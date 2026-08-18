@@ -7,6 +7,17 @@ bundle as a release asset.
 
 ## [Unreleased]
 
+### Security
+
+- Plugin backends now listen on the local machine only, and accept
+  connections from the desktop session that started them. A plugin backend
+  used to open a network port that any machine on the same network could
+  reach, and anything running on the computer could connect to the app's
+  plugin ports; a connection to one of those ports could run code as the
+  user. The app now starts each backend on a loopback-only port, checks that
+  a connecting program is the same user on the same machine, and refuses and
+  shuts down a backend that is still reachable from the network.
+
 ### Fixed
 
 - The store no longer marks an icon pack or wallpaper as installed when its

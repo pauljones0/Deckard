@@ -1,13 +1,19 @@
+import glob
 import os
 import signal
 import importlib
 import shlex
+import subprocess
 import sys
+import tempfile
 from loguru import logger as log
 import threading
 
+from rpyc.utils.authenticators import AuthenticationError
+
 from src.backend.PluginManager.ActionHolder import ActionHolder
 from src.backend.PluginManager.PluginBase import PluginBase
+from src.backend.PluginManager.backend_guard import deckard_rpyc_guard
 from streamcontroller_plugin_tools import BackendBase
 
 import globals as gl
@@ -111,6 +117,158 @@ def build_backend_launch_command(backend_path: str, venv_path: str | None, port:
     terminal = shlex.split(os.environ.get("DECKARD_TERMINAL", "")) or ["gnome-terminal", "--"]
     return [*terminal, "bash", "-c", '"$1" "$2" --port="$3"; exec $SHELL',
             "deckard-backend", interpreter, backend_path, str(port)]
+
+
+def frontend_authenticator(sock):
+    """rpyc authenticator for the frontend servers of plugins and actions.
+
+    Loopback TCP carries no peer credentials, so without this any local
+    process could connect and call register_backend. This accepts only a
+    loopback peer that the socket table attributes to the app's own UID.
+    rpyc runs it on the accepted socket before the protocol starts, so the
+    unmodified backend child passes with no cooperation.
+    """
+    reason = deckard_rpyc_guard.refusal_reason(sock)
+    if reason is not None:
+        log.error(f"Refused a connection to a plugin frontend server: {reason}")
+        raise AuthenticationError(reason)
+    return sock, None
+
+
+def verify_backend_port(port: int, process: subprocess.Popen | None,
+                        via_terminal: bool, owner: str) -> str:
+    """Give the loopback address to register the launched backend on.
+
+    The frontend authenticator gates who may call register_backend; this
+    gates the argument. A connect to an unverified port hands the rpyc
+    netref surface, and through it this process, to whoever listens there.
+    The caller connects to the returned address, and not to a name that
+    could resolve to a squatter on the same port in another family.
+
+    Raises:
+        RuntimeError: On refusal. register_backend runs on an rpyc service
+            thread, so the exception travels back into the registering child
+            and its startup fails visibly.
+    """
+    rows = deckard_rpyc_guard.listen_rows_of_port(port)
+    if via_terminal:
+        # A terminal launch hands the command to the terminal service over
+        # D-Bus (gnome-terminal-server), so the backend is not a child of the
+        # Popen handle. The owner UID of the listener is the check that
+        # remains on this debug path.
+        matched = [row for row in rows if row.uid == os.getuid()]
+        detail = "no listener on that port belongs to this user"
+    elif process is None:
+        matched = []
+        detail = "no backend process was launched"
+    else:
+        matched = [row for row in rows
+                   if deckard_rpyc_guard.pid_owns_inode(process.pid, row.inode)]
+        detail = f"no listener on that port belongs to the launched backend (pid {process.pid})"
+    if not matched:
+        message = f"{owner}: refused backend registration on port {port}: {detail}"
+        log.error(message)
+        raise RuntimeError(message)
+
+    # The backend must listen on loopback. A wildcard-only listener is
+    # LAN-reachable, so the loopback guard did not take effect there; refuse
+    # rather than connect the app to an exposed backend.
+    loopback = [row for row in matched if deckard_rpyc_guard.is_loopback(row.local_ip)]
+    if not loopback:
+        addresses = ", ".join(sorted({row.local_ip for row in matched}))
+        message = (
+            f"{owner}: refused backend registration on port {port}: the backend "
+            f"listens only on a non-loopback address ({addresses}); the loopback "
+            f"guard did not take effect in that process"
+        )
+        log.error(message)
+        raise RuntimeError(message)
+    # rpyc's client resolves and connects AF_INET first, so prefer an IPv4
+    # loopback row when one exists.
+    for row in loopback:
+        if row.local_ip.startswith("127."):
+            return row.local_ip
+    return loopback[0].local_ip
+
+
+def terminate_refused_backend(process: subprocess.Popen | None, owner: str) -> None:
+    """Terminate a backend whose registration verify_backend_port refused.
+
+    A refused backend is exposed or unverifiable, and refusing the connection
+    leaves it listening. Killing the child closes that port. This runs off
+    the caller's thread, because register_backend runs on an rpyc service
+    thread and terminate_backend_process can wait several seconds; the
+    frontend server and connection then tear down through on_disconnect when
+    the child's own connection drops.
+    """
+    if process is None:
+        return
+    log.warning(f"{owner}: terminating the refused backend process (pid {process.pid})")
+    threading.Thread(target=terminate_backend_process, args=(process,),
+                     name="terminate_refused_backend", daemon=True).start()
+
+
+def inject_backend_guard(venv_path: str) -> None:
+    """Copy the loopback guard into a plugin venv before a backend launch.
+
+    A .pth line imports the guard at every interpreter start in that venv,
+    so the injection survives the terminal debug path, which loses the
+    environment. The write is idempotent, and it refreshes a stale copy
+    after an app upgrade. A failure only logs: the app-side gates hold
+    without the guard, and a launch must not die on a read-only venv.
+    """
+    try:
+        source = os.path.abspath(deckard_rpyc_guard.__file__)
+        with open(source, "rb") as f:
+            payload = f.read()
+        site_dirs = glob.glob(os.path.join(venv_path, "lib", "python*", "site-packages"))
+        if not site_dirs:
+            log.error(f"Backend guard not injected: no site-packages under {venv_path}")
+            return
+        for site_dir in site_dirs:
+            _write_if_differs(os.path.join(site_dir, "deckard_rpyc_guard.py"), payload)
+            _write_if_differs(os.path.join(site_dir, "deckard_rpyc_guard.pth"),
+                              b"import deckard_rpyc_guard\n")
+    except Exception as e:
+        log.error(f"Backend guard injection into {venv_path} failed: {e}")
+
+
+def _write_if_differs(path: str, payload: bytes) -> None:
+    try:
+        with open(path, "rb") as f:
+            if f.read() == payload:
+                return
+    except OSError:
+        pass
+    # Write to a unique temp file and rename, so a concurrent interpreter
+    # start in the venv never imports a half-written guard, and two launches
+    # into the same venv do not race one shared temp name.
+    fd, tmp_path = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".deckard_guard_")
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(payload)
+        os.replace(tmp_path, path)
+    except BaseException:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
+
+
+def backend_guard_env() -> dict[str, str]:
+    """Environment for a backend launch: the guard directory on PYTHONPATH.
+
+    sitecustomize.py next to the guard imports it in a child that runs on
+    the app's own interpreter, where no plugin venv exists to carry the .pth
+    file. The app's own site-packages stays untouched, so the app process
+    itself never imports the hook.
+    """
+    env = dict(os.environ)
+    guard_dir = os.path.dirname(os.path.abspath(deckard_rpyc_guard.__file__))
+    existing = env.get("PYTHONPATH")
+    env["PYTHONPATH"] = guard_dir if not existing else guard_dir + os.pathsep + existing
+    return env
 
 
 class PluginManager:

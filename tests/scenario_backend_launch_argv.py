@@ -20,7 +20,10 @@ import globals as gl
 gl.plugin_manager = types.SimpleNamespace(backends=[], backend_processes=[])
 
 from src.backend.PluginManager.ActionCore import ActionCore  # noqa: E402
-from src.backend.PluginManager.PluginManager import build_backend_launch_command  # noqa: E402
+from src.backend.PluginManager.PluginManager import (  # noqa: E402
+    build_backend_launch_command,
+    frontend_authenticator,
+)
 
 
 # A path that a shell would mangle in three different ways at once.
@@ -37,8 +40,13 @@ from rpyc.utils.server import ThreadedServer
 
 
 class StubBackend(rpyc.Service):
+    bind_ip = None
+
     def get_marker(self) -> str:
         return "stub-backend-alive"
+
+    def get_bind_ip(self) -> str:
+        return type(self).bind_ip
 
 
 def main() -> None:
@@ -50,9 +58,12 @@ def main() -> None:
                                        config={"allow_public_attrs": True})
     frontend = frontend_connection.root
 
-    # ThreadedServer binds in __init__, so .port is valid before start().
+    # ThreadedServer binds in __init__, so .port is valid before start(). No
+    # hostname, so an unguarded child binds the wildcard address; the injected
+    # guard rewrites this one to loopback, which get_bind_ip() reports back.
     server = ThreadedServer(StubBackend(), port=0,
                             protocol_config={"allow_public_attrs": True})
+    StubBackend.bind_ip = server.listener.getsockname()[0]
     threading.Thread(target=server.start, name="stub_backend_server",
                      daemon=False).start()
 
@@ -203,10 +214,12 @@ def _make_action() -> ActionCore:
     plugin base, and the launch contract touches none of them.
     """
     action = ActionCore.__new__(ActionCore)
+    action.action_id = "argv-test-action"
     action.backend_connection = None
     action.backend = None
     action.server = None
     action.backend_process = None
+    action._backend_via_terminal = False
     action._backend_ready = threading.Event()
     return action
 
@@ -232,6 +245,21 @@ def check_end_to_end_spaced_path(backend_path: str) -> None:
             "registered, but the backend proxy does not answer"
         )
         print("PASS: a backend under a spaced/quoted path launches and registers")
+
+        # The three hardening measures must be wired into the real launch,
+        # not only correct in isolation. Assert each at its live call site:
+        # the frontend server carries the authenticator, the spawned child
+        # bound loopback (so backend_guard_env armed the guard through
+        # PYTHONPATH), and register_backend refuses a port the child does not
+        # own.
+        assert action.server.authenticator is frontend_authenticator, (
+            "start_server did not install the frontend authenticator"
+        )
+        assert action.backend.get_bind_ip() == "127.0.0.1", (
+            f"the launched child bound {action.backend.get_bind_ip()!r}, not loopback -- "
+            f"the injected guard did not arm in the real Popen environment"
+        )
+        print("PASS: the live launch installs the authenticator and the guard binds the child to loopback")
     finally:
         # Grab the handle first. _release_backend_resources nulls the attribute
         # synchronously and sends SIGTERM on a daemon thread, so a wait on the
@@ -281,6 +309,24 @@ def check_wait_for_backend_event() -> None:
     print(f"PASS: a mid-wait registration wakes wait_for_backend in {elapsed*1000:.0f}ms")
 
 
+def check_register_backend_verifies_port() -> None:
+    """register_backend refuses a port the launched backend does not own.
+
+    This asserts the wiring, not the check in isolation: with no launched
+    process, every port is unowned, so a register_backend that skipped the
+    port check would connect anyway.
+    """
+    action = _make_action()
+    try:
+        action.register_backend(port=0)
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError("register_backend connected without verifying the port")
+    assert action.backend_connection is None, "register_backend connected despite the refusal"
+    print("PASS: register_backend verifies the port before connecting")
+
+
 def main() -> None:
     # Below the per-scenario timeout of run_all.py, so a stall is reported here
     # with a message rather than as an opaque runner timeout.
@@ -291,6 +337,7 @@ def main() -> None:
     check_argv_shape(backend_path)
     check_path_validation(backend_path)
     check_end_to_end_spaced_path(backend_path)
+    check_register_backend_verifies_port()
     check_wait_for_backend_event()
 
     print("PASS: scenario_backend_launch_argv")

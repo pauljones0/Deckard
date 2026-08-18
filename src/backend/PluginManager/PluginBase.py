@@ -57,6 +57,9 @@ class PluginBase(rpyc.Service):
         # through a plugin deactivation or an unload with on_disconnect.
         self._backend_launch_gen: int = 0
         self._backend_stop_requested: bool = False
+        # register_backend relaxes its port-ownership check for a terminal
+        # launch, where the backend is not a child of the Popen handle.
+        self._backend_via_terminal: bool = False
         # register_backend sets this on an rpyc service thread, which the
         # backend process drives, and it wakes wait_for_backend on the
         # launching thread.
@@ -775,7 +778,10 @@ class PluginBase(rpyc.Service):
         if self.server is not None:
             log.warning("Server already running, skipping...")
             return
-        self.server = ThreadedServer(self, hostname="localhost", port=0, protocol_config={"allow_public_attrs": True})
+        from src.backend.PluginManager.PluginManager import frontend_authenticator
+
+        self.server = ThreadedServer(self, hostname="localhost", port=0, protocol_config={"allow_public_attrs": True},
+                                     authenticator=frontend_authenticator)
         threading.Thread(target=self.server.start, name="server_start", daemon=True).start()
 
     def on_disconnect(self, conn: Connection) -> None:
@@ -883,7 +889,11 @@ class PluginBase(rpyc.Service):
         Returns:
             None
         """
-        from src.backend.PluginManager.PluginManager import build_backend_launch_command
+        from src.backend.PluginManager.PluginManager import (
+            backend_guard_env,
+            build_backend_launch_command,
+            inject_backend_guard,
+        )
 
         self.start_server()
         port = self.server.port
@@ -891,14 +901,23 @@ class PluginBase(rpyc.Service):
         # It validates the paths and returns argv, and not a shell string.
         command = build_backend_launch_command(backend_path, venv_path, port, open_in_terminal)
 
+        # The guard rebinds the backend's own rpyc server to loopback. The
+        # .pth copy in the venv survives a terminal launch, which loses the
+        # environment; the PYTHONPATH below covers a venv-less backend.
+        if venv_path is not None:
+            inject_backend_guard(venv_path)
+        elif open_in_terminal:
+            log.warning("Terminal backend launch without a venv: no loopback guard reaches the child")
+
         log.info(f"Launching backend: {command}")
         self._backend_stop_requested = False
         self._backend_launch_gen += 1
+        self._backend_via_terminal = open_in_terminal
         # Cleared after the validation and before the spawn, so a relaunch
         # waits for the registration of the new backend instead of a return on
         # the registration of the previous one.
         self._backend_ready.clear()
-        self.backend_process = subprocess.Popen(command, start_new_session=True)
+        self.backend_process = subprocess.Popen(command, start_new_session=True, env=backend_guard_env())
         if gl.plugin_manager is not None:
             gl.plugin_manager.backend_processes.append(self.backend_process)
 
@@ -984,7 +1003,21 @@ class PluginBase(rpyc.Service):
         Returns:
             None
         """
-        self.backend_connection = rpyc.connect("localhost", port, config={"allow_public_attrs": True})
+        from src.backend.PluginManager.PluginManager import terminate_refused_backend, verify_backend_port
+
+        # Connecting hands the netref surface of this process to whoever
+        # listens on the port, so the port must belong to the launched child.
+        # The check returns the loopback address it verified; connect to that,
+        # not to a name that could resolve to a squatter in another family.
+        plugin_id = self.get_plugin_id_from_folder_name()
+        try:
+            host = verify_backend_port(port, self.backend_process, self._backend_via_terminal, plugin_id)
+        except RuntimeError:
+            # The backend is exposed or unverifiable. Terminate it, so a
+            # LAN-reachable port does not outlive the refused registration.
+            terminate_refused_backend(self.backend_process, plugin_id)
+            raise
+        self.backend_connection = rpyc.connect(host, port, config={"allow_public_attrs": True})
         self.backend = self.backend_connection.root
 
         if gl.plugin_manager is not None:
