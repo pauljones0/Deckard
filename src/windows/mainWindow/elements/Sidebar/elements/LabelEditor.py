@@ -332,7 +332,7 @@ class LabelRow(Adw.PreferencesRow):
 
     # None means the label sets no value for this property, so the widget
     # keeps its current value.
-    def set_color(self, color_values: list[Any] | None) -> None:
+    def set_color(self, color_values: list[int] | None) -> None:
         if color_values is None:
             return
         color = color_values_to_gdk(color_values)
@@ -343,7 +343,7 @@ class LabelRow(Adw.PreferencesRow):
             return
         self.outline_width.button.set_value(outline_width)
 
-    def set_outline_color(self, color_values: list[Any] | None) -> None:
+    def set_outline_color(self, color_values: list[int] | None) -> None:
         if color_values is None:
             return
         color = color_values_to_gdk(color_values)
@@ -370,7 +370,7 @@ class LabelRow(Adw.PreferencesRow):
             return None
         return page, identifier
 
-    def on_change_color(self, _: Any) -> None:
+    def on_change_color(self, _: Gtk.ColorButton) -> None:
         color = list(gdk_color_to_values(self.color_chooser_button.button.get_rgba()))
 
         target = self._page_and_identifier()
@@ -381,7 +381,7 @@ class LabelRow(Adw.PreferencesRow):
 
         self.color_chooser_button.revert_button.set_visible(True)
 
-    def on_change_outline_width(self, _: Any) -> None:
+    def on_change_outline_width(self, _: Gtk.SpinButton) -> None:
         width = int(self.outline_width.button.get_value())
 
         target = self._page_and_identifier()
@@ -392,7 +392,7 @@ class LabelRow(Adw.PreferencesRow):
 
         self.outline_width.revert_button.set_visible(True)
 
-    def on_change_outline_color(self, _: Any) -> None:
+    def on_change_outline_color(self, _: Gtk.ColorButton) -> None:
         color = list(gdk_color_to_values(self.outline_color_chooser_button.button.get_rgba()))
 
         target = self._page_and_identifier()

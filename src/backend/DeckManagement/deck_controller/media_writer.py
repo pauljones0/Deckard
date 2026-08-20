@@ -48,9 +48,12 @@ from src.backend import ui_port
 import globals as gl
 
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, cast, ParamSpec
+
+_Params = ParamSpec("_Params")
 if TYPE_CHECKING:
     from src.backend.DeckManagement.deck_controller.controller import DeckController
+    from src.backend.DeckManagement.BetterDeck import BetterDeck
     from src.backend.DeckManagement.deck_controller.inputs import (
         ControllerDial,
         ControllerKey,
@@ -64,7 +67,7 @@ if TYPE_CHECKING:
 KEY_ENCODE_QUALITY = 90
 
 
-def encode_native_key(deck: Any, image: "Image.Image", quality: int = KEY_ENCODE_QUALITY) -> bytes:
+def encode_native_key(deck: "BetterDeck", image: "Image.Image", quality: int = KEY_ENCODE_QUALITY) -> bytes:
     """PILHelper.to_native_key_format with a tunable JPEG quality, where the
     library hardcodes q100. A smaller JPEG means fewer serial USB HID writes
     per key."""
@@ -90,7 +93,7 @@ def encode_native_key(deck: Any, image: "Image.Image", quality: int = KEY_ENCODE
         return buf.getvalue()
 
 
-def encode_native_touchscreen(deck: Any, image: "Image.Image", quality: int = 90) -> bytes:
+def encode_native_touchscreen(deck: "BetterDeck", image: "Image.Image", quality: int = 90) -> bytes:
     """PILHelper.to_native_touchscreen_format with a tunable JPEG quality,
     and with no mutation of the caller's image. The library hardcodes q100,
     and its _to_native_format calls image.thumbnail() in place when it
@@ -253,7 +256,7 @@ class ReleaseStashedInputsMsg:
     must not skip the release. A control message has no page affinity and
     always executes, FIFO, like ClearMsg and SetBrightnessMsg."""
     # The stashed deck_controller.inputs mapping: input type to its inputs.
-    stashed_inputs: dict[type[InputIdentifier], list[Any]]
+    stashed_inputs: "dict[type[InputIdentifier], list[ControllerKey | ControllerDial | ControllerTouchScreen]]"
 
 
 def _env_float(name: str, default: float) -> float:
@@ -423,7 +426,7 @@ class MediaPlayerThread(threading.Thread):
         # extra lock. The loop drains it fully and first on every wake, ahead
         # of any animation tick or task work, so a brightness or clear op
         # never waits behind them.
-        self.control_q: collections.deque[Any] = collections.deque()
+        self.control_q: "collections.deque[SetBrightnessMsg | ClearMsg | ClearAndCloseMsg | ReleaseStashedInputsMsg]" = collections.deque()
         # Per-writer monotonic stamp counter. add_image_task and
         # add_touchscreen_task stamp a task with next(self._submit_seq) under
         # _slot_lock, atomically with the slot assignment. A stamp taken
@@ -752,7 +755,7 @@ class MediaPlayerThread(threading.Thread):
         Clear's submission time."""
         return next(self._submit_seq)
 
-    def submit_control(self, msg: Any) -> None:
+    def submit_control(self, msg: "SetBrightnessMsg | ClearMsg | ClearAndCloseMsg | ReleaseStashedInputsMsg") -> None:
         """Append and wake, without blocking. Safe from any thread, because a
         deque append is GIL-atomic and needs no lock.
 
@@ -783,8 +786,6 @@ class MediaPlayerThread(threading.Thread):
                 return False
             elif isinstance(msg, ReleaseStashedInputsMsg):
                 self._exec_release_stashed_inputs(msg)
-            else:
-                log.error(f"Unknown control message: {msg!r}")
         return True
 
     def _exec_set_brightness(self, msg: "SetBrightnessMsg") -> None:
@@ -982,7 +983,7 @@ class MediaPlayerThread(threading.Thread):
         while self.running and time.time() - start < timeout:
             time.sleep(0.05)
 
-    def add_task(self, method: Callable[..., Any], *args: Any, **kwargs: Any) -> None:
+    def add_task(self, method: Callable[_Params, object], *args: _Params.args, **kwargs: _Params.kwargs) -> None:
         self.tasks.append(MediaPlayerTask(
             deck_controller=self.deck_controller,
             page=self.deck_controller.active_page,
@@ -1063,7 +1064,7 @@ class MediaPlayerThread(threading.Thread):
             active_page = self.deck_controller.active_page
             current_gen = self.deck_controller._page_load_generation
 
-        def _is_current(task: Any) -> bool:
+        def _is_current(task: "MediaPlayerSetImageTask | MediaPlayerSetTouchscreenImageTask") -> bool:
             # Drop a paint for a page the deck left, or for a superseded
             # generation. config_gen is the generation the paint rendered at.
             if task.page is not active_page:
@@ -1134,7 +1135,7 @@ class MediaPlayerThread(threading.Thread):
                 touch_task.run()
                 self._note_executed(touch_task)
 
-    def _note_executed(self, task: Any) -> None:
+    def _note_executed(self, task: "MediaPlayerSetImageTask | MediaPlayerSetTouchscreenImageTask") -> None:
         """Record that the task's device write was attempted and did not
         raise. A caller reaches this only after the task's own run() returns,
         never for a task dropped as stale or deferred by the touchscreen write

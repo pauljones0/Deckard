@@ -79,6 +79,7 @@ test:compile:
     - python scripts/check_module_sizes.py
     - python scripts/check_gl_slots.py
     - python scripts/check_settings_json.py
+    - python scripts/check_any_explicit_ratchet.py
     # This job's image is the deployment floor, and 3.13 evaluates a parameter
     # and return annotation at def time where the 3.14 dev venv defers it, so
     # this is the only place an unevaluatable annotation shows up.

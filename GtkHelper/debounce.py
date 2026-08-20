@@ -5,20 +5,24 @@ from on_set, so a change of family, size and colour runs up to three full page
 reloads at once, and one colour-picker drag alone fires several.
 """
 import threading
-from typing import Any, Callable, Optional, Protocol
+from typing import Callable, Generic, Optional, Protocol, TypeVar, cast
+
+# The handle a scheduler hands back from schedule and takes in cancel. Each
+# scheduler defines its own; the debouncer never looks inside one.
+HandleT = TypeVar("HandleT", default=int)
 
 
 # The timer source is injectable, so a test drives the coalescing logic with
 # no GTK main loop. Production keeps the GLib.source_remove and
 # GLib.timeout_add pattern that the saturation row uses.
-class Scheduler(Protocol):
+class Scheduler(Protocol[HandleT]):
     """The two operations that a trailing debounce needs from a timer."""
 
-    def schedule(self, delay_ms: int, callback: Callable[[], None]) -> Any:
+    def schedule(self, delay_ms: int, callback: Callable[[], None]) -> HandleT:
         """Arm a one-shot timer and return a handle for cancel."""
         ...
 
-    def cancel(self, handle: Any) -> None:
+    def cancel(self, handle: HandleT) -> None:
         """Disarm a timer that has not fired yet."""
         ...
 
@@ -30,11 +34,11 @@ class GLibScheduler:
     GTK into a process that does not already hold it.
     """
 
-    def schedule(self, delay_ms: int, callback: Callable[[], None]) -> Any:
+    def schedule(self, delay_ms: int, callback: Callable[[], None]) -> int:
         from gi.repository import GLib
         return GLib.timeout_add(delay_ms, self._fire, callback)
 
-    def cancel(self, handle: Any) -> None:
+    def cancel(self, handle: int) -> None:
         from gi.repository import GLib
         GLib.source_remove(handle)
 
@@ -45,7 +49,7 @@ class GLibScheduler:
         return GLib.SOURCE_REMOVE
 
 
-class TrailingDebouncer:
+class TrailingDebouncer(Generic[HandleT]):
     """Coalesce a burst of triggers into one trailing callback.
 
     Every trigger() disarms the pending timer and arms it again, so the
@@ -53,15 +57,19 @@ class TrailingDebouncer:
     """
 
     def __init__(self, delay_ms: int, callback: Callable[[], None],
-                 scheduler: Optional[Scheduler] = None):
+                 scheduler: "Optional[Scheduler[HandleT]]" = None):
         self.delay_ms = delay_ms
         self.callback = callback
-        self.scheduler: Scheduler = scheduler or GLibScheduler()
+        # With no scheduler passed, HandleT falls back to its default of
+        # int, which is exactly what GLibScheduler hands out; the cast states
+        # that binding, because the checker cannot solve HandleT from an
+        # absent argument.
+        self.scheduler: "Scheduler[HandleT]" = scheduler or cast("Scheduler[HandleT]", GLibScheduler())
         # Every trigger reaches the callback. A caller relies on one callback
         # run per burst, so this class holds no equality check, no dirty flag
         # and no early return that can drop a trigger. A later change may move
         # when the callback fires, and every trigger must still reach one fire.
-        self._pending: Optional[Any] = None
+        self._pending: Optional[HandleT] = None
         # One thread only. trigger() and the callback both run on the thread
         # that drives the scheduler, which in production is the GTK main
         # thread, because GTK dispatches the signal handlers there, so the

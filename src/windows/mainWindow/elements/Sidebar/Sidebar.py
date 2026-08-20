@@ -60,7 +60,7 @@ class Sidebar(Adw.NavigationPage):
         """
         To save performance and memory, we only load the thumbnail when the user sees the row
         """
-        self.on_map_tasks: list[Any] = []
+        self.on_map_tasks: list[Callable[[], None]] = []
         self.connect("map", self.on_map)
 
         self.build()
@@ -265,7 +265,7 @@ class KeyEditor(Gtk.Box):
         self.remove_state_button.connect("clicked", self.on_remove_state)
         self.append(self.remove_state_button)
 
-    def on_state_switch(self, *args: Any) -> None:
+    def on_state_switch(self) -> None:
         state = self.state_switcher.get_selected_state()
 
         controller = services.require_main_window().get_active_controller()

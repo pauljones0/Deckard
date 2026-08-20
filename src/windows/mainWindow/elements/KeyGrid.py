@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from src.backend.DeckManagement.deck_controller.controller import DeckController
     from PIL import Image
     from src.backend.DeckManagement.deck_controller.inputs import ControllerKey
+    from src.windows.mainWindow.DeckPlus.ScreenBar import ScreenBar
 from src.backend.DeckManagement.InputIdentifier import Input
 
 
@@ -42,7 +43,14 @@ from src.backend.DeckManagement.ImageHelpers import image2pixbuf
 from src.backend.DeckManagement.HelperMethods import recursive_hasattr
 from src.windows.ui_adapter import mark_dirty
 
-from typing import cast, Any
+from typing import Protocol, cast, Any
+
+
+class _ImageSink(Protocol):
+    """A widget that shows one PIL frame: the key button and the screen-bar
+    image both answer it."""
+
+    def set_image(self, image: "Image.Image") -> None: ...
 
 class KeyGrid(Gtk.Grid):
     """
@@ -97,7 +105,12 @@ class KeyGrid(Gtk.Grid):
         for identifier in list(tasks.keys()):
             if isinstance(identifier, Input.Key):
                 x, y = identifier.coords
-                self._push_current_image(identifier, self.buttons[x][y])
+                button = self.buttons[x][y]
+                if button is None:
+                    # Mid-rebuild the slot is empty; the rebuild composites
+                    # this frame itself, so there is nothing to push here.
+                    continue
+                self._push_current_image(identifier, button)
                 try:
                     tasks.pop(identifier)
                 except KeyError:
@@ -117,7 +130,7 @@ class KeyGrid(Gtk.Grid):
                     except KeyError:
                         pass
 
-    def _find_screenbar(self) -> Any:
+    def _find_screenbar(self) -> "ScreenBar | None":
         """The sibling screenbar, found by a walk up the widget tree.
 
         The lookup is duck-typed, because an import of DeckStackChild or
@@ -130,11 +143,13 @@ class KeyGrid(Gtk.Grid):
         widget = self.get_parent()
         while widget is not None:
             if recursive_hasattr(widget, "screenbar.image"):
-                return getattr(widget, "screenbar")
+                # The walk is duck-typed; the guard above is what proves the
+                # widget is the deck config that owns the screenbar.
+                return cast("ScreenBar", getattr(widget, "screenbar"))
             widget = widget.get_parent()
         return None
 
-    def _push_current_image(self, identifier: "InputIdentifier", widget: Any) -> None:
+    def _push_current_image(self, identifier: "InputIdentifier", widget: "_ImageSink") -> None:
         controller_input = self.deck_controller.get_input(identifier)
         if controller_input is None:
             return
@@ -240,19 +255,23 @@ class KeyButton(Gtk.Frame):
     # GTK4 passes the dropped value to the drop signal, not the content
     # provider. Here that value is a KeyButton or a Gdk.FileList. See
     # set_gtypes above.
-    def on_button_drop(self, drop: Gtk.DropTarget, value: Any, x: float, y: float) -> "bool | None":
-        if isinstance(drop.get_value(), KeyButton):
+    def on_button_drop(self, drop: Gtk.DropTarget, value: "KeyButton | Gdk.FileList", x: float, y: float) -> "bool | None":
+        # value IS drop.get_value(): GTK passes the dropped value to the
+        # signal, so the narrowing reads the parameter it forwards.
+        if isinstance(value, KeyButton):
             self.handle_key_button_drop(drop, value, x, y)
-       
-        elif isinstance(drop.get_value(), Gdk.FileList):
+
+        elif isinstance(value, Gdk.FileList):
             self.handle_file_drop(drop, value, x, y)
 
         else:
-            drop.reject()
+            # The gtype pin above makes this unreachable for the checker,
+            # and the reject stays for whatever GTK marshals anyway.
+            drop.reject()  # type: ignore[unreachable]
             return False
         return None
         
-    def handle_key_button_drop(self, drop: Gtk.DropTarget, value: Any, x: float, y: float) -> None:
+    def handle_key_button_drop(self, drop: Gtk.DropTarget, value: "KeyButton", x: float, y: float) -> None:
         active_page = self.key_grid.deck_controller.active_page
         if active_page is None:
             return
@@ -341,7 +360,7 @@ class KeyButton(Gtk.Frame):
         return None
 
         
-    def on_drag_begin(self, drag_source: Gtk.DragSource, data: Any) -> None:
+    def on_drag_begin(self, drag_source: Gtk.DragSource, data: Gdk.Drag) -> None:
         content = data.get_content()
 
     def on_drag_prepare(self, drag_source: Gtk.DragSource, x: float, y: float) -> Gdk.ContentProvider:
@@ -525,9 +544,6 @@ class KeyButton(Gtk.Frame):
         services.require_main_window().sidebar.load_for_identifier(self.identifier, self.get_key().state)
         return False
 
-    def on_paste_finished(self, result: Any, data: Any, user_data: Any) -> None:
-        value = services.require_main_window().key_clipboard.read_value_finish(result=data)
-
     def on_remove(self, *args: Any) -> bool:
         active_page = self.key_grid.deck_controller.active_page
         if active_page is None:
@@ -602,10 +618,6 @@ class KeyButton(Gtk.Frame):
 
         self.add_controller(self.shortcut_controller)
 
-    def on_update(self, *args: Any, **kwargs: Any) -> None:
-        pass
-
-
 class KeyButtonContextMenu(Gtk.PopoverMenu):
     def __init__(self, key_button:KeyButton, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -616,9 +628,6 @@ class KeyButtonContextMenu(Gtk.PopoverMenu):
         self.connect("closed", self.on_close)
 
         # gl.app.set_accels_for_action("context.test", ["<Primary>t"])
-
-    def on_test(self, *args: Any, **kwargs: Any) -> None:
-        pass
 
     def build(self) -> None:
         self.set_parent(self.key_button)
@@ -642,7 +651,7 @@ class KeyButtonContextMenu(Gtk.PopoverMenu):
 
         self.set_menu_model(self.main_menu)
 
-    def on_close(self, *args: Any, **kwargs: Any) -> None:
+    def on_close(self, popover: Gtk.PopoverMenu) -> None:
         # Unparent on an idle, not here. This code runs inside the closed
         # signal emission, and an unparent of the popover during that emission
         # can dispose the emitter under GTK. The idle also lets fast repeated
@@ -659,7 +668,7 @@ class KeyButtonContextMenu(Gtk.PopoverMenu):
 
         GLib.idle_add(_do_unparent)
 
-    def on_open(self, *args: Any, **kwargs: Any) -> None:
+    def on_open(self) -> None:
         # Inert. MainWindow.add_accel_actions is inert too, and each
         # KeyButton serves these keys through a Gtk.ShortcutController of
         # its own, added in init_shortcuts.

@@ -34,7 +34,7 @@ from loguru import logger as log
 from src.windows.PageManager.Importer.Importer import Importer
 # Import typing
 from collections.abc import Callable
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from src.windows.PageManager.elements.PageEditor import PageEditor
 
@@ -103,7 +103,7 @@ class MenuButton(Gtk.MenuButton):
         self.popover.set_menu_model(self.menu)
         self.set_popover(self.popover)
 
-    def on_import_streamdeck_ui(self, *args: Any) -> None:
+    def on_import_streamdeck_ui(self, action: Gio.SimpleAction, parameter: "GLib.Variant | None") -> None:
         ChooseImportFileDialog(self, self.streamdeck_ui_callback)
 
     def streamdeck_ui_callback(self, selected_file: Gio.File) -> None:
@@ -117,7 +117,7 @@ class MenuButton(Gtk.MenuButton):
         importer.present()
         importer.import_pages(path, "streamdeck-ui")
 
-    def on_export_page(self, *args: Any) -> None:
+    def on_export_page(self, action: Gio.SimpleAction, parameter: "GLib.Variant | None") -> None:
         path = self.pageEditor.active_page_path
         if path in [None, ""]:
             return
@@ -147,7 +147,7 @@ class MenuButton(Gtk.MenuButton):
 
         atomic_write_json(export_path, page_json)
 
-    def on_import_page(self, *args: Any) -> None:
+    def on_import_page(self, action: Gio.SimpleAction, parameter: "GLib.Variant | None") -> None:
         ChooseImportFileDialog(self, self.import_page_callback)
 
     def import_page_callback(self, selected_file: Gio.File) -> None:
@@ -210,7 +210,7 @@ class MenuButton(Gtk.MenuButton):
         # Emit signal
         gl.signal_manager.trigger_signal(Signals.PageAdd, page_path)
 
-    def on_duplicate_page(self, *args: Any) -> None:
+    def on_duplicate_page(self, action: Gio.SimpleAction, parameter: "GLib.Variant | None") -> None:
         active_page_path = self.pageEditor.active_page_path
         if active_page_path in [None, ""]:
             return
@@ -218,7 +218,7 @@ class MenuButton(Gtk.MenuButton):
         file =Gio.File.new_for_path(active_page_path)
         self.import_page_callback(file)
 
-    def on_export_all_pages(self, *args: Any) -> None:
+    def on_export_all_pages(self, action: Gio.SimpleAction, parameter: "GLib.Variant | None") -> None:
         initial_name = f"Deckard_{datetime.now().strftime('%Y-%m-%d_%H-%M')}.json"
         ChooseExportFileDialog(self, self.export_all_pages_callback, initial_name=initial_name)
 
@@ -238,7 +238,7 @@ class MenuButton(Gtk.MenuButton):
 
         atomic_write_json(selected_path, pages)
 
-    def on_import_streamcontroller(self, *args: Any) -> None:
+    def on_import_streamcontroller(self, action: Gio.SimpleAction, parameter: "GLib.Variant | None") -> None:
         ChooseImportFileDialog(self, self.import_streamcontroller_callback)
 
     def import_streamcontroller_callback(self, selected_file: Gio.File) -> None:
@@ -253,7 +253,7 @@ class MenuButton(Gtk.MenuButton):
         
 
 class ChooseImportFileDialog(Gtk.FileDialog):
-    def __init__(self, menu_button: MenuButton, callback: Callable[[Any], Any] | None = None):
+    def __init__(self, menu_button: MenuButton, callback: "Callable[[Gio.File], None] | None" = None):
         super().__init__(title=gl.lm.get("asset-chooser.custom.browse-files.dialog.title"),
                          accept_label=gl.lm.get("asset-chooser.custom.browse-files.dialog.select-button"))
         self.menu_button = menu_button
@@ -271,7 +271,7 @@ class ChooseImportFileDialog(Gtk.FileDialog):
             self.original_callback(selected_file)
 
 class ChooseExportFileDialog(Gtk.FileDialog):
-    def __init__(self, menu_button: MenuButton, callback: Callable[[Any], Any] | None = None, initial_name: str | None = None):
+    def __init__(self, menu_button: MenuButton, callback: "Callable[[Gio.File], None] | None" = None, initial_name: str | None = None):
         super().__init__(title=gl.lm.get("asset-chooser.custom.browse-files.dialog.title"),
                          accept_label=gl.lm.get("asset-chooser.custom.browse-files.dialog.select-button"),
                          initial_name=initial_name)

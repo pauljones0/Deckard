@@ -67,7 +67,7 @@ from src.Signals import Signals
 
 import globals as gl
 
-from typing import cast, Any, TYPE_CHECKING, Generic, TypeVar
+from typing import Any, TYPE_CHECKING, Generic, TypeVar, Protocol
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Sequence
 
@@ -247,7 +247,7 @@ class ControllerInputState:
                     f"Action {getattr(action, 'action_id', action)} raised handling {event}"
                 )
 
-    def _submit_action_callback(self, fn: "Callable[..., Any]", *args: Any) -> "Future[Any] | None":
+    def _submit_action_callback(self, fn: "Callable[..., None]", *args: object) -> "Future[None] | None":
         """Route an action callback through the deck's bounded thread pool.
         Returns the Future, or None when the executor is gone because the deck
         is tearing down.
@@ -256,12 +256,12 @@ class ControllerInputState:
         if executor is None:
             return None
         try:
-            future = executor.submit(fn, *args)
+            future: "Future[None]" = executor.submit(fn, *args)
         except RuntimeError:
             # The executor already shut down; the deck disconnected mid-call.
             return None
         future.add_done_callback(self._log_callback_exception)
-        return cast("Future[Any] | None", future)
+        return future
 
     def own_actions_update_threaded(self) -> None:
         self._submit_action_callback(self.own_actions_update)
@@ -283,10 +283,10 @@ class ControllerInputState:
         else:
             future.add_done_callback(self._on_tick_done)
 
-    def _on_tick_done(self, _future: "Future[Any]") -> None:
+    def _on_tick_done(self, _future: "Future[None]") -> None:
         self._tick_running = False
 
-    def _log_callback_exception(self, future: "Future[Any]") -> None:
+    def _log_callback_exception(self, future: "Future[None]") -> None:
         try:
             exc = future.exception()
         except Exception:
@@ -333,6 +333,13 @@ class ControllerInputState:
 #: plumbing below stay in the base class without erasing the subclass's state
 #: type at every get_active_state() call.
 StateT = TypeVar("StateT", bound="ControllerInputState")
+
+
+class _KeyLayoutLike(Protocol):
+    """The one read Index_To_Coords needs: the raw device handle and the
+    BetterDeck wrapper both answer it."""
+
+    def key_layout(self) -> tuple[int, int]: ...
 
 
 class ControllerInput(Generic[StateT]):
@@ -623,7 +630,7 @@ class ControllerKey(ControllerInput["ControllerKeyState"]):
         # so does the cancel_gesture sweep of ScreenSaver.show(), which runs
         # under _load_page_lock after this key left the live input set and can
         # receive no further event.
-        self._gesture: tuple[Any, ...] | None = None
+        self._gesture: "tuple[ControllerKeyState, list[ActionCore | NoActionHolderFound | ActionOutdated]] | None" = None
 
     def cancel_gesture(self) -> None:
         """End an in-flight gesture without a dispatch of its release
@@ -657,7 +664,7 @@ class ControllerKey(ControllerInput["ControllerKeyState"]):
         return map(lambda x: f"{x[0]}x{x[1]}", map(lambda x: ControllerKey.Index_To_Coords(deck, x), range(deck.key_count())))
 
     @staticmethod
-    def Index_To_Coords(deck: Any, index: int) -> "tuple[int, int]":
+    def Index_To_Coords(deck: "_KeyLayoutLike", index: int) -> "tuple[int, int]":
         # The key-press path passes the raw device handle, whose key_layout
         # is unrotated; the other callers pass the BetterDeck wrapper.
         rows, cols = deck.key_layout()    
@@ -666,7 +673,7 @@ class ControllerKey(ControllerInput["ControllerKeyState"]):
         return x, y
     
     @staticmethod
-    def Coords_To_Index(deck: "BetterDeck", coords: "str | Sequence[Any]") -> int:
+    def Coords_To_Index(deck: "BetterDeck", coords: "str | Sequence[int] | Sequence[str]") -> int:
         parts: "Sequence[int] | Sequence[str]"
         if isinstance(coords, str):
             parts = coords.split("x")
@@ -748,7 +755,7 @@ class ControllerKey(ControllerInput["ControllerKeyState"]):
             return rgb_background.rotate(rotation)
         return image.convert("RGB").rotate(rotation)
 
-    def _update_from_tile_identity(self, identified: tuple[Any, ...], page: "Page | None", config_gen: "int | None", force: bool) -> None:
+    def _update_from_tile_identity(self, identified: "tuple[Image.Image, tuple[str, int]]", page: "Page | None", config_gen: "int | None", force: bool) -> None:
         """Present a passthrough key straight from its frame identity; see
         update(). identified is the (tile, (video md5, frame index)) pair that
         Background handed out as one read."""
@@ -1018,7 +1025,7 @@ class ControllerKey(ControllerInput["ControllerKeyState"]):
 
         return labeled_image
     
-    def add_warning_point(self, image: Image.Image, margin: int = 10, size: int = 10, color: tuple[Any, ...] = (255, 150, 80)) -> Image.Image:
+    def add_warning_point(self, image: Image.Image, margin: int = 10, size: int = 10, color: tuple[int, int, int] = (255, 150, 80)) -> Image.Image:
         draw = ImageDraw.Draw(image)
 
         # Find the coordinates of the top right circle.
@@ -1078,7 +1085,7 @@ class ControllerKey(ControllerInput["ControllerKeyState"]):
         # stash carries it over, or fully after it, on the recreated state,
         # and never on a destroyed state object.
         with self._states_lock:
-            stashed: dict[int, tuple[Any, ...]] = {}
+            stashed: "dict[int, tuple[ActionCore, InputImage | None, InputVideo | KeyGIF | None, ImageLayout]]" = {}
             for index, old_state in self.states.items():
                 owner = old_state.media_owner_action
                 if owner is None:
@@ -1456,7 +1463,7 @@ class ControllerDial(ControllerInput["ControllerDialState"]):
         # latch. It is one attribute, so a writer clears it in one atomic
         # store and the hold-timer callback reads a coherent pair or None,
         # never a torn half.
-        self._gesture: tuple[Any, ...] | None = None
+        self._gesture: "tuple[ControllerDialState, list[ActionCore | NoActionHolderFound | ActionOutdated]] | None" = None
 
     def cancel_gesture(self) -> None:
         """End an in-flight gesture without a dispatch of its release
@@ -1711,7 +1718,7 @@ class ControllerTouchScreenState(ControllerInputState):
         self.controller_touch = controller_touch
 
         # (key, fitted-image-or-None) for _get_fitted_background_image.
-        self._fitted_background_cache: "tuple[tuple[Any, ...] | None, Image.Image | None]" = (None, None)
+        self._fitted_background_cache: "tuple[tuple[str, float, tuple[int, int], float] | None, Image.Image | None]" = (None, None)
 
         # Playback state for a video configured as this touchscreen's
         # background. It is an InputVideo over a strip-sized shared frame

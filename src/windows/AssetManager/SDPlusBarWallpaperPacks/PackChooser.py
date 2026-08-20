@@ -29,18 +29,23 @@ from src.windows.AssetManager.SDPlusBarWallpaperPacks.Preview import SDPlusBarWa
 import globals as gl
 
 # Import typing
-from typing import cast, Any, TYPE_CHECKING
+from typing import TYPE_CHECKING
 if TYPE_CHECKING:
+    from src.backend.SDPlusBarWallpaperPackManagement.SDPlusBarWallpaperPack import SDPlusBarWallpaperPack
     from src.windows.AssetManager.SDPlusBarWallpaperPacks.SDPlusBarWallpaper.SDPlusBarWallpaperChooser import SDPlusBarWallpaperChooserPage
+    from src.windows.AssetManager.SDPlusBarWallpaperPacks.Stack import SDPlusBarWallpaperPackChooserStack
 
 
-class SDPlusBarWallpaperPackChooser(GenericPackChooserPage):
+class SDPlusBarWallpaperPackChooser(GenericPackChooserPage["SDPlusBarWallpaperPack", "SDPlusBarWallpaperPackChooserStack"]):
+    # The concrete stack, restated so the quoted name in the base subscript
+    # has a checked in-file use.
+    stack: "SDPlusBarWallpaperPackChooserStack"
     PACK_FLOW_BOX_CLASS = SDPlusBarWallpaperPackFlowBox
     PACK_PREVIEW_CLASS = SDPlusBarWallpaperPackPreview
     LEAF_CHILD_NAME = "wallpaper-chooser"
 
-    def get_packs(self) -> dict[str, Any]:
+    def get_packs(self) -> "dict[str, SDPlusBarWallpaperPack]":
         return gl.sd_plus_bar_wallpaper_pack_manager.get_wallpaper_packs()
 
     def get_leaf_chooser(self) -> "SDPlusBarWallpaperChooserPage":
-        return cast("SDPlusBarWallpaperChooserPage", self.stack.wallpaper_chooser)
+        return self.stack.wallpaper_chooser

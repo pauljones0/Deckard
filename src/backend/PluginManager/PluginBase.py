@@ -6,7 +6,7 @@ import threading
 import time
 import subprocess
 from collections.abc import Callable
-from typing import cast, Any
+from typing import cast, Any, TypedDict, NotRequired
 
 from packaging import version
 
@@ -36,12 +36,34 @@ from src.backend.PluginManager.EventHolder import EventHolder
 from src.backend.settings_store import PluginSettings
 
 
+class PluginRegistration(TypedDict):
+    """One registered plugin's registry entry. register() is the sole writer.
+
+    register() always writes object, and a reader still tolerates an entry
+    without it: the warm-up skip over a malformed entry is a tested
+    contract, so the key stays NotRequired.
+    """
+
+    object: NotRequired["PluginBase"]
+    plugin_version: "str | None"
+    minimum_app_version: "str | None"
+    github: "str | None"
+    folder_path: str
+    file_name: str
+
+
+class DisabledPluginRegistration(PluginRegistration):
+    """A disabled plugin's entry; reason names why register() refused it."""
+
+    reason: "str | None"
+
+
 class PluginBase(rpyc.Service):  # type: ignore[misc]  # rpyc.Service is unstubbed (Any)
     """The base class of every plugin."""
 
-    # {plugin_id: {"object": PluginBase, "meta": ...}}. See register().
-    plugins: dict[str, dict[str, Any]] = {}
-    disabled_plugins: dict[str, dict[str, Any]] = {}
+    # {plugin_id: registration}. See register().
+    plugins: "dict[str, PluginRegistration]" = {}
+    disabled_plugins: "dict[str, DisabledPluginRegistration]" = {}
 
     def __init__(self, use_legacy_locale: bool = True, legacy_dir: str = "locales"):
         self.backend_connection: Connection = None
@@ -87,11 +109,11 @@ class PluginBase(rpyc.Service):  # type: ignore[misc]  # rpyc.Service is unstubb
             self.locale_manager = LocaleManager(os.path.join(self.PATH, "locales.csv"))
         self.locale_manager.set_to_os_default()
 
-        self.action_holders: dict[str, Any] = {}
+        self.action_holders: "dict[str, ActionHolder]" = {}
 
         self.action_holder_groups: set[ActionHolderGroup] = set()
 
-        self.event_holders: dict[str, Any] = {}
+        self.event_holders: "dict[str, EventHolder]" = {}
 
         self.registered: bool = False
 
@@ -514,7 +536,10 @@ class PluginBase(rpyc.Service):  # type: ignore[misc]  # rpyc.Service is unstubb
         full_id = event_id or f"{self.get_plugin_id()}::{event_id_suffix}"
 
         if full_id in self.event_holders:
-            self.event_holders[full_id].remove_listener(callback)
+            # A None callback matched nothing in the registry before; the
+            # guard keeps that no-op without the call.
+            if callback is not None:
+                self.event_holders[full_id].remove_listener(callback)
         else:
             log.warning(f"{full_id} does not exist in {self.plugin_name}")
 
@@ -861,7 +886,7 @@ class PluginBase(rpyc.Service):  # type: ignore[misc]  # rpyc.Service is unstubb
         ).start()
 
     @staticmethod
-    def _teardown_backend_resources(server: Any, connection: Any, process: "subprocess.Popen[bytes] | None") -> None:
+    def _teardown_backend_resources(server: "ThreadedServer | None", connection: "Connection | None", process: "subprocess.Popen[bytes] | None") -> None:
         # This runs on a worker thread. See _release_backend_resources. Each
         # close and terminate tolerates a failure, because a hung backend must
         # not stop the app.

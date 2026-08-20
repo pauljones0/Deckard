@@ -138,10 +138,24 @@ class PageSelector(Adw.NavigationPage):
             # Compare each part
             for part1, part2 in zip(item_1_parts, item_2_parts):
                 # If the parts are different, return -1 or 1 immediately
-                if part1 < part2:
-                    return -1
-                elif part1 > part2:
-                    return 1
+                if isinstance(part1, int) and isinstance(part2, int):
+                    if part1 < part2:
+                        return -1
+                    elif part1 > part2:
+                        return 1
+                elif isinstance(part1, str) and isinstance(part2, str):
+                    if part1 < part2:
+                        return -1
+                    elif part1 > part2:
+                        return 1
+                else:
+                    # Paired parts share a type when the digits are ASCII:
+                    # re.split alternates text and digit runs from index zero
+                    # in both keys. A non-ASCII decimal digit survives the
+                    # split as text and then reads as int, so this branch is
+                    # reachable; the bare comparison raised for it before,
+                    # and this raise keeps that behavior.
+                    raise TypeError(f"natural key shapes diverged: {part1!r} vs {part2!r}")
         
         fuzz1 = self.calc_ratio(item_1_page_name, search)
         fuzz2 = self.calc_ratio(item_2_page_name, search)

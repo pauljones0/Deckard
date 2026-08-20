@@ -76,7 +76,7 @@ class ImageGroup(Adw.PreferencesGroup):
 
 
 class Layout(Adw.ExpanderRow):
-    def __init__(self, margin_group: Any) -> None:
+    def __init__(self, margin_group: "ImageGroup") -> None:
         super().__init__(title=gl.lm.get("right-area.image-editor.layout.header"), subtitle=gl.lm.get("right-area.image-editor.layout.subtitle"))
         self.margin_group = margin_group
         self.identifier: InputIdentifier = None  # type: ignore[assignment]  # late-init: load_for_identifier

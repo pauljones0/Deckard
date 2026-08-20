@@ -135,14 +135,20 @@ def save_lock(path: str) -> threading.Lock:
         return _save_locks.setdefault(canonical_path(path), threading.Lock())
 
 
+class CancelHandle(Protocol):
+    """What a scheduler hands back: enough to disarm the timer."""
+
+    def cancel(self) -> None: ...
+
+
 class Scheduler(Protocol):
     """The two operations the deferral needs from a timer source."""
 
-    def schedule(self, delay_s: float, callback: Callable[[], None]) -> Any:
+    def schedule(self, delay_s: float, callback: Callable[[], None]) -> CancelHandle:
         """Arm a one-shot timer and return a handle for cancel()."""
         ...
 
-    def cancel(self, handle: Any) -> None:
+    def cancel(self, handle: CancelHandle) -> None:
         """Disarm a timer that has not fired yet. Idempotent after a fire."""
         ...
 
@@ -155,10 +161,10 @@ class TimerWheelScheduler:
     at os._exit, so quit flushes explicitly instead of trusting an armed timer.
     """
 
-    def schedule(self, delay_s: float, callback: Callable[[], None]) -> Any:
+    def schedule(self, delay_s: float, callback: Callable[[], None]) -> timer_wheel.TimerHandle:
         return timer_wheel.schedule(delay_s, callback, name="page_flush")
 
-    def cancel(self, handle: Any) -> None:
+    def cancel(self, handle: CancelHandle) -> None:
         handle.cancel()
 
 
@@ -180,7 +186,7 @@ class _Pending:
         self.source = source
         self.path = path
         self.first_marked = first_marked
-        self.handle: Any = None
+        self.handle: "CancelHandle | None" = None
 
 
 class PageFlush:

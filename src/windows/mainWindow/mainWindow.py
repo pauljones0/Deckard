@@ -61,7 +61,7 @@ class MainWindow(Adw.ApplicationWindow):
         self.key_dict: "dict[Any, Any]" = {}
 
         # Add tasks to run if build is complete
-        self.on_finished: list[Callable[[], Any]] = []
+        self.on_finished: list[Callable[[], object]] = []
 
         self.build()
         self.init_actions()
@@ -78,7 +78,7 @@ class MainWindow(Adw.ApplicationWindow):
         if gl.argparser.parse_args().devel:
             self.add_css_class("devel")
 
-    def on_close(self, *args: Any, **kwargs: Any) -> bool:
+    def on_close(self, *args: object, **kwargs: object) -> bool:
         keep_running = gl.settings_manager.app().keep_running
         if keep_running is None:
             dialog = KeepRunningDialog(self, self.on_close)
@@ -276,7 +276,7 @@ class MainWindow(Adw.ApplicationWindow):
         else:
             self.set_main_error(None)
 
-    def add_on_finished(self, task: Callable[[], Any]) -> None:
+    def add_on_finished(self, task: Callable[[], object]) -> None:
         if not callable(task):
             # Plugins call this untyped, so the runtime check stays even
             # though the annotation reads it as impossible.
@@ -298,28 +298,28 @@ class MainWindow(Adw.ApplicationWindow):
             if callable(task):
                 task()
 
-    def on_copy(self, *args: Any) -> bool:
+    def on_copy(self, *args: object) -> bool:
         child = get_deepest_focused_widget_with_attr(self, "on_copy")
         if child is not None and hasattr(child, "on_copy"):
             child.on_copy()
 
         return False
 
-    def on_cut(self, *args: Any) -> bool:
+    def on_cut(self, *args: object) -> bool:
         child = get_deepest_focused_widget_with_attr(self, "on_cut")
         if child is not None and hasattr(child, "on_cut"):
             child.on_cut()
 
         return False
 
-    def on_paste(self, *args: Any) -> bool:
+    def on_paste(self, *args: object) -> bool:
         child = get_deepest_focused_widget_with_attr(self, "on_paste")
         if child is not None and hasattr(child, "on_paste"):
             child.on_paste()
 
         return False
 
-    def on_remove(self, *args: Any) -> bool:
+    def on_remove(self, *args: object) -> bool:
         child = get_deepest_focused_widget_with_attr(self, "on_remove")
         if child is not None and hasattr(child, "on_remove"):
             child.on_remove()

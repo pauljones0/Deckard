@@ -332,6 +332,8 @@ class PluginManager:
 
     def _warm_up_plugins(self) -> None:
         for plugin_id, plugin in list(PluginBase.plugins.items()):
+            # Skip a malformed entry without an object; a scenario pins this
+            # resilience.
             plugin_base = plugin.get("object")
             if plugin_base is None:
                 continue

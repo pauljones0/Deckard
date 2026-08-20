@@ -51,7 +51,32 @@ import time
 from weakref import WeakSet
 
 from loguru import logger as log
-from typing import Any
+from typing import Protocol, cast
+
+
+class BudgetSource(Protocol):
+    """What a caller hands to register(): anything that can say its size."""
+
+    def budget_bytes(self) -> int: ...
+
+
+class BudgetParticipant(Protocol):
+    """The surface the sweep reads off a registrant.
+
+    register() stamps the four budget_* fields; the methods come from the
+    registrant itself. An accounting-only registrant answers budget_bytes
+    and nothing more; the evictable gate keeps the sweep off the other two
+    methods for it, exactly as the register() docstring states.
+    """
+
+    budget_label: str
+    budget_evictable: bool
+    budget_min_age_s: float
+    budget_floor_bytes: int
+
+    def budget_bytes(self) -> int: ...
+    def budget_head_ts(self) -> "float | None": ...
+    def budget_evict_oldest(self, want_bytes: int, min_age_s: float, floor_bytes: int) -> int: ...
 
 # Tunables.
 
@@ -125,7 +150,7 @@ _lock = threading.Lock()
 # registry in event_dispatch.py documents. A pass snapshots the set as a list
 # under _lock before it iterates, because a WeakSet tolerates a GC-driven
 # removal mid-iteration but not a concurrent add.
-_registry: "WeakSet[Any]" = WeakSet()
+_registry: "WeakSet[BudgetParticipant]" = WeakSet()
 
 _wake = threading.Event()
 _thread_started = False
@@ -135,7 +160,7 @@ _evicted_bytes = 0
 _degenerate_passes = 0
 
 _default_ceiling_cache: int | None = None
-_warned_ceiling_values: set[Any] = set()
+_warned_ceiling_values: set[str] = set()
 
 
 # Ceiling.
@@ -208,7 +233,7 @@ def ceiling_bytes() -> int:
 
 # Registration.
 
-def register(cache: Any, *, label: str, evictable: bool = True,
+def register(cache: BudgetSource, *, label: str, evictable: bool = True,
              min_age_s: float = DEFAULT_MIN_AGE_S,
              floor_bytes: int = DEFAULT_FLOOR_BYTES) -> None:
     """Enrols cache in the process-wide budget. Idempotent.
@@ -223,12 +248,16 @@ def register(cache: Any, *, label: str, evictable: bool = True,
     by group, and logs name the instance.
     """
     try:
-        cache.budget_label = label
-        cache.budget_evictable = bool(evictable)
-        cache.budget_min_age_s = float(min_age_s)
-        cache.budget_floor_bytes = int(floor_bytes)
+        # The stamp below is what makes cache a BudgetParticipant; the cast
+        # states that hand-off. The two methods beyond budget_bytes stay the
+        # evictable contract, unreached for an accounting-only registrant.
+        participant = cast(BudgetParticipant, cache)
+        participant.budget_label = label
+        participant.budget_evictable = bool(evictable)
+        participant.budget_min_age_s = float(min_age_s)
+        participant.budget_floor_bytes = int(floor_bytes)
         with _lock:
-            _registry.add(cache)
+            _registry.add(participant)
         _ensure_thread()
     except Exception as e:
         # Never raise. This runs from DeckController.__init__, where
@@ -237,7 +266,7 @@ def register(cache: Any, *, label: str, evictable: bool = True,
         log.warning(f"cache-budget: could not register {label!r}: {e}")
 
 
-def unregister(cache: Any) -> None:
+def unregister(cache: BudgetSource) -> None:
     """Drops cache from the registry.
 
     The call is optional. A dropped cache falls out of the WeakSet on its own,
@@ -247,12 +276,12 @@ def unregister(cache: Any) -> None:
     """
     try:
         with _lock:
-            _registry.discard(cache)
+            _registry.discard(cast(BudgetParticipant, cache))
     except Exception as e:
         log.warning(f"cache-budget: could not unregister: {e}")
 
 
-def set_min_age(cache: Any, min_age_s: float) -> None:
+def set_min_age(cache: BudgetParticipant, min_age_s: float) -> None:
     """Retunes a registrant's min-age protection in place.
 
     Group-A entries are keyed per frame, so a given entry is re-touched once
@@ -281,7 +310,7 @@ def notify_grew() -> None:
 
 # Introspection.
 
-def _snapshot() -> list[Any]:
+def _snapshot() -> list[BudgetParticipant]:
     with _lock:
         return list(_registry)
 
@@ -435,7 +464,8 @@ def _drain_once() -> bool:
     # total back up, because painters keep putting, so MAX_PICKS_PER_PASS and
     # not that argument alone makes termination unconditional. The ids are
     # stable here, because caches holds strong references for the duration.
-    skip: set[Any] = set()
+    # Keyed by id(): the sweep excludes exact instances for this pass.
+    skip: set[int] = set()
     freed = 0
     evicted = 0
     picks = 0
@@ -545,7 +575,7 @@ def _warn_degenerate(total: int, ceiling: int) -> None:
     )
 
 
-def _report_thrash(caches: list[Any]) -> None:
+def _report_thrash(caches: list[BudgetParticipant]) -> None:
     """Thrash tripwire. A key that comes straight back after the budget shed
     it means the ceiling binds against a live working set.
 

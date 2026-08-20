@@ -22,19 +22,25 @@ from gi.repository import Gtk, GLib
 import functools
 
 from collections.abc import Callable
-from typing import Any
+from typing import Any, Generic, TypeVar, cast
+
+T = TypeVar("T")
+# The pooled child widget class. Gtk.FlowBox wraps a plain widget in its own
+# FlowBoxChild, so a pool class below that bound would reach the factory as
+# the wrapper and not as itself.
+WidgetT = TypeVar("WidgetT", bound=Gtk.FlowBoxChild)
 
 from loguru import logger as log
 
 # The three hooks that a chooser installs on a flow box. All three are
 # optional. A box without them shows its items unfiltered and unsorted, and
 # show_range refuses to run without a factory.
-FilterFunc = Callable[[Any], bool]
-SortFunc = Callable[[Any, Any], int]
-FactoryFunc = Callable[[Gtk.Widget, Any], None]
+FilterFunc = Callable[[T], bool]
+SortFunc = Callable[[T, T], int]
+FactoryFunc = Callable[[WidgetT, T], None]
 
-class DynamicFlowBox(Gtk.Box):
-    def __init__(self, base_class: type, *args: Any, **kwargs: Any):
+class DynamicFlowBox(Gtk.Box, Generic[WidgetT, T]):
+    def __init__(self, base_class: "type[WidgetT]", *args: Any, **kwargs: Any):
         """
         base_class: The class of the items in the flow box. Its constructor is not allowed to require any arguments because empty
                     placeholder objects will be created in the flowbox.
@@ -46,11 +52,11 @@ class DynamicFlowBox(Gtk.Box):
         self.N_ITEMS_PER_PAGE = 50
 
         self.base_class = base_class
-        self.items: list[Any] = []
+        self.items: list[T] = []
 
-        self.sort_func: SortFunc | None = None
-        self.filter_func: FilterFunc | None = None
-        self.factory_func: FactoryFunc | None = None
+        self.sort_func: SortFunc[T] | None = None
+        self.filter_func: FilterFunc[T] | None = None
+        self.factory_func: "FactoryFunc[WidgetT, T] | None" = None
 
         self.build()
 
@@ -90,7 +96,7 @@ class DynamicFlowBox(Gtk.Box):
             self.flow_box.append(placeholder)
 
 
-    def filter_items(self, items: list[Any]) -> list[Any]:
+    def filter_items(self, items: list[T]) -> list[T]:
         if not callable(self.filter_func):
             return items
         
@@ -100,14 +106,14 @@ class DynamicFlowBox(Gtk.Box):
                 filtered_items.append(item)
         return filtered_items
 
-    def sort_items(self, items: list[Any]) -> list[Any]:
+    def sort_items(self, items: list[T]) -> list[T]:
         if not callable(self.sort_func):
             return items
         
         return sorted(items, key=functools.cmp_to_key(self.sort_func))
 
 
-    def get_items_to_show(self) -> list[Any]:
+    def get_items_to_show(self) -> list[T]:
         filtered_items = self.filter_items(self.items)
         sorted_items = self.sort_items(filtered_items)
         return sorted_items
@@ -148,6 +154,10 @@ class DynamicFlowBox(Gtk.Box):
             preview = self.flow_box.get_child_at_index(i)
             if preview is None:
                 break
+            # The pool holds base_class instances only:
+            # generate_placeholders built it from base_class and nothing else
+            # appends to it, so the child is a WidgetT.
+            preview = cast("WidgetT", preview)
             if i < len(page_items):
                 # Bind before the show, so a child becomes clickable only
                 # with its new asset. The guard keeps one bad item from
@@ -170,23 +180,23 @@ class DynamicFlowBox(Gtk.Box):
         return False  # one-shot idle
 
 
-    def on_next(self, *args: Any) -> None:
+    def on_next(self, *args: object) -> None:
         self.current_start_index += self.N_ITEMS_PER_PAGE
         self.show_range(self.current_start_index, self.current_start_index + self.N_ITEMS_PER_PAGE)
 
-    def on_back(self, *args: Any) -> None:
+    def on_back(self, *args: object) -> None:
         self.current_start_index -= self.N_ITEMS_PER_PAGE
         self.show_range(self.current_start_index, self.current_start_index + self.N_ITEMS_PER_PAGE)
 
 
-    def set_item_list(self, items: list[Any]) -> None:
+    def set_item_list(self, items: list[T]) -> None:
         self.items = items
 
-    def set_factory(self, factory_func: FactoryFunc) -> None:
+    def set_factory(self, factory_func: "FactoryFunc[WidgetT, T]") -> None:
         self.factory_func = factory_func
 
-    def set_sort_func(self, sort_func: SortFunc) -> None:
+    def set_sort_func(self, sort_func: SortFunc[T]) -> None:
         self.sort_func = sort_func
 
-    def set_filter_func(self, filter_func: FilterFunc) -> None:
+    def set_filter_func(self, filter_func: FilterFunc[T]) -> None:
         self.filter_func = filter_func

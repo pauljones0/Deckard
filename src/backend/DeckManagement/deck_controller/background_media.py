@@ -28,7 +28,7 @@ from src.backend.DeckManagement.HelperMethods import is_video
 from src.backend.DeckManagement.Subclasses.background_video_cache import BackgroundVideoCache
 from src.backend.DeckManagement.deck_controller.gif_pipeline import GifBackground, GifBudgetExceeded
 
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
@@ -41,7 +41,9 @@ class Background:
         self.deck_controller = deck_controller
 
         self.image: "BackgroundImage | None" = None
-        self.video: "BackgroundVideo | None" = None
+        # Either video provider: the cv2-backed one, or the PIL GIF one,
+        # which carries the same playback surface without subclassing it.
+        self.video: "BackgroundVideo | GifBackground | None" = None
 
         # Extend the background onto the SD+ touchscreen strip. An image slice
         # is memoized; the strip re-composites on every dial label change.
@@ -56,7 +58,8 @@ class Background:
         self.tiles: Sequence[Image.Image | None] = [None] * deck_controller.deck.key_count()
         # (tiles, (video md5, frame index)) for the frame tiles holds. None
         # when the frame has no name. See get_identified_tile().
-        self._identified_tiles: tuple[Any, ...] | None = None
+        # Published only with a real identity; see update_tiles.
+        self._identified_tiles: "tuple[Sequence[Image.Image | None], tuple[str, int]] | None" = None
 
     def set_image(self, image: "BackgroundImage", update: bool = True) -> None:
         self.image = image
@@ -77,7 +80,7 @@ class Background:
         if update:
             self.deck_controller.update_all_inputs()
 
-    def set_video(self, video: "BackgroundVideo | None", update: bool = True) -> None:
+    def set_video(self, video: "BackgroundVideo | GifBackground | None", update: bool = True) -> None:
         if self.video is not None:
             self.video.close()
         self.image = None
@@ -130,7 +133,7 @@ class Background:
         return self._touchscreen_slice
 
     def prebuild_from_path(self, path: str | None, fps: int = 30, loop: bool = True,
-                           allow_keep: bool = True) -> tuple[str, Any]:
+                           allow_keep: bool = True) -> "tuple[str, BackgroundVideo | GifBackground | BackgroundImage | str | None]":
         """Build the new background object lock-free, without a touch on
         self.video, self.image or the deck. apply_prebuilt() swaps it in.
         Returns (kind, payload): blank clears the background, noop keeps the
@@ -174,11 +177,13 @@ class Background:
         with Image.open(path) as image:
             return ("image", BackgroundImage(self.deck_controller, image.copy(), path=path))
 
-    def _discard_prebuilt(self, kind: str, payload: Any) -> None:
+    def _discard_prebuilt(self, kind: str, payload: "BackgroundVideo | GifBackground | BackgroundImage | str | None") -> None:
         """Release the resources of a prebuilt payload that no caller applied.
         A video or image payload holds a cv2 capture or a PIL image, and a
         drop without close() leaks it. keep, noop and blank hold nothing."""
-        if kind not in ("video", "image") or payload is None:
+        if kind not in ("video", "image") or payload is None or isinstance(payload, str):
+            # A keep verdict carries the path string; the kind gate above
+            # already returns for it, and the isinstance restates that.
             return
         try:
             payload.close()
@@ -187,7 +192,7 @@ class Background:
                 "Failed to close an orphaned prebuilt background payload during close()"
             )
 
-    def apply_prebuilt(self, kind: str, payload: Any, fps: int = 30, loop: bool = True, update: bool = True) -> None:
+    def apply_prebuilt(self, kind: str, payload: "BackgroundVideo | GifBackground | BackgroundImage | str | None", fps: int = 30, loop: bool = True, update: bool = True) -> None:
         """Apply the result of prebuild_from_path(). The screensaver
         transition calls this under _background_load_lock, after it re-checks
         the generation. This does no file I/O; it assigns the objects and
@@ -213,9 +218,11 @@ class Background:
                 log.warning("Stale 'keep' background verdict (video swapped mid-transition); leaving current background untouched")
             return
         if kind == "video":
-            self.set_video(payload, update=update)
+            # prebuild pairs the video kind with a video payload and the
+            # image kind with an image; the casts state that pairing.
+            self.set_video(cast("BackgroundVideo | GifBackground", payload), update=update)
         elif kind == "image":
-            self.set_image(payload, update=update)
+            self.set_image(cast("BackgroundImage", payload), update=update)
         else:  # "blank"
             self.set_video(None, update=False)
             self._touchscreen_slice = None
@@ -231,7 +238,7 @@ class Background:
         kind, payload = self.prebuild_from_path(path, fps=fps, loop=loop, allow_keep=allow_keep)
         self.apply_prebuilt(kind, payload, fps=fps, loop=loop, update=update)
 
-    def get_identified_tile(self, key_index: int) -> tuple[Any, ...] | None:
+    def get_identified_tile(self, key_index: int) -> "tuple[Image.Image, tuple[str, int]] | None":
         """(tile, (video md5, frame index)) for a video background, or None
         when no tile has a nameable frame. Tiles and identity publish as one
         pair and read as one, so a concurrent update_tiles() cannot pair this
@@ -474,7 +481,7 @@ class BackgroundVideo(BackgroundVideoCache):
 
         super().__init__(video_path, deck_controller=deck_controller, extend_touchscreen=extend_touchscreen)
 
-    def get_next_tiles(self) -> tuple[list[Image.Image | None], tuple[Any, ...] | None]:
+    def get_next_tiles(self) -> "tuple[list[Image.Image | None], tuple[str, int] | None]":
         """(tiles, identity) for the frame this tick lands on. identity is
         (video md5, source frame index), or None for a fallback or alpha
         payload. One pair keeps the pixels with their identity, because

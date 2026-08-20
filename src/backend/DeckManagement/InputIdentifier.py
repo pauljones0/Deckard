@@ -52,19 +52,19 @@ class InputIdentifier:
     def get_states(self, page: "Page") -> dict[str, Any]:
         return cast(dict[str, Any], self.get_config(page).get("states", {}))
 
-    def get_state_dict(self, page: "Page", state: int) -> dict[str, Any]:
+    def get_state_dict(self, page: "Page", state: "int | str") -> dict[str, Any]:
         return cast(dict[str, Any], self.get_states(page).get(str(state), {}))
 
-    def get_actions(self, page: "Page", state: int) -> list[Any]:
+    def get_actions(self, page: "Page", state: "int | str") -> list[Any]:
         return cast(list[Any], self.get_state_dict(page, state).get("actions", []))
 
-    def get_action_entry(self, page: "Page", state: int, index: int) -> dict[str, Any] | None:
+    def get_action_entry(self, page: "Page", state: "int | str", index: int) -> dict[str, Any] | None:
         actions = self.get_actions(page, state)
         if 0 <= index < len(actions):
             return cast(dict[str, Any] | None, actions[index])
         return None
 
-    def ensure_state_dict(self, page: "Page", state: int) -> dict[str, Any]:
+    def ensure_state_dict(self, page: "Page", state: "int | str") -> dict[str, Any]:
         """Like get_state_dict, but creates the input, states and state chain,
         so the returned dict is part of the page."""
         input_dict = page.dict.setdefault(self.input_type, {}).setdefault(self.json_identifier, {})

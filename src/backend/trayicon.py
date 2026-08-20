@@ -1,11 +1,35 @@
 # Inspired by code of deltragon/SafeEyes repo.
 # Link: https://github.com/deltragon/SafeEyes/blob/f25f554585c79a11621e3a505cc6ce5af08a3d58/safeeyes/plugins/trayicon/plugin.py
 
-from typing import Any, Callable, cast
+from typing import Any, Callable, TypedDict
 
 from gi.repository import Gio, GLib
 
 from loguru import logger as log
+
+# One tray menu entry. The hyphenated D-Bus property names force the
+# functional syntax. Every key is optional except that add_menu_item always
+# sets id.
+MenuItem = TypedDict("MenuItem", {
+    "id": int,
+    "label": str,
+    "enabled": bool,
+    "hidden": bool,
+    "type": str,
+    "icon-name": str,
+    "children-display": str,
+    "children": list["MenuItem"],
+    "callback": Callable[[], object],
+}, total=False)
+
+
+class _SNIKwargs(TypedDict, total=False):
+    """The staged keyword arguments of StatusNotifierItemService."""
+
+    session_bus: Gio.DBusConnection
+    menu_items: list[MenuItem]
+    path: str
+    menu_path: str
 
 SNI_NODE_INFO = Gio.DBusNodeInfo.new_for_xml("""
 <?xml version="1.0" encoding="UTF-8"?>
@@ -162,13 +186,12 @@ class DBusMenuService(DBusService):
 
     revision = 0
 
-    # A menu item is a plain dict with the keys id, label, enabled and
-    # children. idToItems is the flat index from id to item that
-    # getItemsFlat() builds.
-    items: list[dict[str, Any]] = []
-    idToItems: dict[int, dict[str, Any]] = {}
+    # idToItems is the flat index from id to item that getItemsFlat()
+    # builds.
+    items: "list[MenuItem]" = []
+    idToItems: "dict[int, MenuItem]" = {}
 
-    def __init__(self, session_bus: Gio.DBusConnection, items: list[dict[str, Any]], path: str = DBusPath) -> None:
+    def __init__(self, session_bus: Gio.DBusConnection, items: "list[MenuItem]", path: str = DBusPath) -> None:
         super().__init__(
             interface_info=MENU_NODE_INFO,
             object_path=path,
@@ -179,7 +202,7 @@ class DBusMenuService(DBusService):
 
         self.set_items(items)
 
-    def set_items(self, items: list[dict[str, Any]]) -> None:
+    def set_items(self, items: "list[MenuItem]") -> None:
         self.items = items
 
         self.idToItems = self.getItemsFlat(items, {})
@@ -189,7 +212,7 @@ class DBusMenuService(DBusService):
         self.LayoutUpdate(self.revision, 0)
 
     @staticmethod
-    def getItemsFlat(items: list[dict[str, Any]], idToItems: dict[int, dict[str, Any]]) -> dict[int, dict[str, Any]]:
+    def getItemsFlat(items: "list[MenuItem]", idToItems: "dict[int, MenuItem]") -> "dict[int, MenuItem]":
         for item in items:
             if item.get('hidden', False):
                 continue
@@ -202,29 +225,31 @@ class DBusMenuService(DBusService):
         return idToItems
 
     @staticmethod
-    def singleItemToDbus(item: dict[str, Any]) -> tuple[int, dict[str, GLib.Variant]]:
+    def singleItemToDbus(item: "MenuItem") -> tuple[int, dict[str, GLib.Variant]]:
         props = DBusMenuService.itemPropsToDbus(item)
 
         return (item['id'], props)
 
     @staticmethod
-    def itemPropsToDbus(item: dict[str, Any]) -> dict[str, GLib.Variant]:
+    def itemPropsToDbus(item: "MenuItem") -> dict[str, GLib.Variant]:
         result = {}
 
-        string_props = ['label', 'icon-name', 'type', 'children-display']
-        for key in string_props:
-            if key in item:
-                result[key] = GLib.Variant('s', item[key])
-
-        bool_props = ['enabled']
-        for key in bool_props:
-            if key in item:
-                result[key] = GLib.Variant('b', item[key])
+        # Spelled out per key: a TypedDict reads only literal keys.
+        if 'label' in item:
+            result['label'] = GLib.Variant('s', item['label'])
+        if 'icon-name' in item:
+            result['icon-name'] = GLib.Variant('s', item['icon-name'])
+        if 'type' in item:
+            result['type'] = GLib.Variant('s', item['type'])
+        if 'children-display' in item:
+            result['children-display'] = GLib.Variant('s', item['children-display'])
+        if 'enabled' in item:
+            result['enabled'] = GLib.Variant('b', item['enabled'])
 
         return result
 
     @staticmethod
-    def itemToDbus(item: dict[str, Any], recursion_depth: int) -> GLib.Variant | None:
+    def itemToDbus(item: "MenuItem", recursion_depth: int) -> GLib.Variant | None:
         if item.get('hidden', False):
             return None
 
@@ -238,13 +263,13 @@ class DBusMenuService(DBusService):
 
         return GLib.Variant("(ia{sv}av)", (item['id'], props, children))
 
-    def findItemWithParent(self, parent_id: int, items: list[dict[str, Any]]) -> list[dict[str, Any]] | None:
+    def findItemWithParent(self, parent_id: int, items: "list[MenuItem]") -> "list[MenuItem] | None":
         for item in items:
             if item.get('hidden', False):
                 continue
             if 'children' in item:
                 if item['id'] == parent_id:
-                    return cast("list[dict[str, Any]] | None", item['children'])
+                    return item['children']
                 else:
                     ret = self.findItemWithParent(parent_id, item['children'])
                     if ret is not None:
@@ -252,7 +277,7 @@ class DBusMenuService(DBusService):
         return None
 
     def GetLayout(self, parent_id: int, recursion_depth: int, property_name: list[str]) -> tuple[int, tuple[int, dict[str, GLib.Variant], list[GLib.Variant]]]:
-        source: list[dict[str, Any]]
+        source: "list[MenuItem]"
         if parent_id == 0:
             source = self.items
         else:
@@ -351,12 +376,12 @@ class StatusNotifierItemService(DBusService):
     Status = 'Active'
     IconName = 'alienarena'
     IconThemePath = ''
-    ToolTip: tuple[str, list[Any], str, str] = ('', [], 'Safe Eyes', '')  # DBus (sa(iiay)ss); the icon array is always empty
+    ToolTip: "tuple[str, list[tuple[int, int, bytes]], str, str]" = ('', [], 'Safe Eyes', '')  # DBus (sa(iiay)ss); the icon array is always empty
     XAyatanaLabel = ""
     ItemIsMenu = True
     Menu = None
 
-    def __init__(self, session_bus: Gio.DBusConnection, menu_items: list[dict[str, Any]], path: str = DBusPath, menu_path: str = "") -> None:
+    def __init__(self, session_bus: Gio.DBusConnection, menu_items: "list[MenuItem]", path: str = DBusPath, menu_path: str = "") -> None:
         super().__init__(
             interface_info=SNI_NODE_INFO,
             object_path=path,
@@ -424,7 +449,7 @@ class StatusNotifierItemService(DBusService):
         super().unregister()
         self._menu.unregister()
 
-    def set_items(self, items: list[dict[str, Any]]) -> None:
+    def set_items(self, items: "list[MenuItem]") -> None:
         self._menu.set_items(items)
 
     def set_icon(self, icon: str, path: str = "") -> None:
@@ -456,7 +481,7 @@ class DBusTrayIcon:
 
         self.menu = menu
 
-        kwargs: dict[str, Any] = {
+        kwargs: "_SNIKwargs" = {
             "session_bus": session_bus,
             "menu_items": self.menu.get_items()
         }
@@ -494,12 +519,12 @@ class DBusTrayIcon:
 class DBusMenu:
     def __init__(self) -> None:
         # Each entry is the id plus whichever of label, type, icon-name and
-        # callback the caller supplied, so the values are of mixed type.
-        self.menu_items: list[dict[str, Any]] = []
+        # callback the caller supplied.
+        self.menu_items: "list[MenuItem]" = []
 
     def add_menu_item(self, menu_id: int, menu_label: str = "", menu_type: str = "",
-                      icon_name: str = "", callback: Callable[[], Any] | None = None) -> None:
-        item: dict[str, Any] = {'id': menu_id}
+                      icon_name: str = "", callback: "Callable[[], object] | None" = None) -> None:
+        item: "MenuItem" = {'id': menu_id}
         if menu_label != "":
             item['label'] = menu_label
         if menu_type != "":
@@ -511,5 +536,5 @@ class DBusMenu:
 
         self.menu_items.append(item)
 
-    def get_items(self) -> list[dict[str, Any]]:
+    def get_items(self) -> "list[MenuItem]":
         return self.menu_items

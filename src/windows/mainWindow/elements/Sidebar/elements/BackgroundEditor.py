@@ -216,14 +216,14 @@ class ColorRow(Adw.PreferencesRow):
             # disconnect_by_func raises TypeError when nothing is connected.
             pass
 
-    def set_color(self, color_values: list[Any]) -> None:
+    def set_color(self, color_values: list[int]) -> None:
         if len(color_values) == 3:
             color_values.append(255)
         color = Gdk.RGBA()
         color.parse(f"rgba({color_values[0]}, {color_values[1]}, {color_values[2]}, {color_values[3]/255})")
         self.button.button.set_rgba(color)
 
-    def on_change_color(self, *args: Any) -> None:
+    def on_change_color(self, *args: object) -> None:
         target = _page_and_input(self)
         if target is None:
             return
@@ -238,7 +238,7 @@ class ColorRow(Adw.PreferencesRow):
 
         self.button.revert_button.set_visible(True)
 
-    def on_revert(self, *args: Any) -> None:
+    def on_revert(self, *args: object) -> None:
         # Ask before disconnecting. A return between the disconnect and the
         # reconnect leaves the button silently unwired.
         target = _page_and_input(self)
@@ -323,7 +323,7 @@ class VideoLoopRow(Adw.PreferencesRow):
         except TypeError:
             pass
 
-    def on_toggle(self, *args: Any) -> None:
+    def on_toggle(self, *args: object) -> None:
         target = _page_and_input(self)
         if target is None:
             return
@@ -384,7 +384,7 @@ class VideoFpsRow(Adw.PreferencesRow):
         # background video.
         return isinstance(self.active_identifier, (Input.Key, Input.Dial))
 
-    def on_change(self, *args: Any) -> None:
+    def on_change(self, *args: object) -> None:
         target = _page_and_input(self)
         if target is None:
             return

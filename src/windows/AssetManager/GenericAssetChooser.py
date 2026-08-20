@@ -53,11 +53,34 @@ from src.windows.AssetManager.Preview import Preview
 import globals as gl
 
 # Import typing
-from typing import cast, TYPE_CHECKING, Any
+from typing import cast, Generic, Protocol, TYPE_CHECKING, TypeVar, Any
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from gi.repository import GdkPixbuf
+
     from src.windows.AssetManager.AssetManager import AssetManager
+    from src.windows.AssetManager.DynamicFlowBox import DynamicFlowBox
+
+
+class _PackLike(Protocol):
+    """What both chooser bases read off a pack of any subsystem."""
+
+    def get_thumbnail_path(self) -> "Path | None": ...
+
+
+# One pack subsystem binds all four: its pack class, the stack that holds its
+# two pages, its pooled preview widget and its asset class.
+PackT = TypeVar("PackT", bound=_PackLike)
+StackT = TypeVar("StackT", bound=Gtk.Stack)
+PreviewT = TypeVar("PreviewT", bound=Gtk.FlowBoxChild)
+AssetT = TypeVar("AssetT")
+
+
+class _PackPreviewLike(Protocol[PackT]):
+    """A pack-grid preview carries the pack it shows."""
+
+    pack: PackT
 
 
 # A candidate must score at least this against the query to stay in the grid.
@@ -191,7 +214,7 @@ class _ChooserBuildPage(ChooserPage):
         """
 
 
-class GenericPackChooserPage(_ChooserBuildPage):
+class GenericPackChooserPage(_ChooserBuildPage, Generic[PackT, StackT]):
     """The pack grid of one asset type.
 
     Subclasses supply the two widget classes, the stack child to drill into,
@@ -212,7 +235,7 @@ class GenericPackChooserPage(_ChooserBuildPage):
     # A marshal that timed out never binds it. See _handle_build_failure.
     pack_flow = None
 
-    def __init__(self, stack: Any, asset_manager: "AssetManager") -> None:
+    def __init__(self, stack: StackT, asset_manager: "AssetManager") -> None:
         super().__init__()
         self.asset_manager = asset_manager
         self.stack = stack
@@ -265,7 +288,7 @@ class GenericPackChooserPage(_ChooserBuildPage):
 
         self.pack_flow.flow_box.connect("child-activated", self.on_child_activated)
 
-    def _append_packs(self, batch: list[Any]) -> None:
+    def _append_packs(self, batch: "list[tuple[PackT, GdkPixbuf.Pixbuf | None]]") -> None:
         """Runs on the main loop only, over one batch of pack and pixbuf pairs."""
         pack_flow = self.pack_flow
         if pack_flow is None:
@@ -277,13 +300,11 @@ class GenericPackChooserPage(_ChooserBuildPage):
             preview = self.PACK_PREVIEW_CLASS(self, pack, pixbuf=pixbuf)
             flow_box.append(preview)
 
-    def get_pack_thumbnail_path(self, pack: Any) -> "Path | None":
+    def get_pack_thumbnail_path(self, pack: PackT) -> "Path | None":
         """Where the pack's thumbnail lives. Called on the build worker."""
-        # Every pack class types get_thumbnail_path as Path | None; the pack
-        # itself stays duck-typed across the three pack subsystems.
-        return cast("Path | None", pack.get_thumbnail_path())
+        return pack.get_thumbnail_path()
 
-    def on_child_activated(self, flow_box: Gtk.FlowBox, child: Any) -> None:
+    def on_child_activated(self, flow_box: Gtk.FlowBox, child: "_PackPreviewLike[PackT]") -> None:
         # Load the pack's assets, drill into the asset chooser, offer the way back.
         self.get_leaf_chooser().load_for_pack(child.pack)
         self.stack.set_visible_child_name(self.LEAF_CHILD_NAME)
@@ -291,11 +312,11 @@ class GenericPackChooserPage(_ChooserBuildPage):
 
     # Subclass hooks
 
-    def get_packs(self) -> dict[str, Any]:
+    def get_packs(self) -> dict[str, PackT]:
         """{name: pack} for this asset type. Called on the build worker."""
         raise NotImplementedError
 
-    def get_leaf_chooser(self) -> "GenericAssetChooserPage":
+    def get_leaf_chooser(self) -> "GenericAssetChooserPage[PackT, Any, Any, Any]":
         """The sibling page that shows one pack's assets."""
         raise NotImplementedError
 
@@ -304,7 +325,7 @@ class GenericPackChooserPage(_ChooserBuildPage):
         gates deferred work on it."""
 
 
-class GenericAssetChooserPage(_ChooserBuildPage):
+class GenericAssetChooserPage(_ChooserBuildPage, Generic[PackT, AssetT, PreviewT, StackT]):
     """The asset grid of one pack.
 
     It holds a recycling DynamicFlowBox and the shared fuzzy search and sort.
@@ -321,11 +342,10 @@ class GenericAssetChooserPage(_ChooserBuildPage):
     # Class-level defaults. The ChooserPage constructor connects the search
     # entry, and therefore on_search_changed, before __init__ reaches its own
     # attributes.
-    asset_flow = None
-    # load_for_pack takes the pack untyped, so Any is its real type here.
-    _pending_pack: Any = None
+    asset_flow: "DynamicFlowBox[PreviewT, AssetT] | None" = None
+    _pending_pack: "PackT | None" = None
 
-    def __init__(self, stack: Any, asset_manager: "AssetManager") -> None:
+    def __init__(self, stack: StackT, asset_manager: "AssetManager") -> None:
         super().__init__()
         self.asset_manager = asset_manager
         self.stack = stack
@@ -383,7 +403,7 @@ class GenericAssetChooserPage(_ChooserBuildPage):
             pack, self._pending_pack = self._pending_pack, None
             self.load_for_pack(pack)
 
-    def load_for_pack(self, pack: Any) -> None:
+    def load_for_pack(self, pack: PackT) -> None:
         if self.asset_flow is None:
             # The build still waits on the main loop. Keep the request
             # instead of dropping it or raising AttributeError.
@@ -402,11 +422,11 @@ class GenericAssetChooserPage(_ChooserBuildPage):
         # strands without a word.
         self._pending_pack = None
 
-    def on_child_activated(self, flow_box: Gtk.FlowBox, child: Any) -> None:
+    def on_child_activated(self, flow_box: Gtk.FlowBox, child: PreviewT) -> None:
         asset = self.get_child_asset(child)
         self.asset_manager.deliver_selection(getattr(asset, self.ASSET_PATH_ATTR))
 
-    def preview_factory(self, preview: Any, asset: Any) -> None:
+    def preview_factory(self, preview: PreviewT, asset: AssetT) -> None:
         # Called from DynamicFlowBox._apply_range's main-loop callback.
         self.bind_preview(preview, asset)
         if self.selected_path == getattr(asset, self.ASSET_PATH_ATTR):
@@ -415,11 +435,11 @@ class GenericAssetChooserPage(_ChooserBuildPage):
             if self.asset_flow is not None:
                 self.asset_flow.flow_box.select_child(preview)
 
-    def filter_func(self, item: Any) -> bool:
+    def filter_func(self, item: AssetT) -> bool:
         return asset_matches_search(item, self.search_entry.get_text(),
                                     self.ASSET_PATH_ATTR)
 
-    def sort_func(self, item1: Any, item2: Any) -> int:
+    def sort_func(self, item1: AssetT, item2: AssetT) -> int:
         return compare_assets(item1, item2, self.search_entry.get_text(),
                               self.ASSET_PATH_ATTR)
 
@@ -432,15 +452,15 @@ class GenericAssetChooserPage(_ChooserBuildPage):
 
     # Subclass hooks
 
-    def get_assets(self, pack: Any) -> list[Any]:
+    def get_assets(self, pack: PackT) -> list[AssetT]:
         """The assets of the pack, in the order the grid receives them."""
         raise NotImplementedError
 
-    def bind_preview(self, preview: Any, asset: Any) -> None:
+    def bind_preview(self, preview: PreviewT, asset: AssetT) -> None:
         """Show asset in the recycled preview."""
         raise NotImplementedError
 
-    def get_child_asset(self, child: Any) -> Any:
+    def get_child_asset(self, child: PreviewT) -> AssetT:
         """The asset that an activated flow-box child shows."""
         raise NotImplementedError
 

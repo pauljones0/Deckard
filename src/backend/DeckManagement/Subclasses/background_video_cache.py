@@ -1,6 +1,7 @@
 import os
 
 import cv2
+import numpy as np
 import numpy.typing as npt
 from PIL import Image
 from loguru import logger as log
@@ -9,11 +10,11 @@ import globals as gl
 from src.backend.DeckManagement.Subclasses.mp4_tile_cache import Mp4FrameCache, VID_CACHE
 
 # Import typing
-from typing import cast, Any, TYPE_CHECKING
+from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from src.backend.DeckManagement.deck_controller.controller import DeckController
 
-class BackgroundVideoCache(Mp4FrameCache):
+class BackgroundVideoCache(Mp4FrameCache[list[Image.Image]]):
     """Background video, cached as a re-encoded video at deck-canvas resolution.
 
     Mp4FrameCache (mp4_tile_cache.py) owns the build, promote and
@@ -123,7 +124,7 @@ class BackgroundVideoCache(Mp4FrameCache):
                 "(not extended, or the deck was already gone when it was built)")
         return strip_size
 
-    def _generate_alpha_frame(self) -> list[Any]:
+    def _generate_alpha_frame(self) -> list[Image.Image]:
         """Fallback frame of transparent key tiles, plus the strip slice when
         the frame extends onto the touchscreen."""
         entries = [self.deck_controller.generate_alpha_key() for _ in range(self.key_count)]
@@ -131,21 +132,29 @@ class BackgroundVideoCache(Mp4FrameCache):
             entries.append(Image.new("RGBA", self._require_strip_size(), (0, 0, 0, 0)))
         return entries
 
-    def _fallback_payload(self) -> list[Any]:
+    def _fallback_payload(self) -> list[Image.Image]:
         # Mp4FrameCache.get_frame prefers self.last_payload, the last tile
         # list it decoded, over this call. It reaches here only when no decode
         # has succeeded yet.
         return self._generate_alpha_frame()
 
     def get_tiles(self, n: int) -> list[Image.Image]:
-        return cast(list[Any], self.get_frame(n))
+        frame = self.get_frame(n)
+        if frame is None:
+            # The fallback override below always answers, so the base's None
+            # path never reaches a caller.
+            return self._fallback_payload()
+        return frame
 
     def get_tiles_and_index(self, n: int) -> tuple[list[Image.Image], int | None]:
         """get_tiles() plus the source frame index the tiles come from. The
         index is None when unknown. See Mp4FrameCache.get_frame_and_index."""
-        return cast(tuple[list[Any], int | None], self.get_frame_and_index(n))
+        frame, index = self.get_frame_and_index(n)
+        if frame is None:
+            return self._fallback_payload(), None
+        return frame, index
 
-    def _payload_from_bgr(self, frame_bgr: npt.NDArray[Any]) -> list[Image.Image]:
+    def _payload_from_bgr(self, frame_bgr: npt.NDArray[np.uint8]) -> list[Image.Image]:
         # Crop the key tiles and the strip slice out of the canvas frame per
         # request, so no frame data stays in RAM beyond the decoder's buffers.
         canvas = Image.fromarray(cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB))

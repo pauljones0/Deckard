@@ -26,25 +26,29 @@ from src.windows.AssetManager.IconPacks.Icons.IconPreview import IconPreview
 # Import python modules
 
 # Import typing
-from typing import cast, Any, TYPE_CHECKING
+from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from src.backend.IconPackManagement.Icon import Icon
     from src.backend.IconPackManagement.IconPack import IconPack
+    from src.windows.AssetManager.IconPacks.Stack import IconPackChooserStack
 
 
-class IconChooserPage(GenericAssetChooserPage):
+class IconChooserPage(GenericAssetChooserPage["IconPack", "Icon", IconPreview, "IconPackChooserStack"]):
+    # The concrete stack, restated so the quoted name in the base subscript
+    # has a checked in-file use.
+    stack: "IconPackChooserStack"
     # NOTE: IconFlowBox.py's class is (mis)named WallpaperFlowBox upstream.
     FLOW_BOX_CLASS = WallpaperFlowBox
     PREVIEW_CLASS = IconPreview
 
-    def get_assets(self, pack: "IconPack") -> list[Any]:
+    def get_assets(self, pack: "IconPack") -> "list[Icon]":
         return pack.get_icons()
 
     def bind_preview(self, preview: IconPreview, icon: "Icon") -> None:
         preview.set_icon(icon)
 
-    def get_child_asset(self, child: Any) -> "Icon":
-        return cast("Icon", child.icon)
+    def get_child_asset(self, child: IconPreview) -> "Icon":
+        return child.icon
 
     def on_build_finished(self) -> None:
         # The icon stack gates a deferred show_for_path task on the

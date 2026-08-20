@@ -15,7 +15,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 from gi.repository import Gtk
 
-from src.backend.DeckManagement.deck_controller.inputs import ControllerInput
+from src.backend.DeckManagement.deck_controller.inputs import ControllerInput, StateT
 from src.backend.DeckManagement.InputIdentifier import InputIdentifier
 from src.backend import services
 
@@ -31,8 +31,8 @@ class StateSwitcher(Gtk.ScrolledWindow):
 
         # A switch callback takes no arguments. An add-new callback takes the
         # index of the state that this switcher appended.
-        self.switch_callbacks: list[Callable[[], Any]] = []
-        self.add_new_callbacks: list[Callable[[int], Any]] = []
+        self.switch_callbacks: list[Callable[[], object]] = []
+        self.add_new_callbacks: list[Callable[[int], object]] = []
 
         self.build()
 
@@ -113,13 +113,13 @@ class StateSwitcher(Gtk.ScrolledWindow):
         except TypeError:
             pass
 
-    def add_switch_callback(self, callback: Callable[[], Any]) -> None:
+    def add_switch_callback(self, callback: Callable[[], object]) -> None:
         self.switch_callbacks.append(callback)
 
-    def add_add_new_callback(self, callback: Callable[[int], Any]) -> None:
+    def add_add_new_callback(self, callback: Callable[[int], object]) -> None:
         self.add_new_callbacks.append(callback)
 
-    def on_state_switch(self, *args: Any) -> None:
+    def on_state_switch(self, *args: object) -> None:
         for callback in self.switch_callbacks:
             if callable(callback):
                 callback()
@@ -136,7 +136,7 @@ class StateSwitcher(Gtk.ScrolledWindow):
 
         self.load_for_input(c_input, state)
 
-    def load_for_input(self, c_input: ControllerInput[Any], state: int | None = None) -> None:
+    def load_for_input(self, c_input: ControllerInput[StateT], state: int | None = None) -> None:
         self.set_n_states(len(c_input.states.keys()))
         self.select_state(state or c_input.state)
 

@@ -1,11 +1,27 @@
 import os
 import threading
 import traceback
-from collections.abc import Callable, Sequence
-from typing import cast, Any
+from collections.abc import Awaitable, Callable
+from typing import TYPE_CHECKING, TypedDict, TypeVar, cast
+
+if TYPE_CHECKING:
+    import asyncio
+
+_ElemT = TypeVar("_ElemT")
+
+
+class ImageFormat(TypedDict):
+    """The image format dict every StreamDeck device class returns for its
+    keys, its touchscreen and its screen alike."""
+
+    size: tuple[int, int]
+    format: str
+    flip: tuple[bool, bool]
+    rotation: int
 
 from loguru import logger as log
 from StreamDeck.Devices import StreamDeck
+from StreamDeck.Devices.StreamDeck import DialEventType, TouchscreenEventType
 
 class BetterDeck():
     def __init__(self, deck: StreamDeck, rotation: int = 0):
@@ -195,7 +211,7 @@ class BetterDeck():
         """
         return cast(bool, self.deck.is_touch())
 
-    def key_layout(self) -> "Sequence[int]":
+    def key_layout(self) -> tuple[int, int]:
         """
         Retrieves the physical button layout on the attached StreamDeck device.
 
@@ -208,7 +224,7 @@ class BetterDeck():
         else:
             return cols, rows
 
-    def key_image_format(self) -> "dict[str, Any]":
+    def key_image_format(self) -> "ImageFormat":
         """
         Retrieves the image format accepted by the attached StreamDeck device.
         Images should be given in this format when setting an image on a button.
@@ -220,9 +236,9 @@ class BetterDeck():
         :return: Dictionary describing the various image parameters
                  (size, image format, image mirroring and rotation).
         """
-        return cast("dict[str, Any]", self.deck.key_image_format())
+        return cast("ImageFormat", self.deck.key_image_format())
 
-    def touchscreen_image_format(self) -> "dict[str, Any]":
+    def touchscreen_image_format(self) -> "ImageFormat":
         """
         Retrieves the image format accepted by the touchscreen of the Stream
         Deck. Images should be given in this format when drawing on
@@ -235,9 +251,9 @@ class BetterDeck():
         :return: Dictionary describing the various image parameters
                  (size, image format).
         """
-        return cast("dict[str, Any]", self.deck.touchscreen_image_format())
+        return cast("ImageFormat", self.deck.touchscreen_image_format())
 
-    def screen_image_format(self) -> "dict[str, Any]":
+    def screen_image_format(self) -> "ImageFormat":
         """
         Retrieves the image format accepted by the screen of the Stream
         Deck. Images should be given in this format when drawing on
@@ -250,7 +266,7 @@ class BetterDeck():
         :return: Dictionary describing the various image parameters
                  (size, image format).
         """
-        return cast("dict[str, Any]", self.deck.screen_image_format())
+        return cast("ImageFormat", self.deck.screen_image_format())
     
     def set_poll_frequency(self, hz: float) -> None:
         """
@@ -265,7 +281,7 @@ class BetterDeck():
         with self._lock:
             self.deck.set_poll_frequency(hz)
 
-    def set_key_callback(self, callback: Callable[..., Any]) -> None:
+    def set_key_callback(self, callback: "Callable[[StreamDeck.StreamDeck, int, bool], None]") -> None:
         """
         Sets the callback function called each time a button on the StreamDeck
         changes state (either pressed, or released).
@@ -282,13 +298,21 @@ class BetterDeck():
         :param function callback: Callback function to fire each time a button
                                 state changes.
         """
-        def remapper_callback(deck: Any, key: int, state: bool) -> None:
+        def remapper_callback(deck: "StreamDeck.StreamDeck", key: int, state: bool) -> None:
             logical_key = self.get_logical_index(key)
+            if logical_key is None:
+                # Only a rotation outside the four the mapper handles
+                # answers None. Report it rather than forward None into the
+                # consumer's index math. An index past the key grid, such as
+                # the Neo's touch buttons, still maps to an in-grid number
+                # here, as it always did.
+                log.warning(f"Dropping key event {key}: rotation {self.rotation!r} maps no keys")
+                return
             callback(deck, logical_key, state)
 
         self.deck.set_key_callback(remapper_callback)
 
-    def set_key_callback_async(self, async_callback: Callable[..., Any], loop: Any = None) -> None:
+    def set_key_callback_async(self, async_callback: "Callable[[StreamDeck.StreamDeck, int, bool], Awaitable[None]]", loop: "asyncio.AbstractEventLoop | None" = None) -> None:
         """
         Sets the asynchronous callback function called each time a button on the
         StreamDeck changes state (either pressed, or released). The given
@@ -304,14 +328,18 @@ class BetterDeck():
                                         each time a button state changes.
         :param asyncio.loop loop: Asyncio loop to dispatch the callback into
         """
-        async def remapper_callback(deck: Any, key: int, state: bool) -> None:
+        async def remapper_callback(deck: "StreamDeck.StreamDeck", key: int, state: bool) -> None:
             logical_key = self.get_logical_index(key)
+            if logical_key is None:
+                # See the sync remapper above.
+                log.warning(f"Dropping key event {key}: rotation {self.rotation!r} maps no keys")
+                return
             await async_callback(deck, logical_key, state)
 
         # Delegate to the wrapped deck. A self-call recurses forever.
         self.deck.set_key_callback_async(remapper_callback, loop)
 
-    def set_dial_callback(self, callback: Callable[..., Any]) -> None:
+    def set_dial_callback(self, callback: "Callable[[StreamDeck.StreamDeck, int, DialEventType, int], None]") -> None:
         """
         Sets the callback function called each time there is an interaction
         with a dial on the StreamDeck.
@@ -330,7 +358,7 @@ class BetterDeck():
         """
         self.deck.set_dial_callback(callback)
 
-    def set_dial_callback_async(self, async_callback: Callable[..., Any], loop: Any = None) -> None:
+    def set_dial_callback_async(self, async_callback: "Callable[[StreamDeck.StreamDeck, int, DialEventType, int], Awaitable[None]]", loop: "asyncio.AbstractEventLoop | None" = None) -> None:
         """
         Sets the asynchronous callback function called each time there is an
         interaction with a dial on the StreamDeck. The given callback should
@@ -350,7 +378,7 @@ class BetterDeck():
         # Dials need no index remap (see set_dial_callback).
         self.deck.set_dial_callback_async(async_callback, loop)
 
-    def set_touchscreen_callback(self, callback: Callable[..., Any]) -> None:
+    def set_touchscreen_callback(self, callback: "Callable[[StreamDeck.StreamDeck, TouchscreenEventType, dict[str, int]], None]") -> None:
         """
         Sets the callback function called each time there is an interaction
         with a touchscreen on the StreamDeck.
@@ -369,7 +397,7 @@ class BetterDeck():
         """
         self.deck.set_touchscreen_callback(callback)
 
-    def set_touchscreen_callback_async(self, async_callback: Callable[..., Any], loop: Any = None) -> None:
+    def set_touchscreen_callback_async(self, async_callback: "Callable[[StreamDeck.StreamDeck, TouchscreenEventType, dict[str, int]], Awaitable[None]]", loop: "asyncio.AbstractEventLoop | None" = None) -> None:
         """
         Sets the asynchronous callback function called each time there is an
         interaction with the touchscreen on the StreamDeck. The given callback
@@ -399,7 +427,9 @@ class BetterDeck():
                  otherwise).
         """
         with self._lock:
-            return self.reorder_physical_for_rotation(self.deck.key_states())
+            # The rotation permutation is a bijection over the full grid, so
+            # every logical slot receives a state.
+            return cast("list[bool]", self.reorder_physical_for_rotation(self.deck.key_states()))
 
     def dial_states(self) -> "list[bool]":
         """
@@ -558,7 +588,7 @@ class BetterDeck():
         else:
             return None
     
-    def reorder_physical_for_rotation(self, original_list: "list[Any]") -> "list[Any]":
+    def reorder_physical_for_rotation(self, original_list: "list[_ElemT]") -> "list[_ElemT | None]":
         """Maps a physical-indexed list into logical indexing.
 
         The device reports physical indexes, e.g. key_states(). The mapping
@@ -570,7 +600,7 @@ class BetterDeck():
         """
         pysical_rows, physical_cols = self.deck.key_layout()
         total = pysical_rows * physical_cols
-        reordered = [None] * total
+        reordered: "list[_ElemT | None]" = [None] * total
 
         for physical_index in range(total):
             logical_index = self.get_logical_index(physical_index)

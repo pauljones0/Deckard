@@ -26,22 +26,26 @@ from src.windows.AssetManager.SDPlusBarWallpaperPacks.SDPlusBarWallpaper.SDPlusB
 # Import python modules
 
 # Import typing
-from typing import cast, Any, TYPE_CHECKING
+from typing import TYPE_CHECKING
 if TYPE_CHECKING:
+    from src.windows.AssetManager.SDPlusBarWallpaperPacks.Stack import SDPlusBarWallpaperPackChooserStack
     from src.backend.SDPlusBarWallpaperPackManagement.SDPlusBarWallpaper import SDPlusBarWallpaper
     from src.backend.SDPlusBarWallpaperPackManagement.SDPlusBarWallpaperPack import SDPlusBarWallpaperPack
 
 
-class SDPlusBarWallpaperChooserPage(GenericAssetChooserPage):
+class SDPlusBarWallpaperChooserPage(GenericAssetChooserPage["SDPlusBarWallpaperPack", "SDPlusBarWallpaper", SDPlusBarWallpaperPreview, "SDPlusBarWallpaperPackChooserStack"]):
+    # The concrete stack, restated so the quoted name in the base subscript
+    # has a checked in-file use.
+    stack: "SDPlusBarWallpaperPackChooserStack"
     FLOW_BOX_CLASS = SDPlusBarWallpaperFlowBox
     PREVIEW_CLASS = SDPlusBarWallpaperPreview
 
-    def get_assets(self, pack: "SDPlusBarWallpaperPack") -> list[Any]:
+    def get_assets(self, pack: "SDPlusBarWallpaperPack") -> "list[SDPlusBarWallpaper]":
         return pack.get_wallpapers()
 
     def bind_preview(self, preview: SDPlusBarWallpaperPreview,
                      wallpaper: "SDPlusBarWallpaper") -> None:
         preview.set_wallpaper(wallpaper)
 
-    def get_child_asset(self, child: Any) -> "SDPlusBarWallpaper":
-        return cast("SDPlusBarWallpaper", child.wallpaper)
+    def get_child_asset(self, child: SDPlusBarWallpaperPreview) -> "SDPlusBarWallpaper":
+        return child.wallpaper

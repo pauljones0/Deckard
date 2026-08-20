@@ -22,17 +22,23 @@ from gi.repository import Gtk, GdkPixbuf, GLib, Pango
 
 from loguru import logger as log
 
-from typing import Any
+import enum
 
-# Separates a caller that passed a pixbuf, which can be None when the decode
-# failed and the broken-image icon must show, from a caller that said nothing
-# about an image.
-_PIXBUF_UNSET = object()
+
+class _PixbufUnset(enum.Enum):
+    # Separates a caller that passed a pixbuf, which can be None when the
+    # decode failed and the broken-image icon must show, from a caller that
+    # said nothing about an image. A single-member enum, so the identity
+    # check below narrows the union for the checker.
+    TOKEN = enum.auto()
+
+
+_PIXBUF_UNSET = _PixbufUnset.TOKEN
 
 
 class Preview(Gtk.FlowBoxChild):
     def __init__(self, image_path: str | os.PathLike[str] | None = None, text:str | None = None, can_be_deleted: bool = False,
-                 pixbuf: Any = _PIXBUF_UNSET):
+                 pixbuf: "GdkPixbuf.Pixbuf | None | _PixbufUnset" = _PIXBUF_UNSET):
         super().__init__()
         self.set_css_classes(["asset-preview"])
         self.set_margin_start(5)
@@ -149,8 +155,8 @@ class Preview(Gtk.FlowBoxChild):
     def set_text(self, text:str) -> None:
         self.label.set_text(text)
 
-    def on_click_info(self, *args: Any) -> None:
+    def on_click_info(self, button: Gtk.Button) -> None:
         pass
 
-    def on_click_remove(self, *args: Any) -> None:
+    def on_click_remove(self, button: Gtk.Button) -> None:
         pass

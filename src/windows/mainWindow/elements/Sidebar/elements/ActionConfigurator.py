@@ -30,7 +30,7 @@ import globals as gl
 
 # Import own modules
 from src.backend.PluginManager.ActionCore import ActionCore
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from src.windows.mainWindow.elements.Sidebar.Sidebar import Sidebar
@@ -83,7 +83,7 @@ class ActionConfigurator(Gtk.Box):
         self.remove_button = RemoveButton(self, margin_top=12)
         self.main_box.append(self.remove_button)
 
-    def load_for_action(self, action: Any, index: int) -> None:
+    def load_for_action(self, action: "ActionCore", index: int) -> None:
         self.config_group.load_for_action(action)
         self.custom_configs.load_for_action(action)
         self.remove_button.load_for_action(action, index)
@@ -108,7 +108,7 @@ class CommentGroup(Adw.PreferencesGroup):
         self.connect_signals()
         self.add(self.comment_row)
 
-    def load_for_action(self, action: Any, index: int) -> None:
+    def load_for_action(self, action: "ActionCore", index: int) -> None:
         self.disconnect_signals()
         self.action = action
         self.index = index
@@ -163,7 +163,7 @@ class ConfigGroup(Adw.PreferencesGroup):
     def __init__(self, parent: "ActionConfigurator", **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.parent = parent
-        self.loaded_rows: "list[Any]" = []
+        self.loaded_rows: "list[Gtk.Widget]" = []
         self.build()
 
     def build(self) -> None:
@@ -228,7 +228,7 @@ class CustomConfigs(Gtk.Box):
         self.main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, hexpand=True)
         self.append(self.main_box)
 
-    def load_for_action(self, action: Any) -> None:
+    def load_for_action(self, action: "ActionCore") -> None:
         # Append custom config area
         custom_config_area = action.get_custom_config_area()
         
@@ -283,6 +283,10 @@ class RemoveButton(Gtk.Button):
 
         # Remove from action_objects
         try:
+            if self.index is None:
+                # No slot bound; the KeyError path below always treated a
+                # missing key as already gone.
+                raise KeyError("index unset")
             del page.action_objects[action.input_ident.input_type][action.input_ident.json_identifier][int(action.state)][self.index]
         except KeyError:
             #FIXME
@@ -317,7 +321,7 @@ class RemoveButton(Gtk.Button):
         del self.action
 
 
-    def load_for_action(self, action: Any, index: int) -> None:
+    def load_for_action(self, action: "ActionCore", index: int) -> None:
         self.action = action
         self.index = index
 
@@ -436,15 +440,19 @@ class EventAssignerRow(Adw.ComboRow):
         self.factory = Gtk.SignalListItemFactory()
         self.set_factory(self.factory)
 
-        def f_setup(fact: Gtk.SignalListItemFactory, item: Any) -> None:
+        def f_setup(fact: Gtk.SignalListItemFactory, item: Gtk.ListItem) -> None:
             label = Gtk.Label(halign=Gtk.Align.START)
             label.set_selectable(False)
             item.set_child(label)
         self.factory.connect("setup", f_setup)
 
-        def f_bind(fact: Gtk.SignalListItemFactory, item: Any) -> None:
-            item.get_child().set_label(item.get_item().ui_label)
-            item.get_child().set_tooltip_text(item.get_item().tooltip)
+        def f_bind(fact: Gtk.SignalListItemFactory, item: Gtk.ListItem) -> None:
+            # A bound item carries the label f_setup built and the row item
+            # the model holds.
+            label = cast(Gtk.Label, item.get_child())
+            row_item = cast("EventAssignerRowItem", item.get_item())
+            label.set_label(row_item.ui_label)
+            label.set_tooltip_text(row_item.tooltip)
         self.factory.connect("bind", f_bind)
 
         self.connect("notify::selected", self.on_changed)

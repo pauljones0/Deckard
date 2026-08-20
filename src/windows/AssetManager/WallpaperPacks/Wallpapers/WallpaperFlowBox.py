@@ -20,13 +20,15 @@ gi.require_version("Adw", "1")
 
 # Import own modules
 from src.windows.AssetManager.DynamicFlowBox import DynamicFlowBox
+from src.backend.WallpaperPackManagement.Wallpaper import Wallpaper
+from src.windows.AssetManager.WallpaperPacks.Wallpapers.WallpaperPreview import WallpaperPreview
 
 # Import typing
 from typing import Any, TYPE_CHECKING
 if TYPE_CHECKING:
     from src.windows.AssetManager.WallpaperPacks.Wallpapers.WallpaperChooser import WallpaperChooserPage
 
-class WallpaperFlowBox(DynamicFlowBox):
+class WallpaperFlowBox(DynamicFlowBox[WallpaperPreview, Wallpaper]):
     def __init__(self, base_class: type, wallpaper_chooser: "WallpaperChooserPage", *args: Any, **kwargs: Any) -> None:
         super().__init__(base_class, *args, **kwargs)
         self.CHILDREN_PER_PAGE = 150

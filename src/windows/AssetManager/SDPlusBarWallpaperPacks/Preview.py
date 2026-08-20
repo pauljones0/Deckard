@@ -17,18 +17,19 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
+from gi.repository import Gtk, GdkPixbuf
 
 # Import own modules
-from src.windows.AssetManager.Preview import _PIXBUF_UNSET, Preview
+from src.windows.AssetManager.Preview import _PIXBUF_UNSET, Preview, _PixbufUnset
 from src.backend.IconPackManagement.IconPack import IconPack
 
 # Import typing
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from src.windows.AssetManager.SDPlusBarWallpaperPacks.PackChooser import SDPlusBarWallpaperPackChooser
 
 class SDPlusBarWallpaperPackPreview(Preview):
-    def __init__(self, wallpaper_pack_chooser: "SDPlusBarWallpaperPackChooser", pack: IconPack, pixbuf: Any = _PIXBUF_UNSET) -> None:
+    def __init__(self, wallpaper_pack_chooser: "SDPlusBarWallpaperPackChooser", pack: IconPack, pixbuf: "GdkPixbuf.Pixbuf | None | _PixbufUnset" = _PIXBUF_UNSET) -> None:
         # The build worker of the chooser decodes pixbuf. This constructor
         # decodes the thumbnail itself, on its own thread, only when the
         # caller supplies no pixbuf.
@@ -40,7 +41,7 @@ class SDPlusBarWallpaperPackPreview(Preview):
         self.pack = pack
         self.wallpaper_pack_chooser = wallpaper_pack_chooser
 
-    def on_click_info(self, *args: Any) -> None:
+    def on_click_info(self, button: Gtk.Button) -> None:
         attribution = self.pack.get_pack_attribution()
         self.wallpaper_pack_chooser.asset_manager.show_info(
             internal_path = None,

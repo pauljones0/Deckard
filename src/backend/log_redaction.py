@@ -80,7 +80,14 @@ import getpass
 import os
 import re
 import traceback
-from typing import Any
+from collections.abc import Callable
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from loguru import Record
+
+# One redaction rule: a compiled pattern and what re.sub takes in its place.
+_Rule = tuple["re.Pattern[str]", "str | Callable[[re.Match[str]], str]"]
 
 _installed = False
 
@@ -141,8 +148,8 @@ def _colon_replacement(match: re.Match[str]) -> str:
     )
 
 
-def _compile_rules() -> list[tuple[Any, ...]]:
-    rules: list[tuple[Any, ...]] = []
+def _compile_rules() -> "list[_Rule]":
+    rules: "list[_Rule]" = []
 
     # Url userinfo, which is scheme://user:pass@host and scheme://user@host.
     # The bounded quantifiers keep a wall of text without an "@" cheap.
@@ -275,7 +282,7 @@ def scrub(text: str) -> str:
     return text
 
 
-def redact_record(record: Any) -> None:
+def redact_record(record: "Record") -> None:
     """The loguru patcher. It scrubs the message. When an exception rides
     along, from opt(exception=...), from @log.catch or from the central
     exception hooks, it replaces that exception with a scrubbed traceback

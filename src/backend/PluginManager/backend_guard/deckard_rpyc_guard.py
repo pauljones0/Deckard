@@ -25,7 +25,7 @@ import os
 import socket
 import sys
 import types
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import Any, NamedTuple
 
 TCP_ESTABLISHED = "01"
@@ -104,7 +104,7 @@ def _read_rows() -> list[TcpRow]:
     return rows
 
 
-def _endpoint_of(addr: tuple[Any, ...]) -> tuple[str, int]:
+def _endpoint_of(addr: "tuple[str, int] | tuple[str, int, int, int]") -> tuple[str, int]:
     # AF_INET gives (ip, port); AF_INET6 gives (ip, port, flowinfo, scope_id).
     return normalize_ip(addr[0]), addr[1]
 
@@ -173,7 +173,7 @@ def refusal_reason(sock: socket.socket) -> str | None:
     return None
 
 
-def loopback_uid_authenticator(sock: socket.socket) -> tuple[socket.socket, Any]:
+def loopback_uid_authenticator(sock: socket.socket) -> "tuple[socket.socket, None]":
     """rpyc authenticator: accept same-UID loopback peers only.
 
     rpyc runs this on the accepted socket before the protocol starts, so an
@@ -275,7 +275,7 @@ class _RpycServerFinder(importlib.abc.MetaPathFinder):
     def __init__(self) -> None:
         self._resolving = False
 
-    def find_spec(self, fullname: str, path: Any = None, target: Any = None) -> importlib.machinery.ModuleSpec | None:
+    def find_spec(self, fullname: str, path: "Sequence[str] | None" = None, target: "types.ModuleType | None" = None) -> importlib.machinery.ModuleSpec | None:
         # The re-entrant find_spec call below scans sys.meta_path again; the
         # flag makes this finder answer None on that inner pass, so the
         # regular path finder supplies the real spec.

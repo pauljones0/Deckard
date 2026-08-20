@@ -68,7 +68,7 @@ _announced_disabled = False
 
 _installed = False
 # The same shape as sys.excepthook, which install() stores here.
-_ExceptHook = Callable[[type[BaseException], BaseException, TracebackType | None], Any]
+_ExceptHook = Callable[[type[BaseException], BaseException, TracebackType | None], object]
 _prev_sys_hook: _ExceptHook = None  # type: ignore[assignment]  # late-init: install(); only read from _sys_hook, which install() wires up
 # faulthandler stores the raw fd and not the file object, so this
 # module-level reference must keep the file alive for the life of the
@@ -124,14 +124,21 @@ _rate_lock = threading.RLock()
 # unbounded acquire, one deadlocked holder hangs every later hook, including
 # the hook that reports the deadlock.
 _RATE_LOCK_TIMEOUT_S = 0.5
+# The site of one failure: the exception type's name plus the innermost
+# frame's (file, line), or the message text when no traceback exists.
+# _exc_site is the sole constructor.
+SiteKey = tuple[str, tuple[str, "int | str"]]
+
 # Maps a site key to [window start, suppressed, last hit]. An allowed record
 # refreshes the window start, and every occurrence refreshes the last hit. The
-# eviction reads the last hit; see _prune_locked.
-_rate_state: dict[tuple[Any, ...], list[Any]] = {}
+# eviction reads the last hit; see _prune_locked. The value mixes float
+# clocks and an int counter in one mutable triple, which no list element
+# type states honestly.
+_rate_state: dict[SiteKey, list[Any]] = {}
 
 
 def _exc_site(exc_type: type[BaseException] | None, exc_value: BaseException | None,
-              exc_tb: TracebackType | None) -> tuple[tuple[Any, ...], str]:
+              exc_tb: TracebackType | None) -> tuple[SiteKey, str]:
     """Returns (key, printable label) for the code site that raised. The key
     holds the exception type and the innermost traceback frame. One handler
     that fails on every emission collapses onto one key, and one exception
@@ -156,7 +163,7 @@ def _exc_site(exc_type: type[BaseException] | None, exc_value: BaseException | N
     return (type_name, where), _label_for_key((type_name, where))
 
 
-def _label_for_key(key: tuple[Any, ...]) -> str:
+def _label_for_key(key: SiteKey) -> str:
     """The printable site for a key. It builds from the key alone, so a
     pending count still reports after its exception object is gone. The prune
     and the atexit flush hold keys and never exceptions."""
@@ -164,7 +171,7 @@ def _label_for_key(key: tuple[Any, ...]) -> str:
     return f"{where[0]}:{where[1]} [{type_name}]"
 
 
-def _emit_pending(key: tuple[Any, ...], count: int, reason: str) -> None:
+def _emit_pending(key: SiteKey, count: int, reason: str) -> None:
     """Report a pending count that gets no next record to ride on. It follows
     the never-raise contract of _log_exc, with loguru first, __stderr__
     second, and a swallow last. It keeps the "Uncaught exception" prefix,
@@ -183,7 +190,7 @@ def _emit_pending(key: tuple[Any, ...], count: int, reason: str) -> None:
             pass
 
 
-def _prune_locked(now: float) -> list[tuple[tuple[Any, ...], int]]:
+def _prune_locked(now: float) -> list[tuple[SiteKey, int]]:
     """Cap the dict. The caller holds _rate_lock and calls this only once the
     dict is oversized, so a broad storm across many distinct sites cannot turn
     the guard into an unbounded leak. Returns the pending counts of everything
@@ -200,9 +207,9 @@ def _prune_locked(now: float) -> list[tuple[tuple[Any, ...], int]]:
     bounds the dict. This lists the items up front, so a re-entrant hook at GC
     time that mutates the dict cannot turn a prune into a RuntimeError of
     "changed size during iteration"."""
-    dropped: list[tuple[tuple[Any, ...], int]] = []
+    dropped: list[tuple[SiteKey, int]] = []
 
-    def evict(key: tuple[Any, ...]) -> None:
+    def evict(key: SiteKey) -> None:
         entry = _rate_state.pop(key, None)
         if entry is not None and entry[1]:
             dropped.append((key, entry[1]))
@@ -246,7 +253,7 @@ def _flush_pending_counts() -> None:
 atexit.register(_flush_pending_counts)
 
 
-def _rate_limit_bypass(key: tuple[Any, ...]) -> int:
+def _rate_limit_bypass(key: SiteKey) -> int:
     """Take a site's pending count, clear it, and throttle nothing.
 
     The terminal path enters here. That record is the last one this site gets,
@@ -265,14 +272,14 @@ def _rate_limit_bypass(key: tuple[Any, ...]) -> int:
         _rate_lock.release()
 
 
-def _rate_limit(key: tuple[Any, ...]) -> tuple[bool, int]:
+def _rate_limit(key: SiteKey) -> tuple[bool, int]:
     """Returns (suppress this occurrence, failures suppressed since the last
     record).
 
     The first hit of a site always logs at once. A throttle must never delay
     the record that says the failure exists, and only delays what follows."""
     now = time.monotonic()
-    dropped: list[tuple[tuple[Any, ...], int]] = []
+    dropped: list[tuple[SiteKey, int]] = []
     if not _rate_lock.acquire(timeout=_RATE_LOCK_TIMEOUT_S):
         # Never wait without a bound inside a crash handler. With the guard's
         # state wedged, log this occurrence rather than park the failing

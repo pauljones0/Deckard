@@ -36,16 +36,17 @@ import globals as gl
 from gi.repository import Gtk, GLib, Gio
 
 from collections.abc import Callable
-from typing import Any, TYPE_CHECKING
+from typing import Any, TYPE_CHECKING, TypeAlias
 if TYPE_CHECKING:
     from gi.repository import GdkPixbuf
     from src.windows.mainWindow.elements.PageSettingsPage import PageSettingsPage
+    from src.windows.mainWindow.elements.Sidebar.elements.IconSelector import IconSelector
 
 # An icon selector, a dial pixbuf and its task id, or None when the user
 # selected no dial.
-DialPreview = tuple[Any, Any, int] | None
+DialPreview: TypeAlias = "tuple[IconSelector, GdkPixbuf.Pixbuf | None, int] | None"
 # One mirrored strip frame carries a pixbuf, a task id and a dial preview.
-MirrorFrame = tuple[Any, int, DialPreview]
+MirrorFrame: TypeAlias = "tuple[GdkPixbuf.Pixbuf | None, int, DialPreview]"
 
 class ScreenBar(Gtk.Frame):
     def __init__(self, page_settings_page: "PageSettingsPage", identifier: Input.Touchscreen, **kwargs: Any) -> None:
@@ -206,7 +207,7 @@ class ScreenBar(Gtk.Frame):
         return x, y
 
 
-    def on_focus_in(self, *args: Any) -> None:
+    def on_focus_in(self, *args: object) -> None:
         self.set_border_active(True)
 
     def set_border_active(self, active: bool) -> None:
@@ -219,7 +220,7 @@ class ScreenBar(Gtk.Frame):
             self.set_css_classes(["key-button-frame-hidden"])
             self.page_settings_page.deck_config.active_widget = None
 
-    def on_remove(self, *args: Any) -> None:
+    def on_remove(self, *args: object) -> None:
         if gl.app is None:
             return
         controller = gl.app.main_win.get_active_controller()
@@ -261,7 +262,7 @@ class ScreenBarImage(Gtk.Picture):
         
         self.screenbar = screenbar
 
-        self.on_map_tasks: list[Callable[[], Any]] = []
+        self.on_map_tasks: list[Callable[[], object]] = []
         self.connect("map", self.on_map)
 
         # next() on a count is atomic, so two frames never take the same id,
@@ -273,7 +274,7 @@ class ScreenBarImage(Gtk.Picture):
         # None until the first frame is queued.
         self.latest_task_id: int | None = None
 
-    def on_map(self, *args: Any) -> None:
+    def on_map(self, *args: object) -> None:
         for task in self.on_map_tasks:
             task()
         self.on_map_tasks.clear()

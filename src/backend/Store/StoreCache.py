@@ -76,7 +76,9 @@ class _AtomicCacheWriter:
                 pass
             raise
 
-    def write(self, data: Any) -> int:
+    def write(self, data: "str | bytes") -> int:
+        # The file behind this opened in 'w' or 'wb'; the mode's half of the
+        # union is the one a caller can hand over without a runtime error.
         return self._file.write(data)
 
     def __enter__(self) -> "_AtomicCacheWriter":
@@ -361,12 +363,14 @@ class StoreCache:
         ref = parse_repo_url(repo_url)
         return None if ref is None else ref.repo
 
-    def generate_cache_string(self, url: str, path: str, branch: str = "main", data_type: str = "text") -> str:
+    def generate_cache_string(self, url: str, path: str, branch: "str | None" = "main", data_type: str = "text") -> str:
+        # A None branch embeds literally, so it keys its own (never-written)
+        # entry, the same way it builds a URL no fetch can serve.
         user = self.get_user_name(url)
         repo = self.get_repo_name(url)
         return f"{user}::{repo}::{branch}::{data_type}::{path}"
 
-    def get_cache_path(self, url: str, path: str, branch: str = "main", data_type: str = "text") -> str:
+    def get_cache_path(self, url: str, path: str, branch: "str | None" = "main", data_type: str = "text") -> str:
         # return os.path.join(self.files_dir, self.generate_cache_string(url, path, branch, data_type))
 
         cache_string = self.generate_cache_string(url, path, branch, data_type)
@@ -392,7 +396,7 @@ class StoreCache:
             self._mark_index_dirty_locked()
         return path
 
-    def is_cached(self, url: str, path: str, branch: str = "main", data_type: str = "text") -> bool:
+    def is_cached(self, url: str, path: str, branch: "str | None" = "main", data_type: str = "text") -> bool:
         cache_string = self.generate_cache_string(url, path, branch, data_type)
         if cache_string not in self.files:
             return False
@@ -421,20 +425,28 @@ class StoreCache:
             self._write_index_locked()
 
     @overload
-    def open_cache_file(self, url: str, path: str, branch: str = ..., data_type: str = ...,
-                        mode: Literal["r", "rb"] = ...) -> IO[Any]: ...
+    def open_cache_file(self, url: str, path: str, branch: "str | None" = ..., data_type: str = ...,
+                        mode: Literal["r"] = ...) -> IO[str]: ...
 
     @overload
-    def open_cache_file(self, url: str, path: str, branch: str = ..., data_type: str = ...,
+    def open_cache_file(self, url: str, path: str, branch: "str | None" = ..., data_type: str = ...,
+                        mode: Literal["rb"] = ...) -> IO[bytes]: ...
+
+    @overload
+    def open_cache_file(self, url: str, path: str, branch: "str | None" = ..., data_type: str = ...,
+                        mode: Literal["r", "rb"] = ...) -> "IO[str] | IO[bytes]": ...
+
+    @overload
+    def open_cache_file(self, url: str, path: str, branch: "str | None" = ..., data_type: str = ...,
                         mode: Literal["w", "wb"] = ...) -> "_AtomicCacheWriter": ...
 
     @overload
-    def open_cache_file(self, url: str, path: str, branch: str = ..., data_type: str = ...,
-                        mode: str = ...) -> "_AtomicCacheWriter | IO[Any]": ...
+    def open_cache_file(self, url: str, path: str, branch: "str | None" = ..., data_type: str = ...,
+                        mode: str = ...) -> "_AtomicCacheWriter | IO[str] | IO[bytes]": ...
 
-    def open_cache_file(self, url: str, path: str, branch: str = "main",
+    def open_cache_file(self, url: str, path: str, branch: "str | None" = "main",
                         data_type: str = "text",
-                        mode: str = "r") -> "_AtomicCacheWriter | IO[Any]":
+                        mode: str = "r") -> "_AtomicCacheWriter | IO[str] | IO[bytes]":
         cache_path = self.get_cache_path(url, path, branch, data_type)
         os.makedirs(os.path.dirname(cache_path), exist_ok=True)
 
@@ -469,7 +481,7 @@ class StoreCache:
 
         return open(cache_path, mode)
 
-    def get_fetched_date(self, url: str, path: str, branch: str = "main", data_type: str = "text") -> float | None:
+    def get_fetched_date(self, url: str, path: str, branch: "str | None" = "main", data_type: str = "text") -> float | None:
         """When a write last landed the cached content, or None when that is
         unknown. An entry older than the "fetched" field falls back to the
         cache file's mtime, which a read never touches and which os.replace

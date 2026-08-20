@@ -38,7 +38,6 @@ import itertools
 import threading
 import time
 from collections.abc import Callable
-from typing import Any
 
 from loguru import logger as log
 
@@ -48,7 +47,7 @@ class TimerHandle:
 
     __slots__ = ("_wheel", "_seq", "_due", "_callback", "_name", "_cancelled", "_fired")
 
-    def __init__(self, wheel: "TimerWheel", seq: int, due: float, callback: Callable[[], Any], name: str):
+    def __init__(self, wheel: "TimerWheel", seq: int, due: float, callback: Callable[[], object], name: str):
         self._wheel = wheel
         self._seq = seq
         self._due = due
@@ -80,7 +79,7 @@ class TimerWheel:
         self._thread = threading.Thread(target=self._run, name=name, daemon=True)
         self._thread.start()
 
-    def schedule(self, delay_s: float, callback: Callable[[], Any], name: str = "TimerWheelJob") -> TimerHandle:
+    def schedule(self, delay_s: float, callback: Callable[[], object], name: str = "TimerWheelJob") -> TimerHandle:
         """Arm a one-shot timer that calls callback() after delay_s seconds
         on its own dispatch thread. Returns a handle with .cancel()."""
         seq = next(self._seq_counter)
@@ -143,6 +142,6 @@ class TimerWheel:
 _default_wheel = TimerWheel(name="TimerWheel")
 
 
-def schedule(delay_s: float, callback: Callable[[], Any], name: str = "TimerWheelJob") -> TimerHandle:
+def schedule(delay_s: float, callback: Callable[[], object], name: str = "TimerWheelJob") -> TimerHandle:
     """Arm a one-shot timer on the process-wide wheel. See TimerWheel.schedule."""
     return _default_wheel.schedule(delay_s, callback, name=name)

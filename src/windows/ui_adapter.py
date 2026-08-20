@@ -12,7 +12,7 @@ and its docstring says why.
 # in the rotation path.
 import threading
 import time
-from typing import Any, TYPE_CHECKING, cast
+from typing import Any, Generic, Protocol, TYPE_CHECKING, TypeVar, cast
 
 if TYPE_CHECKING:
     from PIL import Image
@@ -20,6 +20,10 @@ if TYPE_CHECKING:
 
     from src.backend.DeckManagement.deck_controller.controller import DeckController
     from src.backend.DeckManagement.InputIdentifier import InputIdentifier
+    from src.windows.mainWindow.DeckPlus.ScreenBar import ScreenBar
+    from src.windows.mainWindow.elements.DeckStackChild import DeckStackChild
+    from src.windows.mainWindow.elements.KeyGrid import KeyGrid
+    from src.windows.mainWindow.elements.Sidebar.Sidebar import Sidebar
     from src.windows.mainWindow.mainWindow import MainWindow
 
 from gi.repository import GLib
@@ -52,6 +56,18 @@ def mark_dirty(controller: "DeckController", identifier: "InputIdentifier") -> N
     except Exception:
         # A controller torn down mid-flight has nothing left to replay to.
         log.opt(exception=True).debug("Could not record a dropped preview frame")
+
+
+_PayloadT = TypeVar("_PayloadT")
+
+
+class MirrorWidget(Protocol, Generic[_PayloadT]):
+    """A widget that mirrors one input: it converts a frame off the main
+    loop and paints the result on it. The payload shape is the widget's
+    own; the adapter only carries it between the two calls."""
+
+    def prepare_mirror_frame(self, image: "Image.Image") -> _PayloadT: ...
+    def paint_mirror_frame(self, payload: _PayloadT) -> bool: ...
 
 
 class _MirrorSlot:
@@ -119,7 +135,7 @@ class GtkUIAdapter(ui_port.UIPort):
         # DeckStack.remove_page maintain it. The bind uses object identity at
         # add time, with no serial match and no ListModel scan from the media
         # thread.
-        self._children: dict[Any, Any] = {}
+        self._children: "dict[DeckController, DeckStackChild]" = {}
         self._window: "MainWindow | None" = None
         # The map and unmap handlers of the window write this bool, and the
         # media thread reads it without a lock. It replaces an off-main
@@ -127,9 +143,9 @@ class GtkUIAdapter(ui_port.UIPort):
         self._window_mapped: bool = False
         # Maps (controller, identifier) to a _MirrorSlot. One slot per input,
         # so a stalled main loop holds one frame per input, not a queue.
-        self._mirror_slots: dict[Any, Any] = {}
+        self._mirror_slots: "dict[tuple[DeckController, InputIdentifier], _MirrorSlot]" = {}
         # Maps a controller to a bool. This is the page-sync coalescer.
-        self._page_sync_queued: dict[Any, Any] = {}
+        self._page_sync_queued: "dict[DeckController, bool]" = {}
 
     # Setup
 
@@ -211,7 +227,7 @@ class GtkUIAdapter(ui_port.UIPort):
             if controller is not None:
                 self._children[controller] = child
 
-    def bind(self, controller: "DeckController", child: Any) -> None:
+    def bind(self, controller: "DeckController", child: "DeckStackChild") -> None:
         self._children[controller] = child
 
     def unbind(self, controller: "DeckController") -> None:
@@ -236,17 +252,17 @@ class GtkUIAdapter(ui_port.UIPort):
 
     # Resolvers
 
-    def _grid(self, child: Any) -> Any:
+    def _grid(self, child: "DeckStackChild") -> "KeyGrid | None":
         if not recursive_hasattr(child, "page_settings.deck_config.grid"):
             return None
         return child.page_settings.deck_config.grid
 
-    def _screenbar(self, child: Any) -> Any:
+    def _screenbar(self, child: "DeckStackChild") -> "ScreenBar | None":
         if not recursive_hasattr(child, "page_settings.deck_config.screenbar.image"):
             return None
         return child.page_settings.deck_config.screenbar
 
-    def _mirror_widget(self, child: Any, identifier: "InputIdentifier") -> Any:
+    def _mirror_widget(self, child: "DeckStackChild", identifier: "InputIdentifier") -> "MirrorWidget[Any] | None":
         """The widget that mirrors identifier, or None when there is none.
 
         This raises during a grid rebuild, because buttons[x][y] can be short
@@ -430,7 +446,7 @@ class GtkUIAdapter(ui_port.UIPort):
         sidebar.update()
         return False
 
-    def _sidebar_for(self, controller: "DeckController", identifier: "InputIdentifier", require_active_deck: bool = True) -> Any:
+    def _sidebar_for(self, controller: "DeckController", identifier: "InputIdentifier", require_active_deck: bool = True) -> "Sidebar | None":
         """The sidebar, only while it shows identifier of controller.
 
         This runs on the main loop, and it holds the widget reads.
@@ -489,7 +505,7 @@ class GtkUIAdapter(ui_port.UIPort):
         if child is None:
             return None
         try:
-            return cast("object | None", self._mirror_widget(child, identifier))
+            return self._mirror_widget(child, identifier)
         except Exception:
             log.opt(exception=True).warning(f"Could not resolve the widget for {identifier}")
         return None
@@ -499,9 +515,9 @@ class GtkUIAdapter(ui_port.UIPort):
         if child is None:
             return None
         if part == "deck_stack_child":
-            return cast("object | None", child)
+            return child
         if part == "key_grid":
-            return cast("object | None", self._grid(child))
+            return self._grid(child)
         return None
 
     # App level

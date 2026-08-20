@@ -29,18 +29,23 @@ from src.windows.AssetManager.WallpaperPacks.Preview import WallpaperPackPreview
 import globals as gl
 
 # Import typing
-from typing import cast, Any, TYPE_CHECKING
+from typing import TYPE_CHECKING
 if TYPE_CHECKING:
+    from src.backend.WallpaperPackManagement.WallpaperPack import WallpaperPack
+    from src.windows.AssetManager.WallpaperPacks.Stack import WallpaperPackChooserStack
     from src.windows.AssetManager.WallpaperPacks.Wallpapers.WallpaperChooser import WallpaperChooserPage
 
 
-class WallpaperPackChooser(GenericPackChooserPage):
+class WallpaperPackChooser(GenericPackChooserPage["WallpaperPack", "WallpaperPackChooserStack"]):
+    # The concrete stack, restated so the quoted name in the base subscript
+    # has a checked in-file use.
+    stack: "WallpaperPackChooserStack"
     PACK_FLOW_BOX_CLASS = WallpaperPackFlowBox
     PACK_PREVIEW_CLASS = WallpaperPackPreview
     LEAF_CHILD_NAME = "wallpaper-chooser"
 
-    def get_packs(self) -> dict[str, Any]:
+    def get_packs(self) -> "dict[str, WallpaperPack]":
         return gl.wallpaper_pack_manager.get_wallpaper_packs()
 
     def get_leaf_chooser(self) -> "WallpaperChooserPage":
-        return cast("WallpaperChooserPage", self.stack.wallpaper_chooser)
+        return self.stack.wallpaper_chooser

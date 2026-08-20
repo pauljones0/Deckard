@@ -30,17 +30,22 @@ from src.windows.AssetManager.IconPacks.Preview import IconPackPreview
 import globals as gl
 
 # Import typing
-from typing import cast, Any, TYPE_CHECKING
+from typing import TYPE_CHECKING
 if TYPE_CHECKING:
+    from src.backend.IconPackManagement.IconPack import IconPack
     from src.windows.AssetManager.IconPacks.Icons.IconChooser import IconChooserPage
+    from src.windows.AssetManager.IconPacks.Stack import IconPackChooserStack
 
 
-class IconPackChooser(GenericPackChooserPage):
+class IconPackChooser(GenericPackChooserPage["IconPack", "IconPackChooserStack"]):
+    # The concrete stack, restated so the quoted name in the base subscript
+    # has a checked in-file use.
+    stack: "IconPackChooserStack"
     PACK_FLOW_BOX_CLASS = IconPackFlowBox
     PACK_PREVIEW_CLASS = IconPackPreview
     LEAF_CHILD_NAME = "icon-chooser"
 
-    def get_packs(self) -> dict[str, Any]:
+    def get_packs(self) -> "dict[str, IconPack]":
         if gl.icon_pack_manager is None:
             # The boot order keeps the window shut until the manager exists,
             # and the type still allows None.
@@ -48,7 +53,7 @@ class IconPackChooser(GenericPackChooserPage):
         return gl.icon_pack_manager.get_icon_packs()
 
     def get_leaf_chooser(self) -> "IconChooserPage":
-        return cast("IconChooserPage", self.stack.icon_chooser)
+        return self.stack.icon_chooser
 
     def on_build_finished(self) -> None:
         # The icon stack gates a deferred show_for_path task on the

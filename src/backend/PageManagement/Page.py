@@ -39,6 +39,11 @@ if TYPE_CHECKING:
 # annotation there reaches the builtin through this alias.
 _Dict = dict
 
+# The action-objects registry: input type -> json identifier -> state ->
+# index -> the action, a placeholder for an unresolved or outdated one, or
+# None for an empty slot.
+ActionObjects = _Dict[str, _Dict[str, _Dict[int, _Dict[int, "ActionCore | NoActionHolderFound | ActionOutdated | None"]]]]
+
 
 class Page:
     def __init__(self, json_path: str, deck_controller: "DeckController", *args: Any, **kwargs: Any) -> None:
@@ -54,7 +59,7 @@ class Page:
 
         # The action objects, kept so a reload can reuse them. Keyed
         # input_type -> json_identifier -> state -> index -> action.
-        self.action_objects: _Dict[str, Any] = {}
+        self.action_objects: ActionObjects = {}
 
         # Serializes the on_ready_called claim in initialize_actions. That
         # method runs outside _load_page_lock, because it can block on a
@@ -168,7 +173,7 @@ class Page:
         # imports this module and a module-level import here closes a cycle.
         from src.backend.DeckManagement.deck_controller.controller import CONTROLLER_CLASSES
 
-        new_action_objects: dict[str, dict[str, Any]] = {}
+        new_action_objects: ActionObjects = {}
 
         for input_type in Input.All:
             input_class = CONTROLLER_CLASSES[input_type]
@@ -220,7 +225,7 @@ class Page:
 
     # def load_action_object_sector(self, loaded_action_objects, dict_key: str, state)
 
-    def get_new_action_object(self, loaded_action_objects: _Dict[str, Any], action_id: str, state: int, i: int, input_ident: InputIdentifier) -> Any:
+    def get_new_action_object(self, loaded_action_objects: ActionObjects, action_id: str, state: int, i: int, input_ident: InputIdentifier) -> "ActionCore | NoActionHolderFound | ActionOutdated | None":
         
         plugin_manager = gl.plugin_manager
         if plugin_manager is None:
@@ -239,11 +244,10 @@ class Page:
         ## Keep old object if it exists
         old_action = loaded_action_objects.get(input_ident.input_type, {}).get(input_ident.json_identifier, {}).get(state, {}).get(i)
         if old_action is not None:
-            # action_core holds the action class, but ActionHolder annotates
-            # that attribute as an instance, so bind it locally before this
-            # code uses it as a class.
-            action_core_class: Any = action_holder.action_core
-            if isinstance(old_action, action_core_class):
+            # A holder without an action class cannot vouch for the old
+            # object; the isinstance below needs a real class either way.
+            action_core_class = action_holder.action_core
+            if action_core_class is not None and isinstance(old_action, action_core_class):
                 return old_action #FIXME: never used
             
         ## Create new action object            
@@ -261,26 +265,22 @@ class Page:
         # with it, comparing the builtin `type` against an input-type name.
         return
 
-    def move_actions(self, type: str, from_key: str, to_key: str) -> None:
-        from_actions = self.action_objects.get(type, {}).get(from_key, {})
-
-        for raw_action in from_actions.values():
-            action: "ActionCore" = raw_action
-            if type == "keys":
-                action.key_index = self.deck_controller.coords_to_index(to_key.split("x"))
-            action.identifier = to_key
-
     def switch_actions_of_inputs(self, input_1: InputIdentifier, input_2: InputIdentifier) -> None:
         input_1_dict = self.action_objects.get(input_1.input_type, {}).get(input_1.json_identifier, {})
         input_2_dict = self.action_objects.get(input_2.input_type, {}).get(input_2.json_identifier, {})
 
+        # Only a real action carries input_ident. A placeholder keeps its
+        # identifier from construction, and an empty (None) slot, which an
+        # incompatible holder leaves behind, carries nothing to repoint.
         for state in input_1_dict:
             for action in input_1_dict[state].values():
-                action.input_ident = input_2
+                if isinstance(action, ActionCore):
+                    action.input_ident = input_2
 
         for state in input_2_dict:
             for action in input_2_dict[state].values():
-                action.input_ident = input_1
+                if isinstance(action, ActionCore):
+                    action.input_ident = input_1
 
         # Change in action_objects
         self.action_objects.setdefault(input_1.input_type, {})
@@ -311,7 +311,7 @@ class Page:
         # Collect first, then delete and tear down. A del of the local variable
         # does nothing to the object, so a plugin uninstall must call
         # ActionCore.teardown to reach clean_up().
-        to_remove: list[tuple[Any, ...]] = []
+        to_remove: list[tuple[str, str, int, int, ActionCore]] = []
         for type in list(self.action_objects.keys()):
             for key in list(self.action_objects[type].keys()):
                 for state in list(self.action_objects[type][key].keys()):
@@ -339,6 +339,9 @@ class Page:
                 for state in list(self.action_objects[input_type][json_identifier].keys()):
                     for index in list(self.action_objects[input_type][json_identifier][state].keys()):
                         action_core = self.action_objects[input_type][json_identifier][state][index]
+                        if action_core is None:
+                            # An empty slot names no plugin.
+                            continue
                         action_id = action_core.action_id
 
                         if plugin_manager.get_plugin_id_from_action_id(action_id) == plugin_id:
@@ -395,7 +398,7 @@ class Page:
         # pages that no deck shows, and those have no Page to ask.
         return self._document.get_without_action_objects()
 
-    def get_all_actions(self, action_dict: _Dict[str, Any] | None = None) -> list[ActionCore]:
+    def get_all_actions(self, action_dict: ActionObjects | None = None) -> list[ActionCore]:
         if action_dict is None:
             action_dict = self.action_objects
         actions = []
@@ -439,40 +442,47 @@ class Page:
         return actions
     
     def get_action(self, identifier: InputIdentifier | None = None, state: int | None = None, index: int | None = None) -> "ActionCore | NoActionHolderFound | ActionOutdated | None":
-        if identifier is None:
+        if identifier is None or state is None or index is None:
+            # A missing coordinate keys nothing; the untyped read answered
+            # None here and this keeps that.
             return None
-        # action_objects is a plain nested dict, so the read is Any.
-        return cast("ActionCore | NoActionHolderFound | ActionOutdated | None",
-                    self.action_objects.get(identifier.input_type, {}).get(identifier.json_identifier, {}).get(state, {}).get(index))
+        return self.action_objects.get(identifier.input_type, {}).get(identifier.json_identifier, {}).get(state, {}).get(index)
     
-    def get_action_dict(self, action_object: Any = None, identifier: InputIdentifier | None = None, state: int | None = None, index: int | None = None) -> Any:
+    def get_action_dict(self, action_object: "ActionCore | None" = None, identifier: InputIdentifier | None = None, state: int | None = None, index: int | None = None) -> _Dict[str, Any]:
         # Arg validation
         if action_object is None:
             if None in (identifier, state, index):
                 raise ValueError("Please pass an identifier, state and index or an action object")
             
         if action_object is None:
-            action_object = self.get_action(identifier, state, index)
+            found = self.get_action(identifier, state, index)
+            # Only a real action owns a dict to look up; a placeholder or an
+            # empty slot has nothing, and the raise below reports it.
+            action_object = found if isinstance(found, ActionCore) else None
 
         if action_object is None:
             raise ValueError("Could not find action object")
         
         ident = action_object.input_ident
-        for state in ident.get_states(self):
-            for i, action_dict in enumerate(ident.get_actions(self, state)):
-                if self.get_action(ident, int(state), i) is action_object:
-                    return action_dict
+        # get_states keys by the state's string spelling; the loop name must
+        # not rebind the state parameter above.
+        for state_key in ident.get_states(self):
+            for i, action_dict in enumerate(ident.get_actions(self, state_key)):
+                if self.get_action(ident, int(state_key), i) is action_object:
+                    # The list holds the page JSON, so the element is a dict.
+                    return cast("_Dict[str, Any]", action_dict)
 
         return {}
                 
-    def set_action_dict(self, action_object: Any = None, identifier: InputIdentifier | None = None, state: int | None = None, index: int | None = None, action_dict: _Dict[str, Any] | None = None) -> None:
+    def set_action_dict(self, action_object: "ActionCore | None" = None, identifier: InputIdentifier | None = None, state: int | None = None, index: int | None = None, action_dict: _Dict[str, Any] | None = None) -> None:
         # Arg validation
         if action_object is None:
             if None in (identifier, state, index):
                 raise ValueError("Please pass an identifier, state and index or an action object")
             
         if action_object is None:
-            action_object = self.get_action(identifier, state, index)
+            found = self.get_action(identifier, state, index)
+            action_object = found if isinstance(found, ActionCore) else None
 
         if action_object is None:
             raise ValueError("Could not find action object")
@@ -480,30 +490,30 @@ class Page:
         # Do not name the loop variable action_dict. It shadows the parameter
         # and makes the assignment below a self-assignment.
         ident = action_object.input_ident
-        for state in ident.get_states(self):
-            actions = ident.get_actions(self, state)
+        for state_key in ident.get_states(self):
+            actions = ident.get_actions(self, state_key)
             for i, _existing_dict in enumerate(actions):
-                if self.get_action(ident, int(state), i) is action_object:
+                if self.get_action(ident, int(state_key), i) is action_object:
                     actions[i] = action_dict
                     break
 
         self.save()
     
-    def get_action_settings(self, action_object: "ActionCore | NoActionHolderFound | ActionOutdated | None" = None, identifier: InputIdentifier | None = None, state: int | None = None, index: int | None = None) -> Any:
+    def get_action_settings(self, action_object: "ActionCore | None" = None, identifier: InputIdentifier | None = None, state: int | None = None, index: int | None = None) -> Any:
         action_dict = self.get_action_dict(action_object, identifier, state, index)
         return action_dict.get("settings", {})
 
 
-    def set_action_settings(self, action_object: "ActionCore | NoActionHolderFound | ActionOutdated | None" = None, identifier: InputIdentifier | None = None, state: int | None = None, index: int | None = None, settings: _Dict[str, Any] | None = None) -> None:
+    def set_action_settings(self, action_object: "ActionCore | None" = None, identifier: InputIdentifier | None = None, state: int | None = None, index: int | None = None, settings: _Dict[str, Any] | None = None) -> None:
         action_dict = self.get_action_dict(action_object, identifier, state, index)
         action_dict["settings"] = settings
         self.set_action_dict(action_object, identifier, state, index, action_dict)
 
-    def get_action_event_assignments(self, action_object: "ActionCore | NoActionHolderFound | ActionOutdated | None" = None, identifier: InputIdentifier | None = None, state: int | None = None, index: int | None = None) -> Any:
+    def get_action_event_assignments(self, action_object: "ActionCore | None" = None, identifier: InputIdentifier | None = None, state: int | None = None, index: int | None = None) -> _Dict[str, "str | None"]:
         action_dict = self.get_action_dict(action_object, identifier, state, index)
 
         # backwards compat
-        assignments = action_dict.get("event-assignments", {})
+        assignments: _Dict[str, "str | None"] = action_dict.get("event-assignments", {})
         for key, value in assignments.items():
             if value == "None":
                 assignments[key] = None
@@ -511,7 +521,7 @@ class Page:
         return assignments
     
     
-    def set_action_event_assigment(self, event_assigner: EventAssigner | None, input_event: InputEvent | None, action_object: "ActionCore | NoActionHolderFound | ActionOutdated | None" = None, identifier: InputIdentifier | None = None, state: int | None = None, index: int | None = None) -> None:
+    def set_action_event_assigment(self, event_assigner: EventAssigner | None, input_event: InputEvent | None, action_object: "ActionCore | None" = None, identifier: InputIdentifier | None = None, state: int | None = None, index: int | None = None) -> None:
         action_dict = self.get_action_dict(action_object, identifier, state, index)
         action_dict.setdefault("event-assignments", {})
         action_dict["event-assignments"][str(input_event)] = event_assigner.id if event_assigner else None
@@ -524,9 +534,11 @@ class Page:
         if input_type not in self.action_objects or json_identifier not in self.action_objects[input_type]:
             return False
         for action in self.action_objects[input_type][json_identifier][state].values():
-            if hasattr(action, "CONTROLS_KEY_IMAGE"):
-                if action.CONTROLS_KEY_IMAGE:
-                    return True
+            # CONTROLS_KEY_IMAGE is an optional flag a plugin's action class
+            # declares; no base class carries it. The getattr default covers
+            # a flagless action, a placeholder and an empty slot alike.
+            if getattr(action, "CONTROLS_KEY_IMAGE", False):
+                return True
         return False
 
     @log.catch
@@ -581,12 +593,14 @@ class Page:
                         # code can still need action.page. teardown() always calls
                         # clean_up(), and it is a no-op for a placeholder.
                         ActionCore.teardown(action)
-                        if hasattr(action, "page"):
-                            action.page = None
+                        if isinstance(action, ActionCore):
+                            # The action is torn down; page describes the
+                            # live phase, so the detach steps outside it.
+                            action.page = None  # type: ignore[assignment]
                     state_dict.clear()
             self.action_objects[input_type] = {}
 
-    def get_pages_with_same_json(self, get_self: bool = False) -> list[Any]:
+    def get_pages_with_same_json(self, get_self: bool = False) -> "list[Page]":
         pages: list[Page]= []
         for controller in (gl.deck_manager.deck_controller if gl.deck_manager is not None else []):
             # Snapshot active_page once. Another thread sets it to None while a

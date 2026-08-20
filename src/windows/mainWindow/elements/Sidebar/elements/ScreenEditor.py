@@ -1,6 +1,6 @@
 from gi.repository import Gtk, Adw
 
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
 from src.windows.mainWindow.elements.Sidebar.elements.ActionManager import ActionManager
 from src.windows.mainWindow.elements.Sidebar.elements.BackgroundEditor import BackgroundEditor
@@ -50,7 +50,7 @@ class ScreenEditor(Gtk.ScrolledWindow):
         self.main_box.append(self.remove_state_button)
 
 
-    def on_state_switch(self, *args: Any) -> None:
+    def on_state_switch(self, *args: object) -> None:
         state = self.state_switcher.get_selected_state()
         # self.sidebar.active_state = self.state_switcher.get_selected_state()
 

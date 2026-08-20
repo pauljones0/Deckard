@@ -23,7 +23,7 @@ This module imports nothing from its sibling modules in the package.
 import time
 from copy import copy
 
-from PIL import Image, ImageDraw, ImageOps
+from PIL import Image, ImageDraw, ImageOps, ImageFont
 from loguru import logger as log
 
 from src.backend.DeckManagement.InputIdentifier import Input
@@ -34,7 +34,8 @@ from src.backend import ui_port
 
 import globals as gl
 
-from typing import Any, TYPE_CHECKING, cast
+from collections.abc import Iterable
+from typing import Any, TYPE_CHECKING, cast, Protocol, TypedDict
 if TYPE_CHECKING:
     from src.backend.DeckManagement.deck_controller.inputs import ControllerInput
 
@@ -102,7 +103,7 @@ class _BitmapRecorder:
 
     def __init__(self, core: Any, max_ops: int, max_bytes: int) -> None:
         self._core = core
-        self.ops: list[tuple[Any, ...]] = []
+        self.ops: list[tuple[object, ...]] = []
         self._max_ops = max_ops
         self._max_bytes = max_bytes
         self._bytes = 0
@@ -110,7 +111,7 @@ class _BitmapRecorder:
     def __getattr__(self, name: str) -> Any:
         return getattr(self._core, name)
 
-    def draw_bitmap(self, coord: Any, mask: Any, ink: Any) -> int:
+    def draw_bitmap(self, coord: "Iterable[object]", mask: "_MaskLike", ink: object) -> int:
         # The mask is an 8-bit coverage ImagingCore, so 1 byte per pixel.
         self._bytes += mask.size[0] * mask.size[1]
         if len(self.ops) >= self._max_ops or self._bytes > self._max_bytes:
@@ -119,6 +120,20 @@ class _BitmapRecorder:
                 f"{self._max_ops}-op / {self._max_bytes}-byte budget")
         self.ops.append((tuple(coord), mask, ink))
         return 0
+
+
+class _MaskLike(Protocol):
+    """The one attribute the blit recorder reads off a glyph mask."""
+
+    @property
+    def size(self) -> tuple[int, int]: ...
+
+
+class _ScrollFrame(TypedDict):
+    """One rolling label's animation state."""
+
+    position: int
+    next_step_at: "float | None"
 
 
 class LabelManager:
@@ -152,16 +167,16 @@ class LabelManager:
         # outline rasterized once onto a transparent strip. A scroll frame
         # composites a window of it instead of a draw.text, which costs
         # ~2.5ms per key.
-        self._scroll_strips: dict[str, tuple[Any, ...]] = {}
+        self._scroll_strips: "dict[str, tuple[tuple[object, ...], Image.Image, float, float]]" = {}
         # {position: (cache key, blit ops or None)}: the static label's glyph
         # masks, rasterized once and replayed per frame. A per-tick draw.text
         # with stroke costs ~820us per key, ~50% of the tick on a populated
         # animated page. None ops pins this position to the direct draw.
-        self._static_ops: dict[str, tuple[Any, ...]] = {}
+        self._static_ops: "dict[str, tuple[tuple[object, ...], tuple[tuple[object, ...], ...] | None]]" = {}
         # {position: (cache key, (w, h))}: the textbbox measurement of the
         # composed label. The FreeType layout pass is the second-biggest
         # per-frame cost, after the raster.
-        self._bbox_cache: dict[str, tuple[Any, ...]] = {}
+        self._bbox_cache: "dict[str, tuple[tuple[object, ...], tuple[int, int]]]" = {}
         # (epoch, {position: KeyLabel}): the merged page, action and default
         # labels. See get_composed_labels() for the invalidation contract.
         self._composed_labels_cache: tuple[int, dict[str, "ComposedKeyLabel"]] | None = None
@@ -172,7 +187,7 @@ class LabelManager:
         # means fresh, and starts with the leading hold. Wall clock, not tick
         # count, so an event wake that pushes the loop past its nominal FPS
         # cannot change the scroll speed.
-        self.frames: dict[str, dict[str, Any]] = {
+        self.frames: "dict[str, _ScrollFrame]" = {
             "top": {"position": 0, "next_step_at": None},
             "center": {"position": 0, "next_step_at": None},
             "bottom": {"position": 0, "next_step_at": None},
@@ -278,7 +293,7 @@ class LabelManager:
             self.controller_input.deck_controller, self.controller_input.identifier,
             self.controller_input.state, "labels")
 
-    def get_use_page_label_properties(self, position: str) -> dict[str, Any]:
+    def get_use_page_label_properties(self, position: str) -> dict[str, bool]:
         if self.page_labels.get(position) is None:
             return {
                 "text": False,
@@ -442,7 +457,7 @@ class LabelManager:
         key = (label.text, getattr(font, "path", None), getattr(font, "size", None))
         cached = self._bbox_cache.get(position)
         if cached is not None and cached[0] == key:
-            return cast(tuple[int, int], cached[1])
+            return cached[1]
         _, _, w, h = _label_measure_draw.textbbox((0, 0), label.text, font=font)
         # textbbox declares floats because it adds a possibly fractional
         # origin. This call anchors at integer (0, 0) with an integer glyph
@@ -534,11 +549,12 @@ class LabelManager:
                 if frame["position"] > overshoot:
                     frame["next_step_at"] = now + self._scroll_hold_end_seconds()
                 else:
-                    frame["next_step_at"] += self.SCROLL_STEP_SECONDS
+                    stepped = next_at + self.SCROLL_STEP_SECONDS
                     # Re-anchor instead of a burst to catch up after a loop
                     # stall from a page switch or a suspend.
-                    if frame["next_step_at"] < now - 0.5:
-                        frame["next_step_at"] = now
+                    if stepped < now - 0.5:
+                        stepped = now
+                    frame["next_step_at"] = stepped
             changed = True
         return changed
 
@@ -765,8 +781,8 @@ class LabelManager:
         for coord, mask, ink in ops:
             core.draw_bitmap(coord, mask, ink)
 
-    def _record_label_blits(self, image: Image.Image, label: "ComposedKeyLabel", font: Any,
-                            xy: tuple[Any, ...], anchor: str) -> tuple[Any, ...] | None:
+    def _record_label_blits(self, image: Image.Image, label: "ComposedKeyLabel", font: "ImageFont.FreeTypeFont",
+                            xy: tuple[float, float], anchor: str) -> "tuple[tuple[object, ...], ...] | None":
         """Run draw.text() against a throwaway target whose draw core only
         records the mask blits, and return them. None means not recordable,
         so the caller draws directly.
@@ -913,14 +929,14 @@ class LayoutManager:
         # object, the same backing source image and the same layout geometry;
         # an in-place re-decode swaps the source image. One tuple, so a
         # concurrent update swaps it atomically.
-        self._fg_cache: tuple[Any, ...] | None = None
+        self._fg_cache: "tuple[object, tuple[object, ...], Image.Image] | None" = None
 
     def clear(self) -> None:
         self.action_layout = ImageLayout()
         self.page_layout = ImageLayout()
         self._fg_cache = None
 
-    def get_use_page_layout_properties(self) -> dict[str, Any]:
+    def get_use_page_layout_properties(self) -> dict[str, bool]:
         return {
             "valign": self.page_layout.valign is not None,
             "halign": self.page_layout.halign is not None,
@@ -981,7 +997,7 @@ class LayoutManager:
             self.controller_input.deck_controller, self.controller_input.identifier,
             self.controller_input.state, "layout")
 
-    def add_image_to_background(self, image: Image.Image | None, background: Image.Image, cache_token: Any = None) -> Image.Image:
+    def add_image_to_background(self, image: Image.Image | None, background: Image.Image, cache_token: object = None) -> Image.Image:
         if image is None:
             return background
         layout = self.get_composed_layout()

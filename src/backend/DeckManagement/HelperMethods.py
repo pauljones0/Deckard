@@ -23,7 +23,7 @@ import sys
 import math
 import re
 import threading
-from typing import cast, TYPE_CHECKING, Any, TypeVar
+from typing import Concatenate, ParamSpec, TYPE_CHECKING, Any, TypeVar, cast
 from urllib.parse import urlparse
 from loguru import logger as log
 from PIL import Image
@@ -42,6 +42,8 @@ from src.backend.DeckManagement import font_resolver
 
 # The decorated method's return type, so instance_cache keeps its signature.
 _Return = TypeVar("_Return")
+_Params = ParamSpec("_Params")
+_Self = TypeVar("_Self")
 
 # Import globals
 from autostart import is_flatpak
@@ -88,7 +90,7 @@ def file_in_dir(file_path: str, directory: str) -> bool | None:
     return os.path.split(file_path)[1] in os.listdir(directory)
 
 
-def recursive_hasattr(obj: Any, attr_string: str) -> bool:
+def recursive_hasattr(obj: object, attr_string: str) -> bool:
     """
     Check if an attribute exists in an object.
 
@@ -140,7 +142,7 @@ def get_sys_param_value(param_name: str) -> str | None:
     return None
 
 
-def get_sys_args_without_param(param_name: str) -> list[Any]:
+def get_sys_args_without_param(param_name: str) -> list[str]:
     """sys.argv minus every argument starting with param_name, and the value
     after it.
 
@@ -244,7 +246,7 @@ def download_file(url: str, path: str = "", file_name: str | None = None) -> str
 
     return path
 
-def natural_keys(s: str) -> "list[Any]":
+def natural_keys(s: str) -> "list[int | str]":
     # The elements alternate text and digit runs; two keys only compare
     # int against int at an index when both names carry digits there.
     return [int(text) if text.isdigit() else text.lower() for text in re.split('([0-9]+)', s)]
@@ -275,7 +277,7 @@ def add_default_keys(d: dict[str, Any], keys: list[Any]) -> None:
         current_level = current_level[key]
 
 
-def instance_cache(func: Callable[..., _Return]) -> Callable[..., _Return]:
+def instance_cache(func: Callable[Concatenate[_Self, _Params], _Return]) -> Callable[Concatenate[_Self, _Params], _Return]:
     """Per-instance method memoization.
 
     Results live in the instance __dict__ and die with the instance. The key
@@ -285,14 +287,23 @@ def instance_cache(func: Callable[..., _Return]) -> Callable[..., _Return]:
     attr = f"_instance_cache_{func.__name__}"
 
     @wraps(func)
-    def wrapper(self: Any, *args: Any) -> _Return:
-        cache = self.__dict__.get(attr)
+    # self is positional-only: the declared return type takes its first
+    # parameter positionally, and a named self would not assign to it.
+    def wrapper(self: _Self, /, *args: _Params.args, **kwargs: _Params.kwargs) -> _Return:
+        if kwargs:
+            # The cache key is the positional args only. A keyword call would
+            # miss or alias a key, so it stays unsupported, as the
+            # positional-only key always made it.
+            raise TypeError(f"{func.__name__} is instance-cached; pass arguments positionally")
+        # The dict lives in the instance __dict__; the annotation states what
+        # this decorator stores in it.
+        cache: dict[tuple[object, ...], _Return] | None = self.__dict__.get(attr)
         if cache is None:
             cache = self.__dict__[attr] = {}
         if args not in cache:
-            cache[args] = func(self, *args)
-        # The cache is a plain dict on the instance, so the read is Any.
-        return cast(_Return, cache[args])
+            # kwargs is empty here, per the guard above.
+            cache[args] = func(self, *args, **kwargs)
+        return cache[args]
 
     return wrapper
 

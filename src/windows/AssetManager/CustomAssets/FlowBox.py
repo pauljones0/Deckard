@@ -33,12 +33,12 @@ from src.windows.AssetManager.CustomAssets.AssetPreview import AssetPreview
 from src.windows.AssetManager.DynamicFlowBox import DynamicFlowBox
 
 # Import typing
-from typing import Any, Callable, TYPE_CHECKING, cast
+from typing import Any, Callable, TYPE_CHECKING
 if TYPE_CHECKING:
     from src.windows.AssetManager.CustomAssets.Chooser import CustomAssetChooser
 
 
-class CustomAssetChooserFlowBox(DynamicFlowBox):
+class CustomAssetChooserFlowBox(DynamicFlowBox[AssetPreview, dict[str, Any]]):
     def __init__(self, asset_chooser: "CustomAssetChooser", *args: Any, **kwargs: Any) -> None:
         super().__init__(AssetPreview, *args, **kwargs)
         self.set_hexpand(True)
@@ -71,10 +71,10 @@ class CustomAssetChooserFlowBox(DynamicFlowBox):
     def select_asset(self, path: str) -> None:
         self.selected_asset = path
 
-    def preview_factory(self, preview: Gtk.Widget, asset: dict[str, Any]) -> None:
-        # The recycler builds its whole pool from base_class, which this box
-        # sets to AssetPreview, so every widget that reaches here is one.
-        asset_preview = cast(AssetPreview, preview)
+    def preview_factory(self, preview: AssetPreview, asset: dict[str, Any]) -> None:
+        # The recycler pools base_class instances, which this box sets to
+        # AssetPreview, and the generic base delivers them as themselves.
+        asset_preview = preview
         asset_preview.set_asset(self, asset)
         if self.selected_asset == asset.get("internal-path"):
             self.flow_box.select_child(asset_preview)

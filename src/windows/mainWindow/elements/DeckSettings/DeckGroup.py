@@ -19,7 +19,7 @@ import gi
 from GtkHelper.GtkHelper import better_disconnect
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Gtk, Adw, GLib
+from gi.repository import Gtk, Adw, GLib, GObject
 
 # Import Python modules
 
@@ -28,7 +28,8 @@ from src.backend import services
 
 import globals as gl
 
-from typing import Any, TYPE_CHECKING
+from collections.abc import Callable
+from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     # A runtime import cycles, because DeckSettingsPage imports this module.
     from src.windows.mainWindow.elements.DeckSettings.DeckSettingsPage import DeckSettingsPage
@@ -53,7 +54,7 @@ class DeckGroup(Adw.PreferencesGroup):
 
 
 class Rotation(Adw.PreferencesRow):
-    def __init__(self, settings_page: "DeckSettingsPage", deck_serial_number: str, **kwargs: Any) -> None:
+    def __init__(self, settings_page: "DeckSettingsPage", deck_serial_number: str) -> None:
         super().__init__()
         self.settings_page = settings_page
         self.deck_serial_number = deck_serial_number
@@ -88,7 +89,7 @@ class Rotation(Adw.PreferencesRow):
 
         self.toggle_group.connect("notify::active", self.on_value_changed)
 
-    def on_value_changed(self, _: Any, __: Any) -> None:
+    def on_value_changed(self, _: Adw.ToggleGroup, __: GObject.ParamSpec) -> None:
         GLib.idle_add(self.on_value_changed_idle)
 
     def on_value_changed_idle(self) -> None:
@@ -105,7 +106,7 @@ class Rotation(Adw.PreferencesRow):
 
         self.settings_page.deck_controller.set_rotation(rot)
 
-    def load_default(self, *args: Any) -> None:
+    def load_default(self, *args: object) -> None:
         # Pass the handler, not the signal name. better_disconnect takes the
         # callable and accepts a miss without a word, so a name here leaves
         # the handler connected. set_active_name below then saves and applies
@@ -119,7 +120,7 @@ class Rotation(Adw.PreferencesRow):
 
 
 class Brightness(Adw.PreferencesRow):
-    def __init__(self, settings_page: "DeckSettingsPage", deck_serial_number: str, **kwargs: Any) -> None:
+    def __init__(self, settings_page: "DeckSettingsPage", deck_serial_number: str) -> None:
         super().__init__()
         self.settings_page = settings_page
         self.deck_serial_number = deck_serial_number
@@ -128,7 +129,7 @@ class Brightness(Adw.PreferencesRow):
         """
         To save performance and memory, we only load the thumbnail when the user sees the row
         """
-        self.on_map_tasks: list[Any] = []
+        self.on_map_tasks: list[Callable[[], None]] = []
         self.connect("map", self.on_map)
 
         # One handler, always: load_default defers itself at construction (an
@@ -202,13 +203,13 @@ class Saturation(Adw.PreferencesRow):
     # DeckController.set_display_saturation, which enhances the static media at
     # once and rebuilds the video cache under the cache filename of the new
     # factor at the next playthrough.
-    def __init__(self, settings_page: "DeckSettingsPage", deck_serial_number: str, **kwargs: Any) -> None:
+    def __init__(self, settings_page: "DeckSettingsPage", deck_serial_number: str) -> None:
         super().__init__()
         self.settings_page = settings_page
         self.deck_serial_number = deck_serial_number
         self.build()
 
-        self.on_map_tasks: list[Any] = []
+        self.on_map_tasks: list[Callable[[], None]] = []
         self.connect("map", self.on_map)
 
         # The pending id of the trailing debounce below, None between runs.
@@ -269,7 +270,7 @@ class Saturation(Adw.PreferencesRow):
 
 
 class Screensaver(Adw.PreferencesRow):
-    def __init__(self, settings_page: "DeckSettingsPage", deck_serial_number: str, **kwargs: Any) -> None:
+    def __init__(self, settings_page: "DeckSettingsPage", deck_serial_number: str) -> None:
         super().__init__()
         self.settings_page = settings_page
         self.deck_serial_number = deck_serial_number
@@ -278,7 +279,7 @@ class Screensaver(Adw.PreferencesRow):
         """
         To save performance and memory, we only load the thumbnail when the user sees the row
         """
-        self.on_map_tasks: list[Any] = []
+        self.on_map_tasks: list[Callable[[], None]] = []
         self.connect("map", self.on_map)
 
         self.load_defaults()

@@ -20,10 +20,9 @@ from gi.repository import Adw, Gtk
 import globals as gl
 
 from collections.abc import Callable
-from typing import Any
 
 class ResponsibleNotesDialog(Adw.MessageDialog):
-    def __init__(self, parent: Gtk.Window | None, callback: Callable[..., Any] | None = None) -> None:
+    def __init__(self, parent: Gtk.Window | None, callback: "Callable[[bool], object] | None" = None) -> None:
         self.callback = callback
 
         super().__init__(

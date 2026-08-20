@@ -35,7 +35,7 @@ from src.backend.DeckManagement.Subclasses.SingleKeyAsset import SingleKeyAsset
 from src.backend.DeckManagement.Subclasses.mp4_tile_cache import get_video_md5
 
 from collections.abc import Generator
-from typing import Any, TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, cast
 if TYPE_CHECKING:
     from src.backend.DeckManagement.deck_controller.controller import DeckController
     from src.backend.DeckManagement.deck_controller.inputs import ControllerKey
@@ -385,7 +385,7 @@ class GifBackground:
         # (frame index, entries) of the last cropped frame. Most ticks land
         # on the frame already cut, because a 10fps GIF under a 30Hz tick
         # re-uses each crop set about 3 times. The caller always gets copies.
-        self._tiles_memo: tuple[Any, ...] = (None, None)
+        self._tiles_memo: "tuple[int | None, list[Image.Image] | None]" = (None, None)
 
     def _pick_frame(self, now: float | None = None) -> int:
         """Wall-clock frame index for now, from a bisect over the cumulative
@@ -422,7 +422,7 @@ class GifBackground:
         self.active_frame = frame
         return frame
 
-    def get_next_tiles(self) -> "tuple[list[Image.Image], tuple[Any, ...] | None]":
+    def get_next_tiles(self) -> "tuple[list[Image.Image], tuple[str, int] | None]":
         """(entries, identity) for the frame this tick lands on, per the
         BackgroundVideo.get_next_tiles contract: key tiles, plus the strip
         slice as one extra entry when extended. identity is (md5, frame
@@ -736,7 +736,7 @@ class KeyGIF(SingleKeyAsset):
             delays = probe_gif_timeline(self.gif_path).frame_delays
         self._adopt_timeline(delays)
 
-    def _source_index(self, cache: Any, index: int) -> int:
+    def _source_index(self, cache: "mp4_tile_cache.KeyVideoCache", index: int) -> int:
         """Map a timeline frame index to the reader's frame index. The cache
         is written frame-for-frame from the PIL walk, so this is usually the
         identity. The reader's count moves at runtime, because a promoted
@@ -747,7 +747,7 @@ class KeyGIF(SingleKeyAsset):
         n_timeline = len(self._cum_delays)
         if n_video <= 0 or n_timeline <= 0 or n_video == n_timeline:
             return index
-        return cast(int, min(n_video - 1, index * n_video // n_timeline))
+        return min(n_video - 1, index * n_video // n_timeline)
 
     def _video_frame(self, index: int) -> Image.Image | None:
         """One frame off the shared tile cache. Check then hold, as
@@ -762,7 +762,7 @@ class KeyGIF(SingleKeyAsset):
             cache: mp4_tile_cache.KeyVideoCache | None = self.video_cache
             if cache is None:
                 return None
-            return cast("Image.Image | None", cache.get_frame(self._source_index(cache, index)))
+            return cache.get_frame(self._source_index(cache, index))
 
     def _frame_at(self, index: int) -> Image.Image | None:
         """The payload for a picked timeline index, from whichever route

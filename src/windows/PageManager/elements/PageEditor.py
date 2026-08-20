@@ -214,7 +214,7 @@ class NameGroup(PageEditorGroup):
 
         self.set_sensitive(is_user_page)
 
-    def on_name_changed(self, entry: Adw.EntryRow, *args: Any) -> None:
+    def on_name_changed(self, entry: Adw.EntryRow, *args: object) -> None:
         active_page_path = self.page_editor.active_page_path
         if active_page_path is None or gl.page_manager is None:
             return
@@ -232,7 +232,7 @@ class NameGroup(PageEditorGroup):
             entry.remove_css_class("error")
             entry.set_show_apply_button(True)
 
-    def on_name_change_applied(self, entry: Adw.EntryRow, *args: Any) -> None:
+    def on_name_change_applied(self, entry: Adw.EntryRow, *args: object) -> None:
         original_path = self.page_editor.active_page_path
         if original_path is None:
             return
@@ -331,19 +331,19 @@ class AutoChangeGroup(PageEditorGroup):
         self.title_entry.set_text(auto_change.get("title", ""))
         self.deck_selector.set_selected_deck_serials(auto_change.get("decks", []).copy())
 
-    def on_enable_changed(self, *args: Any) -> None:
+    def on_enable_changed(self, *args: object) -> None:
         services.require_page_manager().overwrite_auto_change_settings(
             path=self.page_editor.require_active_page_path(),
             enable=self.enable_toggle.get_active()
         )
 
-    def on_stay_on_page_changed(self, *args: Any) -> None:
+    def on_stay_on_page_changed(self, *args: object) -> None:
         services.require_page_manager().overwrite_auto_change_settings(
             path=self.page_editor.require_active_page_path(),
             stay_on_page=self.stay_on_page_toggle.get_active()
         )
 
-    def on_title_entry_applied(self, *args: Any) -> None:
+    def on_title_entry_applied(self, *args: object) -> None:
         self.matching_window_expander.update_matching_windows()
 
         services.require_page_manager().overwrite_auto_change_settings(
@@ -351,7 +351,7 @@ class AutoChangeGroup(PageEditorGroup):
             regex_title=self.title_entry.get_text()
         )
 
-    def on_wm_class_entry_applied(self, *args: Any) -> None:
+    def on_wm_class_entry_applied(self, *args: object) -> None:
         self.matching_window_expander.update_matching_windows()
 
         services.require_page_manager().overwrite_auto_change_settings(
@@ -410,14 +410,14 @@ class BrightnessGroup(PageEditorGroup):
 
         self.brightness_scale.set_value(settings.get("value", 75))
 
-    def on_enable_changed(self, *args: Any) -> None:
+    def on_enable_changed(self, *args: object) -> None:
         services.require_page_manager().overwrite_brightness_settings(
             path=self.page_editor.require_active_page_path(),
             overwrite=self.enable_expander.get_enable_expansion()
         )
         self.update_brightness()
 
-    def on_brightness_changed(self, *args: Any) -> None:
+    def on_brightness_changed(self, *args: object) -> None:
         services.require_page_manager().overwrite_brightness_settings(
             path=self.page_editor.require_active_page_path(),
             brightness=self.brightness_scale.get_value()
@@ -514,42 +514,42 @@ class BackgroundGroup(PageEditorGroup):
         self.extend_touchscreen_toggle.set_active(background_settings.get("extend-to-touchscreen", False))
         self.set_thumbnail(background_settings.get("media-path", None))
 
-    def on_enable_changed(self, *args: Any) -> None:
+    def on_enable_changed(self, *args: object) -> None:
         services.require_page_manager().overwrite_background_settings(
             path=self.page_editor.require_active_page_path(),
             overwrite=self.enable_expander.get_enable_expansion()
         )
         self.update_background()
 
-    def on_show_background_changed(self, *args: Any) -> None:
+    def on_show_background_changed(self, *args: object) -> None:
         services.require_page_manager().overwrite_background_settings(
             path=self.page_editor.require_active_page_path(),
             show=self.show_background_toggle.get_active()
         )
         self.update_background()
 
-    def on_loop_changed(self, *args: Any) -> None:
+    def on_loop_changed(self, *args: object) -> None:
         services.require_page_manager().overwrite_background_settings(
             path=self.page_editor.require_active_page_path(),
             loop=self.loop_toggle.get_active()
         )
         self.update_background()
 
-    def on_fps_changed(self, *args: Any) -> None:
+    def on_fps_changed(self, *args: object) -> None:
         services.require_page_manager().overwrite_background_settings(
             path=self.page_editor.require_active_page_path(),
             fps=int(self.fps_spin.get_value())
         )
         self.update_background()
 
-    def on_extend_touchscreen_changed(self, *args: Any) -> None:
+    def on_extend_touchscreen_changed(self, *args: object) -> None:
         services.require_page_manager().overwrite_background_settings(
             path=self.page_editor.require_active_page_path(),
             extend_to_touchscreen=self.extend_touchscreen_toggle.get_active()
         )
         self.update_background()
 
-    def on_media_selector_click(self, *args: Any) -> None:
+    def on_media_selector_click(self, *args: object) -> None:
         background_settings = services.require_page_manager().get_background_settings(self.page_editor.active_page_path)
 
         services.require_app().let_user_select_asset(default_path=background_settings.get("media-path", ""), callback_func=self.update_image)
@@ -682,49 +682,49 @@ class ScreensaverGroup(PageEditorGroup):
 
         self.set_thumbnail(screensaver_settings.get("media-path", None))
 
-    def on_overwrite_changed(self, *args: Any) -> None:
+    def on_overwrite_changed(self, *args: object) -> None:
         services.require_page_manager().overwrite_screensaver_settings(
             path=self.page_editor.require_active_page_path(),
             overwrite=self.overwrite_expander.get_enable_expansion()
         )
         self.update_screensaver()
 
-    def on_enable_changed(self, *args: Any) -> None:
+    def on_enable_changed(self, *args: object) -> None:
         services.require_page_manager().overwrite_screensaver_settings(
             path=self.page_editor.require_active_page_path(),
             enable=self.enable_screensaver_toggle.get_active()
         )
         self.update_screensaver()
 
-    def on_delay_changed(self, *args: Any) -> None:
+    def on_delay_changed(self, *args: object) -> None:
         services.require_page_manager().overwrite_screensaver_settings(
             path=self.page_editor.require_active_page_path(),
             time_delay=int(self.delay_spin.get_value())
         )
         self.update_screensaver()
 
-    def on_loop_changed(self, *args: Any) -> None:
+    def on_loop_changed(self, *args: object) -> None:
         services.require_page_manager().overwrite_screensaver_settings(
             path=self.page_editor.require_active_page_path(),
             loop=self.loop_toggle.get_active()
         )
         self.update_screensaver()
 
-    def on_fps_changed(self, *args: Any) -> None:
+    def on_fps_changed(self, *args: object) -> None:
         services.require_page_manager().overwrite_screensaver_settings(
             path=self.page_editor.require_active_page_path(),
             fps=int(self.fps_spin.get_value())
         )
         self.update_screensaver()
 
-    def on_brightness_changed(self, *args: Any) -> None:
+    def on_brightness_changed(self, *args: object) -> None:
         services.require_page_manager().overwrite_screensaver_settings(
             path=self.page_editor.require_active_page_path(),
             brightness=self.brightness_scale.get_value()
         )
         self.update_screensaver()
 
-    def on_media_selector_click(self, *args: Any) -> None:
+    def on_media_selector_click(self, *args: object) -> None:
         screensaver_settings = services.require_page_manager().get_screensaver_settings(self.page_editor.active_page_path)
 
         services.require_app().let_user_select_asset(default_path=screensaver_settings.get("media-path", ""), callback_func=self.update_image)
@@ -789,7 +789,7 @@ class MatchingWindowExpander(BetterExpander):
         for window in windows:
             self.add_row(Adw.ActionRow(title=window.title, subtitle=window.wm_class, use_markup=False))
 
-    def update_matching_windows(self, *args: Any) -> None:
+    def update_matching_windows(self, *args: object) -> None:
         # Read the regexes here, on the main thread, because they come from
         # widgets. The query itself must not run here. A window listing calls
         # a subprocess once per window on most desktops, and the first call

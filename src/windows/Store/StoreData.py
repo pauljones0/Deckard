@@ -1,4 +1,5 @@
 from dataclasses import dataclass, field
+from typing import TypeVar
 from PIL import Image
 
 from loguru import logger as log
@@ -55,8 +56,19 @@ class StoreData:
     repository_name: str | None = None # Name of the Repository
     tags: list[str] | None = field(default_factory=list) # If the asset has a compatible version
     is_compatible: bool | None = None
+
+    @property
+    def asset_id(self) -> str | None:
+        # Each concrete class reads its own id field; see the naming note
+        # below the ImageData and LicenceData definitions.
+        raise NotImplementedError
     branch: str | None = None # Repo branch to install from; None = the repo default
     verified: bool = False
+
+# The concrete catalog dataclass one fetch pass builds; StoreBackend's
+# process_store_data narrows to it through its isinstance filter.
+StoreDataT = TypeVar("StoreDataT", bound=StoreData)
+
 
 @dataclass
 class ImageData:

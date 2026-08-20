@@ -17,6 +17,7 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
+from gi.repository import Gtk
 
 # Import own modules
 from src.windows.AssetManager.Preview import Preview
@@ -30,7 +31,7 @@ from loguru import logger as log
 import globals as gl
 
 # Import typing
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from src.backend.SDPlusBarWallpaperPackManagement.SDPlusBarWallpaper import SDPlusBarWallpaper
 
@@ -40,7 +41,7 @@ class SDPlusBarWallpaperPreview(Preview):
 
         self.wallpaper: "SDPlusBarWallpaper" = None  # type: ignore[assignment]  # late-init: set_wallpaper
 
-    def on_click_info(self, *args: Any) -> None:
+    def on_click_info(self, button: Gtk.Button) -> None:
         # The window that owns this preview nulls the slot as it closes, and a
         # recycled child can outlive that, so answer a closed window with a log
         # line rather than a traceback out of the click handler.

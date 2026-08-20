@@ -26,21 +26,25 @@ from src.windows.AssetManager.WallpaperPacks.Wallpapers.WallpaperPreview import 
 # Import python modules
 
 # Import typing
-from typing import cast, Any, TYPE_CHECKING
+from typing import TYPE_CHECKING
 if TYPE_CHECKING:
+    from src.windows.AssetManager.WallpaperPacks.Stack import WallpaperPackChooserStack
     from src.backend.WallpaperPackManagement.Wallpaper import Wallpaper
     from src.backend.WallpaperPackManagement.WallpaperPack import WallpaperPack
 
 
-class WallpaperChooserPage(GenericAssetChooserPage):
+class WallpaperChooserPage(GenericAssetChooserPage["WallpaperPack", "Wallpaper", WallpaperPreview, "WallpaperPackChooserStack"]):
+    # The concrete stack, restated so the quoted name in the base subscript
+    # has a checked in-file use.
+    stack: "WallpaperPackChooserStack"
     FLOW_BOX_CLASS = WallpaperFlowBox
     PREVIEW_CLASS = WallpaperPreview
 
-    def get_assets(self, pack: "WallpaperPack") -> list[Any]:
+    def get_assets(self, pack: "WallpaperPack") -> "list[Wallpaper]":
         return pack.get_wallpapers()
 
     def bind_preview(self, preview: WallpaperPreview, wallpaper: "Wallpaper") -> None:
         preview.set_wallpaper(wallpaper)
 
-    def get_child_asset(self, child: Any) -> "Wallpaper":
-        return cast("Wallpaper", child.wallpaper)
+    def get_child_asset(self, child: WallpaperPreview) -> "Wallpaper":
+        return child.wallpaper

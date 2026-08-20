@@ -13,7 +13,7 @@ import functools
 import threading
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
-from typing import Any, ParamSpec, TypeVar, cast
+from typing import Any, Generic, ParamSpec, TypeVar, TypedDict, cast
 
 from gi.repository import GLib
 
@@ -25,12 +25,19 @@ from loguru import logger as log
 _Params = ParamSpec("_Params")
 _Return = TypeVar("_Return")
 
+
+class _MarshalBox(TypedDict, Generic[_Return], total=False):
+    """What one marshalled call hands back across the thread boundary."""
+
+    result: _Return
+    exc: BaseException
+
 # How long a worker waits for the main loop to service its marshalled call.
 # Module-level (read at call time) so tests can shrink it.
 RUN_ON_MAIN_TIMEOUT_S = 30
 
 
-def run_on_main(func: Callable[..., _Return], *args: Any, **kwargs: Any) -> _Return:
+def run_on_main(func: Callable[_Params, _Return], *args: _Params.args, **kwargs: _Params.kwargs) -> _Return:
     """Run func on the GTK main loop and block until it returns. Runs inline
     on the main thread, because GTK4 accepts calls from that thread only.
 
@@ -44,7 +51,7 @@ def run_on_main(func: Callable[..., _Return], *args: Any, **kwargs: Any) -> _Ret
 
     done = threading.Event()
     # Holds the result under "result" and an escaped exception under "exc".
-    box: dict[str, Any] = {}
+    box: "_MarshalBox[_Return]" = {}
     state_lock = threading.Lock()
     # claimed means the idle callback committed to a run of func.
     # abandoned means the caller timed out and cancelled, and the callback
@@ -95,8 +102,10 @@ def run_on_main(func: Callable[..., _Return], *args: Any, **kwargs: Any) -> _Ret
             )
     if "exc" in box:
         raise box["exc"]
-    # The box is a plain dict, so the value comes back out as Any.
-    return cast(_Return, box.get("result"))
+    # A completed wait leaves exactly one of the two keys set, and the raise
+    # above took the exc path, so "result" is present; get() still answers
+    # None for the shape the checker sees, and the cast strips that.
+    return cast("_Return", box.get("result"))
 
 
 def on_main(func: Callable[_Params, _Return]) -> Callable[_Params, _Return]:
@@ -126,7 +135,7 @@ def _log_background_exception(future: "Future[Any]") -> None:
         log.opt(exception=exc).error("background task raised")
 
 
-def run_in_background(func: Callable[..., _Return], *args: Any, **kwargs: Any) -> "Future[_Return]":
+def run_in_background(func: Callable[_Params, _Return], *args: _Params.args, **kwargs: _Params.kwargs) -> "Future[_Return]":
     """Submit func to the background pool and return its Future. A .result()
     call on the GTK thread deadlocks when the work calls an on_main method."""
     future = _background_pool.submit(func, *args, **kwargs)

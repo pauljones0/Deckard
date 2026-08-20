@@ -20,13 +20,15 @@ gi.require_version("Adw", "1")
 
 # Import own modules
 from src.windows.AssetManager.DynamicFlowBox import DynamicFlowBox
+from src.backend.SDPlusBarWallpaperPackManagement.SDPlusBarWallpaper import SDPlusBarWallpaper
+from src.windows.AssetManager.SDPlusBarWallpaperPacks.SDPlusBarWallpaper.SDPlusBarWallpaperPreview import SDPlusBarWallpaperPreview
 
 # Import typing
 from typing import Any, TYPE_CHECKING
 if TYPE_CHECKING:
     from src.windows.AssetManager.SDPlusBarWallpaperPacks.SDPlusBarWallpaper.SDPlusBarWallpaperChooser import SDPlusBarWallpaperChooserPage
 
-class SDPlusBarWallpaperFlowBox(DynamicFlowBox):
+class SDPlusBarWallpaperFlowBox(DynamicFlowBox[SDPlusBarWallpaperPreview, SDPlusBarWallpaper]):
     def __init__(self, base_class: type, wallpaper_chooser: "SDPlusBarWallpaperChooserPage", *args: Any, **kwargs: Any) -> None:
         super().__init__(base_class, *args, **kwargs)
         self.CHILDREN_PER_PAGE = 150

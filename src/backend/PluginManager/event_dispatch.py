@@ -117,7 +117,7 @@ _monitor_started = False
 _shutdown = False
 
 
-def _observer_name(observer: Any) -> str:
+def _observer_name(observer: object) -> str:
     return getattr(observer, "__qualname__",
                    getattr(observer, "__name__", repr(observer)))
 

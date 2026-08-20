@@ -117,11 +117,11 @@ class IconSelector(Gtk.Box):
         self.image.set_visible(False)
         self.image.set_visible(True)
 
-    def on_hover_enter(self, *args: Any) -> None:
+    def on_hover_enter(self, *args: object) -> None:
         self.label.set_css_classes(["icon-selector-hint-label-visible"])
         self.image.add_css_class("icon-selector-image-hover")
 
-    def on_hover_leave(self, *args: Any) -> None:
+    def on_hover_leave(self, *args: object) -> None:
         self.label.set_css_classes(["icon-selector-hint-label-hidden"])
         self.image.remove_css_class("icon-selector-image-hover")
 
@@ -165,7 +165,7 @@ class IconSelector(Gtk.Box):
             return
         c_input.load_from_page(page)
 
-    def remove_media(self, *args: Any) -> None:
+    def remove_media(self, *args: object) -> None:
         self.set_media_callback(None)
 
     def has_image_to_remove(self) -> bool:

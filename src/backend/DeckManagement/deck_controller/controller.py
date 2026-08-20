@@ -53,7 +53,7 @@ from src.backend.DeckManagement.Subclasses import cache_budget
 from src.backend.DeckManagement.Subclasses.ScreenSaver import ScreenSaver
 from src.backend.DeckManagement.Subclasses.encoded_image_cache import EncodedImageCache
 from src.backend.DeckManagement.Subclasses.native_tile_cache import NativeTileCache, native_tile_cache_max_bytes
-from src.backend.DeckManagement.deck_controller.background_media import Background
+from src.backend.DeckManagement.deck_controller.background_media import Background, BackgroundVideo
 from src.backend.DeckManagement.deck_controller.inputs import ControllerDial, ControllerKey, ControllerTouchScreen
 from src.backend.DeckManagement.deck_controller.media_writer import (
     ClearAndCloseMsg,
@@ -74,9 +74,13 @@ from collections.abc import Sequence
 from typing import cast, TYPE_CHECKING, Any, overload
 if TYPE_CHECKING:
     from src.backend.DeckManagement.DeckManager import DeckManager
-    from src.backend.DeckManagement.deck_controller.background_media import BackgroundVideo
+    from src.backend.DeckManagement.deck_controller.gif_pipeline import GifBackground
     from src.backend.DeckManagement.deck_controller.inputs import ControllerInput
 
+
+# The hashable signature of a deck's native key image format: size,
+# format name, flip pair and rotation. Part of every native tile cache key.
+NativeKeyFormatSig = tuple[tuple[int, int], str, tuple[bool, bool], int]
 
 # Every input identifier class paired with the controller class that drives
 # it. init_inputs below and Page.load_action_objects both read the table at
@@ -107,7 +111,7 @@ class DeckController:
         self._serial_number: str | None = None
         self._key_image_size: tuple[int, int] | None = None
         self._touchscreen_image_size: tuple[int, int] | None = None
-        self._native_key_format_sig: tuple[Any, ...] | None = None
+        self._native_key_format_sig: "NativeKeyFormatSig | None" = None
 
         # Store the raw handle as self.deck so get_alive() returns True inside
         # get_deck_settings. The raw handle answers is_open() the same way the
@@ -201,7 +205,7 @@ class DeckController:
         # Serializes background loads on the pool. A superseded load must not
         # overwrite a newer page's background.
         self._background_load_lock = threading.Lock()
-        self._bg_future: Future[Any] | None = None
+        self._bg_future: "Future[None] | None" = None
 
         # Native encoded key image caches. Build them before the inputs and
         # the background, because the paint path dereferences both directly
@@ -466,7 +470,7 @@ class DeckController:
                 i.update()
         log.debug(f"Updating all inputs took {time.time() - start} seconds")
 
-    def _update_all_inputs_awaiting_background(self, bg_future: "Future[Any]", gen: "int | None" = None) -> None:
+    def _update_all_inputs_awaiting_background(self, bg_future: "Future[None] | None", gen: "int | None" = None) -> None:
         # This runs on the media thread. Skip at once when superseded, then
         # wait out the background decode under a bound, so the keys composite
         # over the new background. The wait blocks the sole writer, and it
@@ -616,26 +620,23 @@ class DeckController:
             # size returns as soon as the deck answers again.
             return (72, 72)
         size = self.deck.key_image_format()["size"]
-        if size is None:
-            size = (72, 72)
-        else:
-            size = max(size[0], 72), max(size[1], 72)
+        size = max(size[0], 72), max(size[1], 72)
         self._key_image_size = size
-        return cast(tuple[int, int], size)
+        return size
 
-    def native_key_format_sig(self) -> tuple[Any, ...]:
+    def native_key_format_sig(self) -> "NativeKeyFormatSig":
         """Hashable signature of the deck's native key image format. It is
         part of every native tile cache key, so bytes encoded for one device
         format can never be served for another. It is memoized because the
         driver's format is fixed for the life of the device. The user-facing
         rotation is not part of it; that lives on BetterDeck and keys
         separately."""
-        if self._native_key_format_sig is None:
+        sig = self._native_key_format_sig
+        if sig is None:
             fmt = self.deck.key_image_format()
-            self._native_key_format_sig = (
-                tuple(fmt["size"]), fmt["format"], tuple(fmt["flip"]), fmt["rotation"],
-            )
-        return self._native_key_format_sig
+            sig = (fmt["size"], fmt["format"], fmt["flip"], fmt["rotation"])
+            self._native_key_format_sig = sig
+        return sig
 
     def clear_encoded_key_caches(self) -> None:
         """Drop every cached native key image, both the pixel-hash encode
@@ -658,7 +659,7 @@ class DeckController:
         cache_budget.register(self.encode_memo, label=f"encode_memo:{serial}")
         cache_budget.register(self.native_tile_cache, label=f"native_tiles:{serial}")
 
-    def refresh_tile_cache_min_age(self, video: "BackgroundVideo | None" = None) -> None:
+    def refresh_tile_cache_min_age(self, video: "BackgroundVideo | GifBackground | None" = None) -> None:
         """Retune how long the native tile cache shields its entries from
         global eviction, to the duration of the background video now playing,
         clamped to DEFAULT_MIN_AGE_S..MAX_MIN_AGE_S. It returns to the
@@ -686,7 +687,10 @@ class DeckController:
         if video is not None:
             min_age = cache_budget.MAX_MIN_AGE_S
             try:
-                if video.is_cache_complete():
+                # The GIF provider has no completion probe; it stays at the
+                # clamp maximum, as its AttributeError under this try always
+                # left it.
+                if isinstance(video, BackgroundVideo) and video.is_cache_complete():
                     fps = float(video.get_source_fps() or getattr(video, "fps", 0) or 0)
                     frames = int(getattr(video, "n_frames", 0) or 0)
                     if fps > 0 and frames > 0:
@@ -706,12 +710,9 @@ class DeckController:
             # get_key_image_size. Callers unpack two ints and none None-checks.
             return (800, 100)
         size = self.deck.touchscreen_image_format()["size"]
-        if size is None:
-            size = (800, 100)
-        else:
-            size = max(size[0], 800), max(size[1], 100)
+        size = max(size[0], 800), max(size[1], 100)
         self._touchscreen_image_size = size
-        return cast(tuple[int, int], size)
+        return size
 
     # ------------ #
     # Page Loading #
@@ -1215,13 +1216,13 @@ class DeckController:
 
     # Callers pass an "XxY" string, which Coords_To_Index splits itself, or an
     # already-split pair as a list or a tuple.
-    def coords_to_index(self, coords: "str | Sequence[Any]") -> int:
+    def coords_to_index(self, coords: "str | Sequence[int] | Sequence[str]") -> int:
         return ControllerKey.Coords_To_Index(self.deck, coords)
 
     def index_to_coords(self, index: int) -> tuple[int, int]:
         return ControllerKey.Index_To_Coords(self.deck, index)
 
-    def get_key_by_coords(self, coords: "str | Sequence[Any]") -> "ControllerKey | None":
+    def get_key_by_coords(self, coords: "str | Sequence[int] | Sequence[str]") -> "ControllerKey | None":
         index = self.coords_to_index(coords)
         return self.get_key_by_index(index)
     

@@ -40,7 +40,21 @@ from src.Signals.Signals import Signal
 import globals as gl
 
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, TypedDict, cast
+# One stored label of this action, keyed by position. set_label writes every
+# key from the KeyLabel it builds; the hyphenated names force the functional
+# syntax.
+ActionLabel = TypedDict("ActionLabel", {
+    "text": "str | None",
+    "color": "list[int] | None",
+    "font-family": "str | None",
+    "font-size": "float | None",
+    "outline_width": "int | None",
+    "outline_color": "list[int] | None",
+    "font-weight": "int | None",
+    "font-style": "str | None",
+})
+
 
 from src.backend.PluginManager.PluginSettings.Asset import Color,Icon
 
@@ -52,6 +66,7 @@ if TYPE_CHECKING:
     # GenerativeUI imports Gtk at module scope, and ActionCore sits in the
     # import closure of the engine through DeckController and Page. The name
     # stays type-only here, and the isinstance below imports it lazily.
+    from src.backend.PageManagement.Page import ActionOutdated, NoActionHolderFound
     from GtkHelper.GenerativeUI.GenerativeUI import GenerativeUI
     from src.backend.PluginManager.PluginBase import PluginBase
     from src.backend.DeckManagement.deck_controller.controller import DeckController
@@ -76,7 +91,7 @@ class ActionCore(rpyc.Service):  # type: ignore[misc]  # rpyc.Service is unstubb
         self._backend_ready = threading.Event()
 
         # The (signal, callback) pairs of this action, disconnected on teardown.
-        self._connected_signals: list[tuple[Any, ...]] = []
+        self._connected_signals: "list[tuple[type[Signal], Callable[..., Any]]]" = []
 
         # An eviction reaches clean_up() from whichever thread calls get_page,
         # the USB monitor or the media thread, and the rpyc on_disconnect hook
@@ -106,7 +121,7 @@ class ActionCore(rpyc.Service):  # type: ignore[misc]  # rpyc.Service is unstubb
 
         self.put_custom_config_rows_below_gen_ui: bool = False
 
-        self.labels: dict[str, dict[str, Any]] = {}
+        self.labels: "dict[str, ActionLabel]" = {}
 
         self.event_manager = EventManager()
 
@@ -508,7 +523,7 @@ class ActionCore(rpyc.Service):  # type: ignore[misc]  # rpyc.Service is unstubb
         self.raise_error_if_not_ready()
 
         if not self.get_is_present(): return False
-        actions = self.page.action_objects.get(self.input_ident.input_type, {}).get(self.input_ident.json_identifier, [])
+        actions = self.page.action_objects.get(self.input_ident.input_type, {}).get(self.input_ident.json_identifier, {})
         return len(actions) > 1
 
     def get_asset_path(self, asset_name: str, subdirs: list[str] | None = None, asset_folder: str = "assets") -> str:
@@ -621,9 +636,9 @@ class ActionCore(rpyc.Service):  # type: ignore[misc]  # rpyc.Service is unstubb
 
     
     def get_event_assignments(self) -> dict[str, str | None]:
-        return cast(dict[str, str | None], self.page.get_action_event_assignments(
+        return self.page.get_action_event_assignments(
             action_object=self
-        ))
+        )
     
     def set_event_assignment(self, input_event: InputEvent | None, event_assigner: EventAssigner | None) -> None:
         self.page.set_action_event_assigment(
@@ -664,7 +679,7 @@ class ActionCore(rpyc.Service):  # type: ignore[misc]  # rpyc.Service is unstubb
     def get_generative_ui(self) -> "list[GenerativeUI[Any]]":
         return self.generative_ui_objects
 
-    def get_generative_ui_widgets(self) -> "list[Any]":
+    def get_generative_ui_widgets(self) -> "list[Gtk.Widget]":
         widgets = []
 
         for generative_object in self.generative_ui_objects:
@@ -703,7 +718,7 @@ class ActionCore(rpyc.Service):  # type: ignore[misc]  # rpyc.Service is unstubb
                                      authenticator=frontend_authenticator)
         threading.Thread(target=self.server.start, name="server_start", daemon=True).start()
 
-    def on_disconnect(self, conn: Any = None) -> None:
+    def on_disconnect(self, conn: "Connection | None" = None) -> None:
         # The rpyc disconnect hook. A dropped connection with a live process
         # orphans the backend, so the full teardown runs here too.
         self._release_backend_resources()
@@ -797,7 +812,7 @@ class ActionCore(rpyc.Service):  # type: ignore[misc]  # rpyc.Service is unstubb
         pass
 
     @staticmethod
-    def teardown(action: Any, hook_name: str = "on_removed_from_cache") -> None:
+    def teardown(action: "ActionCore | NoActionHolderFound | ActionOutdated | None", hook_name: str = "on_removed_from_cache") -> None:
         """Framework-owned teardown at a drop site.
 
         Call this, and not the hook alone, wherever an action leaves a live
@@ -916,7 +931,7 @@ class ActionCore(rpyc.Service):  # type: ignore[misc]  # rpyc.Service is unstubb
         ).start()
 
     @staticmethod
-    def _teardown_backend_resources(server: Any, connection: Any, process: "subprocess.Popen[bytes] | None") -> None:
+    def _teardown_backend_resources(server: "ThreadedServer | None", connection: "Connection | None", process: "subprocess.Popen[bytes] | None") -> None:
         # This runs on a worker thread. See clean_up. Each close and terminate
         # tolerates a failure, because a hung backend must not stop the app.
         if connection is not None:

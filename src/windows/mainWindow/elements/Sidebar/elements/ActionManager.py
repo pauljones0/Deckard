@@ -38,8 +38,13 @@ from src.backend.PageManagement.Page import NoActionHolderFound, ActionOutdated
 from src.windows.mainWindow.elements.Sidebar.elements.ActionMissing.MisingActionButtonRow import MissingActionButtonRow
 from src.windows.mainWindow.elements.Sidebar.elements.ActionMissing.OutdatedActionRow import OutdatedActionRow
 
-from typing import Any, TYPE_CHECKING
+from collections.abc import Collection
+from typing import Any, TYPE_CHECKING, TypeVar
+
+# The element a reorder moves; the helpers never inspect it.
+_ReorderT = TypeVar("_ReorderT")
 if TYPE_CHECKING:
+    from src.backend.PluginManager.ActionHolder import ActionHolder
     from src.windows.mainWindow.elements.Sidebar.Sidebar import Sidebar
 
 class ActionManager(Gtk.Box):
@@ -69,7 +74,7 @@ class ActionGroup(Adw.PreferencesGroup):
         self.sidebar = sidebar
         self.active_identifier: "InputIdentifier | None" = None
 
-        self.actions: "list[Any]" = []
+        self.actions: "list[ActionCore | NoActionHolderFound | ActionOutdated]" = []
 
         self.build()
 
@@ -98,7 +103,7 @@ class ActionExpanderRow(BetterExpander):
         self.add_action_button = AddActionButtonRow(self).button
         self.add_row(self.add_action_button)
 
-    def add_action_row(self, action_name: str, action_id: str, action_category: Any, action_object: Any, comment: str | None, index: int, total_rows: int, controls_image: bool = False, controls_labels: list[bool] | None = None, controls_background: bool = False) -> None:
+    def add_action_row(self, action_name: str, action_id: str, action_category: "str | None", action_object: "ActionCore", comment: str | None, index: int, total_rows: int, controls_image: bool = False, controls_labels: list[bool] | None = None, controls_background: bool = False) -> None:
         if controls_labels is None:
             controls_labels = [False, False, False]
 
@@ -122,7 +127,9 @@ class ActionExpanderRow(BetterExpander):
         actions = controller.active_page.action_objects.get(identifier.input_type, {}).get(identifier.json_identifier, {}).get(state, {})
         self.load_for_actions(actions.values())
 
-    def load_for_actions(self, actions: "list[ActionCore | NoActionHolderFound | ActionOutdated]") -> None:
+    def load_for_actions(self, actions: "Collection[ActionCore | NoActionHolderFound | ActionOutdated | None]") -> None:
+        # An empty (None) slot falls through every branch below, as it always
+        # did for the registry values this receives.
         # The two rows below key by the loaded state, which load_for_identifier
         # binds before it calls here.
         active_state = self.active_state
@@ -183,7 +190,7 @@ class ActionExpanderRow(BetterExpander):
         for i, row in enumerate(self.get_rows()):
             row.index = i
 
-    def reorder_index_after(self, lst: "list[Any]", move_index: int, after_index: int) -> "list[Any]":
+    def reorder_index_after(self, lst: "list[_ReorderT]", move_index: int, after_index: int) -> "list[_ReorderT]":
         if move_index < 0 or move_index >= len(lst):
             raise ValueError("Move index out of range.")
         
@@ -195,7 +202,7 @@ class ActionExpanderRow(BetterExpander):
         
         return lst
     
-    def reorder_action_objects(self, action_objects: "dict[int, Any]", move_index: int, after_index: int) -> "dict[int, Any]":
+    def reorder_action_objects(self, action_objects: "dict[int, _ReorderT]", move_index: int, after_index: int) -> "dict[int, _ReorderT]":
         objects = list(action_objects.values())
         reordered = self.reorder_index_after(objects, move_index, after_index)
 
@@ -373,7 +380,7 @@ class ActionRowLabelToggle(Gtk.Button):
 
 
 class ActionRow(Adw.ActionRow):
-    def __init__(self, action_name: str, action_id: str, action_category: Any, action_object: Any, sidebar: "Sidebar", comment: str | None, index: int, controls_image: bool, controls_labels: list[bool], controls_background: bool, total_rows: int, expander: ActionExpanderRow, **kwargs: Any) -> None:
+    def __init__(self, action_name: str, action_id: str, action_category: "str | None", action_object: "ActionCore", sidebar: "Sidebar", comment: str | None, index: int, controls_image: bool, controls_labels: list[bool], controls_background: bool, total_rows: int, expander: ActionExpanderRow, **kwargs: Any) -> None:
         super().__init__(**kwargs, css_classes=["no-padding"])
         self.action_name = action_name
         self.action_id = action_id
@@ -617,10 +624,10 @@ class ActionRow(Adw.ActionRow):
 
         self.add_controller(dnd_target)
 
-    def on_dnd_begin(self, drag_source: Gtk.DragSource, data: Any) -> None:
+    def on_dnd_begin(self, drag_source: Gtk.DragSource, data: Gdk.Drag) -> None:
         content = data.get_content()
 
-    def on_dnd_end(self, drag_source: Gtk.DragSource, data: Any, flag: bool) -> None:
+    def on_dnd_end(self, drag_source: Gtk.DragSource, data: Gdk.Drag, flag: bool) -> None:
         pass
 
     def on_dnd_prepare(self, drag_source: Gtk.DragSource, x: float, y: float) -> Gdk.ContentProvider:
@@ -665,8 +672,8 @@ class ActionRow(Adw.ActionRow):
         self.comment_label.set_label(comment)
 
 class AddActionButtonRow:
-    def __init__(self, expander: ActionExpanderRow, **kwargs: Any) -> None:
-        # super().__init__(**kwargs, css_classes=["no-padding"])
+    def __init__(self, expander: ActionExpanderRow) -> None:
+        # super().__init__(css_classes=["no-padding"])
         self.expander: ActionExpanderRow = expander
         self.button = Adw.ButtonRow(title=gl.lm.get("action-editor-add-new-action"), css_classes=["suggested-action", "add-action-button"])
         # self.button = Gtk.Button(hexpand=True, vexpand=True, overflow=Gtk.Overflow.HIDDEN,
@@ -685,7 +692,7 @@ class AddActionButtonRow:
             return
         self.expander.action_group.sidebar.let_user_select_action(callback_function=self.add_action, identifier=identifier)
 
-    def add_action(self, action_class: Any) -> None:
+    def add_action(self, action_class: "ActionHolder") -> None:
         log.trace(f"Adding action: {action_class}")
 
         # Gather data

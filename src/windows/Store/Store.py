@@ -60,7 +60,7 @@ class Store(Gtk.ApplicationWindow):
 
         self.connect("close-request", self.on_close)
 
-    def on_close(self, *args: Any, **kwargs: Any) -> None:
+    def on_close(self, *args: object, **kwargs: object) -> None:
         gl.store = None
 
     def build(self) -> None:
@@ -111,7 +111,7 @@ class Store(Gtk.ApplicationWindow):
         # Every child of this stack is a StorePage.
         cast("StorePage", self.main_stack.get_visible_child()).set_info_visible(False)
 
-    def on_switch(self, *args: Any) -> None:
+    def on_switch(self, *args: object) -> None:
         child = cast("StorePage", self.main_stack.get_visible_child())
         # StorePage._loaded guards the load, so this does nothing for a tab
         # that already loaded, which includes the first tab.

@@ -89,10 +89,10 @@ class Manager(Generic[AssetT]):
 
     # Observer
 
-    def add_listener(self, callback: Callable[..., Any]) -> None:
+    def add_listener(self, callback: "Callable[[ManagerEvent, str, AssetT | None], object]") -> None:
         self._observer.subscribe(callback)
 
-    def remove_listener(self, callback: Callable[..., Any]) -> None:
+    def remove_listener(self, callback: "Callable[[ManagerEvent, str, AssetT | None], object]") -> None:
         self._observer.unsubscribe(callback)
 
     # Save/Load
