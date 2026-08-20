@@ -24,22 +24,31 @@ from src.windows.AssetManager.Preview import Preview
 # Import python modules
 import os
 
+from loguru import logger as log
+
 # Import globals
 import globals as gl
 
 # Import typing
-from typing import TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 if TYPE_CHECKING:
     from src.backend.SDPlusBarWallpaperPackManagement.SDPlusBarWallpaper import SDPlusBarWallpaper
 
 class SDPlusBarWallpaperPreview(Preview):
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
 
-        self.wallpaper: "SDPlusBarWallpaper" = None
+        self.wallpaper: "SDPlusBarWallpaper" = None  # type: ignore[assignment]  # late-init: set_wallpaper
 
-    def on_click_info(self, *args):
-        gl.app.asset_manager.show_info(
+    def on_click_info(self, *args: Any) -> None:
+        # The window that owns this preview nulls the slot as it closes, and a
+        # recycled child can outlive that, so answer a closed window with a log
+        # line rather than a traceback out of the click handler.
+        asset_manager = gl.app.asset_manager if gl.app is not None else None
+        if asset_manager is None:
+            log.error("The asset manager window is gone; cannot show asset info")
+            return
+        asset_manager.show_info(
             internal_path = self.wallpaper.path,
             licence_name = self.wallpaper.get_attribution().get("license"),
             license_url = self.wallpaper.get_attribution().get("license-url"),

@@ -23,15 +23,16 @@ from gi.repository import Gtk, Adw
 # Import globals
 import globals as gl
 
-from typing import TYPE_CHECKING
+from typing import cast, Any, TYPE_CHECKING
 if TYPE_CHECKING:
+    from src.backend.DeckManagement.Subclasses.FakeDeck import FakeDeck
     # A runtime import cycles, because DeckSettingsPage imports this module.
     from src.windows.mainWindow.elements.DeckSettings.DeckSettingsPage import DeckSettingsPage
 
 # Import own modules
 
 class FakeDeckGroup(Adw.PreferencesGroup):
-    def __init__(self, settings_page):
+    def __init__(self, settings_page: "DeckSettingsPage") -> None:
         super().__init__(title=gl.lm.get("deck.fake-deck-group.title"), description=gl.lm.get("deck.fake-deck-group.description"))
         self.set_margin_top(50)
         self.deck_serial_number = settings_page.deck_serial_number
@@ -41,12 +42,12 @@ class FakeDeckGroup(Adw.PreferencesGroup):
         self.add(self.layout)
 
 class Layout(Adw.PreferencesRow):
-    def __init__(self, settings_page: "DeckSettingsPage", **kwargs):
+    def __init__(self, settings_page: "DeckSettingsPage", **kwargs: Any) -> None:
         super().__init__()
         self.settings_page = settings_page
         self.build()
 
-    def build(self):
+    def build(self) -> None:
         self.main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, hexpand=True,
                                 margin_start=15, margin_end=15, margin_top=15, margin_bottom=15)
         self.set_child(self.main_box)
@@ -74,32 +75,32 @@ class Layout(Adw.PreferencesRow):
         self.columns_spinner.connect("value-changed", self.on_change_columns)
         self.rows_spinner.connect("value-changed", self.on_change_rows)
 
-    def load_defaults(self):
+    def load_defaults(self) -> None:
         deck = self.settings_page.deck_controller.deck
         self.rows_spinner.set_value(deck.key_layout()[0])
         self.columns_spinner.set_value(deck.key_layout()[1])
 
-    def on_change_rows(self, widget):
+    def on_change_rows(self, widget: Gtk.SpinButton) -> None:
         rows = self.rows_spinner.get_value_as_int()
 
-        deck = self.settings_page.deck_controller.deck
+        deck = cast("FakeDeck", self.settings_page.deck_controller.deck.deck)
 
         deck.set_key_layout([rows, deck.key_layout()[1]])
 
-        self.settings_page.deck_controller.init_keys()
+        self.settings_page.deck_controller.init_inputs()
 
         grid = self.settings_page.deck_stack_child.page_settings.grid_page
         grid.regenerate_buttons()
         grid.build()
 
-    def on_change_columns(self, widget):
+    def on_change_columns(self, widget: Gtk.SpinButton) -> None:
         columns = self.columns_spinner.get_value_as_int()
 
-        deck = self.settings_page.deck_controller.deck
+        deck = cast("FakeDeck", self.settings_page.deck_controller.deck.deck)
 
         deck.set_key_layout([deck.key_layout()[0], columns])
 
-        self.settings_page.deck_controller.init_keys()
+        self.settings_page.deck_controller.init_inputs()
 
         grid = self.settings_page.deck_stack_child.page_settings.grid_page
         grid.regenerate_buttons()

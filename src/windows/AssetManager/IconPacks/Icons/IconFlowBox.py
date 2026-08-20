@@ -27,7 +27,7 @@ if TYPE_CHECKING:
     from src.windows.AssetManager.IconPacks.Icons.IconChooser import IconChooserPage
 
 class WallpaperFlowBox(DynamicFlowBox):
-    def __init__(self, base_class, icon_chooser: "IconChooserPage", *args, **kwargs):
+    def __init__(self, base_class: type, icon_chooser: "IconChooserPage", *args: Any, **kwargs: Any) -> None:
         super().__init__(base_class, *args, **kwargs)
         self.CHILDREN_PER_PAGE = 150
         self.set_hexpand(True)

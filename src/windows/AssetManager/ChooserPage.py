@@ -19,16 +19,18 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Gtk, Gdk, GLib
 
+from typing import Any
+
 import globals as gl
 
 class ChooserPage(Gtk.Stack):
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__(margin_start=15, margin_end=15, margin_top=15, margin_bottom=15)
         self._build()
 
         self.init_dnd()
 
-    def _build(self):
+    def _build(self) -> None:
         self.main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, hexpand=True, vexpand=True)
         self.add_titled(self.main_box, "main", "main")
 
@@ -87,27 +89,27 @@ class ChooserPage(Gtk.Stack):
             GLib.idle_add(self.set_visible_child_name, "main")
             GLib.idle_add(self.spinner.stop)
 
-    def init_dnd(self):
+    def init_dnd(self) -> None:
         self.dnd_target = Gtk.DropTarget.new(Gdk.FileList, Gdk.DragAction.COPY)
         self.dnd_target.connect("drop", self.on_dnd_drop)
         self.dnd_target.connect("accept", self.on_dnd_accept)
 
         self.main_box.add_controller(self.dnd_target)
 
-    def on_dnd_accept(self, drop, user_data):
+    def on_dnd_accept(self, drop: Gtk.DropTarget, user_data: Gdk.Drop) -> bool | None:
         pass
     
-    def on_dnd_drop(self, drop_target, value, x, y):
+    def on_dnd_drop(self, drop_target: Gtk.DropTarget, value: Any, x: float, y: float) -> bool | None:
         pass
 
-    def show_for_path(self, path, callback_func=None, *callback_args, **callback_kwargs):
+    def show_for_path(self, path: str) -> None:
         pass
 
-    def on_video_toggled(self, button):
+    def on_video_toggled(self, button: Gtk.ToggleButton) -> None:
         pass
 
-    def on_image_toggled(self, button):
+    def on_image_toggled(self, button: Gtk.ToggleButton) -> None:
         pass
 
-    def on_search_changed(self, entry):
+    def on_search_changed(self, entry: Gtk.SearchEntry) -> None:
         pass

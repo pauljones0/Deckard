@@ -14,15 +14,19 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 from gi.repository import Gtk, Adw
 
+from typing import Any, TYPE_CHECKING
+if TYPE_CHECKING:
+    from src.windows.Store.Preview import StorePreview
+
 from rapidfuzz import fuzz
 
 class StorePageSection(Gtk.Stack):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
 
         self.build()
 
-    def build(self):
+    def build(self) -> None:
         self.main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, hexpand=True)
         self.add_named(self.main_box, "main")
 
@@ -49,8 +53,6 @@ class StorePageSection(Gtk.Stack):
         self.scrolled_box.append(self.bottom_box)
 
         # Nothing here box
-        self.nothing_here = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, hexpand=True, vexpand=True,
-                                        halign=Gtk.Align.CENTER, valign=Gtk.Align.CENTER)
         self.nothing_here = Adw.StatusPage(
             title="Nothing here",
             icon_name="face-sad-symbolic"
@@ -59,18 +61,18 @@ class StorePageSection(Gtk.Stack):
 
         self.set_visible_child(self.nothing_here)
 
-    def append_child(self, item):
+    def append_child(self, item: "StorePreview") -> None:
         self.flow_box.append(item)
         self.set_visible_child(self.main_box)
 
-    def are_items_present(self):
+    def are_items_present(self) -> bool:
         return self.flow_box.get_first_child() is not None
 
-    def on_search_changed(self, search_entry):
+    def on_search_changed(self, search_entry: Gtk.SearchEntry) -> None:
         self.flow_box.invalidate_filter()
         self.flow_box.invalidate_sort()
 
-    def filter_func(self, item):
+    def filter_func(self, item: "StorePreview") -> bool:
         """
         Filters the given item based on the search string and their number of github stars.
 
@@ -99,16 +101,18 @@ class StorePageSection(Gtk.Stack):
 
         MIN_FUZZY_SCORE = 20
 
-        return (
+        # bool() for the CI checker, where rapidfuzz is uninstalled and its
+        # scores read as Any; the local venv sees this as bool already.
+        return bool(
                 name_score >= MIN_FUZZY_SCORE or
                 author_score >= MIN_FUZZY_SCORE or
                 description_score >= MIN_FUZZY_SCORE
         )
     
-    def sort_func(self, item_a, item_b):
+    def sort_func(self, item_a: "StorePreview", item_b: "StorePreview") -> int:
         search_string = self.search_entry.get_text().strip().lower()
 
-        def get_weighted_score(item):
+        def get_weighted_score(item: "StorePreview") -> float:
             name = item.name_label.get_text().lower()
             author = item.author_label.get_text().lower()
             description = item.description_label.get_text().lower()
@@ -118,7 +122,9 @@ class StorePageSection(Gtk.Stack):
             description_score = fuzz.ratio(search_string, description)
 
             # Adjust weights as desired
-            return (name_score * 0.7) + (author_score * 0.25) + (description_score * 0.05)
+            # float() for the same reason as the bool() in filter_func: the CI
+            # checker has no rapidfuzz, so its scores read as Any there.
+            return float((name_score * 0.7) + (author_score * 0.25) + (description_score * 0.05))
 
         if search_string == "":
             return (item_a.name_label.get_text() > item_b.name_label.get_text()) - \

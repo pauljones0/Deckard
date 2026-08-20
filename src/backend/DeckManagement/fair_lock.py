@@ -14,7 +14,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 """
 import threading
 import time
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
+
+if TYPE_CHECKING:
+    from types import TracebackType
 
 # FIFO ticket lock. It serves as the Stream Deck per-device transport mutex.
 # CPython's threading.Lock is unfair. A thread that releases and immediately
@@ -40,7 +43,7 @@ class FairLock:
 
     __slots__ = ("_cond", "_next_ticket", "_serving", "_abandoned")
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._cond = threading.Condition(threading.Lock())
         # acquire() hands out tickets from _next_ticket and serves them in
         # order. _serving != _next_ticket means a thread owns the lock.
@@ -48,7 +51,7 @@ class FairLock:
         self._serving = 0
         # Tickets whose waiter timed out. release() steps over them, so the
         # queue never stalls behind a ticket with no waiter.
-        self._abandoned = set()
+        self._abandoned: set[int] = set()
 
     def acquire(self, blocking: bool = True, timeout: float = -1) -> bool:
         with self._cond:
@@ -106,6 +109,7 @@ class FairLock:
     def __enter__(self) -> bool:
         return self.acquire()
 
-    def __exit__(self, exc_type, exc_value, traceback) -> Literal[False]:
+    def __exit__(self, exc_type: type[BaseException] | None, exc_value: BaseException | None,
+                 traceback: "TracebackType | None") -> Literal[False]:
         self.release()
         return False

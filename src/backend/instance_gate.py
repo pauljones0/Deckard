@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import time
 from enum import Enum
-from typing import Callable, Protocol
+from typing import cast, Callable, Protocol
 
 # This module imports gi, so it stays off the floor import list. Only main.py
 # and the scenarios that drive it consume it, and it runs in the one process
@@ -133,7 +133,7 @@ def name_has_owner(session_bus: Gio.DBusConnection, name: str) -> bool:
     This asks the bus daemon, and passes NO_AUTO_START, which keeps the probe
     a probe. A call addressed to a well-known name activates it over D-Bus.
     """
-    return session_bus.call_sync(
+    return cast(bool, session_bus.call_sync(
         "org.freedesktop.DBus",
         "/org/freedesktop/DBus",
         "org.freedesktop.DBus",
@@ -143,7 +143,7 @@ def name_has_owner(session_bus: Gio.DBusConnection, name: str) -> bool:
         Gio.DBusCallFlags.NO_AUTO_START,
         DBUS_CALL_TIMEOUT_MS,
         None
-    ).unpack()[0]
+    ).unpack()[0])
 
 
 def activate_action(session_bus: Gio.DBusConnection, name: str, object_path: str,

@@ -17,6 +17,12 @@ import gi
 
 from GtkHelper.GtkHelper import RevertButton
 from src.backend.DeckManagement.InputIdentifier import InputIdentifier, Input
+
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from gi.repository import GdkPixbuf
+    from src.windows.mainWindow.elements.Sidebar.Sidebar import Sidebar
+    from src.backend.PageManagement.Page import Page
 from src.backend.DeckManagement.HelperMethods import is_video
 from src.backend.DeckManagement.ImageHelpers import image2pixbuf
 
@@ -28,10 +34,13 @@ from gi.repository import Gtk, Adw, Gdk, GLib
 from loguru import logger as log
 
 # Import globals
+from src.backend import services
+
 import globals as gl
+from typing import Any, Protocol
 
 
-def build_preview_pixbuf(image_path: str | None):
+def build_preview_pixbuf(image_path: str | None) -> "GdkPixbuf.Pixbuf | None":
     """Pixbuf for paths Gtk.Picture cannot render directly (videos, via their
     thumbnail); None means set_filename can handle the path itself."""
     if image_path and is_video(image_path):
@@ -42,13 +51,37 @@ def build_preview_pixbuf(image_path: str | None):
     return None
 
 
+class _InputBoundRow(Protocol):
+    """What _page_and_input needs of a row: the input it currently edits."""
+
+    active_identifier: InputIdentifier | None
+    active_state: int | None
+
+
+def _page_and_input(row: _InputBoundRow) -> "tuple[Page, InputIdentifier, int] | None":
+    """The page and the input a row writes to, or None when there is no pair.
+
+    MainWindow.get_active_page answers None between the deck selection and
+    the first page load, which its own docstring calls the normal state, and
+    a row carries no identifier and no state until load_for_identifier binds
+    them. Every Page setter below keys its write by all three, and Page reads
+    identifier.input_type to build the dict path.
+    """
+    page = services.require_main_window().get_active_page()
+    identifier = row.active_identifier
+    state = row.active_state
+    if page is None or identifier is None or state is None:
+        return None
+    return page, identifier, state
+
+
 class BackgroundEditor(Gtk.Box):
-    def __init__(self, sidebar, **kwargs):
+    def __init__(self, sidebar: "Sidebar", **kwargs: Any) -> None:
         self.sidebar = sidebar
         super().__init__(**kwargs)
         self.build()
 
-    def build(self):
+    def build(self) -> None:
         self.clamp = Adw.Clamp()
         self.append(self.clamp)
 
@@ -58,28 +91,28 @@ class BackgroundEditor(Gtk.Box):
         self.background_group = BackgroundGroup(self.sidebar)
         self.main_box.append(self.background_group)
 
-    def load_for_identifier(self, identifier: InputIdentifier, state: int):
+    def load_for_identifier(self, identifier: InputIdentifier, state: int) -> None:
         self.background_group.load_for_identifier(identifier, state)
 
 
 class BackgroundGroup(Adw.PreferencesGroup):
-    def __init__(self, sidebar, **kwargs):
+    def __init__(self, sidebar: "Sidebar", **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.sidebar = sidebar
 
         self.build()
 
-    def build(self):
+    def build(self) -> None:
         self.expander = BackgroundExpanderRow(self)
         self.add(self.expander)
 
         return
 
-    def load_for_identifier(self, identifier: InputIdentifier, state: int):
+    def load_for_identifier(self, identifier: InputIdentifier, state: int) -> None:
         self.expander.load_for_identifier(identifier, state)
 
 class BackgroundExpanderRow(Adw.ExpanderRow):
-    def __init__(self, label_group):
+    def __init__(self, label_group: BackgroundGroup) -> None:
         super().__init__(title=gl.lm.get("background-editor.header"), subtitle=gl.lm.get("background-editor-expander.subtitle"))
         self.label_group = label_group
         # Unset until load_for_identifier binds a row to an input.
@@ -87,7 +120,7 @@ class BackgroundExpanderRow(Adw.ExpanderRow):
         self.active_state: int | None = None
         self.build()
 
-    def build(self):
+    def build(self) -> None:
         self.color_row = ColorRow(sidebar=self.label_group.sidebar, expander=self)
         self.add_row(self.color_row)
 
@@ -100,7 +133,7 @@ class BackgroundExpanderRow(Adw.ExpanderRow):
         self.video_fps_row = VideoFpsRow(sidebar=self.label_group.sidebar, expander=self)
         self.add_row(self.video_fps_row)
 
-    def load_for_identifier(self, identifier: InputIdentifier, state: int):
+    def load_for_identifier(self, identifier: InputIdentifier, state: int) -> None:
         self.active_identifier = identifier
         self.active_state = state
 
@@ -122,25 +155,32 @@ class BackgroundExpanderRow(Adw.ExpanderRow):
         # and plugin concern.
         show_loop = False
         show_fps = False
-        active_page = gl.app.main_win.get_active_page() if gl.app is not None else None
+        active_page = services.require_main_window().get_active_page()
         if active_page is None:
             return False
-        if isinstance(self.active_identifier, Input.Touchscreen):
-            path = active_page.get_background_image(identifier=self.active_identifier, state=self.active_state)
-            show_loop = show_fps = bool(path and is_video(path))
-        elif isinstance(self.active_identifier, (Input.Key, Input.Dial)):
-            path = active_page.get_media_path(identifier=self.active_identifier, state=self.active_state)
-            show_fps = bool(path and is_video(path) and not str(path).lower().endswith(".gif"))
+        identifier = self.active_identifier
+        state = self.active_state
+        # With no state selected neither branch runs and both rows hide, which
+        # is what the isinstance chain did before the state was checked here.
+        if state is not None and identifier is not None:
+            if isinstance(identifier, Input.Touchscreen):
+                path = active_page.get_background_image(identifier=identifier, state=state)
+                show_loop = show_fps = bool(path and is_video(path))
+            elif isinstance(identifier, (Input.Key, Input.Dial)):
+                path = active_page.get_media_path(identifier=identifier, state=state)
+                show_fps = bool(path and is_video(path) and not str(path).lower().endswith(".gif"))
         self.video_loop_row.set_visible(show_loop)
         self.video_fps_row.set_visible(show_fps)
-        if show_loop:
-            self.video_loop_row.load_for_identifier(self.active_identifier, self.active_state)
-        if show_fps:
-            self.video_fps_row.load_for_identifier(self.active_identifier, self.active_state)
+        # Neither flag can be true unless the block above ran, so the two
+        # extra checks only tell the checker what the flags already carry.
+        if show_loop and identifier is not None and state is not None:
+            self.video_loop_row.load_for_identifier(identifier, state)
+        if show_fps and identifier is not None and state is not None:
+            self.video_fps_row.load_for_identifier(identifier, state)
         return False  # usable directly as a GLib.idle_add callback
 
 class ColorRow(Adw.PreferencesRow):
-    def __init__(self, sidebar, expander: BackgroundExpanderRow, **kwargs):
+    def __init__(self, sidebar: "Sidebar", expander: BackgroundExpanderRow, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.sidebar = sidebar
         self.expander = expander
@@ -149,7 +189,7 @@ class ColorRow(Adw.PreferencesRow):
         self.active_state: int | None = None
         self.build()
 
-    def build(self):
+    def build(self) -> None:
         self.main_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, hexpand=True,
                                 margin_start=15, margin_end=15, margin_top=15, margin_bottom=15)
         self.set_child(self.main_box)
@@ -165,44 +205,52 @@ class ColorRow(Adw.PreferencesRow):
 
         self.connect_signals()
 
-    def connect_signals(self):
+    def connect_signals(self) -> None:
         self.button.button.connect("notify::rgba", self.on_change_color)
         self.button.revert_button.connect("clicked", self.on_revert)
 
-    def disconnect_signals(self):
+    def disconnect_signals(self) -> None:
         try:
             self.button.button.disconnect_by_func(self.on_change_color)
         except TypeError:
             # disconnect_by_func raises TypeError when nothing is connected.
             pass
 
-    def set_color(self, color_values: list):
+    def set_color(self, color_values: list[Any]) -> None:
         if len(color_values) == 3:
             color_values.append(255)
         color = Gdk.RGBA()
         color.parse(f"rgba({color_values[0]}, {color_values[1]}, {color_values[2]}, {color_values[3]/255})")
         self.button.button.set_rgba(color)
 
-    def on_change_color(self, *args):
+    def on_change_color(self, *args: Any) -> None:
+        target = _page_and_input(self)
+        if target is None:
+            return
+        active_page, identifier, state = target
         color = self.button.button.get_rgba()
         green = round(color.green * 255)
         blue = round(color.blue * 255)
         red = round(color.red * 255)
         alpha = round(color.alpha * 255)
 
-        active_page = gl.app.main_win.get_active_page()
-        active_page.set_background_color(identifier=self.active_identifier, state=self.active_state, color=[red, green, blue, alpha], update_ui=False)
+        active_page.set_background_color(identifier=identifier, state=state, color=[red, green, blue, alpha], update_ui=False)
 
         self.button.revert_button.set_visible(True)
 
-    def on_revert(self, *args):
+    def on_revert(self, *args: Any) -> None:
+        # Ask before disconnecting. A return between the disconnect and the
+        # reconnect leaves the button silently unwired.
+        target = _page_and_input(self)
+        if target is None:
+            return
+        active_page, identifier, state = target
         self.disconnect_signals()
-        active_page = gl.app.main_win.get_active_page()
-        active_page.set_background_color(identifier=self.active_identifier, state=self.active_state, color=None, update_ui=True)
+        active_page.set_background_color(identifier=identifier, state=state, color=None, update_ui=True)
         self.button.revert_button.set_visible(False)
         self.connect_signals()
 
-    def load_for_identifier(self, identifier: InputIdentifier, state: int):
+    def load_for_identifier(self, identifier: InputIdentifier, state: int) -> None:
         self.disconnect_signals()
 
         if gl.app is None:
@@ -211,6 +259,8 @@ class ColorRow(Adw.PreferencesRow):
         self.active_state = state
 
         active_page = gl.app.main_win.get_active_page()
+        if active_page is None:
+            return
 
         c_input = active_page.deck_controller.get_input(identifier)
         if c_input is None:
@@ -232,7 +282,7 @@ class ColorRow(Adw.PreferencesRow):
         self.connect_signals()
 
 class ColorButton(Gtk.Box):
-    def __init__(self, color_row: ColorRow, **kwargs):
+    def __init__(self, color_row: ColorRow, **kwargs: Any) -> None:
         super().__init__(css_classes=["linked"], **kwargs)
         
         self.button = Gtk.ColorDialogButton()
@@ -241,38 +291,8 @@ class ColorButton(Gtk.Box):
         self.append(self.button)
         self.append(self.revert_button)
 
-class ResetColorButton(Adw.PreferencesRow):
-    def __init__(self, color_row: ColorRow, **kwargs):
-        super().__init__(**kwargs, css_classes=["no-padding", "reset-button"])
-        self.color_row: ColorRow = color_row
-
-        self.button = Gtk.Button(hexpand=True, vexpand=True, overflow=Gtk.Overflow.HIDDEN,
-                                 css_classes=["no-margin", "invisible"],
-                                 label=gl.lm.get("background-editor.color.reset"),
-                                 margin_bottom=5, margin_top=5)
-        self.button.connect("clicked", self.on_click)
-        self.set_child(self.button)
-
-    def on_click(self, button):
-        active_page = gl.app.main_win.get_active_page()
-        #TODO: Detatch signal from button
-        active_page.set_background_color(identifier=self.color_row.active_identifier, state=self.color_row.active_state, color=None, update_ui=True)
-
-    def update(self):
-        color = self.color_row.button.get_rgba()
-        green = round(color.green * 255)
-        blue = round(color.blue * 255)
-        red = round(color.red * 255)
-        alpha = round(color.alpha * 255)
-
-        # Only show button if color is not the default of [0, 0, 0, 0]
-        if [red, green, blue, alpha] == [0, 0, 0, 0]:
-            self.set_visible(False)
-        else:
-            self.set_visible(True)
-
 class VideoLoopRow(Adw.PreferencesRow):
-    def __init__(self, sidebar, expander: BackgroundExpanderRow, **kwargs):
+    def __init__(self, sidebar: "Sidebar", expander: BackgroundExpanderRow, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.sidebar = sidebar
         self.expander = expander
@@ -281,7 +301,7 @@ class VideoLoopRow(Adw.PreferencesRow):
         self.active_state: int | None = None
         self.build()
 
-    def build(self):
+    def build(self) -> None:
         self.main_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, hexpand=True,
                                 margin_start=15, margin_end=15, margin_top=15, margin_bottom=15)
         self.set_child(self.main_box)
@@ -294,21 +314,24 @@ class VideoLoopRow(Adw.PreferencesRow):
 
         self.connect_signals()
 
-    def connect_signals(self):
+    def connect_signals(self) -> None:
         self.switch.connect("notify::active", self.on_toggle)
 
-    def disconnect_signals(self):
+    def disconnect_signals(self) -> None:
         try:
             self.switch.disconnect_by_func(self.on_toggle)
         except TypeError:
             pass
 
-    def on_toggle(self, *args):
-        active_page = gl.app.main_win.get_active_page()
-        active_page.set_background_loop(identifier=self.active_identifier, state=self.active_state,
+    def on_toggle(self, *args: Any) -> None:
+        target = _page_and_input(self)
+        if target is None:
+            return
+        active_page, identifier, state = target
+        active_page.set_background_loop(identifier=identifier, state=state,
                                         loop=self.switch.get_active(), update=True)
 
-    def load_for_identifier(self, identifier: InputIdentifier, state: int):
+    def load_for_identifier(self, identifier: InputIdentifier, state: int) -> None:
         self.disconnect_signals()
         self.active_identifier = identifier
         self.active_state = state
@@ -322,7 +345,7 @@ class VideoLoopRow(Adw.PreferencesRow):
 
 
 class VideoFpsRow(Adw.PreferencesRow):
-    def __init__(self, sidebar, expander: BackgroundExpanderRow, **kwargs):
+    def __init__(self, sidebar: "Sidebar", expander: BackgroundExpanderRow, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.sidebar = sidebar
         self.expander = expander
@@ -331,7 +354,7 @@ class VideoFpsRow(Adw.PreferencesRow):
         self.active_state: int | None = None
         self.build()
 
-    def build(self):
+    def build(self) -> None:
         self.main_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, hexpand=True,
                                 margin_start=15, margin_end=15, margin_top=15, margin_bottom=15)
         self.set_child(self.main_box)
@@ -347,10 +370,10 @@ class VideoFpsRow(Adw.PreferencesRow):
 
         self.connect_signals()
 
-    def connect_signals(self):
+    def connect_signals(self) -> None:
         self.spinner.connect("value-changed", self.on_change)
 
-    def disconnect_signals(self):
+    def disconnect_signals(self) -> None:
         try:
             self.spinner.disconnect_by_func(self.on_change)
         except TypeError:
@@ -361,17 +384,20 @@ class VideoFpsRow(Adw.PreferencesRow):
         # background video.
         return isinstance(self.active_identifier, (Input.Key, Input.Dial))
 
-    def on_change(self, *args):
-        active_page = gl.app.main_win.get_active_page()
+    def on_change(self, *args: Any) -> None:
+        target = _page_and_input(self)
+        if target is None:
+            return
+        active_page, identifier, state = target
         fps = int(self.spinner.get_value())
         if self._uses_media_fps():
-            active_page.set_media_fps(identifier=self.active_identifier, state=self.active_state,
+            active_page.set_media_fps(identifier=identifier, state=state,
                                       fps=fps, update=True)
         else:
-            active_page.set_background_fps(identifier=self.active_identifier, state=self.active_state,
+            active_page.set_background_fps(identifier=identifier, state=state,
                                            fps=fps, update=True)
 
-    def load_for_identifier(self, identifier: InputIdentifier, state: int):
+    def load_for_identifier(self, identifier: InputIdentifier, state: int) -> None:
         self.disconnect_signals()
         self.active_identifier = identifier
         self.active_state = state
@@ -388,7 +414,7 @@ class VideoFpsRow(Adw.PreferencesRow):
 
 
 class ImageRow(Adw.PreferencesRow):
-    def __init__(self, sidebar, expander: BackgroundExpanderRow, **kwargs):
+    def __init__(self, sidebar: "Sidebar", expander: BackgroundExpanderRow, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.sidebar = sidebar
         self.expander = expander
@@ -397,7 +423,7 @@ class ImageRow(Adw.PreferencesRow):
         self.active_state: int | None = None
         self.build()
 
-    def build(self):
+    def build(self) -> None:
         self.main_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, hexpand=True,
                                 margin_start=15, margin_end=15, margin_top=15, margin_bottom=15,
                                 spacing=10)
@@ -431,18 +457,22 @@ class ImageRow(Adw.PreferencesRow):
         self.clear_button.set_visible(False)
         self.button_box.append(self.clear_button)
 
-    def on_select_image(self, button):
-        active_page = gl.app.main_win.get_active_page()
-        current_path = active_page.get_background_image(identifier=self.active_identifier, state=self.active_state)
-        gl.app.let_user_select_asset(default_path=current_path, callback_func=self.set_background_image)
+    def on_select_image(self, button: Gtk.Button) -> None:
+        target = _page_and_input(self)
+        if target is None:
+            return
+        active_page, identifier, state = target
+        current_path = active_page.get_background_image(identifier=identifier, state=state)
+        services.require_app().let_user_select_asset(default_path=current_path, callback_func=self.set_background_image)
 
     def set_background_image(self, file_path: str) -> None:
         if not file_path or gl.app is None:
             return
-        active_page = gl.app.main_win.get_active_page()
-        if active_page is None:
+        target = _page_and_input(self)
+        if target is None:
             return
-        active_page.set_background_image(identifier=self.active_identifier, state=self.active_state, path=file_path, update=True)
+        active_page, identifier, state = target
+        active_page.set_background_image(identifier=identifier, state=state, path=file_path, update=True)
         # This can run off the main thread, because the custom-assets chooser
         # delivers a selection on a callback thread, so a widget change must
         # marshal onto the GTK main loop.
@@ -450,20 +480,23 @@ class ImageRow(Adw.PreferencesRow):
         GLib.idle_add(self.expander.update_video_rows)
         self.update_preview(file_path)
 
-    def on_clear_image(self, button):
-        active_page = gl.app.main_win.get_active_page()
-        active_page.set_background_image(identifier=self.active_identifier, state=self.active_state, path=None, update=True)
+    def on_clear_image(self, button: Gtk.Button) -> None:
+        target = _page_and_input(self)
+        if target is None:
+            return
+        active_page, identifier, state = target
+        active_page.set_background_image(identifier=identifier, state=state, path=None, update=True)
         self.clear_button.set_visible(False)
         self.expander.update_video_rows()
         self.update_preview(None)
 
-    def update_preview(self, image_path: str | None):
+    def update_preview(self, image_path: str | None) -> None:
         # Safe from any thread. The thumbnail decode runs here, which can be
         # off the main thread, and the widget updates marshal onto the GTK
         # main loop.
         GLib.idle_add(self._apply_preview, image_path, build_preview_pixbuf(image_path))
 
-    def _apply_preview(self, image_path: str | None, pixbuf) -> bool:
+    def _apply_preview(self, image_path: str | None, pixbuf: "GdkPixbuf.Pixbuf | None") -> bool:
         if image_path:
             if pixbuf is not None:
                 self.preview.set_pixbuf(pixbuf)
@@ -475,7 +508,7 @@ class ImageRow(Adw.PreferencesRow):
             self.preview_frame.set_visible(False)
         return False
 
-    def load_for_identifier(self, identifier: InputIdentifier, state: int):
+    def load_for_identifier(self, identifier: InputIdentifier, state: int) -> None:
         self.active_identifier = identifier
         self.active_state = state
 

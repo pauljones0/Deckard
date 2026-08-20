@@ -14,29 +14,23 @@ class ActionHolderGroup:
         self._group_name: str = group_name
         self._action_holders: set[ActionHolder] = set(action_holders)
 
-    def add_action_holder(self, action_holder: ActionHolder):
+    def add_action_holder(self, action_holder: ActionHolder) -> None:
             self._action_holders.add(action_holder)
 
-    def add_action_holders(self, action_holders: list[ActionHolder]):
+    def add_action_holders(self, action_holders: list[ActionHolder]) -> None:
         self._action_holders.update(action_holders)
 
-    def remove_action_holder(self, action_holder: ActionHolder):
+    def remove_action_holder(self, action_holder: ActionHolder) -> None:
         self._action_holders.remove(action_holder)
 
-    def remove_action_holders(self, action_holders: list[ActionHolder]):
+    def remove_action_holders(self, action_holders: list[ActionHolder]) -> None:
         self._action_holders.difference_update(action_holders)
 
-    def get_group_name(self):
+    def get_group_name(self) -> str:
         return self._group_name
 
-    def get_action_holders(self):
+    def get_action_holders(self) -> "set[ActionHolder]":
         return self._action_holders
-
-    def get_group_support(self):
-        return self._group_support
-
-    def get_hide_on_group_support(self):
-        return self._hide_on_group_support
 
     def get_min_input_compatibility(self, action_input_support: InputIdentifier) -> ActionInputSupport:
         for action_holder in self._action_holders:

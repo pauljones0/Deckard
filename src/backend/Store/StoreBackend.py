@@ -20,7 +20,7 @@ import requests
 import json
 from collections.abc import Callable, Collection
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, NamedTuple, TypeGuard
+from typing import Any, Literal, NamedTuple, TypeGuard, cast, overload
 from PIL import Image
 from io import BytesIO
 from loguru import logger as log
@@ -43,7 +43,7 @@ from src.backend import http_client
 from src.Signals import Signals
 
 import globals as gl
-from src.windows.Store.StoreData import PluginData, IconData, SDPlusBarWallpaperData, WallpaperData
+from src.windows.Store.StoreData import IconData, PluginData, SDPlusBarWallpaperData, StoreData, WallpaperData
 from src.backend.Store.asset_types import (
     ASSET_TYPES,
     AssetTypeDescriptor,
@@ -157,7 +157,7 @@ class StoreBackend:
     ASSET_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 
     @classmethod
-    def is_safe_asset_id(cls, asset_id) -> TypeGuard[str]:
+    def is_safe_asset_id(cls, asset_id: object) -> TypeGuard[str]:
         """Whether a manifest-supplied id is safe as a single path component.
         Reject a bad id and never normalize it. An id that fails this check
         comes from a hostile or broken manifest, and a quiet repair would
@@ -193,18 +193,18 @@ class StoreBackend:
     _unresolvable_installs: "frozenset[str]" = frozenset()
 
     @classmethod
-    def is_safe_commit_sha(cls, commit_sha) -> TypeGuard[str]:
+    def is_safe_commit_sha(cls, commit_sha: object) -> TypeGuard[str]:
         return isinstance(commit_sha, str) and bool(cls.COMMIT_SHA_PATTERN.fullmatch(commit_sha))
 
     @classmethod
-    def is_safe_ref_name(cls, ref_name) -> TypeGuard[str]:
+    def is_safe_ref_name(cls, ref_name: object) -> TypeGuard[str]:
         """Whether a remote-catalog branch or ref name is safe to pass to
         git. It rejects a shell metacharacter, whitespace, a newline and a
         leading dash, so a catalog branch of "main; rm -rf ~" injects no
         shell and git reads no option."""
         return isinstance(ref_name, str) and bool(cls.SAFE_REF_PATTERN.fullmatch(ref_name))
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.store_cache = StoreCache()
 
         # Every fetch path shares this. The catalog prepare_* tasks on
@@ -220,7 +220,7 @@ class StoreBackend:
         # pool cannot starve itself.
         self._prepare_pool = ThreadPoolExecutor(max_workers=self.MAX_CONCURRENT_REQUESTS, thread_name_prefix="store-prepare")
 
-        self.official_store_branch_cache: str = None
+        self.official_store_branch_cache: str | None = None
 
         # Seed the fallback list of official authors.
         self.official_authors = ["Core447", "StreamController"]
@@ -228,7 +228,7 @@ class StoreBackend:
         # Fetch the real official authors on a background thread.
         threading.Thread(target=self._fetch_official_authors_background, daemon=True).start()
 
-    def _fetch_official_authors_background(self):
+    def _fetch_official_authors_background(self) -> None:
         """Fetches official authors in a background thread and updates self.official_authors."""
         try:
             self.official_authors = self.get_official_authors()
@@ -373,7 +373,17 @@ class StoreBackend:
         repo_url = repo_url.replace("github.com", "raw.githubusercontent.com")
         return f"{repo_url}/{branch_name}/{file_path}"
 
-    def get_remote_file(self, repo_url: str, file_path: str, branch_name: str = "main", data_type: str = "text", force_refetch: bool = False):
+    @overload
+    def get_remote_file(self, repo_url: str, file_path: str, branch_name: str = ...,
+                        data_type: Literal["text"] = ..., force_refetch: bool = ...) -> str: ...
+
+    @overload
+    def get_remote_file(self, repo_url: str, file_path: str, branch_name: str = ...,
+                        data_type: Literal["content"] = ..., force_refetch: bool = ...) -> bytes: ...
+
+    def get_remote_file(self, repo_url: str, file_path: str, branch_name: str = "main",
+                        data_type: Literal["text", "content"] = "text",
+                        force_refetch: bool = False) -> "str | bytes":
         """
         Retrieves the content of a remote file from a GitHub repository.
 
@@ -391,9 +401,12 @@ class StoreBackend:
             - A url on another domain than github.com becomes a
               raw.githubusercontent.com url.
         """
-        byte_suffix = ""
+        # Literal modes, so the cache's read and write overloads can tell
+        # which of the two things open_cache_file hands back.
+        read_mode: Literal["r", "rb"] = "r"
+        write_mode: Literal["w", "wb"] = "w"
         if data_type == "content":
-            byte_suffix = "b"
+            read_mode, write_mode = "rb", "wb"
 
         # data_type belongs to the cache key. Without it a binary fetch
         # (data_type="content") of a repo path lands under the same index
@@ -408,8 +421,8 @@ class StoreBackend:
                 data_type=data_type
             )
         if is_cached:
-            with self.store_cache.open_cache_file(url=repo_url, branch=branch_name, path=file_path, data_type=data_type, mode=f"r{byte_suffix}") as f:
-                return f.read()
+            with self.store_cache.open_cache_file(url=repo_url, branch=branch_name, path=file_path, data_type=data_type, mode=read_mode) as f:
+                return cast("str | bytes", f.read())
         else:
             pass
 
@@ -430,11 +443,11 @@ class StoreBackend:
                 fetched = self.store_cache.get_fetched_date(url=repo_url, branch=branch_name, path=file_path, data_type=data_type)
                 if fetched is not None and time.time() - fetched <= StoreCache.DAYS_TO_KEEP * 24 * 60 * 60:
                     log.warning(f"Serving cached copy of {file_path} from {repo_url} after failed fetch")
-                    with self.store_cache.open_cache_file(url=repo_url, branch=branch_name, path=file_path, data_type=data_type, mode=f"r{byte_suffix}") as f:
-                        return f.read()
+                    with self.store_cache.open_cache_file(url=repo_url, branch=branch_name, path=file_path, data_type=data_type, mode=read_mode) as f:
+                        return cast("str | bytes", f.read())
             raise StoreFetchError(url, f"could not fetch {file_path} and no fresh cache")
 
-        with self.store_cache.open_cache_file(url=repo_url, branch=branch_name, path=file_path, data_type=data_type, mode=f"w{byte_suffix}") as f:
+        with self.store_cache.open_cache_file(url=repo_url, branch=branch_name, path=file_path, data_type=data_type, mode=write_mode) as f:
             if data_type == "text":
                 f.write(answer.text)
             elif data_type == "content":
@@ -445,7 +458,7 @@ class StoreBackend:
         elif data_type == "content":
             return answer.content
         
-    def get_last_commit(self, repo_url: str, branch_name: str = "main"):
+    def get_last_commit(self, repo_url: str, branch_name: str = "main") -> "str | None":
         """Resolves the tip sha of a branch via the GitHub API.
 
         Runs under the fetch semaphore, like every sibling fetch.
@@ -482,13 +495,13 @@ class StoreBackend:
             return None
         if not isinstance(commits, list) or len(commits) == 0:
             return None
-        return commits[0].get("sha")
+        return cast("str | None", commits[0].get("sha"))
     
-    def get_official_authors(self) -> list:
+    def get_official_authors(self) -> list[Any]:
         authors_json = self.get_remote_file(self.STORE_REPO_URL, "OfficialAuthors.json", self.STORE_BRANCH, force_refetch=True)
-        return json.loads(authors_json)
+        return cast(list[Any], json.loads(authors_json))
 
-    def fetch_and_parse_store_json(self, url: str, filename: str, branch: str, n_stores_with_errors: int = 0):
+    def fetch_and_parse_store_json(self, url: str, filename: str, branch: str, n_stores_with_errors: int = 0) -> "tuple[Any, int]":
         try:
             store_file_json = self.get_remote_file(url, filename, branch, force_refetch=True)
             store_file_json = json.loads(store_file_json)
@@ -503,7 +516,7 @@ class StoreBackend:
             log.error(e)
             return None, n_stores_with_errors
 
-    def process_store_data(self, filename: str, process_func: Callable[..., Any], get_custom_func: Callable[..., Any] | None, data_class, include_images=True, base_dir: str | None = None):
+    def process_store_data(self, filename: str, process_func: Callable[..., Any], get_custom_func: Callable[..., Any] | None, data_class: type[Any], include_images: bool = True, base_dir: str | None = None) -> "list[Any] | None":
         """Fetches the catalog file from every configured store and prepares
         each entry on the fan-out pool.
 
@@ -579,7 +592,7 @@ class StoreBackend:
                 # prepare_* must never decide against an earlier snapshot.
                 self._installed_index = None
 
-    def _as_store_result(self, data) -> StoreResult[list]:
+    def _as_store_result(self, data: "list[Any] | None") -> StoreResult[list[Any]]:
         # Turn the None that process_store_data returns into the typed
         # channel. Err means that every configured store's fetch failed.
         if data is None:
@@ -598,21 +611,21 @@ class StoreBackend:
     def get_all_sd_plus_bar_wallpapers(self, include_images: bool = True) -> StoreResult[list[SDPlusBarWallpaperData]]:
         return self._as_store_result(self.process_store_data(self.SDPLUSWALLPAPERS_FILE, self.prepare_sd_plus_bar_wallpaper, None, SDPlusBarWallpaperData, include_images, self.sd_plus_bar_wallpapers_dir()))
     
-    def get_manifest(self, url:str, commit:str) -> "dict | None":
+    def get_manifest(self, url:str, commit:str) -> "dict[str, Any] | None":
         manifest = self.get_remote_file(url, "manifest.json", commit)  # raises on a failed fetch
-        return json.loads(manifest)
+        return cast(dict[str, Any] | None, json.loads(manifest))
 
-    def get_attribution(self, url:str, commit:str) -> dict:
+    def get_attribution(self, url:str, commit:str) -> dict[str, Any]:
         try:
             result = self.get_remote_file(url, "attribution.json", commit)
         except StoreFetchError:
             return {}  # An optional file, so a failed fetch reads as empty
         try:
-            return json.loads(result)
+            return cast(dict[str, Any], json.loads(result))
         except (json.decoder.JSONDecodeError, TypeError):
             return {}
 
-    def _resolve_asset_version(self, entry: dict, desc: AssetTypeDescriptor, url: str):
+    def _resolve_asset_version(self, entry: dict[str, Any], desc: AssetTypeDescriptor, url: str) -> "_ResolvedVersion | None":
         """Decide the commit an entry should be fetched at.
 
         A non-plugin entry always pins a version map. A plugin entry can
@@ -647,13 +660,13 @@ class StoreBackend:
         # guard, and it keeps _prepare_asset to a single line.
         return self.get_web_image(url, thumbnail_path, ref)
 
-    def _translate_descriptions(self, manifest: dict) -> "tuple[Any, Any]":
+    def _translate_descriptions(self, manifest: dict[str, Any]) -> "tuple[Any, Any]":
         return (
             gl.lm.get_custom_translation(manifest.get("descriptions", {})),
             gl.lm.get_custom_translation(manifest.get("short-descriptions", {})),
         )
 
-    def _prepare_asset(self, entry, desc: AssetTypeDescriptor, include_image: bool = True, verified: bool = False):
+    def _prepare_asset(self, entry: dict[str, Any], desc: AssetTypeDescriptor, include_image: bool = True, verified: bool = False) -> "StoreData | None":
         """Turn one catalog entry into the descriptor's dataclass. This is
         the one implementation behind prepare_plugin, prepare_icon,
         prepare_wallpaper and prepare_sd_plus_bar_wallpaper.
@@ -776,7 +789,7 @@ class StoreBackend:
             fields["branch"] = branch
         return desc.data_cls(**fields)
 
-    def prepare_plugin(self, plugin, include_image: bool = True, verified: bool = False):
+    def prepare_plugin(self, plugin: dict[str, Any], include_image: bool = True, verified: bool = False) -> "StoreData | None":
         return self._prepare_asset(plugin, PLUGIN, include_image, verified)
 
     def get_current_git_commit_hash_without_git(self, repo_path: str) -> str:
@@ -912,7 +925,7 @@ class StoreBackend:
             # manifest lookup that wrote the stamp.
             log.warning(f"Could not stamp the origin of {asset_path}: {e}")
 
-    def note_installed_origin(self, base_dir: str, asset_id, repo_url: str) -> None:
+    def note_installed_origin(self, base_dir: str, asset_id: object, repo_url: str) -> None:
         """Backfill the origin stamp of an install that something else
         identified. A full prepare fetches the manifest anyway, so the
         identification happens once rather than once per launch.
@@ -936,7 +949,7 @@ class StoreBackend:
             return
         self.stamp_origin(asset_path, repo_url)
 
-    def match_installed_asset(self, ref: RepoRef, installed: dict) -> "InstalledAsset | None":
+    def match_installed_asset(self, ref: RepoRef, installed: dict[str, Any]) -> "InstalledAsset | None":
         """The install a catalog entry refers to, out of everything stamped
         with its repository.
 
@@ -955,7 +968,7 @@ class StoreBackend:
         canonical = [asset for asset in candidates
                      if asset.manifest_id is None or asset.manifest_id == asset.asset_id]
         if len(canonical) == 1:
-            return canonical[0]
+            return cast("InstalledAsset | None", canonical[0])
         if not canonical:
             log.warning(
                 f"Not updating {ref.user}/{ref.repo}: the only directories stamped with it "
@@ -969,7 +982,7 @@ class StoreBackend:
         )
         return None
 
-    def resolve_unstamped_installs(self, base_dir: str, entries: list) -> None:
+    def resolve_unstamped_installs(self, base_dir: str, entries: list[Any]) -> None:
         """Identifies an install that the origin stamp cannot answer for.
         This fetches a candidate entry's manifest, matches its id against the
         directory names, and stamps what it identifies, so no later pass
@@ -1017,7 +1030,7 @@ class StoreBackend:
         if not pending:
             return
 
-        def plausible_first(entry) -> int:
+        def plausible_first(entry: dict[str, Any]) -> int:
             entry_ref = parse_repo_url(entry.get("url"))
             if entry_ref is None:
                 return 2
@@ -1043,7 +1056,7 @@ class StoreBackend:
                 self._unresolvable_installs | {asset.path for asset in pending.values()}
             )
 
-    def _claim_pending_install(self, entry: dict, pending: dict, installed: dict) -> None:
+    def _claim_pending_install(self, entry: dict[str, Any], pending: dict[str, Any], installed: dict[str, Any]) -> None:
         """One entry's turn at the pending directories. This fetches its
         manifest and stamps a pending directory that the id names. It raises
         whatever the remote data raises, and the caller catches per entry."""
@@ -1079,7 +1092,7 @@ class StoreBackend:
         # must see the directory as stamped.
         installed[asset_id] = asset._replace(origin=ref)
 
-    def check_entry_for_update(self, entry: dict, base_dir: str) -> "UpdateCheck | None":
+    def check_entry_for_update(self, entry: dict[str, Any], base_dir: str) -> "UpdateCheck | None":
         """Resolves one catalog entry against what is installed under
         base_dir, fetching nothing the update decision does not need.
 
@@ -1149,7 +1162,7 @@ class StoreBackend:
         # the entry reads as outdated and a reinstall repairs it.
         return UpdateCheck(url, ref, asset.asset_id, asset.sha, target, branch, compatible)
 
-    def get_local_sha_for_id(self, base_dir: str, asset_id) -> str | None:
+    def get_local_sha_for_id(self, base_dir: str, asset_id: object) -> str | None:
         """get_local_sha behind the asset-id whitelist. An unsafe or missing
         manifest id never probes the filesystem, and reads as not installed,
         which is None."""
@@ -1157,9 +1170,9 @@ class StoreBackend:
             return None
         return self.get_local_sha(os.path.join(base_dir, asset_id))
 
-    def get_local_sha(self, git_dir: str):
+    def get_local_sha(self, git_dir: str) -> "str | None":
         if not os.path.exists(git_dir):
-            return
+            return None
         
         if os.path.exists(os.path.join(git_dir, ".git")):
             try:
@@ -1176,13 +1189,13 @@ class StoreBackend:
         with open(version_file_path, "r") as f:
             return f.read().strip()
     
-    def prepare_icon(self, icon, include_image: bool = True, verified: bool = False):
+    def prepare_icon(self, icon: dict[str, Any], include_image: bool = True, verified: bool = False) -> "StoreData | None":
         return self._prepare_asset(icon, ICON, include_image, verified)
 
-    def prepare_wallpaper(self, wallpaper, include_image: bool = True, verified: bool = False):
+    def prepare_wallpaper(self, wallpaper: dict[str, Any], include_image: bool = True, verified: bool = False) -> "StoreData | None":
         return self._prepare_asset(wallpaper, WALLPAPER, include_image, verified)
 
-    def prepare_sd_plus_bar_wallpaper(self, sd_plus_bar_wallpaper, include_image: bool = True, verified: bool = False):
+    def prepare_sd_plus_bar_wallpaper(self, sd_plus_bar_wallpaper: dict[str, Any], include_image: bool = True, verified: bool = False) -> "StoreData | None":
         return self._prepare_asset(sd_plus_bar_wallpaper, SD_PLUS_BAR, include_image, verified)
 
     def get_web_image(self, url: str, path: str, branch: str = "main") -> "Image.Image | None":
@@ -1232,14 +1245,18 @@ class StoreBackend:
         else:
             return None
         
-    def get_newest_version(self, available_versions: list[str]) -> str:
+    def get_newest_version(self, available_versions: list[str]) -> str | None:
+        # None for an empty list, which the callers guard for; max() on an
+        # empty sequence would raise instead.
+        if not available_versions:
+            return None
         parsed_versions = [version.parse(v) for v in available_versions]
-        
+
         max_index = parsed_versions.index(max(parsed_versions))
         return available_versions[max_index]
 
     ## Install
-    def subp_call(self, args):
+    def subp_call(self, args: list[str]) -> int:
         return subprocess.call(args)
 
     def get_main_folder_of_zip(self, zip_path: str) -> str | None:
@@ -1352,7 +1369,7 @@ class StoreBackend:
             raise
         self._remove_leftover(old_tree)
 
-    def download_repo(self, repo_url:str, directory:str, commit_sha:str = None, branch_name:str = None, expected_id:str = None) -> StoreResult[None]:
+    def download_repo(self, repo_url:str, directory:str, commit_sha:str | None = None, branch_name:str | None = None, expected_id:str | None = None) -> StoreResult[None]:
         """Returns Ok(None) on success, or an Err that names the failure.
         INSTALL_FAILED covers a hard failure, such as a missing git on the
         devel clone path or an unresolvable branch. INVALID_ASSET covers a
@@ -1457,7 +1474,7 @@ class StoreBackend:
 
         return Ok(None)
 
-    def clone_repo(self, repo_url:str, local_path:str, commit_sha:str = None, branch_name:str = None, expected_id:str = None) -> StoreResult[None]:
+    def clone_repo(self, repo_url:str, local_path:str, commit_sha:str | None = None, branch_name:str | None = None, expected_id:str | None = None) -> StoreResult[None]:
         if commit_sha is not None:
             # Clone the main branch first.
             branch_name = None
@@ -1744,7 +1761,7 @@ class StoreBackend:
     # because it runs pip and __install__.py, and drives the plugin-manager
     # deregister and reload, which a pack does not need.
 
-    def _install_asset(self, data, desc: AssetTypeDescriptor) -> StoreResult[None]:
+    def _install_asset(self, data: "IconData | WallpaperData | SDPlusBarWallpaperData", desc: AssetTypeDescriptor) -> StoreResult[None]:
         """Download one data-only asset into its per-type directory. Returns
         the StoreResult of download_repo, which is Ok(None) or an Err, or
         Err(INVALID_ASSET) for an unsafe id or a missing url. The plugin
@@ -1768,7 +1785,7 @@ class StoreBackend:
         asset_path = os.path.join(getattr(self, desc.base_dir_attr)(), asset_id)
         return self.download_repo(repo_url=github, directory=asset_path, commit_sha=data.commit_sha, expected_id=asset_id)
 
-    def _uninstall_asset(self, data, desc: AssetTypeDescriptor):
+    def _uninstall_asset(self, data: "IconData | WallpaperData | SDPlusBarWallpaperData", desc: AssetTypeDescriptor) -> "int | None":
         """Delete one data-only asset's installed directory. Returns 400 for
         an unsafe id, and None otherwise."""
         asset_id = data.asset_id
@@ -1778,26 +1795,27 @@ class StoreBackend:
         asset_path = os.path.join(getattr(self, desc.base_dir_attr)(), asset_id)
         if os.path.exists(asset_path):
             shutil.rmtree(asset_path)
+        return None
 
     def install_icon(self, icon_data:IconData) -> StoreResult[None]:
         return self._install_asset(icon_data, ICON)
 
-    def uninstall_icon(self, icon_data:IconData):
+    def uninstall_icon(self, icon_data:IconData) -> "int | None":
         return self._uninstall_asset(icon_data, ICON)
 
     def install_wallpaper(self, wallpaper_data:WallpaperData) -> StoreResult[None]:
         return self._install_asset(wallpaper_data, WALLPAPER)
 
-    def uninstall_wallpaper(self, wallpaper_data:WallpaperData):
+    def uninstall_wallpaper(self, wallpaper_data:WallpaperData) -> "int | None":
         return self._uninstall_asset(wallpaper_data, WALLPAPER)
 
     def install_sd_plus_bar_wallpaper(self, sd_plus_bar_wallpaper_data:SDPlusBarWallpaperData) -> StoreResult[None]:
         return self._install_asset(sd_plus_bar_wallpaper_data, SD_PLUS_BAR)
 
-    def uninstall_sd_plus_bar_wallpaper(self, sd_plus_bar_wallpaper_data:SDPlusBarWallpaperData):
+    def uninstall_sd_plus_bar_wallpaper(self, sd_plus_bar_wallpaper_data:SDPlusBarWallpaperData) -> "int | None":
         return self._uninstall_asset(sd_plus_bar_wallpaper_data, SD_PLUS_BAR)
 
-    def get_plugin_for_id(self, plugin_id) -> "PluginData | None":
+    def get_plugin_for_id(self, plugin_id: "str | None") -> "PluginData | None":
         """The catalog plugin with this id, or None, which an unreachable
         store also gives. get_all_plugins returns a StoreResult, so this
         narrows an Err rather than iterates it. A loop over an Err raises
@@ -1814,7 +1832,7 @@ class StoreBackend:
         return None
 
     ## Updates
-    def _get_assets_to_update(self, desc: AssetTypeDescriptor) -> StoreResult[list]:
+    def _get_assets_to_update(self, desc: AssetTypeDescriptor) -> StoreResult[list[Any]]:
         """The installed assets of one class that have a newer, compatible
         and known target version. This is the shared update-check decision.
         The update-check view fetches no thumbnail, and makes no request for a
@@ -1825,7 +1843,7 @@ class StoreBackend:
             return result
         assets = result.value
 
-        to_update: list = []
+        to_update: list[Any] = []
         for asset in assets:
             if asset.local_sha is None:
                 # The asset is not installed.
@@ -1881,28 +1899,28 @@ class StoreBackend:
 
         return Ok(n_updated)
 
-    def get_plugins_to_update(self) -> StoreResult[list]:
+    def get_plugins_to_update(self) -> StoreResult[list[Any]]:
         return self._get_assets_to_update(PLUGIN)
 
     def update_all_plugins(self) -> StoreResult[int]:
         """Returns Ok with the number of plugins updated, or an Err."""
         return self._update_all(PLUGIN)
 
-    def get_icons_to_update(self) -> StoreResult[list]:
+    def get_icons_to_update(self) -> StoreResult[list[Any]]:
         return self._get_assets_to_update(ICON)
 
     def update_all_icons(self) -> StoreResult[int]:
         """Returns Ok with the number of icon packs updated, or an Err."""
         return self._update_all(ICON)
 
-    def get_wallpapers_to_update(self) -> StoreResult[list]:
+    def get_wallpapers_to_update(self) -> StoreResult[list[Any]]:
         return self._get_assets_to_update(WALLPAPER)
 
     def update_all_wallpapers(self) -> StoreResult[int]:
         """Returns Ok with the number of wallpapers updated, or an Err."""
         return self._update_all(WALLPAPER)
 
-    def get_sd_plus_bar_wallpapers_to_update(self) -> StoreResult[list]:
+    def get_sd_plus_bar_wallpapers_to_update(self) -> StoreResult[list[Any]]:
         return self._get_assets_to_update(SD_PLUS_BAR)
 
     def update_all_sd_plus_bar_wallpapers(self) -> StoreResult[int]:

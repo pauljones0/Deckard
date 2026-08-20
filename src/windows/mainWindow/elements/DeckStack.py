@@ -27,11 +27,13 @@ from loguru import logger as log
 
 # Import own modules
 from src.backend import ui_port
-from src.windows.mainWindow.elements.DeckStackChild import DeckStackChild
+from src.windows.mainWindow.elements.DeckStackChild import DeckStackChild as DeckStackChild
 
 # Import typing
-from typing import TYPE_CHECKING
+from typing import Any, TYPE_CHECKING, cast
 if TYPE_CHECKING:
+    from src.backend.DeckManagement.DeckManager import DeckManager
+    from src.backend.DeckManagement.deck_controller.controller import DeckController
     from src.windows.mainWindow.elements.leftArea import LeftArea
     from src.windows.mainWindow.mainWindow import MainWindow
 
@@ -39,7 +41,7 @@ class DeckStack(Gtk.Stack):
     """
     A deck with childs for each connected deck
     """
-    def __init__(self, main_window: "MainWindow", left_area: "LeftArea", deck_manager, **kwargs):
+    def __init__(self, main_window: "MainWindow", left_area: "LeftArea", deck_manager: "DeckManager", **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.deck_manager = deck_manager
         self.main_window = main_window
@@ -48,26 +50,27 @@ class DeckStack(Gtk.Stack):
         self.deck_names: list[str] = []
         self.deck_numbers: list[str] = []
 
-        self.deck_attributes: dict = {}
+        self.deck_attributes: dict["DeckController", tuple[str, str]] = {}
 
-    def on_switch(self, widget, *args):
+    def on_switch(self, widget: Gtk.Widget, *args: Any) -> None:
         # Update page selector
         self.main_window.sidebar.page_selector.update_selected()
-        self.main_window.deck_settings_button.update_state()
+        self.main_window.deck_settings_button.refresh_state()
 
-        child: DeckStackChild = self.get_visible_child()
+        # Every child of this stack is a DeckStackChild.
+        child = cast(DeckStackChild, self.get_visible_child())
 
-    def build(self):
+    def build(self) -> None:
         self.connect("notify::visible-child-name", self.on_switch)
 
-    def add_pages(self):
+    def add_pages(self) -> None:
         for deck_controller in self.deck_manager.deck_controller:
             self.add_page(deck_controller)
 
         if len(self.deck_manager.deck_controller) == 0:
             self.main_window.change_ui_to_no_connected_deck()
 
-    def add_page(self, deck_controller):
+    def add_page(self, deck_controller: "DeckController") -> None:
         attr = self.get_page_attributes(deck_controller)
         if attr is None:
             return
@@ -107,7 +110,7 @@ class DeckStack(Gtk.Stack):
 
         self.main_window.reload_sidebar()
             
-    def get_page_attributes(self, deck_controller) -> tuple | None:
+    def get_page_attributes(self, deck_controller: "DeckController") -> tuple[Any, ...] | None:
         if deck_controller in self.deck_attributes:
             return self.deck_attributes[deck_controller]
         
@@ -142,7 +145,7 @@ class DeckStack(Gtk.Stack):
 
         return deck_number, deck_type
 
-    def remove_page(self, deck_controller) -> None:
+    def remove_page(self, deck_controller: "DeckController") -> None:
         adapter = ui_port.get()
         unbind = getattr(adapter, "unbind", None)
         if callable(unbind):
@@ -183,7 +186,7 @@ class DeckStack(Gtk.Stack):
 
         self.set_visible_child(pages[0].get_child())  # type: ignore[index]  # gi stub: PyGObject's Gio.ListModel override makes the returned SelectionModel iterable/sized/indexable; gi-stubs declares none of that
 
-    def focus_controller(self, deck_controller) -> None:
+    def focus_controller(self, deck_controller: "DeckController") -> None:
         for page in self.get_pages():  # type: ignore[attr-defined]  # gi stub: PyGObject's Gio.ListModel override makes the returned SelectionModel iterable/sized/indexable; gi-stubs declares none of that
             if page.get_child().deck_controller == deck_controller:
                 self.set_visible_child(page.get_child())

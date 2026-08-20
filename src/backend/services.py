@@ -1,8 +1,8 @@
 """Typed accessors for the process-wide services that live on globals.
 
 The gl module is a namespace of late-initialised slots, and well over six
-hundred places read the four hottest of them, which are the locale manager,
-the App, the settings manager and the page manager backend. Each raw read is
+hundred places read the hottest of them, which are the locale manager, the
+App, the settings manager, the deck manager and the page manager backend. Each raw read is
 an invisible dependency edge. An accessor is checked once and hands its
 callers a concrete type, holds the None guard in one place, gives a seam a
 test can substitute, and leaves an import edge that a rename follows.
@@ -14,7 +14,7 @@ test harness does, still applies.
 """
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 
 # globals at runtime and nothing else first-party. Every type imports under
 # TYPE_CHECKING, and the future import above makes every annotation a string,
@@ -27,6 +27,7 @@ import globals as gl
 if TYPE_CHECKING:
     from locales.LocaleManager import LocaleManager
     from src.app import App
+    from src.backend.DeckManagement.DeckManager import DeckManager
     from src.backend.PageManagement.PageManagerBackend import PageManagerBackend
     from src.backend.SettingsManager import AppSettings, SettingsManager
     from src.windows.mainWindow.mainWindow import MainWindow
@@ -188,7 +189,7 @@ def app_settings() -> AppSettings:
     return gl.settings_manager.app()
 
 
-def deck_settings(serial_number: str) -> dict:
+def deck_settings(serial_number: str) -> dict[str, Any]:
     """This deck's settings, as the settings manager hands them out.
 
     Production returns a fresh deep copy per call, so a mutation of the result
@@ -226,5 +227,40 @@ def require_page_manager() -> PageManagerBackend:
             "the page manager backend does not exist yet -- gl.page_manager "
             "is built by main.create_global_objects(), after the settings "
             "manager it takes as an argument."
+        )
+    return manager
+
+
+# Decks
+
+def deck_manager() -> DeckManager | None:
+    """The deck manager, or None before main() builds it.
+
+    This is the honest read, so a caller that runs during boot sees the
+    absence. That window is wider than it looks: main() constructs the deck
+    manager well after create_global_objects() returns, so every slot that
+    function fills is already live while this one is still None.
+    """
+    return gl.deck_manager
+
+
+def require_deck_manager() -> DeckManager:
+    """The deck manager, never None.
+
+    For a site that only a built window reaches, such as the settings dialog,
+    the deck editor and a page or action editor. None of them carries a live
+    None branch, because the slot binds before the App runs and nothing
+    clears it. App.on_activate copies the same object onto App.deck_manager,
+    so a gl.app.deck_manager read means this too.
+
+    Adopt it only where that holds. A site whose None branch runs, such as the
+    D-Bus surface, keeps its guard.
+    """
+    manager = gl.deck_manager
+    if manager is None:
+        raise RuntimeError(
+            "the deck manager does not exist yet -- gl.deck_manager is built "
+            "in main.main(), after create_global_objects() returns and "
+            "before app.run()."
         )
     return manager

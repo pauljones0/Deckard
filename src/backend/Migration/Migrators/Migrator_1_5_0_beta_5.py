@@ -20,16 +20,16 @@ import os
 import globals as gl
 
 class Migrator_1_5_0_beta_5(Migrator):
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__("1.5.0-beta.5")
         
-    def migrate(self):
+    def migrate(self) -> None:
         self.migrate_pages()
         self.migrate_plugin_settings()
 
         self.set_migrated(True)
 
-    def migrate_pages(self):
+    def migrate_pages(self) -> None:
         pages_dir = os.path.join(gl.DATA_PATH, "pages")
         if not os.path.exists(pages_dir):
             return
@@ -56,7 +56,7 @@ class Migrator_1_5_0_beta_5(Migrator):
 
             atomic_write_json(page_path, page)
 
-    def migrate_plugin_settings(self):
+    def migrate_plugin_settings(self) -> None:
         if not os.path.exists(gl.PLUGIN_DIR):
             return
         for plugin_dir_name in os.listdir(gl.PLUGIN_DIR):

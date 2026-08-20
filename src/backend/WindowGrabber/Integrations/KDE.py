@@ -27,7 +27,7 @@ import gi
 gi.require_version("Xdp", "1.0")
 from gi.repository import Xdp
 
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Optional, cast
 if TYPE_CHECKING:
     from src.backend.WindowGrabber.WindowGrabber import WindowGrabber
 
@@ -138,7 +138,7 @@ class KDE(Integration):
             window_id = stdout.decode().strip()
             if len(window_id) == 0:
                 return None
-            return window_id
+            return cast("str | None", window_id)
         except CalledProcessError as e:
             log.error(f"An error occurred while running kdotool: {e}")
             return None
@@ -167,7 +167,7 @@ class KDE(Integration):
             title = kdotool.communicate()[0].decode().strip()
             if title is None or len(title) < 2:
                 return None
-            return title
+            return cast("str | None", title)
         except CalledProcessError as e:
             log.error(f"An error occurred while running kdotool: {e}")
             return None
@@ -181,7 +181,7 @@ class KDE(Integration):
             window_class = kdotool.communicate()[0].decode().strip()
             if window_class is None or len(window_class) < 4:
                 return None
-            return window_class
+            return cast("str | None", window_class)
         except CalledProcessError as e:
             log.error(f"An error occurred while running kdotool: {e}")
             return None

@@ -20,10 +20,19 @@ gi.require_version("Adw", "1")
 from gi.repository import Gtk, Pango
 
 # Import Python modules
-from loguru import logger as log
+from collections.abc import Iterable
 import os
+from typing import TYPE_CHECKING, Any, cast
+
+if TYPE_CHECKING:
+    from src.windows.mainWindow.mainWindow import MainWindow
+
+
+from loguru import logger as log
 
 # Import globas
+from src.backend import services
+
 import globals as gl
 
 # Import own modules
@@ -31,13 +40,13 @@ from src.windows.PageManager.PageManager import PageManager
 from src.Signals import Signals
 
 class PageSelector(Gtk.Box):
-    def __init__(self, main_window, page_manager, **kwargs):
+    def __init__(self, main_window: "MainWindow", page_manager: Any, **kwargs: Any) -> None:
         self.main_window = main_window
         self.page_manager = page_manager
         super().__init__(orientation=Gtk.Orientation.HORIZONTAL, **kwargs)
         self.build()
 
-    def build(self):
+    def build(self) -> None:
         # Label
         self.label = Gtk.Label(label=gl.lm.get("header-page-selector-page-label"), margin_start=3, margin_end=7, css_classes=["bold"])
         self.append(self.label)
@@ -78,7 +87,7 @@ class PageSelector(Gtk.Box):
         gl.signal_manager.connect_signal(signal=Signals.PageAdd, callback=self.update)
         gl.signal_manager.connect_signal(signal=Signals.PageDelete, callback=self.update)
     
-    def update(self, *args, **kwargs):
+    def update(self, *args: Any, **kwargs: Any) -> None:
         self.disconnect_change_signal()
         pages = self.page_manager.get_pages()
         # self.clear_model()
@@ -92,19 +101,17 @@ class PageSelector(Gtk.Box):
         # self.connect("notify::selected", self.on_change_page)
         self.connect_change_signal()
 
-    def clear_model(self):
+    def clear_model(self) -> None:
         self.pages_model.clear()
-        return
-        for i in range(self.pages_model.get_n_items()):
-            self.pages_model.remove(0)
 
-    def set_selected(self, page_path: str):
-        for i, row in enumerate(self.pages_model):
+    def set_selected(self, page_path: str) -> None:
+        # A Gtk.ListStore iterates its rows at runtime; the stub omits it.
+        for i, row in enumerate(cast("Iterable[Any]", self.pages_model)):
             if row[1] == page_path:
                 self.drop_down.set_active(i)
                 return
             
-    def update_selected(self, *args, **kwargs):
+    def update_selected(self, *args: Any, **kwargs: Any) -> None:
         child = self.main_window.leftArea.deck_stack.get_visible_child()
         if child is None:
             self.drop_down.set_sensitive(False)
@@ -118,14 +125,12 @@ class PageSelector(Gtk.Box):
         page_path = page.json_path
         self.set_selected(page_path)
 
-    def on_change_page(self, drop_down, *args):
+    def on_change_page(self, drop_down: Gtk.ComboBox, *args: Any) -> None:
         active_child = self.main_window.leftArea.deck_stack.get_visible_child()
         if active_child is None:
             return
         
         active_controller = active_child.deck_controller
-        if active_controller is None:
-            return
 
         active = drop_down.get_active()
         if active < 0:
@@ -137,18 +142,18 @@ class PageSelector(Gtk.Box):
             # The selector matches a switch that the deck triggered, so the
             # page already loads or is loaded. Do not start a second load.
             return
-        page = gl.page_manager.get_page(path=page_path, deck_controller = active_controller)
+        page = services.require_page_manager().get_page(path=page_path, deck_controller = active_controller)
         log.info(f"Load page: {page}")
         active_controller.load_page(page)
 
-    def on_click_open_page_manager(self, button):
+    def on_click_open_page_manager(self, button: Gtk.Button) -> None:
         if gl.page_manager_window is not None:
             gl.page_manager_window.present()
             return
-        gl.page_manager_window = PageManager(main_win=gl.app.main_win)
+        gl.page_manager_window = PageManager(main_win=services.require_main_window())
         gl.page_manager_window.present()
 
-    def on_click_open_page_settings(self, button):
+    def on_click_open_page_settings(self, button: Gtk.Button) -> None:
         self.on_click_open_page_manager(button)
 
         active = self.drop_down.get_active()
@@ -157,14 +162,20 @@ class PageSelector(Gtk.Box):
             # A -1 index would activate the last page.
             return
         page_path = self.pages_model[active][1]
-        gl.page_manager_window.page_selector.activate_page(page_path)
+        page_manager_window = gl.page_manager_window
+        if page_manager_window is None:
+            # The call above binds the global or raises out of this method,
+            # so this arm cannot run. It stands because the slot is typed
+            # optional and nothing narrows it across the call.
+            return
+        page_manager_window.page_selector.activate_page(page_path)
 
-    def disconnect_change_signal(self):
+    def disconnect_change_signal(self) -> None:
         try:
             self.drop_down.disconnect_by_func(self.on_change_page)
         except TypeError:
             # disconnect_by_func raises TypeError when nothing is connected.
             pass
 
-    def connect_change_signal(self):
+    def connect_change_signal(self) -> None:
         self.drop_down.connect("changed", self.on_change_page)

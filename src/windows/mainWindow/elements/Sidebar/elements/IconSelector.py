@@ -30,23 +30,32 @@ from loguru import logger as log
 from src.backend.DeckManagement.ImageHelpers import image2pixbuf
 
 # Import globals
+from src.backend import services
+
 import globals as gl
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from src.windows.mainWindow.elements.Sidebar.Sidebar import Sidebar
+    from PIL import Image
+    from gi.repository import GdkPixbuf
+
 
 class IconSelector(Gtk.Box):
-    def __init__(self, sidebar, **kwargs):
+    def __init__(self, sidebar: "Sidebar", **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.sidebar = sidebar
-        self.active_identifier: InputIdentifier = None
-        self.active_state: int = None
+        self.active_identifier: InputIdentifier = None  # type: ignore[assignment]  # late-init: load_for_identifier
+        self.active_state: int = None  # type: ignore[assignment]  # late-init: load_for_identifier
 
         # next() on a count is atomic. A read-modify-write on latest_task_id
         # gives two frames the same id, because the producers are threads, and
         # a stale frame then passes the check in set_pixbuf_and_del.
         self.task_ids = itertools.count()
-        self.latest_task_id: int = None
+        self.latest_task_id: int = None  # type: ignore[assignment]  # late-init: the first render task
         self.build()
 
-    def build(self):
+    def build(self) -> None:
         self.overlay = Gtk.Overlay()
         self.append(self.overlay)
 
@@ -86,15 +95,15 @@ class IconSelector(Gtk.Box):
         self.overlay.set_clip_overlay(self.remove_button, True)
 
 
-    def get_new_task_id(self):
+    def get_new_task_id(self) -> int:
         return next(self.task_ids)
 
-    def set_image(self, image):
+    def set_image(self, image: "Image.Image") -> None:
         pixbuf = image2pixbuf(image.convert("RGBA"), force_transparency=True)
         self.latest_task_id = self.get_new_task_id()
         GLib.idle_add(self.set_pixbuf_and_del, pixbuf, self.latest_task_id, priority=GLib.PRIORITY_HIGH)
 
-    def set_pixbuf_and_del(self, pixbuf, task_id: int = None):
+    def set_pixbuf_and_del(self, pixbuf: "GdkPixbuf.Pixbuf | None", task_id: int | None = None) -> None:
         if task_id is not None:
             if task_id != self.latest_task_id:
                 log.debug("IconSelector: Abort task")
@@ -108,29 +117,29 @@ class IconSelector(Gtk.Box):
         self.image.set_visible(False)
         self.image.set_visible(True)
 
-    def on_hover_enter(self, *args):
+    def on_hover_enter(self, *args: Any) -> None:
         self.label.set_css_classes(["icon-selector-hint-label-visible"])
         self.image.add_css_class("icon-selector-image-hover")
 
-    def on_hover_leave(self, *args):
+    def on_hover_leave(self, *args: Any) -> None:
         self.label.set_css_classes(["icon-selector-hint-label-hidden"])
         self.image.remove_css_class("icon-selector-image-hover")
 
-    def on_click(self, button):
+    def on_click(self, button: Gtk.Button) -> None:
         media_path = self.get_media_path()
-        GLib.idle_add(gl.app.let_user_select_asset, media_path, self.set_media_callback)
+        GLib.idle_add(services.require_app().let_user_select_asset, media_path, self.set_media_callback)
 
-    def get_media_path(self):
-        page = gl.app.main_win.get_active_page()
+    def get_media_path(self) -> "str | None":
+        page = services.require_main_window().get_active_page()
         if page is None:
-            return
-        
+            return None
+
         active_state = self.sidebar.active_state
 
         return page.get_media_path(identifier=self.active_identifier, state=active_state)
     
-    def set_media_path(self, path):
-        page = gl.app.main_win.get_active_page()
+    def set_media_path(self, path: "str | None") -> None:
+        page = services.require_main_window().get_active_page()
         if page is None:
             return
 
@@ -141,23 +150,28 @@ class IconSelector(Gtk.Box):
         # Update remove button visibility
         self.remove_button.set_visible(path not in [None, ""])
 
-    def set_media_callback(self, path):
+    def set_media_callback(self, path: "str | None") -> None:
         self.set_media_path(path)
         # Reload key
-        controller = gl.app.main_win.get_active_controller()
+        controller = services.require_main_window().get_active_controller()
         if controller is None:
             return
 
         c_input = controller.get_input(self.sidebar.active_identifier)
-        c_input.load_from_page(controller.active_page)
+        page = controller.active_page
+        if c_input is None or page is None:
+            # The input can detach and the page can clear while the asset
+            # chooser is open.
+            return
+        c_input.load_from_page(page)
 
-    def remove_media(self, *args):
+    def remove_media(self, *args: Any) -> None:
         self.set_media_callback(None)
 
-    def has_image_to_remove(self):
+    def has_image_to_remove(self) -> bool:
         return self.get_media_path() is not None
     
-    def load_for_identifier(self, identifier: InputIdentifier, state: int):
+    def load_for_identifier(self, identifier: InputIdentifier, state: int) -> None:
         self.active_identifier = identifier
         self.active_state = state
 
@@ -171,11 +185,3 @@ class IconSelector(Gtk.Box):
 
         self.remove_button.set_visible(self.has_image_to_remove())
 
-    def get_selected_state(self) -> int | None:
-        if gl.app is None:
-            return None
-        controller = gl.app.main_win.get_active_controller()
-        if controller is None:
-            return None
-        key_index = controller.coords_to_index(self.sidebar.active_coords)
-        return controller.keys[key_index].get_active_state().state

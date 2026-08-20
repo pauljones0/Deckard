@@ -29,6 +29,8 @@ from StreamDeck.Devices.StreamDeck import TouchscreenEventType
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 
+from src.backend import services
+
 import globals as gl
 
 from gi.repository import Gtk, GLib, Gio
@@ -36,6 +38,7 @@ from gi.repository import Gtk, GLib, Gio
 from collections.abc import Callable
 from typing import Any, TYPE_CHECKING
 if TYPE_CHECKING:
+    from gi.repository import GdkPixbuf
     from src.windows.mainWindow.elements.PageSettingsPage import PageSettingsPage
 
 # An icon selector, a dial pixbuf and its task id, or None when the user
@@ -45,7 +48,7 @@ DialPreview = tuple[Any, Any, int] | None
 MirrorFrame = tuple[Any, int, DialPreview]
 
 class ScreenBar(Gtk.Frame):
-    def __init__(self, page_settings_page: "PageSettingsPage", identifier: Input.Touchscreen, **kwargs):
+    def __init__(self, page_settings_page: "PageSettingsPage", identifier: Input.Touchscreen, **kwargs: Any) -> None:
         self.page_settings_page = page_settings_page
         self.deck_controller = page_settings_page.deck_controller
         self.identifier = identifier
@@ -110,7 +113,7 @@ class ScreenBar(Gtk.Frame):
 
         self.load_from_changes()
 
-    def on_map(self, widget):
+    def on_map(self, widget: Gtk.Widget) -> None:
         self.load_from_changes()
 
     def load_from_changes(self) -> None:
@@ -134,7 +137,7 @@ class ScreenBar(Gtk.Frame):
             except KeyError:
                 pass
 
-    def on_click(self, gesture, n_press, x, y):
+    def on_click(self, gesture: Gtk.GestureClick, n_press: int, x: float, y: float) -> None:
         # print(f"Click: {self.parse_xy(x, y)}")
         self.drag_start_xy = None
         self.drag_start_time = None
@@ -147,8 +150,10 @@ class ScreenBar(Gtk.Frame):
             self.image.grab_focus()
 
             controller_input = self.page_settings_page.deck_controller.get_input(self.identifier)
+            if controller_input is None:
+                return
             state = controller_input.get_active_state().state
-            gl.app.main_win.sidebar.load_for_identifier(self.identifier, state)
+            services.require_main_window().sidebar.load_for_identifier(self.identifier, state)
             
         elif gesture.get_current_button() == 1 and n_press == 2:
             pass
@@ -156,15 +161,17 @@ class ScreenBar(Gtk.Frame):
             # Simulate key press
             # self.simulate_press()
 
-    def on_released(self, gesture, n_press, x, y):
-        if None in [self.drag_start_xy, self.drag_start_time]:
+    def on_released(self, gesture: Gtk.GestureClick, n_press: int, x: float, y: float) -> None:
+        drag_start_xy = self.drag_start_xy
+        drag_start_time = self.drag_start_time
+        if drag_start_xy is None or drag_start_time is None:
             return
         # print(f"Release: {self.parse_xy(x, y)}")
         x, y = self.parse_xy(x, y)
-        start_x, start_y = self.drag_start_xy
+        start_x, start_y = drag_start_xy
         drag_distance = abs(x - start_x) + abs(y - start_y)
 
-        controller = gl.app.main_win.get_active_controller()
+        controller = services.require_main_window().get_active_controller()
         if controller is None:
             return
 
@@ -180,13 +187,13 @@ class ScreenBar(Gtk.Frame):
             controller.event_callback(self.identifier, TouchscreenEventType.DRAG, value)
             return
         
-        if time.time() - self.drag_start_time >= self.long_press_treshold:
+        if time.time() - drag_start_time >= self.long_press_treshold:
             controller.event_callback(self.identifier, TouchscreenEventType.LONG, {"x": x, "y": y})
         
         else:
             controller.event_callback(self.identifier, TouchscreenEventType.SHORT, {"x": x, "y": y})
 
-    def parse_xy(self, x, y) -> tuple[int, int]:
+    def parse_xy(self, x: float, y: float) -> tuple[int, int]:
         width = self.image.get_width()
         height = self.image.get_height()
 
@@ -199,10 +206,10 @@ class ScreenBar(Gtk.Frame):
         return x, y
 
 
-    def on_focus_in(self, *args):
+    def on_focus_in(self, *args: Any) -> None:
         self.set_border_active(True)
 
-    def set_border_active(self, active: bool):
+    def set_border_active(self, active: bool) -> None:
         if active:
             if self.page_settings_page.deck_config.active_widget not in [self, None]:
                 self.page_settings_page.deck_config.active_widget.set_border_active(False)
@@ -212,7 +219,7 @@ class ScreenBar(Gtk.Frame):
             self.set_css_classes(["key-button-frame-hidden"])
             self.page_settings_page.deck_config.active_widget = None
 
-    def on_remove(self, *args) -> None:
+    def on_remove(self, *args: Any) -> None:
         if gl.app is None:
             return
         controller = gl.app.main_win.get_active_controller()
@@ -224,6 +231,8 @@ class ScreenBar(Gtk.Frame):
             return
 
         screen = controller.get_input(self.identifier)
+        if screen is None:
+            return
 
         state_key = str(screen.state)
         if state_key not in self.identifier.get_states(active_page):
@@ -244,7 +253,7 @@ class ScreenBar(Gtk.Frame):
         gl.app.main_win.sidebar.load_for_identifier(self.identifier, screen.state)
 
 class ScreenBarImage(Gtk.Picture):
-    def __init__(self, screenbar: ScreenBar, **kwargs):
+    def __init__(self, screenbar: ScreenBar, **kwargs: Any) -> None:
         super().__init__(keep_aspect_ratio=True, can_shrink=True, content_fit=Gtk.ContentFit.SCALE_DOWN,
                          halign=Gtk.Align.CENTER, hexpand=False, width_request=80, height_request=10,
                          valign=Gtk.Align.CENTER, vexpand=False, css_classes=["plus-screenbar-image"],
@@ -264,15 +273,15 @@ class ScreenBarImage(Gtk.Picture):
         # None until the first frame is queued.
         self.latest_task_id: int | None = None
 
-    def on_map(self, *args):
+    def on_map(self, *args: Any) -> None:
         for task in self.on_map_tasks:
             task()
         self.on_map_tasks.clear()
 
-    def get_new_task_id(self):
+    def get_new_task_id(self) -> int:
         return next(self.task_ids)
 
-    def set_image(self, image: Image.Image):
+    def set_image(self, image: Image.Image) -> None:
         # Callable from any thread. This is the map-time replay path. A live
         # frame arrives through the UI adapter, which calls the same two
         # halves and coalesces the paints into one per input. The idle takes
@@ -351,7 +360,7 @@ class ScreenBarImage(Gtk.Picture):
         icon_selector.latest_task_id = icon_selector.get_new_task_id()
         return icon_selector, pixbuf, icon_selector.latest_task_id
 
-    def set_pixbuf_and_del(self, pixbuf, task_id: int = None):
+    def set_pixbuf_and_del(self, pixbuf: "GdkPixbuf.Pixbuf | None", task_id: int | None = None) -> None:
         if task_id is not None:
             if task_id != self.latest_task_id:
                 log.debug("Screenbar: Abort task")

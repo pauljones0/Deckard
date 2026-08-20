@@ -11,19 +11,26 @@ write.
 """
 import functools
 import threading
-from concurrent.futures import ThreadPoolExecutor
+from collections.abc import Callable
+from concurrent.futures import Future, ThreadPoolExecutor
+from typing import Any, ParamSpec, TypeVar, cast
 
 from gi.repository import GLib
 
 from loguru import logger as log
 
 
+# Preserve a decorated function's own parameters and return type, so a
+# decorator below hands back a callable with the same signature.
+_Params = ParamSpec("_Params")
+_Return = TypeVar("_Return")
+
 # How long a worker waits for the main loop to service its marshalled call.
 # Module-level (read at call time) so tests can shrink it.
 RUN_ON_MAIN_TIMEOUT_S = 30
 
 
-def run_on_main(func, *args, **kwargs):
+def run_on_main(func: Callable[..., _Return], *args: Any, **kwargs: Any) -> _Return:
     """Run func on the GTK main loop and block until it returns. Runs inline
     on the main thread, because GTK4 accepts calls from that thread only.
 
@@ -36,7 +43,8 @@ def run_on_main(func, *args, **kwargs):
         return func(*args, **kwargs)
 
     done = threading.Event()
-    box = {}
+    # Holds the result under "result" and an escaped exception under "exc".
+    box: dict[str, Any] = {}
     state_lock = threading.Lock()
     # claimed means the idle callback committed to a run of func.
     # abandoned means the caller timed out and cancelled, and the callback
@@ -44,7 +52,7 @@ def run_on_main(func, *args, **kwargs):
     # them takes effect.
     state = {"claimed": False, "abandoned": False}
 
-    def _cb():
+    def _cb() -> bool:
         with state_lock:
             if state["abandoned"]:
                 # The caller timed out and moved on. Nothing waits for this
@@ -87,13 +95,14 @@ def run_on_main(func, *args, **kwargs):
             )
     if "exc" in box:
         raise box["exc"]
-    return box.get("result")
+    # The box is a plain dict, so the value comes back out as Any.
+    return cast(_Return, box.get("result"))
 
 
-def on_main(func):
+def on_main(func: Callable[_Params, _Return]) -> Callable[_Params, _Return]:
     """Decorator form of run_on_main."""
     @functools.wraps(func)
-    def wrapper(*args, **kwargs):
+    def wrapper(*args: _Params.args, **kwargs: _Params.kwargs) -> _Return:
         return run_on_main(func, *args, **kwargs)
     return wrapper
 
@@ -108,7 +117,7 @@ def on_main(func):
 _background_pool = ThreadPoolExecutor(max_workers=8, thread_name_prefix="background")
 
 
-def _log_background_exception(future):
+def _log_background_exception(future: "Future[Any]") -> None:
     try:
         exc = future.exception()
     except Exception:
@@ -117,7 +126,7 @@ def _log_background_exception(future):
         log.opt(exception=exc).error("background task raised")
 
 
-def run_in_background(func, *args, **kwargs):
+def run_in_background(func: Callable[..., _Return], *args: Any, **kwargs: Any) -> "Future[_Return]":
     """Submit func to the background pool and return its Future. A .result()
     call on the GTK thread deadlocks when the work calls an on_main method."""
     future = _background_pool.submit(func, *args, **kwargs)
@@ -125,14 +134,14 @@ def run_in_background(func, *args, **kwargs):
     return future
 
 
-def background(func):
+def background(func: Callable[_Params, _Return]) -> Callable[_Params, "Future[_Return]"]:
     """Decorator form of run_in_background."""
     @functools.wraps(func)
-    def wrapper(*args, **kwargs):
+    def wrapper(*args: _Params.args, **kwargs: _Params.kwargs) -> "Future[_Return]":
         return run_in_background(func, *args, **kwargs)
     return wrapper
 
 
-def shutdown_background_pool():
+def shutdown_background_pool() -> None:
     """Stop the @background pool; call on app quit."""
     _background_pool.shutdown(wait=False, cancel_futures=True)

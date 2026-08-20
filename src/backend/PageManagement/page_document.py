@@ -29,7 +29,7 @@ import os
 import shutil
 import threading
 from contextlib import contextmanager
-from typing import Any, Iterator
+from typing import cast, Any, Iterator
 
 from loguru import logger as log
 
@@ -38,7 +38,7 @@ from src.backend.DeckManagement.InputIdentifier import Input
 from src.backend.PageManagement import page_flush
 
 
-def snapshot_json_tree(value):
+def snapshot_json_tree(value: Any) -> Any:
     """Copy a json-shaped tree structurally, and share the leaves.
 
     dict.copy() and list() run in C under the GIL, so each container snapshots
@@ -69,7 +69,7 @@ def content_without_action_objects(data: dict[str, Any]) -> dict[str, Any]:
                     if "object" in action:
                         del action["object"]
 
-    return dictionary
+    return cast(dict[str, Any], dictionary)
 
 
 def move_key_to_end(dictionary: dict[str, Any], key: str) -> None:

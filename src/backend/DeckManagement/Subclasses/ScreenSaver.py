@@ -17,13 +17,14 @@ import time
 from loguru import logger as log
 
 # Import typing
-from typing import TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 
 import globals as gl
 
-from src.backend.DeckManagement.InputIdentifier import Input
+from src.backend.DeckManagement.InputIdentifier import Input, InputIdentifier
 from src.backend import timer_wheel
 if TYPE_CHECKING:
+    from src.backend.PageManagement.Page import Page
     from src.backend.DeckManagement.deck_controller.background_media import Background
     from src.backend.DeckManagement.deck_controller.controller import DeckController
 
@@ -36,9 +37,9 @@ class ScreenSaver:
         # and close() call .clear() and .values() on it, and close() compares
         # it against {}. A list is the wrong shape for a close() that runs
         # before any show().
-        self.original_inputs: dict = {}
+        self.original_inputs: dict[type[InputIdentifier], list[Any]] = {}
         self.original_background: "Background | None" = None
-        self.original_brightness: int = 0
+        self.original_brightness: "float | None" = 0
 
         # Time when last key state changed
         self.last_key_change_time = time.time()
@@ -110,7 +111,7 @@ class ScreenSaver:
     def on_timer_end(self) -> None:
         self.show()
 
-    def show(self):
+    def show(self) -> None:
         """Serialized show transition (docs/presenter-migration-plan.md).
 
         Phase 1 pre-resolves the screensaver background outside any lock.
@@ -269,7 +270,7 @@ class ScreenSaver:
                 ReleaseStashedInputsMsg(stashed_inputs)
             )
 
-    def hide(self):
+    def hide(self) -> None:
         """Serialized hide transition (docs/presenter-migration-plan.md).
 
         Phase 2 runs under _load_page_lock and does the coalesce, the flip and
@@ -329,14 +330,14 @@ class ScreenSaver:
         # because that combination arms a run_on_main and pulsectl deadlock.
         follow_up()
 
-    def _hide_followup(self, active_page, time_delay) -> None:
+    def _hide_followup(self, active_page: "Page | None", time_delay: int) -> None:
         if active_page:
             self.deck_controller.load_page(active_page, allow_reload=True)
         else:
             self.deck_controller.load_default_page()
         self.set_time(time_delay)
 
-    def on_key_change(self):
+    def on_key_change(self) -> None:
         if getattr(self.deck_controller, "_closing", False):
             # The deck is tearing down. A straggling input event, already in
             # flight when the reader thread stopped, must not re-arm the
@@ -355,7 +356,7 @@ class ScreenSaver:
         else:
             self.set_time(self.time_delay)
 
-    def set_brightness(self, brightness: int) -> None:
+    def set_brightness(self, brightness: float) -> None:
         self.brightness = int(brightness)
 
         if self.showing:

@@ -12,7 +12,7 @@ This programm comes with ABSOLUTELY NO WARRANTY!
 You should have received a copy of the GNU General Public License
 along with this program. If not, see <https://www.gnu.org/licenses/>.
 """
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from datetime import datetime
 from functools import wraps
 import hashlib
@@ -23,7 +23,7 @@ import sys
 import math
 import re
 import threading
-from typing import TYPE_CHECKING, Any
+from typing import cast, TYPE_CHECKING, Any, TypeVar
 from urllib.parse import urlparse
 from loguru import logger as log
 from PIL import Image
@@ -39,6 +39,9 @@ if TYPE_CHECKING:
     from gi.repository import Gdk, Pango
 
 from src.backend.DeckManagement import font_resolver
+
+# The decorated method's return type, so instance_cache keeps its signature.
+_Return = TypeVar("_Return")
 
 # Import globals
 from autostart import is_flatpak
@@ -65,7 +68,7 @@ def sha256(text: str) -> str:
     return hash_sha256.hexdigest()
 
 
-def file_in_dir(file_path, directory) -> bool | None:
+def file_in_dir(file_path: str, directory: str) -> bool | None:
     """
     Check if a file is present in a directory.
 
@@ -85,7 +88,7 @@ def file_in_dir(file_path, directory) -> bool | None:
     return os.path.split(file_path)[1] in os.listdir(directory)
 
 
-def recursive_hasattr(obj, attr_string):
+def recursive_hasattr(obj: Any, attr_string: str) -> bool:
     """
     Check if an attribute exists in an object.
 
@@ -104,11 +107,11 @@ def recursive_hasattr(obj, attr_string):
     return True
 
 
-def font_path_from_name(font_name: str):
+def font_path_from_name(font_name: str) -> "str | None":
     return font_resolver.resolve(font_name, 400, "normal")
 
 
-def font_name_from_path(font_path: str):
+def font_name_from_path(font_path: str) -> "str | None":
     return font_resolver.font_name_from_path(font_path)
 
 
@@ -120,7 +123,7 @@ def get_last_dir(path: str) -> str | None:
     return None
 
 
-def has_dict_recursive(dictionary: dict, *args) -> bool:
+def has_dict_recursive(dictionary: dict[str, Any], *args: Any) -> bool:
     working_dict: Any = dictionary
     for arg in args:
         working_dict = working_dict.get(arg)
@@ -137,7 +140,7 @@ def get_sys_param_value(param_name: str) -> str | None:
     return None
 
 
-def get_sys_args_without_param(param_name: str) -> list:
+def get_sys_args_without_param(param_name: str) -> list[Any]:
     """sys.argv minus every argument starting with param_name, and the value
     after it.
 
@@ -192,7 +195,7 @@ def get_image_aspect_ratio(img: Image.Image) -> str:
     return aspect_ratio
 
 
-def get_file_name_from_url(url: str):
+def get_file_name_from_url(url: str) -> str:
     """
     Extracts the file name from a given URL.
 
@@ -208,7 +211,7 @@ def get_file_name_from_url(url: str):
     return os.path.basename(parsed_url.path)
 
 
-def download_file(url: str, path: str = "", file_name: str = None) -> str:
+def download_file(url: str, path: str = "", file_name: str | None = None) -> str:
     """
     Downloads a file from the specified URL and saves it to the specified path.
 
@@ -241,7 +244,9 @@ def download_file(url: str, path: str = "", file_name: str = None) -> str:
 
     return path
 
-def natural_keys(s):
+def natural_keys(s: str) -> "list[Any]":
+    # The elements alternate text and digit runs; two keys only compare
+    # int against int at an index when both names carry digits there.
     return [int(text) if text.isdigit() else text.lower() for text in re.split('([0-9]+)', s)]
 
 
@@ -255,7 +260,7 @@ def natural_sort_by_filenames(paths_list: list[str]) -> list[str]:
     return sorted_paths
 
 
-def add_default_keys(d: dict, keys: list):
+def add_default_keys(d: dict[str, Any], keys: list[Any]) -> None:
     """
     Add nested default keys to a dictionary.
 
@@ -270,7 +275,7 @@ def add_default_keys(d: dict, keys: list):
         current_level = current_level[key]
 
 
-def instance_cache(func):
+def instance_cache(func: Callable[..., _Return]) -> Callable[..., _Return]:
     """Per-instance method memoization.
 
     Results live in the instance __dict__ and die with the instance. The key
@@ -280,25 +285,26 @@ def instance_cache(func):
     attr = f"_instance_cache_{func.__name__}"
 
     @wraps(func)
-    def wrapper(self, *args):
+    def wrapper(self: Any, *args: Any) -> _Return:
         cache = self.__dict__.get(attr)
         if cache is None:
             cache = self.__dict__[attr] = {}
         if args not in cache:
             cache[args] = func(self, *args)
-        return cache[args]
+        # The cache is a plain dict on the instance, so the read is Any.
+        return cast(_Return, cache[args])
 
     return wrapper
 
 
-def _load_gdk():
+def _load_gdk() -> Any:
     """Imports Gdk on demand. See the TYPE_CHECKING note at the top."""
     gi.require_version("Gdk", "4.0")
     from gi.repository import Gdk
     return Gdk
 
 
-def _load_pango():
+def _load_pango() -> Any:
     """Imports Pango on demand. See the TYPE_CHECKING note at the top."""
     from gi.repository import Pango
     return Pango
@@ -310,13 +316,13 @@ def color_values_to_gdk(color_values: Sequence[int]) -> "Gdk.RGBA":
     # The body copies into a list and works off the length, so it accepts any
     # 3- or 4-element sequence of channel values (scenario_helper_methods pins
     # that contract).
-    Gdk = _load_gdk()
+    gdk = _load_gdk()
     # Copy before normalizing. Callers pass tuples, which .append rejects,
     # and they reuse the sequence they passed in.
     values = list(color_values)
     if len(values) == 3:
         values.append(255)
-    color = Gdk.RGBA()
+    color = gdk.RGBA()
     # Every caller works in 0-255 on all four channels. gdk_color_to_values
     # hands back that range, and the label and font settings persist it. CSS
     # rgba() takes the channels in 0-255 but the alpha in 0-1, so this scales
@@ -324,7 +330,7 @@ def color_values_to_gdk(color_values: Sequence[int]) -> "Gdk.RGBA":
     # fully opaque, and a semi-transparent label colour comes back opaque.
     color.parse(f"rgba({values[0]}, {values[1]}, {values[2]}, {values[3] / 255})")
 
-    return color
+    return cast("Gdk.RGBA", color)
 
 
 def gdk_color_to_values(color: "Gdk.RGBA") -> tuple[int, int, int, int]:
@@ -336,22 +342,24 @@ def gdk_color_to_values(color: "Gdk.RGBA") -> tuple[int, int, int, int]:
     return red, green, blue, alpha
 
 
-def get_pango_font_description(font_family: str, font_size: int, font_weight: int, font_style: str) -> "Pango.FontDescription":
-    Pango = _load_pango()
+# The inverse of get_values_from_pango_font_description, which answers a
+# fractional size, so this takes one back.
+def get_pango_font_description(font_family: str, font_size: float, font_weight: int, font_style: str) -> "Pango.FontDescription":
+    pango = _load_pango()
     if font_style == "italic":
-        font_style = Pango.Style.ITALIC
+        font_style = pango.Style.ITALIC
     elif font_style == "oblique":
-        font_style = Pango.Style.OBLIQUE
+        font_style = pango.Style.OBLIQUE
     else:
-        font_style = Pango.Style.NORMAL
+        font_style = pango.Style.NORMAL
 
-    desc = Pango.FontDescription()
+    desc = pango.FontDescription()
     desc.set_family(font_family)
-    desc.set_absolute_size(font_size * Pango.SCALE)
+    desc.set_absolute_size(font_size * pango.SCALE)
     desc.set_weight(font_weight)
     desc.set_style(font_style)
 
-    return desc
+    return cast("Pango.FontDescription", desc)
 
 
 def get_values_from_pango_font_description(desc: "Pango.FontDescription") -> tuple[str | None, float, int, str]:
@@ -382,7 +390,7 @@ def get_sub_folders(parent: str) -> list[str]:
     return [folder for folder in os.listdir(parent) if os.path.isdir(os.path.join(parent, folder))]
 
 
-def sort_times(time_list):
+def sort_times(time_list: "list[str]") -> "list[str]":
     """
     Sort a list of datetime strings in ascending order.
 
@@ -395,7 +403,7 @@ def sort_times(time_list):
     return sorted(time_list, key=lambda x: datetime.fromisoformat(x))
 
 
-def run_command(command):
+def run_command(command: "str | None") -> None:
     """Detaches a shell command line and forgets about it.
 
     command is a command line, not an argv list. Callers, plugins included,
@@ -429,7 +437,7 @@ def run_command(command):
     # (GTK, plugins and deck threads) only to orphan the grandchild.
     threading.Thread(target=process.wait, name="run_command_reaper", daemon=True).start()
 
-def open_web(url):
+def open_web(url: str) -> None:
     """Opens a URL in the user's default browser.
 
     Uses Gio instead of a shell call to xdg-open. GLib routes the call through
@@ -445,7 +453,7 @@ def open_web(url):
         # Gio raises on failure. Log it.
         log.error(f"Failed to open URL {url}: {e}")
 
-def svg_string_to_pil(svg_string, width: int = 96, height: int = 96):
+def svg_string_to_pil(svg_string: str, width: int = 96, height: int = 96) -> Image.Image:
     """
     Convert an SVG string to a PIL Image object.
     
@@ -472,7 +480,7 @@ def svg_string_to_pil(svg_string, width: int = 96, height: int = 96):
     return img
 
 
-def svg_to_pil(svg_path: str, width: int = 96, height: int = 96):
+def svg_to_pil(svg_path: str, width: int = 96, height: int = 96) -> Image.Image:
     """
     Convert an SVG file to a PIL Image object.
     

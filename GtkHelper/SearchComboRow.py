@@ -6,6 +6,7 @@ Modified by: G4PLS
 Modified the Original code to fit the purpose of this application.
 """
 
+from typing import Any
 from typing_extensions import deprecated
 import gi
 
@@ -19,12 +20,12 @@ from loguru import logger as log
 class SearchComboRowItem(GObject.Object):
     __gtype_name__ = 'SearchComboRowItem'
 
-    def __init__(self, display_label):
+    def __init__(self, display_label: str) -> None:
         super().__init__()
         self._display_label = display_label
 
     @GObject.Property
-    def display_label(self):
+    def display_label(self) -> str:
         return self._display_label
 
 @deprecated("This has been deprecated in favor of GtkHelper.ComboRow")
@@ -34,7 +35,7 @@ class SearchComboRow(Adw.PreferencesRow):
         'item-changed': (GObject.SignalFlags.RUN_FIRST, None, (SearchComboRowItem, int,)),
     }
 
-    def __init__(self, title: str, use_single_line: bool = False, **kwargs):
+    def __init__(self, title: str, use_single_line: bool = False, **kwargs: Any) -> None:
         # Take no positional arguments. Adw.PreferencesRow is a GObject, and
         # its constructor takes keyword properties only.
         super().__init__(title=title, **kwargs)
@@ -77,40 +78,40 @@ class SearchComboRow(Adw.PreferencesRow):
         self.main_box.append(self.label)
         self.main_box.append(self.dropdown)
 
-    def _get_search_entry_widget(self, dropdown):
+    def _get_search_entry_widget(self, dropdown: Any) -> Any:
         popover = dropdown.get_last_child()
         box = popover.get_child()
         box2 = box.get_first_child()
         search_entry = box2.get_first_child() # Gtk.SearchEntry
         return search_entry
 
-    def _on_factory_widget_setup(self, factory, list_item):
+    def _on_factory_widget_setup(self, factory: Gtk.SignalListItemFactory, list_item: Any) -> None:
         box = Gtk.Box(spacing=6, orientation=Gtk.Orientation.HORIZONTAL)
         label = Gtk.Label()
         box.append(label)
         list_item.set_child(box)
 
-    def _on_factory_widget_bind(self, factory, list_item):
+    def _on_factory_widget_bind(self, factory: Gtk.SignalListItemFactory, list_item: Any) -> None:
         box = list_item.get_child()
         label = box.get_first_child()
         widget = list_item.get_item()
         label.set_text(widget.display_label)
 
-    def _on_selected_widget(self, dropdown, data):
+    def _on_selected_widget(self, dropdown: Gtk.DropDown, data: Any) -> None:
         selection = dropdown.get_selected_item()
         index = dropdown.get_selected()
 
         if selection and index >= 0:
             self.emit("item-changed", selection, index)
 
-    def _on_search_widget_changed(self, search_entry):
+    def _on_search_widget_changed(self, search_entry: Gtk.SearchEntry) -> None:
         self.search_text = search_entry.get_text()
         self.filter_widget.changed(Gtk.FilterChange.DIFFERENT)
 
-    def _do_filter_widget_view(self, item, filter_list_model):
+    def _do_filter_widget_view(self, item: Any, filter_list_model: Any) -> bool:
         return self.search_text.upper() in item.display_label.upper()
 
-    def populate(self, list: list[SearchComboRowItem], selected_index: int = 0):
+    def populate(self, list: list[SearchComboRowItem], selected_index: int = 0) -> None:
         self.model_widget.remove_all()
 
         for item in list:
@@ -118,7 +119,7 @@ class SearchComboRow(Adw.PreferencesRow):
 
         self.dropdown.set_selected(selected_index)
 
-    def set_selected_item(self, index: int):
+    def set_selected_item(self, index: int) -> None:
         if index < 0:
             return
 

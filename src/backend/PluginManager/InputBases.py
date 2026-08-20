@@ -1,4 +1,5 @@
 from abc import ABC
+from typing import Any
 
 from src.backend.PluginManager.EventAssigner import EventAssigner
 from src.backend.DeckManagement.InputIdentifier import Input
@@ -15,7 +16,7 @@ class InputAction(ABC):
     pass
 
 class KeyAction(InputAction, ActionCore):
-    def __init__(self, default_events: bool = True, *args, **kwargs):
+    def __init__(self, default_events: bool = True, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         if default_events:
             self.add_event_assigner(EventAssigner(
@@ -49,23 +50,23 @@ class KeyAction(InputAction, ActionCore):
                 callback=lambda data: self.on_key_hold_stop()
             ))
 
-    def on_key_down(self):
+    def on_key_down(self) -> None:
         pass
         
-    def on_key_up(self):
+    def on_key_up(self) -> None:
         pass
         
-    def on_key_short_up(self):
+    def on_key_short_up(self) -> None:
         pass
         
-    def on_key_hold_start(self):
+    def on_key_hold_start(self) -> None:
         pass
         
-    def on_key_hold_stop(self):
+    def on_key_hold_stop(self) -> None:
         pass
 
 class DialAction(InputAction, ActionCore):
-    def __init__(self, default_events: bool = True, *args, **kwargs):
+    def __init__(self, default_events: bool = True, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         if default_events:
             self.add_event_assigner(EventAssigner(
@@ -123,35 +124,35 @@ class DialAction(InputAction, ActionCore):
                 callback=lambda data: self.on_dial_long_touch_press()
             ))
 
-    def on_dial_down(self):
+    def on_dial_down(self) -> None:
         pass
         
-    def on_dial_up(self):
+    def on_dial_up(self) -> None:
         pass
         
-    def on_dial_short_up(self):
+    def on_dial_short_up(self) -> None:
         pass
         
-    def on_dial_hold_start(self):
+    def on_dial_hold_start(self) -> None:
         pass
         
-    def on_dial_hold_stop(self):
+    def on_dial_hold_stop(self) -> None:
         pass
         
-    def on_dial_turn_cw(self):
+    def on_dial_turn_cw(self) -> None:
         pass
         
-    def on_dial_turn_ccw(self):
+    def on_dial_turn_ccw(self) -> None:
         pass
         
-    def on_dial_short_touch_press(self):
+    def on_dial_short_touch_press(self) -> None:
         pass
         
-    def on_dial_long_touch_press(self):
+    def on_dial_long_touch_press(self) -> None:
         pass
 
 class TouchScreenAction(InputAction, ActionCore):
-    def __init__(self, default_events: bool = True, *args, **kwargs):
+    def __init__(self, default_events: bool = True, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         if default_events:
             self.add_event_assigner(EventAssigner(
@@ -167,10 +168,10 @@ class TouchScreenAction(InputAction, ActionCore):
                 callback=lambda data: self.on_touchscreen_drag_right()
             ))
 
-    def on_touchscreen_drag_left(self):
+    def on_touchscreen_drag_left(self) -> None:
         pass
         
-    def on_touchscreen_drag_right(self):
+    def on_touchscreen_drag_right(self) -> None:
         pass
 
 

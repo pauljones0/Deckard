@@ -27,7 +27,7 @@ if TYPE_CHECKING:
     from src.windows.AssetManager.WallpaperPacks.Wallpapers.WallpaperChooser import WallpaperChooserPage
 
 class WallpaperFlowBox(DynamicFlowBox):
-    def __init__(self, base_class, wallpaper_chooser: "WallpaperChooserPage", *args, **kwargs):
+    def __init__(self, base_class: type, wallpaper_chooser: "WallpaperChooserPage", *args: Any, **kwargs: Any) -> None:
         super().__init__(base_class, *args, **kwargs)
         self.CHILDREN_PER_PAGE = 150
         self.set_hexpand(True)

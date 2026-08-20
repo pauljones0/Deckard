@@ -32,27 +32,31 @@ from GtkHelper.GtkHelper import BackButton, BetterExpander, BetterPreferencesGro
 from src.backend.PluginManager.ActionHolder import ActionHolder
 
 # Import typing
-from typing import TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from src.windows.mainWindow.elements.Sidebar.Sidebar import Sidebar
 
 # Import globals
+from src.backend import services
+
 import globals as gl
 
 class ActionChooser(Gtk.Box):
-    def __init__(self, sidebar: "Sidebar", **kwargs):
+    def __init__(self, sidebar: "Sidebar", **kwargs: Any) -> None:
         super().__init__(hexpand=True, vexpand=True, **kwargs)
         self.sidebar: "Sidebar" = sidebar
 
-        self.callback_function = None
-        self.callback_args = None
-        self.callback_kwargs = None
+        self.callback_function: "Callable[..., Any] | None" = None
+        self.callback_args: "tuple[Any, ...] | None" = None
+        self.callback_kwargs: "dict[str, Any] | None" = None
+        self.current_stack_page: "Gtk.Widget | None" = None
         # Cleared again whenever show() is handed an invalid callback.
         self.identifier: InputIdentifier | None = None
 
         self.build()
 
-    def build(self):
+    def build(self) -> None:
         self.scrolled_window = Gtk.ScrolledWindow(hexpand=True, vexpand=True)
         self.append(self.scrolled_window)
 
@@ -121,7 +125,7 @@ class ActionChooser(Gtk.Box):
         self.empty_state_label.set_label(text)
         self.empty_state_label.set_visible(True)
 
-    def show(self, callback_function, current_stack_page, identifier: InputIdentifier, callback_args, callback_kwargs):  # type: ignore[override]  # gi stub: shadows Gtk.Widget.show() with the show-for-this-action-slot entry point of the chooser; its one caller is Sidebar.let_user_select_action
+    def show(self, callback_function: "Callable[..., Any] | None", current_stack_page: "Gtk.Widget | None", identifier: InputIdentifier, callback_args: "tuple[Any, ...]", callback_kwargs: "dict[str, Any]") -> None:  # type: ignore[override]  # gi stub: shadows Gtk.Widget.show() with the show-for-this-action-slot entry point of the chooser; its one caller is Sidebar.let_user_select_action
         # current_stack_page matters when a plugin action in the
         # action_configurator calls let_user_select_action.
 
@@ -144,37 +148,43 @@ class ActionChooser(Gtk.Box):
 
         self.sidebar.main_stack.set_visible_child(self)
 
-    def on_back_button_click(self, button):
+    def on_back_button_click(self, button: Gtk.Button) -> None:
         self.sidebar.main_stack.set_visible_child_name("configurator_stack")
 
-    def on_search_changed(self, search_entry):
+    def on_search_changed(self, search_entry: Gtk.SearchEntry) -> None:
         self.plugin_group.search()
 
 class OpenStoreButton(Gtk.Button):
-    def __init__(self, *args, **kwargs):
-        super().__init__(label=gl.lm.get("asset-chooser.add-more-button.label"), css_classes=["suggested-action"],
-                         *args, **kwargs)
+    def __init__(self, **kwargs: Any) -> None:
+        # No *args. The one caller passes margins by keyword, and a forwarded
+        # positional would bind label a second time.
+        super().__init__(label=gl.lm.get("asset-chooser.add-more-button.label"),
+                         css_classes=["suggested-action"], **kwargs)
         self.connect("clicked", self.on_click)
 
-    def on_click(self, button):
-        gl.app.open_store()
+    def on_click(self, button: Gtk.Button) -> None:
+        services.require_app().open_store()
 
 class PluginGroup(BetterPreferencesGroup):
-    def __init__(self, action_chooser, **kwargs):
+    def __init__(self, action_chooser: "ActionChooser", **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.action_chooser = action_chooser
 
-        self.expander = []
+        self.expander: "list[Any]" = []
 
         self.update()
 
         self.set_sort_func(self.sort_func, None)
         self.set_filter_func(self.filter_func, None)
 
-    def update(self):
+    def update(self) -> None:
         self.clear()
         self.expander = []
-        for plugin_id, plugin_dir in dict(gl.plugin_manager.get_plugins()).items():
+        plugin_manager = gl.plugin_manager
+        if plugin_manager is None:
+            # Nothing to offer before main.create_global_objects() builds it.
+            return
+        for plugin_id, plugin_dir in dict(plugin_manager.get_plugins()).items():
             plugin_name = plugin_dir["object"].plugin_name
             expander = PluginExpander(self, plugin_name, plugin_dir)
             self.add(expander)
@@ -182,7 +192,7 @@ class PluginGroup(BetterPreferencesGroup):
 
         self.action_chooser.update_empty_state(len(self.expander))
 
-    def search(self):
+    def search(self) -> None:
         # Let the expanders search
         for expander in self.expander:
             expander.search()
@@ -190,7 +200,7 @@ class PluginGroup(BetterPreferencesGroup):
         self.invalidate_sort()
         self.invalidate_filter()
 
-    def sort_func(self, expander1, expander2, user_data):
+    def sort_func(self, expander1: Any, expander2: Any, user_data: Any) -> int:
         search_string = self.action_chooser.search_entry.get_text()
 
         if search_string == "":
@@ -218,7 +228,7 @@ class PluginGroup(BetterPreferencesGroup):
         
         return 0
     
-    def filter_func(self, expander, user_data):
+    def filter_func(self, expander: Any, user_data: Any) -> bool:
         MIN_ACTION_FUZZY_SCORE = 20
         MIN_TITLE_FUZZY_SCORE = 20
 
@@ -239,35 +249,35 @@ class PluginGroup(BetterPreferencesGroup):
             return True
         return False
     
-    def set_identifier(self, identifier: InputIdentifier):
+    def set_identifier(self, identifier: InputIdentifier) -> None:
         for expander in self.expander:
             expander.set_identifier(identifier)
             expander.invalidate_filter()
 
 class ActionChooserExpander(BetterExpander):
-    def __init__(self, plugin_group, plugin_name, plugin_dir, *args, **kwargs):
+    def __init__(self, plugin_group: PluginGroup, plugin_name: str, plugin_dir: "dict[str, Any]", *args: Any, **kwargs: Any) -> None:
         super().__init__()
         self.plugin_group = plugin_group
         self.plugin_name = plugin_name
         self.plugin_dir = plugin_dir
 
-        self.input_type: InputIdentifier = None
+        self.input_type: InputIdentifier = None  # type: ignore[assignment]  # late-init: show
 
-        self.highest_fuzz_score = 0
+        self.highest_fuzz_score: float = 0
 
         self.set_sort_func(self.sort_func, None)
         self.set_filter_func(self.filter_func, None)
 
-    def build(self):
+    def build(self) -> None:
         pass
 
-    def sort_func(self, row1, row2, user_data):
+    def sort_func(self, row1: Any, row2: Any, user_data: Any) -> "int | None":
         pass
 
-    def filter_func(self, row: "PluginActionRow", user_data):
+    def filter_func(self, row: "PluginActionRow", user_data: Any) -> "bool | None":
         pass
 
-    def calculate_fuzz_ratio_sort(self, search_string, action1_label, action2_label):
+    def calculate_fuzz_ratio_sort(self, search_string: str, action1_label: str, action2_label: str) -> int:
         if search_string == "":
             self.highest_fuzz_score = 0
             # sort alphabetically
@@ -291,7 +301,7 @@ class ActionChooserExpander(BetterExpander):
             return 1
         return 0
 
-    def calculate_fuzz_ratio_filter(self, search_string, label):
+    def calculate_fuzz_ratio_filter(self, search_string: str, label: str) -> bool:
         if search_string == "":
             # Collapse all
             self.set_expanded(False)
@@ -308,24 +318,24 @@ class ActionChooserExpander(BetterExpander):
             return True
         return False
 
-    def search(self):
+    def search(self) -> None:
         self.invalidate_filter()
         self.invalidate_sort()
 
 class PluginExpander(ActionChooserExpander):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self.build()
         self.add_action_holders(*args, **kwargs)
 
-    def build(self):
+    def build(self) -> None:
         # Texts
         self.set_title(self.plugin_name)
         self.set_subtitle(self.plugin_dir["object"].plugin_id)
 
         self.add_prefix(self.plugin_dir["object"].get_selector_icon())
 
-    def add_action_holders(self, *args, **kwargs):
+    def add_action_holders(self, *args: Any, **kwargs: Any) -> None:
         action_holders: set[ActionHolder] = set(self.plugin_dir["object"].action_holders.values())
         action_holder_groups: set[ActionHolderGroup] = self.plugin_dir["object"].action_holder_groups
 
@@ -349,7 +359,7 @@ class PluginExpander(ActionChooserExpander):
 
             self.add_row(action_row)
 
-    def sort_func(self, row1, row2, user_data):
+    def sort_func(self, row1: Any, row2: Any, user_data: Any) -> int:
         # Returns -1 if row1 should be brefore row2, 0 if they are equal, and 1 otherwise
         search_string = self.plugin_group.action_chooser.search_entry.get_text()
 
@@ -368,9 +378,9 @@ class PluginExpander(ActionChooserExpander):
 
         return self.calculate_fuzz_ratio_sort(search_string, action1_label, action2_label)
     
-    def filter_func(self, row: "PluginActionRow", user_data):
+    def filter_func(self, row: "PluginActionRow | ActionGroupExpander", user_data: Any) -> bool:
         search_string = self.plugin_group.action_chooser.search_entry.get_text()
-        
+
         if isinstance(row, ActionGroupExpander):
             label = row.get_title()
         else:
@@ -378,7 +388,7 @@ class PluginExpander(ActionChooserExpander):
 
         return self.calculate_fuzz_ratio_filter(search_string, label)
     
-    def set_identifier(self, input_type: InputIdentifier):
+    def set_identifier(self, input_type: InputIdentifier) -> None:
         self.input_type = input_type
         for row in self.get_rows():
             if isinstance(row, ActionGroupExpander):
@@ -387,24 +397,20 @@ class PluginExpander(ActionChooserExpander):
             row.set_identifier(input_type)
         self.invalidate_filter()
 
-    def set_group_identifier(self, input_type: InputIdentifier, group: ActionHolderGroup, row):
-        return True
-        # Kept for a later option to hide groups
-        group_input_compatibility = group.get_min_input_compatibility(input_type)
-
-        if group_input_compatibility <= ActionInputSupport.UNSUPPORTED:
-            row.hide()
-            return False
+    def set_group_identifier(self, input_type: InputIdentifier, group: ActionHolderGroup, row: Any) -> bool:
+        # A later option can hide groups here, through
+        # group.get_min_input_compatibility(input_type) against
+        # ActionInputSupport.UNSUPPORTED and row.hide().
         return True
 
 class ActionGroupExpander(ActionChooserExpander):
-    def __init__(self, holder_group, *args, **kwargs):
+    def __init__(self, holder_group: ActionHolderGroup, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self.holder_group: ActionHolderGroup = holder_group
         self.build()
         self.add_action_holders()
 
-    def build(self):
+    def build(self) -> None:
         # Texts
         self.set_title(self.holder_group.get_group_name())
 
@@ -422,14 +428,14 @@ class ActionGroupExpander(ActionChooserExpander):
                                       hexpand=True, halign=Gtk.Align.END, margin_end=3, visible=False)
         self.add_suffix(self.warning_icon)
 
-    def add_action_holders(self):
+    def add_action_holders(self) -> None:
         for holder in self.holder_group.get_action_holders():
             action_row = PluginActionRow(self, holder)
             action_row.add_css_class("action-chooser-group-item")
 
             self.add_row(action_row)
 
-    def on_expanded(self, *args):
+    def on_expanded(self, *args: Any) -> None:
         # This expander sits inside another expander, which sticks the icon
         # in the expanded state. The code below sets the icon.
         image = self.get_arrow_image()
@@ -443,7 +449,7 @@ class ActionGroupExpander(ActionChooserExpander):
         else:
             image.set_css_classes(["expander-arrow-not-activated"])
 
-    def sort_func(self, row1, row2, user_data):
+    def sort_func(self, row1: Any, row2: Any, user_data: Any) -> int:
         # Returns -1 if row1 should be brefore row2, 0 if they are equal, and 1 otherwise
         search_string = self.plugin_group.action_chooser.search_entry.get_text()
 
@@ -452,17 +458,17 @@ class ActionGroupExpander(ActionChooserExpander):
 
         return self.calculate_fuzz_ratio_sort(search_string, action1_label, action2_label)
 
-    def filter_func(self, row: "PluginActionRow", user_data):
+    def filter_func(self, row: "PluginActionRow", user_data: Any) -> bool:
         search_string = self.plugin_group.action_chooser.search_entry.get_text()
 
         label = row.label.get_label()
 
         return self.calculate_fuzz_ratio_filter(search_string, label)
 
-    def set_identifier(self, input_type: InputIdentifier):
+    def set_identifier(self, input_type: InputIdentifier) -> None:
         compatibility = self.holder_group.get_min_input_compatibility(input_type)
 
-        def show_compatibility(show: bool = False, tooltip: str = None, icon_name: str = None):
+        def show_compatibility(show: bool = False, tooltip: str | None = None, icon_name: str | None = None) -> None:
             self.warning_icon.set_visible(show)
 
             if icon_name:
@@ -494,7 +500,7 @@ class ActionGroupExpander(ActionChooserExpander):
         self.invalidate_filter()
 
 class PluginActionRow(Adw.ActionRow):
-    def __init__(self, expander, action_holder: ActionHolder, **kwargs):
+    def __init__(self, expander: Any, action_holder: ActionHolder, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.expander = expander
         self.action_holder = action_holder
@@ -512,7 +518,7 @@ class PluginActionRow(Adw.ActionRow):
         self.icon = action_holder.icon
         icon_parent = action_holder.icon.get_parent()
         if icon_parent is not None:
-            icon_parent.remove(self.action_holder.icon)  # type: ignore[union-attr]  # gi stub: remove() lives on the container subclasses (Gtk.Box here), not on Gtk.Widget, which is all get_parent() promises
+            icon_parent.remove(self.action_holder.icon)  # type: ignore[attr-defined]  # gi stub: remove() lives on the container subclasses (Gtk.Box here), not on Gtk.Widget, which is all get_parent() promises
         self.main_box.append(self.icon)
 
         self.label = Gtk.Label(label=self.action_holder.action_name, margin_start=10, css_classes=["bold", "large-text"])
@@ -522,7 +528,7 @@ class PluginActionRow(Adw.ActionRow):
                                       hexpand=True, halign=Gtk.Align.END, margin_end=3, visible=False)
         self.main_box.append(self.warning_icon)
 
-    def on_click(self, button):
+    def on_click(self, button: Gtk.Button) -> None:
         if self.action_holder.action_core is None:
             return
         
@@ -542,13 +548,13 @@ class PluginActionRow(Adw.ActionRow):
         
         callback(self.action_holder, *args, **kwargs)
 
-    def show_warning(self, show: bool, tooltip: str = None):
+    def show_warning(self, show: bool, tooltip: str | None = None) -> None:
         self.warning_icon.set_visible(show)
 
         if show and tooltip is not None:
             self.warning_icon.set_tooltip_text(tooltip)
 
-    def set_identifier(self, identifier: InputIdentifier):
+    def set_identifier(self, identifier: InputIdentifier) -> None:
         action_input_compatibility = self.action_holder.get_input_compatibility(identifier)
 
         if action_input_compatibility <= ActionInputSupport.UNSUPPORTED:

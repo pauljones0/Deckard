@@ -28,7 +28,7 @@ class OutdatedActionRow(MissingRow):
     # state, coords, dial, touch) predates InputIdentifier and passes coords
     # to a parent that has no such parameter, which raises TypeError for every
     # outdated action.
-    def __init__(self, action_id:str, identifier: InputIdentifier, state:int, index: int):
+    def __init__(self, action_id:str, identifier: InputIdentifier | None, state:int, index: int):
         super().__init__(
             action_id=action_id,
             identifier=identifier,

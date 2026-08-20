@@ -53,7 +53,7 @@ class _PageSwitchCounter:
     no lock. The paired timestamp is a plain rebind, which is atomic under the
     GIL too. A torn read costs a diagnostic one stale tick and no more."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._counter = itertools.count(1)
         self.value = 0
         self.last_switch_monotonic = time.monotonic()
@@ -158,7 +158,7 @@ class MemTelemetrySampler(threading.Thread):
     costs microseconds, to log the trim deltas.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__(name="mem_telemetry", daemon=True)
         self._stop_event = threading.Event()
         self._trim_enabled = os.environ.get("SC_MALLOC_TRIM", "1") != "0"

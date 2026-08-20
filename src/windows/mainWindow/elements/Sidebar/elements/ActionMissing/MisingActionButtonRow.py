@@ -22,7 +22,7 @@ gi.require_version("Adw", "1")
 
 
 class MissingActionButtonRow(MissingRow):
-    def __init__(self, action_id:str, identifier: InputIdentifier, state:int, index: int):
+    def __init__(self, action_id:str, identifier: InputIdentifier | None, state:int, index: int):
         super().__init__(
             action_id=action_id,
             identifier=identifier,

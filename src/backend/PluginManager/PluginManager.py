@@ -3,6 +3,7 @@ import os
 import signal
 import importlib
 import shlex
+import socket
 import subprocess
 import sys
 import tempfile
@@ -18,9 +19,10 @@ from streamcontroller_plugin_tools import BackendBase
 
 import globals as gl
 from src.backend import startup_queue
+from typing import cast, Any
 
 
-def terminate_backend_process(process, escalate: bool = True) -> None:
+def terminate_backend_process(process: "subprocess.Popen[bytes] | None", escalate: bool = True) -> None:
     """Send SIGTERM to the process group of a launched backend.
 
     The backend leads its own session. With escalate, this waits, sends SIGKILL
@@ -119,7 +121,7 @@ def build_backend_launch_command(backend_path: str, venv_path: str | None, port:
             "deckard-backend", interpreter, backend_path, str(port)]
 
 
-def frontend_authenticator(sock):
+def frontend_authenticator(sock: "socket.socket") -> "tuple[socket.socket, None]":
     """rpyc authenticator for the frontend servers of plugins and actions.
 
     Loopback TCP carries no peer credentials, so without this any local
@@ -135,7 +137,7 @@ def frontend_authenticator(sock):
     return sock, None
 
 
-def verify_backend_port(port: int, process: subprocess.Popen | None,
+def verify_backend_port(port: int, process: subprocess.Popen[bytes] | None,
                         via_terminal: bool, owner: str) -> str:
     """Give the loopback address to register the launched backend on.
 
@@ -191,7 +193,7 @@ def verify_backend_port(port: int, process: subprocess.Popen | None,
     return loopback[0].local_ip
 
 
-def terminate_refused_backend(process: subprocess.Popen | None, owner: str) -> None:
+def terminate_refused_backend(process: subprocess.Popen[bytes] | None, owner: str) -> None:
     """Terminate a backend whose registration verify_backend_port refused.
 
     A refused backend is exposed or unverifiable, and refusing the connection
@@ -273,12 +275,12 @@ def backend_guard_env() -> dict[str, str]:
 
 class PluginManager:
     action_index: dict[str, ActionHolder] = {}
-    def __init__(self):
+    def __init__(self) -> None:
         self.initialized_plugin_classes = list[PluginBase]()
         self.backends:list[BackendBase] = []
         # The subprocess.Popen handles of the launched backends. The teardown
         # terminates each one.
-        self.backend_processes: list = []
+        self.backend_processes: list[subprocess.Popen[bytes]] = []
         # The first warm_up_plugins() call, from App.on_activate, sets this.
         # After that, load_plugins() runs the warm-up again, so a plugin
         # installed later gets its on_app_ready too. A store install calls
@@ -344,7 +346,7 @@ class PluginManager:
             except Exception as e:
                 log.error(f"Plugin {plugin_id}: on_app_ready failed: {e}")
 
-    def load_plugins(self, show_notification: bool = False):
+    def load_plugins(self, show_notification: bool = False) -> None:
         os.makedirs(gl.PLUGIN_DIR, exist_ok=True)
         try:
             folders = os.listdir(gl.PLUGIN_DIR)
@@ -401,7 +403,7 @@ class PluginManager:
             self.show_n_disabled_plugins_notification()
             self.show_load_errors_notification()
 
-    def show_n_disabled_plugins_notification(self):
+    def show_n_disabled_plugins_notification(self) -> None:
         n_deactivated_plugins = len(PluginBase.disabled_plugins)
         if n_deactivated_plugins == 0:
             return
@@ -410,19 +412,25 @@ class PluginManager:
         if n_deactivated_plugins == 1:
             body = f"{n_deactivated_plugins} plugin has been disabled because it is no longer compatible with the current app version"
         
-        call = lambda: gl.app.send_notification(
-            "dialog-information-symbolic",
-            "Plugins",
-            body,
-            button=("Update All", "app.update-all-assets", None)
-        )
+        def call() -> None:
+            # Read the app at call time, not at definition time: the queue
+            # below may hold this until App.on_activate drains it.
+            app = gl.app
+            if app is None:
+                return
+            app.send_notification(
+                "dialog-information-symbolic",
+                "Plugins",
+                body,
+                button=("Update All", "app.update-all-assets", None)
+            )
         # The plugin load calls this, which on the boot path runs before the
         # app exists. The queue answers whether this thread delivers now, or
         # the drain in App.on_activate does. See src/backend/startup_queue.py.
         if startup_queue.get().when_app_ready(call):
             call()
 
-    def show_load_errors_notification(self):
+    def show_load_errors_notification(self) -> None:
         """Show the plugin load failures to the user.
 
         Any thread can call this at any point during startup, because gl.notify
@@ -441,7 +449,7 @@ class PluginManager:
         gl.notify.error(body, title="Plugins")
 
     @staticmethod
-    def _plugin_folder_of(subclass) -> str:
+    def _plugin_folder_of(subclass: "type[PluginBase]") -> str:
         """Map a PluginBase subclass back to its folder name under PLUGIN_DIR.
 
         The module plugins.<folder>.main gives <folder>, which load_errors
@@ -456,7 +464,7 @@ class PluginManager:
     def _is_plugin_disabled(plugin_base: PluginBase) -> bool:
         return any(entry.get("object") is plugin_base for entry in PluginBase.disabled_plugins.values())
 
-    def init_plugins(self):
+    def init_plugins(self) -> None:
         subclasses = PluginBase.__subclasses__()
         for subclass in subclasses:
             if subclass in self.initialized_plugin_classes:
@@ -487,14 +495,14 @@ class PluginManager:
                 with self._load_errors_lock:
                     self.load_errors[folder] = "did not register (invalid or incomplete manifest?)"
 
-    def generate_action_index(self):
+    def generate_action_index(self) -> None:
         self.action_index.clear()
         plugins = self.get_plugins()
         for plugin in plugins.values():
             plugin_base = plugin["object"]
             self.action_index.update(plugin_base.action_holders)
 
-    def get_plugins(self, include_disabled: bool = False) -> dict:
+    def get_plugins(self, include_disabled: bool = False) -> dict[str, Any]:
         # A copy. An in-place update of PluginBase.plugins, a class attribute,
         # merges the disabled plugins into the enabled registry for good.
         # get_plugin_by_id() defaults to include_disabled=True and runs for
@@ -507,9 +515,6 @@ class PluginManager:
 
         return plugins
     
-    def get_actions_for_plugin_id(self, plugin_id: str):
-        return PluginBase.plugins[plugin_id]["object"].ACTIONS
-    
     def get_action_holder_from_id(self, action_id: str) -> ActionHolder | None:
         """Example string: dev_core447_MediaPlugin::Pause"""
         try:
@@ -519,9 +524,9 @@ class PluginManager:
             return None
             
     def get_plugin_by_id(self, plugin_id:str, include_disabled: bool = True) -> PluginBase | None:
-        return self.get_plugins(include_disabled).get(plugin_id, {}).get("object", None)
+        return cast("PluginBase | None", self.get_plugins(include_disabled).get(plugin_id, {}).get("object", None))
             
-    def remove_plugin_from_list(self, plugin_base: PluginBase):
+    def remove_plugin_from_list(self, plugin_base: PluginBase) -> None:
         # A plugin can live in either registry. A version gate puts a plugin
         # in disabled_plugins alone, and get_plugin_by_id hands it out too,
         # because include_disabled defaults to True. A del on
@@ -532,10 +537,10 @@ class PluginManager:
         PluginBase.plugins.pop(plugin_base.plugin_id, None)
         PluginBase.disabled_plugins.pop(plugin_base.plugin_id, None)
 
-    def get_plugin_id_from_action_id(self, action_id: str) -> str:
+    def get_plugin_id_from_action_id(self, action_id: str | None) -> str | None:
         if action_id is None:
-            return
-        
+            return None
+
         return action_id.split("::")[0]
     
     def get_load_health(self) -> tuple[int, int]:

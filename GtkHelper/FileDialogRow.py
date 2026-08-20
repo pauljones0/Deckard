@@ -26,14 +26,14 @@ class FileDialogRow(Adw.ActionRow):
            file_change_callback (Callable[[Gio.File], None]): Callback to execute when a file is selected.
     """
     def __init__(self,
-                 title: str = None,
-                 subtitle: str = None,
-                 dialog_title: str = None,
-                 initial_path: str = None,
+                 title: str | None = None,
+                 subtitle: str | None = None,
+                 dialog_title: str | None = None,
+                 initial_path: str | None = None,
                  block_interaction: bool = True,
                  only_show_filename: bool = True,
-                 filters: list[FileDialogFilter] = None,
-                 file_change_callback: Callable[[Gio.File], None] = None
+                 filters: list[FileDialogFilter] | None = None,
+                 file_change_callback: Callable[[Gio.File], None] | None = None
                  ):
         super().__init__(title=title, subtitle=subtitle)  # type: ignore[arg-type]  # gi stub: Adw string props accept None (PyGObject maps it to NULL, i.e. empty string)
 
@@ -55,9 +55,10 @@ class FileDialogRow(Adw.ActionRow):
         self.add_suffix(self.file_label)
         self.add_prefix(self.open_dialog_button)
 
-    def on_open_dialog_clicked(self, button):
+    def on_open_dialog_clicked(self, button: Gtk.Button) -> None:
         file_dialog = Gtk.FileDialog.new()
-        file_dialog.set_title(self._dialog_title)
+        if self._dialog_title:
+            file_dialog.set_title(self._dialog_title)
         file_dialog.set_modal(self._block_interaction)
 
         if self._initial_path:
@@ -79,7 +80,7 @@ class FileDialogRow(Adw.ActionRow):
 
         file_dialog.open(None, None, self.on_file_dialog_response)
 
-    def on_file_dialog_response(self, dialog: Gtk.FileDialog, task):
+    def on_file_dialog_response(self, dialog: Gtk.FileDialog, task: Gio.AsyncResult) -> None:
         try:
             file = dialog.open_finish(task)
             if not file:
@@ -95,7 +96,7 @@ class FileDialogRow(Adw.ActionRow):
             # An exception from the callback is a defect, and it propagates.
             pass
 
-    def load_from_path(self, path: str):
+    def load_from_path(self, path: str) -> None:
         self.selected_file = Gio.File.new_for_path(path)
         self.file_label.set_label(path)
         self.update_label()
@@ -103,7 +104,7 @@ class FileDialogRow(Adw.ActionRow):
         if self._callback:
             self._callback(self.selected_file)
 
-    def update_label(self):
+    def update_label(self) -> None:
         if self.selected_file is None:
             self.file_label.set_label("")
             return

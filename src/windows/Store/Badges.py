@@ -17,18 +17,20 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Gtk
 
+from typing import Any
+
 # Import globals
 import globals as gl
 
 class Badge(Gtk.Button):
-    def __init__(self, label: str, tooltip: str = None, *args, **kwargs):
+    def __init__(self, label: str, tooltip: str | None = None, *args: Any, **kwargs: Any) -> None:
         super().__init__(  # type: ignore[misc]  # gi stub: the stub models GObject properties as positional-or-keyword params, so *args reads as a second binding for them; at runtime GObject.__init__ takes properties by keyword only
             label=gl.lm.get(label),
             *args, **kwargs
         )
         self.set_tooltip(tooltip)
 
-    def set_tooltip(self, tooltip: str | None):
+    def set_tooltip(self, tooltip: str | None) -> None:
         if tooltip:
             self.set_has_tooltip(True)
         else:

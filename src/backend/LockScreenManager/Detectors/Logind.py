@@ -2,7 +2,7 @@ import os
 
 from src.backend.LockScreenManager.LockScreenDetector import LockScreenDetector
 
-from typing import TYPE_CHECKING
+from typing import cast, TYPE_CHECKING
 if TYPE_CHECKING:
     from src.backend.LockScreenManager.LockScreenManager import LockScreenManager
 
@@ -74,9 +74,11 @@ class LogindLockScreenDetector(LockScreenDetector):
             -1,
             None
         )
-        return reply.unpack()[0]
+        return cast(str, reply.unpack()[0])
 
-    def on_dbus_signal(self, connection, sender_name, object_path, interface_name, signal_name, parameters):
+    def on_dbus_signal(self, connection: Gio.DBusConnection, sender_name: str,
+                       object_path: str, interface_name: str, signal_name: str,
+                       parameters: GLib.Variant) -> None:
         if signal_name == "Lock":
             self.lock_screen_manager.lock(True)
         elif signal_name == "Unlock":

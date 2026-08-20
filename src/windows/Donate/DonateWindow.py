@@ -19,7 +19,7 @@ from gi.repository import Gtk, Adw
 from src.windows.Onboarding.OnboardingWindow import SupportAppOnboardingScreen
 
 class DonateWindow(Adw.Dialog):
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__(title="Support the original project", accessible_role=Gtk.AccessibleRole.DIALOG)
         self.set_presentation_mode(Adw.DialogPresentationMode.FLOATING)
         self.set_can_close(True)
@@ -29,7 +29,7 @@ class DonateWindow(Adw.Dialog):
 
         self.build()
 
-    def build(self):
+    def build(self) -> None:
         self.main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, hexpand=True)
         self.set_child(self.main_box)
 
@@ -49,12 +49,12 @@ class DonateWindow(Adw.Dialog):
         self.button.connect("clicked", self.on_click_close)
         self.button_box.append(self.button)
 
-    def on_click_dont_show_again(self, widget):
+    def on_click_dont_show_again(self, widget: Gtk.Button) -> None:
         self.close()
 
         app_settings = gl.settings_manager.app()
         app_settings.show_donate_window = False
         app_settings.save()
 
-    def on_click_close(self, widget):
+    def on_click_close(self, widget: Gtk.Button) -> None:
         self.close()

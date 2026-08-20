@@ -20,14 +20,17 @@ import hashlib
 import os
 import threading
 from collections import OrderedDict
+from collections.abc import Iterable
 
 import cv2
 import numpy as np
+import numpy.typing as npt
 from PIL import Image, ImageEnhance, ImageOps
 from loguru import logger as log
 
 import globals as gl
 from src.backend.DeckManagement.Subclasses import cache_budget
+from typing import Any
 
 VID_CACHE = os.path.join(gl.DATA_PATH, "cache", "videos")
 os.makedirs(VID_CACHE, exist_ok=True)
@@ -136,11 +139,11 @@ class Mp4FrameCache:
     # declaration and not a class-level value, because a directly-constructed
     # instance has neither attribute. That is why every read of them goes
     # through getattr(..., None).
-    _registry_key: "tuple | None"
+    _registry_key: "tuple[Any, ...] | None"
     _registry_entry: "_TileCacheEntry | None"
 
     def __init__(self, source_path: str, out_size: tuple[int, int], saturation: float = 1.0,
-                 cache_path: str = None, is_builder: bool = True) -> None:
+                 cache_path: str | None = None, is_builder: bool = True) -> None:
         self.lock = threading.Lock()
 
         self.source_path = source_path
@@ -170,7 +173,7 @@ class Mp4FrameCache:
         self._cache_cap: cv2.VideoCapture | None = None
         self._cache_pos = 0  # index of the next frame _cache_cap will return
         self._last_entry: tuple[int, object] | None = None
-        self.last_payload = None  # last good decode, served over a transient failure
+        self.last_payload: object | None = None  # last good decode, served over a transient failure
         self.last_payload_index: int | None = None  # source frame last_payload holds (see get_frame_and_index)
         self._adopt_failures = 0  # failed shared-cache adoptions (see _maybe_adopt_shared_cache)
 
@@ -246,14 +249,14 @@ class Mp4FrameCache:
     def _default_cache_path(self) -> str:
         raise NotImplementedError
 
-    def _payload_from_bgr(self, frame_bgr: np.ndarray):
+    def _payload_from_bgr(self, frame_bgr: npt.NDArray[Any]) -> Any:
         """Convert one target-resolution BGR frame into what get_frame()
         returns. The default is a single RGB PIL image, which suits key and
         dial tiles decoded at tile resolution. BackgroundVideoCache overrides
         it to crop the canvas into per-key tiles and the strip."""
         return Image.fromarray(cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB))
 
-    def _fallback_payload(self):
+    def _fallback_payload(self) -> Any:
         """Used when no decoded frame exists yet, on the first request during
         a build or after an unrecoverable early failure, and when there is no
         previous payload to repeat."""
@@ -324,10 +327,10 @@ class Mp4FrameCache:
 
     # Frame access.
 
-    def get_frame(self, n: int):
+    def get_frame(self, n: int) -> Any:
         return self.get_frame_and_index(n)[0]
 
-    def get_frame_and_index(self, n: int):
+    def get_frame_and_index(self, n: int) -> "tuple[Any, int | None]":
         """Returns the payload and the source frame index of that payload.
 
         The index names what the payload is and not what the caller asked
@@ -411,7 +414,7 @@ class Mp4FrameCache:
             entry.builder_thread = None
         self._registry_entry = None
 
-    def _get_cached_frame(self, n: int):
+    def _get_cached_frame(self, n: int) -> Any:
         n = max(0, min(n, self.n_frames - 1))
         if self._last_entry is not None and self._last_entry[0] == n:
             return self._last_entry[1]
@@ -439,7 +442,7 @@ class Mp4FrameCache:
         self._last_entry = (n, payload)
         return payload
 
-    def _decode_source_frame(self, n: int):
+    def _decode_source_frame(self, n: int) -> Any:
         if self.cap is None:
             return None
         if self.n_frames > 0:
@@ -483,7 +486,7 @@ class Mp4FrameCache:
             self._last_entry = (n, payload)
         return payload
 
-    def _fit_to_target(self, frame_bgr: np.ndarray) -> np.ndarray:
+    def _fit_to_target(self, frame_bgr: npt.NDArray[Any]) -> npt.NDArray[Any]:
         """Fit a source BGR frame to out_size, keep the aspect ratio and bake
         in the saturation boost. This runs once per source frame during a
         cache build, and never again once the cache is complete."""
@@ -636,7 +639,7 @@ _registry: dict[tuple[str, tuple[int, int], float], _TileCacheEntry] = {}
 
 
 def _registry_key(source_path: str, out_size: tuple[int, int], saturation: float,
-                  variant: str = "") -> tuple:
+                  variant: str = "") -> tuple[Any, ...]:
     # canonical_saturation is the same rounding sat_suffix() uses, so a key
     # and the file path derived from it can never disagree. variant names a
     # second and different rendering of the same source at the same size (see
@@ -715,7 +718,7 @@ def release(reader: KeyVideoCache) -> None:
     _detach_entry(key, entry)
 
 
-def _detach_entry(key: tuple, entry: "_TileCacheEntry") -> None:
+def _detach_entry(key: tuple[Any, ...], entry: "_TileCacheEntry") -> None:
     """Drop one reference to entry. release() and the failure exit of the
     build-from-frames path share it, so a consumer that never got a usable
     reader still balances its refcount."""
@@ -782,7 +785,7 @@ def attach_promoted(source_path: str, out_size: tuple[int, int],
 
 
 def acquire_from_frames(source_path: str, out_size: tuple[int, int], saturation: float,
-                        frames, fps: float = EXTERNAL_TILE_FPS,
+                        frames: "Iterable[Image.Image]", fps: float = EXTERNAL_TILE_FPS,
                         variant: str = "") -> KeyVideoCache | None:
     """Write the shared tile cache for this key from caller-supplied frames,
     then attach a reader to it.
@@ -826,7 +829,7 @@ def acquire_from_frames(source_path: str, out_size: tuple[int, int], saturation:
 
 
 def _attach_promoted_reader(source_path: str, out_size: tuple[int, int], saturation: float,
-                            key: tuple, entry: "_TileCacheEntry", path: str) -> KeyVideoCache | None:
+                            key: tuple[Any, ...], entry: "_TileCacheEntry", path: str) -> KeyVideoCache | None:
     """A reader on this entry, or None. The None path drops the caller's
     refcount.
 
@@ -844,7 +847,7 @@ def _attach_promoted_reader(source_path: str, out_size: tuple[int, int], saturat
     return reader
 
 
-def _write_tile_mp4(path: str, out_size: tuple[int, int], frames, fps: float) -> int:
+def _write_tile_mp4(path: str, out_size: tuple[int, int], frames: "Iterable[Image.Image]", fps: float) -> int:
     """Encode frames into the tile cache at path, atomically.
 
     It writes to a per-writer temp file and calls os.replace on success, the

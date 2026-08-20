@@ -32,7 +32,7 @@ class NoDecksError(Gtk.Box):
     """
     This error gets shown if there are no decks registered/available
     """
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__(
             orientation=Gtk.Orientation.VERTICAL,
             halign=Gtk.Align.CENTER,
@@ -43,7 +43,7 @@ class NoDecksError(Gtk.Box):
 
         self.build()
 
-    def build(self):
+    def build(self) -> None:
         self.no_pages_label = Gtk.Label(label=gl.lm.get("errors.no-deck.header"), css_classes=["error-label"])
         self.append(self.no_pages_label)
 
@@ -56,7 +56,7 @@ class NoDecksError(Gtk.Box):
                                   use_markup=True, margin_top=12)
         self.append(self.no_decks_link)
 
-    def on_add_click(self, button):
+    def on_add_click(self, button: Gtk.Button) -> None:
         self.settings = Settings()
         self.settings.set_visible_page(self.settings.dev_page)
         self.settings.present()

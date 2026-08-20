@@ -18,10 +18,12 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Gtk
+from gi.repository import Gtk, Adw
+
+from typing import Any
 
 class ShortcutsWindow(Gtk.ShortcutsWindow):
-    def __init__(self, app, **kwargs):
+    def __init__(self, app: Adw.Application, **kwargs: Any) -> None:
         super().__init__(**kwargs)
 
         self.section1 = Gtk.ShortcutsSection()

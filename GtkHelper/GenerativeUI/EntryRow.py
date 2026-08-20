@@ -3,7 +3,7 @@ from GtkHelper.GenerativeUI.GenerativeUI import GenerativeUI
 from gi.repository import Adw, GLib
 
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any
+from typing import cast, TYPE_CHECKING, Any
 from GtkHelper.GtkHelper import better_disconnect
 
 if TYPE_CHECKING:
@@ -23,8 +23,8 @@ class EntryRow(GenerativeUI[str]):
     def __init__(self, action_core: "ActionCore",
                  var_name: str,
                  default_value: str,
-                 title: str = None,
-                 filter_func: Callable[[str], str] = None,
+                 title: str | None = None,
+                 filter_func: Callable[[str], str] | None = None,
                  on_change: Callable[..., Any] | None = None,
                  can_reset: bool = True,
                  auto_add: bool = True,
@@ -43,8 +43,8 @@ class EntryRow(GenerativeUI[str]):
             can_reset (bool, optional): Whether the value can be reset. Defaults to True.
             auto_add (bool, optional): Whether to automatically add this entry to the UI. Defaults to True.
         """
-        def build():
-            self._widget: Adw.EntryRow = Adw.EntryRow(
+        def build() -> None:
+            self._widget: Adw.EntryRow | None = Adw.EntryRow(
                 title=self.get_translation(title, title),
                 text=self._default_value
             )
@@ -54,7 +54,7 @@ class EntryRow(GenerativeUI[str]):
             self.connect_signals()
         super().__init__(action_core, var_name, default_value, can_reset, auto_add, complex_var_name, on_change, build=build)
 
-    def connect_signals(self):
+    def connect_signals(self) -> None:
         """
         Connects the signal handlers for the widget, specifically the 'changed' signal
         to trigger the value change handling method.
@@ -63,7 +63,7 @@ class EntryRow(GenerativeUI[str]):
         """
         self.widget.connect("changed", self._value_changed)
 
-    def disconnect_signals(self):
+    def disconnect_signals(self) -> None:
         """
         Disconnects the signal handlers to prevent further handling of the 'changed' signal.
 
@@ -71,7 +71,7 @@ class EntryRow(GenerativeUI[str]):
         """
         better_disconnect(self.widget, self._value_changed)
 
-    def set_text(self, text: str, update_setting: bool = False):
+    def set_text(self, text: str, update_setting: bool = False) -> None:
         """
         Sets the text in the entry row widget and optionally updates the associated setting.
 
@@ -95,9 +95,9 @@ class EntryRow(GenerativeUI[str]):
         """
         if self._widget is None:
             return self.get_value()
-        return self.widget.get_text()
+        return cast(str, self.widget.get_text())
 
-    def _text_reset(self, text):
+    def _text_reset(self, text: str) -> None:
         """
         Resets the text in the entry row to the provided value and adjusts the cursor position.
 
@@ -121,7 +121,7 @@ class EntryRow(GenerativeUI[str]):
 
         self.widget.connect("changed", self._value_changed)
 
-    def _value_changed(self, entry_row: Adw.EntryRow):
+    def _value_changed(self, entry_row: Adw.EntryRow) -> None:
         """
         Handles the value change in the entry row widget.
 
@@ -140,7 +140,7 @@ class EntryRow(GenerativeUI[str]):
         self._handle_value_changed(text)
 
     @GenerativeUI.signal_manager
-    def set_ui_value(self, value: str):
+    def set_ui_value(self, value: str) -> None:
         """
         Sets the value in the UI widget.
 

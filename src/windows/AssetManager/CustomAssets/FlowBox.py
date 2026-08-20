@@ -17,6 +17,7 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
+from gi.repository import Gtk
 
 # Import python modules
 from rapidfuzz import fuzz
@@ -32,18 +33,18 @@ from src.windows.AssetManager.CustomAssets.AssetPreview import AssetPreview
 from src.windows.AssetManager.DynamicFlowBox import DynamicFlowBox
 
 # Import typing
-from typing import TYPE_CHECKING
+from typing import Any, Callable, TYPE_CHECKING, cast
 if TYPE_CHECKING:
     from src.windows.AssetManager.CustomAssets.Chooser import CustomAssetChooser
 
 
 class CustomAssetChooserFlowBox(DynamicFlowBox):
-    def __init__(self, asset_chooser, *args, **kwargs):
-        super().__init__(base_class=AssetPreview, *args, **kwargs)
+    def __init__(self, asset_chooser: "CustomAssetChooser", *args: Any, **kwargs: Any) -> None:
+        super().__init__(AssetPreview, *args, **kwargs)
         self.set_hexpand(True)
 
         self.asset_chooser:"CustomAssetChooser" = asset_chooser
-        self.selected_asset: str = None
+        self.selected_asset: str = None  # type: ignore[assignment]  # late-init: on_child_activated
 
         self.set_factory(self.preview_factory)
         self.set_filter_func(self.filter_func)
@@ -63,19 +64,22 @@ class CustomAssetChooserFlowBox(DynamicFlowBox):
     def refresh(self) -> None:
         self.show_range(0, self.N_ITEMS_PER_PAGE)
 
-    def show_for_path(self, path):
+    def show_for_path(self, path: str) -> None:
         self.select_asset(path)
         self.refresh()
 
-    def select_asset(self, path) -> None:
+    def select_asset(self, path: str) -> None:
         self.selected_asset = path
 
-    def preview_factory(self, preview: AssetPreview, asset: dict):
-        preview.set_asset(self, asset)
+    def preview_factory(self, preview: Gtk.Widget, asset: dict[str, Any]) -> None:
+        # The recycler builds its whole pool from base_class, which this box
+        # sets to AssetPreview, so every widget that reaches here is one.
+        asset_preview = cast(AssetPreview, preview)
+        asset_preview.set_asset(self, asset)
         if self.selected_asset == asset.get("internal-path"):
-            self.flow_box.select_child(preview)
+            self.flow_box.select_child(asset_preview)
 
-    def filter_func(self, asset: dict) -> bool:
+    def filter_func(self, asset: dict[str, Any]) -> bool:
         search_string = self.asset_chooser.search_entry.get_text()
         show_image = self.asset_chooser.image_button.get_active()
         show_video = self.asset_chooser.video_button.get_active()
@@ -96,7 +100,7 @@ class CustomAssetChooserFlowBox(DynamicFlowBox):
 
         return True
 
-    def sort_func(self, a: dict, b: dict) -> int:
+    def sort_func(self, a: dict[str, Any], b: dict[str, Any]) -> int:
         search_string = self.asset_chooser.search_entry.get_text()
 
         if search_string == "":
@@ -117,7 +121,7 @@ class CustomAssetChooserFlowBox(DynamicFlowBox):
 
         return 0
 
-    def on_child_activated(self, flow_box, child):
+    def on_child_activated(self, flow_box: Gtk.FlowBox, child: Any) -> None:
         # Capture the selection and the callback before the thread starts.
         # Each open reuses the window, so a thread that reads
         # self.asset_chooser.asset_manager from its own body can call a new
@@ -150,10 +154,11 @@ class CustomAssetChooserFlowBox(DynamicFlowBox):
         self.asset_chooser.asset_manager.hide()
 
     @log.catch
-    def callback_thread(self, asset_path, callback, callback_args, callback_kwargs):
+    def callback_thread(self, asset_path: str, callback: Callable[..., Any],
+                        callback_args: tuple[Any, ...], callback_kwargs: dict[str, Any]) -> None:
         callback(asset_path, *callback_args, **callback_kwargs)
 
-    def remove_asset(self, asset: dict) -> None:
+    def remove_asset(self, asset: dict[str, Any]) -> None:
         gl.asset_manager_backend.remove_asset_by_id(asset["id"])
         self.flow_box.unselect_all()
         self.refresh()

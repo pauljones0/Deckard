@@ -4,7 +4,7 @@ from src.backend.PluginManager.EventAssigner import EventAssigner
 from src.backend.DeckManagement.InputIdentifier import Input, InputEvent
 from src.backend.PluginManager.ActionCore import ActionCore
 
-from typing import TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 if TYPE_CHECKING:
     from src.backend.DeckManagement.deck_controller.controller import DeckController
     from src.backend.DeckManagement.InputIdentifier import InputIdentifier
@@ -124,7 +124,7 @@ class ActionBase(ActionCore):
 
 
     # backward compatibility
-    def event_callback(self, event: InputEvent, data: dict = None):
+    def event_callback(self, event: InputEvent, data: dict[str, Any] | None = None) -> None:
         ## backward compatibility
         if event == Input.Key.Events.DOWN:
             self.on_key_down()
@@ -144,8 +144,8 @@ class ActionBase(ActionCore):
         elif event in (Input.Touchscreen.Events.DRAG_LEFT, Input.Touchscreen.Events.DRAG_RIGHT):
             self.on_key_down()
 
-    def on_key_down(self):
+    def on_key_down(self) -> None:
         pass
 
-    def on_key_up(self):
+    def on_key_up(self) -> None:
         pass

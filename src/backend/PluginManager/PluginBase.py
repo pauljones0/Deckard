@@ -6,7 +6,7 @@ import threading
 import time
 import subprocess
 from collections.abc import Callable
-from typing import Any
+from typing import cast, Any
 
 from packaging import version
 
@@ -36,7 +36,7 @@ from src.backend.PluginManager.EventHolder import EventHolder
 from src.backend.settings_store import PluginSettings
 
 
-class PluginBase(rpyc.Service):
+class PluginBase(rpyc.Service):  # type: ignore[misc]  # rpyc.Service is unstubbed (Any)
     """The base class of every plugin."""
 
     # {plugin_id: {"object": PluginBase, "meta": ...}}. See register().
@@ -47,7 +47,7 @@ class PluginBase(rpyc.Service):
         self.backend_connection: Connection = None
         self.backend: netref = None
         self.server: ThreadedServer = None
-        self.backend_process: subprocess.Popen | None = None
+        self.backend_process: subprocess.Popen[bytes] | None = None
         # Bookkeeping for the registration watchdog in
         # _watch_backend_registration. The generation counter disarms a stale
         # watchdog after a fast relaunch, which would otherwise attribute the
@@ -87,11 +87,11 @@ class PluginBase(rpyc.Service):
             self.locale_manager = LocaleManager(os.path.join(self.PATH, "locales.csv"))
         self.locale_manager.set_to_os_default()
 
-        self.action_holders: dict = {}
+        self.action_holders: dict[str, Any] = {}
 
         self.action_holder_groups: set[ActionHolderGroup] = set()
 
-        self.event_holders: dict = {}
+        self.event_holders: dict[str, Any] = {}
 
         self.registered: bool = False
 
@@ -116,7 +116,7 @@ class PluginBase(rpyc.Service):
         # Memoized per instance, so the instance frees the cache.
         cached = getattr(self, "_plugin_id_cache", None)
         if cached is not None:
-            return cached
+            return cast(str, cached)
         manifest = self.get_manifest()
         self._plugin_id_cache = manifest.get("id") or self.get_plugin_id_from_folder_name()
         return self._plugin_id_cache
@@ -215,8 +215,8 @@ class PluginBase(rpyc.Service):
 
         return id_settings
 
-    def register(self, plugin_name: str = None, github_repo: str = None, plugin_version: str = None,
-                 app_version: str = None):
+    def register(self, plugin_name: str | None = None, github_repo: str | None = None, plugin_version: str | None = None,
+                 app_version: str | None = None) -> None:
         """Register a plugin with the given information.
 
         Args:
@@ -252,7 +252,7 @@ class PluginBase(rpyc.Service):
         if self.plugin_version in ["", None]:
             log.error(f"Plugin: {self.plugin_name}: Please specify a plugin version")
             return
-        if self.app_version in ["", None]:
+        if self.app_version is None or self.app_version == "":
             log.error(f"Plugin: {self.plugin_name}: Please specify a app version")
             return
 
@@ -298,7 +298,8 @@ class PluginBase(rpyc.Service):
             if not version_check_failed:
                 try:
                     min_app_version = self._get_parsed_base_version(self.min_app_version)
-                    if min_app_version is not None and min_app_version > self._get_parsed_base_version(gl.app_version):
+                    parsed_app_version = self._get_parsed_base_version(gl.app_version)
+                    if min_app_version is not None and parsed_app_version is not None and min_app_version > parsed_app_version:
                         # The plugin is newer than this Deckard.
                         log.warning(
                             f"Plugin {self.plugin_id} is not compatible with this version of Deckard. "
@@ -335,7 +336,7 @@ class PluginBase(rpyc.Service):
                 "reason": reason
             }
 
-    def _get_parsed_base_version(self, version_str: str) -> version.Version:
+    def _get_parsed_base_version(self, version_str: str | None) -> "version.Version | None":
         """Parse a version string and return the base version.
 
         Args:
@@ -348,7 +349,7 @@ class PluginBase(rpyc.Service):
             None.
         """
         if version_str is None:
-            return
+            return None
         base_version = version.parse(version_str).base_version
         return version.parse(base_version)
 
@@ -378,8 +379,13 @@ class PluginBase(rpyc.Service):
         
         app_version = self._get_parsed_base_version(gl.app_version)
         min_app_version = self._get_parsed_base_version(self.min_app_version)
+        if app_version is None or min_app_version is None:
+            # Neither is None here: gl.app_version is a constant and a None
+            # pin returned True above. The guard covers the parser's widened
+            # return and keeps the None-pin semantics.
+            return True
 
-        return app_version >= min_app_version
+        return bool(app_version >= min_app_version)
 
     def are_major_versions_matching(self) -> bool:
         """Check that the major versions of the app and the plugin match.
@@ -388,10 +394,14 @@ class PluginBase(rpyc.Service):
             bool: True when the major versions match.
         """
         app_version = version.parse(gl.app_version)
+        if self.app_version is None:
+            # The loader disables a plugin without a stated app version
+            # before this check runs.
+            return False
         # Use the app version the plugin states, not its minimum app version.
         current_app_version = version.parse(self.app_version)
 
-        return app_version.major == current_app_version.major
+        return bool(app_version.major == current_app_version.major)
 
     #TODO: Better error handling for are_major_versions_matching and is_minimum_version_ok
     def is_app_version_matching(self) -> bool:
@@ -402,7 +412,7 @@ class PluginBase(rpyc.Service):
         """
         return self.are_major_versions_matching() and self.is_minimum_version_ok()
 
-    def add_action_holder(self, action_holder: ActionHolder):
+    def add_action_holder(self, action_holder: ActionHolder) -> None:
         """Add an action holder to the plugin.
 
         Args:
@@ -422,7 +432,7 @@ class PluginBase(rpyc.Service):
         
         self.action_holders[action_holder.action_id] = action_holder
 
-    def add_action_holders(self, action_holders: list[ActionHolder]):
+    def add_action_holders(self, action_holders: list[ActionHolder]) -> None:
         for action_holder in action_holders:
             self.add_action_holder(action_holder)
 
@@ -443,7 +453,7 @@ class PluginBase(rpyc.Service):
 
         self.event_holders[event_holder.event_id] = event_holder
 
-    def add_event_holders(self, event_holders: list[EventHolder]):
+    def add_event_holders(self, event_holders: list[EventHolder]) -> None:
         for event_holder in event_holders:
             self.add_event_holder(event_holder)
 
@@ -453,7 +463,7 @@ class PluginBase(rpyc.Service):
     def add_action_holder_groups(self, action_holder_groups: list[ActionHolderGroup]) -> None:
         self.action_holder_groups.update(action_holder_groups)
 
-    def connect_to_event(self, callback: Callable[..., Any], event_id: str = None, event_id_suffix: str = None) -> None:
+    def connect_to_event(self, callback: Callable[..., Any], event_id: str | None = None, event_id_suffix: str | None = None) -> None:
         """Connect a callback to the event with this event id.
 
         Args:
@@ -489,7 +499,7 @@ class PluginBase(rpyc.Service):
         else:
             plugin.connect_to_event(callback=callback, event_id=event_id)
 
-    def disconnect_from_event(self, event_id: str = None, callback: Callable[..., Any] = None, event_id_suffix: str = None) -> None:
+    def disconnect_from_event(self, event_id: str | None = None, callback: Callable[..., Any] | None = None, event_id_suffix: str | None = None) -> None:
         """Disconnect a callback from the event with this event id.
 
         Args:
@@ -540,7 +550,7 @@ class PluginBase(rpyc.Service):
                     self._settings_lock = lock
         return lock
 
-    def get_settings(self):
+    def get_settings(self) -> "dict[str, Any]":
         """Read the settings from the settings file.
 
         Returns:
@@ -552,7 +562,7 @@ class PluginBase(rpyc.Service):
         with self._get_settings_lock():
             return PluginSettings(self.settings_path).read()
 
-    def get_manifest(self):
+    def get_manifest(self) -> "dict[str, Any]":
         """Read the manifest file from the plugin's directory.
 
         Returns:
@@ -596,7 +606,7 @@ class PluginBase(rpyc.Service):
             log.error(f"Plugin manifest {manifest_path} does not contain a JSON object -- treating it as empty")
         return {}
 
-    def get_about(self):
+    def get_about(self) -> "dict[str, Any]":
         """Read the about file from the plugin's directory.
 
         A missing about.json, an undecodable one and one that holds no object
@@ -635,7 +645,7 @@ class PluginBase(rpyc.Service):
             )
         return {}
     
-    def set_settings(self, settings):
+    def set_settings(self, settings: "dict[str, Any]") -> None:
         """Save the given settings to the settings file.
 
         Args:
@@ -651,7 +661,7 @@ class PluginBase(rpyc.Service):
             PluginSettings(self.settings_path).write(settings)
 
 
-    def add_css_stylesheet(self, path):
+    def add_css_stylesheet(self, path: str) -> None:
         """Add a CSS stylesheet to the style context of the application.
 
         This marshals the work onto the GTK main loop, because a plugin calls
@@ -664,11 +674,14 @@ class PluginBase(rpyc.Service):
         Returns:
             None
         """
-        def _add():
+        def _add() -> None:
             css_provider = Gtk.CssProvider()
             css_provider.load_from_path(path)
+            display = Gdk.Display.get_default()
+            if display is None:
+                return
             Gtk.StyleContext.add_provider_for_display(
-                Gdk.Display.get_default(),
+                display,
                 css_provider,
                 Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
             )
@@ -700,7 +713,7 @@ class PluginBase(rpyc.Service):
             Gtk.Widget: A Gtk.Image widget.
         """
         from src.backend.main_loop import run_on_main
-        return run_on_main(lambda: Gtk.Image(icon_name="view-paged"))
+        return cast("Gtk.Widget", run_on_main(lambda: Gtk.Image(icon_name="view-paged")))
     
     def on_uninstall(self) -> None:
         """Unregister the plugin pages and stop a running backend connection.
@@ -734,13 +747,13 @@ class PluginBase(rpyc.Service):
 
     # Asset Management
 
-    def add_icon(self, key: str, path: str, size:float=1.0, halign:float=0.0, valign:float=0.0):
+    def add_icon(self, key: str, path: str, size:float=1.0, halign:float=0.0, valign:float=0.0) -> None:
         self.asset_manager.icons.add_asset(key=key, asset=Icon(path=path, size=size, halign=halign, valign=valign))
 
-    def add_color(self, key: str, color: tuple[int, int, int, int]):
+    def add_color(self, key: str, color: tuple[int, int, int, int]) -> None:
         self.asset_manager.colors.add_asset(key=key, asset=Color(color=color))
 
-    def get_asset_path(self, asset_name: str, subdirs: list[str] = None, asset_folder: str = "assets") -> str:
+    def get_asset_path(self, asset_name: str, subdirs: list[str] | None = None, asset_folder: str = "assets") -> str:
         """
         Helper method that returns paths to plugin assets.
 
@@ -761,7 +774,7 @@ class PluginBase(rpyc.Service):
             return os.path.join(self.PATH, asset_folder, subdir, asset_name)
         return ""
 
-    def get_settings_area(self):
+    def get_settings_area(self) -> "Adw.PreferencesGroup | None":
         pass
 
     # Rpyc
@@ -848,7 +861,7 @@ class PluginBase(rpyc.Service):
         ).start()
 
     @staticmethod
-    def _teardown_backend_resources(server, connection, process) -> None:
+    def _teardown_backend_resources(server: Any, connection: Any, process: "subprocess.Popen[bytes] | None") -> None:
         # This runs on a worker thread. See _release_backend_resources. Each
         # close and terminate tolerates a failure, because a hung backend must
         # not stop the app.
@@ -866,7 +879,7 @@ class PluginBase(rpyc.Service):
             from src.backend.PluginManager.PluginManager import terminate_backend_process
             terminate_backend_process(process)
 
-    def launch_backend(self, backend_path: str, venv_path: str = None, open_in_terminal: bool = False) -> None:
+    def launch_backend(self, backend_path: str, venv_path: str | None = None, open_in_terminal: bool = False) -> None:
         """Launch the backend process of the plugin.
 
         It starts the rpyc server, builds the command that runs the backend
@@ -930,7 +943,7 @@ class PluginBase(rpyc.Service):
             # visible instead of a silent None in self.backend.
             self._watch_backend_registration(self.backend_process, self._backend_launch_gen)
 
-    def _watch_backend_registration(self, process: subprocess.Popen, launch_gen: int, timeout: float = 30.0) -> None:
+    def _watch_backend_registration(self, process: subprocess.Popen[bytes], launch_gen: int, timeout: float = 30.0) -> None:
         """Observe a launched backend that has not registered yet.
 
         This manages nothing. On a bounded daemon thread it logs the
@@ -1063,7 +1076,7 @@ class PluginBase(rpyc.Service):
         """
         return True
 
-    def request_dbus_permission(self, name: str, bus: str = "session", description: str = None) -> None:
+    def request_dbus_permission(self, name: str, bus: str = "session", description: str | None = None) -> None:
         """Request a DBus permission for the plugin.
 
         It shows a dialog that requests the DBus permission for the given bus,

@@ -35,7 +35,8 @@ import os
 import threading
 
 import requests
-from requests.adapters import HTTPAdapter, Retry
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry  # requests.adapters re-exports this; import it canonically
 
 # Connection-pool size for the shared session. It must stay at or above the
 # store's concurrent-fetch cap, so every in-flight fetch holds a live

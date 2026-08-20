@@ -18,13 +18,18 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Gtk
 
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from src.windows.mainWindow.mainWindow import MainWindow
+
 # Import Python modules
 
 # Import globals
 import globals as gl
 
 class DeckSwitcher(Gtk.Box):
-    def __init__(self, main_window, **kwargs):
+    def __init__(self, main_window: "MainWindow", **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.main_window = main_window
         self.build()
@@ -33,14 +38,14 @@ class DeckSwitcher(Gtk.Box):
         self.set_show_switcher(not no_decks)
 
 
-    def build(self):
+    def build(self) -> None:
         self.switcher = Gtk.StackSwitcher(hexpand=False, margin_start=75, margin_end=75)
         self.append(self.switcher)
 
         self.label = Gtk.Label(label=gl.lm.get("deck-switcher-no-decks"), css_classes=["bold"])
         self.append(self.label)
 
-    def set_show_switcher(self, show):
+    def set_show_switcher(self, show: bool) -> None:
         if show:
             self.switcher.set_visible(True)
             self.label.set_visible(False)

@@ -15,7 +15,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 from src.backend.DeckManagement.Subclasses.SingleKeyAsset import SingleKeyAsset
 from PIL import Image, ImageEnhance
 
-from typing import TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 if TYPE_CHECKING:
     from src.backend.DeckManagement.deck_controller.inputs import ControllerInput
 
@@ -31,7 +31,7 @@ class InputImage(SingleKeyAsset):
     # this constructor runs. _ensure_fits_composed() then re-decodes from path.
     MAX_LAYOUT_SCALE = 2.0
 
-    def __init__(self, controller_input: "ControllerInput", image: Image.Image, path: str = None):
+    def __init__(self, controller_input: "ControllerInput[Any]", image: Image.Image, path: str | None = None):
         """
         Initialize the class with the given controller key, image, fill mode, size, vertical alignment, and horizontal alignment.
 
@@ -68,13 +68,10 @@ class InputImage(SingleKeyAsset):
         # _ensure_fits_composed(). It is None until then, because the
         # constructor's image argument may already be a fitted copy, whose
         # size is not the source's.
-        self._source_native_size = None
+        self._source_native_size: tuple[int, int] | None = None
         # close() clears this to None and then deletes it. Every reader guards
         # on both hasattr and None.
         self.image: Image.Image | None = self._fit_to_budget(image)
-
-        if self.image is None:
-            self.image = self.controller_input.get_empty_background()
 
     def _budget_size(self) -> "tuple[int, int] | None":
         """The largest resolution this class retains without a later re-decode.

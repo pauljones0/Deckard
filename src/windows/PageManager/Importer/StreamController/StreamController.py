@@ -1,6 +1,7 @@
 import os
 import json
 
+from src.backend import services
 from src.backend.DeckManagement.HelperMethods import recursive_hasattr
 from src.backend.PageManagement import page_flush
 from src.backend.atomic_json import atomic_write_json
@@ -10,13 +11,14 @@ from loguru import logger as log
 import globals as gl
 
 from gi.repository import GLib
+from typing import Any
 
 class StreamControllerImporter:
     def __init__(self, json_export_path: str):
         self.json_export_path = json_export_path
 
     
-    def save_json(self, json_path: str, data: dict, _retries: int = 3):
+    def save_json(self, json_path: str, data: dict[str, Any], _retries: int = 3) -> None:
         atomic_write_json(json_path, data)
 
         loaded = None
@@ -33,7 +35,7 @@ class StreamControllerImporter:
             else:
                 log.error(f"Failed to save {json_path} after all retries, giving up")
             
-    def perform_import(self):
+    def perform_import(self) -> None:
         with open(self.json_export_path) as f:
             self.export = json.load(f)
 
@@ -53,8 +55,9 @@ class StreamControllerImporter:
 
             self.save_json(page_path, page)
 
-            gl.page_manager.refresh_document(page_path)
-            gl.page_manager.reload_pages_with_path(page_path)
+            page_manager = services.require_page_manager()
+            page_manager.refresh_document(page_path)
+            page_manager.reload_pages_with_path(page_path)
 
             log.success(f"Imported page {page_name}")
 
@@ -67,8 +70,10 @@ class StreamControllerImporter:
         if gl.page_manager is not None:
             gl.page_manager.refresh_window_watch_state()
 
-        if recursive_hasattr(gl, "app.main_win.sidebar.page_selector"):
-            GLib.idle_add(gl.app.main_win.sidebar.page_selector.update)
-        if recursive_hasattr(gl, "page_manager_window.page_selector"):
-            GLib.idle_add(gl.page_manager_window.page_selector.load_pages)
+        main_win = services.main_window()
+        if main_win is not None and recursive_hasattr(main_win, "sidebar.page_selector"):
+            GLib.idle_add(main_win.sidebar.page_selector.update)
+        page_manager_window = gl.page_manager_window
+        if page_manager_window is not None and recursive_hasattr(page_manager_window, "page_selector"):
+            GLib.idle_add(page_manager_window.page_selector.load_pages)
         log.success("Updated ui")

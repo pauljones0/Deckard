@@ -23,7 +23,7 @@ from src.windows.PageManager.elements.PageSelector import PageSelector
 from src.windows.PageManager.elements.PageEditor import PageEditor
 
 # Import typing
-from typing import TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 if TYPE_CHECKING:
     from src.windows.mainWindow.mainWindow import MainWindow
 
@@ -47,12 +47,12 @@ class PageManager(Adw.ApplicationWindow):
 
         self.connect("close-request", self.on_close)
 
-    def on_close(self, *args, **kwargs):
+    def on_close(self, *args: Any, **kwargs: Any) -> None:
         gl.page_manager_window = None
         self.destroy()
 
 
-    def build(self):
+    def build(self) -> None:
         # Split view
         self.split = Adw.NavigationSplitView(vexpand=True, sidebar_width_fraction=0.4, min_sidebar_width=300)
         self.set_content(self.split)

@@ -15,6 +15,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 # Import Python modules
 import threading
 import time
+from collections.abc import Iterable
+from typing import Any
 from StreamDeck.DeviceManager import DeviceManager
 from StreamDeck.Devices import StreamDeck
 from loguru import logger as log
@@ -42,7 +44,7 @@ from gi.repository import Xdp
 ELGATO_VENDOR_ID = "0fd9"
 
 
-def close_all_controllers(controllers, join_timeout: float = 2.0) -> None:
+def close_all_controllers(controllers: "Iterable[Any]", join_timeout: float = 2.0) -> None:
     """Runs the terminal close protocol for every open controller.
 
     The test harness StubDeckManager calls this function, so the harness and
@@ -88,7 +90,7 @@ class DeckManager:
     # An instance can override it, so the harness can shrink it.
     BOOT_RESCAN_DELAYS: tuple[float, ...] = (2.0, 3.0, 5.0, 10.0, 15.0, 25.0)
 
-    def __init__(self):
+    def __init__(self) -> None:
         #TODO: Maybe outsource some objects
         self.deck_controller: list[DeckController] = []
         # Guards concurrent add/remove of deck_controller (called from the USB
@@ -105,7 +107,7 @@ class DeckManager:
         # init. Deck arrival, exhausted backoff or quit stops it.
         self._boot_rescan_thread: threading.Thread | None = None
         self._boot_rescan_stop = threading.Event()
-        self.fake_deck_controller = []
+        self.fake_deck_controller: list[DeckController] = []
         self.settings_manager = SettingsManager()
         self.page_manager = gl.page_manager
         # self.page_manager.load_pages()
@@ -127,7 +129,7 @@ class DeckManager:
             self.load_remote_decks()
 
 
-    def load_remote_decks(self):
+    def load_remote_decks(self) -> None:
         print(" load remote decks")
         self.remote_deck_manager.start()
         for controller in self.remote_deck_manager.deck_controllers:
@@ -144,19 +146,19 @@ class DeckManager:
         ui_port.get().on_page_list_changed()
         ui_port.get().refresh_deck_availability()
 
-    def remove_remote_decks(self):
+    def remove_remote_decks(self) -> None:
         for controller in self.remote_deck_manager.deck_controllers:
             self.remove_controller(controller)
         ui_port.get().refresh_deck_availability()
         self.remote_deck_manager.stop()
 
-    def load_decks(self):
+    def load_decks(self) -> None:
         if not gl.argparser.parse_args().skip_load_hardware_decks:
             self.load_hardware_decks()
 
         self.load_fake_decks()
     
-    def load_hardware_decks(self):
+    def load_hardware_decks(self) -> None:
         decks=DeviceManager().enumerate()
         for deck in decks:
             self.load_hardware_deck(deck)
@@ -246,7 +248,7 @@ class DeckManager:
         if thread is not None and thread.is_alive():
             thread.join(timeout=2)
 
-    def load_hardware_deck(self, deck, attempts: int = 3, retry_delay: float = 0.5):
+    def load_hardware_deck(self, deck: Any, attempts: int = 3, retry_delay: float = 0.5) -> None:
         deck_controller = self._init_deck_controller_with_retry(deck, attempts=attempts, retry_delay=retry_delay)
         if deck_controller is not None:
             self.deck_controller.append(deck_controller)
@@ -256,7 +258,7 @@ class DeckManager:
             # boot enumeration registered before it.
             publish_controller(deck_controller)
 
-    def _init_deck_controller_with_retry(self, deck, attempts: int = 3, retry_delay: float = 0.5) -> DeckController | None:
+    def _init_deck_controller_with_retry(self, deck: Any, attempts: int = 3, retry_delay: float = 0.5) -> DeckController | None:
         # Opening a deck and reading its serial right after open is sometimes
         # flaky (TransportError -1). Retry, and never let one bad deck crash
         # startup. The startup path (load_hardware_deck) and the hotplug and
@@ -284,7 +286,7 @@ class DeckManager:
         log.error("Giving up on deck after repeated transport errors; skipping it. Replugging the deck usually fixes this.")
         return None
 
-    def load_fake_decks(self):
+    def load_fake_decks(self) -> None:
         old_n_fake_decks = len(self.fake_deck_controller)
         # The spin row writes an int, but a hand-edited settings file can
         # leave a float or a numeric string here, and the comparisons below
@@ -294,7 +296,7 @@ class DeckManager:
         if n_fake_decks > old_n_fake_decks:
             log.info(f"Loading {n_fake_decks - old_n_fake_decks} fake deck(s)")
             # Load difference in number of fake decks
-            for controller in range(n_fake_decks - old_n_fake_decks):
+            for _ in range(n_fake_decks - old_n_fake_decks):
                 a = f"Fake Deck {len(self.fake_deck_controller)+1}"
                 fake_deck = FakeDeck(serial_number = f"fake-deck-{len(self.fake_deck_controller)+1}", deck_type=f"Fake Deck {len(self.fake_deck_controller)+1}")
                 self.add_newly_connected_deck(fake_deck, is_fake=True)
@@ -313,7 +315,7 @@ class DeckManager:
 
         ui_port.get().refresh_deck_availability()
 
-    def on_connect(self, device_id, device_info):
+    def on_connect(self, device_id: Any, device_info: Any) -> None:
         log.info(f"Device {device_id} with info: {device_info} connected")
         # Check if it is a supported device
         if device_info["ID_VENDOR_ID"] != ELGATO_VENDOR_ID:
@@ -362,7 +364,7 @@ class DeckManager:
         return n_registered
 
 
-    def on_disconnect(self, device_id, device_info):
+    def on_disconnect(self, device_id: Any, device_info: Any) -> None:
         log.info(f"Device {device_id} with info: {device_info} disconnected")
         if device_info["ID_VENDOR_ID"] != ELGATO_VENDOR_ID:
             return
@@ -413,7 +415,7 @@ class DeckManager:
                 return controller
         return None
 
-    def add_newly_connected_deck(self, deck:StreamDeck, is_fake: bool = False):
+    def add_newly_connected_deck(self, deck:StreamDeck, is_fake: bool = False) -> None:
         # Retry the init instead of constructing a DeckController directly. A
         # deck that arrives mid-boot-storm through hotplug or the boot rescan
         # hits the same flaky open and serial read the startup path retries.
@@ -438,11 +440,11 @@ class DeckManager:
 
         ui_port.get().refresh_deck_availability()
 
-    def close_all(self):
+    def close_all(self) -> None:
         log.info("Closing all decks")
         close_all_controllers(self.deck_controller)
 
-    def stop_usb_monitoring(self):
+    def stop_usb_monitoring(self) -> None:
         self.usb_monitor.stop_monitoring(timeout=2)
 
     def get_connected_serials(self) -> list[str]:
@@ -454,7 +456,7 @@ class FlatpakDeckDisconnectThread(threading.Thread):
         super().__init__(name="FlatpakDeckDisconnectThread")
         self.deck_manager = deck_manager
 
-    def run(self):
+    def run(self) -> None:
         while gl.threads_running:
             time.sleep(2)
             for controller in list(self.deck_manager.deck_controller):

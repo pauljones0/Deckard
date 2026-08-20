@@ -11,6 +11,7 @@ import os
 import re
 import shutil
 import time
+from typing import Any
 
 from loguru import logger as log
 
@@ -37,7 +38,7 @@ MAX_DISPLAY_SATURATION = 1.5
 DEFAULT_DISPLAY_SATURATION = 1.0
 
 
-def _clamp_saturation(raw) -> float:
+def _clamp_saturation(raw: Any) -> float:
     """Maps a persisted saturation to the factor the runtime applies.
 
     A non-numeric or non-finite value, that is NaN or inf, falls back to the
@@ -144,7 +145,7 @@ def _collect_json_paths() -> list[str]:
     return paths
 
 
-def _walk_for_video_paths(node, found: set[str]) -> None:
+def _walk_for_video_paths(node: Any, found: set[str]) -> None:
     """Any string anywhere in the JSON that points at an existing video file
     counts as a reference. Media appears as a deck or page background, a
     screensaver, or per-key and per-dial media, and this survives a change in

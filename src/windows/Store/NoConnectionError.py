@@ -19,7 +19,7 @@ gi.require_version("Adw", "1")
 from gi.repository import Gtk
 
 class NoConnectionError(Gtk.Box):
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__(orientation=Gtk.Orientation.VERTICAL,
                          halign=Gtk.Align.CENTER, valign=Gtk.Align.CENTER)
 

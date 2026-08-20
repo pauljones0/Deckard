@@ -4,27 +4,31 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Gtk, Adw, Gio, GObject
 
+from typing import Any
+
 from loguru import logger as log
 
 class BaseComboRowItem(GObject.GObject):
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
 
-    def __str__(self):
+    def __str__(self) -> str:
         """Used to display values in the ComboRow"""
-        pass
+        # The subclasses override this. An empty string keeps str() valid
+        # on a bare item, where the old bare stub answered None.
+        return ""
 
-    def get_value(self):
+    def get_value(self) -> str:
         """Used to retrieve the value that will be saved"""
         return self.__str__()
 
-    def __eq__(self, other):
+    def __eq__(self, other: object) -> bool:
         if isinstance(other, BaseComboRowItem):
             return self.get_value() == other.get_value()
         return self.get_value() == str(other)
 
     @GObject.Property(type=GObject.TYPE_STRING)  # type: ignore[arg-type]  # gi stub: Property(type=) accepts a GType, stubs only declare type[Any] | None
-    def filter_value(self):
+    def filter_value(self) -> str:
         return self.__str__()
 
 class ComboRowItem(BaseComboRowItem):
@@ -32,7 +36,7 @@ class ComboRowItem(BaseComboRowItem):
         super().__init__()
         self.label = label
 
-    def __str__(self):
+    def __str__(self) -> str:
         return self.label
     
 class SimpleComboRowItem(BaseComboRowItem):
@@ -41,10 +45,10 @@ class SimpleComboRowItem(BaseComboRowItem):
         self.value = value
         self.label = label
 
-    def __str__(self):
+    def __str__(self) -> str:
         return self.label
     
-    def get_value(self):
+    def get_value(self) -> str:
         return self.value
 
 class ComboRow(Adw.ComboRow):
@@ -69,8 +73,8 @@ class ComboRow(Adw.ComboRow):
     """
     def __init__(self,
                  items: list[BaseComboRowItem] | list[str],
-                 title: str = None,
-                 subtitle: str = None,
+                 title: str | None = None,
+                 subtitle: str | None = None,
                  enable_search: bool = True,
                  default_selection: BaseComboRowItem | str | None = None):
         super().__init__(title=title, subtitle=subtitle)  # type: ignore[arg-type]  # gi stub: Adw string props accept None (PyGObject maps it to NULL, i.e. empty string)
@@ -89,7 +93,7 @@ class ComboRow(Adw.ComboRow):
 
         self.populate(self.convert_item_list(items), default_selection)
 
-    def convert_item_list(self, items):
+    def convert_item_list(self, items: list[BaseComboRowItem] | list[str]) -> list[BaseComboRowItem]:
         converted_list: list[BaseComboRowItem] = []
 
         for item in items:
@@ -100,7 +104,7 @@ class ComboRow(Adw.ComboRow):
 
         return converted_list
 
-    def set_selected_item(self, item: BaseComboRowItem | str | None):
+    def set_selected_item(self, item: BaseComboRowItem | str | None) -> "BaseComboRowItem | None":
         selected_item_index = 0
 
         for index in range(self.model.get_n_items()):
@@ -111,18 +115,18 @@ class ComboRow(Adw.ComboRow):
         self.set_selected(selected_item_index)
         return self.get_item_at(selected_item_index)
 
-    def add_item(self, combo_row_item: BaseComboRowItem | str):
+    def add_item(self, combo_row_item: BaseComboRowItem | str) -> None:
         if isinstance(combo_row_item, str):
             combo_row_item = ComboRowItem(combo_row_item)
 
         self.model.append(combo_row_item)
 
-    def add_items(self, items: list[BaseComboRowItem] | list[str]):
+    def add_items(self, items: list[BaseComboRowItem] | list[str]) -> None:
         converted_list = self.convert_item_list(items)
 
         self.model.splice(self.model.get_n_items(), 0, converted_list)
 
-    def remove_item_at_index(self, index: int):
+    def remove_item_at_index(self, index: int) -> None:
         size = self.model.get_n_items()
 
         if not (0 <= index < size):
@@ -131,13 +135,13 @@ class ComboRow(Adw.ComboRow):
 
         self.model.remove(index)
 
-    def remove_item(self, item: BaseComboRowItem | str):
+    def remove_item(self, item: BaseComboRowItem | str) -> None:
         for index in range(self.model.get_n_items()):
             if self.model.get_item(index) == item:
                 self.remove_item_at_index(index)
                 break
 
-    def remove_items(self, start: int, amount: int):
+    def remove_items(self, start: int, amount: int) -> None:
         size = self.model.get_n_items()
 
         if not (0 <= start < size and start + amount < size):
@@ -147,7 +151,7 @@ class ComboRow(Adw.ComboRow):
         for i in range(amount + 1):
             self.model.remove(start)
 
-    def remove_all_items(self):
+    def remove_all_items(self) -> None:
         self.model.remove_all()
 
     def get_item_at(self, index: int) -> BaseComboRowItem | None:
@@ -162,7 +166,7 @@ class ComboRow(Adw.ComboRow):
                 return item
         return None
 
-    def get_item_amount(self):
+    def get_item_amount(self) -> int:
         return self.model.get_n_items()
 
     def get_selected_item(self) -> BaseComboRowItem | None:
@@ -173,16 +177,16 @@ class ComboRow(Adw.ComboRow):
 
         return self.get_item_at(selected_index)
 
-    def populate(self, items: list[BaseComboRowItem], selected_item: BaseComboRowItem | str | None = ""):
+    def populate(self, items: list[BaseComboRowItem], selected_item: BaseComboRowItem | str | None = "") -> None:
         self.remove_all_items()
         self.add_items(items)
         self.set_selected_item(selected_item)
 
-    def _on_factory_setup(self, factory, list_item):
+    def _on_factory_setup(self, factory: Gtk.SignalListItemFactory, list_item: Any) -> None:
         label = Gtk.Label(halign=Gtk.Align.START)
         list_item.set_child(label)
 
-    def _on_factory_bind(self, factory, list_item):
+    def _on_factory_bind(self, factory: Gtk.SignalListItemFactory, list_item: Any) -> None:
         item = list_item.get_item()
         label = list_item.get_child()
         label.set_text(str(item))

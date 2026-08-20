@@ -12,15 +12,20 @@ This programm comes with ABSOLUTELY NO WARRANTY!
 You should have received a copy of the GNU General Public License
 along with this program. If not, see <https://www.gnu.org/licenses/>.
 """
+from typing import TYPE_CHECKING
+
 from PIL import Image
 
 # image2pixbuf imports GLib and GdkPixbuf on demand. It is their only
 # consumer, and all its callers live under src/windows/. A module-level
 # import drags the widget stack into the engine's import closure, and
-# ImageHelpers is core to the render path.
+# ImageHelpers is core to the render path. The annotation below is a string
+# for the same reason: a runtime one would evaluate the name at def time.
+if TYPE_CHECKING:
+    from gi.repository import GdkPixbuf
 
 
-def is_transparent(img: Image.Image):
+def is_transparent(img: Image.Image) -> bool:
     """
     Determines if an image has transparency.
 
@@ -30,10 +35,10 @@ def is_transparent(img: Image.Image):
     Returns:
         bool: True if the image has transparency, False otherwise.
     """
-    return img.has_transparency_data
+    return bool(img.has_transparency_data)
 
 
-def image2pixbuf(img, force_transparency=False):
+def image2pixbuf(img: Image.Image, force_transparency: bool = False) -> "GdkPixbuf.Pixbuf | None":
     """
     Converts an image to a GdkPixbuf.Pixbuf object.
 
@@ -41,27 +46,24 @@ def image2pixbuf(img, force_transparency=False):
         img (PIL.Image.Image): The image to convert.
 
     Returns:
-        GdkPixbuf.Pixbuf: The converted GdkPixbuf.Pixbuf object.
+        GdkPixbuf.Pixbuf: The converted GdkPixbuf.Pixbuf object, or None when
+        the image is not one GdkPixbuf accepts, which is usually a non-RGB one.
     """
     from gi.repository import GLib, GdkPixbuf
 
     img = img.convert("RGBA")
     force_transparency = True
 
-    data = img.tobytes()
     w, h = img.size
-    data = GLib.Bytes.new(data)
+    # Two names, because the GLib wrapper is not the buffer it wraps.
+    raw = img.tobytes()
+    data = GLib.Bytes.new(raw)
     transparent = True if force_transparency else is_transparent(img)
     channels = 4 if transparent else 3
 
     try:
-        pix = GdkPixbuf.Pixbuf.new_from_bytes(data, GdkPixbuf.Colorspace.RGB,
+        return GdkPixbuf.Pixbuf.new_from_bytes(data, GdkPixbuf.Colorspace.RGB,
                 transparent, 8, w, h, w * channels)
-        # Clean up memory
-        data = None
-        w, h = None, None
-        del data
-        return pix
-    except TypeError as e:
-         # This usually happens if the image is a non RGB image
-         return
+    except TypeError:
+        # This usually happens if the image is a non RGB image
+        return None

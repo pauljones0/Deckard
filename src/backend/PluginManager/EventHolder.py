@@ -12,8 +12,8 @@ if TYPE_CHECKING:
 class EventHolder:
     """Holds the event callbacks of one event id."""
     def __init__(self, plugin_base: "PluginBase",
-                 event_id: str = None,
-                 event_id_suffix: str = None):
+                 event_id: str | None = None,
+                 event_id_suffix: str | None = None):
         if event_id in ["", None] and event_id_suffix in ["", None]:
             raise ValueError("Please specify a signal id")
 
@@ -32,17 +32,17 @@ class EventHolder:
         # one event_id.
         self._lane = event_dispatch.Lane(label=self.event_id)
 
-    def add_listener(self, callback: Callable[..., Any]):
+    def add_listener(self, callback: Callable[..., Any]) -> None:
         if not self.observers.add(callback):
             # A functools.partial and other callable objects have no
             # __name__, and this warning must not break the connect.
             name = getattr(callback, "__name__", repr(callback))
             log.warning(f"Callback {name} is already subscribed to: {self.event_id}")
 
-    def remove_listener(self, callback: Callable[..., Any]):
+    def remove_listener(self, callback: Callable[..., Any]) -> None:
         self.observers.remove(callback)
 
-    def trigger_event(self, *args, **kwargs):
+    def trigger_event(self, *args: Any, **kwargs: Any) -> None:
         """Queue this holder's current observers onto its lane and return.
 
         A return does not mean the observers ran. They run after it, one at a

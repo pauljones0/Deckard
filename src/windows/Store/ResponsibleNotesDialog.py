@@ -15,7 +15,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Adw
+from gi.repository import Adw, Gtk
 
 import globals as gl
 
@@ -23,7 +23,7 @@ from collections.abc import Callable
 from typing import Any
 
 class ResponsibleNotesDialog(Adw.MessageDialog):
-    def __init__(self, parent, callback: Callable[..., Any] | None = None):
+    def __init__(self, parent: Gtk.Window | None, callback: Callable[..., Any] | None = None) -> None:
         self.callback = callback
 
         super().__init__(
@@ -49,7 +49,7 @@ class ResponsibleNotesDialog(Adw.MessageDialog):
 
         self.connect("response", self.on_response)
 
-    def on_response(self, dialog: Adw.MessageDialog, response: int) -> None:
+    def on_response(self, dialog: Adw.MessageDialog, response: str) -> None:
         app_settings = gl.settings_manager.app()
         agreed = (response == "agree")
         app_settings.responsibility_notes_agreed = agreed

@@ -27,25 +27,25 @@ from src.windows.AssetManager.WallpaperPacks.Wallpapers.WallpaperChooser import 
 import globals as gl
 
 # Import typing
-from typing import TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 if TYPE_CHECKING:
     from src.windows.AssetManager.AssetManager import AssetManager
 
 class WallpaperPackChooserStack(Gtk.Stack):
-    def __init__(self, asset_manager: "AssetManager", *args, **kwargs):
+    def __init__(self, asset_manager: "AssetManager", *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self.asset_manager = asset_manager
 
         self.build()
 
-    def build(self):
+    def build(self) -> None:
         self.pack_chooser = WallpaperPackChooser(self, self.asset_manager)
         self.add_titled(self.pack_chooser, "pack-chooser", "Chooser")
 
         self.wallpaper_chooser = WallpaperChooserPage(self, self.asset_manager)
         self.add_titled(self.wallpaper_chooser, "wallpaper-chooser", "Wallpaper Chooser")
 
-    def show_for_path(self, path):
+    def show_for_path(self, path: str) -> None:
         # No caller reaches this method. AssetChooser.show_for_path is the
         # one entry point, and it routes a pre-selection to the custom-asset
         # chooser or to the icon-pack chooser. A future caller must set the

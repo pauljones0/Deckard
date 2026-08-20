@@ -46,7 +46,7 @@ class StorePreview(Gtk.FlowBoxChild):
 
         self.build()
 
-    def build(self):
+    def build(self) -> None:
         self.main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL,
                                  hexpand=True, vexpand=False,
                                  css_classes=["no-padding"],
@@ -138,7 +138,7 @@ class StorePreview(Gtk.FlowBoxChild):
         self.install_spinner = Gtk.Spinner(spinning=False, visible=True, halign=Gtk.Align.CENTER, hexpand=True)
         self.install_spinner_box.append(self.install_spinner)
 
-    def show_install_spinner(self, show: bool = True):
+    def show_install_spinner(self, show: bool = True) -> None:
         if show:
             self.install_uninstall_button.set_visible(False)
             self.install_spinner_box.set_visible(True)
@@ -148,42 +148,42 @@ class StorePreview(Gtk.FlowBoxChild):
             self.install_spinner_box.set_visible(False)
             self.install_spinner.set_spinning(False)
 
-    def set_image(self, image: Image.Image | None):
+    def set_image(self, image: Image.Image | None) -> None:
         if image is None:
             return
         image.thumbnail((250, 360))
         pixbuf = image2pixbuf(image, force_transparency=True)
         GLib.idle_add(self.image.set_pixbuf, pixbuf)
 
-    def set_official(self, official: bool | None):
+    def set_official(self, official: bool | None) -> None:
         # A catalog entry without the field reads as None, so not official.
         self.official_badge.set_visible(bool(official))
 
-    def set_verified(self, verified:bool):
+    def set_verified(self, verified:bool) -> None:
         self.verified_badge.set_visible(verified)
         self.warning_badge.set_visible(not verified)
 
-    def set_author_label(self, author: str | None):
+    def set_author_label(self, author: str | None) -> None:
         self.author_label.set_text(author or "")
 
-    def set_name_label(self, name: str | None):
+    def set_name_label(self, name: str | None) -> None:
         self.name_label.set_text(name or "")
 
-    def set_url(self, url: str | None):
+    def set_url(self, url: str | None) -> None:
         self.url = url
 
-    def on_github_clicked(self, button: Gtk.Button):
+    def on_github_clicked(self, button: Gtk.Button) -> None:
         if self.url is None:
             return
         open_web(self.url)
 
-    def on_download_clicked(self, button: Gtk.Button):
+    def on_download_clicked(self, button: Gtk.Button) -> None:
         GLib.idle_add(self.show_install_spinner, True)
 
         threading.Thread(target=self.perform_download_threaded, args=(), name="perform_download_threaded").start()
 
     @log.catch
-    def perform_download_threaded(self):
+    def perform_download_threaded(self) -> None:
         # Allow one download at a time, because two break the plugin
         # initialization. The lock replaces a check-then-set poll on
         # currently_downloading, which lets a double-click start two installs.
@@ -207,19 +207,21 @@ class StorePreview(Gtk.FlowBoxChild):
                 store.currently_downloading = False
                 GLib.idle_add(self.show_install_spinner, False)
 
-    def install(self):
+    def install(self) -> bool | None:
+        # The pages return whether a real install happened, so their overrides
+        # answer bool; this stub answers None and the dispatcher reads neither.
         pass
 
-    def uninstall(self):
+    def uninstall(self) -> None:
         pass
 
-    def update(self):
+    def update(self) -> None:
         pass
 
-    def on_click_main(self, button: Gtk.Button):
+    def on_click_main(self, button: Gtk.Button) -> None:
         pass
 
-    def set_install_state(self, state: int):
+    def set_install_state(self, state: int) -> None:
         """
         Sets the state of the install button.
 
@@ -264,6 +266,6 @@ class StorePreview(Gtk.FlowBoxChild):
             description = description[:(cutoff-3)] + "..."
         self.description_label.set_label(description)
 
-    def check_required_version(self, app_version_to_check: str | None):
+    def check_required_version(self, app_version_to_check: str | None) -> bool:
         # One shared gate. See StoreData.is_min_app_version_satisfied.
         return is_min_app_version_satisfied(app_version_to_check)

@@ -45,9 +45,10 @@ from typing import TYPE_CHECKING, Any, cast
 from src.backend.PluginManager.PluginSettings.Asset import Color,Icon
 
 if TYPE_CHECKING:
-    # Type-only. Nothing here runs gi.require_version("Adw", "1"), and the
-    # annotation that uses Adw is a string.
+    # Type-only. Nothing here runs gi.require_version, and the annotations
+    # that use Adw and Gtk are strings.
     from gi.repository import Adw
+    from gi.repository import Gtk
     # GenerativeUI imports Gtk at module scope, and ActionCore sits in the
     # import closure of the engine through DeckController and Page. The name
     # stays type-only here, and the isinstance below imports it lazily.
@@ -57,7 +58,7 @@ if TYPE_CHECKING:
     from src.backend.DeckManagement.deck_controller.inputs import ControllerInput, ControllerInputState, ControllerKey
     from src.backend.PageManagement.Page import Page
 
-class ActionCore(rpyc.Service):
+class ActionCore(rpyc.Service):  # type: ignore[misc]  # rpyc.Service is unstubbed (Any)
     # Change to match your action
     def __init__(self, action_id: str, action_name: str,
                  deck_controller: "DeckController", page: "Page", plugin_base: "PluginBase", state: int,
@@ -65,7 +66,7 @@ class ActionCore(rpyc.Service):
         self.backend_connection: Connection = None
         self.backend: netref = None
         self.server: ThreadedServer = None
-        self.backend_process: subprocess.Popen | None = None
+        self.backend_process: subprocess.Popen[bytes] | None = None
         # register_backend relaxes its port-ownership check for a terminal
         # launch, where the backend is not a child of the Popen handle.
         self._backend_via_terminal: bool = False
@@ -75,7 +76,7 @@ class ActionCore(rpyc.Service):
         self._backend_ready = threading.Event()
 
         # The (signal, callback) pairs of this action, disconnected on teardown.
-        self._connected_signals: list[tuple] = []
+        self._connected_signals: list[tuple[Any, ...]] = []
 
         # An eviction reaches clean_up() from whichever thread calls get_page,
         # the USB monitor or the media thread, and the rpyc on_disconnect hook
@@ -91,7 +92,7 @@ class ActionCore(rpyc.Service):
         self.action_id = action_id
         self.action_name = action_name
         self.plugin_base = plugin_base
-        self.generative_ui_objects: list["GenerativeUI"] = []
+        self.generative_ui_objects: list["GenerativeUI[Any]"] = []
 
         self.on_ready_called = False
         # Set after on_ready() returned or raised. A tick and an external
@@ -111,21 +112,21 @@ class ActionCore(rpyc.Service):
 
         log.info(f"Loaded action {self.action_name} with id {self.action_id}")
 
-    def clear_event_assigners(self):
+    def clear_event_assigners(self) -> None:
         self.event_manager.clear_event_assigners()
 
-    def load_event_overrides(self):
+    def load_event_overrides(self) -> None:
         self.event_manager.set_overrides(self.get_event_assignments())
         
-    def set_deck_controller(self, deck_controller):
+    def set_deck_controller(self, deck_controller: "DeckController") -> None:
         """Internal function. Do not call it manually."""
         self.deck_controller = deck_controller
  
-    def set_page(self, page):
+    def set_page(self, page: "Page") -> None:
         """Internal function. Do not call it manually."""
         self.page = page
 
-    def get_input(self) -> "ControllerInput | None":
+    def get_input(self) -> "ControllerInput[Any] | None":
         # None when the identifier names an input this deck does not have.
         # DeckController.get_input then falls off the end of its search loop.
         return self.deck_controller.get_input(self.input_ident)
@@ -135,24 +136,24 @@ class ActionCore(rpyc.Service):
         if i is None: return None
         return i.states.get(self.state)
     
-    def add_event_assigner(self, event_assigner: EventAssigner):
+    def add_event_assigner(self, event_assigner: EventAssigner) -> None:
         self.event_manager.add_event_assigner(event_assigner)
 
-    def _raw_event_callback(self, event: InputEvent, data: dict = None):
+    def _raw_event_callback(self, event: InputEvent, data: dict[str, Any] | None = None) -> None:
         event_assigner = self.event_manager.get_event_assigner_for_event(event)
         if event_assigner:
             event_assigner.call(data)
 
-    def event_callback(self, event: InputEvent, data: dict = None):
+    def event_callback(self, event: InputEvent, data: dict[str, Any] | None = None) -> None:
         pass
 
-    def on_trigger(self):
+    def on_trigger(self) -> None:
         pass
 
-    def on_tick(self):
+    def on_tick(self) -> None:
         pass
 
-    def on_ready(self):
+    def on_ready(self) -> None:
         """The app calls this when the page can process action requests.
 
         Set the default image here rather than in the constructor. This hook
@@ -161,7 +162,7 @@ class ActionCore(rpyc.Service):
         """
         pass
 
-    def on_update(self):
+    def on_update(self) -> None:
         """The app calls this when the action must redraw itself."""
         # The compatibility call below re-runs the whole on_ready body, so it
         # fires only after a ready completed. A caller that arrives while the
@@ -180,7 +181,7 @@ class ActionCore(rpyc.Service):
             return
         self.on_ready() # backward compatibility
 
-    def set_media(self, image = None, media_path=None, size: float = None, valign: float = None, halign: float = None, fps: int = 30, loop: bool = True, update: bool = True):
+    def set_media(self, image: "Image.Image | None" = None, media_path: "str | None" = None, size: float | None = None, valign: float | None = None, halign: float | None = None, fps: int = 30, loop: bool = True, update: bool = True) -> None:
         self.raise_error_if_not_ready()
 
         if type(self.input_ident) not in [Input.Key, Input.Dial]:
@@ -202,12 +203,12 @@ class ActionCore(rpyc.Service):
         # InputImage must upscale it instead of a failed re-open of
         # media_path.
         path_for_reopen = None
-        if is_image(media_path) and image is None:
+        if media_path is not None and is_image(media_path) and image is None:
             with Image.open(media_path) as img:
                 image = img.copy()
             path_for_reopen = media_path
 
-        if is_svg(media_path) and image is None:
+        if media_path is not None and is_svg(media_path) and image is None:
             image = gl.media_manager.generate_svg_thumbnail(media_path)
 
         controller_input = self.get_input()
@@ -235,7 +236,7 @@ class ActionCore(rpyc.Service):
                 ), update=False)
                 self._stamp_media_owner(input_state)
 
-            elif is_video(media_path):
+            elif media_path is not None and is_video(media_path):
                 # A local import. deck_controller/inputs.py imports ActionCore
                 # at module level, so a top-level ControllerKey import here
                 # closes a cycle. KeyGIF comes in at the same call site.
@@ -290,16 +291,19 @@ class ActionCore(rpyc.Service):
         if update:
             controller_input.update()
 
-    def _stamp_media_owner(self, input_state) -> None:
+    def _stamp_media_owner(self, input_state: "ControllerInputState") -> None:
         # Record this action as the owner of the media it set, so
         # ControllerKey.load_from_input_dict restores that media across the
         # state wipe of create_n_states while this action object still drives
         # the key. Key states alone carry the attribute, so a dial state takes
         # no part in the restore.
-        if hasattr(input_state, "media_owner_action"):
+        from src.backend.DeckManagement.deck_controller.inputs import (
+            ControllerKeyState,
+        )
+        if isinstance(input_state, ControllerKeyState):
             input_state.media_owner_action = self
 
-    def set_background_color(self, color: list[int] = None, update: bool = True):
+    def set_background_color(self, color: list[int] | None = None, update: bool = True) -> None:
         if color is None:
             color = [0, 0, 0, 0]
 
@@ -374,10 +378,10 @@ class ActionCore(rpyc.Service):
         except AttributeError:
             pass
 
-    def set_label(self, text: str, position: str = "bottom", color: list[int]=None,
-                  font_family: str=None, font_size=None, outline_width: int = None, outline_color: list[int] = None,
-                  font_weight: int = None, font_style: str = None,
-                  update: bool=True):
+    def set_label(self, text: str | None, position: str = "bottom", color: list[int] | None=None,
+                  font_family: str | None=None, font_size: "float | None" = None, outline_width: int | None = None, outline_color: list[int] | None = None,
+                  font_weight: int | None = None, font_style: str | None = None,
+                  update: bool=True) -> None:
         self.raise_error_if_not_ready()
 
         if type(self.input_ident) not in [Input.Key, Input.Dial]:
@@ -434,49 +438,55 @@ class ActionCore(rpyc.Service):
 
         state.label_manager.set_action_label(label=key_label, position=position, update=update)
 
-    def set_top_label(self, text: str, color: list[int] = None,
-                      font_family: str = None, font_size = None, outline_width: int = None, outline_color: list[int] = None,
-                      font_weight: int = None, font_style: str = None,
-                      update: bool = True):
+    def set_top_label(self, text: str, color: list[int] | None = None,
+                      font_family: str | None = None, font_size: "float | None" = None, outline_width: int | None = None, outline_color: list[int] | None = None,
+                      font_weight: int | None = None, font_style: str | None = None,
+                      update: bool = True) -> None:
         self.set_label(text=text, position="top", color=color, font_family=font_family, font_size=font_size,
                        outline_width=outline_width, outline_color=outline_color,
                        font_weight=font_weight, font_style=font_style, update=update)
 
-    def set_center_label(self, text: str, color: list[int] = None,
-                      font_family: str = None, font_size = None, outline_width: int = None, outline_color: list[int] = None,
-                      font_weight: int = None, font_style: str = None,
-                      update: bool = True):
+    def set_center_label(self, text: str, color: list[int] | None = None,
+                      font_family: str | None = None, font_size: "float | None" = None, outline_width: int | None = None, outline_color: list[int] | None = None,
+                      font_weight: int | None = None, font_style: str | None = None,
+                      update: bool = True) -> None:
         self.set_label(text=text, position="center", color=color, font_family=font_family, font_size=font_size,
                        outline_width=outline_width, outline_color=outline_color,
                        font_weight=font_weight, font_style=font_style, update=update)
 
-    def set_bottom_label(self, text: str, color: list[int] = None,
-                      font_family: str = None, font_size = None, outline_width: int = None, outline_color: list[int] = None,
-                      font_weight: int = None, font_style: str = None,
-                      update: bool = True):
+    def set_bottom_label(self, text: str, color: list[int] | None = None,
+                      font_family: str | None = None, font_size: "float | None" = None, outline_width: int | None = None, outline_color: list[int] | None = None,
+                      font_weight: int | None = None, font_style: str | None = None,
+                      update: bool = True) -> None:
         self.set_label(text=text, position="bottom", color=color, font_family=font_family, font_size=font_size,
                        outline_width=outline_width, outline_color=outline_color,
                        font_weight=font_weight, font_style=font_style, update=update)
 
-    def on_labels_changed_in_ui(self):
+    def on_labels_changed_in_ui(self) -> None:
         # TODO
         pass
 
     def get_config_rows(self) -> "list[Adw.PreferencesRow]":
         return []
     
-    def get_custom_config_area(self):
-        return
+    def get_custom_config_area(self) -> "Gtk.Widget | None":
+        return None
     
-    def get_settings(self) -> dict:
+    def get_settings(self) -> dict[str, Any]:
         # self.page.load()
         if self.page is None:
-            return {}
-        return self.page.get_action_settings(action_object=self)
+            # A plugin can construct or drive an action untyped over rpyc, so
+            # the runtime check stays even though the annotation says the
+            # page is always set.
+            return {}  # type: ignore[unreachable]
+        return cast(dict[str, Any], self.page.get_action_settings(action_object=self))
     
-    def set_settings(self, settings: dict):
+    def set_settings(self, settings: dict[str, Any]) -> None:
         if self.page is None:
-            return
+            # A plugin can construct or drive an action untyped over rpyc, so
+            # the runtime check stays even though the annotation says the
+            # page is always set.
+            return  # type: ignore[unreachable]
         self.page.set_action_settings(action_object=self, settings=settings)
 
     def connect(self, signal: type[Signal], callback: Callable[..., Any]) -> None:
@@ -490,9 +500,9 @@ class ActionCore(rpyc.Service):
         # action that does not sit on a key.
         if not isinstance(self.input_ident, Input.Key):
             return None
-        # A Key identifier always resolves to a ControllerKey. get_input() is
-        # declared over the whole input family, so narrow the type here.
-        return cast("ControllerKey | None", self.deck_controller.get_input(self.input_ident))
+        # The isinstance guard selects get_input()'s Key overload, so this
+        # already reads as ControllerKey | None.
+        return self.deck_controller.get_input(self.input_ident)
     
     def get_is_multi_action(self) -> bool:
         self.raise_error_if_not_ready()
@@ -501,7 +511,7 @@ class ActionCore(rpyc.Service):
         actions = self.page.action_objects.get(self.input_ident.input_type, {}).get(self.input_ident.json_identifier, [])
         return len(actions) > 1
 
-    def get_asset_path(self, asset_name: str, subdirs: list[str] = None, asset_folder: str = "assets") -> str:
+    def get_asset_path(self, asset_name: str, subdirs: list[str] | None = None, asset_folder: str = "assets") -> str:
         """Return the path to a plugin asset.
 
         Args:
@@ -527,43 +537,44 @@ class ActionCore(rpyc.Service):
     def get_color(self, key: str, skip_override: bool = False) -> Color | None:
         return self.plugin_base.asset_manager.colors.get_asset(key, skip_override)
 
-    def get_translation(self, key: str, fallback: str = None):
+    def get_translation(self, key: str, fallback: str | None = None) -> str:
         return self.plugin_base.locale_manager.get(key, fallback)
     
-    def has_label_controls(self):
+    def has_label_controls(self) -> "list[bool]":
+        state = self.get_state()
+        if state is None:
+            return []
         own_action_index = self.get_own_action_index()
-        return [own_action_index == i for i in self.get_state().action_permission_manager.get_label_control_indices()]
+        return [own_action_index == i for i in state.action_permission_manager.get_label_control_indices()]
     
-    def has_label_control(self, label_index) -> bool:
+    def has_label_control(self, label_index: int) -> bool:
         #TODO: Might require performance improvements
         state = self.get_state()
         if state is None:
             return False
         return state.action_permission_manager.get_label_control_index(label_index) == self.get_own_action_index()
 
-    def has_image_control(self):
+    def has_image_control(self) -> bool:
         #TODO: Might require performance improvements
-        image_control_index = self.get_state().action_permission_manager.get_image_control_index()
+        state = self.get_state()
+        if state is None:
+            return False
+        image_control_index = state.action_permission_manager.get_image_control_index()
         return image_control_index == self.get_own_action_index()
 
-
-        key_dict = self.input_ident.get_state_dict(self.page, self.state)
-
-        if key_dict.get("image-control-action") is None:
-            return False
-        
-        if ("image-control-action" not in key_dict) and (not self.get_is_multi_action()):
-            return True
-
-        return self.get_own_action_index() == key_dict.get("image-control-action")
     
-    def has_background_control(self):
+    def has_background_control(self) -> bool:
         #TODO: Might require performance improvements
-        background_control_index = self.get_state().action_permission_manager.get_background_control_index()
+        state = self.get_state()
+        if state is None:
+            return False
+        background_control_index = state.action_permission_manager.get_background_control_index()
         return background_control_index == self.get_own_action_index()
     
-    def get_is_present(self):
-        if self.page is None: return False
+    def get_is_present(self) -> bool:
+        # A plugin can drive an action untyped over rpyc, so the runtime check
+        # stays even though the annotation says the page is always set.
+        if self.page is None: return False  # type: ignore[unreachable]
         if self.page.deck_controller.active_page is not self.page: return False
         if self.page.deck_controller.screen_saver.showing: return False
         # if self.state != self.get_state().state: return False #TODO: Check for touchscreen and dial states
@@ -584,7 +595,7 @@ class ActionCore(rpyc.Service):
         actions = self.page.get_all_actions_for_input(self.input_ident, self.state)
         if self not in actions:
             return None
-        return actions.index(self)
+        return cast(int | None, actions.index(self))
 
     # None is a valid value here. Input.EventFromStringName answers None for
     # the stored str(None), which maps that event to no assigner. Every event
@@ -604,17 +615,17 @@ class ActionCore(rpyc.Service):
 
         return assignment
     
-    def set_all_events_to_null(self):
+    def set_all_events_to_null(self) -> None:
         for input_type in self.event_manager.get_event_map().keys():
             self.set_event_assignment(input_type, None)
 
     
-    def get_event_assignments(self) -> dict[str, str]:
-        return self.page.get_action_event_assignments(
+    def get_event_assignments(self) -> dict[str, str | None]:
+        return cast(dict[str, str | None], self.page.get_action_event_assignments(
             action_object=self
-        )
+        ))
     
-    def set_event_assignment(self, input_event: InputEvent | None, event_assigner: EventAssigner | None):
+    def set_event_assignment(self, input_event: InputEvent | None, event_assigner: EventAssigner | None) -> None:
         self.page.set_action_event_assigment(
             event_assigner=event_assigner,
             input_event=input_event,
@@ -623,12 +634,12 @@ class ActionCore(rpyc.Service):
 
         self.load_event_overrides()
     
-    def raise_error_if_not_ready(self):
+    def raise_error_if_not_ready(self) -> None:
         if self.on_ready_called:
             return
         raise Warning("Seems like you're calling this method before the action is ready")
     
-    def get_generative_ui_objects(self) -> list["GenerativeUI"]:
+    def get_generative_ui_objects(self) -> list["GenerativeUI[Any]"]:
         from GtkHelper.GenerativeUI.GenerativeUI import GenerativeUI
 
         objects = []
@@ -638,10 +649,10 @@ class ActionCore(rpyc.Service):
 
         return objects
 
-    def add_generative_ui_object(self, generative_ui_object: "GenerativeUI"):
+    def add_generative_ui_object(self, generative_ui_object: "GenerativeUI[Any]") -> None:
         self.generative_ui_objects.append(generative_ui_object)
 
-    def remove_generative_ui_object(self, generative_ui_object: "GenerativeUI"):
+    def remove_generative_ui_object(self, generative_ui_object: "GenerativeUI[Any]") -> None:
         """Unregister a GenerativeUI element, such as a rebuilt config row.
 
         The action then stops retaining it for its own lifetime."""
@@ -650,10 +661,10 @@ class ActionCore(rpyc.Service):
         except ValueError:
             pass
 
-    def get_generative_ui(self):
+    def get_generative_ui(self) -> "list[GenerativeUI[Any]]":
         return self.generative_ui_objects
 
-    def get_generative_ui_widgets(self):
+    def get_generative_ui_widgets(self) -> "list[Any]":
         widgets = []
 
         for generative_object in self.generative_ui_objects:
@@ -665,10 +676,10 @@ class ActionCore(rpyc.Service):
             widgets.append(widget)
         return widgets
 
-    def load_initial_generative_ui(self):
+    def load_initial_generative_ui(self) -> None:
         GLib.idle_add(self._do_load_initial_generative_ui)
 
-    def _do_load_initial_generative_ui(self):
+    def _do_load_initial_generative_ui(self) -> None:
         # A GenerativeUI widget builds on the first read of .widget, which
         # normally happens when the config opens. A call to load_initial_ui()
         # for every object would read .widget on every action's on_ready and
@@ -682,7 +693,7 @@ class ActionCore(rpyc.Service):
     
     # Rpyc
 
-    def start_server(self):
+    def start_server(self) -> None:
         if self.server is not None:
             log.warning("Server already running, skipping...")
             return
@@ -692,12 +703,12 @@ class ActionCore(rpyc.Service):
                                      authenticator=frontend_authenticator)
         threading.Thread(target=self.server.start, name="server_start", daemon=True).start()
 
-    def on_disconnect(self, conn=None):
+    def on_disconnect(self, conn: Any = None) -> None:
         # The rpyc disconnect hook. A dropped connection with a live process
         # orphans the backend, so the full teardown runs here too.
         self._release_backend_resources()
     
-    def launch_backend(self, backend_path: str, venv_path: str = None, open_in_terminal: bool = False):
+    def launch_backend(self, backend_path: str, venv_path: str | None = None, open_in_terminal: bool = False) -> None:
         from src.backend.PluginManager.PluginManager import (
             backend_guard_env,
             build_backend_launch_command,
@@ -730,7 +741,7 @@ class ActionCore(rpyc.Service):
 
         self.wait_for_backend()
 
-    def wait_for_backend(self, tries: int = 3):
+    def wait_for_backend(self, tries: int = 3) -> None:
         """Block until the backend registers, up to tries * 0.1 seconds.
 
         A plugin calls this with its own tries value, which stays a parameter.
@@ -739,7 +750,7 @@ class ActionCore(rpyc.Service):
         """
         self._backend_ready.wait(timeout=tries * 0.1)
 
-    def register_backend(self, port: int):
+    def register_backend(self, port: int) -> None:
         """Internal method. Do not call it manually."""
         from src.backend.PluginManager.PluginManager import terminate_refused_backend, verify_backend_port
 
@@ -763,7 +774,7 @@ class ActionCore(rpyc.Service):
         self._backend_ready.set()
         self.on_backend_ready()
 
-    def on_backend_ready(self):
+    def on_backend_ready(self) -> None:
         pass
 
     def ping(self) -> bool:
@@ -786,7 +797,7 @@ class ActionCore(rpyc.Service):
         pass
 
     @staticmethod
-    def teardown(action, hook_name: str = "on_removed_from_cache") -> None:
+    def teardown(action: Any, hook_name: str = "on_removed_from_cache") -> None:
         """Framework-owned teardown at a drop site.
 
         Call this, and not the hook alone, wherever an action leaves a live
@@ -846,7 +857,7 @@ class ActionCore(rpyc.Service):
         self._release_backend_resources()
 
     @staticmethod
-    def _destroy_gen_ui_batch(snapshot: list["GenerativeUI"]) -> None:
+    def _destroy_gen_ui_batch(snapshot: list["GenerativeUI[Any]"]) -> None:
         """Destroy each GenerativeUI object of the teardown snapshot.
 
         clean_up() queues this callback with GLib.idle_add. It runs on the GTK
@@ -905,7 +916,7 @@ class ActionCore(rpyc.Service):
         ).start()
 
     @staticmethod
-    def _teardown_backend_resources(server, connection, process) -> None:
+    def _teardown_backend_resources(server: Any, connection: Any, process: "subprocess.Popen[bytes] | None") -> None:
         # This runs on a worker thread. See clean_up. Each close and terminate
         # tolerates a failure, because a hung backend must not stop the app.
         if connection is not None:

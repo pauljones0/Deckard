@@ -34,7 +34,7 @@ SortFunc = Callable[[Any, Any], int]
 FactoryFunc = Callable[[Gtk.Widget, Any], None]
 
 class DynamicFlowBox(Gtk.Box):
-    def __init__(self, base_class: type, *args, **kwargs):
+    def __init__(self, base_class: type, *args: Any, **kwargs: Any):
         """
         base_class: The class of the items in the flow box. Its constructor is not allowed to require any arguments because empty
                     placeholder objects will be created in the flowbox.
@@ -46,7 +46,7 @@ class DynamicFlowBox(Gtk.Box):
         self.N_ITEMS_PER_PAGE = 50
 
         self.base_class = base_class
-        self.items: list = []
+        self.items: list[Any] = []
 
         self.sort_func: SortFunc | None = None
         self.filter_func: FilterFunc | None = None
@@ -56,7 +56,7 @@ class DynamicFlowBox(Gtk.Box):
 
         self.generate_placeholders()
 
-    def build(self):
+    def build(self) -> None:
         self.scrolled_window = Gtk.ScrolledWindow(hexpand=True, vexpand=True)
         self.append(self.scrolled_window)
 
@@ -84,13 +84,13 @@ class DynamicFlowBox(Gtk.Box):
         self.next_button.connect("clicked", self.on_next)
         self.nav_box.append(self.next_button)
 
-    def generate_placeholders(self):
+    def generate_placeholders(self) -> None:
         for i in range(self.N_ITEMS_PER_PAGE):
             placeholder = self.base_class()
             self.flow_box.append(placeholder)
 
 
-    def filter_items(self, items: list):
+    def filter_items(self, items: list[Any]) -> list[Any]:
         if not callable(self.filter_func):
             return items
         
@@ -100,14 +100,14 @@ class DynamicFlowBox(Gtk.Box):
                 filtered_items.append(item)
         return filtered_items
 
-    def sort_items(self, items: list):
+    def sort_items(self, items: list[Any]) -> list[Any]:
         if not callable(self.sort_func):
             return items
         
         return sorted(items, key=functools.cmp_to_key(self.sort_func))
 
 
-    def get_items_to_show(self) -> list:
+    def get_items_to_show(self) -> list[Any]:
         filtered_items = self.filter_items(self.items)
         sorted_items = self.sort_items(filtered_items)
         return sorted_items
@@ -170,16 +170,16 @@ class DynamicFlowBox(Gtk.Box):
         return False  # one-shot idle
 
 
-    def on_next(self, *args):
+    def on_next(self, *args: Any) -> None:
         self.current_start_index += self.N_ITEMS_PER_PAGE
         self.show_range(self.current_start_index, self.current_start_index + self.N_ITEMS_PER_PAGE)
 
-    def on_back(self, *args):
+    def on_back(self, *args: Any) -> None:
         self.current_start_index -= self.N_ITEMS_PER_PAGE
         self.show_range(self.current_start_index, self.current_start_index + self.N_ITEMS_PER_PAGE)
 
 
-    def set_item_list(self, items: list) -> None:
+    def set_item_list(self, items: list[Any]) -> None:
         self.items = items
 
     def set_factory(self, factory_func: FactoryFunc) -> None:

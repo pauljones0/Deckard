@@ -56,7 +56,7 @@ def _safe_describe(callback: Callable[..., Any]) -> str:
 
 
 class SignalManager:
-    def __init__(self):
+    def __init__(self) -> None:
         # signal -> CallbackRegistry. A registry holds bound methods weakly and
         # locks its own contents, so trigger_signal never iterates a list that
         # another thread mutates. A registry is iterable and accepts list(), so

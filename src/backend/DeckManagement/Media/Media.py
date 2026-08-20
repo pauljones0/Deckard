@@ -22,7 +22,7 @@ class Media:
     layers: list[ImageLayer] = field(default_factory=list)
 
     @classmethod
-    def from_path(cls, path: str, size: float = 1.0, halign: float = 0.0, valign: float = 0.0):
+    def from_path(cls, path: str, size: float = 1.0, halign: float = 0.0, valign: float = 0.0) -> "Media":
         """
         Creates a new media by adding the media path directly as a new layer.
 
@@ -50,7 +50,7 @@ class Media:
         layers = [layer] if layer is not None else []
         return cls(size=size, halign=halign, valign=valign, layers=layers)
 
-    def add_layer(self, layer: ImageLayer | list[ImageLayer]):
+    def add_layer(self, layer: ImageLayer | list[ImageLayer]) -> None:
         """
         Adds a layer to the media.
 
@@ -66,7 +66,7 @@ class Media:
         elif isinstance(layer, ImageLayer):
             self.layers.append(layer)
 
-    def append_layer(self, *args: ImageLayer | list[ImageLayer]):
+    def append_layer(self, *args: ImageLayer | list[ImageLayer]) -> None:
         """
         Adds layers below the current existing ones.
 
@@ -83,7 +83,7 @@ class Media:
             elif isinstance(arg, ImageLayer):
                 self.layers.append(arg)
 
-    def prepend_layer(self, *args: ImageLayer | list[ImageLayer]):
+    def prepend_layer(self, *args: ImageLayer | list[ImageLayer]) -> None:
         """
         Adds layers on top of the current existing ones.
 

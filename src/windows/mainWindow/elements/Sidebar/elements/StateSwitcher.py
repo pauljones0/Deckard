@@ -17,13 +17,15 @@ from gi.repository import Gtk
 
 from src.backend.DeckManagement.deck_controller.inputs import ControllerInput
 from src.backend.DeckManagement.InputIdentifier import InputIdentifier
+from src.backend import services
+
 import globals as gl
 
 from collections.abc import Callable
 from typing import Any
 
 class StateSwitcher(Gtk.ScrolledWindow):
-    def __init__(self, type, **kwargs):
+    def __init__(self, type: str, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.type = type
 
@@ -34,7 +36,7 @@ class StateSwitcher(Gtk.ScrolledWindow):
 
         self.build()
 
-    def build(self):
+    def build(self) -> None:
         self.stack = Gtk.Stack()
 
         self.main_box = Gtk.Box(overflow=Gtk.Overflow.HIDDEN, css_classes=["state-switcher-box", "linked"], valign=Gtk.Align.CENTER, halign=Gtk.Align.CENTER)
@@ -47,9 +49,11 @@ class StateSwitcher(Gtk.ScrolledWindow):
         self.add_button.connect("clicked", self.on_add_click)
         self.main_box.append(self.add_button)
 
-    def clear_stack(self):
-        while self.stack.get_first_child() is not None:
-            self.stack.remove(self.stack.get_first_child())
+    def clear_stack(self) -> None:
+        child = self.stack.get_first_child()
+        while child is not None:
+            self.stack.remove(child)
+            child = self.stack.get_first_child()
 
     def get_n_states(self) -> int:
         n = 0
@@ -59,7 +63,7 @@ class StateSwitcher(Gtk.ScrolledWindow):
             child = child.get_next_sibling()
         return n
 
-    def set_n_states(self, n: int):
+    def set_n_states(self, n: int) -> None:
         self._disconnect_signal()
         self.clear_stack()
 
@@ -68,76 +72,71 @@ class StateSwitcher(Gtk.ScrolledWindow):
 
         self._connect_signal()
 
-    def on_add_click(self, button):
-        controller = gl.app.main_win.get_active_controller()
-        c_input = controller.get_input(gl.app.main_win.sidebar.active_identifier)
+    def on_add_click(self, button: Gtk.Button) -> None:
+        main_win = services.require_main_window()
+        controller = main_win.get_active_controller()
+        if controller is None:
+            return
+        c_input = controller.get_input(main_win.sidebar.active_identifier)
 
         if c_input is None:
             return
-        
+
+        # The input owns the state list and tells the sidebar to reload, so
+        # this adds no stack child of its own and fires no add callback. The
+        # code that did opened with a return and read three attributes that a
+        # controller does not carry.
         c_input.add_new_state()
-        return
-
-
-        input_element_dict = {
-            "keys": controller.keys,
-            "dials": controller.dials,
-            "touchscreens": controller.touchscreens,
-        }[self.type]
-        for d in input_element_dict:
-            if d.identifier == gl.app.main_win.sidebar.active_identifier:
-                d.add_new_state()
-                return
-
-        n_states = self.get_n_states()
-        self.stack.add_titled(Gtk.Box(), str(n_states + 1), f"State {n_states + 1}")
-
-        for callback in self.add_new_callbacks:
-            if callable(callback):
-                callback(n_states)
 
     def get_selected_state(self) -> int:
         name = self.stack.get_visible_child_name()
+        if name is None:
+            raise RuntimeError(
+                "the state switcher holds no state -- set_n_states fills the "
+                "stack, and nothing selects a state before it runs."
+            )
         return int(name) - 1
     
-    def select_state(self, state: int):
+    def select_state(self, state: int) -> None:
         if state >= self.get_n_states():
             return
         self._disconnect_signal()
         self.stack.set_visible_child_name(str(state + 1))
         self._connect_signal()
 
-    def _connect_signal(self):
+    def _connect_signal(self) -> None:
         self.stack.connect("notify::visible-child-name", self.on_state_switch)
 
-    def _disconnect_signal(self):
+    def _disconnect_signal(self) -> None:
         try:
             self.stack.disconnect_by_func(self.on_state_switch)
         except TypeError:
             pass
 
-    def add_switch_callback(self, callback: Callable[[], Any]):
+    def add_switch_callback(self, callback: Callable[[], Any]) -> None:
         self.switch_callbacks.append(callback)
 
-    def add_add_new_callback(self, callback: Callable[[int], Any]):
+    def add_add_new_callback(self, callback: Callable[[int], Any]) -> None:
         self.add_new_callbacks.append(callback)
 
-    def on_state_switch(self, *args):
+    def on_state_switch(self, *args: Any) -> None:
         for callback in self.switch_callbacks:
             if callable(callback):
                 callback()
 
-    def load_for_identifier(self, identifier: InputIdentifier, state: int):
+    def load_for_identifier(self, identifier: InputIdentifier, state: int) -> None:
         if gl.app is None:
             return
         controller = gl.app.main_win.get_active_controller()
         if controller is None:
             return
         c_input = controller.get_input(identifier)
+        if c_input is None:
+            return
 
         self.load_for_input(c_input, state)
 
-    def load_for_input(self, c_input: ControllerInput, state: int = None) -> None:
+    def load_for_input(self, c_input: ControllerInput[Any], state: int | None = None) -> None:
         self.set_n_states(len(c_input.states.keys()))
         self.select_state(state or c_input.state)
 

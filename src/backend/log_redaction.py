@@ -80,6 +80,7 @@ import getpass
 import os
 import re
 import traceback
+from typing import Any
 
 _installed = False
 
@@ -130,7 +131,7 @@ def _username() -> str:
         return os.environ.get("USER") or os.environ.get("LOGNAME") or ""
 
 
-def _colon_replacement(match: re.Match) -> str:
+def _colon_replacement(match: re.Match[str]) -> str:
     """Rebuild 'name': 'value' as 'name': '***', and keep the quoting the
     original used, from a dict repr, JSON, YAML or none."""
     value_quote = match.group(4) or ""
@@ -140,8 +141,8 @@ def _colon_replacement(match: re.Match) -> str:
     )
 
 
-def _compile_rules() -> list[tuple]:
-    rules: list[tuple] = []
+def _compile_rules() -> list[tuple[Any, ...]]:
+    rules: list[tuple[Any, ...]] = []
 
     # Url userinfo, which is scheme://user:pass@host and scheme://user@host.
     # The bounded quantifiers keep a wall of text without an "@" cheap.
@@ -274,7 +275,7 @@ def scrub(text: str) -> str:
     return text
 
 
-def redact_record(record) -> None:
+def redact_record(record: Any) -> None:
     """The loguru patcher. It scrubs the message. When an exception rides
     along, from opt(exception=...), from @log.catch or from the central
     exception hooks, it replaces that exception with a scrubbed traceback

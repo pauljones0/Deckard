@@ -122,6 +122,17 @@ celerybeat.pid
 # Environments
 .env
 .venv
+# The cached CI-match mypy env that scripts/typecheck-ci.sh builds. The venv
+# module writes a self-ignoring .gitignore inside it, which is what actually
+# kept it out of commits while this entry carried an inline comment: a
+# trailing "# ..." is not gitignore syntax, it becomes part of the pattern
+# and the pattern then matches nothing.
+.typecheck-ci-venv/
+# Local session config. Worktrees receive it as a symlink from
+# scripts/worktree-env.sh, and the entry is slashless like .venv above on
+# purpose: git does not match "dir/" patterns against symlinks, and the
+# worktree copy is one.
+.claude
 env/
 venv/
 ENV/

@@ -30,7 +30,7 @@ if TYPE_CHECKING:
     from src.windows.AssetManager.WallpaperPacks.Preview import WallpaperPackPreview
 
 class WallpaperPackFlowBox(Gtk.Box):
-    def __init__(self, wallpaper_chooser: "WallpaperPackChooser", *args, **kwargs):
+    def __init__(self, wallpaper_chooser: "WallpaperPackChooser", *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self.set_orientation(Gtk.Orientation.HORIZONTAL)
         self.set_hexpand(True)
@@ -45,6 +45,6 @@ class WallpaperPackFlowBox(Gtk.Box):
 
         self.build()
 
-    def build(self):
+    def build(self) -> None:
         self.flow_box = Gtk.FlowBox(hexpand=True, orientation=Gtk.Orientation.HORIZONTAL, selection_mode=Gtk.SelectionMode.NONE)
         self.append(self.flow_box)

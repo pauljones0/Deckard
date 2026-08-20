@@ -13,6 +13,7 @@ You should have received a copy of the GNU General Public License
 along with this program. If not, see <https://www.gnu.org/licenses/>.
 """
 # Import gtk modules
+import os
 import gi
 
 gi.require_version("Gtk", "4.0")
@@ -21,6 +22,8 @@ from gi.repository import Gtk, GdkPixbuf, GLib, Pango
 
 from loguru import logger as log
 
+from typing import Any
+
 # Separates a caller that passed a pixbuf, which can be None when the decode
 # failed and the broken-image icon must show, from a caller that said nothing
 # about an image.
@@ -28,8 +31,8 @@ _PIXBUF_UNSET = object()
 
 
 class Preview(Gtk.FlowBoxChild):
-    def __init__(self, image_path: str = None, text:str = None, can_be_deleted: bool = False,
-                 pixbuf=_PIXBUF_UNSET):
+    def __init__(self, image_path: str | os.PathLike[str] | None = None, text:str | None = None, can_be_deleted: bool = False,
+                 pixbuf: Any = _PIXBUF_UNSET):
         super().__init__()
         self.set_css_classes(["asset-preview"])
         self.set_margin_start(5)
@@ -53,7 +56,7 @@ class Preview(Gtk.FlowBoxChild):
         if text is not None:
             self.set_text(text)
 
-    def _build(self):
+    def _build(self) -> None:
         self.overlay = Gtk.Overlay()
         self.set_child(self.overlay)
 
@@ -86,7 +89,7 @@ class Preview(Gtk.FlowBoxChild):
         self.overlay.add_overlay(self.remove_button)
 
     @staticmethod
-    def decode_pixbuf(path: str | None) -> GdkPixbuf.Pixbuf | None:
+    def decode_pixbuf(path: str | os.PathLike[str] | None) -> GdkPixbuf.Pixbuf | None:
         """Decode path at preview size, or return None on a failed decode.
 
         A missing, corrupt or unreadable file returns None. This method touches
@@ -97,15 +100,15 @@ class Preview(Gtk.FlowBoxChild):
         # 110 ms for an oversized one, so a run inside a main-loop callback
         # freezes the window for a whole pack grid. The pack choosers therefore
         # decode on their build worker and pass the result to set_pixbuf.
-        # The None check runs before any str() call, because str(None) gives
-        # the true string "None". The decode also needs the guard, because a
+        # The None check runs before any fspath() call, because fspath(None)
+        # raises and a str(None) would give the true string "None". The decode also needs the guard, because a
         # corrupt or unreadable file raises GLib.Error, which kills the idle
         # and leaves the recycled cell on a stale image.
         if path is None:
             return None
 
         try:
-            return GdkPixbuf.Pixbuf.new_from_file_at_scale(str(path),
+            return GdkPixbuf.Pixbuf.new_from_file_at_scale(os.fspath(path),
                                                            width=250,
                                                            height=180,
                                                            preserve_aspect_ratio=True)
@@ -119,7 +122,7 @@ class Preview(Gtk.FlowBoxChild):
             log.opt(exception=True).warning(f"Unexpected error loading asset preview for {path}: {e}")
             return None
 
-    def set_image(self, path:str):
+    def set_image(self, path: str | os.PathLike[str]) -> None:
         self.set_pixbuf(self.decode_pixbuf(path))
 
     def set_pixbuf(self, pixbuf: GdkPixbuf.Pixbuf | None) -> None:
@@ -143,11 +146,11 @@ class Preview(Gtk.FlowBoxChild):
         self.picture.set_pixbuf(None)
         self.broken_icon.set_visible(True)
 
-    def set_text(self, text:str):
+    def set_text(self, text:str) -> None:
         self.label.set_text(text)
 
-    def on_click_info(self, *args):
+    def on_click_info(self, *args: Any) -> None:
         pass
 
-    def on_click_remove(self, *args):
+    def on_click_remove(self, *args: Any) -> None:
         pass

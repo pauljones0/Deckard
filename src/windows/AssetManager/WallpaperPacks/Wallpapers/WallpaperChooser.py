@@ -26,7 +26,7 @@ from src.windows.AssetManager.WallpaperPacks.Wallpapers.WallpaperPreview import 
 # Import python modules
 
 # Import typing
-from typing import TYPE_CHECKING
+from typing import cast, Any, TYPE_CHECKING
 if TYPE_CHECKING:
     from src.backend.WallpaperPackManagement.Wallpaper import Wallpaper
     from src.backend.WallpaperPackManagement.WallpaperPack import WallpaperPack
@@ -36,11 +36,11 @@ class WallpaperChooserPage(GenericAssetChooserPage):
     FLOW_BOX_CLASS = WallpaperFlowBox
     PREVIEW_CLASS = WallpaperPreview
 
-    def get_assets(self, pack: "WallpaperPack") -> list:
+    def get_assets(self, pack: "WallpaperPack") -> list[Any]:
         return pack.get_wallpapers()
 
     def bind_preview(self, preview: WallpaperPreview, wallpaper: "Wallpaper") -> None:
         preview.set_wallpaper(wallpaper)
 
-    def get_child_asset(self, child) -> "Wallpaper":
-        return child.wallpaper
+    def get_child_asset(self, child: Any) -> "Wallpaper":
+        return cast("Wallpaper", child.wallpaper)

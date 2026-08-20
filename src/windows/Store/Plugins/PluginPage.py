@@ -47,9 +47,14 @@ class PluginPage(StorePage):
 
     # Carry no @log.catch here. StorePage._load_guarded must see the failure,
     # so it can show the error page and arm the tab for a retry.
-    def load(self):
+    def load(self) -> None:
         self.set_loading()
-        result = self.store.backend.get_all_plugins()
+        backend = self.store.backend
+        if backend is None:
+            # _load_guarded turns this into the error page and re-arms the
+            # tab, the same as any other failure this fetch can raise.
+            raise RuntimeError("the store backend is unavailable")
+        result = backend.get_all_plugins()
         if isinstance(result, Err):
             self.show_connection_error()
             return
@@ -138,22 +143,31 @@ class PluginPreview(StorePreview):
         GLib.idle_add(self.set_install_state, 1)
         return True
 
-    def uninstall(self):
-        self.store.backend.uninstall_plugin(plugin_id=self.plugin_data.plugin_id)
+    def uninstall(self) -> None:
+        backend = self.store.backend
+        plugin_id = self.plugin_data.plugin_id
+        if backend is None or plugin_id is None:
+            # A record with no id uninstalls nothing, so the button must keep
+            # saying installed rather than report a removal that never ran.
+            log.error(f"Store backend unavailable; cannot uninstall {plugin_id}"
+                      if backend is None else
+                      "Cannot uninstall a store plugin whose record carries no id")
+            return
+        backend.uninstall_plugin(plugin_id=plugin_id)
         GLib.idle_add(self.set_install_state, 0)
 
-    def update(self):
+    def update(self) -> None:
         # install_plugin deregisters the old version only after the download
         # succeeds, so a failed update leaves the old version installed and
         # registered. No recovery reload runs here.
         self.install()
 
-    def notify_install_failure(self):
+    def notify_install_failure(self) -> None:
         name = self.plugin_data.plugin_name or self.plugin_data.plugin_id
         gl.notify.error(f"The plugin {name} could not be installed",
                         title="Plugin install failed")
 
-    def on_click_main(self, button: Gtk.Button):
+    def on_click_main(self, button: Gtk.Button) -> None:
         self.plugin_page.set_info_visible(True)
 
         # Update info page

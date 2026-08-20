@@ -1,8 +1,9 @@
 from GtkHelper.GenerativeUI.GenerativeUI import GenerativeUI
 
+from gi.repository import Gtk
 
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any
+from typing import cast, TYPE_CHECKING, Any
 
 from GtkHelper.GtkHelper import better_disconnect, on_main
 
@@ -32,8 +33,8 @@ class ScaleRow(GenerativeUI[float]):
                  default_value: float,
                  min: float,
                  max: float,
-                 title: str = None,
-                 subtitle: str = None,
+                 title: str | None = None,
+                 subtitle: str | None = None,
                  step: float = 0.1,
                  digits: int = 2,
                  draw_value: bool = True,
@@ -66,8 +67,8 @@ class ScaleRow(GenerativeUI[float]):
             can_reset (bool, optional): Whether the scale value can be reset. Defaults to True.
             auto_add (bool, optional): Whether to automatically add the scale row to the UI. Defaults to True.
         """
-        def build():
-            self._widget: Scale = Scale(
+        def build() -> None:
+            self._widget: Scale | None = Scale(
                 title=self.get_translation(title, title),
                 subtitle=self.get_translation(subtitle, subtitle),
                 value=self._default_value,
@@ -84,7 +85,7 @@ class ScaleRow(GenerativeUI[float]):
             self.connect_signals()
         super().__init__(action_core, var_name, default_value, can_reset, auto_add, complex_var_name, on_change, build=build)
 
-    def connect_signals(self):
+    def connect_signals(self) -> None:
         """
         Connects the signal handler for the 'value-changed' signal to track changes in the scale's value.
 
@@ -92,7 +93,7 @@ class ScaleRow(GenerativeUI[float]):
         """
         self.widget.scale.connect("value-changed", self._value_changed)
 
-    def disconnect_signals(self):
+    def disconnect_signals(self) -> None:
         """
         Disconnects the signal handler for the 'value-changed' signal.
 
@@ -100,7 +101,7 @@ class ScaleRow(GenerativeUI[float]):
         """
         better_disconnect(self.widget.scale, self._value_changed)
 
-    def set_number(self, number: float, update_setting: bool = False):
+    def set_number(self, number: float, update_setting: bool = False) -> None:
         """
         Sets the scale value and optionally updates the associated setting.
 
@@ -124,9 +125,9 @@ class ScaleRow(GenerativeUI[float]):
         """
         if self._widget is None:
             return self.get_value()
-        return self.widget.scale.get_value()
+        return cast(float, self.widget.scale.get_value())
 
-    def _value_changed(self, scale):
+    def _value_changed(self, scale: Gtk.Scale) -> None:
         """
         Handles the change in scale value.
 
@@ -138,7 +139,7 @@ class ScaleRow(GenerativeUI[float]):
         self._handle_value_changed(scale.get_value())
 
     @GenerativeUI.signal_manager
-    def set_ui_value(self, value: float):
+    def set_ui_value(self, value: float) -> None:
         """
         Sets the value of the scale widget in the UI.
 
@@ -148,7 +149,7 @@ class ScaleRow(GenerativeUI[float]):
         self.widget.scale.set_value(value)
 
     @on_main
-    def set_min(self, min: float):
+    def set_min(self, min: float) -> None:
         """
         Sets the minimum value for the scale.
 
@@ -158,7 +159,7 @@ class ScaleRow(GenerativeUI[float]):
         self.widget.set_min(min)
 
     @on_main
-    def set_max(self, max: float):
+    def set_max(self, max: float) -> None:
         """
         Sets the maximum value for the scale.
 
@@ -168,7 +169,7 @@ class ScaleRow(GenerativeUI[float]):
         self.widget.set_max(max)
 
     @on_main
-    def set_step(self, step: float):
+    def set_step(self, step: float) -> None:
         """
         Sets the step size for adjusting the scale value.
 
@@ -178,18 +179,18 @@ class ScaleRow(GenerativeUI[float]):
         self.widget.set_step(step)
 
     @property
-    def min(self):
+    def min(self) -> float:
         """
         Gets the minimum value for the scale.
 
         Returns:
             float: The minimum value for the scale.
         """
-        return self.widget.min
+        return cast(float, self.widget.min)
 
     @min.setter
     @on_main
-    def min(self, value: float):
+    def min(self, value: float) -> None:
         """
         Sets the minimum value for the scale.
 
@@ -199,18 +200,18 @@ class ScaleRow(GenerativeUI[float]):
         self.widget.min = value
 
     @property
-    def max(self):
+    def max(self) -> float:
         """
         Gets the maximum value for the scale.
 
         Returns:
             float: The maximum value for the scale.
         """
-        return self.widget.max
+        return cast(float, self.widget.max)
 
     @max.setter
     @on_main
-    def max(self, value: float):
+    def max(self, value: float) -> None:
         """
         Sets the maximum value for the scale.
 
@@ -220,18 +221,18 @@ class ScaleRow(GenerativeUI[float]):
         self.widget.max = value
 
     @property
-    def step(self):
+    def step(self) -> float:
         """
         Gets the step size for adjusting the scale value.
 
         Returns:
             float: The step size for the scale.
         """
-        return self.widget.step
+        return cast(float, self.widget.step)
 
     @step.setter
     @on_main
-    def step(self, value: float):
+    def step(self, value: float) -> None:
         """
         Sets the step size for adjusting the scale value.
 
@@ -241,7 +242,7 @@ class ScaleRow(GenerativeUI[float]):
         self.widget.step = value
 
     @property
-    def digits(self):
+    def digits(self) -> int:
         """
         Gets the number of digits to display for the scale value.
 
@@ -250,11 +251,11 @@ class ScaleRow(GenerativeUI[float]):
         """
         # digits is widget-construction config, and the value layer holds no
         # equivalent, so this read builds the widget.
-        return self.widget.digits
+        return cast(int, self.widget.digits)
 
     @digits.setter
     @on_main
-    def digits(self, digits: int):
+    def digits(self, digits: int) -> None:
         """
         Sets the number of digits to display for the scale value.
 

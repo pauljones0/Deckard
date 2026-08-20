@@ -15,6 +15,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 from collections import deque
 
 from src.backend.DeckManagement.Subclasses.byte_lru_cache import ByteLRUCache
+from typing import Any
 
 
 class EncodedImageCache(ByteLRUCache):
@@ -40,10 +41,10 @@ class EncodedImageCache(ByteLRUCache):
         # Doorkeeper bookkeeping, a bounded FIFO of recently-seen keys. The
         # set gives O(1) membership, and the deque names which key to evict
         # from the set once the ring is full.
-        self._doorkeeper_seen: set = set()
-        self._doorkeeper_order: "deque" = deque()
+        self._doorkeeper_seen: set[Any] = set()
+        self._doorkeeper_order: "deque[Any]" = deque()
 
-    def _admit(self, key) -> bool:
+    def _admit(self, key: object) -> bool:
         """Doorkeeper check and record. The caller holds _lock.
 
         Returns True when the ring already holds key, that is on its second or

@@ -35,6 +35,7 @@ import subprocess
 import threading
 
 from fontTools.ttLib import TTFont
+from typing import Any
 
 
 # Weight mapping from the OpenType and CSS range, 100 to 900, into the
@@ -127,10 +128,14 @@ class _FontConfig:
     main thread.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._lock = threading.Lock()
-        self._lib = None
-        self._config = None
+        # Both stay None until _ensure_loaded() binds them, and both go back
+        # to meaning "unavailable" through _unavailable rather than by being
+        # cleared. FcInitLoadConfigAndFonts is declared with a c_void_p
+        # restype, so the config is an int address or None.
+        self._lib: ctypes.CDLL | None = None
+        self._config: int | None = None
         self._unavailable = False
 
     def _ensure_loaded(self) -> bool:
@@ -186,7 +191,7 @@ class _FontConfig:
             self._unavailable = True
             return False
 
-    def match(self, family: str, weight: int | None, style: str | None):
+    def match(self, family: str, weight: int | None, style: str | None) -> dict[str, str | None] | None:
         """Returns a dict with "family" and "file". Either is None when
         fontconfig set no such field on the match. The whole result is None
         when fontconfig is unreachable, and the caller then falls back to the
@@ -196,6 +201,10 @@ class _FontConfig:
                 return None
 
             lib = self._lib
+            if lib is None:
+                # _ensure_loaded() answered True, so this cannot fire; the
+                # read is declared so the calls below narrow.
+                return None
             pattern = lib.FcPatternCreate()
             if not pattern:
                 return None
@@ -223,9 +232,12 @@ class _FontConfig:
             finally:
                 lib.FcPatternDestroy(pattern)
 
-    def _get_string(self, pattern, obj: bytes) -> str | None:
+    def _get_string(self, pattern: Any, obj: bytes) -> str | None:
+        lib = self._lib
+        if lib is None:
+            return None
         value = ctypes.c_char_p()
-        res = self._lib.FcPatternGetString(pattern, obj, 0, ctypes.byref(value))
+        res = lib.FcPatternGetString(pattern, obj, 0, ctypes.byref(value))
         if res != 0 or value.value is None:  # FcResultMatch == 0
             return None
         return value.value.decode("utf-8", errors="replace")
@@ -234,7 +246,7 @@ class _FontConfig:
 _fontconfig = _FontConfig()
 
 
-def _match_via_subprocess(family: str, weight: int | None, style: str | None):
+def _match_via_subprocess(family: str, weight: int | None, style: str | None) -> dict[str, str | None] | None:
     """fc-match fallback for an environment that cannot dlopen libfontconfig,
     e.g. a stripped-down flatpak runtime. It runs the same matcher the
     fontconfig binaries and the ctypes path use, as a subprocess."""
@@ -263,7 +275,7 @@ def _match_via_subprocess(family: str, weight: int | None, style: str | None):
     return {"family": matched_family or None, "file": matched_file or None}
 
 
-def _resolve_pattern(family: str, weight: int | None, style: str | None):
+def _resolve_pattern(family: str, weight: int | None, style: str | None) -> dict[str, str | None] | None:
     result = _fontconfig.match(family, weight, style)
     if result is None:
         result = _match_via_subprocess(family, weight, style)

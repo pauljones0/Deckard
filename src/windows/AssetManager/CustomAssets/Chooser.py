@@ -18,7 +18,7 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Gtk, Gdk, GLib
+from gi.repository import Gtk, Gdk, GLib, Gio
 
 # Import python modules
 from loguru import logger as log
@@ -34,6 +34,7 @@ import globals as gl
 
 # Import typing modules
 from collections.abc import Callable
+from collections.abc import Iterable
 from typing import Any, TYPE_CHECKING
 if TYPE_CHECKING:
     from src.windows.AssetManager.AssetManager import AssetManager
@@ -53,7 +54,7 @@ class CustomAssetChooser(ChooserPage):
         threading.Thread(target=self.build).start()
 
     @log.catch
-    def build(self):
+    def build(self) -> None:
         self.build_finished = False
         try:
             # The whole GTK construction runs on the main loop. A build of
@@ -61,7 +62,7 @@ class CustomAssetChooser(ChooserPage):
             # button on this worker thread is the off-main GTK crash class.
             # One pause when the tab opens costs less than a segfault. Only
             # the build bookkeeping stays on the thread.
-            def _build_ui():
+            def _build_ui() -> None:
                 self.asset_chooser = CustomAssetChooserFlowBox(self)
                 # Append to main_box, as the wallpaper, SD+ bar and icon
                 # choosers do, and not into the outer ScrolledWindow of
@@ -113,15 +114,15 @@ class CustomAssetChooser(ChooserPage):
             except Exception as e:
                 log.opt(exception=True).warning(f"Deferred asset-chooser task failed: {e}")
 
-    def on_dnd_accept(self, drop, user_data):
+    def on_dnd_accept(self, drop: Gtk.DropTarget, user_data: Gdk.Drop) -> bool:
         return True
     
-    def on_dnd_drop(self, drop_target, value: Gdk.FileList, x, y):
+    def on_dnd_drop(self, drop_target: Gtk.DropTarget, value: Gdk.FileList, x: float, y: float) -> bool:
         paths = value.get_files()
         self.add_files(paths)
         return True
     
-    def add_asset(self, asset: dict) -> None:
+    def add_asset(self, asset: dict[str, Any]) -> None:
         # asset_chooser.items is the same live list object as the one in
         # gl.asset_manager_backend, so it already holds the new asset. Only
         # the recycler needs a re-render. This can run off the main thread,
@@ -131,7 +132,7 @@ class CustomAssetChooser(ChooserPage):
             return
         GLib.idle_add(chooser.refresh)
 
-    def add_files(self, files: list) -> None:
+    def add_files(self, files: Iterable[Any]) -> None:
         # The window that owns the cursor can be gone when a drop or a
         # file-dialog callback lands, because AssetManager.on_close nulls
         # gl.asset_manager. Skip the busy cursor then, and still add the files.
@@ -149,7 +150,7 @@ class CustomAssetChooser(ChooserPage):
         if asset_manager is not None:
             asset_manager.set_cursor_from_name("default")
 
-    def show_for_path(self, path):
+    def show_for_path(self, path: str) -> None:
         def show_now() -> None:
             chooser = self.asset_chooser
             if chooser is None:
@@ -167,7 +168,7 @@ class CustomAssetChooser(ChooserPage):
                 return
         show_now()
 
-    def on_video_toggled(self, button):
+    def on_video_toggled(self, button: Gtk.ToggleButton) -> None:
         # Read-modify-write serialized against the other toggle, so flipping
         # both in quick succession cannot lose one.
         with settings_store.get().edit(settings_store.UI_ASSET_MANAGER) as settings:
@@ -177,7 +178,7 @@ class CustomAssetChooser(ChooserPage):
         if self.asset_chooser is not None:
             self.asset_chooser.refresh()
 
-    def on_image_toggled(self, button):
+    def on_image_toggled(self, button: Gtk.ToggleButton) -> None:
         with settings_store.get().edit(settings_store.UI_ASSET_MANAGER) as settings:
             settings["image-toggle"] = button.get_active()
 
@@ -185,18 +186,18 @@ class CustomAssetChooser(ChooserPage):
         if self.asset_chooser is not None:
             self.asset_chooser.refresh()
 
-    def load_defaults(self):
+    def load_defaults(self) -> None:
         # Both toggles start on. The True defaults live in the surface schema.
         settings = settings_store.get().view(settings_store.UI_ASSET_MANAGER)
         # This runs on the build worker, and a toggle write is a GTK call.
         run_on_main(self.video_button.set_active, settings.get("video-toggle"))
         run_on_main(self.image_button.set_active, settings.get("image-toggle"))
 
-    def on_search_changed(self, entry):
+    def on_search_changed(self, entry: Gtk.SearchEntry) -> None:
         if self.asset_chooser is not None:
             self.asset_chooser.refresh()
 
-    def on_browse_files_clicked(self, button):
+    def on_browse_files_clicked(self, button: Gtk.Button) -> None:
         ChooseFileDialog(self) #TODO: Change to Xdp Portal call
 
 
@@ -207,7 +208,7 @@ class ChooseFileDialog(Gtk.FileDialog):
         self.custom_asset_chooser = custom_asset_chooser
         self.open_multiple(callback=self.callback)
 
-    def callback(self, dialog, result):
+    def callback(self, dialog: Gtk.FileDialog, result: Gio.AsyncResult) -> None:
         try:
             selected_files = self.open_multiple_finish(result)
         except GLib.Error as err:

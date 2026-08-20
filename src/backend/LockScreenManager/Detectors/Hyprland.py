@@ -8,10 +8,10 @@ if TYPE_CHECKING:
     from src.backend.LockScreenManager.LockScreenManager import LockScreenManager
 
 class HyprlandLockScreenDetector(LockScreenDetector):
-    def __lock(self):
+    def __lock(self) -> None:
         self.lock_screen_manager.lock(True)
 
-    def __unlock(self):
+    def __unlock(self) -> None:
         self.lock_screen_manager.lock(False)
 
     def __init__(self, lock_screen_manager: "LockScreenManager"):

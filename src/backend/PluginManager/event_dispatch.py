@@ -47,7 +47,7 @@ import asyncio
 import threading
 import time
 from collections import deque
-from typing import Callable, Iterable, TypedDict
+from typing import Any, Callable, Iterable, TypedDict
 from weakref import WeakSet
 
 from loguru import logger as log
@@ -117,7 +117,7 @@ _monitor_started = False
 _shutdown = False
 
 
-def _observer_name(observer) -> str:
+def _observer_name(observer: Any) -> str:
     return getattr(observer, "__qualname__",
                    getattr(observer, "__name__", repr(observer)))
 
@@ -130,7 +130,10 @@ def _ensure_monitor() -> None:
     if _monitor_started:
         return
     with _watch_lock:
-        if _monitor_started:
+        # A fresh, declared read: the outer check narrowed the module flag,
+        # and narrowing cannot see another thread's write before the lock.
+        started: bool = _monitor_started
+        if started:
             return
         _monitor_started = True
     threading.Thread(target=_monitor_loop, name="event_dispatch_watchdog",
@@ -200,7 +203,7 @@ class Lane:
     def __init__(self, label: str | None = None):
         self.label = label
         self._cond = threading.Condition()
-        self._pending: deque = deque()
+        self._pending: deque[Any] = deque()
         self._runner: threading.Thread | None = None
         # Watchdog state, guarded by the module-wide _watch_lock. Contention
         # stays low, because there are a few lanes and one short critical
@@ -218,7 +221,7 @@ class Lane:
 
     # --- producer side ------------------------------------------------
 
-    def dispatch(self, observers: Iterable[Callable], args: tuple, kwargs: dict,
+    def dispatch(self, observers: Iterable[Callable[..., Any]], args: tuple[Any, ...], kwargs: dict[str, Any],
                  label: str | None = None) -> None:
         """Queue observers onto this lane and return."""
         global _backlog
@@ -257,7 +260,7 @@ class Lane:
                 self.backlog -= 1
             raise
 
-    def _enqueue(self, batch: tuple) -> None:
+    def _enqueue(self, batch: tuple[Any, ...]) -> None:
         with self._cond:
             if _shutdown:
                 # Re-checked under the lock the runner exits on. shutdown()
@@ -350,8 +353,8 @@ class Lane:
                 f"event dispatch lane {self.name} could not be retired cleanly")
         _close_thread_loop()
 
-    def _run_batch(self, observers: list[Callable], label: str | None,
-                   args: tuple, kwargs: dict) -> None:
+    def _run_batch(self, observers: list[Callable[..., Any]], label: str | None,
+                   args: tuple[Any, ...], kwargs: dict[str, Any]) -> None:
         global _backlog
         try:
             # _get_loop() must stay inside this try. It creates the loop and
@@ -421,7 +424,7 @@ class Lane:
 _default_lane = Lane()
 
 
-def dispatch(observers: Iterable[Callable], args: tuple, kwargs: dict, label: str | None = None) -> None:
+def dispatch(observers: Iterable[Callable[..., Any]], args: tuple[Any, ...], kwargs: dict[str, Any], label: str | None = None) -> None:
     """Queue observers on the shared default lane and return.
 
     This lane serves the callers that own none. EventHolder and the

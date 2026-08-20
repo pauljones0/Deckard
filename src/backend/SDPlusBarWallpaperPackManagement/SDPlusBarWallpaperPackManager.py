@@ -14,7 +14,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 """
 
 import os
-from typing import Any
+from typing import cast, Any
 from loguru import logger as log
 
 import globals as gl
@@ -58,7 +58,7 @@ class SDPlusBarWallpaperPackManager:
 
     def get_wallpaper_attribution(self, attribution: dict[str, Any], wallpaper_name: str) -> dict[str, Any] | None:
         if wallpaper_name in attribution:
-            return attribution[wallpaper_name]
+            return cast(dict[str, Any] | None, attribution[wallpaper_name])
         else:
             return attribution.get("generic", attribution.get("default", attribution.get("general")))
 

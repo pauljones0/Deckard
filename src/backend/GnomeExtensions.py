@@ -17,8 +17,8 @@ from gi.repository import Gio, GLib
 from loguru import logger as log
 
 class GnomeExtensions:
-    def __init__(self):
-        self.proxy = None
+    def __init__(self) -> None:
+        self.proxy: Gio.DBusProxy | None = None
         self.connect_dbus()
 
     def connect_dbus(self) -> None:
@@ -50,7 +50,10 @@ class GnomeExtensions:
         if not self.get_is_connected(): return extensions
 
         # a{sa{sv}} keyed by uuid; iterating the reply dict yields the uuids.
-        reply = self.proxy.call_sync("ListExtensions", None, Gio.DBusCallFlags.NONE, -1, None)
+        proxy = self.proxy
+        if proxy is None:
+            return extensions
+        reply = proxy.call_sync("ListExtensions", None, Gio.DBusCallFlags.NONE, -1, None)
         for extension in reply.unpack()[0]:
             extensions.append(extension)
         return extensions
@@ -59,7 +62,10 @@ class GnomeExtensions:
         if not self.get_is_connected(): return False
         # Keep the default timeout. GNOME Shell answers only after the user
         # dismisses its install confirmation dialog.
-        reply = self.proxy.call_sync(
+        proxy = self.proxy
+        if proxy is None:
+            return False
+        reply = proxy.call_sync(
             "InstallRemoteExtension", GLib.Variant("(s)", (uuid,)), Gio.DBusCallFlags.NONE, -1, None
         )
         response = reply.unpack()[0]

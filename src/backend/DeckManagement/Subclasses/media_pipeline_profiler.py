@@ -26,7 +26,7 @@ class MediaPipelineProfiler:
 
     REPORT_INTERVAL = 5.0
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._lock = threading.Lock()
         self._times: dict[str, list[float]] = defaultdict(list)
         self._counts: dict[str, int] = defaultdict(int)

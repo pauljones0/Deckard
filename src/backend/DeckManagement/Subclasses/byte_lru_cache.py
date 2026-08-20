@@ -108,7 +108,7 @@ class ByteLRUCache:
         with self._lock:
             return len(self._entries)
 
-    def get(self, key) -> bytes | None:
+    def get(self, key: object) -> bytes | None:
         if self._max_bytes <= 0:
             return None
         with self._lock:
@@ -118,7 +118,7 @@ class ByteLRUCache:
                 self._stamps[key] = time.monotonic()
             return data
 
-    def put(self, key, data: bytes) -> None:
+    def put(self, key: object, data: bytes) -> None:
         if self._max_bytes <= 0:
             return
         notify = False
@@ -162,7 +162,7 @@ class ByteLRUCache:
 
     # Subclass hooks.
 
-    def _admit(self, key) -> bool:
+    def _admit(self, key: object) -> bool:
         """Whether a not-yet-cached key earns a real cache slot on this put().
 
         The caller holds _lock. The default admits on first sighting.
@@ -185,7 +185,7 @@ class ByteLRUCache:
         self._total_bytes -= len(evicted)
         return len(evicted)
 
-    def _was_recently_evicted(self, key) -> bool:
+    def _was_recently_evicted(self, key: object) -> bool:
         """Thrash check. True when the budget shed key inside the tripwire
         window. The caller holds _lock. This drops an expired entry when it
         meets one, and insert keeps the ring FIFO-bounded, so it never walks.
@@ -196,7 +196,7 @@ class ByteLRUCache:
         del self._recent_evicted[key]
         return (time.monotonic() - stamp) <= THRASH_WINDOW_S
 
-    def _note_evicted_locked(self, key) -> None:
+    def _note_evicted_locked(self, key: object) -> None:
         self._recent_evicted[key] = time.monotonic()
         self._recent_evicted.move_to_end(key)
         while len(self._recent_evicted) > THRASH_RING_SIZE:

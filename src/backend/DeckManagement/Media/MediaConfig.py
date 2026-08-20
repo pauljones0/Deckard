@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from typing import Any
 
 
 @dataclass(slots=True)
@@ -29,7 +30,7 @@ class MediaConfig:
     halign: float | None = None
 
     @classmethod
-    def from_dict(cls, d: dict) -> "MediaConfig":
+    def from_dict(cls, d: dict[str, Any]) -> "MediaConfig":
         """
         Creates a MediaConfig from a raw media dict (kebab-case keys, as
         stored in the page JSON).

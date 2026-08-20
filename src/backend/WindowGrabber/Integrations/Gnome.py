@@ -23,7 +23,7 @@ import globals as gl
 
 from gi.repository import Gio, GLib
 
-from typing import TYPE_CHECKING
+from typing import cast, TYPE_CHECKING
 if TYPE_CHECKING:
     from src.backend.WindowGrabber.WindowGrabber import WindowGrabber
 
@@ -105,7 +105,8 @@ class Gnome(Integration):
         proxy.disconnect(handler_id)
 
 
-    def on_dbus_signal(self, proxy, sender_name: str, signal_name: str, parameters) -> None:
+    def on_dbus_signal(self, proxy: Gio.DBusProxy, sender_name: str, signal_name: str,
+                       parameters: GLib.Variant) -> None:
         if signal_name != "FocusedWindowChanged":
             return
         self.on_window_changed(parameters.unpack()[0])
@@ -159,7 +160,7 @@ class Gnome(Integration):
             # callers read as "the call failed". An AttributeError on None
             # would escape their except clause.
             raise GLib.Error("no D-Bus proxy for the GNOME extension")
-        return proxy.call_sync(method_name, None, Gio.DBusCallFlags.NONE, -1, None).unpack()[0]
+        return cast(str, proxy.call_sync(method_name, None, Gio.DBusCallFlags.NONE, -1, None).unpack()[0])
 
     def get_is_connected(self) -> bool:
         # Check the live owner, not only that a proxy exists. GDBusProxy

@@ -16,6 +16,8 @@ import contextlib
 import os
 import shutil
 import sys
+from collections.abc import Iterator
+from typing import Callable
 
 import appinfo
 
@@ -99,7 +101,7 @@ def _write_marker(marker_path: str, state: str) -> bool:
 
 
 @contextlib.contextmanager
-def _migration_lock(new_root: str):
+def _migration_lock(new_root: str) -> "Iterator[None]":
     """Serialize the migration across concurrent first-run launches.
 
     The blocking exclusive lock makes a second launch wait, re-read the
@@ -203,7 +205,9 @@ def _finish_symlink(old_root: str, new_root: str, marker_path: str) -> None:
 
 def migrate(old_root: str = OLD_ROOT, new_root: str = NEW_ROOT,
             argv: list[str] | None = None, require_pre_globals: bool = True,
-            marker_name: str = MARKER_NAME, running_check=None, locked_fn=None) -> None:
+            marker_name: str = MARKER_NAME,
+            running_check: Callable[[], bool] | None = None,
+            locked_fn: Callable[[str, str, str, Callable[[], bool]], None] | None = None) -> None:
     # globals.py resolves DATA_PATH and makes that directory at import time,
     # on every invocation, which creates an empty tree under the new id and
     # breaks the "does the new tree exist" check below. main.py therefore calls
@@ -240,7 +244,7 @@ def migrate(old_root: str = OLD_ROOT, new_root: str = NEW_ROOT,
 
 
 def _migrate_locked(old_root: str, new_root: str, marker_path: str,
-                    running_check) -> None:
+                    running_check: Callable[[], bool]) -> None:
     state = _read_marker(marker_path)
     if state == _STATE_COMPLETE:
         return
@@ -398,7 +402,7 @@ def _finish_copy(old_root: str, new_root: str, marker_path: str) -> None:
 
 
 def _copy_migrate_locked(old_root: str, new_root: str, marker_path: str,
-                         running_check) -> None:
+                         running_check: Callable[[], bool]) -> None:
     """Cross-filesystem variant of _migrate_locked.
 
     os.rename cannot cross a filesystem. This copies old_root to a staging

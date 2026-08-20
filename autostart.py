@@ -29,11 +29,13 @@ LEGACY_AUTOSTART_NAMES = ("StreamController.desktop", appinfo.OLD_APP_ID + ".des
 
 import gi
 gi.require_version("Xdp", "1.0")
-from gi.repository import Xdp
+from gi.repository import Gio, Xdp
+
+from typing import Any
 
 from loguru import logger as log
 
-def is_flatpak():
+def is_flatpak() -> bool:
     return os.path.isfile('/.flatpak-info')
 
 # Orders the setup_autostart() calls against the async portal callback. The
@@ -50,7 +52,7 @@ def _current_autostart_generation() -> int:
     return _autostart_generation
 
 
-def remove_legacy_autostart_entries():
+def remove_legacy_autostart_entries() -> None:
     """Delete the pre-rename autostart entries.
 
     This runs at every launch, so a failed delete, or an old build that writes
@@ -69,7 +71,7 @@ def remove_legacy_autostart_entries():
 
 
 @log.catch
-def setup_autostart(enable: bool = True):
+def setup_autostart(enable: bool = True) -> None:
     global _autostart_generation
     remove_legacy_autostart_entries()
 
@@ -89,14 +91,14 @@ def setup_autostart(enable: bool = True):
         setup_autostart_desktop_entry(enable, native=True)
 
 
-def setup_autostart_flatpak(enable: bool = True, generation: int = None):
+def setup_autostart_flatpak(enable: bool = True, generation: int | None = None) -> None:
     """Set the flatpak autostart through the background portal.
 
     https://libportal.org/method.Portal.request_background.html
     https://libportal.org/method.Portal.request_background_finish.html
     https://docs.flatpak.org/de/latest/portal-api-reference.html#gdbus-org.freedesktop.portal.Background
     """
-    def request_background_callback(portal, result, user_data):
+    def request_background_callback(portal: Xdp.Portal, result: Gio.AsyncResult, user_data: Any) -> None:
         try:
             success = portal.request_background_finish(result)
         except Exception:
@@ -131,7 +133,7 @@ def setup_autostart_flatpak(enable: bool = True, generation: int = None):
         log.error("request_background failed")
         setup_autostart_desktop_entry(enable)
 
-def setup_autostart_desktop_entry(enable: bool = True, native: bool = False):
+def setup_autostart_desktop_entry(enable: bool = True, native: bool = False) -> None:
     log.info("Setting up autostart using desktop entry")
 
     import globals as gl
@@ -158,7 +160,7 @@ def setup_autostart_desktop_entry(enable: bool = True, native: bool = False):
             except Exception as e:
                 log.error(f"Failed to remove autostart from: {AUTOSTART_DESKTOP_PATH} with error: {e}")
 
-def ensure_app_desktop_entry():
+def ensure_app_desktop_entry() -> None:
     """Install or refresh ~/.local/share/applications/<app id>.desktop.
 
     A Wayland compositor maps the window app_id to a desktop file of the same
@@ -189,7 +191,7 @@ def _launcher_exec(extra_args: str = "") -> str:
     return f"{cmd} {extra_args}".rstrip()
 
 
-def _install_desktop_file(template_name: str, target: str, exec_args: str = ""):
+def _install_desktop_file(template_name: str, target: str, exec_args: str = "") -> None:
     """Write a native desktop entry from a flatpak template.
 
     Icon= becomes an absolute repo path, and Exec= becomes an absolute launch
@@ -223,7 +225,7 @@ def _install_desktop_file(template_name: str, target: str, exec_args: str = ""):
         log.error(f"Failed to install desktop entry at {target}: {e}")
 
 
-def copy_desktop_file(source: str, target: str, overwrite: bool = False):
+def copy_desktop_file(source: str, target: str, overwrite: bool = False) -> None:
     if not overwrite and os.path.exists(target):
         log.info(f"Desktop file already exists at: {target}")
         return

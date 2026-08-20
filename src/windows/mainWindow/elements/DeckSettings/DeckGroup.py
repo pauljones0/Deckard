@@ -24,9 +24,11 @@ from gi.repository import Gtk, Adw, GLib
 # Import Python modules
 
 # Import globals
+from src.backend import services
+
 import globals as gl
 
-from typing import TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 if TYPE_CHECKING:
     # A runtime import cycles, because DeckSettingsPage imports this module.
     from src.windows.mainWindow.elements.DeckSettings.DeckSettingsPage import DeckSettingsPage
@@ -35,7 +37,7 @@ if TYPE_CHECKING:
 from src.backend.DeckManagement.ImageHelpers import image2pixbuf
 
 class DeckGroup(Adw.PreferencesGroup):
-    def __init__(self, settings_page):
+    def __init__(self, settings_page: "DeckSettingsPage") -> None:
         super().__init__(title=gl.lm.get("deck.deck-group.title"), description=gl.lm.get("deck.deck-group.description"))
         self.deck_serial_number = settings_page.deck_serial_number
 
@@ -51,7 +53,7 @@ class DeckGroup(Adw.PreferencesGroup):
 
 
 class Rotation(Adw.PreferencesRow):
-    def __init__(self, settings_page: "DeckSettingsPage", deck_serial_number, **kwargs):
+    def __init__(self, settings_page: "DeckSettingsPage", deck_serial_number: str, **kwargs: Any) -> None:
         super().__init__()
         self.settings_page = settings_page
         self.deck_serial_number = deck_serial_number
@@ -60,7 +62,7 @@ class Rotation(Adw.PreferencesRow):
         self.load_default()
         self.connect("map", self.load_default)
 
-    def build(self):
+    def build(self) -> None:
         self.main_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, hexpand=True,
                                 margin_start=15, margin_end=15, margin_top=15, margin_bottom=15)
         self.set_child(self.main_box)
@@ -86,11 +88,16 @@ class Rotation(Adw.PreferencesRow):
 
         self.toggle_group.connect("notify::active", self.on_value_changed)
 
-    def on_value_changed(self, _, __):
+    def on_value_changed(self, _: Any, __: Any) -> None:
         GLib.idle_add(self.on_value_changed_idle)
 
-    def on_value_changed_idle(self):
-        rot = int(self.toggle_group.get_active_name())
+    def on_value_changed_idle(self) -> None:
+        active_name = self.toggle_group.get_active_name()
+        if active_name is None:
+            # No button of the group is active, so there is no rotation to
+            # read and nothing to save.
+            return
+        rot = int(active_name)
 
         deck_settings = gl.settings_manager.deck(self.deck_serial_number)
         deck_settings.set_value("rotation", rot)
@@ -98,7 +105,7 @@ class Rotation(Adw.PreferencesRow):
 
         self.settings_page.deck_controller.set_rotation(rot)
 
-    def load_default(self, *args):
+    def load_default(self, *args: Any) -> None:
         # Pass the handler, not the signal name. better_disconnect takes the
         # callable and accepts a miss without a word, so a name here leaves
         # the handler connected. set_active_name below then saves and applies
@@ -112,7 +119,7 @@ class Rotation(Adw.PreferencesRow):
 
 
 class Brightness(Adw.PreferencesRow):
-    def __init__(self, settings_page: "DeckSettingsPage", deck_serial_number, **kwargs):
+    def __init__(self, settings_page: "DeckSettingsPage", deck_serial_number: str, **kwargs: Any) -> None:
         super().__init__()
         self.settings_page = settings_page
         self.deck_serial_number = deck_serial_number
@@ -121,7 +128,7 @@ class Brightness(Adw.PreferencesRow):
         """
         To save performance and memory, we only load the thumbnail when the user sees the row
         """
-        self.on_map_tasks: list = []
+        self.on_map_tasks: list[Any] = []
         self.connect("map", self.on_map)
 
         # One handler, always: load_default defers itself at construction (an
@@ -129,12 +136,12 @@ class Brightness(Adw.PreferencesRow):
         self.load_default()
         self.scale.connect("value-changed", self.on_value_changed)
 
-    def on_map(self, widget):
+    def on_map(self, widget: Gtk.Widget) -> None:
         for f in self.on_map_tasks:
             f()
         self.on_map_tasks.clear()
 
-    def build(self):
+    def build(self) -> None:
         self.main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, hexpand=True,
                                 margin_start=15, margin_end=15, margin_top=15, margin_bottom=15)
         self.set_child(self.main_box)
@@ -146,10 +153,10 @@ class Brightness(Adw.PreferencesRow):
         self.scale.set_draw_value(True)
         self.main_box.append(self.scale)
 
-    def on_value_changed(self, scale):
+    def on_value_changed(self, scale: Gtk.Scale) -> None:
         GLib.idle_add(self.on_value_changed_idle, scale)
 
-    def on_value_changed_idle(self, scale):
+    def on_value_changed_idle(self, scale: Gtk.Scale) -> None:
         value = round(scale.get_value())
 
         # Update and save brightness in deck settings
@@ -167,7 +174,7 @@ class Brightness(Adw.PreferencesRow):
         if not overwrite:
             self.settings_page.deck_controller.set_brightness(value)
 
-    def load_default(self):
+    def load_default(self) -> None:
         if not self.get_mapped():
             self.on_map_tasks.clear()
             self.on_map_tasks.append(lambda: self.load_default())
@@ -195,24 +202,27 @@ class Saturation(Adw.PreferencesRow):
     # DeckController.set_display_saturation, which enhances the static media at
     # once and rebuilds the video cache under the cache filename of the new
     # factor at the next playthrough.
-    def __init__(self, settings_page: "DeckSettingsPage", deck_serial_number, **kwargs):
+    def __init__(self, settings_page: "DeckSettingsPage", deck_serial_number: str, **kwargs: Any) -> None:
         super().__init__()
         self.settings_page = settings_page
         self.deck_serial_number = deck_serial_number
         self.build()
 
-        self.on_map_tasks: list = []
+        self.on_map_tasks: list[Any] = []
         self.connect("map", self.on_map)
+
+        # The pending id of the trailing debounce below, None between runs.
+        self._apply_source: int | None = None
 
         self.load_default()  # defers at construction; see Brightness above
         self.scale.connect("value-changed", self.on_value_changed)
 
-    def on_map(self, widget):
+    def on_map(self, widget: Gtk.Widget) -> None:
         for f in self.on_map_tasks:
             f()
         self.on_map_tasks.clear()
 
-    def build(self):
+    def build(self) -> None:
         self.main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, hexpand=True,
                                 margin_start=15, margin_end=15, margin_top=15, margin_bottom=15)
         self.set_child(self.main_box)
@@ -225,16 +235,16 @@ class Saturation(Adw.PreferencesRow):
         self.scale.set_digits(2)
         self.main_box.append(self.scale)
 
-    def on_value_changed(self, scale):
+    def on_value_changed(self, scale: Gtk.Scale) -> None:
         # A trailing debounce. value-changed fires on every drag step, and an
         # apply of the saturation is a full page reload, plus a cache rebuild
         # for a video background. Apply once, 300 ms after the drag stops,
         # instead of about ten times across one drag.
-        if getattr(self, "_apply_source", None) is not None:
+        if self._apply_source is not None:
             GLib.source_remove(self._apply_source)
         self._apply_source = GLib.timeout_add(300, self._apply_value)
 
-    def _apply_value(self):
+    def _apply_value(self) -> bool:
         self._apply_source = None
         value = round(self.scale.get_value(), 2)
 
@@ -244,7 +254,7 @@ class Saturation(Adw.PreferencesRow):
         self.settings_page.deck_controller.set_display_saturation(value)
         return GLib.SOURCE_REMOVE
 
-    def load_default(self):
+    def load_default(self) -> None:
         if not self.get_mapped():
             self.on_map_tasks.clear()
             self.on_map_tasks.append(lambda: self.load_default())
@@ -259,7 +269,7 @@ class Saturation(Adw.PreferencesRow):
 
 
 class Screensaver(Adw.PreferencesRow):
-    def __init__(self, settings_page: "DeckSettingsPage", deck_serial_number, **kwargs):
+    def __init__(self, settings_page: "DeckSettingsPage", deck_serial_number: str, **kwargs: Any) -> None:
         super().__init__()
         self.settings_page = settings_page
         self.deck_serial_number = deck_serial_number
@@ -268,17 +278,17 @@ class Screensaver(Adw.PreferencesRow):
         """
         To save performance and memory, we only load the thumbnail when the user sees the row
         """
-        self.on_map_tasks: list = []
+        self.on_map_tasks: list[Any] = []
         self.connect("map", self.on_map)
 
         self.load_defaults()
 
-    def on_map(self, widget):
+    def on_map(self, widget: Gtk.Widget) -> None:
         for f in self.on_map_tasks:
             f()
         self.on_map_tasks.clear()
     
-    def build(self):
+    def build(self) -> None:
         self.main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, hexpand=True,
                                 margin_start=15, margin_end=15, margin_top=15, margin_bottom=15)
         self.set_child(self.main_box)
@@ -365,7 +375,7 @@ class Screensaver(Adw.PreferencesRow):
         self.fps_spinner.disconnect_by_func(self.on_change_fps)
         self.scale.disconnect_by_func(self.on_change_brightness)
 
-    def load_defaults(self):
+    def load_defaults(self) -> None:
         self.disconnect_signals()
         # One read, and read only. A missing key shows the default from the
         # deck-settings schema and reaches no file. A write here pins the
@@ -395,7 +405,7 @@ class Screensaver(Adw.PreferencesRow):
             return False
         return bool(active_page.dict.get("screensaver", {}).get("overwrite", False))
 
-    def on_toggle_enable(self, toggle_switch, state):
+    def on_toggle_enable(self, toggle_switch: Gtk.Switch, state: bool) -> None:
         config = gl.settings_manager.deck(self.deck_serial_number)
         config.set("screensaver", "enable", state)
         # Save
@@ -406,7 +416,7 @@ class Screensaver(Adw.PreferencesRow):
 
         self.config_box.set_visible(state)
 
-    def on_toggle_loop(self, toggle_switch, state):
+    def on_toggle_loop(self, toggle_switch: Gtk.Switch, state: bool) -> None:
         config = gl.settings_manager.deck(self.deck_serial_number)
         config.set("screensaver", "loop", state)
         # Save
@@ -416,7 +426,7 @@ class Screensaver(Adw.PreferencesRow):
         if not self.page_overwrites_screensaver():
             self.settings_page.deck_controller.screen_saver.set_loop(state)
 
-    def on_change_fps(self, spinner):
+    def on_change_fps(self, spinner: Gtk.SpinButton) -> None:
         config = gl.settings_manager.deck(self.deck_serial_number)
         config.set("screensaver", "fps", spinner.get_value_as_int())
         # Save
@@ -425,7 +435,7 @@ class Screensaver(Adw.PreferencesRow):
         if not self.page_overwrites_screensaver():
             self.settings_page.deck_controller.screen_saver.set_fps(spinner.get_value_as_int())
 
-    def on_change_time(self, spinner):
+    def on_change_time(self, spinner: Gtk.SpinButton) -> None:
         config = gl.settings_manager.deck(self.deck_serial_number)
         config.set("screensaver", "time-delay", round(spinner.get_value_as_int()))
         # Save
@@ -434,7 +444,7 @@ class Screensaver(Adw.PreferencesRow):
         if not self.page_overwrites_screensaver():
             self.settings_page.deck_controller.screen_saver.set_time(round(spinner.get_value_as_int()))
 
-    def on_change_brightness(self, scale):
+    def on_change_brightness(self, scale: Gtk.Scale) -> None:
         config = gl.settings_manager.deck(self.deck_serial_number)
         config.set("screensaver", "brightness", scale.get_value())
         # Save
@@ -443,24 +453,22 @@ class Screensaver(Adw.PreferencesRow):
         if not self.page_overwrites_screensaver():
             self.settings_page.deck_controller.screen_saver.set_brightness(scale.get_value())
 
-    def set_thumbnail(self, file_path):
+    def set_thumbnail(self, file_path: "str | None") -> None:
         if file_path is None:
             return
         if not os.path.isfile(file_path):
             return
         image = gl.media_manager.get_thumbnail(file_path)
         pixbuf = image2pixbuf(image)
-        self.media_selector_image.pixbuf = None
-        del self.media_selector_image.pixbuf
         self.media_selector_image.set_from_pixbuf(pixbuf)
         self.media_selector_button.set_child(self.media_selector_image)
 
-    def on_choose_image(self, button):
+    def on_choose_image(self, button: Gtk.Button) -> None:
         media_path = gl.settings_manager.deck(self.deck_serial_number).get("screensaver", "media-path")
 
-        gl.app.let_user_select_asset(default_path=media_path, callback_func=self.update_image)
+        services.require_app().let_user_select_asset(default_path=media_path, callback_func=self.update_image)
 
-    def update_image(self, image_path):
+    def update_image(self, image_path: "str | None") -> None:
         self.set_thumbnail(image_path)
         settings = gl.settings_manager.deck(self.deck_serial_number)
         settings.set("screensaver", "media-path", image_path)

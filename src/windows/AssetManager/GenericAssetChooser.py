@@ -53,24 +53,26 @@ from src.windows.AssetManager.Preview import Preview
 import globals as gl
 
 # Import typing
-from typing import TYPE_CHECKING
+from typing import cast, TYPE_CHECKING, Any
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from src.windows.AssetManager.AssetManager import AssetManager
 
 
 # A candidate must score at least this against the query to stay in the grid.
 SEARCH_SCORE_THRESHOLD = 50
 
-def asset_display_name(item, attr: str = "path") -> str:
+def asset_display_name(item: Any, attr: str = "path") -> str:
     """The string that the search matches on.
 
     It is the file name of the asset, without the directory and without the
     extension, which is what the preview label shows.
     """
-    return os.path.splitext(os.path.basename(getattr(item, attr)))[0]
+    return cast(str, os.path.splitext(os.path.basename(getattr(item, attr)))[0])
 
 
-def asset_matches_search(item, search: str, attr: str = "path") -> bool:
+def asset_matches_search(item: Any, search: str, attr: str = "path") -> bool:
     """Filter predicate for one asset.
 
     An empty query keeps everything. Any other query needs a display name
@@ -79,10 +81,10 @@ def asset_matches_search(item, search: str, attr: str = "path") -> bool:
     if search == "":
         return True
     score = fuzz.ratio(asset_display_name(item, attr).lower(), search.lower())
-    return score >= SEARCH_SCORE_THRESHOLD
+    return bool(score >= SEARCH_SCORE_THRESHOLD)
 
 
-def compare_assets(item1, item2, search: str, attr: str = "path") -> int:
+def compare_assets(item1: Any, item2: Any, search: str, attr: str = "path") -> int:
     """GTK sort comparator over two assets.
 
     It returns -1 when item1 comes first, 1 when item1 comes last, and 0 on a
@@ -210,7 +212,7 @@ class GenericPackChooserPage(_ChooserBuildPage):
     # A marshal that timed out never binds it. See _handle_build_failure.
     pack_flow = None
 
-    def __init__(self, stack, asset_manager: "AssetManager"):
+    def __init__(self, stack: Any, asset_manager: "AssetManager") -> None:
         super().__init__()
         self.asset_manager = asset_manager
         self.stack = stack
@@ -220,7 +222,7 @@ class GenericPackChooserPage(_ChooserBuildPage):
         self.start_build()
 
     @log.catch
-    def build(self):
+    def build(self) -> None:
         self.build_finished = False
 
         # This work belongs on the worker thread. The pack discovery reads
@@ -263,7 +265,7 @@ class GenericPackChooserPage(_ChooserBuildPage):
 
         self.pack_flow.flow_box.connect("child-activated", self.on_child_activated)
 
-    def _append_packs(self, batch: list) -> None:
+    def _append_packs(self, batch: list[Any]) -> None:
         """Runs on the main loop only, over one batch of pack and pixbuf pairs."""
         pack_flow = self.pack_flow
         if pack_flow is None:
@@ -275,11 +277,13 @@ class GenericPackChooserPage(_ChooserBuildPage):
             preview = self.PACK_PREVIEW_CLASS(self, pack, pixbuf=pixbuf)
             flow_box.append(preview)
 
-    def get_pack_thumbnail_path(self, pack):
+    def get_pack_thumbnail_path(self, pack: Any) -> "Path | None":
         """Where the pack's thumbnail lives. Called on the build worker."""
-        return pack.get_thumbnail_path()
+        # Every pack class types get_thumbnail_path as Path | None; the pack
+        # itself stays duck-typed across the three pack subsystems.
+        return cast("Path | None", pack.get_thumbnail_path())
 
-    def on_child_activated(self, flow_box, child):
+    def on_child_activated(self, flow_box: Gtk.FlowBox, child: Any) -> None:
         # Load the pack's assets, drill into the asset chooser, offer the way back.
         self.get_leaf_chooser().load_for_pack(child.pack)
         self.stack.set_visible_child_name(self.LEAF_CHILD_NAME)
@@ -287,7 +291,7 @@ class GenericPackChooserPage(_ChooserBuildPage):
 
     # Subclass hooks
 
-    def get_packs(self) -> dict:
+    def get_packs(self) -> dict[str, Any]:
         """{name: pack} for this asset type. Called on the build worker."""
         raise NotImplementedError
 
@@ -318,9 +322,10 @@ class GenericAssetChooserPage(_ChooserBuildPage):
     # entry, and therefore on_search_changed, before __init__ reaches its own
     # attributes.
     asset_flow = None
-    _pending_pack = None
+    # load_for_pack takes the pack untyped, so Any is its real type here.
+    _pending_pack: Any = None
 
-    def __init__(self, stack, asset_manager: "AssetManager"):
+    def __init__(self, stack: Any, asset_manager: "AssetManager") -> None:
         super().__init__()
         self.asset_manager = asset_manager
         self.stack = stack
@@ -339,7 +344,7 @@ class GenericAssetChooserPage(_ChooserBuildPage):
         self.start_build()
 
     @log.catch
-    def build(self):
+    def build(self) -> None:
         self.build_finished = False
         self.set_loading(True)
 
@@ -378,7 +383,7 @@ class GenericAssetChooserPage(_ChooserBuildPage):
             pack, self._pending_pack = self._pending_pack, None
             self.load_for_pack(pack)
 
-    def load_for_pack(self, pack) -> None:
+    def load_for_pack(self, pack: Any) -> None:
         if self.asset_flow is None:
             # The build still waits on the main loop. Keep the request
             # instead of dropping it or raising AttributeError.
@@ -397,25 +402,28 @@ class GenericAssetChooserPage(_ChooserBuildPage):
         # strands without a word.
         self._pending_pack = None
 
-    def on_child_activated(self, flow_box, child):
+    def on_child_activated(self, flow_box: Gtk.FlowBox, child: Any) -> None:
         asset = self.get_child_asset(child)
         self.asset_manager.deliver_selection(getattr(asset, self.ASSET_PATH_ATTR))
 
-    def preview_factory(self, preview, asset):
+    def preview_factory(self, preview: Any, asset: Any) -> None:
         # Called from DynamicFlowBox._apply_range's main-loop callback.
         self.bind_preview(preview, asset)
         if self.selected_path == getattr(asset, self.ASSET_PATH_ATTR):
-            self.asset_flow.flow_box.select_child(preview)
+            # The recycler that calls this is the flow box itself, so it
+            # exists; the class default keeps the annotation optional.
+            if self.asset_flow is not None:
+                self.asset_flow.flow_box.select_child(preview)
 
-    def filter_func(self, item) -> bool:
+    def filter_func(self, item: Any) -> bool:
         return asset_matches_search(item, self.search_entry.get_text(),
                                     self.ASSET_PATH_ATTR)
 
-    def sort_func(self, item1, item2) -> int:
+    def sort_func(self, item1: Any, item2: Any) -> int:
         return compare_assets(item1, item2, self.search_entry.get_text(),
                               self.ASSET_PATH_ATTR)
 
-    def on_search_changed(self, entry):
+    def on_search_changed(self, entry: Gtk.SearchEntry) -> None:
         if self.asset_flow is None:
             # Nothing rendered yet (build still queued on the main loop);
             # the first render already reads the current search text.
@@ -424,15 +432,15 @@ class GenericAssetChooserPage(_ChooserBuildPage):
 
     # Subclass hooks
 
-    def get_assets(self, pack) -> list:
+    def get_assets(self, pack: Any) -> list[Any]:
         """The assets of the pack, in the order the grid receives them."""
         raise NotImplementedError
 
-    def bind_preview(self, preview, asset) -> None:
+    def bind_preview(self, preview: Any, asset: Any) -> None:
         """Show asset in the recycled preview."""
         raise NotImplementedError
 
-    def get_child_asset(self, child):
+    def get_child_asset(self, child: Any) -> Any:
         """The asset that an activated flow-box child shows."""
         raise NotImplementedError
 

@@ -23,7 +23,7 @@ from gi.repository import Gtk
 
 # Import Python modules
 import threading
-from typing import TYPE_CHECKING
+from typing import Any, TYPE_CHECKING, cast
 if TYPE_CHECKING:
     from src.windows.mainWindow.mainWindow import MainWindow
 
@@ -37,7 +37,7 @@ from src.windows.Store.StorePage import StorePage
 from src.windows.Store.Wallpapers.WallpaperPage import WallpaperPage
 
 class Store(Gtk.ApplicationWindow):
-    def __init__(self, main_window: "MainWindow", *args, **kwargs):
+    def __init__(self, main_window: "MainWindow", *args: Any, **kwargs: Any) -> None:
         super().__init__(  # type: ignore[misc]  # gi stub: the stub models GObject properties as positional-or-keyword params, so *args reads as a second binding for them; at runtime GObject.__init__ takes properties by keyword only
             title="Store",
             default_width=1050,
@@ -60,10 +60,10 @@ class Store(Gtk.ApplicationWindow):
 
         self.connect("close-request", self.on_close)
 
-    def on_close(self, *args, **kwargs):
+    def on_close(self, *args: Any, **kwargs: Any) -> None:
         gl.store = None
 
-    def build(self):
+    def build(self) -> None:
         # Header bar
         self.header = Gtk.HeaderBar(css_classes=["flat"])
         self.set_titlebar(self.header)
@@ -106,12 +106,13 @@ class Store(Gtk.ApplicationWindow):
         # can also arrive first, and both calls are idempotent.
         self.plugin_page.ensure_loaded()
 
-    def on_back_button_click(self, button: Gtk.Button):
+    def on_back_button_click(self, button: Gtk.Button) -> None:
         # Switch active page back from info page
-        self.main_stack.get_visible_child().set_info_visible(False)
+        # Every child of this stack is a StorePage.
+        cast("StorePage", self.main_stack.get_visible_child()).set_info_visible(False)
 
-    def on_switch(self, *args):
-        child: StorePage = self.main_stack.get_visible_child()
+    def on_switch(self, *args: Any) -> None:
+        child = cast("StorePage", self.main_stack.get_visible_child())
         # StorePage._loaded guards the load, so this does nothing for a tab
         # that already loaded, which includes the first tab.
         child.ensure_loaded()

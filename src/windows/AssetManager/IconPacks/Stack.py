@@ -35,7 +35,7 @@ if TYPE_CHECKING:
     from src.windows.AssetManager.AssetManager import AssetManager
 
 class IconPackChooserStack(Gtk.Stack):
-    def __init__(self, asset_manager: "AssetManager", *args, **kwargs):
+    def __init__(self, asset_manager: "AssetManager", *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self.asset_manager = asset_manager
 
@@ -48,7 +48,7 @@ class IconPackChooserStack(Gtk.Stack):
 
         self.build()
 
-    def build(self):
+    def build(self) -> None:
         self.pack_chooser = IconPackChooser(self, self.asset_manager)
         self.add_titled(self.pack_chooser, "pack-chooser", "Chooser")
 
@@ -56,7 +56,11 @@ class IconPackChooserStack(Gtk.Stack):
         self.add_titled(self.icon_chooser, "icon-chooser", "Icon Chooser")
 
 
-    def show_for_path(self, path):
+    def show_for_path(self, path: str | None) -> None:
+        if path is None:
+            # No pre-selection. The loop below would compare every icon
+            # against None and select nothing, so return at once.
+            return
         with self._loads_lock:
             if not self.get_is_build_finished():
                 # Defer under the same lock that on_load_finished drains
@@ -64,6 +68,11 @@ class IconPackChooserStack(Gtk.Stack):
                 # flag as True here and dispatches at once.
                 self.on_loads_finished_tasks.append(lambda: self.show_for_path(path))
                 return
+        if gl.icon_pack_manager is None:
+            # Same reading as IconPackChooserPage.get_packs: the boot order
+            # keeps the window shut until the manager exists, and the type
+            # still allows None. With no packs there is nothing to select.
+            return
         packs = gl.icon_pack_manager.get_icon_packs()
         for pack in packs.values():
             icons = pack.get_icons()
@@ -76,10 +85,10 @@ class IconPackChooserStack(Gtk.Stack):
                     self.asset_manager.back_button.set_visible(True)
                     return
                 
-    def get_is_build_finished(self):
+    def get_is_build_finished(self) -> bool:
         return hasattr(self, "pack_chooser") and self.pack_chooser.build_finished and hasattr(self, "icon_chooser") and self.icon_chooser.build_finished
                 
-    def on_load_finished(self):
+    def on_load_finished(self) -> None:
         """Run from both build worker threads, the pack one and the icon one.
 
         It snapshots and clears the deferred-task queue in one step under the

@@ -3,7 +3,7 @@ from GtkHelper.GenerativeUI.GenerativeUI import GenerativeUI
 
 
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any
+from typing import cast, TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from src.backend.PluginManager.ActionCore import ActionCore
 
@@ -27,8 +27,8 @@ class ComboRow(GenerativeUI[BaseComboRowItem | str | None]):
                  var_name: str,
                  default_value: BaseComboRowItem | str,
                  items: list[BaseComboRowItem] | list[str],
-                 title: str = None,
-                 subtitle: str = None,
+                 title: str | None = None,
+                 subtitle: str | None = None,
                  enable_search: bool = False,
                  on_change: Callable[..., Any] | None = None,
                  can_reset: bool = True,
@@ -50,8 +50,8 @@ class ComboRow(GenerativeUI[BaseComboRowItem | str | None]):
             can_reset (bool, optional): Whether resetting is allowed. Defaults to True.
             auto_add (bool, optional): Whether to automatically add this UI element to the action. Defaults to True.
         """
-        def build():
-            self._widget: Combo = Combo(
+        def build() -> None:
+            self._widget: Combo | None = Combo(
                 title=self.get_translation(title, title),
                 subtitle=self.get_translation(subtitle, subtitle),
                 items=items,
@@ -63,26 +63,26 @@ class ComboRow(GenerativeUI[BaseComboRowItem | str | None]):
         super().__init__(action_core, var_name, default_value, can_reset, auto_add, complex_var_name, on_change, build=build)
 
     @on_main
-    def set_sensitive(self, sensitive: bool):
+    def set_sensitive(self, sensitive: bool) -> None:
         self.widget.set_sensitive(sensitive)
 
-    def get_sensitive(self):
-        return self.widget.get_sensitive()
+    def get_sensitive(self) -> bool:
+        return cast(bool, self.widget.get_sensitive())
 
-    def connect_signals(self):
+    def connect_signals(self) -> None:
         """Connects the signal to detect selection changes in the combo box."""
         self.widget.connect("notify::selected", self._value_changed)
 
-    def disconnect_signals(self):
+    def disconnect_signals(self) -> None:
         """Disconnects the signal for selection changes."""
         better_disconnect(self.widget, self._value_changed)
 
-    def _value_changed(self, combo_row: Combo, _):
+    def _value_changed(self, combo_row: Combo, _: Any) -> None:
         """Handles the event when a new item is selected."""
         item = combo_row.get_selected_item()
         self._handle_value_changed(item)
 
-    def _handle_value_changed(self, item: BaseComboRowItem | str | None, update_settings: bool = True, trigger_callback: bool = True):
+    def _handle_value_changed(self, item: BaseComboRowItem | str | None, update_settings: bool = True, trigger_callback: bool = True) -> None:
         """Handles updating the stored value and triggering the change callback."""
         old_value = self.get_value(self._default_value)
 
@@ -96,7 +96,7 @@ class ComboRow(GenerativeUI[BaseComboRowItem | str | None]):
             # _handle_value_changed says why this must not force a build.
             self.on_change(self._widget, item, old_value)
 
-    def reset_value(self):
+    def reset_value(self) -> None:
         """Reset the selection to its default.
 
         An unbuilt row has no item list to resolve the old and new
@@ -109,23 +109,24 @@ class ComboRow(GenerativeUI[BaseComboRowItem | str | None]):
         self._reset_value_on_widget()
 
     @GenerativeUI.signal_manager
-    def _reset_value_on_widget(self):
+    def _reset_value_on_widget(self) -> None:
         selected_item = self.widget.set_selected_item(self._default_value)
         self._handle_value_changed(selected_item)
 
-    def load_initial_ui(self):
+    def load_initial_ui(self) -> None:
         value = self.get_value()
         selected_item = self.widget.set_selected_item(value)
         self._handle_value_changed(selected_item, False)
 
     @GenerativeUI.signal_manager
-    def set_ui_value(self, value: BaseComboRowItem | str | None):
+    def set_ui_value(self, value: BaseComboRowItem | str | None) -> None:
         """Sets the selected item in the UI."""
         self.widget.set_selected_item(value)
 
-    def set_value(self, item: BaseComboRowItem | str | None):
+    def set_value(self, item: BaseComboRowItem | str | None) -> None:
         """Sets the selected item in the UI."""
 
+        value: str | None
         if isinstance(item, BaseComboRowItem):
             value = item.get_value()
         else:
@@ -136,62 +137,62 @@ class ComboRow(GenerativeUI[BaseComboRowItem | str | None]):
     # Widget Wrappers
 
     @on_main
-    def set_selected_item(self, item: BaseComboRowItem | str = "", update_setting: bool = False):
+    def set_selected_item(self, item: BaseComboRowItem | str = "", update_setting: bool = False) -> "BaseComboRowItem | None":
         """Sets the selected item and optionally updates the stored value."""
-        selected_item = self.widget.set_selected_item(item)
+        selected_item = cast("BaseComboRowItem | None", self.widget.set_selected_item(item))
         if update_setting:
             self.set_value(selected_item)
         return selected_item
 
     @GenerativeUI.signal_manager
-    def add_item(self, combo_row_item: BaseComboRowItem | str):
+    def add_item(self, combo_row_item: BaseComboRowItem | str) -> None:
         """Adds a single item to the combo box."""
         self.widget.add_item(combo_row_item)
 
     @GenerativeUI.signal_manager
-    def add_items(self, items: list[BaseComboRowItem] | list[str]):
+    def add_items(self, items: list[BaseComboRowItem] | list[str]) -> None:
         """Adds multiple items to the combo box."""
         self.widget.add_items(items)
 
     @GenerativeUI.signal_manager
-    def remove_item_at_index(self, index: int):
+    def remove_item_at_index(self, index: int) -> None:
         """Removes an item from the combo box by its index."""
         self.widget.remove_item_at_index(index)
 
     @GenerativeUI.signal_manager
-    def remove_item(self, item: BaseComboRowItem | str):
+    def remove_item(self, item: BaseComboRowItem | str) -> None:
         """Removes an item from the combo box by its value."""
         self.widget.remove_item(item)
 
     @GenerativeUI.signal_manager
-    def remove_items(self, start: int, amount: int):
+    def remove_items(self, start: int, amount: int) -> None:
         """Removes a range of items from the combo box."""
         self.widget.remove_items(start, amount)
 
     @GenerativeUI.signal_manager
-    def remove_all_items(self):
+    def remove_all_items(self) -> None:
         """Clears all items from the combo box."""
         self.widget.remove_all_items()
 
     def get_item_at(self, index: int) -> BaseComboRowItem | None:
         """Retrieves an item at a specific index."""
-        return self.widget.get_item_at(index)
+        return cast("BaseComboRowItem | None", self.widget.get_item_at(index))
 
     def get_item(self, name: BaseComboRowItem | str | None) -> BaseComboRowItem | None:
         """Retrieves an item by its name."""
-        return self.widget.get_item(name)
+        return cast("BaseComboRowItem | None", self.widget.get_item(name))
 
     def get_selected_item(self) -> BaseComboRowItem | None:
         """Returns the currently selected item."""
-        return self.widget.get_selected_item()
+        return cast("BaseComboRowItem | None", self.widget.get_selected_item())
 
-    def get_item_amount(self):
-        return self.widget.get_item_amount()
+    def get_item_amount(self) -> int:
+        return cast(int, self.widget.get_item_amount())
 
     @GenerativeUI.signal_manager
     def populate(self, items: list[BaseComboRowItem] | list[str], selected_item: BaseComboRowItem | str = "",
                  update_settings: bool = False,
-                 trigger_callback: bool = True):
+                 trigger_callback: bool = True) -> None:
         """Repopulates the combo box with new items and optionally updates the selection."""
         self.widget.remove_all_items()
         self.widget.add_items(items)

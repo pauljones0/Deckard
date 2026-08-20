@@ -24,14 +24,14 @@ from loguru import logger as log
 import globals as gl
 
 class LockScreenManager:
-    def __init__(self):
+    def __init__(self) -> None:
         self.locked = False
         self.detector = None
 
         threading.Thread(target=self.setup, daemon=True).start() # Detector setup can block, so keep it off the caller's thread
 
     @log.catch
-    def setup(self):
+    def setup(self) -> None:
         # XDG_CURRENT_DESKTOP holds a colon-separated list ("ubuntu:GNOME",
         # "GNOME-Classic:GNOME"), so match one component. A match on the whole
         # string misses these sessions and lock detection never starts.
@@ -48,7 +48,7 @@ class LockScreenManager:
             self.detector = LogindLockScreenDetector(self)
 
     @log.catch
-    def lock(self, active):
+    def lock(self, active: bool) -> None:
         gl.screen_locked = active
         if gl.presence_monitor:
             # Tell the monitor before the screensaver work below reads the
@@ -72,7 +72,10 @@ class LockScreenManager:
         
         log.info(f"Locking screen: {active}")
 
-        for controller in gl.deck_manager.deck_controller:
+        deck_manager = gl.deck_manager
+        if deck_manager is None:
+            return
+        for controller in deck_manager.deck_controller:
             controller.allow_interaction = not active
             if active:
                 controller.screen_saver.show()

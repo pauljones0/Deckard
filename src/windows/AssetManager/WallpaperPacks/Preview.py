@@ -23,12 +23,12 @@ from src.windows.AssetManager.Preview import _PIXBUF_UNSET, Preview
 from src.backend.IconPackManagement.IconPack import IconPack
 
 # Import typing
-from typing import TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 if TYPE_CHECKING:
     from src.windows.AssetManager.WallpaperPacks.PackChooser import WallpaperPackChooser
 
 class WallpaperPackPreview(Preview):
-    def __init__(self, wallpaper_pack_chooser: "WallpaperPackChooser", pack: IconPack, pixbuf=_PIXBUF_UNSET):
+    def __init__(self, wallpaper_pack_chooser: "WallpaperPackChooser", pack: IconPack, pixbuf: Any = _PIXBUF_UNSET) -> None:
         # The build worker of the chooser decodes pixbuf. This constructor
         # decodes the thumbnail itself, on its own thread, only when the
         # caller supplies no pixbuf.
@@ -40,7 +40,7 @@ class WallpaperPackPreview(Preview):
         self.pack = pack
         self.wallpaper_pack_chooser = wallpaper_pack_chooser
 
-    def on_click_info(self, *args):
+    def on_click_info(self, *args: Any) -> None:
         attribution = self.pack.get_pack_attribution()
         self.wallpaper_pack_chooser.asset_manager.show_info(
             internal_path = None,

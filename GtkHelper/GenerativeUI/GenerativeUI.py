@@ -2,11 +2,11 @@ import functools
 import threading
 from abc import ABC, abstractmethod
 from collections.abc import Callable
-from typing import Any, TypeVar
+from typing import Any, Concatenate, ParamSpec, TypeVar, cast
 
 from gi.repository import Gtk
 
-from typing import TYPE_CHECKING
+from typing import cast, TYPE_CHECKING
 
 from loguru import logger as log
 
@@ -14,7 +14,12 @@ from loguru import logger as log
 if TYPE_CHECKING:
     from src.backend.PluginManager.ActionCore import ActionCore
 
+# The element's value type, e.g. bool for a toggle row or float for a scale.
 T = TypeVar("T")
+# Preserve a decorated method's parameters and return type through
+# signal_manager, so the wrapped method keeps its own signature.
+_Params = ParamSpec("_Params")
+_Return = TypeVar("_Return")
 
 class GenerativeUI[T](ABC):
     """
@@ -84,7 +89,7 @@ class GenerativeUI[T](ABC):
         # through the _widget is None skip in _destroy_gen_ui_batch.
         self._action_core.add_generative_ui_object(self)
 
-    def _ensure_built(self):
+    def _ensure_built(self) -> None:
         """Build the widget on the first access. Every .widget read may call it.
 
         An off-main access marshals through run_on_main, under its 30 s bound,
@@ -128,39 +133,39 @@ class GenerativeUI[T](ABC):
             raise
 
     @abstractmethod
-    def connect_signals(self):
+    def connect_signals(self) -> None:
         """Connects signals for the UI element."""
         pass
 
     @abstractmethod
-    def disconnect_signals(self):
+    def disconnect_signals(self) -> None:
         """Disconnects signals for the UI element."""
         pass
 
     @property
-    def action_core(self):
+    def action_core(self) -> "ActionCore":
         """Returns the associated ActionCore instance."""
         return self._action_core
 
     @property
-    def var_name(self):
+    def var_name(self) -> str:
         """Returns the variable name used in settings."""
         return self._var_name
 
     @property
-    def default_value(self):
+    def default_value(self) -> T:
         """Returns the default value of the UI element."""
         return self._default_value
 
     @property
-    def widget(self):
+    def widget(self) -> Any:
         """Returns the GTK widget representing the UI element, building it on
         first access (see _ensure_built)."""
         self._ensure_built()
         # Back-reference so a container can recover the owning GenerativeUI object.
         if self._widget is not None:
             try:
-                self._widget._generative_ui_owner = self
+                setattr(self._widget, "_generative_ui_owner", self)
             except Exception:
                 pass
         return self._widget
@@ -174,22 +179,22 @@ class GenerativeUI[T](ABC):
         return self._widget is not None
 
     @property
-    def can_reset(self):
+    def can_reset(self) -> bool:
         """Returns whether the UI element can be reset."""
         return self._can_reset
 
     @property
-    def auto_add(self):
+    def auto_add(self) -> bool:
         """Returns whether the UI element is automatically added to the action."""
         return self._auto_add
 
     @property
-    def complex_var_name(self):
+    def complex_var_name(self) -> bool:
         """Returns the complex variable name used in settings."""
         return self._complex_var_name
 
     @staticmethod
-    def signal_manager(func):
+    def signal_manager(func: Callable[Concatenate[Any, _Params], _Return]) -> Callable[Concatenate[Any, _Params], _Return]:
         """
         Decorator to manage signal connections by disconnecting and reconnecting signals around the function call.
 
@@ -201,10 +206,10 @@ class GenerativeUI[T](ABC):
         """
 
         @functools.wraps(func)
-        def wrapper(self, *args, **kwargs):
+        def wrapper(self: Any, *args: _Params.args, **kwargs: _Params.kwargs) -> _Return:
             from GtkHelper.GtkHelper import run_on_main
 
-            def _run():
+            def _run() -> _Return:
                 self.disconnect_signals()
                 try:
                     return func(self, *args, **kwargs)
@@ -213,11 +218,13 @@ class GenerativeUI[T](ABC):
 
             return run_on_main(_run)
 
-        return wrapper
+        # functools.wraps types its result as _Wrapped, which mypy will not
+        # unify with the Concatenate return annotation; the cast restores it.
+        return cast(Callable[Concatenate[Any, _Params], _Return], wrapper)
 
     @abstractmethod
     @signal_manager
-    def set_ui_value(self, value: T):
+    def set_ui_value(self, value: T) -> None:
         """
         Sets the UI element to the specified value.
 
@@ -226,7 +233,7 @@ class GenerativeUI[T](ABC):
         """
         pass
 
-    def _handle_value_changed(self, new_value: T, update_settings: bool = True, trigger_callback: bool = True):
+    def _handle_value_changed(self, new_value: T, update_settings: bool = True, trigger_callback: bool = True) -> None:
         """
         Handles changes in the UI element's value.
 
@@ -244,12 +251,12 @@ class GenerativeUI[T](ABC):
             # for a widget that the callback may never read.
             self.on_change(self._widget, new_value, old_value)
 
-    def update_value_in_ui(self):
+    def update_value_in_ui(self) -> None:
         """Updates the UI element with the current value from settings."""
         value = self.get_value()
         self.set_ui_value(value)
 
-    def reset_value(self):
+    def reset_value(self) -> None:
         """Reset the value to its default.
 
         It syncs the widget only when the widget exists. An unbuilt row has
@@ -259,7 +266,7 @@ class GenerativeUI[T](ABC):
         if self._widget is not None:
             self.update_value_in_ui()
 
-    def resolve_var_name(self):
+    def resolve_var_name(self) -> list[str]:
         keys = [self.var_name]
 
         if self.complex_var_name:
@@ -267,7 +274,7 @@ class GenerativeUI[T](ABC):
 
         return keys
 
-    def set_value(self, value: T):
+    def set_value(self, value: T) -> None:
         """
         Sets the value in the action's settings.
 
@@ -276,7 +283,7 @@ class GenerativeUI[T](ABC):
         """
         # A local annotation, not a cast. ActionCore.get_settings declares a
         # return type of dir, a typo for dict, so this file cannot use it.
-        settings: dict = self._action_core.get_settings()
+        settings: dict[str, Any] = self._action_core.get_settings()
 
         keys = self.resolve_var_name()
 
@@ -291,7 +298,7 @@ class GenerativeUI[T](ABC):
 
         self._action_core.set_settings(settings)
 
-    def get_value(self, fallback: T = None) -> T:
+    def get_value(self, fallback: T | None = None) -> T:
         """
         Retrieves the value from the action's settings.
 
@@ -301,7 +308,7 @@ class GenerativeUI[T](ABC):
         Returns:
             T: The retrieved value.
         """
-        settings: dict = self._action_core.get_settings()
+        settings: dict[str, Any] = self._action_core.get_settings()
 
         keys = self.resolve_var_name()
 
@@ -311,25 +318,25 @@ class GenerativeUI[T](ABC):
                 return fallback if fallback is not None else self._default_value
             d = d[key]
 
-        return d
+        return cast("T", d)
 
-    def load_initial_ui(self):
+    def load_initial_ui(self) -> None:
         """Loads the initial UI state based on the stored value."""
         value = self.get_value()
         self.set_ui_value(value)
         self._handle_value_changed(value, False)
 
-    def load_ui_value(self):
+    def load_ui_value(self) -> None:
         """Loads the UI element with the stored value."""
         value = self.get_value()
         self.set_ui_value(value)
 
-    def get_translation(self, key: str, fallback: str = None):
+    def get_translation(self, key: str | None, fallback: str | None = None) -> str:
         """
         Retrieves a translated string for the given key.
 
         Args:
-            key (str): The translation key.
+            key (str | None): The translation key. A falsy key answers "".
             fallback (str, optional): The fallback text if translation is not found.
 
         Returns:
@@ -337,19 +344,19 @@ class GenerativeUI[T](ABC):
         """
         return self._action_core.get_translation(key, fallback) if key else ""
 
-    def unparent(self):
+    def unparent(self) -> None:
         """Removes the UI element from its parent widget if it has one. A
         never-built widget has no parent to remove, so this is a no-op that
         does not force a build."""
         from GtkHelper.GtkHelper import run_on_main
 
-        def _do():
+        def _do() -> None:
             widget = self._widget
             if widget is not None and widget.get_parent():
                 widget.unparent()
         run_on_main(_do)
 
-    def destroy(self):
+    def destroy(self) -> None:
         """Disconnect the signals, unparent the widget, and unregister.
 
         A second call does nothing. Never call run_dispose() on the widget,
@@ -358,7 +365,7 @@ class GenerativeUI[T](ABC):
         """
         from GtkHelper.GtkHelper import run_on_main
 
-        def _do():
+        def _do() -> None:
             # A widget that never built has nothing to disconnect and nothing
             # to unparent, and a .widget read here forces the build that this
             # class avoids.
@@ -374,23 +381,23 @@ class GenerativeUI[T](ABC):
             self._widget = None
         run_on_main(_do)
 
-    def _create_reset_button(self):
+    def _create_reset_button(self) -> Gtk.Button:
         """Creates a reset button for the UI element."""
         button = Gtk.Button(icon_name="edit-undo-symbolic", vexpand=True, css_classes=["no-rounded-corners"],
                             overflow=Gtk.Overflow.HIDDEN)
         button.connect("clicked", lambda _: self.reset_value())
         return button
 
-    def _get_suffix_box(self):
+    def _get_suffix_box(self) -> "Gtk.Widget | None":
         """
         Retrieves the suffix box widget from the UI element.
 
         Returns:
             Gtk.Widget: The suffix box widget.
         """
-        return self.widget.get_first_child().get_last_child()
+        return cast("Gtk.Widget | None", self.widget.get_first_child().get_last_child())
 
-    def _handle_reset_button_creation(self):
+    def _handle_reset_button_creation(self) -> None:
         """
         Handles the creation and addition of the reset button to the UI element.
         """

@@ -58,7 +58,10 @@ class StartupQueue:
             gl.app_loading_finished_tasks.append(task)
             if gl.app is None:
                 return False
-            try:
+            # The docstring's append-recheck-remove race: on_activate can
+            # publish gl.app between the two checks, which narrowing cannot
+            # see, so this recovery path is live.
+            try:  # type: ignore[unreachable]
                 gl.app_loading_finished_tasks.remove(task)
             except ValueError:
                 # The drain took it first and delivers it.
@@ -125,7 +128,7 @@ class StartupQueue:
 
     # Leg C. --change-state requests that wait for their deck.
 
-    def park_state_request(self, serial_number: str, request: dict) -> None:
+    def park_state_request(self, serial_number: str, request: dict[str, Any]) -> None:
         """Park a state change for a deck that has not appeared yet.
 
         The last write wins per serial. The request stores as given. The CLI
@@ -135,7 +138,7 @@ class StartupQueue:
         """
         gl.api_state_requests[serial_number] = request
 
-    def peek_state_request(self, serial_number: str) -> dict | None:
+    def peek_state_request(self, serial_number: str) -> dict[str, Any] | None:
         """This serial's parked state request, left parked, or None.
 
         A peek rather than a claim lets the request survive an exception
@@ -162,7 +165,7 @@ class StartupQueue:
     # Legs B and C. The whole parking, for a process that leaves.
 
     def claim_parked_requests(self) -> tuple[list[tuple[str, str]],
-                                             list[tuple[str, dict]]]:
+                                             list[tuple[str, dict[str, Any]]]]:
         """Everything parked, removed as it hands it over.
 
         This claims rather than peeks. The caller is a launch that lost the

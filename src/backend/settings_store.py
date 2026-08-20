@@ -23,7 +23,7 @@ import threading
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import Any
+from typing import cast, Any
 
 from loguru import logger as log
 
@@ -182,7 +182,7 @@ ASSET_LIBRARY = SurfaceSpec(
 
 # Every app-settings default, defined exactly once. Callers read through
 # AppSettings, rather than repeat .get(section, {}).get(key, default).
-APP_DEFAULTS: dict[str, dict] = {
+APP_DEFAULTS: dict[str, dict[str, Any]] = {
     "general": {
         "hold-time": 0.5,
         "rolling-labels": True,
@@ -238,7 +238,7 @@ def _fallback_font() -> str:
     # Resolve this late. gl.fallback_font runs a system font scan on first
     # access, through the __getattr__ of globals.py, so it must not run during
     # the import of this module.
-    return gl.fallback_font
+    return cast(str, gl.fallback_font)
 
 
 # The subkeys of general.default-font. This is no section schema. These keys
@@ -248,7 +248,7 @@ def _fallback_font() -> str:
 # value sits here". A merge of the two honours a zero size, or gives every
 # schema in the app a second meaning. It sits next to APP_DEFAULTS because it
 # describes the same file, and only AppSettings.font_default reads it.
-APP_FONT_DEFAULTS: dict = {
+APP_FONT_DEFAULTS: dict[str, Any] = {
     "font-family": _fallback_font,
     "font-size": 15,
     "font-weight": 400,
@@ -652,9 +652,9 @@ def get() -> SettingsStore:
 # settings_views directly. It is this module's back half, reached through
 # here.
 from src.backend.settings_views import (  # noqa: E402, F401
-    AppSettings,
-    DeckSettings,
-    PluginSettings,
-    SchemaView,
+    AppSettings as AppSettings,
+    DeckSettings as DeckSettings,
+    PluginSettings as PluginSettings,
+    SchemaView as SchemaView,
 )
 

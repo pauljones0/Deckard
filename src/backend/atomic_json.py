@@ -14,6 +14,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 """
 # Shared durable-JSON writer. Stdlib only, because the migrators run before
 # SettingsManager and the globals consumers exist, and must still import this.
+from typing import Any
+
 import json
 import os
 import stat
@@ -195,7 +197,7 @@ def prune_corrupt_sidecars(primary_path: str, keep: int = CORRUPT_SIDECAR_KEEP,
     return removed
 
 
-def atomic_write_json(file_path: str, data, indent: int | None = 4) -> None:
+def atomic_write_json(file_path: str, data: Any, indent: int | None = 4) -> None:
     """Write data as JSON to file_path atomically and durably.
 
     This serializes the payload into a temp file in the target's real

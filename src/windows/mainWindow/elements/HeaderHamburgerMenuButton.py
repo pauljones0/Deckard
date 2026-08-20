@@ -25,6 +25,8 @@ from gi.repository import Gtk, Gio, Adw, GLib
 
 # Import globals
 import appinfo
+from src.backend import services
+
 import globals as gl
 
 # Import python modules
@@ -34,12 +36,12 @@ import  os
 from src.windows.Settings.Settings import Settings
 
 # Import typing
-from typing import TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 if TYPE_CHECKING:
-    from windows.mainWindow.mainWindow import MainWindow
+    from src.windows.mainWindow.mainWindow import MainWindow
 
 class HeaderHamburgerMenuButton(Gtk.MenuButton):
-    def __init__(self, main_window: "MainWindow", **kwargs):
+    def __init__(self, main_window: "MainWindow", **kwargs: Any) -> None:
         self.main_window: "MainWindow" = main_window
         super().__init__(**kwargs)
         self.set_icon_name("open-menu-symbolic")
@@ -47,7 +49,7 @@ class HeaderHamburgerMenuButton(Gtk.MenuButton):
         self.init_actions()
         self.build()
 
-    def init_actions(self):
+    def init_actions(self) -> None:
         # Open store
         self.open_store_action = Gio.SimpleAction.new("open-store", None)
         self.open_store_action.connect("activate", self.on_open_store)
@@ -69,7 +71,7 @@ class HeaderHamburgerMenuButton(Gtk.MenuButton):
         self.open_about_action.connect("activate", self.on_open_about)
         self.main_window.add_action(self.open_about_action)
 
-    def build(self):
+    def build(self) -> None:
         self.menu = Gio.Menu.new()
         self.menu.append(gl.lm.get("open-store"), "win.open-store")
         self.menu.append(gl.lm.get("open-settings"), "win.open-settings")
@@ -82,21 +84,21 @@ class HeaderHamburgerMenuButton(Gtk.MenuButton):
         self.popover.set_menu_model(self.menu)
         self.set_popover(self.popover)
 
-    def on_open_store(self, action, parameter):
-        gl.app.open_store()
+    def on_open_store(self, action: Gio.SimpleAction, parameter: "GLib.Variant | None") -> None:
+        services.require_app().open_store()
 
-    def on_open_settings(self, action, parameter):
-        self.settings = Settings()
+    def on_open_settings(self, action: Gio.SimpleAction, parameter: "GLib.Variant | None") -> None:
+        self.settings: "Settings | None" = Settings()
         self.settings.present()
         self.settings = None
         
-    def on_quit(self, action, parameter):
-        GLib.idle_add(gl.app.on_quit)
+    def on_quit(self, action: Gio.SimpleAction, parameter: "GLib.Variant | None") -> None:
+        GLib.idle_add(services.require_app().on_quit)
 
-    def on_support(self, action, parameter):
+    def on_support(self, action: Gio.SimpleAction, parameter: "GLib.Variant | None") -> None:
         open_web("https://ko-fi.com/core447")
 
-    def get_contributer_list(self):
+    def get_contributer_list(self) -> "list[Any]":
         try:
             # Use the shared session. api.github.com rate-limits by IP, and
             # the store calls the same endpoint, so a fetch through
@@ -125,7 +127,7 @@ class HeaderHamburgerMenuButton(Gtk.MenuButton):
         if not contributors:
             return
 
-        def add_section():
+        def add_section() -> bool:
             about.add_credit_section(
                 f"Contributors ({len(contributors)})",
                 sorted(set(contributors), key=str.casefold),
@@ -134,7 +136,7 @@ class HeaderHamburgerMenuButton(Gtk.MenuButton):
 
         GLib.idle_add(add_section)
 
-    def on_open_about(self, action, parameter):
+    def on_open_about(self, action: Gio.SimpleAction, parameter: "GLib.Variant | None") -> None:
         self.about = Adw.AboutDialog()
         self.about.set_application_name("Deckard")
 
@@ -205,7 +207,7 @@ class HeaderHamburgerMenuButton(Gtk.MenuButton):
         self.about.set_release_notes(gl.release_notes)  
         self.about.set_release_notes_version(gl.app_version)
         
-        self.about.present(gl.app.get_active_window())
+        self.about.present(services.require_app().get_active_window())
 
         # The contributor list comes from the GitHub API. A fetch on this
         # thread freezes the whole UI for one network round trip, and it hangs

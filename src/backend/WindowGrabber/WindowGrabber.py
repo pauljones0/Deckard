@@ -15,6 +15,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 import re
 import threading
+from typing import TYPE_CHECKING
+
 from loguru import logger as log
 
 import globals as gl
@@ -23,6 +25,9 @@ from src.backend.main_loop import run_in_background
 from src.backend.session_info import desktop_components, session_type
 from src.backend.WindowGrabber.Window import Window
 from src.backend.WindowGrabber.Integration import Integration
+
+if TYPE_CHECKING:
+    from src.backend.DeckManagement.deck_controller.controller import DeckController
 from src.backend.WindowGrabber.Integrations.Hyprland import Hyprland
 from src.backend.WindowGrabber.Integrations.Gnome import Gnome
 from src.backend.WindowGrabber.Integrations.Sway import Sway
@@ -388,7 +393,7 @@ class WindowGrabber:
                     "Auto page switch failed for one deck; continuing with the others"
                 )
 
-    def _apply_auto_change(self, deck_controller, window: Window) -> None:
+    def _apply_auto_change(self, deck_controller: "DeckController", window: Window) -> None:
         """Applies the auto-change page rules to a single deck for the given
         foreground window. It can raise when the deck is torn down mid-call,
         and the caller isolates that per deck."""
@@ -429,7 +434,7 @@ class WindowGrabber:
         if not found_page:
             self._restore_manual_page(deck_controller)
 
-    def _restore_manual_page(self, deck_controller) -> None:
+    def _restore_manual_page(self, deck_controller: "DeckController") -> None:
         """Returns one deck to its last manually loaded page, if the page it
         shows got there by an automatic switch and does not ask to stay.
 

@@ -14,7 +14,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 """
 
 import os
-from typing import Any
+from typing import cast, Any
 from loguru import logger as log
 
 from src.backend.IconPackManagement.IconPack import IconPack
@@ -56,19 +56,14 @@ class IconPackManager:
 
         return icons
 
-    def get_icon_attribution(self, attribution: dict[str, Any], icon_name: str) -> dict[str, Any] | None:
+    def get_icon_attribution(self, attribution: dict[str, Any], icon_name: str) -> dict[str, Any]:
         if icon_name in attribution:
-            return attribution[icon_name]
+            return cast(dict[str, Any], attribution[icon_name])
         else:
-            return attribution.get("generic", attribution.get("default", attribution.get("general")))
+            return cast(dict[str, Any],
+                        attribution.get("generic", attribution.get("default", attribution.get("general", {}))))
             
-    def prepare_icon_packs(self):
+    def prepare_icon_packs(self) -> None:
+        # Disabled. The body that followed returned a {pack: icons} map and
+        # never ran.
         return
-        packs = self.get_icon_packs()
-
-        prepared_packs = {}
-
-        for pack in packs:
-            prepared_packs[pack] = self.get_pack_icons(packs[pack])
-
-        return prepared_packs

@@ -519,7 +519,9 @@ class _StubController:
 
     def __init__(self):
         self.deck = _StubDeck()
-        self.active_page = None
+        # The rows re-render only while a page is active, so the stub
+        # carries one.
+        self.active_page = object()
         self.screen_saver = _StubScreenSaver()
         self.brightness_calls: list = []
         self.rotation_calls: list = []

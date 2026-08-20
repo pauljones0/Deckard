@@ -15,7 +15,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 import signal
 import threading
 import time
-from typing import TYPE_CHECKING
+from collections.abc import Callable
+from typing import Any, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from types import FrameType
 
 import gi
 
@@ -64,7 +68,7 @@ import globals as gl
 SIGINT_ESCALATE_AFTER_S = 2.0
 
 
-def unix_signal_add(priority, signum, callback) -> bool:
+def unix_signal_add(priority: int, signum: int, callback: Callable[[], bool]) -> bool:
     """Install a GLib main-loop source for signum. True if one went in.
 
     GLib 2.80 moved the Unix API from the GLib-2.0 introspection namespace to
@@ -93,7 +97,7 @@ def unix_signal_add(priority, signum, callback) -> bool:
 
 
 class App(Adw.Application):
-    def __init__(self, **kwargs):
+    def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
 
         # Re-entry latch for on_quit. Set at construction, so the first signal
@@ -107,24 +111,30 @@ class App(Adw.Application):
         # The live engine-to-UI adapter, so on_quit can detach it. It stays
         # None until on_activate builds the window, so a TERM before that
         # raises nothing here.
-        self._ui_adapter = None
+        self._ui_adapter: GtkUIAdapter | None = None
 
         # on_activate fills both. Other windows read them through gl.app, which
         # publishes before the loop starts. Declare them here, so an early
         # reader finds None instead of an AttributeError.
-        self.deck_manager: "DeckManager" = None  # type: ignore[assignment]  # late-init: on_activate
-        self.style_manager: Adw.StyleManager = None  # type: ignore[assignment]  # late-init: on_activate
+        self.deck_manager: "DeckManager | None" = None  # late-init: on_activate
+        self.style_manager: "Adw.StyleManager | None" = None  # late-init: on_activate
+
+        # The asset chooser window, built on first use and nulled again by its
+        # own close handler, so the next request builds a fresh one.
+        self.asset_manager: "AssetManager | None" = None  # late-init: let_user_select_asset
 
         self.connect("activate", self.on_activate)
 
-        css_provider = Gtk.CssProvider()
-        css_provider.load_from_path(os.path.join(gl.top_level_dir, "style.css"))
-        Gtk.StyleContext.add_provider_for_display(Gdk.Display.get_default(), css_provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+        display = Gdk.Display.get_default()
+        if display is not None:
+            css_provider = Gtk.CssProvider()
+            css_provider.load_from_path(os.path.join(gl.top_level_dir, "style.css"))
+            Gtk.StyleContext.add_provider_for_display(display, css_provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
 
-        icon_theme = Gtk.IconTheme.get_for_display(Gdk.Display.get_default())
-        icon_theme.add_search_path(os.path.join(gl.top_level_dir, "Assets", "icons"))
+            icon_theme = Gtk.IconTheme.get_for_display(display)
+            icon_theme.add_search_path(os.path.join(gl.top_level_dir, "Assets", "icons"))
 
-    def on_activate(self, app):
+    def on_activate(self, app: "App") -> None:
         log.trace("running: on_activate")
         if getattr(self, "_activate_completed", False):
             # GApplication forwards a second launch here as a remote
@@ -172,7 +182,11 @@ class App(Adw.Application):
         self._ui_adapter = adapter
         ui_port.install(adapter)
         try:
-            self.main_win = MainWindow(application=app, deck_manager=self.deck_manager)
+            deck_manager = self.deck_manager
+            if deck_manager is None:
+                # main() builds it before app.run().
+                raise RuntimeError("on_activate ran before the deck manager was built")
+            self.main_win = MainWindow(application=app, deck_manager=deck_manager)
         except Exception:
             ui_port.install(None)
             self._ui_adapter = None
@@ -210,7 +224,8 @@ class App(Adw.Application):
         # subprocess launch cannot block this GTK main loop. Background mode
         # needs it most, because no config UI opens there to start a backend
         # before the first hardware press.
-        gl.plugin_manager.warm_up_plugins()
+        if gl.plugin_manager is not None:
+            gl.plugin_manager.warm_up_plugins()
 
         # Set this last. Everything above completed, so a re-activation can
         # take the present-only early return.
@@ -218,22 +233,24 @@ class App(Adw.Application):
 
         log.success("Finished loading app")
 
-    def on_reopen(self, *args, **kwargs):
+    def on_reopen(self, *args: Any, **kwargs: Any) -> None:
         self.main_win.present()
         log.info("awake")
 
         self.show_donate(ignore_background_launch=True)
 
-    def let_user_select_asset(self, default_path, callback_func=None, *callback_args, **callback_kwargs):
+    def let_user_select_asset(self, default_path: str | None, callback_func: Callable[..., Any] | None = None, *callback_args: Any, **callback_kwargs: Any) -> None:
         # Reuse the window instead of orphaning it with a new one. on_close()
         # nulls gl.asset_manager and self.asset_manager, so this constructs the
         # window on first use, and again after a close.
-        if getattr(self, "asset_manager", None) is None:
-            self.asset_manager = AssetManager(application=self, main_window=self.main_win)
-            gl.asset_manager = self.asset_manager
-        self.asset_manager.show_for_path(default_path, callback_func, *callback_args, **callback_kwargs)
+        asset_manager = self.asset_manager
+        if asset_manager is None:
+            asset_manager = AssetManager(application=self, main_window=self.main_win)
+            self.asset_manager = asset_manager
+            gl.asset_manager = asset_manager
+        asset_manager.show_for_path(default_path, callback_func, *callback_args, **callback_kwargs)
 
-    def show_donate(self, ignore_background_launch: bool = False):
+    def show_donate(self, ignore_background_launch: bool = False) -> None:
         if not ignore_background_launch and gl.argparser.parse_args().b:
             return
         if gl.showed_donate_window:
@@ -254,7 +271,7 @@ class App(Adw.Application):
         self.donate = DonateWindow()
         self.donate.present(self.main_win)
 
-    def show_onboarding(self):
+    def show_onboarding(self) -> None:
         if gl.argparser.parse_args().b:
             return
         if os.path.exists(os.path.join(gl.DATA_PATH, ".skip-onboarding")):
@@ -267,7 +284,7 @@ class App(Adw.Application):
         with open(os.path.join(gl.DATA_PATH, ".skip-onboarding"), "w") as f:
             f.write("")
 
-    def show_permissions(self):
+    def show_permissions(self) -> None:
         portal = Xdp.Portal.new()
         if not portal.running_under_flatpak():
             return
@@ -279,7 +296,7 @@ class App(Adw.Application):
                 return
         self.permissions.present()
 
-    def on_quit(self, *args):
+    def on_quit(self, *args: Any) -> None:
         # Run at most once. Many routes reach here: the TERM and HUP source,
         # which stays armed for every further signal, the main-loop idle that
         # Ctrl+C queues, the Gio quit action, the tray, and the window close
@@ -342,7 +359,8 @@ class App(Adw.Application):
         # stop event wakes a rescan that waits in backoff, and the bounded join
         # covers an enumeration in flight, so the rescan cannot register a new
         # controller while the quit path closes the existing ones.
-        gl.deck_manager.stop_boot_rescan()
+        if gl.deck_manager is not None:
+            gl.deck_manager.stop_boot_rescan()
 
         # Write every page edit that still waits on its debounce timer. Those
         # timers run on daemon threads, and this process ends in os._exit, so a
@@ -388,9 +406,11 @@ class App(Adw.Application):
         # closed the device. It also runs before the slow joins. A deck that
         # is still open when force_quit fires fails the next startup with
         # TransportError(-1).
-        gl.deck_manager.close_all()
+        deck_manager = gl.deck_manager
+        if deck_manager is not None:
+            deck_manager.close_all()
 
-        for ctrl in gl.deck_manager.deck_controller:
+        for ctrl in (deck_manager.deck_controller if deck_manager is not None else []):
             # app_quit=True skips the action teardown, which can run plugin
             # hooks through run_on_main. on_quit already runs on the main
             # thread against the 6 s force_quit timer, and a plugin gains
@@ -399,9 +419,8 @@ class App(Adw.Application):
             # close here does nothing.
             ctrl.close(remove_media=True, app_quit=True)
 
-        gl.deck_manager.stop_usb_monitoring()
-
-        gl.plugin_manager.loop_daemon = False
+        if deck_manager is not None:
+            deck_manager.stop_usb_monitoring()
 
         from src.backend.main_loop import shutdown_background_pool
         shutdown_background_pool()
@@ -420,7 +439,8 @@ class App(Adw.Application):
 
         # Terminate the plugin and action backend subprocesses. They are the
         # only child processes this app owns.
-        gl.plugin_manager.terminate_all_backends()
+        if gl.plugin_manager is not None:
+            gl.plugin_manager.terminate_all_backends()
 
         gl.tray_icon.stop()
 
@@ -462,7 +482,7 @@ class App(Adw.Application):
             # native and not a Python exception.
             log.warning(f"Failed to destroy the main window during shutdown: {e}")
 
-    def force_quit(self):
+    def force_quit(self) -> None:
         log.info("Forcing quit...")
         # Last chance to reap the plugin backends. They start with
         # start_new_session=True, so nothing kills them after this os._exit.
@@ -470,12 +490,13 @@ class App(Adw.Application):
         # from the timer-wheel dispatch thread, and it can run beside a
         # concurrent on_quit.
         try:
-            gl.plugin_manager.terminate_all_backends()
+            if gl.plugin_manager is not None:
+                gl.plugin_manager.terminate_all_backends()
         except Exception as e:
             log.warning(f"Failed to terminate plugin backends during force quit: {e}")
         os._exit(1)
 
-    def _on_unix_signal(self, *args):
+    def _on_unix_signal(self, *args: Any) -> bool:
         """SIGTERM and SIGHUP entry point. Runs on_quit and keeps the source.
 
         The Gio quit action and the GLib.idle_add(on_quit) routes do not use
@@ -492,7 +513,7 @@ class App(Adw.Application):
         # once a teardown runs, so a plain return disarms the handler.
         return GLib.SOURCE_CONTINUE
 
-    def _on_sigint(self, signum, frame):
+    def _on_sigint(self, signum: int, frame: "FrameType | None") -> None:
         """SIGINT entry point. Queues the teardown, and escalates on a wedge.
 
         The _quit_started gate keeps a press during a running teardown a no-op.
@@ -527,7 +548,7 @@ class App(Adw.Application):
         # priority sits below the GTK frame-clock redraws.
         GLib.idle_add(self.on_quit, priority=GLib.PRIORITY_DEFAULT)
 
-    def register_signal_handlers(self):
+    def register_signal_handlers(self) -> None:
         # SIGINT stays a Python-level handler. The PyGObject wakeup-fd bridge
         # fires it promptly under the GLib loop, and a custom handler keeps
         # register_sigint_fallback in Gio.Application.run inert. That fallback
@@ -554,7 +575,7 @@ class App(Adw.Application):
             )
             signal.signal(signum, self._on_unix_signal)
 
-    def add_signals(self):
+    def add_signals(self) -> None:
         self.update_all_assets_action = Gio.SimpleAction.new("update-all-assets", None)
         self.update_all_assets_action.connect("activate", self.update_all_assets)
         self.add_action(self.update_all_assets_action)
@@ -563,32 +584,37 @@ class App(Adw.Application):
         self.install_plugin_action.connect("activate", self.install_plugin)
         self.add_action(self.install_plugin_action)
 
-    def update_all_assets(self, *args, **kwargs):
+    def update_all_assets(self, *args: Any, **kwargs: Any) -> None:
         threading.Thread(target=self._update_all_assets, name="update_all_assets").start()
 
     @log.catch
-    def _update_all_assets(self):
+    def _update_all_assets(self) -> None:
         self.set_working(True)
 
-        result = gl.store_backend.update_everything()
+        store_backend = gl.store_backend
+        if store_backend is None:
+            self.set_working(False)
+            return
+        result = store_backend.update_everything()
 
         self.set_working(False)
 
         # update_everything returns Ok(count) or Err. A failure must not
         # report success.
         if isinstance(result, Ok):
-            gl.app.send_notification("dialog-information-symbolic", "Assets updated",
+            self.send_notification("dialog-information-symbolic", "Assets updated",
                                      f"{result.value} assets have been updated")
         else:
-            gl.app.send_notification("dialog-information-symbolic", "Asset update failed",
+            self.send_notification("dialog-information-symbolic", "Asset update failed",
                                      "Could not reach the store to update assets")
 
-    def install_plugin(self, action, plugin_id: GLib.Variant):
-        plugin_id = plugin_id.unpack()
-        threading.Thread(target=self._install_plugin, args=(plugin_id,), name="install_plugin").start()
+    def install_plugin(self, action: Gio.SimpleAction, plugin_id: GLib.Variant) -> None:
+        # A new name: after unpack the value is a str, not a Variant.
+        plugin_id_str: str = plugin_id.unpack()
+        threading.Thread(target=self._install_plugin, args=(plugin_id_str,), name="install_plugin").start()
 
     @log.catch
-    def _install_plugin(self, plugin_id: str):
+    def _install_plugin(self, plugin_id: str) -> None:
         store_backend = gl.store_backend
         if store_backend is None:
             log.error(f"Cannot install plugin {plugin_id}: no store backend")
@@ -629,7 +655,7 @@ class App(Adw.Application):
                           icon_name: str,
                           title: str,
                           body: str,
-                          button: tuple[str, str, GLib.Variant] = None,
+                          button: tuple[str, str, GLib.Variant | None] | None = None,
                           category: str = "im.error") -> None:
         """Safe from any thread, because the body runs on the GTK main thread.
 
@@ -670,7 +696,7 @@ class App(Adw.Application):
             f"The plugin {plugin_id} is missing. Please install it.",
             button=("Install", "app.install-plugin", GLib.Variant.new_string(plugin_id))
         )
-    def open_store(self, callback_agreed: bool = None) -> None:
+    def open_store(self, callback_agreed: bool | None = None) -> None:
         agreed = gl.settings_manager.app().responsibility_notes_agreed
 
         if not agreed:

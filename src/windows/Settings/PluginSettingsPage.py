@@ -14,6 +14,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 """
 from gi.repository import Gtk, Adw, GLib
 
+from loguru import logger as log
+
 from GtkHelper.ConfirmationDialog import ConfirmationDialog
 from GtkHelper.GtkHelper import BetterPreferencesGroup
 from src.backend.PluginManager.PluginBase import PluginBase
@@ -22,7 +24,7 @@ import globals as gl
 from .PluginSettingsWindow.PluginSettingsWindow import PluginSettingsWindow
 from .PluginAbout import PluginAboutFactory
 
-from typing import TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 if TYPE_CHECKING:
     # A runtime import cycles, because Settings.py imports this module.
     from src.windows.Settings.Settings import Settings
@@ -43,15 +45,25 @@ class PluginSettingsGroup(BetterPreferencesGroup):
         self.plugin_page: PluginSettingsPage = plugin_page
         self.load()
 
-    def load(self):
+    def load(self) -> None:
         self.clear()
-        for plugin_id in gl.plugin_manager.get_plugins():
-            plugin_base = gl.plugin_manager.get_plugin_by_id(plugin_id)
+        plugin_manager = gl.plugin_manager
+        if plugin_manager is None:
+            # Nothing to list before main.create_global_objects() builds it,
+            # and this page can open with no plugins at all.
+            return
+        for plugin_id in plugin_manager.get_plugins():
+            plugin_base = plugin_manager.get_plugin_by_id(plugin_id)
+            if plugin_base is None:
+                # get_plugins keyed it a moment ago, so an absence here means
+                # another thread removed it. Skip the row rather than build
+                # one whose every button dereferences None.
+                continue
             self.add(PluginExpander(settings_group=self, plugin_base=plugin_base))
 
 
 class IconTextButton(Gtk.Button):
-    def __init__(self, icon_name: str, text: str, **kwargs):
+    def __init__(self, icon_name: str, text: str, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
         self.set_child(self.box)
@@ -84,17 +96,17 @@ class PluginExpander(Adw.ActionRow):
         self.uninstall_button.connect("clicked", self.on_uninstall_button_clicked)
 
 
-    def on_settings_window_button_clicked(self, *args):
+    def on_settings_window_button_clicked(self, *args: Any) -> None:
         settings = PluginSettingsWindow(self.plugin_base)
         settings.present(self.settings_group.plugin_page.settings)
 
-    def on_changelog_window_button_clicked(self, *args):
+    def on_changelog_window_button_clicked(self, *args: Any) -> None:
         factory = PluginAboutFactory(self.plugin_base)
         about = factory.create_new_about()
 
         about.present(self)
 
-    def on_uninstall_button_clicked(self, *args):
+    def on_uninstall_button_clicked(self, *args: Any) -> None:
         dialog = ConfirmationDialog(
             title="Uninstall ?",
             body=f'Are you sure you want to uninstall "{self.plugin_base.plugin_name}"?',
@@ -104,19 +116,24 @@ class PluginExpander(Adw.ActionRow):
         )
         dialog.show()
 
-    def uninstall_plugin(self):
+    def uninstall_plugin(self) -> None:
         self.uninstall_button.set_sensitive(False)
         self.uninstall_button.set_child(Gtk.Spinner(spinning=True))
 
-        def do():
-            gl.store_backend.uninstall_plugin(self.plugin_base.plugin_id)
+        def do() -> None:
+            backend = gl.store_backend
+            plugin_id = self.plugin_base.plugin_id
+            if backend is None:
+                log.error(f"Store backend unavailable; cannot uninstall {plugin_id}")
+                return
+            backend.uninstall_plugin(plugin_id)
             self.settings_group.load()
 
         GLib.idle_add(do)
 
 
 class ToggleRow(Adw.ActionRow):
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
         self.set_title("Test setting")
         self.set_subtitle("Test setting description")

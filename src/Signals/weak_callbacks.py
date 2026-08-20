@@ -27,7 +27,7 @@ every callback strong. This isolates a plugin regression to this file.
 import os
 import threading
 import weakref
-from typing import Callable
+from typing import Any, Callable, Iterator, cast
 
 from loguru import logger as log
 
@@ -40,11 +40,11 @@ _STRONG_CALLBACKS = os.environ.get("SC_STRONG_CALLBACKS") == "1"
 _Entry = object
 
 
-def _is_bound_method(cb: Callable) -> bool:
+def _is_bound_method(cb: Callable[..., Any]) -> bool:
     return hasattr(cb, "__self__") and hasattr(cb, "__func__")
 
 
-def describe_callback(cb: Callable) -> str:
+def describe_callback(cb: Callable[..., Any]) -> str:
     """Give a printable identity for a live callback.
 
     Public because the synchronous signal fan-out names a failed handler with
@@ -55,7 +55,7 @@ def describe_callback(cb: Callable) -> str:
     return f"{module}.{qualname}" if module else qualname
 
 
-class _WeakMethodEntry(weakref.WeakMethod):
+class _WeakMethodEntry(weakref.WeakMethod[Any]):
     """A WeakMethod that keeps a printable description of its method.
 
     A dead WeakMethod resolves to None and cannot name its target, so __new__
@@ -65,17 +65,19 @@ class _WeakMethodEntry(weakref.WeakMethod):
 
     description: str
 
-    def __new__(cls, meth: Callable):
+    def __new__(cls, meth: Callable[..., Any]) -> "_WeakMethodEntry":
         self = super().__new__(cls, meth)
         self.description = describe_callback(meth)
         return self
 
 
-def _resolve_entry(entry: _Entry):
+def _resolve_entry(entry: _Entry) -> Callable[..., Any] | None:
     """Return the live callable an entry refers to, or None if it died."""
     if isinstance(entry, weakref.WeakMethod):
         return entry()
-    return entry
+    # _Entry is object, because an entry is either a WeakMethod or the plain
+    # callable _make_entry stored. This arm is the second of those.
+    return cast("Callable[..., Any]", entry)
 
 
 class CallbackRegistry:
@@ -90,12 +92,12 @@ class CallbackRegistry:
         # A list and not a set, because callers depend on the connect order.
         self._entries: list[_Entry] = []
 
-    def _make_entry(self, cb: Callable) -> _Entry:
+    def _make_entry(self, cb: Callable[..., Any]) -> _Entry:
         if not _STRONG_CALLBACKS and _is_bound_method(cb):
             return _WeakMethodEntry(cb)
         return cb
 
-    def add(self, cb: Callable) -> bool:
+    def add(self, cb: Callable[..., Any]) -> bool:
         """Add cb unless an equal live entry is already present.
 
         Returns True after an add and False after a dedupe. Also prunes the
@@ -128,7 +130,7 @@ class CallbackRegistry:
             self._entries.append(entry)
             return True
 
-    def remove(self, cb: Callable) -> None:
+    def remove(self, cb: Callable[..., Any]) -> None:
         """Remove cb if present, else do nothing. Also prunes dead entries."""
         with self._lock:
             kept = []
@@ -141,7 +143,7 @@ class CallbackRegistry:
                 kept.append(entry)
             self._entries = kept
 
-    def snapshot(self) -> list[Callable]:
+    def snapshot(self) -> list[Callable[..., Any]]:
         """Return the live callables and prune the dead entries.
 
         Each prune logs at DEBUG. A bound method whose owner is unreferenced
@@ -173,7 +175,7 @@ class CallbackRegistry:
             )
         return live_callbacks
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[Callable[..., Any]]:
         # Direct iteration gives the same live and pruned view as snapshot().
         return iter(self.snapshot())
 

@@ -6,6 +6,7 @@ from gi.repository import Gtk, Adw, GObject
 import re
 import socket
 from loguru import logger as log
+from typing import Any
 
 class IpEntryRow(Adw.PreferencesRow):
     __gtype_name__ = "IpEntryRow"
@@ -13,17 +14,17 @@ class IpEntryRow(Adw.PreferencesRow):
         'ip-changed': (GObject.SignalFlags.RUN_FIRST, None, (str,)),
     }
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
 
-        self.ip_boxes: dict[int, (Gtk.Entry, Gtk.EventControllerFocus)] = {}
+        self.ip_boxes: dict[int, tuple[Gtk.Entry, Gtk.EventControllerFocus]] = {}
 
         self.main_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
         self.set_child(self.main_box)
 
         self.build()
 
-    def build(self):
+    def build(self) -> None:
         self.label = Gtk.Label(label="Ip Address", margin_start=10)
         self.main_box.append(self.label)
 
@@ -47,14 +48,14 @@ class IpEntryRow(Adw.PreferencesRow):
 
         self.connect_events()
 
-    def connect_events(self):
+    def connect_events(self) -> None:
         for _, (ip_box, controller) in self.ip_boxes.items():
             ip_box.connect("activate", self.ip_box_enter_pressed)
             ip_box.connect("changed", self.ip_text_changed)
             controller.connect("leave", self.ip_changed)
 
 
-    def disconnect_events(self):
+    def disconnect_events(self) -> None:
         try:
             for _, (ip_box, controller) in self.ip_boxes.items():
                 ip_box.disconnect_by_func(self.ip_box_enter_pressed)
@@ -65,7 +66,7 @@ class IpEntryRow(Adw.PreferencesRow):
             # already disconnected.
             pass
 
-    def ip_box_enter_pressed(self, entry: Gtk.Entry):
+    def ip_box_enter_pressed(self, entry: Gtk.Entry) -> None:
         for key, (ip_box, _) in self.ip_boxes.items():
             if ip_box.get_name() != entry.get_name():
                 continue
@@ -76,7 +77,7 @@ class IpEntryRow(Adw.PreferencesRow):
                 break
         self.ip_changed()
 
-    def ip_text_changed(self, entry: Gtk.Entry):
+    def ip_text_changed(self, entry: Gtk.Entry) -> None:
         ip_text = entry.get_text()
         dot_index = ip_text.find(".")
 
@@ -100,7 +101,7 @@ class IpEntryRow(Adw.PreferencesRow):
         self.connect_events()
         self.ip_changed()
 
-    def ip_changed(self, *args):
+    def ip_changed(self, *args: Any) -> None:
         self.emit('ip-changed', self.get_ip())
 
     def get_ip(self) -> str:
@@ -112,7 +113,7 @@ class IpEntryRow(Adw.PreferencesRow):
                 out += "."
         return out
 
-    def set_ip(self, ip_address: str):
+    def set_ip(self, ip_address: str) -> None:
         self.disconnect_events()
 
         regex = r'(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})'
@@ -128,7 +129,7 @@ class IpEntryRow(Adw.PreferencesRow):
         self.connect_events()
         self.emit('ip-changed', self.get_ip())
 
-    def set_ip_by_hostname(self, hostname: str):
+    def set_ip_by_hostname(self, hostname: str) -> None:
         try:
             ip_address = socket.gethostbyname(hostname)
             self.set_ip(ip_address)
@@ -143,7 +144,7 @@ class HostnameEntryRow(Adw.PreferencesRow):
         'hostname-changed': (GObject.SignalFlags.RUN_FIRST, None, (str,)),
     }
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
 
         self.main_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
@@ -151,7 +152,7 @@ class HostnameEntryRow(Adw.PreferencesRow):
 
         self.build()
 
-    def build(self):
+    def build(self) -> None:
         self.label = Gtk.Label(label="Hostname", margin_start=10)
         self.main_box.append(self.label)
 
@@ -163,25 +164,25 @@ class HostnameEntryRow(Adw.PreferencesRow):
 
         self.connect_events()
 
-    def connect_events(self):
+    def connect_events(self) -> None:
         self.hostname_entry.connect("activate", self.hostname_changed)
         self.focus_listener.connect("leave", self.hostname_changed)
 
-    def disconnect_events(self):
+    def disconnect_events(self) -> None:
         try:
             self.hostname_entry.disconnect_by_func(self.hostname_changed)
             self.focus_listener.disconnect_by_func(self.hostname_changed)
         except TypeError:
             pass
 
-    def hostname_changed(self, *args):
+    def hostname_changed(self, *args: Any) -> None:
         self.emit('hostname-changed', self.hostname_entry.get_text())
 
 
     def get_hostname(self) -> str:
         return self.hostname_entry.get_text()
 
-    def set_hostname(self, hostname: str):
+    def set_hostname(self, hostname: str) -> None:
         try:
             socket.gethostbyname(hostname)
             self.hostname_entry.set_text(hostname)
@@ -189,7 +190,7 @@ class HostnameEntryRow(Adw.PreferencesRow):
             log.error(f"Error while getting hostname {hostname}. {e}")
             self.hostname_entry.set_text("")
 
-    def set_hostname_by_ip(self, ip_address: str):
+    def set_hostname_by_ip(self, ip_address: str) -> None:
         try:
             hostname, _, _ = socket.gethostbyaddr(ip_address)
             self.hostname_entry.set_text(hostname)
@@ -201,7 +202,7 @@ class HostnameEntryRow(Adw.PreferencesRow):
 class NetworkEntryRow(Adw.PreferencesRow):
     __gtype_name__ = "NetworkEntryRow"
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
 
         self.main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -217,12 +218,12 @@ class NetworkEntryRow(Adw.PreferencesRow):
         self.ip_box.connect("ip-changed", self.ip_changed)
         self.hostname_box.connect("hostname-changed", self.hostname_changed)
 
-    def ip_changed(self, entry, ip):
+    def ip_changed(self, entry: IpEntryRow, ip: str) -> None:
         self.hostname_box.disconnect_events()
         self.hostname_box.set_hostname_by_ip(ip)
         self.hostname_box.connect_events()
 
-    def hostname_changed(self, entry, hostname):
+    def hostname_changed(self, entry: HostnameEntryRow, hostname: str) -> None:
         self.ip_box.disconnect_events()
         self.ip_box.set_ip_by_hostname(hostname)
         self.ip_box.connect_events()
@@ -233,14 +234,14 @@ class NetworkEntryRow(Adw.PreferencesRow):
     def get_hostname(self) -> str:
         return self.hostname_box.get_hostname()
 
-    def set_ip(self, ip_address: str):
+    def set_ip(self, ip_address: str) -> None:
         self.ip_box.set_ip(ip_address)
 
-    def set_ip_by_hostname(self, hostname: str):
+    def set_ip_by_hostname(self, hostname: str) -> None:
         self.ip_box.set_ip_by_hostname(hostname)
 
-    def set_hostname(self, hostname: str):
+    def set_hostname(self, hostname: str) -> None:
         self.hostname_box.set_hostname(hostname)
 
-    def set_hostname_by_ip(self, ip_address: str):
+    def set_hostname_by_ip(self, ip_address: str) -> None:
         self.hostname_box.set_hostname_by_ip(ip_address)

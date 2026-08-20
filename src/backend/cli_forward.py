@@ -18,7 +18,7 @@ this work lives here where a scenario drives it.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 
 import appinfo
 from src.backend import startup_queue
@@ -26,6 +26,10 @@ from src.backend import startup_queue
 if TYPE_CHECKING:
     from argparse import Namespace
     from typing import Protocol
+
+    # _connect() imports GLib on demand, so this stays out of the runtime
+    # closure and the annotation that uses it stays a string.
+    from gi.repository import GLib
 
     class Transport(Protocol):
         """What forwarding needs from the running instance."""
@@ -123,7 +127,7 @@ class Verdict:
 
 # Syntax
 
-def _parse_state_requests(raw: list) -> tuple[list[tuple[str, str, str, int]],
+def _parse_state_requests(raw: list[Any]) -> tuple[list[tuple[str, str, str, int]],
                                               list[str]]:
     """Read the --change-state groups into (serial, page, coords, state).
 
@@ -181,7 +185,7 @@ def _parse_state_requests(raw: list) -> tuple[list[tuple[str, str, str, int]],
 
 # The two things an invocation can do with its requests
 
-def _park(page_requests: list, state_requests: list[tuple[str, str, str, int]]) -> None:
+def _park(page_requests: list[Any], state_requests: list[tuple[str, str, str, int]]) -> None:
     """Hand every request to the startup queue, for the decks this process
     enumerates next. The serial keys each request and the last write wins,
     which is the parking contract rather than an effect of this loop."""
@@ -196,7 +200,7 @@ def _park(page_requests: list, state_requests: list[tuple[str, str, str, int]]) 
         })
 
 
-def _forward(transport: Transport, page_requests: list,
+def _forward(transport: Transport, page_requests: list[Any],
              state_requests: list[tuple[str, str, str, int]]) -> list[str]:
     """Send every request to the running instance and collect what it said.
 
@@ -353,7 +357,7 @@ class _BusTransport:
             self._glib.Variant("(sssi)", (serial, page, coords, state)),
         )
 
-    def _call(self, method: str, params) -> str:
+    def _call(self, method: str, params: "GLib.Variant | None") -> str:
         try:
             reply = self._connection.call_sync(
                 appinfo.APP_ID,

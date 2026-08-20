@@ -19,6 +19,12 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Gtk, Adw
 
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from src.windows.mainWindow.elements.DeckStack import DeckStack
+    from src.backend.DeckManagement.deck_controller.controller import DeckController
+
 # Import own modules
 from src.windows.mainWindow.elements.DeckSettings.DeckSettingsPage import DeckSettingsPage
 from src.windows.mainWindow.elements.PageSettingsPage import PageSettingsPage
@@ -31,14 +37,14 @@ class DeckStackChild(Gtk.Overlay):
     Child of DeckStack
     This stack features one page for the page specific settings and one for the deck settings
     """
-    def __init__(self, deck_stack, deck_controller, **kwargs):
+    def __init__(self, deck_stack: "DeckStack", deck_controller: "DeckController", **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.deck_stack = deck_stack
         self.deck_controller = deck_controller
 
         self.build()
 
-    def build(self):
+    def build(self) -> None:
         self.main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, hexpand=True, vexpand=True)
         self.set_child(self.main_box)
 
@@ -60,5 +66,5 @@ class DeckStackChild(Gtk.Overlay):
         self.low_fps_banner.connect("button-clicked", self.on_banner_dismiss)
         self.main_box.prepend(self.low_fps_banner)
 
-    def on_banner_dismiss(self, banner):
+    def on_banner_dismiss(self, banner: Adw.Banner) -> None:
         banner.set_revealed(False)

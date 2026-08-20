@@ -26,7 +26,7 @@ from src.windows.AssetManager.IconPacks.Icons.IconPreview import IconPreview
 # Import python modules
 
 # Import typing
-from typing import TYPE_CHECKING
+from typing import cast, Any, TYPE_CHECKING
 if TYPE_CHECKING:
     from src.backend.IconPackManagement.Icon import Icon
     from src.backend.IconPackManagement.IconPack import IconPack
@@ -37,14 +37,14 @@ class IconChooserPage(GenericAssetChooserPage):
     FLOW_BOX_CLASS = WallpaperFlowBox
     PREVIEW_CLASS = IconPreview
 
-    def get_assets(self, pack: "IconPack") -> list:
+    def get_assets(self, pack: "IconPack") -> list[Any]:
         return pack.get_icons()
 
     def bind_preview(self, preview: IconPreview, icon: "Icon") -> None:
         preview.set_icon(icon)
 
-    def get_child_asset(self, child) -> "Icon":
-        return child.icon
+    def get_child_asset(self, child: Any) -> "Icon":
+        return cast("Icon", child.icon)
 
     def on_build_finished(self) -> None:
         # The icon stack gates a deferred show_for_path task on the

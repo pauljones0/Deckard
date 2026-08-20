@@ -19,6 +19,8 @@ gi.require_version("Adw", "1")
 from gi.repository import Gtk, Adw
 
 # Import globals
+from src.backend import services
+
 import globals as gl
 
 from collections.abc import Callable
@@ -26,7 +28,7 @@ from typing import Any
 
 class MultiDeckSelector(Gtk.ApplicationWindow):
     def __init__(self, application: Gtk.Application, source_window: Gtk.ApplicationWindow,
-                 selected_deck_serials: list[str] = None, callback: Callable[[str, bool], Any] | None = None):
+                 selected_deck_serials: list[str] | None = None, callback: Callable[[str, bool], Any] | None = None):
         super().__init__(application=application,
                          title=gl.lm.get("multi-deck-selector.title"),
                          transient_for=source_window,
@@ -44,7 +46,7 @@ class MultiDeckSelector(Gtk.ApplicationWindow):
         self.load_decks()
         self.set_selected_deck_serials(self.selected_deck_serials)
 
-    def build(self):
+    def build(self) -> None:
         self.header = Adw.HeaderBar(css_classes=["flat"])
         self.set_titlebar(self.header)
 
@@ -61,15 +63,22 @@ class MultiDeckSelector(Gtk.ApplicationWindow):
         self.not_attached_label = Gtk.Label(css_classes=["dim-label"], margin_bottom=3, margin_top=3)
         self.main_box.append(self.not_attached_label)
 
-    def load_decks(self):
-        for controller in gl.deck_manager.deck_controller:
-            serial_number, name = gl.app.main_win.leftArea.deck_stack.get_page_attributes(controller)
+    def load_decks(self) -> None:
+        for controller in services.require_deck_manager().deck_controller:
+            deck_stack = services.require_main_window().leftArea.deck_stack
+            attributes = deck_stack.get_page_attributes(controller)
+            # A deck whose serial number could not be read has no attributes.
+            # DeckStack.add_page skips it the same way, so it has no stack
+            # child to select either.
+            if attributes is None:
+                continue
+            serial_number, name = attributes
 
             row = DeckRow(self, name, serial_number, False)
             self.rows.append(row)
             self.deck_box.append(row)
 
-    def call_callback(self, serial_number: str, state: bool):
+    def call_callback(self, serial_number: str, state: bool) -> None:
         if callable(self.callback):
             self.callback(serial_number, state)
 
@@ -83,7 +92,7 @@ class MultiDeckSelector(Gtk.ApplicationWindow):
                 n += 1
         return n
     
-    def set_selected_deck_serials(self, serials: list[str]):
+    def set_selected_deck_serials(self, serials: list[str]) -> None:
         for row in self.rows:
             if row.deck_serial_number in serials:
                 row.set_active(True)
@@ -109,5 +118,5 @@ class DeckRow(Gtk.CheckButton):
 
         self.connect("toggled", self.on_toggled)
 
-    def on_toggled(self, button: Gtk.CheckButton):
+    def on_toggled(self, button: Gtk.CheckButton) -> None:
         self.selector.call_callback(self.deck_serial_number, button.get_active())

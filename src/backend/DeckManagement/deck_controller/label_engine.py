@@ -34,7 +34,7 @@ from src.backend import ui_port
 
 import globals as gl
 
-from typing import TYPE_CHECKING, cast
+from typing import Any, TYPE_CHECKING, cast
 if TYPE_CHECKING:
     from src.backend.DeckManagement.deck_controller.inputs import ControllerInput
 
@@ -47,7 +47,7 @@ if TYPE_CHECKING:
         places that rely on it.
         """
         text: str
-        font_size: int
+        font_size: float
         font_name: str
         font_weight: int
         style: str
@@ -100,17 +100,17 @@ class _BitmapRecorder:
     Past either bound it raises _RecordingTooLarge at once."""
     __slots__ = ("_core", "ops", "_max_ops", "_max_bytes", "_bytes")
 
-    def __init__(self, core, max_ops: int, max_bytes: int):
+    def __init__(self, core: Any, max_ops: int, max_bytes: int) -> None:
         self._core = core
-        self.ops: list[tuple] = []
+        self.ops: list[tuple[Any, ...]] = []
         self._max_ops = max_ops
         self._max_bytes = max_bytes
         self._bytes = 0
 
-    def __getattr__(self, name):
+    def __getattr__(self, name: str) -> Any:
         return getattr(self._core, name)
 
-    def draw_bitmap(self, coord, mask, ink) -> int:
+    def draw_bitmap(self, coord: Any, mask: Any, ink: Any) -> int:
         # The mask is an 8-bit coverage ImagingCore, so 1 byte per pixel.
         self._bytes += mask.size[0] * mask.size[1]
         if len(self.ops) >= self._max_ops or self._bytes > self._max_bytes:
@@ -122,7 +122,7 @@ class _BitmapRecorder:
 
 
 class LabelManager:
-    def __init__(self, controller_input: "ControllerInput"):
+    def __init__(self, controller_input: "ControllerInput[Any]"):
         self.controller_input = controller_input
         
         self.page_labels: dict[str, "KeyLabel"] = {}
@@ -152,16 +152,16 @@ class LabelManager:
         # outline rasterized once onto a transparent strip. A scroll frame
         # composites a window of it instead of a draw.text, which costs
         # ~2.5ms per key.
-        self._scroll_strips: dict[str, tuple] = {}
+        self._scroll_strips: dict[str, tuple[Any, ...]] = {}
         # {position: (cache key, blit ops or None)}: the static label's glyph
         # masks, rasterized once and replayed per frame. A per-tick draw.text
         # with stroke costs ~820us per key, ~50% of the tick on a populated
         # animated page. None ops pins this position to the direct draw.
-        self._static_ops: dict[str, tuple] = {}
+        self._static_ops: dict[str, tuple[Any, ...]] = {}
         # {position: (cache key, (w, h))}: the textbbox measurement of the
         # composed label. The FreeType layout pass is the second-biggest
         # per-frame cost, after the raster.
-        self._bbox_cache: dict[str, tuple] = {}
+        self._bbox_cache: dict[str, tuple[Any, ...]] = {}
         # (epoch, {position: KeyLabel}): the merged page, action and default
         # labels. See get_composed_labels() for the invalidation contract.
         self._composed_labels_cache: tuple[int, dict[str, "ComposedKeyLabel"]] | None = None
@@ -172,13 +172,13 @@ class LabelManager:
         # means fresh, and starts with the leading hold. Wall clock, not tick
         # count, so an event wake that pushes the loop past its nominal FPS
         # cannot change the scroll speed.
-        self.frames: dict[str, dict] = {
+        self.frames: dict[str, dict[str, Any]] = {
             "top": {"position": 0, "next_step_at": None},
             "center": {"position": 0, "next_step_at": None},
             "bottom": {"position": 0, "next_step_at": None},
         }
 
-    def init_labels(self):
+    def init_labels(self) -> None:
         for position in ["top", "center", "bottom"]:
             self.page_labels[position] = KeyLabel(self.controller_input)
             self.action_labels[position] = KeyLabel(self.controller_input)
@@ -224,14 +224,14 @@ class LabelManager:
         self._scroll_strips.clear()
         self._static_ops.clear()
 
-    def clear_labels(self):
+    def clear_labels(self) -> None:
         self.init_labels()
         self._bump_label_epoch()
         self._scroll_strips.clear()
         self._static_ops.clear()
         self._bbox_cache.clear()
 
-    def set_page_label(self, position: str, label: "KeyLabel", update: bool = True):
+    def set_page_label(self, position: str, label: "KeyLabel | None", update: bool = True) -> None:
         if label is None:
             label = self.page_labels[position]
             label.clear_values()
@@ -252,7 +252,7 @@ class LabelManager:
                 and a.outline_color == b.outline_color
                 and a.alignment == b.alignment)
 
-    def set_action_label(self, position: str, label: "KeyLabel", update: bool = True):
+    def set_action_label(self, position: str, label: "KeyLabel | None", update: bool = True) -> None:
         if label is None:
             label = self.action_labels[position]
             label.clear_values()
@@ -268,7 +268,7 @@ class LabelManager:
         if update:
             self.update_label(position)
 
-    def update_label_editor(self):
+    def update_label_editor(self) -> None:
         """Kept as the caller-facing name; the widget work belongs to the
         adapter. Page.set_label_* calls this on every label styling change,
         at 8 sites, and the trailing update_input repaint runs after it. So
@@ -278,7 +278,7 @@ class LabelManager:
             self.controller_input.deck_controller, self.controller_input.identifier,
             self.controller_input.state, "labels")
 
-    def get_use_page_label_properties(self, position: str) -> dict:
+    def get_use_page_label_properties(self, position: str) -> dict[str, Any]:
         if self.page_labels.get(position) is None:
             return {
                 "text": False,
@@ -408,11 +408,13 @@ class LabelManager:
     
     def fix_invalid(self, label: "ComposedKeyLabel") -> "ComposedKeyLabel":
         if not isinstance(label.text, str):
-            label.text = str(label.text)
+            # Plugins set label text untyped, so the runtime repair stays
+            # even though the annotation reads it as impossible.
+            label.text = str(label.text)  # type: ignore[unreachable]
 
         return label
 
-    def update_label(self, position: str):
+    def update_label(self, position: str) -> None:
         self.controller_input.update()
 
     def get_available_width(self) -> int:
@@ -440,7 +442,7 @@ class LabelManager:
         key = (label.text, getattr(font, "path", None), getattr(font, "size", None))
         cached = self._bbox_cache.get(position)
         if cached is not None and cached[0] == key:
-            return cached[1]
+            return cast(tuple[int, int], cached[1])
         _, _, w, h = _label_measure_draw.textbbox((0, 0), label.text, font=font)
         # textbbox declares floats because it adds a possibly fractional
         # origin. This call anchors at integer (0, 0) with an integer glyph
@@ -763,8 +765,8 @@ class LabelManager:
         for coord, mask, ink in ops:
             core.draw_bitmap(coord, mask, ink)
 
-    def _record_label_blits(self, image: Image.Image, label: "ComposedKeyLabel", font,
-                            xy: tuple, anchor: str) -> tuple | None:
+    def _record_label_blits(self, image: Image.Image, label: "ComposedKeyLabel", font: Any,
+                            xy: tuple[Any, ...], anchor: str) -> tuple[Any, ...] | None:
         """Run draw.text() against a throwaway target whose draw core only
         records the mask blits, and return them. None means not recordable,
         so the caller draws directly.
@@ -900,7 +902,7 @@ class LabelManager:
 
 
 class LayoutManager:
-    def __init__(self, controller_input: "ControllerInput"):
+    def __init__(self, controller_input: "ControllerInput[Any]"):
         self.controller_input = controller_input
 
         self.action_layout = ImageLayout()
@@ -911,14 +913,14 @@ class LayoutManager:
         # object, the same backing source image and the same layout geometry;
         # an in-place re-decode swaps the source image. One tuple, so a
         # concurrent update swaps it atomically.
-        self._fg_cache: tuple | None = None
+        self._fg_cache: tuple[Any, ...] | None = None
 
-    def clear(self):
+    def clear(self) -> None:
         self.action_layout = ImageLayout()
         self.page_layout = ImageLayout()
         self._fg_cache = None
 
-    def get_use_page_layout_properties(self) -> dict:
+    def get_use_page_layout_properties(self) -> dict[str, Any]:
         return {
             "valign": self.page_layout.valign is not None,
             "halign": self.page_layout.halign is not None,
@@ -961,25 +963,25 @@ class LayoutManager:
 
         return cast("ComposedImageLayout", layout)
     
-    def set_page_layout(self, layout: ImageLayout, update: bool = True):
+    def set_page_layout(self, layout: ImageLayout, update: bool = True) -> None:
         self.page_layout = layout
 
         if update:
             self.update()
 
-    def set_action_layout(self, layout: ImageLayout, update: bool = True):
+    def set_action_layout(self, layout: ImageLayout, update: bool = True) -> None:
         self.action_layout = layout
 
         if update:
             self.update()
 
-    def update(self):
+    def update(self) -> None:
         self.controller_input.update()
         ui_port.get().on_input_visuals_changed(
             self.controller_input.deck_controller, self.controller_input.identifier,
             self.controller_input.state, "layout")
 
-    def add_image_to_background(self, image: Image.Image | None, background: Image.Image, cache_token=None) -> Image.Image:
+    def add_image_to_background(self, image: Image.Image | None, background: Image.Image, cache_token: Any = None) -> Image.Image:
         if image is None:
             return background
         layout = self.get_composed_layout()
@@ -1044,7 +1046,7 @@ class LayoutManager:
     
 
 class BackgroundManager:
-    def __init__(self, controller_input: "ControllerInput"):
+    def __init__(self, controller_input: "ControllerInput[Any]"):
         self.controller_input = controller_input
         
         self.action_color: list[int] | None = None
@@ -1058,15 +1060,15 @@ class BackgroundManager:
         if update:
             self.update()
 
-    def set_page_color(self, color: list[int], update: bool = True, update_ui: bool = True) -> None:
+    def set_page_color(self, color: list[int] | None, update: bool = True, update_ui: bool = True) -> None:
         self.page_color = color
         if isinstance(color, list) and len(color) == 3:
-            self.page_color.append(255)
+            color.append(255)
 
         if update:
             self.update(ui=update_ui)
 
-    def update(self, ui: bool = True):
+    def update(self, ui: bool = True) -> None:
         self.controller_input.update()
         if ui:
             ui_port.get().on_input_visuals_changed(

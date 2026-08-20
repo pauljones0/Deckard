@@ -40,7 +40,7 @@ from StreamDeck.Devices import StreamDeck
 from loguru import logger as log
 
 from src.backend.DeckManagement.fair_lock import FairLock
-from src.backend.DeckManagement.InputIdentifier import Input
+from src.backend.DeckManagement.InputIdentifier import Input, InputIdentifier
 from src.backend.DeckManagement.Subclasses.media_pipeline_profiler import media_prof
 from src.backend.PageManagement.Page import Page
 from src.backend import ui_port
@@ -64,7 +64,7 @@ if TYPE_CHECKING:
 KEY_ENCODE_QUALITY = 90
 
 
-def encode_native_key(deck, image: "Image.Image", quality: int = KEY_ENCODE_QUALITY) -> bytes:
+def encode_native_key(deck: Any, image: "Image.Image", quality: int = KEY_ENCODE_QUALITY) -> bytes:
     """PILHelper.to_native_key_format with a tunable JPEG quality, where the
     library hardcodes q100. A smaller JPEG means fewer serial USB HID writes
     per key."""
@@ -90,7 +90,7 @@ def encode_native_key(deck, image: "Image.Image", quality: int = KEY_ENCODE_QUAL
         return buf.getvalue()
 
 
-def encode_native_touchscreen(deck, image: "Image.Image", quality: int = 90) -> bytes:
+def encode_native_touchscreen(deck: Any, image: "Image.Image", quality: int = 90) -> bytes:
     """PILHelper.to_native_touchscreen_format with a tunable JPEG quality,
     and with no mutation of the caller's image. The library hardcodes q100,
     and its _to_native_format calls image.thumbnail() in place when it
@@ -128,10 +128,10 @@ class MediaPlayerTask:
     # dereferences it, so a page-less paint is judged stale, not crashed on.
     page: Page | None
     _callable: Callable[..., Any]
-    args: tuple
-    kwargs: dict
+    args: tuple[Any, ...]
+    kwargs: dict[str, Any]
 
-    def run(self):
+    def run(self) -> None:
         self._callable(*self.args, **self.kwargs)
 
 @dataclass
@@ -147,7 +147,7 @@ class MediaPlayerSetTouchscreenImageTask:
     controller_touchscreen: "ControllerTouchScreen | None" = None  # stamped once this paint is presented
     img_hash: int | None = None  # hash of the presented image, recorded in run()
 
-    def run(self):
+    def run(self) -> None:
         if not self.deck_controller.deck.is_touch():
             return
         try:
@@ -159,7 +159,6 @@ class MediaPlayerSetTouchscreenImageTask:
             # forever. MediaPlayerSetImageTask does the same.
             if self.controller_touchscreen is not None:
                 self.controller_touchscreen._last_img_hash = self.img_hash
-            self.native_image = None
             del self.native_image
             self.deck_controller._on_write_result(True)
         except StreamDeck.TransportError as e:
@@ -182,7 +181,7 @@ class MediaPlayerSetImageTask:
     img_hash: int | None = None  # hash of the presented image, recorded in run()
     submit_seq: int | None = None  # writer's monotonic submit-seq stamp; None when unstamped
 
-    def run(self):
+    def run(self) -> None:
         try:
             if media_prof:
                 _t0 = time.perf_counter()
@@ -194,7 +193,6 @@ class MediaPlayerSetImageTask:
             # or the correcting render hash-skips and the key bleeds forever.
             if self.controller_key is not None:
                 self.controller_key._last_img_hash = self.img_hash
-            self.native_image = None
             del self.native_image
             self.deck_controller._on_write_result(True)
         except StreamDeck.TransportError as e:
@@ -254,7 +252,8 @@ class ReleaseStashedInputsMsg:
     hide()-triggered load_page() that changes active_page before this drains
     must not skip the release. A control message has no page affinity and
     always executes, FIFO, like ClearMsg and SetBrightnessMsg."""
-    stashed_inputs: dict
+    # The stashed deck_controller.inputs mapping: input type to its inputs.
+    stashed_inputs: dict[type[InputIdentifier], list[Any]]
 
 
 def _env_float(name: str, default: float) -> float:
@@ -273,7 +272,7 @@ def _env_float(name: str, default: float) -> float:
         return default
 
 
-def _install_fair_transport_lock(deck) -> bool:
+def _install_fair_transport_lock(deck: Any) -> bool:
     """Swap the transport's per-device mutex for a FIFO one.
 
     The library guards every read, write and feature report of a device with
@@ -424,7 +423,7 @@ class MediaPlayerThread(threading.Thread):
         # extra lock. The loop drains it fully and first on every wake, ahead
         # of any animation tick or task work, so a brightness or clear op
         # never waits behind them.
-        self.control_q: collections.deque = collections.deque()
+        self.control_q: collections.deque[Any] = collections.deque()
         # Per-writer monotonic stamp counter. add_image_task and
         # add_touchscreen_task stamp a task with next(self._submit_seq) under
         # _slot_lock, atomically with the slot assignment. A stamp taken
@@ -459,7 +458,7 @@ class MediaPlayerThread(threading.Thread):
         self._last_tick_error_log: float = 0.0
         self._suppressed_tick_errors: int = 0
 
-    def run(self):
+    def run(self) -> None:
         self.running = True
 
         # Guard the body. An uncaught exception here kills the sole writer and
@@ -753,7 +752,7 @@ class MediaPlayerThread(threading.Thread):
         Clear's submission time."""
         return next(self._submit_seq)
 
-    def submit_control(self, msg) -> None:
+    def submit_control(self, msg: Any) -> None:
         """Append and wake, without blocking. Safe from any thread, because a
         deque append is GIL-atomic and needs no lock.
 
@@ -815,7 +814,7 @@ class MediaPlayerThread(threading.Thread):
                     )
         stashed_inputs.clear()
 
-    def check_resume_gap(self, now: float = None) -> bool:
+    def check_resume_gap(self, now: float | None = None) -> bool:
         """Detect a wall-clock gap of 5s or more between media-loop
         iterations, which is the signature of a process suspend and resume
         cycle. It is split out of run() so a unit-tier scenario drives it
@@ -943,7 +942,7 @@ class MediaPlayerThread(threading.Thread):
     def get_median_fps(self) -> float:
         return statistics.median(self.fps)
     
-    def update_low_fps_warning(self):
+    def update_low_fps_warning(self) -> None:
         if not self.show_fps_warnings:
             return
         
@@ -983,7 +982,7 @@ class MediaPlayerThread(threading.Thread):
         while self.running and time.time() - start < timeout:
             time.sleep(0.05)
 
-    def add_task(self, method: Callable[..., Any], *args, **kwargs):
+    def add_task(self, method: Callable[..., Any], *args: Any, **kwargs: Any) -> None:
         self.tasks.append(MediaPlayerTask(
             deck_controller=self.deck_controller,
             page=self.deck_controller.active_page,
@@ -993,7 +992,7 @@ class MediaPlayerThread(threading.Thread):
         ))
         self._wake_event.set()
 
-    def add_touchscreen_task(self, native_image: bytes, page=None, config_gen=None, controller_touchscreen=None, img_hash=None):
+    def add_touchscreen_task(self, native_image: bytes, page: "Page | None" = None, config_gen: "int | None" = None, controller_touchscreen: "ControllerTouchScreen | None" = None, img_hash: "int | None" = None) -> None:
         task = MediaPlayerSetTouchscreenImageTask(
             deck_controller=self.deck_controller,
             page=page if page is not None else self.deck_controller.active_page,
@@ -1014,7 +1013,7 @@ class MediaPlayerThread(threading.Thread):
             self.touchscreen_task = task
         self._wake_event.set()
 
-    def add_image_task(self, key_index: int, native_image: bytes, page=None, config_gen=None, controller_key=None, img_hash=None):
+    def add_image_task(self, key_index: int, native_image: bytes, page: "Page | None" = None, config_gen: "int | None" = None, controller_key: "ControllerKey | None" = None, img_hash: "int | None" = None) -> None:
         task = MediaPlayerSetImageTask(
             deck_controller=self.deck_controller,
             page=page if page is not None else self.deck_controller.active_page,
@@ -1031,7 +1030,7 @@ class MediaPlayerThread(threading.Thread):
             self.image_tasks[key_index] = task
         self._wake_event.set()
 
-    def perform_media_player_tasks(self):
+    def perform_media_player_tasks(self) -> None:
         # Drain the queues before the page and generation snapshot. Every
         # drained task then predates the snapshot, so a mismatch means stale.
         # The reverse order drops a task just queued for the new page, unrun.
@@ -1064,7 +1063,7 @@ class MediaPlayerThread(threading.Thread):
             active_page = self.deck_controller.active_page
             current_gen = self.deck_controller._page_load_generation
 
-        def _is_current(task):
+        def _is_current(task: Any) -> bool:
             # Drop a paint for a page the deck left, or for a superseded
             # generation. config_gen is the generation the paint rendered at.
             if task.page is not active_page:
@@ -1093,13 +1092,13 @@ class MediaPlayerThread(threading.Thread):
         # nothing, measured at a 19fps loop on a busy video.
         bulk = len(image_batch) >= self.BULK_BATCH_THRESHOLD
         writes_since_yield = 0
-        for task in image_batch:
-            if _is_current(task):
+        for image_task in image_batch:
+            if _is_current(image_task):
                 if bulk and writes_since_yield >= self.YIELD_STRIDE and self._inter_write_yield > 0:
                     time.sleep(self._inter_write_yield)
                     writes_since_yield = 0
-                task.run()
-                self._note_executed(task)
+                image_task.run()
+                self._note_executed(image_task)
                 writes_since_yield += 1
 
         if touch_task is not None and _is_current(touch_task):
@@ -1135,7 +1134,7 @@ class MediaPlayerThread(threading.Thread):
                 touch_task.run()
                 self._note_executed(touch_task)
 
-    def _note_executed(self, task) -> None:
+    def _note_executed(self, task: Any) -> None:
         """Record that the task's device write was attempted and did not
         raise. A caller reaches this only after the task's own run() returns,
         never for a task dropped as stale or deferred by the touchscreen write

@@ -26,8 +26,8 @@ class ColorButtonRow(Adw.ActionRow):
             The row is set up with a title and subtitle if provided.
     """
     def __init__(self,
-                 title: str = None,
-                 subtitle: str = None,
+                 title: str | None = None,
+                 subtitle: str | None = None,
                  default_color: tuple[int, int, int, int] = (0, 0, 0, 255),
                  ):
         super().__init__(title=title, subtitle=subtitle)  # type: ignore[arg-type]  # gi stub: Adw string props accept None (PyGObject maps it to NULL, i.e. empty string)
@@ -43,7 +43,7 @@ class ColorButtonRow(Adw.ActionRow):
         return self.convert_from_rgba(rgba)
 
     @color.setter
-    def color(self, value: tuple[int, int, int, int]):
+    def color(self, value: tuple[int, int, int, int]) -> None:
         rgba = self.convert_to_rgba(value)
         self.color_button.set_rgba(rgba)
 

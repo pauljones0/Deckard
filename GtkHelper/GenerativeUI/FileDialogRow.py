@@ -5,7 +5,7 @@ from GtkHelper.FileDialogRow import FileDialogRow as FileDialog, FileDialogFilte
 from gi.repository import Gio
 
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any
+from typing import cast, TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from src.backend.PluginManager.ActionCore import ActionCore
@@ -25,12 +25,12 @@ class FileDialogRow(GenerativeUI[str]):
     def __init__(self, action_core: "ActionCore",
                  var_name: str,
                  default_value: str,
-                 title: str = None,
-                 subtitle: str = None,
-                 dialog_title: str = None,
+                 title: str | None = None,
+                 subtitle: str | None = None,
+                 dialog_title: str | None = None,
                  block_interaction: bool = True,
                  only_show_filename: bool = True,
-                 filters: list[FileDialogFilter] = None,
+                 filters: list[FileDialogFilter] | None = None,
                  on_change: Callable[..., Any] | None = None,
                  can_reset: bool = True,
                  auto_add: bool = True,
@@ -53,8 +53,8 @@ class FileDialogRow(GenerativeUI[str]):
             can_reset (bool, optional): Whether the value can be reset. Defaults to True.
             auto_add (bool, optional): Whether to automatically add this entry to the UI. Defaults to True.
         """
-        def build():
-            self._widget: FileDialog = FileDialog(
+        def build() -> None:
+            self._widget: FileDialog | None = FileDialog(
                 title=self.get_translation(title),
                 subtitle=self.get_translation(subtitle),
                 dialog_title=self.get_translation(dialog_title),
@@ -68,7 +68,7 @@ class FileDialogRow(GenerativeUI[str]):
             self._handle_reset_button_creation()
         super().__init__(action_core, var_name, default_value, can_reset, auto_add, complex_var_name, on_change, build=build)
 
-    def set_file(self, path: str, update_setting: bool = False):
+    def set_file(self, path: str, update_setting: bool = False) -> None:
         """
         Sets the file path in the file dialog widget and optionally updates the associated setting.
 
@@ -92,9 +92,9 @@ class FileDialogRow(GenerativeUI[str]):
         """
         if self._widget is None:
             return Gio.File.new_for_path(self.get_value())
-        return self.widget.selected_file
+        return cast("Gio.File", self.widget.selected_file)
 
-    def _file_changed(self, file: Gio.File):
+    def _file_changed(self, file: Gio.File) -> None:
         """
         Handles the change in file selection in the file dialog.
 
@@ -112,7 +112,7 @@ class FileDialogRow(GenerativeUI[str]):
         self._handle_value_changed(path)
 
     @GenerativeUI.signal_manager
-    def set_ui_value(self, value: str):
+    def set_ui_value(self, value: str) -> None:
         """
         Sets the value (file path) in the UI file dialog widget.
 

@@ -14,6 +14,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 """
 
 import os
+from typing import Any, cast
+
 import json
 from pathlib import Path
 
@@ -31,7 +33,7 @@ class IconPack:
         self.generate_folder_structure("icons")
 
     @instance_cache
-    def get_manifest(self):
+    def get_manifest(self) -> dict[str, Any]:
         path = Path(os.path.join(self.path, "manifest.json"))
 
         if not path.exists(follow_symlinks=True):
@@ -41,28 +43,35 @@ class IconPack:
         return self.get_json(path)
         
     @instance_cache
-    def get_attribution_json(self):
+    def get_attribution_json(self) -> dict[str, Any]:
         path = Path(os.path.join(self.path, "attribution.json"))
 
         return self.get_json(path)
     
     @instance_cache
-    def get_pack_attribution(self):
+    def get_pack_attribution(self) -> dict[str, Any]:
         attribution = self.get_attribution_json()
-        return attribution.get("default", attribution.get("general", attribution.get("generic", {})))
+        return cast(dict[str, Any],
+                    attribution.get("default", attribution.get("general", attribution.get("generic", {}))))
         
     @instance_cache
-    def get_json(self, json_path: Path):
+    def get_json(self, json_path: Path) -> dict[str, Any]:
         if not json_path.exists(follow_symlinks=True):
             return {}
         
         with open(json_path) as f:
-            return json.load(f)
+            return cast(dict[str, Any], json.load(f))
 
     @instance_cache
-    def get_thumbnail_path(self):
+    def get_thumbnail_path(self) -> Path | None:
         manifest = self.get_manifest()
-        path = Path(os.path.join(self.path, manifest.get("thumbnail")))
+        thumbnail = manifest.get("thumbnail")
+        if thumbnail is None:
+            # A manifest with no thumbnail key is as unusable as one whose
+            # thumbnail is missing from disk, and joining None raises.
+            self.is_valid = False
+            return None
+        path = Path(os.path.join(self.path, thumbnail))
         if path.exists(follow_symlinks=True):
             return path
         self.is_valid = False
@@ -80,15 +89,21 @@ class IconPack:
 
         return content
 
-    def generate_folder_structure(self, asset_path: str):
+    def generate_folder_structure(self, asset_path: str) -> None:
         manifest = self.get_manifest()
 
         if self.is_valid is False:
             return
 
-        asset_path = manifest.get(asset_path)
+        # Not asset_path again: the parameter names the manifest key, and
+        # what comes back is the folder it points at. A manifest that omits
+        # the key leaves the pack unusable, and joining None raises.
+        asset_folder = manifest.get(asset_path)
+        if asset_folder is None:
+            self.is_valid = False
+            return
 
-        pack_path = Path(os.path.join(self.path, asset_path))
+        pack_path = Path(os.path.join(self.path, asset_folder))
 
         if not pack_path.exists(follow_symlinks=True):
             self.is_valid = False

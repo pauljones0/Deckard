@@ -104,7 +104,7 @@ def _read_rows() -> list[TcpRow]:
     return rows
 
 
-def _endpoint_of(addr: tuple) -> tuple[str, int]:
+def _endpoint_of(addr: tuple[Any, ...]) -> tuple[str, int]:
     # AF_INET gives (ip, port); AF_INET6 gives (ip, port, flowinfo, scope_id).
     return normalize_ip(addr[0]), addr[1]
 
@@ -198,7 +198,7 @@ _PATCHED_MARK = "_deckard_rpyc_guard_patched"
 _TARGET_MODULE = "rpyc.utils.server"
 
 
-def _compose_authenticator(existing: Callable | None) -> Callable:
+def _compose_authenticator(existing: Callable[..., Any] | None) -> Callable[..., Any]:
     if existing is None:
         return loopback_uid_authenticator
 
@@ -228,7 +228,7 @@ def _patch_server_class(module: types.ModuleType) -> None:
         # below. The constructor binds and listens, so a call inside the try
         # would let a bind failure fall through to a second, unhardened
         # construction that leaks the first socket and serves the wildcard.
-        call_args: tuple = (self, *args)
+        call_args: tuple[Any, ...] = (self, *args)
         call_kwargs = kwargs
         try:
             bound = signature.bind(self, *args, **kwargs)

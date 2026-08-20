@@ -28,7 +28,7 @@ from src.backend.DeckManagement.HelperMethods import is_video
 from src.backend.DeckManagement.Subclasses.background_video_cache import BackgroundVideoCache
 from src.backend.DeckManagement.deck_controller.gif_pipeline import GifBackground, GifBudgetExceeded
 
-from typing import TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
@@ -56,7 +56,7 @@ class Background:
         self.tiles: Sequence[Image.Image | None] = [None] * deck_controller.deck.key_count()
         # (tiles, (video md5, frame index)) for the frame tiles holds. None
         # when the frame has no name. See get_identified_tile().
-        self._identified_tiles: tuple | None = None
+        self._identified_tiles: tuple[Any, ...] | None = None
 
     def set_image(self, image: "BackgroundImage", update: bool = True) -> None:
         self.image = image
@@ -129,7 +129,8 @@ class Background:
             self._touchscreen_slice = image.get_touchscreen_image()
         return self._touchscreen_slice
 
-    def prebuild_from_path(self, path: str | None, fps: int = 30, loop: bool = True, allow_keep: bool = True):
+    def prebuild_from_path(self, path: str | None, fps: int = 30, loop: bool = True,
+                           allow_keep: bool = True) -> tuple[str, Any]:
         """Build the new background object lock-free, without a touch on
         self.video, self.image or the deck. apply_prebuilt() swaps it in.
         Returns (kind, payload): blank clears the background, noop keeps the
@@ -173,7 +174,7 @@ class Background:
         with Image.open(path) as image:
             return ("image", BackgroundImage(self.deck_controller, image.copy(), path=path))
 
-    def _discard_prebuilt(self, kind: str, payload) -> None:
+    def _discard_prebuilt(self, kind: str, payload: Any) -> None:
         """Release the resources of a prebuilt payload that no caller applied.
         A video or image payload holds a cv2 capture or a PIL image, and a
         drop without close() leaks it. keep, noop and blank hold nothing."""
@@ -186,7 +187,7 @@ class Background:
                 "Failed to close an orphaned prebuilt background payload during close()"
             )
 
-    def apply_prebuilt(self, kind: str, payload, fps: int = 30, loop: bool = True, update: bool = True) -> None:
+    def apply_prebuilt(self, kind: str, payload: Any, fps: int = 30, loop: bool = True, update: bool = True) -> None:
         """Apply the result of prebuild_from_path(). The screensaver
         transition calls this under _background_load_lock, after it re-checks
         the generation. This does no file I/O; it assigns the objects and
@@ -230,7 +231,7 @@ class Background:
         kind, payload = self.prebuild_from_path(path, fps=fps, loop=loop, allow_keep=allow_keep)
         self.apply_prebuilt(kind, payload, fps=fps, loop=loop, update=update)
 
-    def get_identified_tile(self, key_index: int) -> tuple | None:
+    def get_identified_tile(self, key_index: int) -> tuple[Any, ...] | None:
         """(tile, (video md5, frame index)) for a video background, or None
         when no tile has a nameable frame. Tiles and identity publish as one
         pair and read as one, so a concurrent update_tiles() cannot pair this
@@ -419,7 +420,7 @@ class BackgroundImage:
         )
         return strip_slice.resize((strip_width, strip_height), Image.Resampling.LANCZOS)
     
-    def crop_key_image_from_deck_sized_image(self, image: Image.Image, key):
+    def crop_key_image_from_deck_sized_image(self, image: Image.Image, key: int) -> Image.Image:
         deck = self.deck_controller.deck
 
 
@@ -473,7 +474,7 @@ class BackgroundVideo(BackgroundVideoCache):
 
         super().__init__(video_path, deck_controller=deck_controller, extend_touchscreen=extend_touchscreen)
 
-    def get_next_tiles(self) -> tuple[list[Image.Image | None], tuple | None]:
+    def get_next_tiles(self) -> tuple[list[Image.Image | None], tuple[Any, ...] | None]:
         """(tiles, identity) for the frame this tick lands on. identity is
         (video md5, source frame index), or None for a fallback or alpha
         payload. One pair keeps the pixels with their identity, because

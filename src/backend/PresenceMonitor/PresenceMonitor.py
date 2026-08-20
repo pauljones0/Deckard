@@ -27,7 +27,7 @@ deck reader thread for notify_activity. This module makes no GTK call.
 import os
 import threading
 import time
-from typing import Any
+from typing import cast, Any
 
 from loguru import logger as log
 
@@ -83,8 +83,8 @@ class PresenceMonitor:
     # harness can shorten it.
     DECK_ACTIVITY_GRACE_S = 30.0
 
-    def __init__(self, mode: str = None, minutes: int = None,
-                 idle_detector: bool = True, bus=None):
+    def __init__(self, mode: str | None = None, minutes: int | None = None,
+                 idle_detector: bool = True, bus: Gio.DBusConnection | None = None) -> None:
         # The media thread reads this plain bool every tick, and the lock
         # below never guards it. A torn read cannot happen, and a stale read
         # costs one tick of animation.
@@ -167,7 +167,7 @@ class PresenceMonitor:
             self._last_deck_activity = time.time()
         self._evaluate()
 
-    def on_idle_hint_changed(self, idle_hint: bool, idle_since: float = None) -> None:
+    def on_idle_hint_changed(self, idle_hint: bool, idle_since: float | None = None) -> None:
         """The logind session IdleHint changed. idle_since carries the
         wall-clock time the session went idle, from IdleSinceHint. None means
         "as of now", which the arithmetic assumes when logind reports no
@@ -191,7 +191,7 @@ class PresenceMonitor:
             return
         self._evaluate()
 
-    def set_mode(self, mode: str, minutes: int = None) -> None:
+    def set_mode(self, mode: str, minutes: int | None = None) -> None:
         """Runtime push from the Settings dialog."""
         with self._lock:
             self._mode = mode if mode in (MODE_SCREENSAVER, MODE_SYSTEM_IDLE) else MODE_SCREENSAVER
@@ -332,7 +332,7 @@ class LogindIdleDetector:
     and the monitor gates on the lock alone.
     """
 
-    def __init__(self, monitor: PresenceMonitor, bus=None):
+    def __init__(self, monitor: PresenceMonitor, bus: Gio.DBusConnection | None = None) -> None:
         self.monitor = monitor
         self.bus: Gio.DBusConnection | None = None
         self.session_path: str | None = None
@@ -350,7 +350,7 @@ class LogindIdleDetector:
             threading.Thread(target=self.setup_dbus, name="PresenceIdleSetup",
                              daemon=True).start()
 
-    def setup_dbus(self, bus=None) -> None:
+    def setup_dbus(self, bus: Gio.DBusConnection | None = None) -> None:
         try:
             # logind lives on the system bus. bus is a test seam and
             # production passes None. Compare against None, because a falsy but
@@ -420,7 +420,7 @@ class LogindIdleDetector:
             -1,
             None,
         )
-        return reply.unpack()[0]
+        return cast(str, reply.unpack()[0])
 
     def read_property(self, name: str) -> Any:
         bus = self.bus
@@ -451,7 +451,7 @@ class LogindIdleDetector:
         hint = bool(self.read_property("IdleHint"))
         self.monitor.on_idle_hint_changed(hint, self._read_idle_since() if hint else None)
 
-    def _read_idle_since(self, changed: dict = None):
+    def _read_idle_since(self, changed: dict[str, Any] | None = None) -> float | None:
         """IdleSinceHint as wall-clock seconds, or None when logind has no
         usable timestamp. logind reports 0 for a session that was never idle.
         This prefers the value the signal carries, and falls back to a
@@ -471,8 +471,9 @@ class LogindIdleDetector:
             return None
         return usec / 1_000_000 if usec > 0 else None
 
-    def on_properties_changed(self, connection, sender_name, object_path,
-                              interface_name, signal_name, parameters) -> None:
+    def on_properties_changed(self, connection: Gio.DBusConnection, sender_name: str,
+                              object_path: str, interface_name: str, signal_name: str,
+                              parameters: GLib.Variant) -> None:
         try:
             iface, changed, _invalidated = parameters.unpack()
             if iface != LOGIND_SESSION_IFACE or "IdleHint" not in changed:

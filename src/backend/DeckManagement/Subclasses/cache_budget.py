@@ -51,6 +51,7 @@ import time
 from weakref import WeakSet
 
 from loguru import logger as log
+from typing import Any
 
 # Tunables.
 
@@ -124,7 +125,7 @@ _lock = threading.Lock()
 # registry in event_dispatch.py documents. A pass snapshots the set as a list
 # under _lock before it iterates, because a WeakSet tolerates a GC-driven
 # removal mid-iteration but not a concurrent add.
-_registry: "WeakSet" = WeakSet()
+_registry: "WeakSet[Any]" = WeakSet()
 
 _wake = threading.Event()
 _thread_started = False
@@ -134,7 +135,7 @@ _evicted_bytes = 0
 _degenerate_passes = 0
 
 _default_ceiling_cache: int | None = None
-_warned_ceiling_values: set = set()
+_warned_ceiling_values: set[Any] = set()
 
 
 # Ceiling.
@@ -207,7 +208,7 @@ def ceiling_bytes() -> int:
 
 # Registration.
 
-def register(cache, *, label: str, evictable: bool = True,
+def register(cache: Any, *, label: str, evictable: bool = True,
              min_age_s: float = DEFAULT_MIN_AGE_S,
              floor_bytes: int = DEFAULT_FLOOR_BYTES) -> None:
     """Enrols cache in the process-wide budget. Idempotent.
@@ -236,7 +237,7 @@ def register(cache, *, label: str, evictable: bool = True,
         log.warning(f"cache-budget: could not register {label!r}: {e}")
 
 
-def unregister(cache) -> None:
+def unregister(cache: Any) -> None:
     """Drops cache from the registry.
 
     The call is optional. A dropped cache falls out of the WeakSet on its own,
@@ -251,7 +252,7 @@ def unregister(cache) -> None:
         log.warning(f"cache-budget: could not unregister: {e}")
 
 
-def set_min_age(cache, min_age_s: float) -> None:
+def set_min_age(cache: Any, min_age_s: float) -> None:
     """Retunes a registrant's min-age protection in place.
 
     Group-A entries are keyed per frame, so a given entry is re-touched once
@@ -280,7 +281,7 @@ def notify_grew() -> None:
 
 # Introspection.
 
-def _snapshot() -> list:
+def _snapshot() -> list[Any]:
     with _lock:
         return list(_registry)
 
@@ -355,7 +356,10 @@ def _ensure_thread() -> None:
     if _thread_started:
         return
     with _lock:
-        if _thread_started:
+        # A fresh, declared read: the outer check narrowed the module flag,
+        # and narrowing cannot see another thread's write before the lock.
+        started: bool = _thread_started
+        if started:
             return
         _thread_started = True
     try:
@@ -431,7 +435,7 @@ def _drain_once() -> bool:
     # total back up, because painters keep putting, so MAX_PICKS_PER_PASS and
     # not that argument alone makes termination unconditional. The ids are
     # stable here, because caches holds strong references for the duration.
-    skip: set = set()
+    skip: set[Any] = set()
     freed = 0
     evicted = 0
     picks = 0
@@ -541,7 +545,7 @@ def _warn_degenerate(total: int, ceiling: int) -> None:
     )
 
 
-def _report_thrash(caches: list) -> None:
+def _report_thrash(caches: list[Any]) -> None:
     """Thrash tripwire. A key that comes straight back after the budget shed
     it means the ceiling binds against a live working set.
 

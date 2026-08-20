@@ -12,7 +12,7 @@ This programm comes with ABSOLUTELY NO WARRANTY!
 You should have received a copy of the GNU General Public License
 along with this program. If not, see <https://www.gnu.org/licenses/>.
 """
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from typing import Any
 
 from typing_extensions import deprecated
@@ -23,7 +23,7 @@ from src.backend.DeckManagement.HelperMethods import open_web
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Gtk, Adw, GLib
+from gi.repository import Gtk, Adw, GLib, GObject
 
 from loguru import logger as log
 
@@ -37,11 +37,11 @@ from src.backend.services import tr
 # from main_loop at call time, so a copy in this namespace is a dead write.
 # Patch src.backend.main_loop.RUN_ON_MAIN_TIMEOUT_S instead.
 from src.backend.main_loop import (  # noqa: F401  (re-export for plugins)
-    background,
-    on_main,
-    run_in_background,
-    run_on_main,
-    shutdown_background_pool,
+    background as background,
+    on_main as on_main,
+    run_in_background as run_in_background,
+    run_on_main as run_on_main,
+    shutdown_background_pool as shutdown_background_pool,
 )
 
 
@@ -64,38 +64,53 @@ def get_deepest_focused_widget_with_attr(start: Gtk.Widget, attr:str) -> Gtk.Wid
             return widget
     return None
 
-def better_disconnect(widget: Gtk.Widget, handler: Callable[..., Any]):
+def better_disconnect(widget: GObject.Object, handler: Callable[..., Any]) -> None:
     try:
         widget.disconnect_by_func(handler)
     except Exception:
         pass
 
-def better_unparent(widget: Gtk.Widget):
+def better_unparent(widget: Gtk.Widget) -> None:
     if widget.get_parent() is not None:
         widget.unparent()
 
 # Helper Classes
 class BetterExpander(Adw.ExpanderRow):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
+        # Subclasses that track their rows replace this. Empty here, so
+        # get_index_of_child raises the ValueError it documents rather than
+        # an AttributeError on a subclass that never set it.
+        self.actions: list[Any] = []
 
-    def set_sort_func(self, *args, **kwargs):
+    def set_sort_func(self, *args: Any, **kwargs: Any) -> None:
         revealer_list_box = self.get_list_box()
+        if revealer_list_box is None:
+            return
         revealer_list_box.set_sort_func(*args, **kwargs)
 
-    def set_filter_func(self, *args, **kwargs):
+    def set_filter_func(self, *args: Any, **kwargs: Any) -> None:
         revealer_list_box = self.get_list_box()
+        if revealer_list_box is None:
+            return
         revealer_list_box.set_filter_func(*args, **kwargs)
 
-    def invalidate_filter(self):
+    def invalidate_filter(self) -> None:
         list_box = self.get_list_box()
+        if list_box is None:
+            return
         list_box.invalidate_filter()
 
-    def invalidate_sort(self):
+    def invalidate_sort(self) -> None:
         list_box = self.get_list_box()
+        if list_box is None:
+            return
         list_box.invalidate_sort()
 
-    def get_rows(self):
+    def get_rows(self) -> Any:
+        # The rows are per-subclass widgets that callers read duck-typed
+        # attributes off, so the checker sees dynamic here, as with
+        # BetterPreferencesGroup.get_list_box.
         revealer_list_box = self.get_list_box()
         if revealer_list_box is None:
             return
@@ -127,11 +142,17 @@ class BetterExpander(Adw.ExpanderRow):
 
         return revealer_list_box
 
-    def clear(self):
+    def clear(self) -> None:
         list_box = self.get_list_box()
+        if list_box is None:
+            # add_row() appends through libadwaita's own pointer and does not
+            # use this walk, so a silent clear here lets a caller that clears
+            # and refills duplicate every row. Say it rather than hide it.
+            log.warning("Expander has no list box to clear; the Adw layout this walk expects has changed")
+            return
         list_box.remove_all()
 
-    def reorder_child_after(self, child, after):
+    def reorder_child_after(self, child: Gtk.Widget, after: Gtk.Widget) -> None:
         childs = self.get_rows()
         after_index = childs.index(after)
 
@@ -158,7 +179,7 @@ class BetterExpander(Adw.ExpanderRow):
             return
         list_box.remove(child)
 
-    def get_index_of_child(self, child):
+    def get_index_of_child(self, child: Any) -> int:
         for i, action in enumerate(self.actions):
             if action == child:
                 return i
@@ -190,30 +211,32 @@ class BetterExpander(Adw.ExpanderRow):
         return image if isinstance(image, Gtk.Image) else None
 
 class BetterPreferencesGroup(Adw.PreferencesGroup):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
 
-    def clear(self):
+    def clear(self) -> None:
         list_box = self.get_list_box()
         list_box.remove_all()
 
-    def set_sort_func(self, *args, **kwargs):
+    def set_sort_func(self, *args: Any, **kwargs: Any) -> None:
         list_box = self.get_list_box()
         list_box.set_sort_func(*args, **kwargs)
 
-    def set_filter_func(self, *args, **kwargs):
+    def set_filter_func(self, *args: Any, **kwargs: Any) -> None:
         list_box = self.get_list_box()
         list_box.set_filter_func(*args, **kwargs)
 
-    def invalidate_filter(self):
+    def invalidate_filter(self) -> None:
         list_box = self.get_list_box()
         list_box.invalidate_filter()
 
-    def invalidate_sort(self):
+    def invalidate_sort(self) -> None:
         list_box = self.get_list_box()
         list_box.invalidate_sort()
 
-    def get_rows(self):
+    def get_rows(self) -> Any:
+        # Dynamic for the same reason as get_list_box below: the rows are
+        # per-subclass widgets read duck-typed by the callers.
         list_box = self.get_list_box()
         if list_box is None:
             return
@@ -226,22 +249,26 @@ class BetterPreferencesGroup(Adw.PreferencesGroup):
 
         return rows
 
-    def get_list_box(self):
+    def get_list_box(self) -> Any:
+        # Every step walks Adw's internal tree, so any of them can answer
+        # None. Only get_rows below checks for that: the other callers
+        # dereference the result, so a layout that does not match surfaces
+        # there as an AttributeError. Do not add a guard to clear() without
+        # reading the note on BetterExpander.clear -- a silent clear that the
+        # matching add_row does not skip duplicates every row.
         first_box = self.get_first_child()
-        second_box = first_box.get_first_child()
-        third_box = second_box.get_next_sibling()
-        list_box = third_box.get_first_child()
-
-        return list_box
+        second_box = first_box.get_first_child() if first_box is not None else None
+        third_box = second_box.get_next_sibling() if second_box is not None else None
+        return third_box.get_first_child() if third_box is not None else None
 
 class AttributeRow(Adw.PreferencesRow):
-    def __init__(self, title:str, attr:str, *args, **kwargs):
+    def __init__(self, title:str, attr:str, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self.title = title
         self.attr_str = attr
         self.build()
 
-    def build(self):
+    def build(self) -> None:
         self.main_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, hexpand=True,
                                 margin_top=15, margin_bottom=15)
         self.set_child(self.main_box)
@@ -249,21 +276,21 @@ class AttributeRow(Adw.PreferencesRow):
         self.title_label = Gtk.Label(label=self.title, xalign=0, hexpand=True, margin_start=15)
         self.main_box.append(self.title_label)
 
-        self.attribute_label = Gtk.Label(label=self.attr_str, halign=0, margin_end=15)
+        self.attribute_label = Gtk.Label(label=self.attr_str, halign=Gtk.Align.FILL, margin_end=15)
         self.main_box.append(self.attribute_label)
 
-    def set_title(self, title:str):
+    def set_title(self, title:str) -> None:
         self.title_label.set_label(title)
 
-    def set_url(self, attr:str):
+    def set_url(self, attr: str | None) -> None:
         if attr is None:
             attr = "N/A"
         self.attribute_label.set_label(attr)
 
 class EntryDialog(Gtk.ApplicationWindow):
-    def __init__(self, parent_window, dialog_title:str, entry_heading:str = "Name:", default_text:str = None, confirm_label:str = "OK", forbid_answers:list[str] = None,
+    def __init__(self, parent_window: Gtk.Window, dialog_title:str, entry_heading:str = "Name:", default_text:str | None = None, confirm_label:str = "OK", forbid_answers:list[str] | None = None,
                  empty_warning:str = "The name cannot be empty", cancel_label:str = "Cancel", already_exists_warning:str = "This name already exists",
-                 placeholder:str = None):
+                 placeholder:str | None = None):
         if forbid_answers is None:
             forbid_answers = []
 
@@ -276,10 +303,10 @@ class EntryDialog(Gtk.ApplicationWindow):
         self.placeholder_text = placeholder
         self.already_exists_warning = already_exists_warning
         super().__init__(transient_for=parent_window, modal=True, default_height=150, default_width=350, title = dialog_title)
-        self.callback_func = None
+        self.callback_func: Callable[[str], Any] | None = None
         self.build()
 
-    def build(self):
+    def build(self) -> None:
         # Create title bar
         self.title_bar = Gtk.HeaderBar(show_title_buttons=False, css_classes=["flat"])
         # Cancel button
@@ -293,7 +320,7 @@ class EntryDialog(Gtk.ApplicationWindow):
         # Label
         self.label = Gtk.Label(label=self.entry_heading)
         # Input box
-        self.input_box = Gtk.Entry(hexpand=True, margin_top=10, text=self.default_text, placeholder_text=self.placeholder_text)
+        self.input_box = Gtk.Entry(hexpand=True, margin_top=10, text=self.default_text or "", placeholder_text=self.placeholder_text)
         self.input_box.connect('changed', self.on_name_change)
         # Warning label
         self.warning_label = Gtk.Label(label=self.empty_warning, css_classes=['warning-label'], margin_top=10)
@@ -313,11 +340,11 @@ class EntryDialog(Gtk.ApplicationWindow):
         # Trigger on_confirm on return press
         self.input_box.connect("activate", self.on_confirm)
 
-    def on_cancel(self, button):
+    def on_cancel(self, button: Gtk.Button) -> None:
         self.destroy()
 
 
-    def on_name_change(self, entry):
+    def on_name_change(self, entry: Gtk.Entry) -> None:
         if entry.get_text() == '':
             self.set_dialog_status(0)
         elif entry.get_text() not in self.forbid_answers:
@@ -325,7 +352,7 @@ class EntryDialog(Gtk.ApplicationWindow):
         else:
             self.set_dialog_status(1)
 
-    def set_dialog_status(self, status):
+    def set_dialog_status(self, status: int) -> None:
         """
         Sets the status of the dialog
 
@@ -356,18 +383,20 @@ class EntryDialog(Gtk.ApplicationWindow):
             self.confirm_button.set_sensitive(True)
             self.confirm_button.set_css_classes(['confirm-button'])
 
-    def show(self, callback_func):
+    def show(self, callback_func: Callable[[str], Any] | None) -> None:  # type: ignore[override]  # shadows Gtk.Widget.show with this dialog's callback form
         self.callback_func = callback_func
         self.present()
 
-    def on_confirm(self, button):
+    def on_confirm(self, button: Gtk.Widget) -> None:
+        if self.callback_func is None:
+            return
         self.callback_func(self.input_box.get_text())
         self.destroy()
 
 class ErrorPage(Gtk.Box):
     def __init__(self, reload_func: Callable[..., Any] | None = None,
                  error_text:str = "Error",
-                 reload_args = None):
+                 reload_args: "Iterable[Any] | None" = None):
         super().__init__(orientation=Gtk.Orientation.VERTICAL,
                          halign=Gtk.Align.CENTER,
                          valign=Gtk.Align.CENTER)
@@ -380,7 +409,7 @@ class ErrorPage(Gtk.Box):
         self.reload_args = reload_args
         self.build()
 
-    def build(self):
+    def build(self) -> None:
         self.error_label = Gtk.Label(label=self.error_text)
         self.append(self.error_label)
 
@@ -390,13 +419,15 @@ class ErrorPage(Gtk.Box):
         if callable(self.reload_func):
             self.append(self.retry_button)
 
-    def on_retry_button_click(self, button):
+    def on_retry_button_click(self, button: Gtk.Button) -> None:
+        if self.reload_func is None:
+            return
         self.reload_func(*self.reload_args)
 
-    def set_error_text(self, error_text):
+    def set_error_text(self, error_text: str) -> None:
         self.error_label.set_text(error_text)
 
-    def set_reload_func(self, reload_func):
+    def set_reload_func(self, reload_func: "Callable[..., Any] | None") -> None:
         if callable(self.reload_func):
             if callable(reload_func):
                 self.reload_func = reload_func
@@ -406,11 +437,11 @@ class ErrorPage(Gtk.Box):
             self.append(self.retry_button)
             self.reload_func = reload_func
 
-    def set_reload_args(self, reload_args):
+    def set_reload_args(self, reload_args: "Iterable[Any]") -> None:
         self.reload_args = reload_args
 
 class OriginalURL(Adw.ActionRow):
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__(title="Original URL:", subtitle="N/A")
         self.set_activatable(False)
 
@@ -421,7 +452,7 @@ class OriginalURL(Adw.ActionRow):
         self.open_button.connect("clicked", self.on_open_clicked)
         self.suffix_box.append(self.open_button)
 
-    def set_url(self, url:str):
+    def set_url(self, url: str | None) -> None:
         if url is None:
             self.set_subtitle("N/A")
             self.open_button.set_sensitive(False)
@@ -429,27 +460,32 @@ class OriginalURL(Adw.ActionRow):
         self.set_subtitle(url)
         self.open_button.set_sensitive(True)
 
-    def on_open_clicked(self, button:Gtk.Button):
-        if self.get_subtitle() in [None, "N/A", ""]:
+    def on_open_clicked(self, button:Gtk.Button) -> None:
+        url = self.get_subtitle()
+        if not url or url == "N/A":
             return
-        open_web(self.get_subtitle())
+        open_web(url)
 
 class EntryRowWithoutTitle(Adw.EntryRow):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
 
         # Make title invisible
-        child:Gtk.Box = self.get_child() # Box
-        prefix_box:Gtk.Box = child.get_first_child()
-        gizmo = prefix_box.get_next_sibling()
-        empty_title = gizmo.get_first_child()
-        title = empty_title.get_next_sibling()
+        # Walks Adw's internal tree to hide the title; any step can answer
+        # None, and a layout that does not match leaves the title as it is.
+        child = self.get_child()
+        prefix_box = child.get_first_child() if child is not None else None
+        gizmo = prefix_box.get_next_sibling() if prefix_box is not None else None
+        empty_title = gizmo.get_first_child() if gizmo is not None else None
+        title = empty_title.get_next_sibling() if empty_title is not None else None
+        if empty_title is None or title is None:
+            return
 
         empty_title.set_visible(False)
         title.set_visible(False)
 
 class BackButton(Gtk.Button):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self.box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         self.set_child(self.box)
@@ -458,12 +494,12 @@ class BackButton(Gtk.Button):
         self.box.append(Gtk.Label(label=tr("go-back")))
 
 class RevertButton(Gtk.Button):
-    def __init__(self, **kwargs):
+    def __init__(self, **kwargs: Any) -> None:
         super().__init__(icon_name="edit-undo-symbolic", **kwargs)
         self.set_tooltip_text("Revert to action defaults")
 
 class LoadingScreen(Gtk.Box):
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__(orientation=Gtk.Orientation.VERTICAL, hexpand=True, vexpand=True,
                          valign=Gtk.Align.CENTER, halign=Gtk.Align.CENTER)
 
@@ -476,7 +512,7 @@ class LoadingScreen(Gtk.Box):
         self.progress_bar = Gtk.ProgressBar(margin_top=20, show_text=True, text="", visible=False)
         self.append(self.progress_bar)
 
-    def set_spinning(self, loading: bool):
+    def set_spinning(self, loading: bool) -> None:
         if loading:
             GLib.idle_add(self.spinner.start)
         else:
@@ -485,7 +521,7 @@ class LoadingScreen(Gtk.Box):
 
 @deprecated("This has been deprecated in favor of GtkHelper.ComboRow.ComboRow.")
 class ComboRow(Adw.PreferencesRow):
-    def __init__(self, title, model: Gtk.ListStore, **kwargs):
+    def __init__(self, title: str, model: Gtk.ListStore, **kwargs: Any) -> None:
         super().__init__(title=title, **kwargs)
         self.model = model
 
@@ -503,7 +539,7 @@ class ComboRow(Adw.PreferencesRow):
 
 @deprecated("This has been deprecated in favor of GtkHelper.ScaleRow.ScaleRow.")
 class ScaleRow(Adw.PreferencesRow):
-    def __init__(self, title, value: float, min: float, max: float, step: float, text_right: str = "", text_left: str = "", **kwargs):
+    def __init__(self, title: str, value: float, min: float, max: float, step: float, text_right: str = "", text_left: str = "", **kwargs: Any) -> None:
         super().__init__(title=title, **kwargs)
         self.main_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL,
                                 margin_start=10, margin_end=10,
@@ -519,7 +555,7 @@ class ScaleRow(Adw.PreferencesRow):
         self.scale.set_size_request(200, -1)  # Adjust width as needed
         self.scale.set_tooltip_text(str(value))
 
-        def correct_step_amount(adjustment):
+        def correct_step_amount(adjustment: Gtk.Adjustment) -> None:
             value = adjustment.get_value()
             step = adjustment.get_step_increment()
             rounded_value = round(value / step) * step

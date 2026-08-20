@@ -26,6 +26,7 @@ import globals as gl
 import json
 import os
 
+from src.backend import services
 from src.backend.atomic_json import atomic_write_json
 from src.backend.PageManagement import page_flush
 
@@ -54,7 +55,7 @@ class MenuButton(Gtk.MenuButton):
         self.set_page_specific_actions_enabled(False)
         self.build()
 
-    def init_actions(self):
+    def init_actions(self) -> None:
         self.action_group = Gio.SimpleActionGroup()
         self.insert_action_group("pm", self.action_group)
 
@@ -79,11 +80,11 @@ class MenuButton(Gtk.MenuButton):
         self.action_group.add_action(self.export_all_pages_action)
         self.action_group.add_action(self.import_streamcontroller)
 
-    def set_page_specific_actions_enabled(self, enabled: bool):
+    def set_page_specific_actions_enabled(self, enabled: bool) -> None:
         self.duplicate_page_action.set_enabled(enabled)
         self.export_page_action.set_enabled(enabled)
 
-    def build(self):
+    def build(self) -> None:
         self.menu = Gio.Menu.new()
         self.menu.append(gl.lm.get("page-manager.duplicate"), "pm.duplicate-page")
         self.menu.append(gl.lm.get("page-manager.export-page"), "pm.export-page")
@@ -102,16 +103,21 @@ class MenuButton(Gtk.MenuButton):
         self.popover.set_menu_model(self.menu)
         self.set_popover(self.popover)
 
-    def on_import_streamdeck_ui(self, *args):
+    def on_import_streamdeck_ui(self, *args: Any) -> None:
         ChooseImportFileDialog(self, self.streamdeck_ui_callback)
 
-    def streamdeck_ui_callback(self, selected_file):
-        importer = Importer(gl.app, self.pageEditor.page_manager)
+    def streamdeck_ui_callback(self, selected_file: Gio.File) -> None:
+        path = selected_file.get_path()
+        if not path:
+            # A location with no local path, such as a remote GVfs mount,
+            # cannot be read or written here.
+            return
+        importer = Importer(services.require_app(), self.pageEditor.page_manager)
         # GLib.idle_add(importer.present)
         importer.present()
-        importer.import_pages(selected_file.get_path(), "streamdeck-ui")
+        importer.import_pages(path, "streamdeck-ui")
 
-    def on_export_page(self, *args):
+    def on_export_page(self, *args: Any) -> None:
         path = self.pageEditor.active_page_path
         if path in [None, ""]:
             return
@@ -119,28 +125,40 @@ class MenuButton(Gtk.MenuButton):
         initial_name = os.path.basename(path)
         ChooseExportFileDialog(self, self.export_page_callback, initial_name=initial_name)
 
-    def export_page_callback(self, selected_file):
+    def export_page_callback(self, selected_file: Gio.File) -> None:
+        export_path = selected_file.get_path()
+        if not export_path:
+            # A location with no local path, such as a remote GVfs mount,
+            # cannot be read or written here.
+            return
         page_json = {}
         # Read the path once, so the flush and the open reach the same file
         # when the editor selection changes during this call.
         page_path = self.pageEditor.active_page_path
+        if not page_path:
+            # The editor cleared its selection while the file chooser was up.
+            # Same reading as on_export_page, which checks before opening it.
+            return
         # A read barrier. The export reads the file directly, so an edit that
         # is still in flight would be absent from what the user exports.
         page_flush.get().flush_path(page_path)
         with open(page_path, "r") as f:
             page_json = json.load(f)
 
-        atomic_write_json(selected_file.get_path(), page_json)
+        atomic_write_json(export_path, page_json)
 
-    def on_import_page(self, *args):
+    def on_import_page(self, *args: Any) -> None:
         ChooseImportFileDialog(self, self.import_page_callback)
 
-    def import_page_callback(self, selected_file):
-        if selected_file in [None, ""]:
+    def import_page_callback(self, selected_file: Gio.File) -> None:
+        path = selected_file.get_path()
+        if not path:
+            # A location with no local path, such as a remote GVfs mount,
+            # cannot be read or written here.
             return
-        page_name = os.path.splitext(os.path.basename(selected_file.get_path()))[0]
+        page_name = os.path.splitext(os.path.basename(path))[0]
         self.selected_file = selected_file
-        if page_name in gl.page_manager.get_page_names():
+        if page_name in services.require_page_manager().get_page_names():
             dial = EntryDialog(parent_window=self.pageEditor.page_manager,
                            dialog_title=gl.lm.get("page-manager.page-selector.add-dialog.title"),
                            placeholder=gl.lm.get("page-manager.page-selector.add-dialog.placeholder"),
@@ -148,7 +166,7 @@ class MenuButton(Gtk.MenuButton):
                            cancel_label=gl.lm.get("page-manager.page-selector.add-dialog.cancel"),
                            empty_warning=gl.lm.get("page-manager.page-selector.add-dialog.empty-warning"),
                            already_exists_warning=gl.lm.get("page-manager.page-selector.add-dialog.already-exists-warning"),
-                           forbid_answers=gl.page_manager.get_page_names(),
+                           forbid_answers=services.require_page_manager().get_page_names(),
                            default_text=page_name)
         
             dial.show(callback_func=self.import_page_name_selected_callback)
@@ -156,9 +174,16 @@ class MenuButton(Gtk.MenuButton):
             self.import_page_name_selected_callback(page_name)
 
 
-    def import_page_name_selected_callback(self, name):
+    def import_page_name_selected_callback(self, name: str) -> None:
         import_dict = {}
-        source_path = self.selected_file.get_path()
+        selected_file = self.selected_file
+        source_path = selected_file.get_path() if selected_file is not None else None
+        if not source_path:
+            # No file left to read: either the chooser handed back a location
+            # with no local path, or a second callback arrived after the first
+            # cleared the slot below.
+            log.error("Page import has no source file to read")
+            return
         # A read barrier. On the duplicate path this file is a live page, so
         # its pending edits must reach the disk before the copy reads it. A
         # duplicate must match what the screen shows. This does nothing for a
@@ -176,7 +201,7 @@ class MenuButton(Gtk.MenuButton):
         # "backup". add_page appends the .json extension itself.
         page_name = name
         try:
-            page_path = gl.page_manager.add_page(page_name, import_dict)
+            page_path = services.require_page_manager().add_page(page_name, import_dict)
         except FileExistsError:
             return
 
@@ -185,7 +210,7 @@ class MenuButton(Gtk.MenuButton):
         # Emit signal
         gl.signal_manager.trigger_signal(Signals.PageAdd, page_path)
 
-    def on_duplicate_page(self, *args):
+    def on_duplicate_page(self, *args: Any) -> None:
         active_page_path = self.pageEditor.active_page_path
         if active_page_path in [None, ""]:
             return
@@ -193,32 +218,38 @@ class MenuButton(Gtk.MenuButton):
         file =Gio.File.new_for_path(active_page_path)
         self.import_page_callback(file)
 
-    def on_export_all_pages(self, *args):
+    def on_export_all_pages(self, *args: Any) -> None:
         initial_name = f"Deckard_{datetime.now().strftime('%Y-%m-%d_%H-%M')}.json"
         ChooseExportFileDialog(self, self.export_all_pages_callback, initial_name=initial_name)
 
-    def export_all_pages_callback(self, selected_file):
-        if selected_file in [None, ""]:
-            return
+    def export_all_pages_callback(self, selected_file: Gio.File) -> None:
         selected_path = selected_file.get_path()
+        if not selected_path:
+            # A location with no local path, such as a remote GVfs mount,
+            # cannot be read or written here.
+            return
 
         pages = {}
 
-        for path in gl.page_manager.get_pages(add_custom_pages=False):
-            js = gl.page_manager.get_page_data(path)
+        page_manager = services.require_page_manager()
+        for path in page_manager.get_pages(add_custom_pages=False):
+            js = page_manager.get_page_data(path)
             pages[os.path.basename(path)] = js
 
         atomic_write_json(selected_path, pages)
 
-    def on_import_streamcontroller(self, *args):
+    def on_import_streamcontroller(self, *args: Any) -> None:
         ChooseImportFileDialog(self, self.import_streamcontroller_callback)
 
-    def import_streamcontroller_callback(self, selected_file):
-        if selected_file in [None, ""]:
+    def import_streamcontroller_callback(self, selected_file: Gio.File) -> None:
+        path = selected_file.get_path()
+        if not path:
+            # A location with no local path, such as a remote GVfs mount,
+            # cannot be read or written here.
             return
-        importer = Importer(gl.app, self.pageEditor.page_manager)
+        importer = Importer(services.require_app(), self.pageEditor.page_manager)
         importer.present()
-        importer.import_pages(selected_file.get_path(), "streamcontroller")
+        importer.import_pages(path, "streamcontroller")
         
 
 class ChooseImportFileDialog(Gtk.FileDialog):
@@ -229,7 +260,7 @@ class ChooseImportFileDialog(Gtk.FileDialog):
         self.original_callback = callback
         self.open(callback=self.callback)
 
-    def callback(self, dialog, result):
+    def callback(self, dialog: Gtk.FileDialog, result: Gio.AsyncResult) -> None:
         try:
             selected_file = self.open_finish(result)
         except GLib.Error as err:
@@ -240,7 +271,7 @@ class ChooseImportFileDialog(Gtk.FileDialog):
             self.original_callback(selected_file)
 
 class ChooseExportFileDialog(Gtk.FileDialog):
-    def __init__(self, menu_button: MenuButton, callback: Callable[[Any], Any] | None = None, initial_name: str = None):
+    def __init__(self, menu_button: MenuButton, callback: Callable[[Any], Any] | None = None, initial_name: str | None = None):
         super().__init__(title=gl.lm.get("asset-chooser.custom.browse-files.dialog.title"),
                          accept_label=gl.lm.get("asset-chooser.custom.browse-files.dialog.select-button"),
                          initial_name=initial_name)
@@ -248,7 +279,7 @@ class ChooseExportFileDialog(Gtk.FileDialog):
         self.original_callback = callback
         self.save(callback=self.callback)
 
-    def callback(self, dialog, result):
+    def callback(self, dialog: Gtk.FileDialog, result: Gio.AsyncResult) -> None:
         try:
             selected_file = self.save_finish(result)
         except GLib.Error as err:

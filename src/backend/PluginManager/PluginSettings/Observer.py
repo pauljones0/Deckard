@@ -23,13 +23,13 @@ class Observer:
         # stream and no other. The wedge watchdog names the lane by label.
         self._lane = event_dispatch.Lane(label=label)
 
-    def subscribe(self, observer: Callable[..., Any]):
+    def subscribe(self, observer: Callable[..., Any]) -> None:
         self.observers.add(observer)
 
-    def unsubscribe(self, observer: Callable[..., Any]):
+    def unsubscribe(self, observer: Callable[..., Any]) -> None:
         self.observers.remove(observer)
 
-    def notify(self, *args, **kwargs):
+    def notify(self, *args: Any, **kwargs: Any) -> None:
         """Queue the current subscribers onto the lane and return.
 
         A return does not mean the subscribers ran. They run after it, one at

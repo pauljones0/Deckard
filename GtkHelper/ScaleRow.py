@@ -5,6 +5,8 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Gtk, Adw
 
+from typing import Any
+
 from GtkHelper.GtkHelper import better_disconnect
 
 class ScaleRow(Adw.ActionRow):
@@ -35,8 +37,8 @@ class ScaleRow(Adw.ActionRow):
                  max: float,
                  draw_side_values: bool = True,
                  add_text_entry: bool = False,
-                 title: str = None,
-                 subtitle: str = None,
+                 title: str | None = None,
+                 subtitle: str | None = None,
                  step: float = 0.1,
                  digits: int = 2,
                  draw_value: bool = False,
@@ -85,7 +87,7 @@ class ScaleRow(Adw.ActionRow):
         if self._add_text_entry:
             self.add_suffix(self.entry_row)
 
-    def _connect_signals(self):
+    def _connect_signals(self) -> None:
         self._adjustment.connect("value-changed", self._correct_step_amount)
 
         if self._add_text_entry:
@@ -93,7 +95,7 @@ class ScaleRow(Adw.ActionRow):
             self.entry_row.connect("changed", self._entry_row_changed)
             self.entry_row_controller.connect("leave", self._reset_entry_row)
 
-    def _disconnect_signals(self):
+    def _disconnect_signals(self) -> None:
         better_disconnect(self._adjustment, self._correct_step_amount)
 
         if self._add_text_entry:
@@ -104,15 +106,15 @@ class ScaleRow(Adw.ActionRow):
     def get_value(self) -> float:
         return self._adjustment.get_value()
 
-    def set_value(self, value: float):
+    def set_value(self, value: float) -> None:
         self._adjustment.set_value(value)
 
     @property
-    def min(self):
+    def min(self) -> float:
         return self._adjustment.get_lower()
 
     @min.setter
-    def min(self, value: float):
+    def min(self, value: float) -> None:
         if self._adjustment.get_upper() < value:
             return
 
@@ -120,11 +122,11 @@ class ScaleRow(Adw.ActionRow):
         self.left.set_label(str(value))
 
     @property
-    def max(self):
+    def max(self) -> float:
         return self._adjustment.get_upper()
 
     @max.setter
-    def max(self, value: float):
+    def max(self, value: float) -> None:
         if value < self._adjustment.get_lower():
             return
 
@@ -132,40 +134,40 @@ class ScaleRow(Adw.ActionRow):
         self.right.set_label(str(value))
 
     @property
-    def step(self):
+    def step(self) -> float:
         return self._adjustment.get_step_increment()
 
     @step.setter
-    def step(self, value: float):
+    def step(self, value: float) -> None:
         self._adjustment.set_step_increment(value)
 
     @property
-    def digits(self):
+    def digits(self) -> int:
         return self.scale.get_digits()
 
     @digits.setter
-    def digits(self, digits: int):
+    def digits(self, digits: int) -> None:
         self.scale.set_digits(digits)
 
     @property
-    def draw_value(self):
+    def draw_value(self) -> bool:
         return self.scale.get_draw_value()
 
     @draw_value.setter
-    def draw_value(self, draw: bool):
+    def draw_value(self, draw: bool) -> None:
         self.scale.set_draw_value(draw)
 
     @property
-    def round_digits(self):
+    def round_digits(self) -> int:
         return self.scale.get_round_digits()
 
     @round_digits.setter
-    def round_digits(self, round_digits: bool):
+    def round_digits(self, round_digits: bool) -> None:
         self.scale.set_round_digits(round_digits)
 
     # Scale Row
 
-    def _correct_step_amount(self, adjustment):
+    def _correct_step_amount(self, adjustment: Gtk.Adjustment) -> None:
         value = adjustment.get_value()
         step = adjustment.get_step_increment()
         rounded_value = round(value / step) * step
@@ -180,7 +182,7 @@ class ScaleRow(Adw.ActionRow):
 
     # Entry Row
 
-    def _entry_row_changed(self, entry_row):
+    def _entry_row_changed(self, entry_row: Adw.EntryRow) -> None:
         self._disconnect_signals()
 
         text = entry_row.get_text()
@@ -199,7 +201,7 @@ class ScaleRow(Adw.ActionRow):
 
         self._connect_signals()
 
-    def _reset_entry_row(self, *args):
+    def _reset_entry_row(self, *args: Any) -> None:
         self._disconnect_signals()
 
         current_value = self.entry_row.get_text()

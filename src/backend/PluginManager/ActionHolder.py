@@ -14,14 +14,13 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 """
 from copy import deepcopy
 
-from src.backend.PluginManager.ActionBase import ActionBase
 from src.backend.PluginManager.ActionInputSupport import ActionInputSupport
 from src.backend.PluginManager.ActionCore import ActionCore
 from src.backend.PageManagement.Page import Page
 from src.backend.DeckManagement.deck_controller.controller import DeckController
 from src.backend.DeckManagement.InputIdentifier import Input, InputIdentifier
 
-from typing import TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from src.backend.PluginManager.PluginBase import PluginBase
@@ -41,14 +40,16 @@ class ActionHolder:
     def __init__(self,
         plugin_base: "PluginBase",
         action_name: str,
-        action_core: type[ActionCore] = None,
-        action_base: type[ActionBase] = None,
-        icon: Gtk.Widget = None,
-        min_app_version: str = None,
-        action_id: str = None,
-        action_id_suffix: str = None,
-        action_support: dict[type[InputIdentifier], ActionInputSupport] = None,
-        *args, **kwargs):
+        action_core: type[ActionCore] | None = None,
+        # The name is historical; any ActionCore subclass works here, and
+        # live plugins pass ones that skip ActionBase.
+        action_base: type[ActionCore] | None = None,
+        icon: Gtk.Widget | None = None,
+        min_app_version: str | None = None,
+        action_id: str | None = None,
+        action_id_suffix: str | None = None,
+        action_support: dict[type[InputIdentifier], ActionInputSupport] | None = None,
+        *args: Any, **kwargs: Any) -> None:
 
         if action_support is None:
             action_support = {

@@ -21,6 +21,8 @@ from StreamDeck.Devices.StreamDeck import DialEventType
 
 from src.backend.DeckManagement.InputIdentifier import Input
 
+from src.backend import services
+
 import globals as gl
 
 gi.require_version("Gtk", "4.0")
@@ -28,13 +30,14 @@ gi.require_version("Adw", "1")
 
 from gi.repository import Gtk, Gdk, GLib, Gio
 
-from typing import TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 if TYPE_CHECKING:
+    from src.backend.DeckManagement.deck_controller.inputs import ControllerDial
     from src.windows.mainWindow.elements.PageSettingsPage import PageSettingsPage
     from src.backend.DeckManagement.deck_controller.controller import DeckController
 
 class DialBox(Gtk.Box):
-    def __init__(self, deck_controller: "DeckController", page_settings_page: "PageSettingsPage", **kwargs):
+    def __init__(self, deck_controller: "DeckController", page_settings_page: "PageSettingsPage", **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.deck_controller = deck_controller
         self.set_hexpand(True)
@@ -45,7 +48,7 @@ class DialBox(Gtk.Box):
         self.build()
 
 
-    def build(self):
+    def build(self) -> None:
         for i in range(self.deck_controller.deck.dial_count()):
             dial = Dial(self, Input.Dial(str(i)))
             self.dials.append(dial)
@@ -53,7 +56,7 @@ class DialBox(Gtk.Box):
 
 
 class Dial(Gtk.Frame):
-    def __init__(self, dial_box: DialBox, identifier: Input.Dial, **kwargs):
+    def __init__(self, dial_box: DialBox, identifier: Input.Dial, **kwargs: Any) -> None:
         super().__init__(**kwargs)
 
         self.dial_box = dial_box
@@ -96,13 +99,13 @@ class Dial(Gtk.Frame):
         self.set_focus_child(self.image)
         self.image.set_focusable(True)
 
-        self.last_scroll = None
+        self.last_scroll: float | None = None
         
         # Software knob properties
-        self.knob_rotation = 0  # Current rotation angle in degrees
+        self.knob_rotation: float = 0  # Current rotation angle in degrees
         self.knob_dragging = False
-        self.knob_last_angle = 0
-        self.knob_start_y = 0
+        self.knob_last_angle: float = 0
+        self.knob_start_y: float = 0
         self.knob_sensitivity = 2.0  # Degrees per pixel of vertical drag
         
         # Add drag controller for software knob
@@ -174,7 +177,7 @@ class Dial(Gtk.Frame):
 
 
 
-    def on_key(self, controller, keyval, keycode, state):
+    def on_key(self, controller: Gtk.EventControllerKey, keyval: int, keycode: int, state: Gdk.ModifierType) -> bool:
         # Handle arrow keys for software knob turning when dial is focused
         if keyval == Gdk.KEY_Left:
             self.on_turn_left()
@@ -184,7 +187,7 @@ class Dial(Gtk.Frame):
             return True
         return False
 
-    def on_scroll(self, gesture, dx, dy):
+    def on_scroll(self, gesture: Gtk.EventControllerScroll, dx: float, dy: float) -> None:
         if self.last_scroll:
             if time.time() - self.last_scroll < 0.17:
                 return
@@ -197,33 +200,39 @@ class Dial(Gtk.Frame):
 
         value = -1 if dy > 0 else 1
 
-        controller = gl.app.main_win.get_active_controller()
+        controller = services.require_main_window().get_active_controller()
         if controller is not None:
             controller.event_callback(self.identifier, DialEventType.TURN, value)
 
         self.last_scroll = time.time()
 
-    def on_click(self, gesture, n_press, x, y):
+    def on_click(self, gesture: Gtk.GestureClick, n_press: int, x: float, y: float) -> None:
         if gesture.get_current_button() == 1 and n_press == 1:
             # Single left click
             # Select dial
             self.image.grab_focus()
 
-            controller = gl.app.main_win.get_active_controller()
+            controller = services.require_main_window().get_active_controller()
+            # The two other buttons of this gesture already answer an absent
+            # controller by doing nothing.
+            if controller is None:
+                return
             dial = controller.get_input(self.identifier)
+            if dial is None:
+                return
 
             state = dial.get_active_state().state
 
-            gl.app.main_win.sidebar.load_for_dial(self.identifier, state)
+            services.require_main_window().sidebar.load_for_dial(self.identifier, state)
 
             if self.dial_box.deck_controller.deck.is_touch():
                 dial_image = dial.get_active_state().get_rendered_touch_image()
-                gl.app.main_win.sidebar.key_editor.icon_selector.set_image(dial_image)
+                services.require_main_window().sidebar.key_editor.icon_selector.set_image(dial_image)
 
         elif gesture.get_current_button() == 1 and n_press == 2:
             # Double left click
             # Simulate key press
-            controller = gl.app.main_win.get_active_controller()
+            controller = services.require_main_window().get_active_controller()
             if controller is not None:
                 controller.event_callback(self.identifier, DialEventType.PUSH, 1)
                 # Release after 100ms
@@ -239,10 +248,10 @@ class Dial(Gtk.Frame):
         else:
             pass
 
-    def on_focus_in(self, *args):
+    def on_focus_in(self, *args: Any) -> None:
         self.set_border_active(True)
 
-    def set_border_active(self, active: bool):
+    def set_border_active(self, active: bool) -> None:
         if active:
             if self.dial_box.page_settings_page.deck_config.active_widget not in [self, None]:
                 self.dial_box.page_settings_page.deck_config.active_widget.set_border_active(False)
@@ -252,7 +261,7 @@ class Dial(Gtk.Frame):
             self.set_css_classes(["dial-frame", "dial-frame-hidden"])
             self.dial_box.page_settings_page.deck_config.active_widget = None
 
-    def on_knob_drag_begin(self, gesture, start_x, start_y):
+    def on_knob_drag_begin(self, gesture: Gtk.GestureDrag, start_x: float, start_y: float) -> None:
         """Initialize drag state when user starts dragging the knob"""
         self.knob_dragging = True
         self.knob_start_y = start_y
@@ -268,15 +277,13 @@ class Dial(Gtk.Frame):
         # Change cursor to grabbing
         self.image.set_cursor(Gdk.Cursor.new_from_name("grabbing"))
 
-    def on_knob_drag_update(self, gesture, offset_x, offset_y):
+    def on_knob_drag_update(self, gesture: Gtk.GestureDrag, offset_x: float, offset_y: float) -> None:
         """Handle drag updates to turn the knob"""
         if not self.knob_dragging:
             return
             
         # Get the start point correctly for GTK4
-        start_point = gesture.get_start_point()
-        start_x = start_point.x
-        start_y = start_point.y
+        _ok, start_x, start_y = gesture.get_start_point()
         current_x = start_x + offset_x
         current_y = start_y + offset_y
         
@@ -310,71 +317,94 @@ class Dial(Gtk.Frame):
                 
                 self.knob_last_angle = current_angle
 
-    def on_knob_drag_end(self, gesture, offset_x, offset_y):
+    def on_knob_drag_end(self, gesture: Gtk.GestureDrag, offset_x: float, offset_y: float) -> None:
         """Clean up drag state when user stops dragging"""
         self.knob_dragging = False
         # Reset cursor to grab
         self.image.set_cursor(Gdk.Cursor.new_from_name("grab"))
 
-    def on_turn_left(self, *args):
+    def on_turn_left(self, *args: Any) -> bool:
         """Turn the knob one step to the left in software"""
-        controller = gl.app.main_win.get_active_controller()
+        controller = services.require_main_window().get_active_controller()
         if controller is not None:
             controller.event_callback(self.identifier, DialEventType.TURN, -1)
+        return False
 
-    def on_turn_right(self, *args):
+    def on_turn_right(self, *args: Any) -> bool:
         """Turn the knob one step to the right in software"""
-        controller = gl.app.main_win.get_active_controller()
+        controller = services.require_main_window().get_active_controller()
         if controller is not None:
             controller.event_callback(self.identifier, DialEventType.TURN, 1)
+        return False
 
-    def on_copy(self, *args):
-        controller = gl.app.main_win.get_active_controller()
+    def on_copy(self, *args: Any) -> bool:
+        controller = services.require_main_window().get_active_controller()
         if controller is None:
-            return
+            return False
         
         active_page = controller.active_page
         if active_page is None:
-            return
+            return False
         
         dial_dict = active_page.dict.get(self.identifier.input_type, {}).get(self.identifier.json_identifier, {})
-        gl.app.main_win.key_dict = dial_dict
+        services.require_main_window().key_dict = dial_dict
         content = Gdk.ContentProvider.new_for_value(dial_dict)
-        gl.app.main_win.key_clipboard.set_content(content)
+        services.require_main_window().key_clipboard.set_content(content)
+        return False
 
-    def on_cut(self, *args):
+    def on_cut(self, *args: Any) -> bool:
+        if self._get_dial() is None:
+            return False
         self.on_copy()
         self.on_remove()
+        return False
 
-    def on_paste(self, *args):
-        # Check if clipboard is from this Deckard instance
-        if not gl.app.main_win.key_clipboard.is_local() and False:  # TODO: Rely on system keyboard - Enabling this will cause copy/paste problems on KDE/Wayland
-            #TODO: Use read_value_async to read it instead - This is more like a temporary hack
-            return
-        
+    def on_paste(self, *args: Any) -> bool:
+        # No is_local() check on the clipboard. Refusing a clipboard this
+        # instance does not own breaks copy and paste on KDE under Wayland,
+        # where ownership reads as foreign. Telling the two apart needs the
+        # value itself, through read_value_async.
+
         # Remove the old action objects. Several actions can share one action
-        # base, and nothing else tells those actions apart.
+        # base, and nothing else tells those actions apart. A dial the deck
+        # does not carry stops the paste here, before the page write below.
+        if self._get_dial() is None:
+            return False
         self.on_remove()
         
-        controller = gl.app.main_win.get_active_controller()
+        controller = services.require_main_window().get_active_controller()
         if controller is None:
-            return
+            return False
         
         active_page = controller.active_page
         if active_page is None:
-            return
+            return False
         
         active_page.dict.setdefault(self.identifier.input_type, {})
         active_page.dict[self.identifier.input_type].setdefault(self.identifier.json_identifier, {})
-        active_page.dict[self.identifier.input_type][self.identifier.json_identifier] = gl.app.main_win.key_dict
+        active_page.dict[self.identifier.input_type][self.identifier.json_identifier] = services.require_main_window().key_dict
         active_page.reload_similar_pages(identifier=self.identifier, reload_self=True)
 
         # Reload ui
         dial = controller.get_input(self.identifier)
         if dial is not None:
-            gl.app.main_win.sidebar.load_for_identifier(self.identifier, dial.state)
+            services.require_main_window().sidebar.load_for_identifier(self.identifier, dial.state)
+        return False
 
-    def on_remove(self, *args) -> None:
+    def _get_dial(self) -> "ControllerDial | None":
+        """The live dial for this box, or None when the deck has no such dial.
+
+        on_cut and on_paste ask first, because on_remove answers None by
+        returning and the paste would otherwise carry on to its page write.
+        """
+        if gl.app is None:
+            return None
+        controller = gl.app.main_win.get_active_controller()
+        if controller is None:
+            return None
+        return controller.get_input(self.identifier)
+
+    def on_remove(self, *args: Any) -> None:
         if gl.app is None:
             return
         controller = gl.app.main_win.get_active_controller()
@@ -386,6 +416,8 @@ class Dial(Gtk.Frame):
             return
 
         dial = controller.get_input(self.identifier)
+        if dial is None:
+            return
 
         state_key = str(dial.state)
         if state_key not in self.identifier.get_states(active_page):
@@ -402,21 +434,22 @@ class Dial(Gtk.Frame):
 
         active_page.reload_similar_pages(identifier=self.identifier, reload_self=True)
 
-    def on_update(self, *args, **kwargs):
-        controller = gl.app.main_win.get_active_controller()
+    def on_update(self, *args: Any, **kwargs: Any) -> bool:
+        controller = services.require_main_window().get_active_controller()
         if controller is None:
-            return
+            return False
         
         dial = controller.get_input(self.identifier)
         if dial is None:
-            return
+            return False
             
         # Reload the dial's current state
         dial.update()
+        return False
 
 
 class DialContextMenu(Gtk.PopoverMenu):
-    def __init__(self, dial: Dial, **kwargs):
+    def __init__(self, dial: Dial, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.dial = dial
         self._unparenting = False
@@ -424,7 +457,7 @@ class DialContextMenu(Gtk.PopoverMenu):
 
         self.connect("closed", self.on_close)
 
-    def build(self):
+    def build(self) -> None:
         self.set_has_arrow(False)
 
         self.main_menu = Gio.Menu.new()
@@ -445,13 +478,13 @@ class DialContextMenu(Gtk.PopoverMenu):
 
         self.set_menu_model(self.main_menu)
 
-    def popup(self):
+    def popup(self) -> None:
         """Override popup to set parent just before showing"""
         if self.dial and not self.get_parent():
             self.set_parent(self.dial)
         super().popup()
 
-    def on_close(self, *args, **kwargs):
+    def on_close(self, *args: Any, **kwargs: Any) -> None:
         # Unparent on an idle, not here. This code runs inside the closed
         # signal emission, and an unparent of the popover during that emission
         # can dispose the emitter under GTK. The guard keeps fast repeated
@@ -460,12 +493,12 @@ class DialContextMenu(Gtk.PopoverMenu):
             return
         self._unparenting = True
 
-        def _do_unparent():
+        def _do_unparent() -> bool:
             if self.get_parent() is not None:
                 self.unparent()
             return GLib.SOURCE_REMOVE
 
         GLib.idle_add(_do_unparent)
 
-    def on_open(self, *args, **kwargs):
+    def on_open(self, *args: Any, **kwargs: Any) -> None:
         return

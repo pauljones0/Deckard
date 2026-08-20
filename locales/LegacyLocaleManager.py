@@ -16,17 +16,18 @@ import os
 import json
 import locale
 from loguru import logger as log
+from typing import cast, Any
 
 class LegacyLocaleManager:
     def __init__(self, locales_path: str):
         self.locales_path: str = locales_path
-        self.locales_json: dict = {}
-        self.fallback_json: dict = {}
+        self.locales_json: dict[str, Any] = {}
+        self.fallback_json: dict[str, Any] = {}
         self.locales: str = None  # type: ignore[assignment]  # late-init: set_language(), reached via the set_to_os_default() every constructor caller makes
         self.FALLBACK_LOCALE: str = "en_US"
         self.set_fallback_language(self.FALLBACK_LOCALE)
 
-    def load_fallback_language(self):
+    def load_fallback_language(self) -> None:
         path = os.path.join(self.locales_path, f"{self.FALLBACK_LOCALE}.json")
         if not os.path.exists(path):
             log.warning(f"Fallback language file not found under: {path}")
@@ -34,7 +35,7 @@ class LegacyLocaleManager:
         with open(os.path.join(self.locales_path, f"{self.FALLBACK_LOCALE}.json")) as f:
             self.fallback_json = json.load(f)
 
-    def set_to_os_default(self):
+    def set_to_os_default(self) -> None:
         os_locale = locale.getlocale()[0]
         self.set_language(self.FALLBACK_LOCALE if os_locale is None else os_locale)
 
@@ -53,7 +54,7 @@ class LegacyLocaleManager:
         self.FALLBACK_LOCALE = language
         self.load_fallback_language()
 
-    def get(self, key: str, fallback: str = None) -> str:
+    def get(self, key: str, fallback: str | None = None) -> str:
         if fallback is None:
             fallback = key
 
@@ -62,9 +63,9 @@ class LegacyLocaleManager:
         if result is None:
             result = self.fallback_json.get(key, fallback)
 
-        return result
+        return cast(str, result)
     
-    def get_availbale_locales(self) -> list:
+    def get_availbale_locales(self) -> list[Any]:
         locales: list[str] = []
         if not os.path.exists(self.locales_path):
             return locales
@@ -85,5 +86,5 @@ class LegacyLocaleManager:
         primary_language_code = preferred_language.split("_")[0]
         for language in available_locales:
             if language.startswith(primary_language_code):
-                return language
+                return cast(str, language)
         return self.FALLBACK_LOCALE

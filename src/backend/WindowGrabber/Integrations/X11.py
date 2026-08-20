@@ -27,7 +27,7 @@ import gi
 gi.require_version("Xdp", "1.0")
 from gi.repository import Xdp
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 if TYPE_CHECKING:
     from src.backend.WindowGrabber.WindowGrabber import WindowGrabber
 
@@ -43,6 +43,9 @@ class X11(Integration):
 
     @log.catch
     def _run_command(self, command: list[str]) -> subprocess.Popen[bytes] | None:
+        # stdout=PIPE is load-bearing: the two callers read communicate()[0]
+        # and decode() it with no None guard, which holds only while stdout is
+        # a pipe.
         if self.flatpak:
             command.insert(0, "flatpak-spawn")
             command.insert(1, "--host")
@@ -179,14 +182,12 @@ class X11(Integration):
             if xprop is None:
                 return None
             title_bytes = xprop.communicate()[0]
-            if title_bytes is None:
-                return None
             decoded = title_bytes.decode()
             split = decoded.split('"', 1)
             if len(split) < 2:
                 return None
             title = split[1].rstrip('"\n')
-            return title
+            return cast("str | None", title)
         except subprocess.CalledProcessError as e:
             log.error(f"An error occurred while running xprop: {e}")
             return None
@@ -200,14 +201,12 @@ class X11(Integration):
             if xprop is None:
                 return None
             class_bytes = xprop.communicate()[0]
-            if class_bytes is None:
-                return None
             decoded = class_bytes.decode()
             split = decoded.split('"')
             if len(split) < 4:
                 return None
             window_class = split[3]
-            return window_class
+            return cast("str | None", window_class)
         except subprocess.CalledProcessError as e:
             log.error(f"An error occurred while running xprop: {e}")
             return None

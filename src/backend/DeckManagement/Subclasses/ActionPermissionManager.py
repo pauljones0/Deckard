@@ -14,7 +14,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 """
 
 import threading
-from typing import TYPE_CHECKING
+from typing import cast, Any, TYPE_CHECKING
 
 from loguru import logger as log
 
@@ -30,12 +30,12 @@ class ActionPermissionManager:
     ## Labels
     def get_label_control_indices(self) -> list[int | None]:
         state_dict = self.get_state_dict()
-        return state_dict.get("label-control-actions", [None, None, None])
+        return cast("list[int | None]", state_dict.get("label-control-actions", [None, None, None]))
     
     def get_label_control_index(self, label_position: int) -> int | None:
         return self.get_label_control_indices()[label_position]
     
-    def set_label_control_index(self, label_position: int, index: int, reload_pages: bool = True, reload_self: bool = True):
+    def set_label_control_index(self, label_position: int, index: int, reload_pages: bool = True, reload_self: bool = True) -> None:
         state_dict = self.get_state_dict()
         state_dict.setdefault("label-control-actions", [None, None, None])
         state_dict["label-control-actions"][label_position] = index
@@ -48,7 +48,7 @@ class ActionPermissionManager:
         state_dict = self.get_state_dict()
         return state_dict.get("image-control-action", None)
     
-    def set_image_control_index(self, index: int, reload_pages: bool = True, reload_self: bool = True):
+    def set_image_control_index(self, index: int, reload_pages: bool = True, reload_self: bool = True) -> None:
         state_dict = self.get_state_dict()
         state_dict["image-control-action"] = index
         self.set_state_dict(state_dict)
@@ -60,7 +60,7 @@ class ActionPermissionManager:
         state_dict = self.get_state_dict()
         return state_dict.get("background-control-action", None)
     
-    def set_background_control_index(self, index: int, reload_pages: bool = True, reload_self: bool = True):
+    def set_background_control_index(self, index: int, reload_pages: bool = True, reload_self: bool = True) -> None:
         state_dict = self.get_state_dict()
         state_dict["background-control-action"] = index
         self.set_state_dict(state_dict)
@@ -73,14 +73,16 @@ class ActionPermissionManager:
     # None. A read degrades to the empty dict that the .get(..., default)
     # callers handle. A write is dropped, because there is nothing to persist
     # it to.
-    def get_input_dict(self) -> dict:
+    def get_input_dict(self) -> dict[str, Any]:
         active_page = self.deck_controller.active_page
         if active_page is None:
             log.warning(f"No active page on deck {self.deck_controller.serial_number()}; returning empty input dict")
             return {}
-        return self.input_identifier.get_dict(active_page.dict)
+        # get_dict answers None for an input the page does not carry, and the
+        # readers below walk the result, so an absent input reads as empty.
+        return self.input_identifier.get_dict(active_page.dict) or {}
 
-    def set_input_dict(self, new_input_dict: dict):
+    def set_input_dict(self, new_input_dict: dict[str, Any]) -> None:
         active_page = self.deck_controller.active_page
         if active_page is None:
             log.warning(f"No active page on deck {self.deck_controller.serial_number()}; dropping input dict write")
@@ -92,10 +94,10 @@ class ActionPermissionManager:
         active_page.save()
 
     ## State dict
-    def get_state_dict(self) -> dict:
-        return self.get_input_dict().get("states", {}).get(str(self.controller_input_state.state), {})
+    def get_state_dict(self) -> dict[str, Any]:
+        return cast(dict[str, Any], self.get_input_dict().get("states", {}).get(str(self.controller_input_state.state), {}))
 
-    def set_state_dict(self, new_state_dict: dict):
+    def set_state_dict(self, new_state_dict: dict[str, Any]) -> None:
         active_page = self.deck_controller.active_page
         if active_page is None:
             log.warning(f"No active page on deck {self.deck_controller.serial_number()}; dropping state dict write")

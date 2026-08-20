@@ -21,13 +21,15 @@ from gi.repository import Gtk, Adw
 from src.windows.MultiDeckSelector.MultiDeckSelector import MultiDeckSelector
 
 # Import globals
+from src.backend import services
+
 import globals as gl
 
 from collections.abc import Callable
 from typing import Any
 
 class MultiDeckSelectorRow(Adw.ActionRow):
-    def __init__(self, source_window: Gtk.ApplicationWindow, title: str, subtitle: str, selected_deck_serials: list[str] = None, callback: Callable[[str, bool], Any] | None = None):
+    def __init__(self, source_window: Gtk.ApplicationWindow, title: str, subtitle: str, selected_deck_serials: list[str] | None = None, callback: Callable[[str, bool], Any] | None = None):
         super().__init__(title = title, subtitle = subtitle, activatable=True)
 
         if selected_deck_serials is None:
@@ -44,7 +46,7 @@ class MultiDeckSelectorRow(Adw.ActionRow):
 
         self.connect("activated", self.on_activated)
 
-    def build(self):
+    def build(self) -> None:
         self.suffix_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         self.add_suffix(self.suffix_box)
 
@@ -55,10 +57,10 @@ class MultiDeckSelectorRow(Adw.ActionRow):
         self.arrow_icon = Gtk.Image(icon_name="go-next-symbolic")
         self.suffix_box.append(self.arrow_icon)
 
-    def on_activated(self, widget):
+    def on_activated(self, widget: Adw.ActionRow) -> None:
         if self.multi_deck_selector is None:
             self.multi_deck_selector = MultiDeckSelector(
-                application=gl.app,
+                application=services.require_app(),
                 source_window=self.source_window,
                 selected_deck_serials=self.selected_deck_serials,
                 callback=self.change_callback
@@ -67,13 +69,13 @@ class MultiDeckSelectorRow(Adw.ActionRow):
         
         self.multi_deck_selector.present()
 
-    def on_dialog_close(self, widget):
+    def on_dialog_close(self, widget: MultiDeckSelector) -> None:
         self.multi_deck_selector = None
 
-    def set_label(self, n_selected_decks: int):
+    def set_label(self, n_selected_decks: int) -> None:
         self.suffix_label.set_label(f"{n_selected_decks} {gl.lm.get('multi-deck-selector.selected')}")
 
-    def change_callback(self, serial_number: str, state: bool):
+    def change_callback(self, serial_number: str, state: bool) -> None:
         if state:
             if serial_number not in self.selected_deck_serials:
                 self.selected_deck_serials.append(serial_number)
@@ -86,7 +88,7 @@ class MultiDeckSelectorRow(Adw.ActionRow):
         if callable(self.callback):
             self.callback(serial_number, state)
 
-    def set_selected_deck_serials(self, selected_deck_serials: list[str]):
+    def set_selected_deck_serials(self, selected_deck_serials: list[str]) -> None:
         if self.multi_deck_selector is not None:
             self.multi_deck_selector.close()
 

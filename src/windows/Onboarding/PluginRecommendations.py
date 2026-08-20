@@ -1,3 +1,5 @@
+from typing import Any
+
 import threading
 from gi.repository import Gtk, Adw, GLib
 from loguru import logger as log
@@ -9,7 +11,7 @@ from src.backend.Store.store_result import Err
 from src.windows.Store.StoreData import PluginData
 
 class PluginRecommendations(Gtk.Box):
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__(orientation=Gtk.Orientation.VERTICAL)
         self.defaults = [
             "com_core447_DeckPlugin",
@@ -65,25 +67,25 @@ class PluginRecommendations(Gtk.Box):
 
         threading.Thread(target=self.load).start()
 
-    def set_loading(self, loading: bool):
+    def set_loading(self, loading: bool) -> None:
         # The whole body marshals, because load() calls it from a plain
         # thread, and set_spinning is a GTK call like set_visible_child.
         GLib.idle_add(self.loading_box.set_spinning, loading)
         GLib.idle_add(self.main_stack.set_visible_child,
                       self.loading_box if loading else self.scrolled_window)
 
-    def show_connection_error(self):
+    def show_connection_error(self) -> None:
         GLib.idle_add(self.loading_box.set_spinning, False)
         GLib.idle_add(self.main_stack.set_visible_child, self.error_box)
         # Re-arm the retry button (disabled on click so a double-click can't
         # run two loaders and duplicate the rows on success).
         GLib.idle_add(self.retry_button.set_sensitive, True)
 
-    def on_retry_clicked(self, button):
+    def on_retry_clicked(self, button: Gtk.Button) -> None:
         self.retry_button.set_sensitive(False)
         threading.Thread(target=self.load).start()
 
-    def load(self):
+    def load(self) -> None:
         self.set_loading(True)
 
         # Only the data fetch belongs on this thread. A build of the
@@ -95,7 +97,10 @@ class PluginRecommendations(Gtk.Box):
         # happens offline and under a GitHub rate limit. Both an Err and a
         # raising fetch reach the same error state.
         try:
-            result = gl.store_backend.get_all_plugins()
+            backend = gl.store_backend
+            if backend is None:
+                raise RuntimeError("the store backend is unavailable")
+            result = backend.get_all_plugins()
         except Exception as e:
             log.opt(exception=e).error("Onboarding: plugin recommendations fetch failed")
             self.show_connection_error()
@@ -106,7 +111,7 @@ class PluginRecommendations(Gtk.Box):
             return
         plugins = result.value
 
-        def build_rows():
+        def build_rows() -> bool:
             for plugin in plugins:
                 if not plugin:
                     continue
@@ -123,10 +128,10 @@ class PluginRecommendations(Gtk.Box):
 
         GLib.idle_add(build_rows)
 
-    def get_selected_plugins(self) -> list[str]:
+    def get_selected_plugins(self) -> list[PluginData]:
         return [row.plugin for row in self.group.get_rows() if row.check.get_active()]
     
-    def sort_func(self, row1, row2):
+    def sort_func(self, row1: "PluginRow", row2: "PluginRow") -> int:
         title1 = row1.plugin.plugin_name or ""
         title2 = row2.plugin.plugin_name or ""
 
@@ -137,7 +142,7 @@ class PluginRecommendations(Gtk.Box):
         return 0
 
 class PluginRow(Adw.ActionRow):
-    def __init__(self, plugin: PluginData, *args, **kwargs):
+    def __init__(self, plugin: PluginData, *args: Any, **kwargs: Any):
         super().__init__(*args, **kwargs)
         self.plugin = plugin
 
@@ -151,8 +156,8 @@ class PluginRow(Adw.ActionRow):
         self.connect("activated", self.on_activated)
         self.check.connect("toggled", self.on_toggled)
 
-    def on_activated(self, row):
+    def on_activated(self, row: "PluginRow") -> None:
         self.check.set_active(not self.check.get_active())
 
-    def on_toggled(self, button):
+    def on_toggled(self, button: Gtk.CheckButton) -> None:
         pass

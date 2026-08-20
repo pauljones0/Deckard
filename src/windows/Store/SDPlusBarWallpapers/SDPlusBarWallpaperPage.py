@@ -44,9 +44,14 @@ class SDPlusBarWallpaperPage(StorePage):
 
     # Carry no @log.catch here. StorePage._load_guarded must see the failure,
     # so it can show the error page and arm the tab for a retry.
-    def load(self):
+    def load(self) -> None:
         self.set_loading()
-        result = self.store.backend.get_all_sd_plus_bar_wallpapers()
+        backend = self.store.backend
+        if backend is None:
+            # _load_guarded turns this into the error page and re-arms the
+            # tab, the same as any other failure this fetch can raise.
+            raise RuntimeError("the store backend is unavailable")
+        result = backend.get_all_sd_plus_bar_wallpapers()
         if isinstance(result, Err):
             self.show_connection_error()
             return
@@ -116,19 +121,24 @@ class SDPlusBarWallpaperPreview(StorePreview):
         GLib.idle_add(self.set_install_state, 1)
         return True
 
-    def notify_install_failure(self):
+    def notify_install_failure(self) -> None:
         name = self.wallpaper_data.name or self.wallpaper_data.id
         gl.notify.error(f"The SD+ bar wallpaper {name} could not be installed",
                         title="SD+ bar wallpaper install failed")
 
-    def uninstall(self):
-        self.store.backend.uninstall_sd_plus_bar_wallpaper(sd_plus_bar_wallpaper_data=self.wallpaper_data)
+    def uninstall(self) -> None:
+        backend = self.store.backend
+        if backend is None:
+            log.error("Store backend unavailable; cannot uninstall "
+                      f"{self.wallpaper_data.id}")
+            return
+        backend.uninstall_sd_plus_bar_wallpaper(sd_plus_bar_wallpaper_data=self.wallpaper_data)
         self.set_install_state(0)
 
-    def update(self):
+    def update(self) -> None:
         self.install()
 
-    def on_click_main(self, button: Gtk.Button):
+    def on_click_main(self, button: Gtk.Button) -> None:
         self.wallpaper_page.set_info_visible(True)
 
         # Update info page
@@ -140,5 +150,6 @@ class SDPlusBarWallpaperPreview(StorePreview):
         self.wallpaper_page.info_page.set_license(self.wallpaper_data.license)
         self.wallpaper_page.info_page.set_copyright(self.wallpaper_data.copyright)
         self.wallpaper_page.info_page.set_original_url(self.wallpaper_data.original_url)
-        self.wallpaper_page.info_page.set_license_description(self.wallpaper_data.license_descriptions)
+        self.wallpaper_page.info_page.set_license_description(
+            gl.lm.get_custom_translation(self.wallpaper_data.license_descriptions))
 

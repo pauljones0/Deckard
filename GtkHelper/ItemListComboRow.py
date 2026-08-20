@@ -10,7 +10,7 @@ You should have received a copy of the GNU General Public License
 along with this program. If not, see <https://www.gnu.org/licenses/>.
 """
 
-from typing import Sequence
+from typing import Any, Sequence
 from typing_extensions import deprecated
 
 import gi
@@ -29,11 +29,11 @@ class ItemListComboRowListItem(GObject.Object):
         self._name = name
 
     @GObject.Property(type=str)
-    def key(self):
+    def key(self) -> str:
         return self._key
 
     @GObject.Property(type=str)
-    def name(self):
+    def name(self) -> str:
         return self._name
 
 
@@ -46,7 +46,7 @@ class ItemListComboRow(Adw.ComboRow):
     Based on https://discourse.gnome.org/t/migrate-from-comboboxtext-to-comborow-dropdown/10565/2
     """
 
-    def __init__(self, items: Sequence[ItemListComboRowListItem], *args, **kwargs):
+    def __init__(self, items: Sequence[ItemListComboRowListItem], *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
 
         self.__items: list[ItemListComboRowListItem] = list(items)
@@ -61,7 +61,7 @@ class ItemListComboRow(Adw.ComboRow):
         self.set_model(self.model)
         self.set_factory(self.factory)
 
-    def set_items(self, items: Sequence[ItemListComboRowListItem]):
+    def set_items(self, items: Sequence[ItemListComboRowListItem]) -> None:
         self.model.remove_all()
         keys = set()
         self.__items = list(items)
@@ -73,16 +73,16 @@ class ItemListComboRow(Adw.ComboRow):
 
         self.set_model(self.model) # Update ui
 
-    def __on_factory_setup(self, factory, list_item):
+    def __on_factory_setup(self, factory: Gtk.SignalListItemFactory, list_item: Any) -> None:
         label = Gtk.Label()
         list_item.set_child(label)
 
-    def __on_factory_bind(self, factory, list_item):
+    def __on_factory_bind(self, factory: Gtk.SignalListItemFactory, list_item: Any) -> None:
         label = list_item.get_child()
         entry: ItemListComboRowListItem = list_item.get_item()
         label.set_text(entry.name)
 
-    def set_selected_item_by_key(self, key: str, default: int | None = None):
+    def set_selected_item_by_key(self, key: str, default: int | None = None) -> None:
         """
         Call when loading user-settings, to pre-select the correkt ListItem
         """

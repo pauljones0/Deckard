@@ -26,13 +26,11 @@ from gi.repository import Gtk, Adw, Gdk, Pango
 import globals as gl
 
 # Import typing
-from typing import TYPE_CHECKING
-if TYPE_CHECKING:
-    from windows.mainWindow.mainWindow import MainWindow
 
 
 class FlatpakPermissionRequestWindow(Gtk.ApplicationWindow):
-    def __init__(self, application, main_window: "MainWindow", command: str = "", description: str = None):
+    def __init__(self, application: Adw.Application | None, main_window: Gtk.Window | None,
+                 command: str = "", description: str | None = None) -> None:
         super().__init__(application=application)
         self.set_title("Permissions")
         if main_window is not None:
@@ -52,7 +50,7 @@ class FlatpakPermissionRequestWindow(Gtk.ApplicationWindow):
         self.flatpak_docs_link = "https://docs.flatpak.org/en/latest/sandbox-permissions.html"
         self.build()
 
-    def build(self):
+    def build(self) -> None:
         self.header = Adw.HeaderBar(css_classes=["flat"])
         self.set_titlebar(self.header)
 
@@ -81,9 +79,10 @@ class FlatpakPermissionRequestWindow(Gtk.ApplicationWindow):
         self.main_box.append(self.image)
 
         ## Labels
-        self.header = Gtk.Label(label="Flatpak", css_classes=["permissions-window-header"],
-                                margin_bottom=35)
-        self.main_box.append(self.header)
+        # Not self.header: that name already holds the title bar built above.
+        self.header_label = Gtk.Label(label="Flatpak", css_classes=["permissions-window-header"],
+                                      margin_bottom=35)
+        self.main_box.append(self.header_label)
 
         self.description_box = Gtk.Box(hexpand=False, vexpand=False, homogeneous=False, halign=Gtk.Align.CENTER)
         self.main_box.append(self.description_box)
@@ -117,15 +116,18 @@ class FlatpakPermissionRequestWindow(Gtk.ApplicationWindow):
         # self.info_label_box.append(self.more_info_label) #FIXME: Somehow preventing the description label from wrapping
 
 
-    def on_copy(self, button):
+    def on_copy(self, button: Gtk.Button) -> None:
         try:
-            Gdk.Display.get_default().get_clipboard().set(self.command)
+            display = Gdk.Display.get_default()
+            if display is None:
+                raise RuntimeError("there is no default display")
+            display.get_clipboard().set(self.command)
         except Exception as e:
             #TODO: Show toast
             log.warning(f"Could not copy the command to the clipboard: {e}")
 
-    def on_mark_solved(self, button):
+    def on_mark_solved(self, button: Gtk.Button) -> None:
         self.destroy()
 
-    def on_close(self, button):
+    def on_close(self, button: Gtk.Button) -> None:
         self.destroy()

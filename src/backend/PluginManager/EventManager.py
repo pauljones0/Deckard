@@ -3,26 +3,28 @@ from src.backend.PluginManager.EventAssigner import EventAssigner
 
 
 class EventManager:
-    def __init__(self):
+    def __init__(self) -> None:
         self._event_assigners: list[EventAssigner] = []
 
-        self._overrides: dict[str, str] = {} # {"key_down": "event_1"}
+        self._overrides: dict[str, str | None] = {} # {"key_down": "event_1"}
 
-    def set_overrides(self, overrides: dict[str, str]):
+    def set_overrides(self, overrides: dict[str, str | None]) -> None:
         self._overrides = overrides
 
-    def add_event_assigner(self, event_assigner: EventAssigner):
+    def add_event_assigner(self, event_assigner: EventAssigner) -> None:
         if self.get_event_assigner_by_id(event_assigner.id):
             raise ValueError(f"Event assigner with id '{event_assigner.id}' already exists on this action")
         self._event_assigners.append(event_assigner)
 
-    def clear_event_assigners(self):
+    def clear_event_assigners(self) -> None:
         self._event_assigners.clear()
 
     def get_all_event_assigners(self) -> list[EventAssigner]:
         return self._event_assigners
 
-    def get_event_assigner_by_id(self, id: str) -> EventAssigner | None:
+    def get_event_assigner_by_id(self, id: str | None) -> EventAssigner | None:
+        # A None id matches no assigner, which is what a cleared
+        # selection in the event row means.
         for event_assigner in self._event_assigners:
             if event_assigner.id == id:
                 return event_assigner

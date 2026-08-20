@@ -13,6 +13,8 @@ You should have received a copy of the GNU General Public License
 along with this program. If not, see <https://www.gnu.org/licenses/>.
 """
 # Import gtk modules
+from typing import Any
+
 import gi
 
 from src.backend.DeckManagement.InputIdentifier import Input
@@ -37,10 +39,13 @@ class DeckConfig(Gtk.Box):
                          halign=Gtk.Align.CENTER, valign=Gtk.Align.CENTER)
         self.page_settings_page = page_settings_page
 
-        self.active_widget = None
+        # A KeyButton, a DialWidget or a ScreenBar, whichever holds focus.
+        # The three share set_border_active and no base class, and their
+        # signatures are not annotated yet, so a protocol would not bind.
+        self.active_widget: Any = None
         self.build()
 
-    def build(self):
+    def build(self) -> None:
         # Add key grid
         self.grid = KeyGrid(self.page_settings_page.deck_controller, self.page_settings_page)
         self.append(self.grid)

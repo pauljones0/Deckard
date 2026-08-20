@@ -28,6 +28,8 @@ from src.windows.PageManager.Importer.Importer import Importer
 from loguru import logger as log
 
 # Import globals
+from src.backend import services
+
 import globals as gl
 
 # Import signals
@@ -40,7 +42,7 @@ class NoPagesError(Gtk.Box):
     """
     This error gets shown if there are no pages registered/available
     """
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__(
             orientation=Gtk.Orientation.VERTICAL,
             halign=Gtk.Align.CENTER,
@@ -51,7 +53,7 @@ class NoPagesError(Gtk.Box):
 
         self.build()
 
-    def build(self):
+    def build(self) -> None:
         self.no_pages_label = Gtk.Label(label=gl.lm.get("errors.no-page.header"), css_classes=["error-label"])
         self.append(self.no_pages_label)
 
@@ -65,18 +67,18 @@ class NoPagesError(Gtk.Box):
         self.import_button.connect("clicked", self.on_import_clicked)
         self.append(self.import_button)
 
-    def on_create_new(self, button):
-        dial = EntryDialog(parent_window=gl.app.main_win,
+    def on_create_new(self, button: Gtk.Button) -> None:
+        dial = EntryDialog(parent_window=services.require_main_window(),
                            dialog_title=gl.lm.get("page-manager.page-selector.add-dialog.title"),
                            placeholder=gl.lm.get("page-manager.page-selector.add-dialog.placeholder"),
                            confirm_label=gl.lm.get("page-manager.page-selector.add-dialog.confirm"),
                            cancel_label=gl.lm.get("page-manager.page-selector.add-dialog.cancel"),
                            empty_warning=gl.lm.get("page-manager.page-selector.add-dialog.empty-warning"),
                            already_exists_warning=gl.lm.get("page-manager.page-selector.add-dialog.already-exists-warning"),
-                           forbid_answers=gl.page_manager.get_page_names())
+                           forbid_answers=services.require_page_manager().get_page_names())
         dial.show(self.add_page_callback)
 
-    def add_page_callback(self, name:str):
+    def add_page_callback(self, name:str) -> None:
         if gl.page_manager is None or gl.app is None:
             return
         try:
@@ -93,12 +95,10 @@ class NoPagesError(Gtk.Box):
         if visible_child is None:
             return
         active_controller = visible_child.deck_controller
-        if active_controller is None:
-            return
         
         active_controller.load_default_page()
 
-    def on_import_clicked(self, button):
+    def on_import_clicked(self, button: Gtk.Button) -> None:
         popover = Popover(parent=self)
         popover.popup()
 
@@ -119,28 +119,35 @@ class Popover(Gtk.PopoverMenu):
         self.menu.append("StreamDeck UI", "import.streamdeck-ui")
         self.set_menu_model(self.menu)
 
-    def on_import_streamdeck_ui(self, *args):
+    def on_import_streamdeck_ui(self, *args: Any) -> None:
         ChooseFileDialog(self, self.streamdeck_ui_callback)
 
-    def streamdeck_ui_callback(self, selected_file):
-        importer = Importer(gl.app, window=gl.app.main_win)
+    def streamdeck_ui_callback(self, selected_file: Gio.File) -> None:
+        path = selected_file.get_path()
+        if not path:
+            # A location with no local path, such as a remote GVfs mount,
+            # cannot be read here.
+            return
+        importer = Importer(services.require_app(), window=services.require_main_window())
         # GLib.idle_add(importer.present)
         importer.present()
-        importer.import_pages(selected_file.get_path(), "streamdeck-ui", gl.app.main_win.check_for_errors)
+        importer.import_pages(path, "streamdeck-ui", services.require_main_window().check_for_errors)
 
 class ChooseFileDialog(Gtk.FileDialog):
-    def __init__(self, menu_button: Gtk.MenuButton, callback: Callable[[Any], Any] | None = None):
+    def __init__(self, menu_button: Gtk.Widget, callback: Callable[[Any], Any] | None = None):
         super().__init__(title=gl.lm.get("asset-chooser.custom.browse-files.dialog.title"),
                          accept_label=gl.lm.get("asset-chooser.custom.browse-files.dialog.select-button"))
         self.menu_button = menu_button
         self.original_callback = callback
         self.open(callback=self.callback)
 
-    def callback(self, dialog, result):
+    def callback(self, dialog: Gtk.FileDialog, result: Gio.AsyncResult) -> None:
         try:
             selected_file = self.open_finish(result)
         except GLib.Error as err:
             log.error(err)
             return
         
+        if self.original_callback is None:
+            return
         self.original_callback(selected_file)

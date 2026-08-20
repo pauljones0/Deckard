@@ -2,7 +2,7 @@ import enum
 import json
 from collections.abc import Callable
 from types import MappingProxyType
-from typing import Any, Generic, TypeVar
+from typing import cast, Any, Generic, TypeVar
 
 from .Observer import Observer
 from .Asset import Asset
@@ -29,12 +29,12 @@ class Manager(Generic[AssetT]):
 
     # Assets
 
-    def add_asset(self, key: str, asset: AssetT, override: bool = False):
+    def add_asset(self, key: str, asset: AssetT, override: bool = False) -> None:
         if not self._assets.__contains__(key) or override:
             self._assets[key] = asset
             self._observer.notify(ManagerEvent.ADD, key, asset)
 
-    def remove_asset(self, key: str):
+    def remove_asset(self, key: str) -> None:
         """Remove an asset from the manager, and its override with it."""
         if self._assets.__contains__(key):
             del self._assets[key]
@@ -45,7 +45,7 @@ class Manager(Generic[AssetT]):
 
     # Overrides
 
-    def add_override(self, key: str, asset: AssetT, skip_asset_check: bool = False, override: bool = False):
+    def add_override(self, key: str, asset: AssetT, skip_asset_check: bool = False, override: bool = False) -> None:
         if not self._assets.__contains__(key) and not skip_asset_check:
             return
 
@@ -53,7 +53,7 @@ class Manager(Generic[AssetT]):
             self._asset_overrides[key] = asset
             self._observer.notify(ManagerEvent.OVERRIDE_ADD, key, asset)
 
-    def remove_override(self, key: str):
+    def remove_override(self, key: str) -> None:
         if self._asset_overrides.__contains__(key):
             del self._asset_overrides[key]
             self._observer.notify(ManagerEvent.OVERRIDE_REMOVE, key, self.get_asset(key))
@@ -71,7 +71,7 @@ class Manager(Generic[AssetT]):
             return self._assets.get(key, None)
         return self._asset_overrides.get(key, self._assets.get(key, None))
 
-    def get_asset_values(self, key: str, skip_override: bool = False):
+    def get_asset_values(self, key: str, skip_override: bool = False) -> Any:
         asset = self.get_asset(key, skip_override)
         if asset:
             return asset.get_values()
@@ -89,32 +89,37 @@ class Manager(Generic[AssetT]):
 
     # Observer
 
-    def add_listener(self, callback: Callable[..., Any]):
+    def add_listener(self, callback: Callable[..., Any]) -> None:
         self._observer.subscribe(callback)
 
-    def remove_listener(self, callback: Callable[..., Any]):
+    def remove_listener(self, callback: Callable[..., Any]) -> None:
         self._observer.unsubscribe(callback)
 
     # Save/Load
 
-    def get_asset_json(self):
+    def get_asset_json(self) -> str:
         return json.dumps({key: asset.to_json() for key, asset in self._assets.items()}, indent=4)
 
-    def get_override_json(self):
-        out = {}
+    def get_override_json(self) -> "dict[str, Any]":
+        out: "dict[str, Any]" = {}
 
         for key, asset in self._asset_overrides.items():
             out[key] = asset.to_json()
         return out
 
-    def load_json(self, json_data: dict):
-        json = json_data.get(self._json_key, None)
+    def load_json(self, json_data: dict[str, Any]) -> None:
+        data = json_data.get(self._json_key, None)
 
-        if not json:
+        if not data:
             return
 
-        for key, value in json.items():
-            self.add_override(key, self._asset_type.from_json(value), skip_asset_check=True)
+        for key, value in data.items():
+            asset = self._asset_type.from_json(value)
+            if asset is None:
+                # The concrete asset classes always build one; the base
+                # answers None only for an unknown asset kind.
+                continue
+            self.add_override(key, cast("AssetT", asset), skip_asset_check=True)
 
-    def get_save_key(self):
+    def get_save_key(self) -> str:
         return self._json_key

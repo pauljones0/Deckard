@@ -92,7 +92,7 @@ class Sway(Integration):
 
         return None
 
-    def _walk_tree(self, node, windows: list[dict[str, Any]]):
+    def _walk_tree(self, node: Any, windows: list[dict[str, Any]]) -> None:
         if "window_properties" in node or "app_id" in node:
            # Add container nodes that are windows.
            windows.append(node)

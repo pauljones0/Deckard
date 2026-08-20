@@ -79,6 +79,10 @@ test:compile:
     - python scripts/check_module_sizes.py
     - python scripts/check_gl_slots.py
     - python scripts/check_settings_json.py
+    # This job's image is the deployment floor, and 3.13 evaluates a parameter
+    # and return annotation at def time where the 3.14 dev venv defers it, so
+    # this is the only place an unevaluatable annotation shows up.
+    - python scripts/check_eager_annotations.py
 
 # Lint gate. Rule selection lives in pyproject.toml and is an explicit
 # allowlist -- no rule is enabled until its population is clean, so this job
@@ -101,7 +105,11 @@ lint:types:                # blocking type-check gate: the tree is at zero mypy 
   needs: []
   script:
     # quoted: the ' #' inside the regex would otherwise start a YAML comment
-    - "pip install --quiet $(grep -oE '^(mypy|types-setuptools)==[^ #]+' requirements-dev.txt) typing_extensions"
+    - "pip install --quiet $(grep -oE '^(mypy|types-setuptools|types-requests)==[^ #]+' requirements-dev.txt) typing_extensions"
+    # loguru ships py.typed and is pure-Python (no C deps), so install the real
+    # package: without it @log.catch reads as Any and disallow_untyped_decorators
+    # flags every decorated function. Installing it matches the local checker.
+    - "pip install --quiet $(grep -oE '^loguru==[^ #]+' requirements.txt)"
     # --no-deps: PyGObject-stubs >= 2.13 hard-depends on PyGObject, whose
     # pycairo chain needs a C toolchain this slim image lacks. The stubs are
     # type-time-only (mypy reads the .pyi files, never imports the package),

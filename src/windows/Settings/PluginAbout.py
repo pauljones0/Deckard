@@ -16,19 +16,20 @@ class PluginAboutFactory:
         self.about = self.plugin_base.get_about()
         self.manifest = self.plugin_base.get_manifest()
 
-    def create_new_about(self):
+    def create_new_about(self) -> Adw.AboutDialog:
         about = Adw.AboutDialog()
 
-        about.set_application_name(self.plugin_base.plugin_name)
-        about.set_version(self.plugin_base.plugin_version)
-        about.set_website(self.plugin_base.github_repo)
-        about.set_issue_url(f"{self.plugin_base.github_repo}/issues")
+        github_repo = self.plugin_base.github_repo
+        about.set_application_name(self.plugin_base.plugin_name or "")
+        about.set_version(self.plugin_base.plugin_version or "")
+        about.set_website(github_repo or "")
+        about.set_issue_url(f"{github_repo}/issues" if github_repo else "")
 
         self._full_setup(about)
 
         return about
 
-    def _full_setup(self, about: Adw.AboutDialog):
+    def _full_setup(self, about: Adw.AboutDialog) -> None:
         self.add_release_notes(about)
         self.add_copyright(about)
         self.add_support(about)
@@ -37,7 +38,7 @@ class PluginAboutFactory:
         self.add_author(about)
         self.add_comments(about)
 
-    def add_release_notes(self, about: Adw.AboutDialog):
+    def add_release_notes(self, about: Adw.AboutDialog) -> None:
         release_notes = self.about.get("release-notes", {})
 
         path = release_notes.get("path", "")
@@ -53,13 +54,13 @@ class PluginAboutFactory:
 
         about.set_release_notes_version(version or self.plugin_base.plugin_version or "")
 
-    def add_credits(self, about: Adw.AboutDialog):
+    def add_credits(self, about: Adw.AboutDialog) -> None:
         credits = self.about.get("credits", {})
 
         for section, people in credits.items():
             about.add_credit_section(section, people)
 
-    def add_comments(self, about: Adw.AboutDialog):
+    def add_comments(self, about: Adw.AboutDialog) -> None:
         comment = self.about.get("comments", None)
 
         if not comment:
@@ -71,25 +72,25 @@ class PluginAboutFactory:
         if translation:
             about.set_comments(translation)
 
-    def add_support(self, about: Adw.AboutDialog):
+    def add_support(self, about: Adw.AboutDialog) -> None:
         support = self.about.get("support", "")
 
         if support:
             about.set_support_url(support)
 
-    def add_author(self, about: Adw.AboutDialog):
+    def add_author(self, about: Adw.AboutDialog) -> None:
         author = self.about.get("author", "")
 
         if author:
             about.set_developer_name(author)
 
-    def add_copyright(self, about: Adw.AboutDialog):
+    def add_copyright(self, about: Adw.AboutDialog) -> None:
         copyright = self.about.get("copyright", "")
 
         if copyright:
             about.set_copyright(copyright)
 
-    def add_acknowledgements(self, about: Adw.AboutDialog):
+    def add_acknowledgements(self, about: Adw.AboutDialog) -> None:
         acknowledgements = self.about.get("acknowledgements", {})
 
         for section, people in acknowledgements.items():

@@ -17,18 +17,24 @@ import gi
 
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
+    from src.windows.mainWindow.elements.PageSettingsPage import PageSettingsPage
+    from src.backend.DeckManagement.InputIdentifier import InputIdentifier
+    from src.backend.DeckManagement.deck_controller.controller import DeckController
+    from PIL import Image
     from src.backend.DeckManagement.deck_controller.inputs import ControllerKey
 from src.backend.DeckManagement.InputIdentifier import Input
 
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Gtk, Gdk, GLib, Gio
+from gi.repository import Gtk, Gdk, GdkPixbuf, GLib, Gio
 
 # Import Python modules 
 from loguru import logger as log
 
 # Imort globals
+from src.backend import services
+
 import globals as gl
 
 # Import own modules
@@ -36,25 +42,24 @@ from src.backend.DeckManagement.ImageHelpers import image2pixbuf
 from src.backend.DeckManagement.HelperMethods import recursive_hasattr
 from src.windows.ui_adapter import mark_dirty
 
-from typing import Any
+from typing import cast, Any
 
 class KeyGrid(Gtk.Grid):
     """
     Child of PageSettingsPage
     Key grid for the button config
     """
-    def __init__(self, deck_controller, page_settings_page, **kwargs):
+    def __init__(self, deck_controller: "DeckController", page_settings_page: "PageSettingsPage", **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.deck_controller = deck_controller
         self.page_settings_page = page_settings_page
 
-        self.selected_key = None # The selected key, indicated by a blue frame around it
+        self.selected_key: "KeyButton | None" = None # The selected key, indicated by a blue frame around it
 
         [y, x] = self.deck_controller.deck.key_layout()
-        self.buttons = [[None] * y for i in range(x)]
+        # build() fills every slot. The Nones live between this line and it.
+        self.buttons: list[list["KeyButton | None"]] = [[None] * y for i in range(x)]
 
-        # Store the copied key from the page
-        self.copied_key:dict = None
 
         self.build()
 
@@ -65,11 +70,11 @@ class KeyGrid(Gtk.Grid):
 
         GLib.idle_add(self.select_key, 0, 0)
 
-    def regenerate_buttons(self):
+    def regenerate_buttons(self) -> None:
         [y, x] = self.deck_controller.deck.key_layout()
         self.buttons = [[None] * y for i in range(x)]
     
-    def build(self):
+    def build(self) -> None:
         self.clear()
 
         layout = self.deck_controller.deck.key_layout()
@@ -79,12 +84,8 @@ class KeyGrid(Gtk.Grid):
                 self.attach(button, x, y, 1, 1)
                 button._set_visible(False) # Hide buttons per default - they will be shown when the the grid is mapped to prevent large grids to resize every child
                 self.buttons[x][y] = button
-        return
-        log.debug(self.deck_controller.deck.key_layout())
-        l = Gtk.Label(label="Key Grid")
-        self.attach(l, 0, 0, 1, 1)
 
-    def load_from_changes(self):
+    def load_from_changes(self) -> None:
         # Apply the changes that arrived before this widget existed, or while
         # the window was hidden. Each entry is a dirty marker and not a stored
         # PIL image, so this composites the current frame for each dirty
@@ -116,7 +117,7 @@ class KeyGrid(Gtk.Grid):
                     except KeyError:
                         pass
 
-    def _find_screenbar(self):
+    def _find_screenbar(self) -> Any:
         """The sibling screenbar, found by a walk up the widget tree.
 
         The lookup is duck-typed, because an import of DeckStackChild or
@@ -129,11 +130,11 @@ class KeyGrid(Gtk.Grid):
         widget = self.get_parent()
         while widget is not None:
             if recursive_hasattr(widget, "screenbar.image"):
-                return widget.screenbar
+                return getattr(widget, "screenbar")
             widget = widget.get_parent()
         return None
 
-    def _push_current_image(self, identifier, widget) -> None:
+    def _push_current_image(self, identifier: "InputIdentifier", widget: Any) -> None:
         controller_input = self.deck_controller.get_input(identifier)
         if controller_input is None:
             return
@@ -144,36 +145,38 @@ class KeyGrid(Gtk.Grid):
             return
         widget.set_image(image)
         
-    def select_key(self, x: int, y: int):
-        self.buttons[x][y].on_focus_in()
-        self.buttons[x][y].image.grab_focus()
+    def select_key(self, x: int, y: int) -> None:
+        button = self.buttons[x][y]
+        if button is None:
+            return
+        button.on_focus_in()
+        button.image.grab_focus()
 
-    def on_map(self, widget):
+    def on_map(self, widget: Gtk.Widget) -> None:
         self.load_from_changes()
 
         # Only show buttons when the grid is mapped to prevent large grids to resize every child
         self.set_buttons_visible(True)
 
-    def on_unmap(self, widget):
+    def on_unmap(self, widget: Gtk.Widget) -> None:
         # Only show buttons when the grid is mapped to prevent large grids to resize every child
         self.set_buttons_visible(False)
 
-    def clear(self):
-        while self.get_first_child() is not None:
-            self.remove(self.get_first_child())
+    def clear(self) -> None:
+        child = self.get_first_child()
+        while child is not None:
+            self.remove(child)
+            child = self.get_first_child()
 
-    def set_buttons_visible(self, visible):
-        for i in range(len(self.buttons)):
-            for j in range(len(self.buttons[i])):
-                self.buttons[i][j]._set_visible(visible)
-        return
-        for x in range(self.deck_controller.deck.key_layout()[1]):
-            for y in range(self.deck_controller.deck.key_layout()[0]):
-                self.buttons[x][y]._set_visible(visible)
+    def set_buttons_visible(self, visible: bool) -> None:
+        for row in self.buttons:
+            for button in row:
+                if button is not None:
+                    button._set_visible(visible)
 
 
 class KeyButton(Gtk.Frame):
-    def __init__(self, key_grid:KeyGrid, coords, **kwargs):
+    def __init__(self, key_grid:KeyGrid, coords: tuple[int, int], **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.set_css_classes(["key-button-frame-hidden"])
         self.coords = coords
@@ -181,7 +184,7 @@ class KeyButton(Gtk.Frame):
 
         self.key_grid = key_grid
 
-        self.pixbuf = None
+        self.pixbuf: GdkPixbuf.Pixbuf | None = None
 
         # self.button = Gtk.Button(hexpand=True, vexpand=True, css_classes=["key-button"])
         # self.set_child(self.button)
@@ -231,13 +234,13 @@ class KeyButton(Gtk.Frame):
         self.button_dnd_target.connect("drop", self.on_button_drop)
         self.add_controller(self.button_dnd_target)
 
-    def on_button_accept(self, drop: Gtk.DropTarget, user_data):
+    def on_button_accept(self, drop: Gtk.DropTarget, user_data: Gdk.Drop) -> bool:
         return True
 
     # GTK4 passes the dropped value to the drop signal, not the content
     # provider. Here that value is a KeyButton or a Gdk.FileList. See
     # set_gtypes above.
-    def on_button_drop(self, drop: Gtk.DropTarget, value: Any, x, y):
+    def on_button_drop(self, drop: Gtk.DropTarget, value: Any, x: float, y: float) -> "bool | None":
         if isinstance(drop.get_value(), KeyButton):
             self.handle_key_button_drop(drop, value, x, y)
        
@@ -247,8 +250,9 @@ class KeyButton(Gtk.Frame):
         else:
             drop.reject()
             return False
+        return None
         
-    def handle_key_button_drop(self, drop: Gtk.DropTarget, value: Any, x, y):
+    def handle_key_button_drop(self, drop: Gtk.DropTarget, value: Any, x: float, y: float) -> None:
         active_page = self.key_grid.deck_controller.active_page
         if active_page is None:
             return
@@ -291,7 +295,7 @@ class KeyButton(Gtk.Frame):
     # value is the dropped Gdk.FileList and not the ContentProvider.
     # on_button_drop routes here only when drop.get_value() is a Gdk.FileList,
     # because GTK passes the value to the drop signal, not the provider.
-    def handle_file_drop(self, drop: Gtk.DropTarget, value: Gdk.FileList, x, y):
+    def handle_file_drop(self, drop: Gtk.DropTarget, value: Gdk.FileList, x: float, y: float) -> "bool | None":
         files = value.get_files()
         if len(files) > 1:
             drop.reject()
@@ -313,6 +317,9 @@ class KeyButton(Gtk.Frame):
 
         # Set media to key
         active_page = self.key_grid.deck_controller.active_page
+        if active_page is None:
+            # The page can clear while the drop is in flight.
+            return None
 
         state_dict = self.identifier.ensure_state_dict(active_page, self.state)
         state_dict.setdefault("media", {
@@ -323,31 +330,31 @@ class KeyButton(Gtk.Frame):
         state_dict["media"]["path"] = internal_path
         # Save page
         active_page.save()
-        key_index = self.key_grid.deck_controller.coords_to_index(self.coords)
-        self.key_grid.deck_controller.load_key(key_index, page=active_page)
+        self.key_grid.deck_controller.load_input_from_identifier(self.identifier, page=active_page)
 
         # Update icon selector if current key is selected
         if gl.app is None:
-            return
+            return None
         active_identifier = gl.app.main_win.sidebar.active_identifier
         if active_identifier == self.identifier:
             gl.app.main_win.sidebar.key_editor.icon_selector.load_for_identifier(self.identifier, self.get_key().state)
+        return None
 
         
-    def on_drag_begin(self, drag_source, data):
+    def on_drag_begin(self, drag_source: Gtk.DragSource, data: Any) -> None:
         content = data.get_content()
 
-    def on_drag_prepare(self, drag_source, x, y):
+    def on_drag_prepare(self, drag_source: Gtk.DragSource, x: float, y: float) -> Gdk.ContentProvider:
         drag_source.set_icon(self.image.get_paintable(), self.get_width() // 2, self.get_height() // 2)
         content = Gdk.ContentProvider.new_for_value(self)
         return content
 
-    def on_dnd_accept(self, drop, user_data):
+    def on_dnd_accept(self, drop: Gtk.DropTarget, user_data: Gdk.Drop) -> bool:
         return True
 
         
 
-    def set_image(self, image):
+    def set_image(self, image: "Image.Image") -> None:
         # Callable from any thread. This is the map-time replay path. A live
         # frame arrives through the UI adapter, which calls the same two
         # halves and coalesces the paints into one per input. The idle takes
@@ -358,7 +365,7 @@ class KeyButton(Gtk.Frame):
         # image = None
         # del image
 
-    def prepare_mirror_frame(self, image):
+    def prepare_mirror_frame(self, image: "Image.Image") -> "GdkPixbuf.Pixbuf | None":
         """The paint-ready payload for paint_mirror_frame.
 
         Any thread may call it. image2pixbuf uses only PIL and GdkPixbuf, so
@@ -372,7 +379,7 @@ class KeyButton(Gtk.Frame):
         # stale frame, and the next repaint corrects it.
         return image2pixbuf(image.convert("RGBA"), force_transparency=True)
 
-    def paint_mirror_frame(self, pixbuf) -> bool:
+    def paint_mirror_frame(self, pixbuf: "GdkPixbuf.Pixbuf | None") -> bool:
         # Main loop only. It returns False, because a GLib idle callback that
         # returns a true value re-arms.
         self.pixbuf = pixbuf
@@ -400,16 +407,16 @@ class KeyButton(Gtk.Frame):
         if controller is not None:
             mark_dirty(controller, self.identifier)
 
-    def set_icon_selector_previews(self, pixbuf):
+    def set_icon_selector_previews(self, pixbuf: "GdkPixbuf.Pixbuf | None") -> None:
         # Main loop only, because the gating below reads widget state.
         if not recursive_hasattr(gl, "app.main_win.sidebar"):
             return
-        sidebar = gl.app.main_win.sidebar
+        sidebar = services.require_main_window().sidebar
         if pixbuf is None:
             return
         if sidebar.key_editor.label_editor.label_group.expander.active_identifier != self.identifier:
             return
-        child = gl.app.main_win.leftArea.deck_stack.get_visible_child()
+        child = services.require_main_window().leftArea.deck_stack.get_visible_child()
         if child is None:
             return
         if child.deck_controller != self.key_grid.deck_controller:
@@ -419,7 +426,7 @@ class KeyButton(Gtk.Frame):
         # Update icon selector in margin editor
         # sidebar.key_editor.image_editor.image_group.expander.margin_row.icon_selector.image.set_from_pixbuf(pixbuf)
 
-    def on_click(self, gesture, n_press, x, y):
+    def on_click(self, gesture: Gtk.GestureClick, n_press: int, x: float, y: float) -> None:
         if gesture.get_current_button() == 1 and n_press == 1:
             # Single left click
             # Select key
@@ -437,7 +444,7 @@ class KeyButton(Gtk.Frame):
             popover.on_open()
             popover.popup()
 
-    def simulate_press(self):
+    def simulate_press(self) -> None:
         ## Check if double click to emulate is turned on in the settings
         if not gl.settings_manager.app().emulate_at_double_click:
             return
@@ -446,7 +453,7 @@ class KeyButton(Gtk.Frame):
         # Release key after 100ms
         GLib.timeout_add(100, self.key_grid.deck_controller.event_callback, self.identifier, False)
 
-    def set_border_active(self, visible):
+    def set_border_active(self, visible: bool) -> None:
         if visible:
             # Hide other frames
             if self.key_grid.page_settings_page.deck_config.active_widget not in [self, None]:
@@ -459,7 +466,7 @@ class KeyButton(Gtk.Frame):
             self.set_css_classes(["key-button-frame-hidden"])
             self.key_grid.page_settings_page.deck_config.active_widget = None
 
-    def on_focus_in(self, *args):
+    def on_focus_in(self, *args: Any) -> None:
         # Update settings on the righthand side of the screen
         self.update_sidebar()
         # Update preview
@@ -469,10 +476,10 @@ class KeyButton(Gtk.Frame):
         # self.button.set_css_classes(["key-button-new-small"])
         self.set_border_active(True)
 
-    def update_sidebar(self):
+    def update_sidebar(self) -> None:
         if not recursive_hasattr(gl, "app.main_win.sidebar"):
             return
-        sidebar = gl.app.main_win.sidebar
+        sidebar = services.require_main_window().sidebar
         # Check if already loaded for this coords
         if sidebar.active_identifier == self.identifier:
             if not self.get_mapped():
@@ -481,51 +488,54 @@ class KeyButton(Gtk.Frame):
         sidebar.load_for_identifier(self.identifier, self.state)
 
     # Modifier
-    def on_copy(self, *args):
+    def on_copy(self, *args: Any) -> bool:
         active_page = self.key_grid.deck_controller.active_page
         if active_page is None:
-            return
+            return False
         key_dict = active_page.dict.get(self.identifier.input_type, {}).get(self.identifier.json_identifier, {})
-        gl.app.main_win.key_dict = key_dict
+        services.require_main_window().key_dict = key_dict
         content = Gdk.ContentProvider.new_for_value(key_dict)
-        gl.app.main_win.key_clipboard.set_content(content)
+        services.require_main_window().key_clipboard.set_content(content)
+        return False
 
-    def on_cut(self, *args):
+    def on_cut(self, *args: Any) -> bool:
         self.on_copy()
         self.on_remove()
+        return False
 
-    def on_paste(self, *args):
-        # Check if clipboard is from this Deckard instance
-        if not gl.app.main_win.key_clipboard.is_local() and False:  # TODO: Rely on system keyboard - Enabling this will cause copy/paste problems on KDE/Wayland
-            #TODO: Use read_value_async to read it instead - This is more like a temporary hack
-            return
-        
+    def on_paste(self, *args: Any) -> bool:
+        # No is_local() check on the clipboard. Refusing a clipboard this
+        # instance does not own breaks copy and paste on KDE under Wayland,
+        # where ownership reads as foreign. Telling the two apart needs the
+        # value itself, through read_value_async.
+
         # Remove the old action objects. Several actions can share one action
         # base, and nothing else tells those actions apart.
         self.on_remove()
         
         active_page = self.key_grid.deck_controller.active_page
         if active_page is None:
-            return
+            return False
         active_page.dict.setdefault(self.identifier.input_type, {})
         active_page.dict[self.identifier.input_type].setdefault(self.identifier.json_identifier, {})
-        active_page.dict[self.identifier.input_type][self.identifier.json_identifier] = gl.app.main_win.key_dict
+        active_page.dict[self.identifier.input_type][self.identifier.json_identifier] = services.require_main_window().key_dict
         active_page.reload_similar_pages(self.identifier, reload_self=True)
 
         # Reload ui
-        gl.app.main_win.sidebar.load_for_identifier(self.identifier, self.get_key().state)
+        services.require_main_window().sidebar.load_for_identifier(self.identifier, self.get_key().state)
+        return False
 
-    def on_paste_finished(self, result, data, user_data):
-        value = gl.app.main_win.key_clipboard.read_value_finish(result=data)
+    def on_paste_finished(self, result: Any, data: Any, user_data: Any) -> None:
+        value = services.require_main_window().key_clipboard.read_value_finish(result=data)
 
-    def on_remove(self, *args):
+    def on_remove(self, *args: Any) -> bool:
         active_page = self.key_grid.deck_controller.active_page
         if active_page is None:
-            return
+            return False
         x, y = self.coords
         
         if f"{x}x{y}" not in active_page.dict.get("keys", {}):
-            return
+            return False
         del active_page.dict["keys"][f"{x}x{y}"]
         active_page.save()
         active_page.load()
@@ -534,12 +544,13 @@ class KeyButton(Gtk.Frame):
         active_page.reload_similar_pages(self.identifier, reload_self=True)
 
         # Reload ui
-        gl.app.main_win.sidebar.load_for_identifier(self.identifier, self.get_key().state)
+        services.require_main_window().sidebar.load_for_identifier(self.identifier, self.get_key().state)
+        return False
 
     def get_key(self) -> "ControllerKey":
         controller = self.key_grid.deck_controller
 
-        return controller.get_input(self.identifier)
+        return cast("ControllerKey", controller.get_input(self.identifier))
 
     def remove_media(self) -> None:
         key = self.get_key()
@@ -547,11 +558,11 @@ class KeyButton(Gtk.Frame):
 
         state.remove_media()
 
-    def _set_visible(self, visible: bool):
+    def _set_visible(self, visible: bool) -> None:
         self.set_visible(visible)
         self.image.set_visible(visible)
 
-    def init_actions(self):
+    def init_actions(self) -> None:
         self.action_group = Gio.SimpleActionGroup()
         self.insert_action_group("key", self.action_group)
 
@@ -571,7 +582,7 @@ class KeyButton(Gtk.Frame):
         self.action_group.add_action(self.remove_action)
 
 
-    def init_shortcuts(self):
+    def init_shortcuts(self) -> None:
         self.shortcut_controller = Gtk.ShortcutController()
 
         self.copy_shortcut_action = Gtk.CallbackAction.new(self.on_copy)
@@ -591,12 +602,12 @@ class KeyButton(Gtk.Frame):
 
         self.add_controller(self.shortcut_controller)
 
-    def on_update(self, *args, **kwargs):
+    def on_update(self, *args: Any, **kwargs: Any) -> None:
         pass
 
 
 class KeyButtonContextMenu(Gtk.PopoverMenu):
-    def __init__(self, key_button:KeyButton, **kwargs):
+    def __init__(self, key_button:KeyButton, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.key_button = key_button
         self._unparenting = False
@@ -606,10 +617,10 @@ class KeyButtonContextMenu(Gtk.PopoverMenu):
 
         # gl.app.set_accels_for_action("context.test", ["<Primary>t"])
 
-    def on_test(self, *args, **kwargs):
+    def on_test(self, *args: Any, **kwargs: Any) -> None:
         pass
 
-    def build(self):
+    def build(self) -> None:
         self.set_parent(self.key_button)
         self.set_has_arrow(False)
 
@@ -631,7 +642,7 @@ class KeyButtonContextMenu(Gtk.PopoverMenu):
 
         self.set_menu_model(self.main_menu)
 
-    def on_close(self, *args, **kwargs):
+    def on_close(self, *args: Any, **kwargs: Any) -> None:
         # Unparent on an idle, not here. This code runs inside the closed
         # signal emission, and an unparent of the popover during that emission
         # can dispose the emitter under GTK. The idle also lets fast repeated
@@ -641,13 +652,15 @@ class KeyButtonContextMenu(Gtk.PopoverMenu):
             return
         self._unparenting = True
 
-        def _do_unparent():
+        def _do_unparent() -> bool:
             if self.get_parent() is not None:
                 self.unparent()
             return GLib.SOURCE_REMOVE
 
         GLib.idle_add(_do_unparent)
 
-    def on_open(self, *args, **kwargs):
+    def on_open(self, *args: Any, **kwargs: Any) -> None:
+        # Inert. MainWindow.add_accel_actions is inert too, and each
+        # KeyButton serves these keys through a Gtk.ShortcutController of
+        # its own, added in init_shortcuts.
         return
-        gl.app.main_win.add_accel_actions()

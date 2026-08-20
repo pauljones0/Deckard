@@ -19,7 +19,7 @@ gi.require_version("Adw", "1")
 from gi.repository import Gtk, Adw, Pango
 
 # Import python modules
-from typing import TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 
 # Import own modules
 if TYPE_CHECKING:
@@ -37,7 +37,7 @@ class InfoPage(Gtk.Box):
         self.store_page = store_page
         self.build()
 
-    def build(self):
+    def build(self) -> None:
         self.clamp = Adw.Clamp(hexpand=True)
         self.append(self.clamp)
 
@@ -74,40 +74,40 @@ class InfoPage(Gtk.Box):
         self.license_description = DescriptionRow(title="License Description:", desc="N/A")
         self.legal_group.add(self.license_description)
 
-    def set_name(self, name:str):
+    def set_name(self, name: str | None) -> None:
         self.name_row.set_url(name)
 
-    def set_description(self, description:str):
+    def set_description(self, description: str | None) -> None:
         self.description_row.set_description(description)
 
-    def set_author(self, author:str):
+    def set_author(self, author: str | None) -> None:
         self.author_row.set_url(author)
 
-    def set_version(self, version:str):
+    def set_version(self, version: str | None) -> None:
         self.version_row.set_url(version)
 
-    def set_license(self, license:str):
+    def set_license(self, license: str | None) -> None:
         self.license_row.set_url(license)
 
-    def set_copyright(self, copyright:str):
+    def set_copyright(self, copyright: str | None) -> None:
         self.copyright_row.set_url(copyright)
 
-    def set_license_description(self, description:str):
+    def set_license_description(self, description: str | None) -> None:
         self.license_description.set_description(description)
 
-    def set_original_url(self, url:str):
+    def set_original_url(self, url: str | None) -> None:
         self.original_url.set_url(url)
 
 
 class DescriptionRow(Adw.PreferencesRow):
-    def __init__(self, title:str, desc:str, *args, **kwargs):
+    def __init__(self, title: str, desc: str, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self.title = title
         self.desc = desc
 
         self.build()
 
-    def build(self):
+    def build(self) -> None:
         self.main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, hexpand=True,
                                 margin_top=15, margin_bottom=15)
         self.set_child(self.main_box)
@@ -119,12 +119,8 @@ class DescriptionRow(Adw.PreferencesRow):
                                            margin_start=15, margin_top=15, margin_end=15)
         self.main_box.append(self.description_label)
 
-    def set_description(self, description:str):
-        if description in [None, ""]:
-            description = "N/A"
-        self.description_label.set_text(description)
+    def set_description(self, description: str | None) -> None:
+        self.description_label.set_text(description or "N/A")
 
-    def set_title(self, title:str):
-        if title in [None, ""]:
-            title = "N/A"
-        self.title_label.set_text(title)
+    def set_title(self, title: str | None) -> None:
+        self.title_label.set_text(title or "N/A")

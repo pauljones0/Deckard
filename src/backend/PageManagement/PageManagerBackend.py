@@ -18,7 +18,10 @@ import shutil
 import threading
 import zipfile
 from contextlib import contextmanager
-from typing import Any, Iterator, TypedDict
+from typing import cast, Any, Iterator, TypedDict, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from src.backend.SettingsManager import SettingsManager
 
 from loguru import logger as log
 
@@ -44,7 +47,7 @@ class PageEntry(TypedDict):
 
 
 class PageManagerBackend:
-    def __init__(self, settings_manager):
+    def __init__(self, settings_manager: "SettingsManager") -> None:
         self.settings_manager = settings_manager
 
         # Guards pages, which arbitrary threads read and mutate.
@@ -58,7 +61,7 @@ class PageManagerBackend:
         # guarded by _pages_lock. A second caller for one page waits on the
         # first construction instead of building a twin Page whose actions
         # register live event and signal handlers.
-        self._loads_in_flight: dict[tuple, tuple[threading.Thread, threading.Event]] = {}
+        self._loads_in_flight: dict[tuple["DeckController", str], tuple[threading.Thread, threading.Event]] = {}
         # One document per page file, keyed by the flush seam's
         # canonical_path, like every other per-page registry in this process.
         # A page reached by two spellings is then one document with one save
@@ -72,9 +75,9 @@ class PageManagerBackend:
         # Holders of a cached page that eviction cannot see for itself.
         # Public, so the deck controller can bracket its tick and key work.
         self.pins = PagePins()
-        self.custom_pages = []
+        self.custom_pages: list[str] = []
 
-        self.page_order = []
+        self.page_order: list[str] = []
 
         # In the Settings UI, n-cached-pages counts the cached pages besides
         # the active one, so set_pages_to_cache() stores max_pages = value + 1
@@ -240,7 +243,7 @@ class PageManagerBackend:
 
         return page_names
 
-    def clear_old_cached_pages(self):
+    def clear_old_cached_pages(self) -> None:
         # Eviction is an in-memory teardown. It writes no disk file and
         # touches no page json. clear_action_objects() tears down the live
         # action objects and drops the cache entry. The harm of a gutted live
@@ -290,8 +293,8 @@ class PageManagerBackend:
             # so a concurrent get_page() mints a fresh Page instead of this
             # gutted one.
             with self._pages_lock:
-                page_data = controller_pages.get(path)
-                if page_data is None or page_data.get("page") is not page_obj:
+                current_entry = controller_pages.get(path)
+                if current_entry is None or current_entry.get("page") is not page_obj:
                     continue  # discarded or replaced already
                 if self.pins.is_pinned(page_obj):
                     continue
@@ -304,7 +307,7 @@ class PageManagerBackend:
             # waits on this lock.
             page_obj.clear_action_objects()
 
-    def _page_is_live(self, page_obj) -> bool:
+    def _page_is_live(self, page_obj: "Page") -> bool:
         """Answer True when a controller depends on this Page object.
 
         A controller depends on the page it shows and on the page it stashed as
@@ -324,18 +327,18 @@ class PageManagerBackend:
                 return True
         return False
 
-    def get_default_page(self, deck_serial_number: str):
+    def get_default_page(self, deck_serial_number: str) -> str | None:
         page_settings = settings_store.get().read(settings_store.PAGES)
         page_path = page_settings.get("default-pages", {}).get(deck_serial_number, None)
 
         if page_path and os.path.isfile(page_path):
-            return page_path
+            return cast(str, page_path)
 
         return None
 
     # path=None is the documented value that clears this deck's default page.
     # get_all_default_page_serial_numbers skips a falsy entry for that reason.
-    def set_default_page(self, deck_serial_number: str, path: str | None):
+    def set_default_page(self, deck_serial_number: str, path: str | None) -> None:
         # A read-modify-write, serialized against every other edit of
         # pages.json. The store's per-file edit lock is the only lock this
         # takes, and no caller holds it while it acquires _pages_lock.
@@ -354,7 +357,7 @@ class PageManagerBackend:
 
         return serial_numbers
 
-    def get_serial_numbers_from_page(self, path: str) -> list[str]:
+    def get_serial_numbers_from_page(self, path: str | None) -> list[str]:
         serial_numbers = []
 
         page_settings = settings_store.get().read(settings_store.PAGES)
@@ -365,7 +368,7 @@ class PageManagerBackend:
 
         return serial_numbers
 
-    def set_pages_to_cache(self, amount: int):
+    def set_pages_to_cache(self, amount: int) -> None:
         old_max_pages = self.max_pages
 
         self.max_pages = amount + 1
@@ -373,7 +376,7 @@ class PageManagerBackend:
         if old_max_pages > self.max_pages:
             self.clear_old_cached_pages()
 
-    def move_page(self, old_path: str, new_path: str):
+    def move_page(self, old_path: str, new_path: str) -> None:
         # Read barrier. The copy below reads the old file, so its pending
         # edits go to disk first, or the renamed page arrives without them.
         page_flush.get().flush_path(old_path)
@@ -433,7 +436,7 @@ class PageManagerBackend:
         os.remove(old_path)
         self.refresh_window_watch_state()
 
-    def remove_page(self, page_path: str):
+    def remove_page(self, page_path: str) -> None:
         # Iterate over all deck controllers to handle any that are using the page to be removed
         for controller in (gl.deck_manager.deck_controller if gl.deck_manager is not None else []):
             # A page change asked for while the screensaver owns the deck goes
@@ -537,7 +540,7 @@ class PageManagerBackend:
         # it, so the watcher needs a new gate here too.
         self.refresh_window_watch_state()
 
-    def add_page(self, page_name: str, page_dict: dict = None) -> str:
+    def add_page(self, page_name: str, page_dict: dict[str, Any] | None = None) -> str:
         page_dict = page_dict or {}
 
         # The app creates the pages dir at startup. A caller before that init,
@@ -570,7 +573,7 @@ class PageManagerBackend:
         self.refresh_window_watch_state()
         return path
 
-    def register_page(self, path: str):
+    def register_page(self, path: str) -> None:
         if not os.path.isfile(path):
             log.error(f"Page {path} does not exist")
             return
@@ -584,7 +587,7 @@ class PageManagerBackend:
         # towards the watcher gate from here on.
         self.refresh_window_watch_state()
 
-    def unregister_page(self, path: str):
+    def unregister_page(self, path: str) -> None:
         if not self.custom_pages.__contains__(path):
             return
 
@@ -592,7 +595,7 @@ class PageManagerBackend:
         gl.signal_manager.trigger_signal(Signals.PageDelete, path)
         self.refresh_window_watch_state()
 
-    def get_pages_with_path(self, path: str):
+    def get_pages_with_path(self, path: str) -> "list[Page]":
         pages_set = set()
 
         # A read of self.pages must hold _pages_lock. discard_controller()
@@ -611,7 +614,7 @@ class PageManagerBackend:
 
         return list(pages_set)
 
-    def reload_pages_with_path(self, path: str, brightness: bool = True, screensaver: bool = True, background: bool = True, inputs: bool = True):
+    def reload_pages_with_path(self, path: str, brightness: bool = True, screensaver: bool = True, background: bool = True, inputs: bool = True) -> None:
         pages = self.get_pages_with_path(path)
 
         for page in pages:
@@ -713,7 +716,7 @@ class PageManagerBackend:
         document.refresh_from_disk()
         return document
 
-    def get_page_data(self, path: str, use_backup: bool = True) -> dict:
+    def get_page_data(self, path: str | None, use_backup: bool = True) -> dict[str, Any]:
         """Read the whole content of one page file from disk.
 
         pages/backups/ substitutes a missing or an unreadable primary. The
@@ -749,7 +752,7 @@ class PageManagerBackend:
                 data = healed
         return data
 
-    def set_page_data(self, path: str, data: dict, reload_brightness: bool = True, reload_screensaver: bool = True, reload_background: bool = True, reload_inputs: bool = True):
+    def set_page_data(self, path: str, data: dict[str, Any], reload_brightness: bool = True, reload_screensaver: bool = True, reload_background: bool = True, reload_inputs: bool = True) -> None:
         """Replace a whole page with data, for the whole-page editor.
 
         It goes through the document and not over the file. A file write leaves
@@ -766,7 +769,7 @@ class PageManagerBackend:
                                         inputs=reload_inputs)
 
     @staticmethod
-    def _strip_asset(page_dict: dict, abs_target_path: str) -> bool:
+    def _strip_asset(page_dict: dict[str, Any], abs_target_path: str) -> bool:
         """Drop every reference to one asset out of one page's content.
 
         Returns whether the page referenced the asset. The sweep below writes
@@ -789,7 +792,7 @@ class PageManagerBackend:
 
         return page_had_asset
 
-    def remove_asset_from_all_pages(self, path: str):
+    def remove_asset_from_all_pages(self, path: str) -> None:
         if not path:
             raise ValueError("Invalid path")
 
@@ -929,9 +932,11 @@ class PageManagerBackend:
             except Exception as e:
                 log.error(f"Failed to remove backup file {old_backup}: {e}")
 
-    def get_page_settings(self, path: str) -> dict:
+    def get_page_settings(self, path: str | None) -> dict[str, Any]:
+        # get_page_data answers {} for a None path, and the page editor reads
+        # through here before it holds a page.
         data = self.get_page_data(path, False)
-        return data.get("settings", {})
+        return cast(dict[str, Any], data.get("settings", {}))
 
     @contextmanager
     def edit_page_settings(self, path: str) -> Iterator[dict[str, Any]]:
@@ -953,7 +958,7 @@ class PageManagerBackend:
                 data["settings"] = settings
             yield settings
 
-    def set_page_settings(self, path: str, settings: dict):
+    def set_page_settings(self, path: str | None, settings: dict[str, Any]) -> None:
         """Set the whole settings section of the page json.
 
         :param path: Path to the file
@@ -1009,16 +1014,16 @@ class PageManagerBackend:
         except Exception:
             log.opt(exception=True).warning("Could not update the active window watcher state")
 
-    def get_auto_change_settings(self, path: str) -> dict:
+    def get_auto_change_settings(self, path: str) -> dict[str, Any]:
         """
         Returns the auto change settings section of the page settings
         :param path: Path to the file
         :return: dict
         """
         page_settings = self.get_page_settings(path)
-        return page_settings.get("auto-change", {})
+        return cast(dict[str, Any], page_settings.get("auto-change", {}))
 
-    def set_auto_change_settings(self, path: str, enable: bool = False, wm_class: str = "", regex_title: str = "", stay_on_page: bool = False, decks: list[str] = None):
+    def set_auto_change_settings(self, path: str, enable: bool = False, wm_class: str = "", regex_title: str = "", stay_on_page: bool = False, decks: list[str] | None = None) -> None:
         decks = decks or []
 
         with self.edit_page_settings(path) as settings:
@@ -1034,7 +1039,7 @@ class PageManagerBackend:
         # every read of a page file takes the lock the block above holds.
         self.refresh_window_watch_state()
 
-    def overwrite_auto_change_settings(self, path: str, enable: bool = None, wm_class: str = None, regex_title: str = None, stay_on_page: bool = None, decks: list[str] = None):
+    def overwrite_auto_change_settings(self, path: str, enable: bool | None = None, wm_class: str | None = None, regex_title: str | None = None, stay_on_page: bool | None = None, decks: list[str] | None = None) -> None:
         with self.edit_page_settings(path) as settings:
             auto_change_settings = settings.setdefault("auto-change", {})
 
@@ -1051,11 +1056,11 @@ class PageManagerBackend:
 
         self.refresh_window_watch_state()
 
-    def get_screensaver_settings(self, path: str):
+    def get_screensaver_settings(self, path: str | None) -> dict[str, Any]:
         page_settings = self.get_page_settings(path)
-        return page_settings.get("screensaver", {})
+        return cast(dict[str, Any], page_settings.get("screensaver", {}))
 
-    def set_screensaver_settings(self, path: str, overwrite: bool = False, enable: bool = False, time_delay: int = 5, loop: bool = True, fps: int = 30, brightness: float = 30, media_path: str = ""):
+    def set_screensaver_settings(self, path: str, overwrite: bool = False, enable: bool = False, time_delay: int = 5, loop: bool = True, fps: int = 30, brightness: float = 30, media_path: str = "") -> None:
         with self.edit_page_settings(path) as settings:
             settings["screensaver"] = {
                 "overwrite": overwrite,
@@ -1067,7 +1072,7 @@ class PageManagerBackend:
                 "media-path": media_path
             }
 
-    def overwrite_screensaver_settings(self, path: str, overwrite: bool = None, enable: bool = None, time_delay: int = None, loop: bool = None, fps: int = None, brightness: float = None, media_path: str = None):
+    def overwrite_screensaver_settings(self, path: str, overwrite: bool | None = None, enable: bool | None = None, time_delay: int | None = None, loop: bool | None = None, fps: int | None = None, brightness: float | None = None, media_path: str | None = None) -> None:
         with self.edit_page_settings(path) as settings:
             screensaver_settings = settings.setdefault("screensaver", {})
 
@@ -1086,18 +1091,18 @@ class PageManagerBackend:
             if media_path is not None:
                 screensaver_settings["media-path"] = media_path
 
-    def get_brightness_settings(self, path: str):
+    def get_brightness_settings(self, path: str) -> dict[str, Any]:
         page_settings = self.get_page_settings(path)
-        return page_settings.get("brightness", {})
+        return cast(dict[str, Any], page_settings.get("brightness", {}))
 
-    def set_brightness_settings(self, path: str, overwrite: bool = False, brightness: float = 75):
+    def set_brightness_settings(self, path: str, overwrite: bool = False, brightness: float = 75) -> None:
         with self.edit_page_settings(path) as settings:
             settings["brightness"] = {
                 "overwrite": overwrite,
                 "value": brightness
             }
 
-    def overwrite_brightness_settings(self, path: str, overwrite: bool = None, brightness: float = None):
+    def overwrite_brightness_settings(self, path: str, overwrite: bool | None = None, brightness: float | None = None) -> None:
         with self.edit_page_settings(path) as settings:
             brightness_settings = settings.setdefault("brightness", {})
 
@@ -1106,11 +1111,11 @@ class PageManagerBackend:
             if brightness is not None:
                 brightness_settings["value"] = brightness
 
-    def get_background_settings(self, path: str):
+    def get_background_settings(self, path: str | None) -> dict[str, Any]:
         page_settings = self.get_page_settings(path)
-        return page_settings.get("background", {})
+        return cast(dict[str, Any], page_settings.get("background", {}))
 
-    def set_background_settings(self, path: str, overwrite: bool = False, show: bool = False, fps: int = 30, loop: bool = False, media_path: str = "", extend_to_touchscreen: bool = False):
+    def set_background_settings(self, path: str, overwrite: bool = False, show: bool = False, fps: int = 30, loop: bool = False, media_path: str = "", extend_to_touchscreen: bool = False) -> None:
         with self.edit_page_settings(path) as settings:
             settings["background"] = {
                 "overwrite": overwrite,
@@ -1121,7 +1126,7 @@ class PageManagerBackend:
                 "extend-to-touchscreen": extend_to_touchscreen
             }
 
-    def overwrite_background_settings(self, path: str, overwrite: bool = None, show: bool = None, fps: int = None, loop: bool = None, media_path: str = None, extend_to_touchscreen: bool = None):
+    def overwrite_background_settings(self, path: str, overwrite: bool | None = None, show: bool | None = None, fps: int | None = None, loop: bool | None = None, media_path: str | None = None, extend_to_touchscreen: bool | None = None) -> None:
         with self.edit_page_settings(path) as settings:
             background_settings = settings.setdefault("background", {})
 

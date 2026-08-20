@@ -31,7 +31,7 @@ from gi.repository import Gtk, Adw, GLib
 from loguru import logger as log
 
 class Importer(Adw.ApplicationWindow):
-    def __init__(self, app, window):
+    def __init__(self, app: Adw.Application, window: Gtk.Window) -> None:
         super().__init__(application=app,
                          transient_for=window,
                          modal=True,
@@ -41,7 +41,7 @@ class Importer(Adw.ApplicationWindow):
 
         self.build()
 
-    def build(self):
+    def build(self) -> None:
         self.main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         self.set_content(self.main_box)
 
@@ -51,7 +51,7 @@ class Importer(Adw.ApplicationWindow):
         self.progess_bar = Gtk.ProgressBar(margin_start=20, margin_end=20, margin_top=20, margin_bottom=20, show_text=True)
         self.main_box.append(self.progess_bar)
 
-    def show_error(self, message: str = "Import failed"):
+    def show_error(self, message: str = "Import failed") -> None:
         GLib.idle_add(self.progess_bar.set_text, message)
         GLib.idle_add(self.progess_bar.set_fraction, 0)
         GLib.timeout_add(3000, self.close)

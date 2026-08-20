@@ -17,7 +17,7 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Adw
+from gi.repository import Adw, Gtk
 
 import globals as gl
 
@@ -25,7 +25,7 @@ from collections.abc import Callable
 from typing import Any
 
 class KeepRunningDialog(Adw.MessageDialog):
-    def __init__(self, parent, callback: Callable[..., Any] | None = None):
+    def __init__(self, parent: Gtk.Window | None, callback: Callable[..., Any] | None = None) -> None:
         self.callback = callback
 
         super().__init__(

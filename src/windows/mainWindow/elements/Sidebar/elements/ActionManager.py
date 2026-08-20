@@ -27,6 +27,8 @@ from loguru import logger as log
 from copy import copy
 
 # Import globals
+from src.backend import services
+
 import globals as gl
 
 # Import own modules
@@ -36,17 +38,17 @@ from src.backend.PageManagement.Page import NoActionHolderFound, ActionOutdated
 from src.windows.mainWindow.elements.Sidebar.elements.ActionMissing.MisingActionButtonRow import MissingActionButtonRow
 from src.windows.mainWindow.elements.Sidebar.elements.ActionMissing.OutdatedActionRow import OutdatedActionRow
 
-from typing import TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 if TYPE_CHECKING:
     from src.windows.mainWindow.elements.Sidebar.Sidebar import Sidebar
 
 class ActionManager(Gtk.Box):
-    def __init__(self, sidebar, **kwargs):
+    def __init__(self, sidebar: "Sidebar", **kwargs: Any) -> None:
         self.sidebar = sidebar
         super().__init__(**kwargs)
         self.build()
 
-    def build(self):
+    def build(self) -> None:
         self.clamp = Adw.Clamp()
         self.append(self.clamp)
 
@@ -58,61 +60,52 @@ class ActionManager(Gtk.Box):
 
         self.main_box.set_margin_bottom(50)
 
-    def load_for_identifier(self, identifier: InputIdentifier, state: int):
+    def load_for_identifier(self, identifier: InputIdentifier, state: int) -> None:
         self.action_group.load_for_identifier(identifier, state)
 
 class ActionGroup(Adw.PreferencesGroup):
-    def __init__(self, sidebar, **kwargs):
+    def __init__(self, sidebar: "Sidebar", **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.sidebar = sidebar
-        self.active_identifier = None
+        self.active_identifier: "InputIdentifier | None" = None
 
-        self.actions = []
+        self.actions: "list[Any]" = []
 
         self.build()
 
-    def build(self):
+    def build(self) -> None:
         self.expander = ActionExpanderRow(self)
         self.add(self.expander)
 
-    def load_for_identifier(self, identifier: InputIdentifier, state: int):
+    def load_for_identifier(self, identifier: InputIdentifier, state: int) -> None:
         self.active_identifier = identifier
         self.expander.load_for_identifier(identifier, state)
 
-    def load_for_coords(self, coords: tuple[int, int], state: int):
-        self.expander.load_for_coords(coords, state)
-
-    def load_for_screen(self, gesture: str, state: int):
-        self.expander.load_for_screen(gesture, state)
-
-    def load_for_dial(self, n: int, state: int):
-        self.expander.load_for_dial(n, state)
-
 
 class ActionExpanderRow(BetterExpander):
-    def __init__(self, action_group):
+    def __init__(self, action_group: ActionGroup) -> None:
         super().__init__(title=gl.lm.get("action-editor-header"), subtitle=gl.lm.get("action-editor-expander-subtitle"))
         self.set_expanded(True)
-        self.active_identifier = None
+        self.active_identifier: "InputIdentifier | None" = None
         self.action_group = action_group
-        self.active_state = None
+        self.active_state: "int | None" = None
 
-        self.preview = None
+        self.preview: "Adw.PreferencesRow | None" = None
 
         self.build()
 
-    def build(self):
+    def build(self) -> None:
         self.add_action_button = AddActionButtonRow(self).button
         self.add_row(self.add_action_button)
 
-    def add_action_row(self, action_name: str, action_id: str, action_category, action_object, comment: str, index: int, total_rows: int, controls_image: bool = False, controls_labels: list[bool] = None, controls_background: bool = False):
+    def add_action_row(self, action_name: str, action_id: str, action_category: Any, action_object: Any, comment: str | None, index: int, total_rows: int, controls_image: bool = False, controls_labels: list[bool] | None = None, controls_background: bool = False) -> None:
         if controls_labels is None:
             controls_labels = [False, False, False]
 
         action_row = ActionRow(action_name, action_id, action_category, action_object, self.action_group.sidebar, comment, index, controls_image, controls_labels, controls_background, total_rows, self)
         self.add_row(action_row)
 
-    def load_for_identifier(self, identifier: InputIdentifier, state: int):
+    def load_for_identifier(self, identifier: InputIdentifier, state: int) -> None:
         if not isinstance(identifier, InputIdentifier):
             raise ValueError("Invalid identifier given to load_for_identifier")
         self.active_state = state
@@ -122,14 +115,17 @@ class ActionExpanderRow(BetterExpander):
 
         if gl.app is None:
             return
-        controller = gl.app.main_win.get_active_controller()
+        controller = services.require_main_window().get_active_controller()
         if controller is None or controller.active_page is None:
             return
 
         actions = controller.active_page.action_objects.get(identifier.input_type, {}).get(identifier.json_identifier, {}).get(state, {})
         self.load_for_actions(actions.values())
 
-    def load_for_actions(self, actions: list[ActionCore]):
+    def load_for_actions(self, actions: "list[ActionCore | NoActionHolderFound | ActionOutdated]") -> None:
+        # The two rows below key by the loaded state, which load_for_identifier
+        # binds before it calls here.
+        active_state = self.active_state
         number_of_actions = len(actions)
         for i, action in enumerate(actions):
             if isinstance(action, ActionCore):
@@ -144,18 +140,22 @@ class ActionExpanderRow(BetterExpander):
 
                 self.add_action_row(action.action_name, action.action_id, action.plugin_base.plugin_name, action, controls_image=controls_image, controls_labels=controls_labels, controls_background=controls_background, comment=comment, index=i, total_rows=number_of_actions)
             elif isinstance(action, NoActionHolderFound):
-                missing_button_row = MissingActionButtonRow(action.id, action.identifier, self.active_state, i)
+                if active_state is None:
+                    continue
+                missing_button_row = MissingActionButtonRow(action.id, action.identifier, active_state, i)
                 self.add_row(missing_button_row)
             elif isinstance(action, ActionOutdated):
                 # No plugin installed for this action
-                missing_button_row = OutdatedActionRow(action.id, action.identifier, self.active_state, i)
-                self.add_row(missing_button_row)
+                if active_state is None:
+                    continue
+                outdated_row = OutdatedActionRow(action.id, action.identifier, active_state, i)
+                self.add_row(outdated_row)
 
         # Place add button at the end
         if len(self.get_rows()) > 0:
             self.reorder_child_after(self.add_action_button, self.get_rows()[-1])
 
-    def clear_actions(self, keep_add_button=False):
+    def clear_actions(self, keep_add_button: bool = False) -> None:
         for child in self.get_rows():
             if hasattr(child, "action_object"):
                 child.action_object = None
@@ -163,12 +163,7 @@ class ActionExpanderRow(BetterExpander):
         if keep_add_button:
             self.add_row(self.add_action_button)
 
-    def get_index_of_child(self, child):
-        for i, action in enumerate(self.actions):
-            if action == child:
-                return i
-            
-    def add_drop_preview(self, index):
+    def add_drop_preview(self, index: int) -> None:
         #TODO: Fix this function, it does not work
         # return
         if hasattr(self, "preview"):
@@ -184,11 +179,11 @@ class ActionExpanderRow(BetterExpander):
 
         self.reorder_child_after(self.preview, self.get_rows()[index])
 
-    def update_indices(self):
+    def update_indices(self) -> None:
         for i, row in enumerate(self.get_rows()):
             row.index = i
 
-    def reorder_index_after(self, lst, move_index, after_index):
+    def reorder_index_after(self, lst: "list[Any]", move_index: int, after_index: int) -> "list[Any]":
         if move_index < 0 or move_index >= len(lst):
             raise ValueError("Move index out of range.")
         
@@ -200,7 +195,7 @@ class ActionExpanderRow(BetterExpander):
         
         return lst
     
-    def reorder_action_objects(self, action_objects, move_index, after_index):
+    def reorder_action_objects(self, action_objects: "dict[int, Any]", move_index: int, after_index: int) -> "dict[int, Any]":
         objects = list(action_objects.values())
         reordered = self.reorder_index_after(objects, move_index, after_index)
 
@@ -219,17 +214,22 @@ class ActionExpanderRow(BetterExpander):
             new_objects[i] = row.action_object
 
 
-    def reorder_actions(self, move_index, after_index):
-        controller = gl.app.main_win.get_active_controller()
+    def reorder_actions(self, move_index: int, after_index: int) -> None:
+        controller = services.require_main_window().get_active_controller()
         if controller is None:
             return
+        identifier = self.active_identifier
+        state = self.active_state
+        page = controller.active_page
+        if identifier is None or state is None or page is None:
+            return
 
-        state_dict = self.active_identifier.get_state_dict(controller.active_page, self.active_state)
+        state_dict = identifier.get_state_dict(page, state)
 
         actions = state_dict["actions"]
         reordered = self.reorder_index_after(copy(actions), move_index, after_index)
 
-        action_objects = controller.active_page.action_objects[self.active_identifier.input_type][self.active_identifier.json_identifier][self.active_state]
+        action_objects = page.action_objects[identifier.input_type][identifier.json_identifier][state]
         reordered_action_objects = self.reorder_action_objects(action_objects, move_index, after_index)
 
 
@@ -237,7 +237,7 @@ class ActionExpanderRow(BetterExpander):
         state_dict["actions"] = reordered
 
         # Reorder in action objects
-        controller.active_page.action_objects[self.active_identifier.input_type][self.active_identifier.json_identifier][self.active_state] = reordered_action_objects
+        page.action_objects[identifier.input_type][identifier.json_identifier][state] = reordered_action_objects
 
 
         ## Update control indices
@@ -248,13 +248,13 @@ class ActionExpanderRow(BetterExpander):
 
 
         image_control_action_index = state_dict.get("image-control-action")
-        state_dict["image-control-action"] = action_order_map.get(image_control_action_index, None)
+        state_dict["image-control-action"] = None if image_control_action_index is None else action_order_map.get(image_control_action_index, None)
 
         # The background permission follows its action, as the image
         # permission does. Without this remap the persisted index points at
         # whatever action moved into the old slot.
         background_control_action_index = state_dict.get("background-control-action")
-        state_dict["background-control-action"] = action_order_map.get(background_control_action_index, None)
+        state_dict["background-control-action"] = None if background_control_action_index is None else action_order_map.get(background_control_action_index, None)
 
         # The key can be absent on a page that add_action never touched,
         # which covers a hand-edited, imported or old page. Use the same
@@ -267,18 +267,21 @@ class ActionExpanderRow(BetterExpander):
             label_control_actions[i] = action_order_map.get(label_control_action)
         state_dict["label-control-actions"] = label_control_actions
 
-        controller.active_page.save()
+        page.save()
 
-        controller.load_page(controller.active_page)
+        controller.load_page(page)
  
-    def update_comment_for_index(self, action_index):
-        visible_child = gl.app.main_win.leftArea.deck_stack.get_visible_child()
+    def update_comment_for_index(self, action_index: int) -> None:
+        visible_child = services.require_main_window().leftArea.deck_stack.get_visible_child()
         if visible_child is None:
             return
         controller = visible_child.deck_controller
-        if controller is None:
+        page = controller.active_page
+        identifier = self.active_identifier
+        state = self.active_state
+        if page is None or identifier is None or state is None:
             return
-        comment = controller.active_page.get_action_comment(identifier=self.active_identifier, index=action_index)
+        comment = page.get_action_comment(index=action_index, state=state, identifier=identifier)
         self.get_rows()[action_index].set_comment(comment)
 
 
@@ -289,7 +292,7 @@ class ActionRowLabelToggle(Gtk.Button):
 
         self.build()
 
-    def build(self):
+    def build(self) -> None:
         self.set_css_classes(["blue-toggle-button"])
 
         self.main_box = Gtk.Box()
@@ -326,10 +329,10 @@ class ActionRowLabelToggle(Gtk.Button):
 
         self.connect("clicked", self.on_click)
 
-    def on_click(self, button):
+    def on_click(self, button: Gtk.Button) -> None:
         self.popover.popup()
 
-    def on_label_toggled(self, button: Gtk.CheckButton):
+    def on_label_toggled(self, button: Gtk.CheckButton) -> None:
         i = int(button.get_name())
 
         indicator = self.indicators[i]
@@ -341,11 +344,11 @@ class ActionRowLabelToggle(Gtk.Button):
 
         self.action_row.label_toggled(i, button.get_active())
 
-    def connect_signals(self):
+    def connect_signals(self) -> None:
         for button in self.config_buttons:
             button.connect("toggled", self.on_label_toggled)
 
-    def disconnect_signals(self):
+    def disconnect_signals(self) -> None:
         for button in self.config_buttons:
             try:
                 button.disconnect_by_func(self.on_label_toggled)
@@ -370,7 +373,7 @@ class ActionRowLabelToggle(Gtk.Button):
 
 
 class ActionRow(Adw.ActionRow):
-    def __init__(self, action_name, action_id, action_category, action_object, sidebar: "Sidebar", comment: str, index, controls_image: bool, controls_labels: list[bool], controls_background: bool, total_rows: int, expander: ActionExpanderRow, **kwargs):
+    def __init__(self, action_name: str, action_id: str, action_category: Any, action_object: Any, sidebar: "Sidebar", comment: str | None, index: int, controls_image: bool, controls_labels: list[bool], controls_background: bool, total_rows: int, expander: ActionExpanderRow, **kwargs: Any) -> None:
         super().__init__(**kwargs, css_classes=["no-padding"])
         self.action_name = action_name
         self.action_id = action_id
@@ -390,7 +393,7 @@ class ActionRow(Adw.ActionRow):
         self.update_allow_box_visibility()
         # self.init_dnd() #FIXME: Add drag and drop
 
-    def build(self):
+    def build(self) -> None:
         # self.overlay = Gtk.Overlay()
         # self.set_child(self.overlay)
 
@@ -436,7 +439,7 @@ class ActionRow(Adw.ActionRow):
                                wrap_mode=Pango.WrapMode.WORD_CHAR, wrap=True)
         self.left_top_box.append(self.label)
 
-        self.comment_label = Gtk.Label(label=self.comment, xalign=0, sensitive=False, ellipsize=Pango.EllipsizeMode.END, margin_end=60)
+        self.comment_label = Gtk.Label(label=self.comment or "", xalign=0, sensitive=False, ellipsize=Pango.EllipsizeMode.END, margin_end=60)
         self.left_bottom_box.append(self.comment_label)
 
         if self.comment in ["", None]:
@@ -456,16 +459,11 @@ class ActionRow(Adw.ActionRow):
         self.down_button.connect("clicked", self.on_click_down)
         self.button_box.append(self.down_button)
 
-    def update_allow_box_visibility(self):
+    def update_allow_box_visibility(self) -> None:
         self.allow_box.set_visible(True) #TODO
         return
-        if self.expander.active_identifier is None:
-            self.allow_box.set_visible(False)
-            return
-        hide = self.controls_image and any(self.controls_labels) and (self.total_rows == 1)
-        self.allow_box.set_visible(not hide)
 
-    def on_allow_image_toggled(self, button):
+    def on_allow_image_toggled(self, button: Gtk.ToggleButton) -> None:
         for child in self.expander.get_rows():
             if child is self:
                 continue
@@ -474,12 +472,17 @@ class ActionRow(Adw.ActionRow):
             child.set_image_toggled(False)
 
 
-        controller = gl.app.main_win.get_active_controller()
+        controller = services.require_main_window().get_active_controller()
         if controller is None:
             return
         page = controller.active_page
 
-        input_state = self.action_object.get_input().states.get(self.expander.active_state)
+        controller_input = self.action_object.get_input()
+        state = self.expander.active_state
+        if controller_input is None or state is None:
+            log.error("Input or state not found")
+            return
+        input_state = controller_input.states.get(state)
         if input_state is None:
             log.error("Input state not found")
             return
@@ -487,9 +490,10 @@ class ActionRow(Adw.ActionRow):
         new_value = self.index if button.get_active() else None
         input_state.action_permission_manager.set_image_control_index(new_value, True, True)
 
-        page.reload_similar_pages(identifier=self.action_object.input_ident, reload_self=True)
+        if page is not None:
+            page.reload_similar_pages(identifier=self.action_object.input_ident, reload_self=True)
 
-    def on_allow_background_toggled(self, button):
+    def on_allow_background_toggled(self, button: Gtk.ToggleButton) -> None:
         for child in self.expander.get_rows():
             if child is self:
                 continue
@@ -497,12 +501,17 @@ class ActionRow(Adw.ActionRow):
                 continue
             child.set_background_toggled(False)
 
-        controller = gl.app.main_win.get_active_controller()
+        controller = services.require_main_window().get_active_controller()
         if controller is None:
             return
         page = controller.active_page
 
-        input_state = self.action_object.get_input().states.get(self.expander.active_state)
+        controller_input = self.action_object.get_input()
+        state = self.expander.active_state
+        if controller_input is None or state is None:
+            log.error("Input or state not found")
+            return
+        input_state = controller_input.states.get(state)
         if input_state is None:
             log.error("Input state not found")
             return
@@ -510,9 +519,10 @@ class ActionRow(Adw.ActionRow):
         new_value = self.index if button.get_active() else None
         input_state.action_permission_manager.set_background_control_index(new_value, True, True)
 
-        page.reload_similar_pages(identifier=self.action_object.input_ident, reload_self=True)
+        if page is not None:
+            page.reload_similar_pages(identifier=self.action_object.input_ident, reload_self=True)
 
-    def label_toggled(self, i, value):
+    def label_toggled(self, i: int, value: bool) -> None:
         for child in self.expander.get_rows():
             if child is self:
                 continue
@@ -522,20 +532,25 @@ class ActionRow(Adw.ActionRow):
             active[i] = False
             child.allow_label_toggle.set_active(active)
 
-        controller = gl.app.main_win.get_active_controller()
+        controller = services.require_main_window().get_active_controller()
         if controller is None:
             return
        
-        input_state = self.action_object.get_input().states.get(self.expander.active_state)
+        controller_input = self.action_object.get_input()
+        state = self.expander.active_state
+        if controller_input is None or state is None:
+            log.error("Input or state not found")
+            return
+        input_state = controller_input.states.get(state)
         if input_state is None:
             log.error("Input state not found")
             return
         
-        value = self.action_object.get_own_action_index() if value else None
-        
-        input_state.action_permission_manager.set_label_control_index(i, value, True, True)
+        index_value = self.action_object.get_own_action_index() if value else None
 
-    def set_image_toggled(self, value: bool):
+        input_state.action_permission_manager.set_label_control_index(i, index_value, True, True)
+
+    def set_image_toggled(self, value: bool) -> None:
         try:
             self.allow_image_toggle.disconnect_by_func(self.on_allow_image_toggled)
         except TypeError:
@@ -545,7 +560,7 @@ class ActionRow(Adw.ActionRow):
 
         self.allow_image_toggle.connect("toggled", self.on_allow_image_toggled)
 
-    def set_background_toggled(self, value: bool):
+    def set_background_toggled(self, value: bool) -> None:
         try:
             self.allow_background_toggle.disconnect_by_func(self.on_allow_background_toggled)
         except TypeError:
@@ -555,19 +570,17 @@ class ActionRow(Adw.ActionRow):
 
         self.allow_background_toggle.connect("toggled", self.on_allow_background_toggled)
 
-    def get_own_index(self) -> int:
-        return self.expander.get_index_of_child(self)
-
-    def on_click_up(self, button):
+    def on_click_up(self, button: Gtk.Button) -> None:
         # The neighbour is the row widget itself (ActionRow /
         # MissingActionButtonRow / the add-action Adw.ButtonRow). The add
         # button is only reachable here via the index-0 wrap-around
         # (get_rows()[-1]); moving past it makes no sense, so bail.
-        one_up_child = self.expander.get_rows()[self.index - 1]
+        index = self.index
+        one_up_child = self.expander.get_rows()[index - 1]
         if one_up_child is self.expander.add_action_button:
             return
         self.expander.reorder_child_after(self, one_up_child)
-        self.expander.reorder_actions(self.index - 1, self.index)
+        self.expander.reorder_actions(index - 1, index)
 
         # Keep row.index in step with the new visual order. The sidebar
         # rebuild runs at idle priority, because load_page queues
@@ -576,18 +589,17 @@ class ActionRow(Adw.ActionRow):
         self.expander.update_indices()
 
 
-    def on_click_down(self, button):
-        one_down_child = self.expander.get_rows()[self.index + 1]
+    def on_click_down(self, button: Gtk.Button) -> None:
+        index = self.index
+        one_down_child = self.expander.get_rows()[index + 1]
         if one_down_child is self.expander.add_action_button:
             return
         self.expander.reorder_child_after(self, one_down_child)
-        self.expander.reorder_actions(self.index, self.index + 1)
+        self.expander.reorder_actions(index, index + 1)
 
         self.expander.update_indices()
 
-    def init_dnd(self):
-        if self.index is None:
-            return
+    def init_dnd(self) -> None:
         # DnD Source
         dnd_source = Gtk.DragSource()
         dnd_source.set_actions(Gdk.DragAction.MOVE)
@@ -598,56 +610,48 @@ class ActionRow(Adw.ActionRow):
         self.add_controller(dnd_source)
 
         # DnD Target
-        dnd_target = Gtk.DropTarget.new(self, Gdk.DragAction.MOVE)
+        dnd_target = Gtk.DropTarget.new(ActionRow, Gdk.DragAction.MOVE)
         dnd_target.set_gtypes([ActionRow])
         dnd_target.connect("drop", self.on_dnd_drop)
         dnd_target.connect("motion", self.on_dnd_motion)
 
         self.add_controller(dnd_target)
 
-    def on_dnd_begin(self, drag_source, data):
+    def on_dnd_begin(self, drag_source: Gtk.DragSource, data: Any) -> None:
         content = data.get_content()
 
-    def on_dnd_end(self, drag_source, data, flag):
+    def on_dnd_end(self, drag_source: Gtk.DragSource, data: Any, flag: bool) -> None:
         pass
 
-    def on_dnd_prepare(self, drag_source, x, y):
+    def on_dnd_prepare(self, drag_source: Gtk.DragSource, x: float, y: float) -> Gdk.ContentProvider:
         drag_source.set_icon(
             Gtk.WidgetPaintable.new(self),
-            self.get_width() / 2, self.get_height() / 2
+            # The paintable hotspot takes ints; the halves round down.
+            self.get_width() // 2, self.get_height() // 2
         )
         content = Gdk.ContentProvider.new_for_value(self)
         return content
 
-    def on_dnd_drop(self, drop_target, value, x, y):
+    def on_dnd_drop(self, drop_target: Gtk.DropTarget, value: Any, x: float, y: float) -> bool:
         if not isinstance(value, ActionRow):
             return False
         
         self.sidebar.key_editor.action_editor.action_group.expander.reorder_child_after(value, self)
         return True
-        # Remove preview
-        index = self.sidebar.key_editor.action_editor.action_group.expander.get_index_of_child(self.sidebar.key_editor.action_editor.action_group.expander.preview)
-        self.sidebar.key_editor.action_editor.action_group.expander.remove(self.sidebar.key_editor.action_editor.action_group.expander.preview)
-        self.sidebar.key_editor.action_editor.action_group.expander.actions.pop(index)
-        return True
     
-    def on_dnd_motion(self, drop_target, x, y):
+    def on_dnd_motion(self, drop_target: Gtk.DropTarget, x: float, y: float) -> Gdk.DragAction:
+        index = self.index
         if y > self.get_height() / 2:
-            self.sidebar.key_editor.action_editor.action_group.expander.add_drop_preview(self.index-1)
+            self.sidebar.key_editor.action_editor.action_group.expander.add_drop_preview(index-1)
         else:
-            self.sidebar.key_editor.action_editor.action_group.expander.add_drop_preview(self.index)
+            self.sidebar.key_editor.action_editor.action_group.expander.add_drop_preview(index)
         return Gdk.DragAction.MOVE
 
-
-        self.sidebar.key_editor.action_editor.action_group.expander.add_drop_preview(self.index)
-
-        return Gdk.DragAction.MOVE
-
-    def on_click(self, button):
+    def on_click(self, button: Gtk.Button) -> None:
         self.sidebar.action_configurator.load_for_action(self.action_object, self.index)
         self.sidebar.show_action_configurator()
 
-    def update_comment(self, comment: str):
+    def update_comment(self, comment: str | None) -> None:
         self.comment = comment
         # Update ui
         if comment is None:
@@ -661,7 +665,7 @@ class ActionRow(Adw.ActionRow):
         self.comment_label.set_label(comment)
 
 class AddActionButtonRow:
-    def __init__(self, expander: ActionExpanderRow, **kwargs):
+    def __init__(self, expander: ActionExpanderRow, **kwargs: Any) -> None:
         # super().__init__(**kwargs, css_classes=["no-padding"])
         self.expander: ActionExpanderRow = expander
         self.button = Adw.ButtonRow(title=gl.lm.get("action-editor-add-new-action"), css_classes=["suggested-action", "add-action-button"])
@@ -673,19 +677,28 @@ class AddActionButtonRow:
         self.action_name = "Add Action"
         # self.set_child(self.button)
 
-    def on_click(self, button):
-        self.expander.action_group.sidebar.let_user_select_action(callback_function=self.add_action, identifier=self.expander.active_identifier)
+    def on_click(self, button: Gtk.Button) -> None:
+        identifier = self.expander.active_identifier
+        if identifier is None:
+            # The expander loads its identifier before the sidebar shows the
+            # configurator that hosts this button.
+            return
+        self.expander.action_group.sidebar.let_user_select_action(callback_function=self.add_action, identifier=identifier)
 
-    def add_action(self, action_class):
+    def add_action(self, action_class: Any) -> None:
         log.trace(f"Adding action: {action_class}")
 
         # Gather data
         # action_string = gl.plugin_manager.get_action_string_from_action(action_class)
-        active_page = gl.app.main_win.get_active_page()
+        active_page = services.require_main_window().get_active_page()
         if active_page is None:
             return
         
-        state_dict = self.expander.active_identifier.ensure_state_dict(active_page, self.expander.active_state)
+        identifier = self.expander.active_identifier
+        state = self.expander.active_state
+        if identifier is None or state is None:
+            return
+        state_dict = identifier.ensure_state_dict(active_page, state)
         state_dict.setdefault("actions", [])
 
         # Add action
@@ -704,10 +717,10 @@ class AddActionButtonRow:
         # Reload page to add an object to the new action
         active_page.load()
         # Reload the key on all decks
-        active_page.reload_similar_pages(identifier=self.expander.active_identifier, reload_self=True)
+        active_page.reload_similar_pages(identifier=identifier, reload_self=True)
 
         # Reload ui
-        self.expander.load_for_identifier(self.expander.active_identifier, self.expander.active_state)
+        self.expander.load_for_identifier(identifier, state)
 
         rows = self.expander.get_rows()
         if len(rows) < 2:
@@ -719,13 +732,13 @@ class AddActionButtonRow:
         # Open Action Config Screen
         if gl.settings_manager.app().auto_open_action_config:
             if action and action.has_configuration:
-                gl.app.main_win.sidebar.action_configurator.load_for_action(last_row.action_object, last_row.index)
-                gl.app.main_win.sidebar.show_action_configurator()
+                services.require_main_window().sidebar.action_configurator.load_for_action(last_row.action_object, last_row.index)
+                services.require_main_window().sidebar.show_action_configurator()
 
         # Open Plugin Settings Window
         if action and action.plugin_base.has_plugin_settings and action.plugin_base.first_setup:
             settings_window = PluginSettingsWindow(action.plugin_base)
-            settings_window.present(gl.app.get_active_window())
+            settings_window.present(services.require_app().get_active_window())
 
             settings = action.plugin_base.get_settings()
             settings["first-setup"] = False

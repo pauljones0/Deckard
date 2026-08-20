@@ -13,6 +13,13 @@ You should have received a copy of the GNU General Public License
 along with this program. If not, see <https://www.gnu.org/licenses/>.
 """
 # Import gtk modules
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+    from src.windows.mainWindow.mainWindow import MainWindow
+
+
 import gi
 
 from src.backend.DeckManagement.InputIdentifier import Input, InputIdentifier
@@ -39,29 +46,31 @@ from src.windows.mainWindow.elements.Sidebar.elements.ImageEditor import ImageEd
 from GtkHelper.GtkHelper import ErrorPage
 
 # Import globals
+from src.backend import services
+
 import globals as gl
 
 class Sidebar(Adw.NavigationPage):
-    def __init__(self, main_window, **kwargs):
+    def __init__(self, main_window: "MainWindow", **kwargs: Any) -> None:
         super().__init__(hexpand=True, title="Sidebar", **kwargs)
         self.main_window = main_window
-        self.active_identifier: InputIdentifier = None
-        self.active_state: int = None
+        self.active_identifier: InputIdentifier = None  # type: ignore[assignment]  # late-init: load_for_identifier
+        self.active_state: int = None  # type: ignore[assignment]  # late-init: load_for_identifier
         
         """
         To save performance and memory, we only load the thumbnail when the user sees the row
         """
-        self.on_map_tasks: list = []
+        self.on_map_tasks: list[Any] = []
         self.connect("map", self.on_map)
 
         self.build()
 
-    def on_map(self, widget):
+    def on_map(self, widget: Gtk.Widget) -> None:
         for f in self.on_map_tasks:
             f()
         self.on_map_tasks.clear()
 
-    def build(self):
+    def build(self) -> None:
         self.main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, hexpand=True)
         self.set_child(self.main_box)
 
@@ -86,7 +95,7 @@ class Sidebar(Adw.NavigationPage):
         self.action_configurator = ActionConfigurator(self)
         self.main_stack.add_named(self.action_configurator, "action_configurator")
 
-        self.error_page = ErrorPage(self)
+        self.error_page = ErrorPage()
         self.main_stack.add_named(self.error_page, "error_page")
 
         self.page_selector = PageSelector(self.main_window, gl.page_manager, halign=Gtk.Align.CENTER)
@@ -94,7 +103,7 @@ class Sidebar(Adw.NavigationPage):
 
         self.load_for_identifier(Input.Key("0x0"), 0)
 
-    def let_user_select_action(self, callback_function, identifier: InputIdentifier, *callback_args, **callback_kwargs):
+    def let_user_select_action(self, callback_function: "Callable[..., Any] | None", identifier: InputIdentifier, *callback_args: Any, **callback_kwargs: Any) -> None:
         """
         Show the action chooser to let the user select an action.
         The callback_function will be called with the following parameters:
@@ -116,10 +125,10 @@ class Sidebar(Adw.NavigationPage):
                                  callback_args=callback_args,
                                  callback_kwargs=callback_kwargs)
 
-    def show_action_configurator(self):
+    def show_action_configurator(self) -> None:
         self.main_stack.set_visible_child(self.action_configurator)
 
-    def load_for_key(self, identifier: Input.Key, state: int):
+    def load_for_key(self, identifier: Input.Key, state: int) -> None:
         if not isinstance(identifier, Input.Key):
             raise ValueError
         self.active_identifier = identifier
@@ -146,8 +155,6 @@ class Sidebar(Adw.NavigationPage):
         if visible_child is None:
             return
         controller = visible_child.deck_controller
-        if controller is None:
-            return
         if controller.active_page is None:
             # self.error_page.set_error_text(gl.lm.get("right-area-no-page-selected-error"))
             # self.error_page.set_reload_args([None])
@@ -159,21 +166,21 @@ class Sidebar(Adw.NavigationPage):
 
         self.key_editor.load_for_identifier(identifier, state)
 
-    def load_for_dial(self, identifier: Input.Dial, state: int):
+    def load_for_dial(self, identifier: Input.Dial, state: int) -> None:
         self.active_identifier = identifier
         self.active_state = state
         self.main_stack.set_visible_child(self.configurator_stack)
         self.configurator_stack.set_visible_child(self.key_editor)
         self.key_editor.load_for_identifier(identifier, state)
 
-    def load_for_touchscreen(self, identifier: Input.Touchscreen, state: int):
+    def load_for_touchscreen(self, identifier: Input.Touchscreen, state: int) -> None:
         self.active_identifier = identifier
         self.active_state = state
         self.main_stack.set_visible_child(self.configurator_stack)
         self.configurator_stack.set_visible_child(self.screen_editor)
         self.screen_editor.load_for_identifier(identifier, state)
 
-    def load_for_identifier(self, identifier: InputIdentifier, state: int):
+    def load_for_identifier(self, identifier: InputIdentifier, state: int) -> None:
         if isinstance(identifier, Input.Key):
             self.load_for_key(identifier, state)
         elif isinstance(identifier, Input.Dial):
@@ -181,7 +188,7 @@ class Sidebar(Adw.NavigationPage):
         elif isinstance(identifier, Input.Touchscreen):
             self.load_for_touchscreen(identifier, state)
 
-    def show_error(self):
+    def show_error(self) -> None:
         if self.main_stack.get_visible_child() == self.error_page:
             return
         
@@ -190,7 +197,7 @@ class Sidebar(Adw.NavigationPage):
         self.main_stack.set_transition_duration(200)
 
 
-    def hide_error(self):
+    def hide_error(self) -> None:
         if self.main_stack.get_visible_child() != self.error_page:
             return
 
@@ -202,7 +209,7 @@ class Sidebar(Adw.NavigationPage):
         self.main_stack.set_visible_child(self.configurator_stack)
         self.main_stack.set_transition_duration(200)
 
-    def update(self):
+    def update(self) -> None:
         identifier = self.active_identifier
         state = self.active_state
         # The refresh follows the current state of the input. The remembered
@@ -222,7 +229,7 @@ class Sidebar(Adw.NavigationPage):
 
 
 class KeyEditor(Gtk.Box):
-    def __init__(self, sidebar: Sidebar, **kwargs):
+    def __init__(self, sidebar: Sidebar, **kwargs: Any) -> None:
         self.sidebar:Sidebar = sidebar
         super().__init__(**kwargs)
         self.set_orientation(Gtk.Orientation.VERTICAL)
@@ -258,52 +265,60 @@ class KeyEditor(Gtk.Box):
         self.remove_state_button.connect("clicked", self.on_remove_state)
         self.append(self.remove_state_button)
 
-    def on_state_switch(self, *args):
+    def on_state_switch(self, *args: Any) -> None:
         state = self.state_switcher.get_selected_state()
 
-        controller = gl.app.main_win.get_active_controller()
+        controller = services.require_main_window().get_active_controller()
         if controller is None:
             return
         
         controller_input = controller.get_input(self.sidebar.active_identifier)
+        if controller_input is None:
+            return
         log.info(f"Going to state {state} from {controller_input.state}")
         controller_input.set_state(state=state, update_sidebar=True)
 
-    def on_add_new_state(self, state):
-        controller = gl.app.main_win.get_active_controller()
+    def on_add_new_state(self, state: int) -> None:
+        controller = services.require_main_window().get_active_controller()
         if controller is None:
             return
         
         c_input = controller.get_input(self.sidebar.active_identifier)
+        if c_input is None:
+            return
         c_input.add_new_state()
 
         self.remove_state_button.set_visible(self.state_switcher.get_n_states() > 1)
 
-    def on_remove_state(self, button):
+    def on_remove_state(self, button: Gtk.Button) -> None:
         if self.state_switcher.get_n_states() <= 1:
             return
 
-        controller = gl.app.main_win.get_active_controller()
+        controller = services.require_main_window().get_active_controller()
         if controller is None:
             return
         
         active_state = self.state_switcher.get_selected_state()
         
         c_input = controller.get_input(self.sidebar.active_identifier)
+        if c_input is None:
+            return
         c_input.remove_state(active_state)
 
         self.remove_state_button.set_visible(self.state_switcher.get_n_states() > 1)
 
-    def load_for_identifier(self, identifier: InputIdentifier, state: int):
+    def load_for_identifier(self, identifier: InputIdentifier, state: int) -> None:
         self.sidebar.active_identifier = identifier
 
         if gl.app is None:
             return
-        controller = gl.app.main_win.get_active_controller()
+        controller = services.require_main_window().get_active_controller()
         if controller is None:
             return
         
         c_input = controller.get_input(identifier)
+        if c_input is None:
+            return
 
         self.state_switcher.load_for_identifier(identifier, state)
         c_input.set_state(state)

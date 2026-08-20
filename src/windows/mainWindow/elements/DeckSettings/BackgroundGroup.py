@@ -14,6 +14,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 """
 # Import gtk modules
 import os
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from src.windows.mainWindow.elements.DeckSettings.DeckSettingsPage import DeckSettingsPage
+
+
 import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
@@ -22,13 +28,15 @@ from gi.repository import Gtk, Adw
 # Import Python modules
 
 # Import globals
+from src.backend import services
+
 import globals as gl
 
 # Import own modules
 from src.backend.DeckManagement.ImageHelpers import image2pixbuf
 
 class BackgroundGroup(Adw.PreferencesGroup):
-    def __init__(self, settings_page):
+    def __init__(self, settings_page: "DeckSettingsPage") -> None:
         super().__init__(title=gl.lm.get("deck.background-group.title"), description=gl.lm.get("deck.background-group.description"))
         self.set_margin_top(50)
         self.deck_serial_number = settings_page.deck_serial_number
@@ -37,7 +45,7 @@ class BackgroundGroup(Adw.PreferencesGroup):
 
 
 class BackgroundMediaRow(Adw.PreferencesRow):
-    def __init__(self, settings_page, deck_serial_number, **kwargs):
+    def __init__(self, settings_page: "DeckSettingsPage", deck_serial_number: str, **kwargs: Any) -> None:
         super().__init__()
         self.settings_page = settings_page
         self.deck_serial_number = deck_serial_number
@@ -45,17 +53,17 @@ class BackgroundMediaRow(Adw.PreferencesRow):
         """
         To save performance and memory, we only load the thumbnail when the user sees the row
         """
-        self.on_map_tasks: list = []
+        self.on_map_tasks: list[Any] = []
         self.connect("map", self.on_map)
         
         self.build()
 
-    def on_map(self, widget):
+    def on_map(self, widget: Gtk.Widget) -> None:
         for f in self.on_map_tasks:
             f()
         self.on_map_tasks.clear()
 
-    def build(self):
+    def build(self) -> None:
         self.main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, hexpand=True,
                                 margin_start=15, margin_end=15, margin_top=15, margin_bottom=15)
         self.set_child(self.main_box)
@@ -115,7 +123,7 @@ class BackgroundMediaRow(Adw.PreferencesRow):
         self.connect_signals()
         self.load_defaults()
 
-    def connect_signals(self):
+    def connect_signals(self) -> None:
         self.enable_switch.connect("state-set", self.on_toggle_enable)
         self.media_selector_button.connect("clicked", self.on_choose_image)
         self.loop_switch.connect("state-set", self.on_toggle_loop)
@@ -123,7 +131,7 @@ class BackgroundMediaRow(Adw.PreferencesRow):
         self.extend_touchscreen_switch.connect("state-set", self.on_toggle_extend_touchscreen)
 
 
-    def disconnect_signals(self):
+    def disconnect_signals(self) -> None:
         self.enable_switch.disconnect_by_func(self.on_toggle_enable)
         self.media_selector_button.disconnect_by_func(self.on_choose_image)
         self.loop_switch.disconnect_by_func(self.on_toggle_loop)
@@ -131,7 +139,7 @@ class BackgroundMediaRow(Adw.PreferencesRow):
         self.extend_touchscreen_switch.disconnect_by_func(self.on_toggle_extend_touchscreen)
 
 
-    def load_defaults(self):
+    def load_defaults(self) -> None:
         if not self.get_mapped():
             self.on_map_tasks.clear()
             self.on_map_tasks.append(lambda: self.load_defaults())
@@ -154,12 +162,12 @@ class BackgroundMediaRow(Adw.PreferencesRow):
 
         self.connect_signals()
 
-    def load_defaults_from_page(self):
+    def load_defaults_from_page(self) -> None:
         # The early return below disables this method, so the unguarded
         # active_page.dict["background"] reads that follow never run. Guard
         # them before anything calls this method again.
         return
-        if not hasattr(self.settings_page.deck_page.deck_controller, "active_page"):
+        if not hasattr(self.settings_page.deck_page.deck_controller, "active_page"):  # type: ignore[unreachable]  # kept as the record of what the guard note above asks for
             return
         if self.settings_page.deck_page.deck_controller.active_page is None:
             return
@@ -184,7 +192,7 @@ class BackgroundMediaRow(Adw.PreferencesRow):
 
         self.set_thumbnail(file_path)
 
-    def on_toggle_enable(self, toggle_switch, state):
+    def on_toggle_enable(self, toggle_switch: Gtk.Switch, state: bool) -> None:
         config = gl.settings_manager.deck(self.deck_serial_number)
         config.set("background", "enable", state)
         # Save
@@ -192,9 +200,12 @@ class BackgroundMediaRow(Adw.PreferencesRow):
         # Update
         self.config_box.set_visible(state)
         # Update
-        self.settings_page.deck_controller.load_background(page=self.settings_page.deck_controller.active_page)
+        controller = self.settings_page.deck_controller
+        page = controller.active_page
+        if page is not None:
+            controller.load_background(page=page)
 
-    def on_toggle_loop(self, toggle_switch, state):
+    def on_toggle_loop(self, toggle_switch: Gtk.Switch, state: bool) -> None:
         settings = gl.settings_manager.deck(self.deck_serial_number)
         settings.set("background", "loop", state)
 
@@ -202,9 +213,12 @@ class BackgroundMediaRow(Adw.PreferencesRow):
         settings.save()
 
         # Update
-        self.settings_page.deck_controller.load_background(page=self.settings_page.deck_controller.active_page)
+        controller = self.settings_page.deck_controller
+        page = controller.active_page
+        if page is not None:
+            controller.load_background(page=page)
 
-    def on_toggle_extend_touchscreen(self, toggle_switch, state):
+    def on_toggle_extend_touchscreen(self, toggle_switch: Gtk.Switch, state: bool) -> None:
         settings = gl.settings_manager.deck(self.deck_serial_number)
         settings.set("background", "extend-to-touchscreen", state)
 
@@ -212,9 +226,12 @@ class BackgroundMediaRow(Adw.PreferencesRow):
         settings.save()
 
         # Update
-        self.settings_page.deck_controller.load_background(page=self.settings_page.deck_controller.active_page)
+        controller = self.settings_page.deck_controller
+        page = controller.active_page
+        if page is not None:
+            controller.load_background(page=page)
 
-    def on_change_fps(self, spinner):
+    def on_change_fps(self, spinner: Gtk.SpinButton) -> None:
         settings = gl.settings_manager.deck(self.deck_serial_number)
         settings.set("background", "fps", spinner.get_value_as_int())
 
@@ -222,33 +239,33 @@ class BackgroundMediaRow(Adw.PreferencesRow):
         settings.save()
 
         # Update
-        self.settings_page.deck_controller.load_background(page=self.settings_page.deck_controller.active_page)
+        controller = self.settings_page.deck_controller
+        page = controller.active_page
+        if page is not None:
+            controller.load_background(page=page)
 
-    def on_choose_image(self, button):
+    def on_choose_image(self, button: Gtk.Button) -> None:
         media_path = gl.settings_manager.deck(self.deck_serial_number).get("background", "media-path")
 
-        gl.app.let_user_select_asset(default_path=media_path, callback_func=self.update_image)
+        services.require_app().let_user_select_asset(default_path=media_path, callback_func=self.update_image)
 
-    def update_image(self, file_path):
+    def update_image(self, file_path: "str | None") -> None:
         self.set_thumbnail(file_path)   
         settings = gl.settings_manager.deck(self.deck_serial_number)
         settings.set("background", "media-path", file_path)
         settings.save()
 
         controller = self.settings_page.deck_controller
-        controller.load_background(page=controller.active_page)
+        page = controller.active_page
+        if page is not None:
+            controller.load_background(page=page)
 
-    def set_thumbnail(self, file_path):
-        if file_path in [None, ""]:
+    def set_thumbnail(self, file_path: "str | None") -> None:
+        if not file_path:
             return
         if not os.path.isfile(file_path):
             return
         image = gl.media_manager.get_thumbnail(file_path)
         pixbuf = image2pixbuf(image)
-        self.media_selector_image.pixbuf = None
-        del self.media_selector_image.pixbuf
         self.media_selector_image.set_from_pixbuf(pixbuf)
         self.media_selector_button.set_child(self.media_selector_image)
-
-    def set_deck_background(self, file_path):
-        self.settings_page.deck_controller.set_background(file_path)

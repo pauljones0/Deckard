@@ -6,15 +6,19 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Gtk, GdkPixbuf, Pango, Gdk
 
-from typing import TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 if TYPE_CHECKING:
+    from PIL import Image
+
+    from src.backend.DeckManagement.Media.Media import Media
+
     # The page classes of the settings window, IconPage and ColorPage, and
     # not the plugin list page of the same name in src/windows/Settings. A
     # runtime import cycles, because PluginSettingsWindow imports this module.
     from src.windows.Settings.PluginSettingsWindow.PluginSettingsWindow import PluginSettingsPage
 
 class AssetPreview(Gtk.FlowBoxChild):
-    def __init__(self, window: "PluginSettingsPage", name: str, size: tuple[int, int] = (50,50), *args, **kwargs):
+    def __init__(self, window: "PluginSettingsPage", name: str, size: tuple[int, int] = (50,50), *args: Any, **kwargs: Any):
         super().__init__(*args, **kwargs)
         self.set_css_classes(["asset-preview"])
         self.set_margin_start(5)
@@ -32,7 +36,7 @@ class AssetPreview(Gtk.FlowBoxChild):
 
         self.reset_button.connect("clicked", window.reset_button_clicked, self)
 
-    def create_base_ui(self):
+    def create_base_ui(self) -> None:
         self.overlay = Gtk.Overlay()
 
         self.main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -51,19 +55,26 @@ class AssetPreview(Gtk.FlowBoxChild):
 
         self.set_size_request(self.size[0], self.size[1])
 
-    def build(self):
+    def build(self) -> None:
         pass
 
 class IconPreview(AssetPreview):
-    def __init__(self, image, media, *args, **kwargs):
+    def __init__(self, image: "Image.Image | None", media: "Media | None", *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
 
         self.media = media
         self.image = image
-        self.pixbuf = image2pixbuf(image)
+        # An asset whose file the user deleted renders as None, and the
+        # picture shows empty for it rather than stopping the whole dialog.
+        self.pixbuf = image2pixbuf(image) if image is not None else None
         self.build()
 
-    def scale_pixbuf(self):
+    def scale_pixbuf(self) -> "GdkPixbuf.Pixbuf | None":
+        # image2pixbuf answers None for an image GdkPixbuf will not take, and
+        # set_pixbuf(None) clears the picture, which is what an unusable asset
+        # should show.
+        if self.pixbuf is None:
+            return None
         original_width = self.pixbuf.get_width()
         original_height = self.pixbuf.get_height()
         w = self.size[0]
@@ -76,7 +87,7 @@ class IconPreview(AssetPreview):
 
         return self.pixbuf.scale_simple(new_width, new_height, GdkPixbuf.InterpType.BILINEAR)
 
-    def build(self):
+    def build(self) -> None:
         self.picture = Gtk.Picture(width_request=self.size[0], height_request=self.size[1], overflow=Gtk.Overflow.HIDDEN,
                                    content_fit=Gtk.ContentFit.COVER,
                                    hexpand=False, vexpand=False, keep_aspect_ratio=True)
@@ -97,19 +108,19 @@ class IconPreview(AssetPreview):
 
         self.overlay.add_overlay(self.edit_button)
 
-    def set_image(self, image):
+    def set_image(self, image: "Image.Image | None") -> None:
         self.image = image
-        self.pixbuf = image2pixbuf(self.image)
+        self.pixbuf = image2pixbuf(image) if image is not None else None
         self.picture.set_pixbuf(self.scale_pixbuf())
 
 class ColorPreview(AssetPreview):
-    def __init__(self, color: tuple[int, int, int, int], *args, **kwargs):
+    def __init__(self, color: tuple[int, int, int, int], *args: Any, **kwargs: Any):
         super().__init__(*args, **kwargs)
 
         self.color = color
         self.build()
 
-    def build(self):
+    def build(self) -> None:
         self.color_button = Gtk.ColorButton(title="Pick Color")
         self.color_button.set_sensitive(False)
         self.set_color(self.color)
@@ -122,11 +133,11 @@ class ColorPreview(AssetPreview):
                                margin_start=20, margin_end=20)
         self.main_box.append(self.label)
 
-    def set_color(self, color: tuple[int, int, int, int]):
+    def set_color(self, color: tuple[int, int, int, int]) -> None:
         self.color = color
         self.color_button.set_rgba(self.get_rgba())
 
-    def set_color_rgba(self, color: Gdk.RGBA):
+    def set_color_rgba(self, color: Gdk.RGBA) -> None:
         normalized = (round(color.red * 255),
                       round(color.green * 255),
                       round(color.blue * 255),
@@ -134,7 +145,7 @@ class ColorPreview(AssetPreview):
         self.color = normalized
         self.color_button.set_rgba(color)
 
-    def get_rgba(self):
+    def get_rgba(self) -> Gdk.RGBA:
         rgba = Gdk.RGBA()
         normalized = tuple(color / 255.0 for color in self.color)
         rgba.red = normalized[0]

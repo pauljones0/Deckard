@@ -19,7 +19,7 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Gtk, Adw
 
-from typing import TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 if TYPE_CHECKING:
     from .AssetManager import AssetManager
 
@@ -40,7 +40,7 @@ class InfoPage(Gtk.Box):
         self.asset_manager = asset_manager
         self.build()
 
-    def build(self):
+    def build(self) -> None:
         self.clamp = Adw.Clamp(hexpand=True)
         self.append(self.clamp)
 
@@ -89,8 +89,8 @@ class InfoPage(Gtk.Box):
         self.license_comment_row = AttributeRow(title="Comment:", attr="Error")
         self.license_group.add(self.license_comment_row)
 
-    def show_info(self, internal_path:str = None, licence_name: str = None, license_url: str = None, author: str = None, license_comment: str = None,
-                  original_url: str = None):
+    def show_info(self, internal_path:str | None = None, licence_name: str | None = None, license_url: str | None = None, author: str | None = None, license_comment: str | None = None,
+                  original_url: str | None = None) -> None:
         if internal_path is None:
             self.image_group.set_visible(False)
             self.video_group.set_visible(False)
@@ -106,7 +106,7 @@ class InfoPage(Gtk.Box):
         self.original_url_row.set_url(original_url)
 
 
-    def show_for_asset(self, asset:dict):
+    def show_for_asset(self, asset:dict[str, Any]) -> None:
         if is_video(asset["internal-path"]):
             self.show_for_vid(asset["internal-path"])
         else:
@@ -119,7 +119,7 @@ class InfoPage(Gtk.Box):
 
         
 
-    def show_for_img(self, path:str):
+    def show_for_img(self, path:str) -> None:
         # Update ui vis
         self.image_group.set_visible(True)
         self.video_group.set_visible(False)
@@ -135,7 +135,7 @@ class InfoPage(Gtk.Box):
             self.img_resolution_row.set_url("unknown")
             self.img_aspect_ratio_row.set_url("unknown")
 
-    def show_for_vid(self, path:str):
+    def show_for_vid(self, path:str) -> None:
         # Update ui vis
         self.image_group.set_visible(False)
         self.video_group.set_visible(True)

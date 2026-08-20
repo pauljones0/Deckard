@@ -27,25 +27,25 @@ from src.windows.AssetManager.SDPlusBarWallpaperPacks.SDPlusBarWallpaper.SDPlusB
 import globals as gl
 
 # Import typing
-from typing import TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 if TYPE_CHECKING:
     from src.windows.AssetManager.AssetManager import AssetManager
 
 class SDPlusBarWallpaperPackChooserStack(Gtk.Stack):
-    def __init__(self, asset_manager: "AssetManager", *args, **kwargs):
+    def __init__(self, asset_manager: "AssetManager", *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self.asset_manager = asset_manager
 
         self.build()
 
-    def build(self):
+    def build(self) -> None:
         self.pack_chooser = SDPlusBarWallpaperPackChooser(self, self.asset_manager)
         self.add_titled(self.pack_chooser, "pack-chooser", "Chooser")
 
         self.wallpaper_chooser = SDPlusBarWallpaperChooserPage(self, self.asset_manager)
         self.add_titled(self.wallpaper_chooser, "wallpaper-chooser", "SD+ Bar Wallpaper Chooser")
 
-    def show_for_path(self, path):
+    def show_for_path(self, path: str) -> None:
         packs = gl.sd_plus_bar_wallpaper_pack_manager.get_wallpaper_packs()
         for pack in packs.values():
             wallpapers = pack.get_wallpapers()

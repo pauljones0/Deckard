@@ -3,7 +3,7 @@ from GtkHelper.GenerativeUI.GenerativeUI import GenerativeUI
 from gi.repository import Adw
 
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any
+from typing import cast, TYPE_CHECKING, Any
 
 from GtkHelper.GtkHelper import better_disconnect
 
@@ -23,8 +23,8 @@ class SwitchRow(GenerativeUI[bool]):
     def __init__(self, action_core: "ActionCore",
                  var_name: str,
                  default_value: bool,
-                 title: str = None,
-                 subtitle: str = None,
+                 title: str | None = None,
+                 subtitle: str | None = None,
                  on_change: Callable[..., Any] | None = None,
                  can_reset: bool = True,
                  auto_add: bool = True,
@@ -43,8 +43,8 @@ class SwitchRow(GenerativeUI[bool]):
             can_reset (bool, optional): Whether the switch value can be reset. Defaults to True.
             auto_add (bool, optional): Whether to automatically add the switch row to the UI. Defaults to True.
         """
-        def build():
-            self._widget: Adw.SwitchRow = Adw.SwitchRow(
+        def build() -> None:
+            self._widget: Adw.SwitchRow | None = Adw.SwitchRow(
                 title=self.get_translation(title, title),
                 subtitle=self.get_translation(subtitle, subtitle),
                 active=default_value
@@ -54,19 +54,19 @@ class SwitchRow(GenerativeUI[bool]):
             self.connect_signals()
         super().__init__(action_core, var_name, default_value, can_reset, auto_add, complex_var_name, on_change, build=build)
 
-    def connect_signals(self):
+    def connect_signals(self) -> None:
         """
         Connects the signal handler for the switch widget to track changes in its state.
         """
         self.widget.connect("notify::active", self._value_changed)
 
-    def disconnect_signals(self):
+    def disconnect_signals(self) -> None:
         """
         Disconnects the signal handler for the switch widget.
         """
         better_disconnect(self.widget, self._value_changed)
 
-    def set_active(self, active: bool, change_setting: bool = False):
+    def set_active(self, active: bool, change_setting: bool = False) -> None:
         """
         Sets the state of the switch widget and optionally updates the associated setting.
 
@@ -90,9 +90,9 @@ class SwitchRow(GenerativeUI[bool]):
         """
         if self._widget is None:
             return self.get_value()
-        return self.widget.get_active()
+        return cast(bool, self.widget.get_active())
 
-    def _value_changed(self, switch, _):
+    def _value_changed(self, switch: Adw.SwitchRow, _: Any) -> None:
         """
         Handles the change in switch state.
 
@@ -105,7 +105,7 @@ class SwitchRow(GenerativeUI[bool]):
         self._handle_value_changed(switch.get_active())
 
     @GenerativeUI.signal_manager
-    def set_ui_value(self, value: bool):
+    def set_ui_value(self, value: bool) -> None:
         """
         Sets the state of the switch widget in the UI.
 

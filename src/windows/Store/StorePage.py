@@ -31,6 +31,9 @@ from src.windows.Store.NoConnectionError import NoConnectionError
 # Typing
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from src.windows.Store.Preview import StorePreview
     from src.windows.Store.Store import Store
 
 # Import globals
@@ -86,7 +89,7 @@ class StorePage(Gtk.Stack):
             log.exception(f"{type(self).__name__}.load() failed")
             self.show_connection_error()
 
-    def build(self):
+    def build(self) -> None:
         self.main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, hexpand=True)
         self.add_titled(self.main_box, "Store", "Store")
 
@@ -123,20 +126,26 @@ class StorePage(Gtk.Stack):
         self.no_connection_page = NoConnectionError()
         self.add_titled(self.no_connection_page, "Error", "Error")
 
-    def append_preview_on_main(self, section, factory):
+    def append_preview_on_main(self, section: StorePageSection,
+                               factory: "Callable[..., StorePreview]") -> None:
         """Construct a preview widget on the GTK main loop, then append it.
+
+        Callable[..., ...] and not Callable[[], ...]: the loaders bind the
+        loop variable with a lambda default (lambda x=x: ...), and a lambda
+        with a defaulted parameter does not unify with an empty parameter
+        list. The call below passes nothing, so the defaults are what run.
 
         The page loaders run on worker threads. A call of the form
         GLib.idle_add(section.append_child, XPreview(...)) marshals the append
         only, and it builds the widget tree as the argument, on the loader
         thread. That is the off-main GTK class that kills the process.
         """
-        def _build():
+        def _build() -> bool:
             section.append_child(factory())
             return False
         GLib.idle_add(_build)
 
-    def set_loading(self):
+    def set_loading(self) -> None:
         GLib.idle_add(self.section_stack.set_visible, False)
         # GLib.idle_add(self.bottom_box.set_visible, False)
         GLib.idle_add(self.loading_box.set_visible, True)
@@ -144,7 +153,7 @@ class StorePage(Gtk.Stack):
         GLib.idle_add(self.spinner.set_spinning, True)
         GLib.idle_add(self.section_switcher.set_visible, False)
 
-    def set_loaded(self):
+    def set_loaded(self) -> None:
         GLib.idle_add(self.section_stack.set_visible, True)
         # GLib.idle_add(self.bottom_box.set_visible, True)
         GLib.idle_add(self.loading_box.set_visible, False)
@@ -152,11 +161,11 @@ class StorePage(Gtk.Stack):
         GLib.idle_add(self.section_switcher.set_visible, True)
         GLib.idle_add(self.hide_stack_switcher_if_all_compatible)
 
-    def hide_stack_switcher_if_all_compatible(self):
+    def hide_stack_switcher_if_all_compatible(self) -> None:
         if not self.incompatible_section.are_items_present():
             self.section_switcher.set_visible(False)
 
-    def set_info_visible(self, visible:bool):
+    def set_info_visible(self, visible:bool) -> None:
         if visible:
             self.set_visible_child(self.info_page)
             self.store.back_button.set_visible(True)
@@ -164,7 +173,7 @@ class StorePage(Gtk.Stack):
             self.set_visible_child(self.main_box)
             self.store.back_button.set_visible(False)
 
-    def show_connection_error(self):
+    def show_connection_error(self) -> None:
         # A failed load stays retryable. The next ensure_loaded(), which a
         # visit to the tab triggers, starts a fresh load instead of reading
         # the error page as loaded.
@@ -172,5 +181,5 @@ class StorePage(Gtk.Stack):
         # Called from the load() worker thread: marshal the widget change.
         GLib.idle_add(self.set_visible_child, self.no_connection_page)
 
-    def hide_connection_error(self):
+    def hide_connection_error(self) -> None:
         GLib.idle_add(self.set_visible_child, self.main_box)

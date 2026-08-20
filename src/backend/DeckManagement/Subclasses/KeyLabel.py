@@ -22,7 +22,7 @@ import globals as gl
 
 
 @lru_cache(maxsize=128)
-def _load_font(font_path: str, font_size: int, encoding: str) -> ImageFont.FreeTypeFont:
+def _load_font(font_path: str, font_size: float, encoding: str) -> ImageFont.FreeTypeFont:
     # ImageFont.truetype re-reads the file and re-parses the FreeType face on
     # every call. LabelManager._draw_static_label caches the rasterized label
     # per composed label, so this is off the per-frame path. get_font() still
@@ -55,7 +55,7 @@ def _find_font_path(font_name: str | None, font_weight: int | None, style: str |
     return font_resolver.resolve(font_name, font_weight, style)
 
 
-from typing import TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 if TYPE_CHECKING:
     from src.backend.DeckManagement.deck_controller.inputs import ControllerInput
 
@@ -65,9 +65,11 @@ class KeyLabel:
     # LabelManager is typed on the base, so the declaration names the shared
     # base and not ControllerKey. This class carries the value and never
     # reads it.
-    controller_input: "ControllerInput"
+    controller_input: "ControllerInput[Any]"
     text: str | None = None
-    font_size: int | None = None
+    # Pango sizes are 1024ths, so a chooser hands back a fractional size
+    # and the persisted settings keep it.
+    font_size: float | None = None
     font_name: str | None = None
     font_weight: int | None = None
     style: str | None = None # normal, oblique, italic
@@ -83,7 +85,7 @@ class KeyLabel:
 
         return _find_font_path(font_name, self.font_weight, self.style)
 
-    def clear_values(self):
+    def clear_values(self) -> None:
         self.text = None
         self.font_size = None
         self.font_name = None

@@ -5,13 +5,13 @@ from datetime import datetime
 import base64
 from io import BytesIO
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from src.backend.DeckManagement.Subclasses.RemoteDeckManager import RemoteDeckManager
     from PIL import Image
 
-def create_handler(remote_deck_manager: "RemoteDeckManager"):
+def create_handler(remote_deck_manager: "RemoteDeckManager") -> "type[BaseHTTPRequestHandler]":
     """Factory function to create a handler class with access to RemoteDeckManager."""
     
     class RemoteDecksLocalServerHandler(BaseHTTPRequestHandler):
@@ -22,13 +22,13 @@ def create_handler(remote_deck_manager: "RemoteDeckManager"):
         # {button_id: {"data": <data: URI>, "timestamp": <epoch seconds>}}
         button_images: dict[int, dict[str, str | int]] = {}
 
-        def _set_cors_headers(self):
+        def _set_cors_headers(self) -> None:
             """Set CORS headers to allow cross-origin requests."""
             self.send_header('Access-Control-Allow-Origin', '*')
             self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
             self.send_header('Access-Control-Allow-Headers', 'Content-Type')
 
-        def _send_json_response(self, status_code, data):
+        def _send_json_response(self, status_code: int, data: Any) -> None:
             """Send a JSON response."""
             self.send_response(status_code)
             self._set_cors_headers()
@@ -37,7 +37,7 @@ def create_handler(remote_deck_manager: "RemoteDeckManager"):
             self.wfile.write(json.dumps(data).encode('utf-8'))
         
         @classmethod
-        def send_button_image(cls, button_id: int, image: "Image.Image"):
+        def send_button_image(cls, button_id: int, image: "Image.Image") -> None:
             """
             Store a PIL image for a specific button to be sent to the browser.
             
@@ -56,13 +56,13 @@ def create_handler(remote_deck_manager: "RemoteDeckManager"):
                 'timestamp': int(time.time())
             }
 
-        def do_OPTIONS(self):
+        def do_OPTIONS(self) -> None:
             """Handle preflight OPTIONS request."""
             self.send_response(200)
             self._set_cors_headers()
             self.end_headers()
 
-        def do_GET(self):
+        def do_GET(self) -> None:
             """Handle GET requests."""
             if self.path == '/status':
                 response_data = {
@@ -99,7 +99,7 @@ def create_handler(remote_deck_manager: "RemoteDeckManager"):
             else:
                 self._send_json_response(404, {'error': 'Not found'})
 
-        def do_POST(self):
+        def do_POST(self) -> None:
             """Handle POST requests."""
             if self.path == '/message':
                 content_length = int(self.headers['Content-Length'])
@@ -172,7 +172,7 @@ def create_handler(remote_deck_manager: "RemoteDeckManager"):
             else:
                 self._send_json_response(404, {'error': 'Not found'})
 
-        def log_message(self, format, *args):
+        def log_message(self, format: str, *args: Any) -> None:
             """Override to customize logging."""
             pass
     

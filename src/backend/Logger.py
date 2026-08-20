@@ -1,4 +1,6 @@
 from dataclasses import dataclass
+from typing import Any
+
 from loguru import logger
 
 # Every level method goes through log_method, one frame below the plugin that
@@ -41,7 +43,7 @@ class Logger:
             self.log_level[level.name] = level
         self.add_sink()
 
-    def add_log_level(self, log_level: Loglevel):
+    def add_log_level(self, log_level: Loglevel) -> None:
         # Resolve this once rather than per call. The level name is fixed for
         # the life of this logger.
         level_name = f"{self.name}_{log_level.name}"
@@ -50,18 +52,18 @@ class Logger:
             no=log_level.priority,
             color=f"{log_level.color}")
 
-        def log_method(self, message, *args, **kwargs):
+        def log_method(self: Any, message: str, *args: Any, **kwargs: Any) -> None:
             _CALLER_LOGGER.log(level_name, message)
 
         setattr(self, log_level.method_name, log_method.__get__(self))
 
-    def add_sink(self):
+    def add_sink(self) -> None:
         # Build the prefix once. The filter runs for every record this handler
         # is offered, and not for the accepted ones alone.
         level_prefix = f"{self.config.name}_"
 
-        def log_filter(record):
-            return record["level"].name.startswith(level_prefix)
+        def log_filter(record: Any) -> bool:
+            return bool(record["level"].name.startswith(level_prefix))
 
         self.sink_id = logger.add(
             sink=self.config.log_file_path,
@@ -76,7 +78,7 @@ class Logger:
             format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {level} | {name} | {function}:{line} - {message}"
         )
 
-    def remove_sink(self):
+    def remove_sink(self) -> None:
         """Detach this sink and release its resources.
 
         add_sink passes enqueue=True, so loguru backs the sink with a
@@ -88,5 +90,5 @@ class Logger:
             logger.remove(self.sink_id)
             self.sink_id = None
 
-    def _log(self, level, message, *args, **kwargs):
+    def _log(self, level: str, message: str, *args: Any, **kwargs: Any) -> None:
         logger.log(level, message, *args, **kwargs)

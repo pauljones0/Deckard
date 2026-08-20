@@ -3,7 +3,7 @@ from GtkHelper.GenerativeUI.GenerativeUI import GenerativeUI
 from gi.repository import Gtk, Adw
 
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any
+from typing import cast, TYPE_CHECKING, Any
 
 from GtkHelper.GtkHelper import better_disconnect, on_main
 
@@ -31,8 +31,8 @@ class SpinRow(GenerativeUI[float]):
                  default_value: float,
                  min: float,
                  max: float,
-                 title: str = None,
-                 subtitle: str = None,
+                 title: str | None = None,
+                 subtitle: str | None = None,
                  step: float = 0.1,
                  digits: int = 2,
                  on_change: Callable[..., Any] | None = None,
@@ -57,10 +57,10 @@ class SpinRow(GenerativeUI[float]):
             can_reset (bool, optional): Whether the spin value can be reset. Defaults to True.
             auto_add (bool, optional): Whether to automatically add the spin row to the UI. Defaults to True.
         """
-        def build():
+        def build() -> None:
             self._adjustment = Gtk.Adjustment.new(self._default_value, min, max, step, 1, 0)
 
-            self._widget: Adw.SpinRow = Adw.SpinRow(
+            self._widget: Adw.SpinRow | None = Adw.SpinRow(
                 title=self.get_translation(title, title),
                 subtitle=self.get_translation(subtitle, subtitle),
                 value=self._default_value,
@@ -73,14 +73,14 @@ class SpinRow(GenerativeUI[float]):
             self.connect_signals()
         super().__init__(action_core, var_name, default_value, can_reset, auto_add, complex_var_name, on_change, build=build)
 
-    def connect_signals(self):
+    def connect_signals(self) -> None:
         """
         Connects the signal handlers for the spin row widget to track changes in its value.
         """
         self._adjustment.connect("value-changed", self._correct_step_amount)
         self.widget.connect("changed", self._value_changed)
 
-    def disconnect_signals(self):
+    def disconnect_signals(self) -> None:
         """
         Disconnects the signal handlers for the spin row widget.
         """
@@ -90,7 +90,7 @@ class SpinRow(GenerativeUI[float]):
         better_disconnect(self._adjustment, self._correct_step_amount)
         better_disconnect(widget, self._value_changed)
 
-    def set_number(self, number: float, update_setting: bool = False):
+    def set_number(self, number: float, update_setting: bool = False) -> None:
         """
         Sets the value of the spin row widget and optionally updates the associated setting.
 
@@ -114,9 +114,9 @@ class SpinRow(GenerativeUI[float]):
         """
         if self._widget is None:
             return self.get_value()
-        return self.widget.get_value()
+        return cast(float, self.widget.get_value())
 
-    def _value_changed(self, spin: Adw.SpinRow):
+    def _value_changed(self, spin: Adw.SpinRow) -> None:
         """
         Handles the change in spin row value.
 
@@ -128,7 +128,7 @@ class SpinRow(GenerativeUI[float]):
         self._handle_value_changed(spin.get_value())
 
     @GenerativeUI.signal_manager
-    def set_ui_value(self, value: float):
+    def set_ui_value(self, value: float) -> None:
         """
         Sets the value of the spin row widget in the UI.
 
@@ -137,7 +137,7 @@ class SpinRow(GenerativeUI[float]):
         """
         self.widget.set_value(value)
 
-    def _correct_step_amount(self, adjustment):
+    def _correct_step_amount(self, adjustment: Gtk.Adjustment) -> None:
         """
         Corrects the step amount to ensure it is in multiples of the step size.
 
@@ -163,12 +163,12 @@ class SpinRow(GenerativeUI[float]):
         return self._adjustment
 
     @property
-    def min(self):
+    def min(self) -> float:
         return self._get_adjustment().get_lower()
 
     @min.setter
     @on_main
-    def min(self, value: float):
+    def min(self, value: float) -> None:
         """
         Sets the minimum value for the spin row.
 
@@ -181,12 +181,12 @@ class SpinRow(GenerativeUI[float]):
         adjustment.set_lower(value)
 
     @property
-    def max(self):
+    def max(self) -> float:
         return self._get_adjustment().get_upper()
 
     @max.setter
     @on_main
-    def max(self, value: float):
+    def max(self, value: float) -> None:
         """
         Sets the maximum value for the spin row.
         Args:
@@ -198,12 +198,12 @@ class SpinRow(GenerativeUI[float]):
         adjustment.set_upper(value)
 
     @property
-    def step(self):
+    def step(self) -> float:
         return self._get_adjustment().get_step_increment()
 
     @step.setter
     @on_main
-    def step(self, value: float):
+    def step(self, value: float) -> None:
         """
         Sets the step size for adjusting the spin row value.
         Args:

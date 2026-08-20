@@ -24,19 +24,26 @@ gi.require_version("Adw", "1")
 from gi.repository import Gtk, Adw, GObject, Gio
 
 # Import globals
+from src.backend import services
+
 import globals as gl
 
 # Import own modules
 from src.backend.PluginManager.ActionCore import ActionCore
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from src.windows.mainWindow.elements.Sidebar.Sidebar import Sidebar
+
 
 
 class ActionConfigurator(Gtk.Box):
-    def __init__(self, sidebar, **kwargs):
+    def __init__(self, sidebar: "Sidebar", **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.sidebar = sidebar
         self.build()
 
-    def build(self):
+    def build(self) -> None:
         self.scrolled_window = Gtk.ScrolledWindow(hexpand=True, vexpand=True, margin_end=4)
         self.append(self.scrolled_window)
 
@@ -76,7 +83,7 @@ class ActionConfigurator(Gtk.Box):
         self.remove_button = RemoveButton(self, margin_top=12)
         self.main_box.append(self.remove_button)
 
-    def load_for_action(self, action, index):
+    def load_for_action(self, action: Any, index: int) -> None:
         self.config_group.load_for_action(action)
         self.custom_configs.load_for_action(action)
         self.remove_button.load_for_action(action, index)
@@ -85,23 +92,23 @@ class ActionConfigurator(Gtk.Box):
 
         self.config_group_and_custom_configs_separator.set_visible(self.config_group.is_visible() and self.custom_configs.is_visible())
 
-    def on_back_button_click(self, button):
+    def on_back_button_click(self, button: Gtk.Button) -> None:
         self.sidebar.main_stack.set_visible_child_name("configurator_stack")
 
 class CommentGroup(Adw.PreferencesGroup):
-    def __init__(self, parent, **kwargs):
+    def __init__(self, parent: "ActionConfigurator", **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.parent = parent
-        self.action: ActionCore = None
-        self.index: int = None
+        self.action: ActionCore = None  # type: ignore[assignment]  # late-init: load_for_action
+        self.index: int = None  # type: ignore[assignment]  # late-init: load_for_action
         self.build()
 
-    def build(self):
+    def build(self) -> None:
         self.comment_row = Adw.EntryRow(title="Comment")
         self.connect_signals()
         self.add(self.comment_row)
 
-    def load_for_action(self, action, index):
+    def load_for_action(self, action: Any, index: int) -> None:
         self.disconnect_signals()
         self.action = action
         self.index = index
@@ -113,28 +120,26 @@ class CommentGroup(Adw.PreferencesGroup):
 
         self.connect_signals()
 
-    def on_comment_changed(self, entry):
+    def on_comment_changed(self, entry: Gtk.Editable) -> None:
         self.set_comment(entry.get_text())
 
         # Update ActionManager - A full reload is not efficient but ensures correct behavior if the ActionConfigurator is triggered from a plugin action
-        gl.app.main_win.sidebar.key_editor.action_editor.load_for_identifier(self.action.input_ident, self.action.state)
+        services.require_main_window().sidebar.key_editor.action_editor.load_for_identifier(self.action.input_ident, self.action.state)
 
-    def connect_signals(self):
+    def connect_signals(self) -> None:
         self.comment_row.connect("changed", self.on_comment_changed)
 
-    def disconnect_signals(self):
+    def disconnect_signals(self) -> None:
         self.comment_row.disconnect_by_func(self.on_comment_changed)
     
 
     def get_comment(self) -> str | None:
         if gl.app is None:
             return None
-        visible_child = gl.app.main_win.leftArea.deck_stack.get_visible_child()
+        visible_child = services.require_main_window().leftArea.deck_stack.get_visible_child()
         if visible_child is None:
             return None
         controller = visible_child.deck_controller
-        if controller is None:
-            return None
         page = controller.active_page
         if page is None:
             return None
@@ -143,28 +148,28 @@ class CommentGroup(Adw.PreferencesGroup):
     def set_comment(self, comment: str) -> None:
         if gl.app is None:
             return
-        visible_child = gl.app.main_win.leftArea.deck_stack.get_visible_child()
+        visible_child = services.require_main_window().leftArea.deck_stack.get_visible_child()
         if visible_child is None:
             return
         controller = visible_child.deck_controller
-        if controller is None:
-            return
         page = controller.active_page
+        if page is None:
+            return
         page.set_action_comment(self.index, comment, self.action.state, self.action.input_ident)
     
 
 
 class ConfigGroup(Adw.PreferencesGroup):
-    def __init__(self, parent, **kwargs):
+    def __init__(self, parent: "ActionConfigurator", **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.parent = parent
-        self.loaded_rows = []
+        self.loaded_rows: "list[Any]" = []
         self.build()
 
-    def build(self):
+    def build(self) -> None:
         pass
 
-    def load_for_action(self, action: ActionCore):
+    def load_for_action(self, action: ActionCore) -> None:
         config_rows = action.get_config_rows()
         generative_ui_objects = action.get_generative_ui()
 
@@ -179,13 +184,13 @@ class ConfigGroup(Adw.PreferencesGroup):
         # Clear
         self.clear()
 
-        def load_config_rows():
+        def load_config_rows() -> None:
             # Load rows
             for row in config_rows:
                 self.add(row)
                 self.loaded_rows.append(row)
 
-        def load_gen_ui_rows():
+        def load_gen_ui_rows() -> None:
             for gen_ui in generative_ui_objects:
                 gen_ui.load_ui_value()
 
@@ -210,20 +215,20 @@ class ConfigGroup(Adw.PreferencesGroup):
         # Show
         self.show()
 
-    def clear(self):
+    def clear(self) -> None:
         for row in self.loaded_rows:
             self.remove(row)
         self.loaded_rows = []
 
 class CustomConfigs(Gtk.Box):
-    def __init__(self, parent, **kwargs):
+    def __init__(self, parent: "ActionConfigurator", **kwargs: Any) -> None:
         super().__init__(orientation=Gtk.Orientation.VERTICAL, **kwargs)
         self.parent = parent
 
         self.main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, hexpand=True)
         self.append(self.main_box)
 
-    def load_for_action(self, action):
+    def load_for_action(self, action: Any) -> None:
         # Append custom config area
         custom_config_area = action.get_custom_config_area()
         
@@ -240,12 +245,14 @@ class CustomConfigs(Gtk.Box):
         # Show
         self.show()
 
-    def clear(self):
-        while self.main_box.get_first_child() is not None:
-            self.main_box.remove(self.main_box.get_first_child())
+    def clear(self) -> None:
+        child = self.main_box.get_first_child()
+        while child is not None:
+            self.main_box.remove(child)
+            child = self.main_box.get_first_child()
 
 class RemoveButton(Gtk.Button):
-    def __init__(self, configurator, **kwargs):
+    def __init__(self, configurator: "ActionConfigurator", **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.set_css_classes(["remove-action-button"])
         self.configurator = configurator
@@ -253,35 +260,41 @@ class RemoveButton(Gtk.Button):
         self.set_margin_bottom(100)
         self.connect("clicked", self.on_remove_button_click)
 
-        self.action = None
-        self.index = None
+        self.action: "ActionCore | None" = None
+        self.index: int | None = None
 
-    def on_remove_button_click(self, button):
-        visible_child = gl.app.main_win.leftArea.deck_stack.get_visible_child()
+    def on_remove_button_click(self, button: Gtk.Button) -> None:
+        action = self.action
+        if action is None:
+            # load_for_action binds it, and the button is only reachable
+            # through the configurator that calls that first.
+            return
+        visible_child = services.require_main_window().leftArea.deck_stack.get_visible_child()
         if visible_child is None:
             return
         controller = visible_child.deck_controller
-        if controller is None:
-            return
         page = controller.active_page
+        if page is None:
+            # No page on this deck, so there is no action entry to remove.
+            return
 
         # Swtich to main editor page
         self.configurator.sidebar.main_stack.set_visible_child_name("configurator_stack")
 
         # Remove from action_objects
         try:
-            del page.action_objects[self.action.input_ident.input_type][self.action.input_ident.json_identifier][int(self.action.state)][self.index]
+            del page.action_objects[action.input_ident.input_type][action.input_ident.json_identifier][int(action.state)][self.index]
         except KeyError:
             #FIXME
             pass
-        page.fix_action_objects_order(self.action.input_ident)
+        page.fix_action_objects_order(action.input_ident)
 
         # Remove from page json
-        state_dict = self.action.input_ident.get_state_dict(page, self.action.state)
+        state_dict = action.input_ident.get_state_dict(page, action.state)
         state_dict["actions"].pop(self.index)
 
         #TODO: Also update if action before this one has the access
-        if self.action.input_ident.input_type == "keys" and state_dict.get("image-control-action") == self.index:
+        if action.input_ident.input_type == "keys" and state_dict.get("image-control-action") == self.index:
             if len(state_dict["actions"]) > 0:
                 state_dict["image-control-action"] = 0
             else:
@@ -293,10 +306,10 @@ class RemoveButton(Gtk.Button):
         self.configurator.sidebar.update()
 
         # Decide whether the key needs a reload
-        load = not page.has_key_an_image_controlling_action(self.action.input_ident, self.action.state)
+        load = not page.has_key_an_image_controlling_action(action.input_ident, action.state)
         load = True # TODO
         if load:
-            page.reload_similar_pages(identifier=self.action.input_ident, reload_self=True)
+            page.reload_similar_pages(identifier=action.input_ident, reload_self=True)
 
         # Destroy the action. This notifies, then calls clean_up(), whether or
         # not the action overrides the hook.
@@ -304,18 +317,18 @@ class RemoveButton(Gtk.Button):
         del self.action
 
 
-    def load_for_action(self, action, index):
+    def load_for_action(self, action: Any, index: int) -> None:
         self.action = action
         self.index = index
 
 class EventAssignerUI(BetterPreferencesGroup):
-    def __init__(self, action_configurator: ActionConfigurator, **kwargs):
+    def __init__(self, action_configurator: ActionConfigurator, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.action_configurator = action_configurator
         self.action: ActionCore = None  # type: ignore[assignment]  # late-init: EventAssignerUI.load_for_action
         self.build()
 
-    def build(self):
+    def build(self) -> None:
         self.expander = Adw.ExpanderRow(title="Event Assigner", subtitle="Configure event assignments")
         self.add(self.expander)
 
@@ -344,7 +357,7 @@ class EventAssignerUI(BetterPreferencesGroup):
             self.rows.append(row)
             self.expander.add_row(row)
 
-    def load_for_action(self, action: ActionCore):
+    def load_for_action(self, action: ActionCore) -> None:
         self.action = action
         
         self.set_sensitive(action.allow_event_configuration)
@@ -365,16 +378,7 @@ class EventAssignerUI(BetterPreferencesGroup):
 
         return
 
-        assignments = action.get_event_assignments()
-
-        for row in self.rows:
-            new_assignment = assignments.get(row.event)
-            row.select_event(new_assignment)
-
-            action_input_type = type(action.input_ident)
-            row.set_visible(row.event in action_input_type.Events)
-
-    def reset_assignments(self):
+    def reset_assignments(self) -> None:
         self.action.set_all_events_to_null()
         # for event, assigner in self.action.event_manager.get_event_map(True).items():
             # self.action.set_event_assignment(event, assigner.default_event)
@@ -384,18 +388,13 @@ class EventAssignerUI(BetterPreferencesGroup):
                 self.action.set_event_assignment(event, assigner)
 
 
-    def on_reset(self, button):
+    def on_reset(self, button: Gtk.Button) -> None:
         self.reset_assignments()
         self.load_for_action(self.action)
 
-    def on_clear_all(self, button):
-        assignments: dict[InputEvent, InputEvent] = {}
-        for row in self.rows:
-            if not row.get_visible():
-                continue
-
-            assignments[row.event] = None
-
+    def on_clear_all(self, button: Gtk.Button) -> None:
+        # set_all_events_to_null does the whole job. The map this used to
+        # build fed a set_event_assignments call that is commented out below.
         self.action.set_all_events_to_null()
         # self.action.set_event_assignments(assignments)
         self.load_for_action(self.action)
@@ -437,13 +436,13 @@ class EventAssignerRow(Adw.ComboRow):
         self.factory = Gtk.SignalListItemFactory()
         self.set_factory(self.factory)
 
-        def f_setup(fact, item):
+        def f_setup(fact: Gtk.SignalListItemFactory, item: Any) -> None:
             label = Gtk.Label(halign=Gtk.Align.START)
             label.set_selectable(False)
             item.set_child(label)
         self.factory.connect("setup", f_setup)
 
-        def f_bind(fact, item):
+        def f_bind(fact: Gtk.SignalListItemFactory, item: Any) -> None:
             item.get_child().set_label(item.get_item().ui_label)
             item.get_child().set_tooltip_text(item.get_item().tooltip)
         self.factory.connect("bind", f_bind)
@@ -452,16 +451,16 @@ class EventAssignerRow(Adw.ComboRow):
 
 
 
-    def _connect_signal(self):
+    def _connect_signal(self) -> None:
         self.connect("notify::selected", self.on_changed)
 
-    def _disconnect_signal(self):
+    def _disconnect_signal(self) -> None:
         try:
             self.disconnect_by_func(self.on_changed)
         except TypeError:
             pass
 
-    def set_available_events(self, events: list[EventAssigner]):
+    def set_available_events(self, events: list[EventAssigner]) -> None:
         self._disconnect_signal()
         model = Gio.ListStore.new(EventAssignerRowItem)
         self.set_model(model)
@@ -474,7 +473,7 @@ class EventAssignerRow(Adw.ComboRow):
         self.set_selected(0)
         self._connect_signal()
 
-    def select_event(self, event_assigner: EventAssigner | None):
+    def select_event(self, event_assigner: EventAssigner | None) -> None:
         self._disconnect_signal()
 
         model = self.get_model()
@@ -503,10 +502,11 @@ class EventAssignerRow(Adw.ComboRow):
         self.set_selected(Gtk.INVALID_LIST_POSITION)
         self._connect_signal()
 
-    def on_changed(self, *args):
+    def on_changed(self, *args: Any) -> None:
         selected = self.get_selected_item()
 
-        event_id = selected.id if selected else None
+        # The model holds EventRow items, which carry an id.
+        event_id = getattr(selected, "id", None) if selected else None
 
 
         event_assigner = self.event_assigner.action.event_manager.get_event_assigner_by_id(event_id)

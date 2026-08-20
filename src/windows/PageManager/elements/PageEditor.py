@@ -17,6 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 import gi
 
 from GtkHelper.ScaleRow import ScaleRow
+from src.backend import services
 from src.backend.DeckManagement.ImageHelpers import image2pixbuf
 from src.windows.MultiDeckSelector.MultiDeckSelectorRow import MultiDeckSelectorRow
 gi.require_version("Gtk", "4.0")
@@ -24,7 +25,7 @@ gi.require_version("Adw", "1")
 from gi.repository import Gtk, Adw, GLib
 
 # Import typing
-from typing import TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 if TYPE_CHECKING:
     from src.windows.PageManager.PageManager import PageManager
 
@@ -49,17 +50,17 @@ class PageEditor(Adw.NavigationPage):
         self.active_page_path: str | None = None
         self.build()
 
-    def get_page_data(self) -> dict:
+    def get_page_data(self) -> dict[str, Any]:
         if gl.page_manager is None or self.active_page_path is None:
             return {}
         return gl.page_manager.get_page_data(self.active_page_path, use_backup=False)
 
-    def set_page_data(self, data: dict, reload_brightness: bool = True, reload_screensaver: bool = True, reload_background: bool = True, reload_inputs: bool = True):
+    def set_page_data(self, data: dict[str, Any], reload_brightness: bool = True, reload_screensaver: bool = True, reload_background: bool = True, reload_inputs: bool = True) -> None:
         if gl.page_manager is None or self.active_page_path is None:
             return
         gl.page_manager.set_page_data(self.active_page_path, data, reload_brightness=reload_brightness, reload_screensaver=reload_screensaver, reload_background=reload_background, reload_inputs=reload_inputs)
 
-    def build(self):
+    def build(self) -> None:
         self.main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, hexpand=True)
         self.set_child(self.main_box)
 
@@ -124,6 +125,26 @@ class PageEditor(Adw.NavigationPage):
         # Default to the no page info screen
         self.main_stack.set_visible_child_name("no-page")
 
+    def require_active_page_path(self) -> str:
+        """The path of the page the editor holds. It raises when there is none.
+
+        Every override row writes through this. A None reaches canonical_path()
+        inside the page manager and raises TypeError there, naming neither the
+        editor nor the row, and an override row is reachable only once the
+        stack leaves its no-page child.
+
+        The readers do not come through here. get_page_data answers {} for a
+        None path, and a group builds its rows before load_for_page binds one,
+        so the reads must keep tolerating the absence.
+        """
+        path = self.active_page_path
+        if path is None:
+            raise RuntimeError(
+                "the page editor has no active page -- load_for_page binds "
+                "it, and the editor shows its no-page child until then."
+            )
+        return path
+
     def load_for_page(self, page_path: str) -> None:
         self.active_page_path = page_path
         self.name_group.load_for_page(page_path=page_path)
@@ -143,21 +164,21 @@ class PageEditor(Adw.NavigationPage):
         self.page_manager.remove_page_by_path(self.active_page_path)
 
 class PageEditorGroup(Adw.PreferencesGroup):
-    def __init__(self, page_editor: PageEditor, *args, **kwargs):
+    def __init__(self, page_editor: PageEditor, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self.page_editor = page_editor
         self.build()
 
-    def build(self):
+    def build(self) -> None:
         pass
 
-    def connect_events(self):
+    def connect_events(self) -> None:
         pass
 
-    def disconnect_events(self):
+    def disconnect_events(self) -> None:
         pass
 
-    def load_config_settings(self, page_path: str):
+    def load_config_settings(self, page_path: str) -> None:
         pass
 
     def load_for_page(self, page_path: str) -> None:
@@ -169,19 +190,19 @@ class NameGroup(PageEditorGroup):
     def __init__(self, page_editor: PageEditor):
         super().__init__(page_editor)
 
-    def build(self):
+    def build(self) -> None:
         self.name_entry = Adw.EntryRow(title=gl.lm.get("page-manager.page-editor.name-group.name"), show_apply_button=True)
         self.add(self.name_entry)
 
-    def connect_events(self):
+    def connect_events(self) -> None:
         self.name_entry.connect("changed", self.on_name_changed)
         self.name_entry.connect("apply", self.on_name_change_applied)
 
-    def disconnect_events(self):
+    def disconnect_events(self) -> None:
         better_disconnect(self.name_entry, self.on_name_changed)
         better_disconnect(self.name_entry, self.on_name_change_applied)
 
-    def load_config_settings(self, page_path: str):
+    def load_config_settings(self, page_path: str | None) -> None:
         if page_path is None:
             return
 
@@ -193,7 +214,7 @@ class NameGroup(PageEditorGroup):
 
         self.set_sensitive(is_user_page)
 
-    def on_name_changed(self, entry: Adw.EntryRow, *args):
+    def on_name_changed(self, entry: Adw.EntryRow, *args: Any) -> None:
         active_page_path = self.page_editor.active_page_path
         if active_page_path is None or gl.page_manager is None:
             return
@@ -211,7 +232,7 @@ class NameGroup(PageEditorGroup):
             entry.remove_css_class("error")
             entry.set_show_apply_button(True)
 
-    def on_name_change_applied(self, entry: Adw.EntryRow, *args):
+    def on_name_change_applied(self, entry: Adw.EntryRow, *args: Any) -> None:
         original_path = self.page_editor.active_page_path
         if original_path is None:
             return
@@ -226,17 +247,17 @@ class DefaultPageGroup(PageEditorGroup):
     def __init__(self, page_editor: PageEditor):
         super().__init__(page_editor, title=gl.lm.get("page-manager.page-editor.default-page.title"))
 
-    def build(self):
+    def build(self) -> None:
         self.deck_selector = MultiDeckSelectorRow(
             source_window=self.page_editor.page_manager,
             title=gl.lm.get("page-manager.page-editor.default-page.row.title"),
             subtitle=gl.lm.get("page-manager.page-editor.default-page.row.subtitle"),
             callback=self.on_deck_changed,
-            selected_deck_serials=gl.page_manager.get_serial_numbers_from_page(self.page_editor.active_page_path)
+            selected_deck_serials=services.require_page_manager().get_serial_numbers_from_page(self.page_editor.active_page_path)
         )
         self.add(self.deck_selector)
 
-    def load_config_settings(self, page_path: str):
+    def load_config_settings(self, page_path: str) -> None:
         if gl.page_manager is None:
             return
         serial_numbers = gl.page_manager.get_serial_numbers_from_page(page_path)
@@ -244,7 +265,7 @@ class DefaultPageGroup(PageEditorGroup):
         self.deck_selector.set_label(len(serial_numbers))
         self.deck_selector.set_selected_deck_serials(serial_numbers)
 
-    def on_deck_changed(self, serial_number: str, state: bool):
+    def on_deck_changed(self, serial_number: str, state: bool) -> None:
         if gl.page_manager is None:
             return
         path: str | None = self.page_editor.active_page_path
@@ -261,7 +282,7 @@ class AutoChangeGroup(PageEditorGroup):
     def __init__(self, page_editor: PageEditor):
         super().__init__(page_editor, title=gl.lm.get("page-manager.page-editor.change-group.title"))
 
-    def build(self):
+    def build(self) -> None:
         self.enable_toggle = Adw.SwitchRow(title=gl.lm.get("page-manager.page-editor.change-group.enable"))
         self.add(self.enable_toggle)
 
@@ -273,7 +294,7 @@ class AutoChangeGroup(PageEditorGroup):
             title="Decks",
             subtitle="Decks on which the page should be loaded",
             callback=self.on_deck_changed,
-            selected_deck_serials=gl.page_manager.get_serial_numbers_from_page(self.page_editor.active_page_path)
+            selected_deck_serials=services.require_page_manager().get_serial_numbers_from_page(self.page_editor.active_page_path)
         )
         self.add(self.deck_selector)
 
@@ -286,19 +307,19 @@ class AutoChangeGroup(PageEditorGroup):
         self.matching_window_expander = MatchingWindowExpander(auto_change_group=self)
         self.add(self.matching_window_expander)
 
-    def connect_events(self):
+    def connect_events(self) -> None:
         self.enable_toggle.connect("notify::active", self.on_enable_changed)
         self.stay_on_page_toggle.connect("notify::active", self.on_stay_on_page_changed)
         self.title_entry.connect("apply", self.on_title_entry_applied)
         self.wm_class_entry.connect("apply", self.on_wm_class_entry_applied)
 
-    def disconnect_events(self):
+    def disconnect_events(self) -> None:
         better_disconnect(self.enable_toggle, self.on_enable_changed)
         better_disconnect(self.stay_on_page_toggle, self.on_stay_on_page_changed)
         better_disconnect(self.title_entry, self.on_title_entry_applied)
         better_disconnect(self.wm_class_entry, self.on_wm_class_entry_applied)
 
-    def load_config_settings(self, page_path: str):
+    def load_config_settings(self, page_path: str) -> None:
         active_page_path = self.page_editor.active_page_path
         if gl.page_manager is None or active_page_path is None:
             return
@@ -310,35 +331,35 @@ class AutoChangeGroup(PageEditorGroup):
         self.title_entry.set_text(auto_change.get("title", ""))
         self.deck_selector.set_selected_deck_serials(auto_change.get("decks", []).copy())
 
-    def on_enable_changed(self, *args):
-        gl.page_manager.overwrite_auto_change_settings(
-            path=self.page_editor.active_page_path,
+    def on_enable_changed(self, *args: Any) -> None:
+        services.require_page_manager().overwrite_auto_change_settings(
+            path=self.page_editor.require_active_page_path(),
             enable=self.enable_toggle.get_active()
         )
 
-    def on_stay_on_page_changed(self, *args):
-        gl.page_manager.overwrite_auto_change_settings(
-            path=self.page_editor.active_page_path,
+    def on_stay_on_page_changed(self, *args: Any) -> None:
+        services.require_page_manager().overwrite_auto_change_settings(
+            path=self.page_editor.require_active_page_path(),
             stay_on_page=self.stay_on_page_toggle.get_active()
         )
 
-    def on_title_entry_applied(self, *args):
+    def on_title_entry_applied(self, *args: Any) -> None:
         self.matching_window_expander.update_matching_windows()
 
-        gl.page_manager.overwrite_auto_change_settings(
-            path=self.page_editor.active_page_path,
+        services.require_page_manager().overwrite_auto_change_settings(
+            path=self.page_editor.require_active_page_path(),
             regex_title=self.title_entry.get_text()
         )
 
-    def on_wm_class_entry_applied(self, *args):
+    def on_wm_class_entry_applied(self, *args: Any) -> None:
         self.matching_window_expander.update_matching_windows()
 
-        gl.page_manager.overwrite_auto_change_settings(
-            path=self.page_editor.active_page_path,
+        services.require_page_manager().overwrite_auto_change_settings(
+            path=self.page_editor.require_active_page_path(),
             wm_class=self.wm_class_entry.get_text()
         )
 
-    def on_deck_changed(self, serial_number: str, state: bool):
+    def on_deck_changed(self, serial_number: str, state: bool) -> None:
         page_manager = gl.page_manager
         path = self.page_editor.active_page_path
         if page_manager is None or path is None:
@@ -359,7 +380,7 @@ class BrightnessGroup(PageEditorGroup):
     def __init__(self, page_editor: PageEditor):
         super().__init__(page_editor, title="Brightness Override")
 
-    def build(self):
+    def build(self) -> None:
         self.enable_expander = BetterExpander(
             title="Overwrite Brightness",
             subtitle="Overrides the Deck Brightness",
@@ -371,15 +392,15 @@ class BrightnessGroup(PageEditorGroup):
         self.brightness_scale = ScaleRow(0, 0, 100, digits=0, draw_value=True, draw_side_values=False, title="Brightness")
         self.enable_expander.add_row(self.brightness_scale)
 
-    def connect_events(self):
+    def connect_events(self) -> None:
         self.enable_expander.connect("notify::enable-expansion", self.on_enable_changed)
         self.brightness_scale.scale.connect("value-changed", self.on_brightness_changed)
 
-    def disconnect_events(self):
+    def disconnect_events(self) -> None:
         better_disconnect(self.enable_expander, self.on_enable_changed)
         better_disconnect(self.brightness_scale.scale, self.on_brightness_changed)
 
-    def load_config_settings(self, page_path: str):
+    def load_config_settings(self, page_path: str) -> None:
         if gl.page_manager is None:
             return
         settings = gl.page_manager.get_brightness_settings(page_path)
@@ -389,25 +410,30 @@ class BrightnessGroup(PageEditorGroup):
 
         self.brightness_scale.set_value(settings.get("value", 75))
 
-    def on_enable_changed(self, *args):
-        gl.page_manager.overwrite_brightness_settings(
-            path=self.page_editor.active_page_path,
+    def on_enable_changed(self, *args: Any) -> None:
+        services.require_page_manager().overwrite_brightness_settings(
+            path=self.page_editor.require_active_page_path(),
             overwrite=self.enable_expander.get_enable_expansion()
         )
         self.update_brightness()
 
-    def on_brightness_changed(self, *args):
-        gl.page_manager.overwrite_brightness_settings(
-            path=self.page_editor.active_page_path,
+    def on_brightness_changed(self, *args: Any) -> None:
+        services.require_page_manager().overwrite_brightness_settings(
+            path=self.page_editor.require_active_page_path(),
             brightness=self.brightness_scale.get_value()
         )
         self.update_brightness()
 
-    def update_brightness(self):
-        def on_idle():
-            for controller in gl.deck_manager.deck_controller:
-                if controller.active_page.json_path == self.page_editor.active_page_path:
-                    controller.load_brightness(controller.active_page)
+    def update_brightness(self) -> None:
+        def on_idle() -> None:
+            for controller in services.require_deck_manager().deck_controller:
+                page = controller.active_page
+                # A deck that carries no page must not stop the reload for
+                # the decks after it in this list.
+                if page is None:
+                    continue
+                if page.json_path == self.page_editor.active_page_path:
+                    controller.load_brightness(page)
 
         GLib.idle_add(on_idle)
 
@@ -415,7 +441,7 @@ class BackgroundGroup(PageEditorGroup):
     def __init__(self, page_editor: PageEditor):
         super().__init__(page_editor, title="Background Override")
 
-    def build(self):
+    def build(self) -> None:
         self.enable_expander = BetterExpander(
             title="Overwrite Background",
             subtitle="Overrides the Deck Background",
@@ -458,7 +484,7 @@ class BackgroundGroup(PageEditorGroup):
 
         self.media_selector_image = Gtk.Image()
 
-    def connect_events(self):
+    def connect_events(self) -> None:
         self.enable_expander.connect("notify::enable-expansion", self.on_enable_changed)
         self.show_background_toggle.connect("notify::active", self.on_show_background_changed)
         self.loop_toggle.connect("notify::active", self.on_loop_changed)
@@ -466,7 +492,7 @@ class BackgroundGroup(PageEditorGroup):
         self.extend_touchscreen_toggle.connect("notify::active", self.on_extend_touchscreen_changed)
         self.media_selector_button.connect("clicked", self.on_media_selector_click)
 
-    def disconnect_events(self):
+    def disconnect_events(self) -> None:
         better_disconnect(self.enable_expander, self.on_enable_changed)
         better_disconnect(self.show_background_toggle, self.on_show_background_changed)
         better_disconnect(self.loop_toggle, self.on_loop_changed)
@@ -474,7 +500,7 @@ class BackgroundGroup(PageEditorGroup):
         better_disconnect(self.extend_touchscreen_toggle, self.on_extend_touchscreen_changed)
         better_disconnect(self.media_selector_button, self.on_media_selector_click)
 
-    def load_config_settings(self, page_path: str):
+    def load_config_settings(self, page_path: str) -> None:
         if gl.page_manager is None:
             return
         background_settings = gl.page_manager.get_background_settings(page_path)
@@ -488,50 +514,49 @@ class BackgroundGroup(PageEditorGroup):
         self.extend_touchscreen_toggle.set_active(background_settings.get("extend-to-touchscreen", False))
         self.set_thumbnail(background_settings.get("media-path", None))
 
-    def on_enable_changed(self, *args):
-        gl.page_manager.overwrite_background_settings(
-            path=self.page_editor.active_page_path,
+    def on_enable_changed(self, *args: Any) -> None:
+        services.require_page_manager().overwrite_background_settings(
+            path=self.page_editor.require_active_page_path(),
             overwrite=self.enable_expander.get_enable_expansion()
         )
         self.update_background()
 
-    def on_show_background_changed(self, *args):
-        gl.page_manager.overwrite_background_settings(
-            path=self.page_editor.active_page_path,
+    def on_show_background_changed(self, *args: Any) -> None:
+        services.require_page_manager().overwrite_background_settings(
+            path=self.page_editor.require_active_page_path(),
             show=self.show_background_toggle.get_active()
         )
         self.update_background()
 
-    def on_loop_changed(self, *args):
-        gl.page_manager.overwrite_background_settings(
-            path=self.page_editor.active_page_path,
+    def on_loop_changed(self, *args: Any) -> None:
+        services.require_page_manager().overwrite_background_settings(
+            path=self.page_editor.require_active_page_path(),
             loop=self.loop_toggle.get_active()
         )
         self.update_background()
 
-    def on_fps_changed(self, *args):
-        gl.page_manager.overwrite_background_settings(
-            path=self.page_editor.active_page_path,
+    def on_fps_changed(self, *args: Any) -> None:
+        services.require_page_manager().overwrite_background_settings(
+            path=self.page_editor.require_active_page_path(),
             fps=int(self.fps_spin.get_value())
         )
         self.update_background()
 
-    def on_extend_touchscreen_changed(self, *args):
-        gl.page_manager.overwrite_background_settings(
-            path=self.page_editor.active_page_path,
+    def on_extend_touchscreen_changed(self, *args: Any) -> None:
+        services.require_page_manager().overwrite_background_settings(
+            path=self.page_editor.require_active_page_path(),
             extend_to_touchscreen=self.extend_touchscreen_toggle.get_active()
         )
         self.update_background()
 
-    def on_media_selector_click(self, *args):
-        background_settings = gl.page_manager.get_background_settings(self.page_editor.active_page_path)
+    def on_media_selector_click(self, *args: Any) -> None:
+        background_settings = services.require_page_manager().get_background_settings(self.page_editor.active_page_path)
 
-        gl.app.let_user_select_asset(default_path=background_settings.get("media-path", ""), callback_func=self.update_image)
+        services.require_app().let_user_select_asset(default_path=background_settings.get("media-path", ""), callback_func=self.update_image)
 
-    def set_thumbnail(self, file_path):
+    def set_thumbnail(self, file_path: str | None) -> None:
         if not file_path:
             self.media_selector_image.set_from_pixbuf(None)
-            self.media_selector_image.pixbuf = None
             return
 
         image = gl.media_manager.get_thumbnail(file_path)
@@ -542,21 +567,26 @@ class BackgroundGroup(PageEditorGroup):
 
         image.close()
 
-    def update_image(self, file_path):
+    def update_image(self, file_path: str | None) -> None:
         self.set_thumbnail(file_path)
 
-        gl.page_manager.overwrite_background_settings(
-            path=self.page_editor.active_page_path,
+        services.require_page_manager().overwrite_background_settings(
+            path=self.page_editor.require_active_page_path(),
             media_path=file_path
         )
 
         self.update_background()
 
-    def update_background(self):
-        def on_idle():
-            for controller in gl.deck_manager.deck_controller:
-                if controller.active_page.json_path == self.page_editor.active_page_path:
-                    controller.load_background(controller.active_page)
+    def update_background(self) -> None:
+        def on_idle() -> None:
+            for controller in services.require_deck_manager().deck_controller:
+                page = controller.active_page
+                # A deck that carries no page must not stop the reload for
+                # the decks after it in this list.
+                if page is None:
+                    continue
+                if page.json_path == self.page_editor.active_page_path:
+                    controller.load_background(page)
 
         GLib.idle_add(on_idle)
 
@@ -564,7 +594,7 @@ class ScreensaverGroup(PageEditorGroup):
     def __init__(self, page_editor: PageEditor):
         super().__init__(page_editor, title="Screensaver Overwrite")
 
-    def build(self):
+    def build(self) -> None:
         self.overwrite_expander = BetterExpander(
             title="Overwrite Screensaver",
             subtitle="Overrides the Deck Screensaver",
@@ -610,7 +640,7 @@ class ScreensaverGroup(PageEditorGroup):
 
         self.media_selector_image = Gtk.Image()
 
-    def connect_events(self):
+    def connect_events(self) -> None:
         self.overwrite_expander.connect("notify::enable-expansion", self.on_overwrite_changed)
         self.enable_screensaver_toggle.connect("notify::active", self.on_enable_changed)
         self.delay_spin.connect("changed", self.on_delay_changed)
@@ -619,7 +649,7 @@ class ScreensaverGroup(PageEditorGroup):
         self.brightness_scale.scale.connect("value-changed", self.on_brightness_changed)
         self.media_selector_button.connect("clicked", self.on_media_selector_click)
 
-    def disconnect_events(self):
+    def disconnect_events(self) -> None:
         better_disconnect(self.overwrite_expander, self.on_overwrite_changed)
         better_disconnect(self.enable_screensaver_toggle, self.on_enable_changed)
         better_disconnect(self.delay_spin, self.on_delay_changed)
@@ -634,7 +664,7 @@ class ScreensaverGroup(PageEditorGroup):
         better_disconnect(self.brightness_scale.scale, self.on_brightness_changed)
         better_disconnect(self.media_selector_button, self.on_media_selector_click)
 
-    def load_config_settings(self, page_path: str):
+    def load_config_settings(self, page_path: str) -> None:
         if gl.page_manager is None:
             return
         screensaver_settings = gl.page_manager.get_screensaver_settings(page_path)
@@ -652,57 +682,56 @@ class ScreensaverGroup(PageEditorGroup):
 
         self.set_thumbnail(screensaver_settings.get("media-path", None))
 
-    def on_overwrite_changed(self, *args):
-        gl.page_manager.overwrite_screensaver_settings(
-            path=self.page_editor.active_page_path,
+    def on_overwrite_changed(self, *args: Any) -> None:
+        services.require_page_manager().overwrite_screensaver_settings(
+            path=self.page_editor.require_active_page_path(),
             overwrite=self.overwrite_expander.get_enable_expansion()
         )
         self.update_screensaver()
 
-    def on_enable_changed(self, *args):
-        gl.page_manager.overwrite_screensaver_settings(
-            path=self.page_editor.active_page_path,
+    def on_enable_changed(self, *args: Any) -> None:
+        services.require_page_manager().overwrite_screensaver_settings(
+            path=self.page_editor.require_active_page_path(),
             enable=self.enable_screensaver_toggle.get_active()
         )
         self.update_screensaver()
 
-    def on_delay_changed(self, *args):
-        gl.page_manager.overwrite_screensaver_settings(
-            path=self.page_editor.active_page_path,
+    def on_delay_changed(self, *args: Any) -> None:
+        services.require_page_manager().overwrite_screensaver_settings(
+            path=self.page_editor.require_active_page_path(),
             time_delay=int(self.delay_spin.get_value())
         )
         self.update_screensaver()
 
-    def on_loop_changed(self, *args):
-        gl.page_manager.overwrite_screensaver_settings(
-            path=self.page_editor.active_page_path,
+    def on_loop_changed(self, *args: Any) -> None:
+        services.require_page_manager().overwrite_screensaver_settings(
+            path=self.page_editor.require_active_page_path(),
             loop=self.loop_toggle.get_active()
         )
         self.update_screensaver()
 
-    def on_fps_changed(self, *args):
-        gl.page_manager.overwrite_screensaver_settings(
-            path=self.page_editor.active_page_path,
+    def on_fps_changed(self, *args: Any) -> None:
+        services.require_page_manager().overwrite_screensaver_settings(
+            path=self.page_editor.require_active_page_path(),
             fps=int(self.fps_spin.get_value())
         )
         self.update_screensaver()
 
-    def on_brightness_changed(self, *args):
-        gl.page_manager.overwrite_screensaver_settings(
-            path=self.page_editor.active_page_path,
+    def on_brightness_changed(self, *args: Any) -> None:
+        services.require_page_manager().overwrite_screensaver_settings(
+            path=self.page_editor.require_active_page_path(),
             brightness=self.brightness_scale.get_value()
         )
         self.update_screensaver()
 
-    def on_media_selector_click(self, *args):
-        screensaver_settings = gl.page_manager.get_screensaver_settings(self.page_editor.active_page_path)
+    def on_media_selector_click(self, *args: Any) -> None:
+        screensaver_settings = services.require_page_manager().get_screensaver_settings(self.page_editor.active_page_path)
 
-        gl.app.let_user_select_asset(default_path=screensaver_settings.get("media-path", ""), callback_func=self.update_image)
+        services.require_app().let_user_select_asset(default_path=screensaver_settings.get("media-path", ""), callback_func=self.update_image)
 
-    def set_thumbnail(self, file_path):
+    def set_thumbnail(self, file_path: str | None) -> None:
         if not file_path:
             self.media_selector_image.set_from_pixbuf(None)
-            self.media_selector_image.pixbuf = None
             return
 
         image = gl.media_manager.get_thumbnail(file_path)
@@ -713,21 +742,26 @@ class ScreensaverGroup(PageEditorGroup):
 
         image.close()
 
-    def update_image(self, file_path):
+    def update_image(self, file_path: str | None) -> None:
         self.set_thumbnail(file_path)
 
-        gl.page_manager.overwrite_screensaver_settings(
-            path=self.page_editor.active_page_path,
+        services.require_page_manager().overwrite_screensaver_settings(
+            path=self.page_editor.require_active_page_path(),
             media_path=file_path
         )
 
         self.update_screensaver()
 
-    def update_screensaver(self):
-        def on_idle():
-            for controller in gl.deck_manager.deck_controller:
-                if controller.active_page.json_path == self.page_editor.active_page_path:
-                    controller.load_screensaver(controller.active_page)
+    def update_screensaver(self) -> None:
+        def on_idle() -> None:
+            for controller in services.require_deck_manager().deck_controller:
+                page = controller.active_page
+                # A deck that carries no page must not stop the reload for
+                # the decks after it in this list.
+                if page is None:
+                    continue
+                if page.json_path == self.page_editor.active_page_path:
+                    controller.load_screensaver(page)
 
         GLib.idle_add(on_idle)
 
@@ -750,12 +784,12 @@ class MatchingWindowExpander(BetterExpander):
         self.update_button.connect("clicked", self.update_matching_windows)
         self.add_suffix(self.update_button)
 
-    def load_windows(self, windows: list[Window]):
+    def load_windows(self, windows: list[Window]) -> None:
         self.clear()
         for window in windows:
             self.add_row(Adw.ActionRow(title=window.title, subtitle=window.wm_class, use_markup=False))
 
-    def update_matching_windows(self, *args):
+    def update_matching_windows(self, *args: Any) -> None:
         # Read the regexes here, on the main thread, because they come from
         # widgets. The query itself must not run here. A window listing calls
         # a subprocess once per window on most desktops, and the first call
@@ -772,14 +806,14 @@ class MatchingWindowExpander(BetterExpander):
         run_in_background(self._load_matching_windows, class_regex, title_regex,
                           self._query_generation)
 
-    def _load_matching_windows(self, class_regex: str, title_regex: str, generation: int):
+    def _load_matching_windows(self, class_regex: str, title_regex: str, generation: int) -> None:
         window_grabber = gl.window_grabber
         if window_grabber is None:
             return
         matching_windows = window_grabber.get_all_matching_windows(class_regex=class_regex, title_regex=title_regex)
         GLib.idle_add(self._show_matching_windows, matching_windows, generation)
 
-    def _show_matching_windows(self, windows: list[Window], generation: int):
+    def _show_matching_windows(self, windows: list[Window], generation: int) -> None:
         if generation != self._query_generation:
             # A newer query started, so this list is out of date, and a show
             # here undoes the newer answer.

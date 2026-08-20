@@ -27,8 +27,9 @@ from src.windows.mainWindow.elements.DeckConfig import DeckConfig
 # Import globals
 
 # Import typing
-from typing import TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 if TYPE_CHECKING:
+    from src.backend.DeckManagement.deck_controller.controller import DeckController
     from src.windows.mainWindow.elements.DeckStack import DeckStackChild
 
 class PageSettingsPage(Gtk.Overlay):
@@ -36,13 +37,13 @@ class PageSettingsPage(Gtk.Overlay):
     Child of DeckStackChild
     This stack features one page for the key grid and one for the page settings
     """
-    def __init__(self, deck_stack_child: "DeckStackChild", deck_controller, **kwargs):
+    def __init__(self, deck_stack_child: "DeckStackChild", deck_controller: "DeckController", **kwargs: Any) -> None:
         self.deck_controller = deck_controller
         self.deck_stack_child = deck_stack_child
         super().__init__(hexpand=True, vexpand=True)
         self.build()
 
-    def build(self):
+    def build(self) -> None:
         self.global_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, hexpand=True)
         self.set_child(self.global_box)
 
@@ -52,12 +53,14 @@ class PageSettingsPage(Gtk.Overlay):
         self.deck_config = DeckConfig(self)
         self.main_box.append(self.deck_config)
 
-    def on_open_deck_settings_button_click(self, button):
-        self.deck_stack_child.set_visible_child_name("deck-settings")
+    def on_open_deck_settings_button_click(self, button: Gtk.Button) -> None:
+        # The child is an overlay; its stack is what holds the two pages.
+        # Nothing connects this handler, so the wrong call never ran.
+        self.deck_stack_child.stack.set_visible_child_name("deck-settings")
 
 
 class Switcher(Gtk.StackSwitcher):
-    def __init__(self, deck_page, **kwargs):
+    def __init__(self, deck_page: "DeckStackChild", **kwargs: Any) -> None:
         super().__init__(stack=deck_page.stack, **kwargs)
         self.deck_page = deck_page
         self.set_hexpand(True)
@@ -65,5 +68,5 @@ class Switcher(Gtk.StackSwitcher):
         self.set_margin_end(10)
         self.build()
 
-    def build(self):
+    def build(self) -> None:
         pass

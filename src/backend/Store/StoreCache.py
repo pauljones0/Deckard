@@ -10,6 +10,11 @@ from loguru import logger as log
 import globals as gl
 from src.backend.atomic_json import atomic_write_json
 from src.backend.Store.StoreURL import parse_repo_url
+from collections.abc import Callable
+from typing import Any, IO, Literal, TYPE_CHECKING, cast, overload
+
+if TYPE_CHECKING:
+    from types import TracebackType
 
 
 # Every live StoreCache, held weakly, so the exit hook below drains deferred
@@ -50,7 +55,8 @@ class _AtomicCacheWriter:
     until close or abort, so two writers on one cache key serialize.
     """
 
-    def __init__(self, final_path: str, mode: str, lock: threading.Lock, on_committed):
+    def __init__(self, final_path: str, mode: str, lock: threading.Lock,
+                 on_committed: Callable[[], None]) -> None:
         self._final_path = final_path
         self._lock = lock
         self._on_committed = on_committed
@@ -70,13 +76,14 @@ class _AtomicCacheWriter:
                 pass
             raise
 
-    def write(self, data):
+    def write(self, data: Any) -> int:
         return self._file.write(data)
 
-    def __enter__(self):
+    def __enter__(self) -> "_AtomicCacheWriter":
         return self
 
-    def __exit__(self, exc_type, exc, tb):
+    def __exit__(self, exc_type: type[BaseException] | None, exc: BaseException | None,
+                 tb: "TracebackType | None") -> Literal[False]:
         if exc_type is not None:
             self.abort()
         else:
@@ -117,7 +124,7 @@ class _AtomicCacheWriter:
         finally:
             self._lock.release()
 
-    def __del__(self):
+    def __del__(self) -> None:
         # A caller dropped this handle without close() or abort(). Never
         # commit such a write.
         if not getattr(self, "_finished", True):
@@ -174,7 +181,7 @@ class StoreCache:
     # override it, and the harness shortens it rather than sleep for seconds.
     FLUSH_DEBOUNCE_S = 2.0
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.CACHE_PATH = os.path.join(gl.DATA_PATH, "Store" , "cache")
 
         self.files_json = os.path.join(self.CACHE_PATH, "files.json")
@@ -209,17 +216,17 @@ class StoreCache:
         self.create_cache_dirs()
         self.create_cache_files()
 
-    def get_files(self) -> dict:
+    def get_files(self) -> dict[str, Any]:
         if not os.path.exists(self.files_json):
             return {}
         try:
             with open(self.files_json, "r") as f:
-                return json.load(f)
+                return cast(dict[str, Any], json.load(f))
         except json.decoder.JSONDecodeError as e:
             log.error(e)
             return {}
 
-    def set_files(self, files: dict):
+    def set_files(self, files: dict[str, Any]) -> None:
         """Persist the index at once. This is the synchronous half of the
         split that the class docstring describes, for a content commit and
         for an eviction.
@@ -232,7 +239,7 @@ class StoreCache:
         with self.write_lock:
             self._write_index_locked(files)
 
-    def _write_index_locked(self, files: dict = None) -> None:
+    def _write_index_locked(self, files: dict[str, Any] | None = None) -> None:
         """Dump the index to disk. The caller must hold write_lock.
 
         A write of the live index also covers what the pending timer would
@@ -293,7 +300,7 @@ class StoreCache:
             # the pending wake-up when an explicit flush wrote first.
             timer.cancel()
 
-    def remove_old_cache_files(self):
+    def remove_old_cache_files(self) -> None:
         now = time.time()
         for string in self.files.copy():
             entry = self.files[string]
@@ -331,10 +338,10 @@ class StoreCache:
 
         self.set_files(self.files)
 
-    def create_cache_dirs(self):
+    def create_cache_dirs(self) -> None:
         os.makedirs(self.CACHE_PATH, exist_ok=True)
 
-    def create_cache_files(self):
+    def create_cache_files(self) -> None:
         files = [self.files_json]
 
         for file in files:
@@ -364,21 +371,26 @@ class StoreCache:
 
         cache_string = self.generate_cache_string(url, path, branch, data_type)
         if cache_string in self.files:
-            return self.files[cache_string].get("path")
+            recorded = self.files[cache_string].get("path")
+            # A record that lost its path orphans its blob (see the class
+            # docstring), and is_cached already treats that as uncached. Fall
+            # through and re-record the canonical location instead of handing
+            # the caller a None it would pass to os.path.dirname.
+            if recorded is not None:
+                return cast(str, recorded)
 
-        else:
-            path = os.path.join(self.files_dir, cache_string)
-            # The first sighting of this cache string. Record where the blob
-            # goes, plus the last-use clock. No content exists yet, and the
-            # write that creates it stamps the index synchronously through
-            # _stamp_committed. This record defers; see the class docstring.
-            with self.write_lock:
-                self.files[cache_string] = {
-                    "path": path,
-                    "date": time.time()
-                }
-                self._mark_index_dirty_locked()
-            return path
+        path = os.path.join(self.files_dir, cache_string)
+        # The first sighting of this cache string. Record where the blob
+        # goes, plus the last-use clock. No content exists yet, and the
+        # write that creates it stamps the index synchronously through
+        # _stamp_committed. This record defers; see the class docstring.
+        with self.write_lock:
+            self.files[cache_string] = {
+                "path": path,
+                "date": time.time()
+            }
+            self._mark_index_dirty_locked()
+        return path
 
     def is_cached(self, url: str, path: str, branch: str = "main", data_type: str = "text") -> bool:
         cache_string = self.generate_cache_string(url, path, branch, data_type)
@@ -408,7 +420,21 @@ class StoreCache:
             # docstring). Never route this write through the debounce.
             self._write_index_locked()
 
-    def open_cache_file(self, url: str, path: str, branch: str = "main", data_type: str = "text", mode: str = "r"):
+    @overload
+    def open_cache_file(self, url: str, path: str, branch: str = ..., data_type: str = ...,
+                        mode: Literal["r", "rb"] = ...) -> IO[Any]: ...
+
+    @overload
+    def open_cache_file(self, url: str, path: str, branch: str = ..., data_type: str = ...,
+                        mode: Literal["w", "wb"] = ...) -> "_AtomicCacheWriter": ...
+
+    @overload
+    def open_cache_file(self, url: str, path: str, branch: str = ..., data_type: str = ...,
+                        mode: str = ...) -> "_AtomicCacheWriter | IO[Any]": ...
+
+    def open_cache_file(self, url: str, path: str, branch: str = "main",
+                        data_type: str = "text",
+                        mode: str = "r") -> "_AtomicCacheWriter | IO[Any]":
         cache_path = self.get_cache_path(url, path, branch, data_type)
         os.makedirs(os.path.dirname(cache_path), exist_ok=True)
 
@@ -453,7 +479,7 @@ class StoreCache:
         entry = self.files.get(self.generate_cache_string(url, path, branch, data_type), {})
         fetched = entry.get("fetched")
         if fetched is not None:
-            return fetched
+            return cast(float | None, fetched)
         cache_path = entry.get("path")
         if cache_path and os.path.exists(cache_path):
             try:

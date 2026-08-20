@@ -25,16 +25,16 @@ from loguru import logger as log
 from functools import cmp_to_key
 
 class DynamicFlowBox(Gtk.Box):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self.set_orientation(Gtk.Orientation.VERTICAL)
 
         self.start_index = 0
         self.N_ITEMS_PER_PAGE = 50
 
-        self.all_items: list = []
-        self.filtered_items: list = []
-        self.sorted_items: list = []
+        self.all_items: list[Any] = []
+        self.filtered_items: list[Any] = []
+        self.sorted_items: list[Any] = []
 
         self.factory: Callable[[Any], Gtk.Widget | None] | None = None
         self.filter: Callable[[Any], bool] | None = None
@@ -42,7 +42,7 @@ class DynamicFlowBox(Gtk.Box):
         
         self.build()
 
-    def build(self):
+    def build(self) -> None:
         self.scrolled_window = Gtk.ScrolledWindow(hexpand=True, vexpand=True, margin_bottom=10)
         self.append(self.scrolled_window)
 
@@ -69,13 +69,13 @@ class DynamicFlowBox(Gtk.Box):
         self.nav_box.append(self.next_button)
 
 
-    def load_items(self):
+    def load_items(self) -> None:
         start = self.start_index
         end = self.start_index + self.N_ITEMS_PER_PAGE
 
         self.load_list(self.get_list_to_load()[start:end])
 
-    def get_list_to_load(self) -> list:
+    def get_list_to_load(self) -> list[Any]:
         if self.filter is not None:
             return self.filtered_items
         if self.sort is not None:
@@ -83,15 +83,17 @@ class DynamicFlowBox(Gtk.Box):
 
         return self.all_items
 
-    def add_item(self, item, invalidate_filter: bool = False):
+    def add_item(self, item: Any, invalidate_filter: bool = False) -> None:
         self.all_items.append(item)
         if invalidate_filter:
             self.invalidate_filter()
 
-    def load_list(self, items):
+    def load_list(self, items: list[Any]) -> None:
         # self.remove_all()
         while self.flow_box.get_first_child() is not None:
             child = self.flow_box.get_first_child()
+            if child is None:
+                break
             if hasattr(child, "disconnect_signals"):
                 child.disconnect_signals()
             self.flow_box.remove(child)
@@ -102,18 +104,20 @@ class DynamicFlowBox(Gtk.Box):
                 continue
             self.flow_box.append(widget)
 
-    def get_item_widget(self, item) -> Gtk.Widget | None:
+    def get_item_widget(self, item: Any) -> Gtk.Widget | None:
         if callable(self.factory):
             return self.factory(item)
         return None
 
-    def set_factory(self, factory: Callable[[Any], Gtk.Widget | None]):
+    def set_factory(self, factory: Callable[[Any], Gtk.Widget | None]) -> None:
         if not callable(factory):
-            log.warning("Chosen factory is not callable")
+            # Plugins call this untyped, so the runtime check stays even
+            # though the annotation reads it as impossible.
+            log.warning("Chosen factory is not callable")  # type: ignore[unreachable]
             return
         self.factory = factory
 
-    def on_next(self, button):
+    def on_next(self, button: Gtk.Button) -> None:
         self.start_index += self.N_ITEMS_PER_PAGE
         self.start_index = min(self.start_index, len(self.all_items) - self.N_ITEMS_PER_PAGE)
         self.load_items()
@@ -122,7 +126,7 @@ class DynamicFlowBox(Gtk.Box):
         self.prev_button.set_sensitive(self.start_index > 0)
         self.next_button.set_sensitive(self.start_index + self.N_ITEMS_PER_PAGE < len(self.get_list_to_load()))
 
-    def on_prev(self, button):
+    def on_prev(self, button: Gtk.Button) -> None:
         self.start_index -= self.N_ITEMS_PER_PAGE
         self.start_index = max(0, self.start_index)
         self.load_items()
@@ -131,7 +135,7 @@ class DynamicFlowBox(Gtk.Box):
         self.prev_button.set_sensitive(self.start_index > 0)
         self.next_button.set_sensitive(self.start_index + self.N_ITEMS_PER_PAGE < len(self.get_list_to_load()))
 
-    def invalidate_filter(self):
+    def invalidate_filter(self) -> None:
         self.filtered_items = []
         for item in self.all_items:
             if not callable(self.filter):
@@ -141,22 +145,29 @@ class DynamicFlowBox(Gtk.Box):
             self.filtered_items.append(item)
         self.load_items()
 
-    def invalidate_sort(self):
-        if not callable(self.sort):
+    def invalidate_sort(self) -> None:
+        sort = self.sort
+        if not callable(sort):
             self.sorted_items = self.filtered_items
-        self.sorted_items = sorted(self.filtered_items, key=cmp_to_key(self.sort))
+            self.load_items()
+            return
+        self.sorted_items = sorted(self.filtered_items, key=cmp_to_key(sort))
         self.load_items()
 
     def set_filter_func(self, filter: Callable[[Any], bool]) -> None:
         if not callable(filter):
-            log.warning("Chosen filter is not callable")
+            # Plugins call this untyped, so the runtime check stays even
+            # though the annotation reads it as impossible.
+            log.warning("Chosen filter is not callable")  # type: ignore[unreachable]
             return
         self.filter = filter
         self.invalidate_filter()
 
     def set_sort_func(self, sort: Callable[[Any, Any], int]) -> None:
         if not callable(sort):
-            log.warning("Chosen sort function is not callable")
+            # Plugins call this untyped, so the runtime check stays even
+            # though the annotation reads it as impossible.
+            log.warning("Chosen sort function is not callable")  # type: ignore[unreachable]
             return
         self.sort = sort
         self.invalidate_sort()

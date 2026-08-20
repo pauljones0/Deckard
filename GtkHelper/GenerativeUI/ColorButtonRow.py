@@ -4,7 +4,7 @@ from GtkHelper.ColorButtonRow import ColorButtonRow as ColorDialog
 
 from gi.repository import Gdk, Gtk
 
-from typing import TYPE_CHECKING, Callable
+from typing import cast, TYPE_CHECKING, Callable
 
 from GtkHelper.GtkHelper import better_disconnect
 
@@ -24,9 +24,9 @@ class ColorButtonRow(GenerativeUI[tuple[int, int, int, int]]):
                  action_core: "ActionCore",
                  var_name: str,
                  default_value: tuple[int, int, int, int],
-                 title: str = None,
-                 subtitle: str = None,
-                 on_change: Callable[[Gtk.Widget, tuple[int, int, int, int], tuple[int, int, int, int]], None] = None,
+                 title: str | None = None,
+                 subtitle: str | None = None,
+                 on_change: Callable[[Gtk.Widget, tuple[int, int, int, int], tuple[int, int, int, int]], None] | None = None,
                  can_reset: bool = True,
                  auto_add: bool = True,
                  complex_var_name: bool = False
@@ -44,8 +44,8 @@ class ColorButtonRow(GenerativeUI[tuple[int, int, int, int]]):
             can_reset (bool, optional): Whether the UI element can be reset. Defaults to True.
             auto_add (bool, optional): Whether the UI element is automatically added to the action. Defaults to True.
         """
-        def build():
-            self._widget: ColorDialog = ColorDialog(
+        def build() -> None:
+            self._widget: ColorDialog | None = ColorDialog(
                 title=self.get_translation(title),
                 subtitle=self.get_translation(subtitle),
                 default_color=self._default_value
@@ -55,19 +55,19 @@ class ColorButtonRow(GenerativeUI[tuple[int, int, int, int]]):
             self.connect_signals()
         super().__init__(action_core, var_name, default_value, can_reset, auto_add, complex_var_name, on_change, build=build)
 
-    def connect_signals(self):
+    def connect_signals(self) -> None:
         """
         Connects the necessary signals for detecting color changes.
         """
         self.widget.color_button.connect("color-set", self._value_changed)
 
-    def disconnect_signals(self):
+    def disconnect_signals(self) -> None:
         """
         Disconnects signals to prevent unwanted behavior.
         """
         better_disconnect(self.widget.color_button, self._value_changed)
 
-    def set_color(self, color: tuple[int, int, int, int], update_setting: bool):
+    def set_color(self, color: tuple[int, int, int, int], update_setting: bool) -> None:
         """
         Sets the color in the UI and optionally updates the stored value.
 
@@ -91,9 +91,9 @@ class ColorButtonRow(GenerativeUI[tuple[int, int, int, int]]):
         """
         if self._widget is None:
             return self.get_value()
-        return self.widget.color
+        return cast(tuple[int, int, int, int], self.widget.color)
 
-    def _value_changed(self, button: Gtk.ColorButton):
+    def _value_changed(self, button: Gtk.ColorButton) -> None:
         """
         Handles the event when the color is changed in the UI.
 
@@ -103,7 +103,7 @@ class ColorButtonRow(GenerativeUI[tuple[int, int, int, int]]):
         self._handle_value_changed(self.widget.color)
 
     @GenerativeUI.signal_manager
-    def set_ui_value(self, value: tuple[int, int, int, int]):
+    def set_ui_value(self, value: tuple[int, int, int, int]) -> None:
         """
         Updates the UI with the given color.
 
@@ -113,13 +113,13 @@ class ColorButtonRow(GenerativeUI[tuple[int, int, int, int]]):
         self.widget.color = value
 
     def convert_from_rgba(self, color: Gdk.RGBA) -> tuple[int, int, int, int]:
-        return self.widget.convert_from_rgba(color)
+        return cast(tuple[int, int, int, int], self.widget.convert_from_rgba(color))
 
     def convert_to_rgba(self, color: tuple[int, int, int, int]) -> Gdk.RGBA:
-        return self.widget.convert_to_rgba(color)
+        return cast("Gdk.RGBA", self.widget.convert_to_rgba(color))
 
     def normalize_to_255(self, color: tuple[float, float, float, float]) -> tuple[int, int, int, int]:
-        return self.widget.normalize_to_255(color)
+        return cast(tuple[int, int, int, int], self.widget.normalize_to_255(color))
 
     def normalize_to_1(self, color: tuple[int, int, int, int]) -> tuple[float, float, float, float]:
-        return self.widget.normalize_to_1(color)
+        return cast(tuple[float, float, float, float], self.widget.normalize_to_1(color))

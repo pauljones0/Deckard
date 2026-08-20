@@ -16,3 +16,4 @@ req2flatpak==0.2.0        # generates the flatpak manifest's python-requirements
 ruff==0.16.0              # linter; config in pyproject.toml, enforced by the lint:ruff CI job
 PyGObject-stubs==2.17.0   # editor/type-checker stubs for gi.repository
 types-setuptools==75.8.0.20250225  # editor/type-checker stubs for setuptools
+types-requests==2.33.0.20260712    # stubs for requests; keeps the store reads typed under the stubs-only checker

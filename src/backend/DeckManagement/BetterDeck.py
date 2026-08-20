@@ -1,6 +1,8 @@
 import os
 import threading
 import traceback
+from collections.abc import Callable, Sequence
+from typing import cast, Any
 
 from loguru import logger as log
 from StreamDeck.Devices import StreamDeck
@@ -43,7 +45,7 @@ class BetterDeck():
         )
 
 
-    def open(self):
+    def open(self) -> None:
         """
         Opens the device for input/output. This must be called prior to setting
         or retrieving any device state.
@@ -53,7 +55,7 @@ class BetterDeck():
         with self._lock:
             self.deck.open()
 
-    def close(self):
+    def close(self) -> None:
         """
         Closes the device for input/output.
 
@@ -85,7 +87,7 @@ class BetterDeck():
             except RuntimeError:
                 pass
 
-    def is_open(self):
+    def is_open(self) -> bool:
         """
         Indicates if the StreamDeck device is currently open and ready for use.
 
@@ -95,9 +97,9 @@ class BetterDeck():
         # This takes no BetterDeck lock. A status probe must not stall behind
         # a multi-chunk image write, and the transport's per-chunk mutex
         # covers close() races.
-        return self.deck.is_open()
+        return cast(bool, self.deck.is_open())
 
-    def connected(self):
+    def connected(self) -> bool:
         """
         Indicates if the physical StreamDeck device this instance is attached to
         is still connected to the host.
@@ -107,9 +109,9 @@ class BetterDeck():
         """
         # This takes no BetterDeck lock, see is_open(). The transport mutex
         # covers close() races.
-        return self.deck.connected()
+        return cast(bool, self.deck.connected())
 
-    def vendor_id(self):
+    def vendor_id(self) -> int:
         """
         Retrieves the vendor ID attached StreamDeck. This can be used
         to determine the exact type of attached StreamDeck.
@@ -117,9 +119,9 @@ class BetterDeck():
         :rtype: int
         :return: Vendor ID of the attached device.
         """
-        return self.deck.vendor_id()
+        return cast(int, self.deck.vendor_id())
 
-    def product_id(self):
+    def product_id(self) -> int:
         """
         Retrieves the product ID attached StreamDeck. This can be used
         to determine the exact type of attached StreamDeck.
@@ -127,9 +129,9 @@ class BetterDeck():
         :rtype: int
         :return: Product ID of the attached device.
         """
-        return self.deck.product_id()
+        return cast(int, self.deck.product_id())
 
-    def id(self):
+    def id(self) -> str:
         """
         Retrieves the physical ID of the attached StreamDeck. This can be used
         to differentiate one StreamDeck from another.
@@ -137,63 +139,63 @@ class BetterDeck():
         :rtype: str
         :return: Identifier for the attached device.
         """
-        return self.deck.id()
+        return cast(str, self.deck.id())
 
-    def key_count(self):
+    def key_count(self) -> int:
         """
         Retrieves number of physical buttons on the attached StreamDeck device.
 
         :rtype: int
         :return: Number of physical buttons.
         """
-        return self.deck.key_count()
+        return cast(int, self.deck.key_count())
 
-    def touch_key_count(self):
+    def touch_key_count(self) -> int:
         """
         Retrieves number of touch buttons on the attached StreamDeck device.
 
         :rtype: int
         :return: Number of touch buttons.
         """
-        return self.deck.touch_key_count()
+        return cast(int, self.deck.touch_key_count())
 
-    def dial_count(self):
+    def dial_count(self) -> int:
         """
         Retrieves number of physical dials on the attached StreamDeck device.
 
         :rtype: int
         :return: Number of physical dials
         """
-        return self.deck.dial_count()
+        return cast(int, self.deck.dial_count())
 
-    def deck_type(self):
+    def deck_type(self) -> str:
         """
         Retrieves the model of Stream Deck.
 
         :rtype: str
         :return: String containing the model name of the StreamDeck device.
         """
-        return self.deck.deck_type()
+        return cast(str, self.deck.deck_type())
 
-    def is_visual(self):
+    def is_visual(self) -> bool:
         """
         Returns whether the Stream Deck has a visual display output.
 
         :rtype: bool
         :return: `True` if the deck has a screen, `False` otherwise.
         """
-        return self.deck.is_visual()
+        return cast(bool, self.deck.is_visual())
 
-    def is_touch(self):
+    def is_touch(self) -> bool:
         """
         Returns whether the Stream Deck can receive touch events
 
         :rtype: bool
         :return: `True` if the deck can receive touch events, `False` otherwise
         """
-        return self.deck.is_touch()
+        return cast(bool, self.deck.is_touch())
 
-    def key_layout(self):
+    def key_layout(self) -> "Sequence[int]":
         """
         Retrieves the physical button layout on the attached StreamDeck device.
 
@@ -206,7 +208,7 @@ class BetterDeck():
         else:
             return cols, rows
 
-    def key_image_format(self):
+    def key_image_format(self) -> "dict[str, Any]":
         """
         Retrieves the image format accepted by the attached StreamDeck device.
         Images should be given in this format when setting an image on a button.
@@ -218,9 +220,9 @@ class BetterDeck():
         :return: Dictionary describing the various image parameters
                  (size, image format, image mirroring and rotation).
         """
-        return self.deck.key_image_format()
+        return cast("dict[str, Any]", self.deck.key_image_format())
 
-    def touchscreen_image_format(self):
+    def touchscreen_image_format(self) -> "dict[str, Any]":
         """
         Retrieves the image format accepted by the touchscreen of the Stream
         Deck. Images should be given in this format when drawing on
@@ -233,9 +235,9 @@ class BetterDeck():
         :return: Dictionary describing the various image parameters
                  (size, image format).
         """
-        return self.deck.touchscreen_image_format()
+        return cast("dict[str, Any]", self.deck.touchscreen_image_format())
 
-    def screen_image_format(self):
+    def screen_image_format(self) -> "dict[str, Any]":
         """
         Retrieves the image format accepted by the screen of the Stream
         Deck. Images should be given in this format when drawing on
@@ -248,9 +250,9 @@ class BetterDeck():
         :return: Dictionary describing the various image parameters
                  (size, image format).
         """
-        return self.deck.screen_image_format()
+        return cast("dict[str, Any]", self.deck.screen_image_format())
     
-    def set_poll_frequency(self, hz):
+    def set_poll_frequency(self, hz: float) -> None:
         """
         Sets the frequency of the button polling reader thread, determining how
         often the StreamDeck will be polled for button changes.
@@ -263,7 +265,7 @@ class BetterDeck():
         with self._lock:
             self.deck.set_poll_frequency(hz)
 
-    def set_key_callback(self, callback):
+    def set_key_callback(self, callback: Callable[..., Any]) -> None:
         """
         Sets the callback function called each time a button on the StreamDeck
         changes state (either pressed, or released).
@@ -280,13 +282,13 @@ class BetterDeck():
         :param function callback: Callback function to fire each time a button
                                 state changes.
         """
-        def remapper_callback(deck, key, state):
+        def remapper_callback(deck: Any, key: int, state: bool) -> None:
             logical_key = self.get_logical_index(key)
             callback(deck, logical_key, state)
 
         self.deck.set_key_callback(remapper_callback)
 
-    def set_key_callback_async(self, async_callback, loop=None):
+    def set_key_callback_async(self, async_callback: Callable[..., Any], loop: Any = None) -> None:
         """
         Sets the asynchronous callback function called each time a button on the
         StreamDeck changes state (either pressed, or released). The given
@@ -302,14 +304,14 @@ class BetterDeck():
                                         each time a button state changes.
         :param asyncio.loop loop: Asyncio loop to dispatch the callback into
         """
-        async def remapper_callback(deck, key, state):
+        async def remapper_callback(deck: Any, key: int, state: bool) -> None:
             logical_key = self.get_logical_index(key)
             await async_callback(deck, logical_key, state)
 
         # Delegate to the wrapped deck. A self-call recurses forever.
         self.deck.set_key_callback_async(remapper_callback, loop)
 
-    def set_dial_callback(self, callback):
+    def set_dial_callback(self, callback: Callable[..., Any]) -> None:
         """
         Sets the callback function called each time there is an interaction
         with a dial on the StreamDeck.
@@ -328,7 +330,7 @@ class BetterDeck():
         """
         self.deck.set_dial_callback(callback)
 
-    def set_dial_callback_async(self, async_callback, loop=None):
+    def set_dial_callback_async(self, async_callback: Callable[..., Any], loop: Any = None) -> None:
         """
         Sets the asynchronous callback function called each time there is an
         interaction with a dial on the StreamDeck. The given callback should
@@ -348,7 +350,7 @@ class BetterDeck():
         # Dials need no index remap (see set_dial_callback).
         self.deck.set_dial_callback_async(async_callback, loop)
 
-    def set_touchscreen_callback(self, callback):
+    def set_touchscreen_callback(self, callback: Callable[..., Any]) -> None:
         """
         Sets the callback function called each time there is an interaction
         with a touchscreen on the StreamDeck.
@@ -367,7 +369,7 @@ class BetterDeck():
         """
         self.deck.set_touchscreen_callback(callback)
 
-    def set_touchscreen_callback_async(self, async_callback, loop=None):
+    def set_touchscreen_callback_async(self, async_callback: Callable[..., Any], loop: Any = None) -> None:
         """
         Sets the asynchronous callback function called each time there is an
         interaction with the touchscreen on the StreamDeck. The given callback
@@ -387,7 +389,7 @@ class BetterDeck():
         # The touchscreen needs no index remap.
         self.deck.set_touchscreen_callback_async(async_callback, loop)
 
-    def key_states(self):
+    def key_states(self) -> "list[bool]":
         """
         Retrieves the current states of the buttons on the StreamDeck.
 
@@ -399,7 +401,7 @@ class BetterDeck():
         with self._lock:
             return self.reorder_physical_for_rotation(self.deck.key_states())
 
-    def dial_states(self):
+    def dial_states(self) -> "list[bool]":
         """
         Retrieves the current states of the dials (pressed or not) on the
         Stream Deck
@@ -410,9 +412,9 @@ class BetterDeck():
                  otherwise).
         """
         with self._lock:
-            return self.deck.dial_states()
+            return cast("list[bool]", self.deck.dial_states())
 
-    def reset(self):
+    def reset(self) -> None:
         """
         Resets the StreamDeck, clearing all button images and showing the
         standby image.
@@ -421,7 +423,9 @@ class BetterDeck():
         with self._lock:
             self.deck.reset()
 
-    def set_brightness(self, percent):
+    # The library reads a float as normalized 0.0-1.0 and an int as
+    # 0-100, so 50.0 means full brightness while 50 means half.
+    def set_brightness(self, percent: float) -> None:
         """
         Sets the global screen brightness of the StreamDeck, across all the
         physical buttons.
@@ -433,7 +437,7 @@ class BetterDeck():
         with self._lock:
             self.deck.set_brightness(percent)
 
-    def get_serial_number(self):
+    def get_serial_number(self) -> str:
         """
         Gets the serial number of the attached StreamDeck.
 
@@ -441,9 +445,9 @@ class BetterDeck():
         :return: String containing the serial number of the attached device.
         """
         with self._lock:
-            return self.deck.get_serial_number()
+            return cast(str, self.deck.get_serial_number())
 
-    def get_firmware_version(self):
+    def get_firmware_version(self) -> str:
         """
         Gets the firmware version of the attached StreamDeck.
 
@@ -451,9 +455,9 @@ class BetterDeck():
         :return: String containing the firmware version of the attached device.
         """
         with self._lock:
-            return self.deck.get_firmware_version()
+            return cast(str, self.deck.get_firmware_version())
 
-    def set_key_image(self, key, image):
+    def set_key_image(self, key: int, image: bytes) -> None:
         """
         Sets the image of a button on the StreamDeck to the given image. The
         image being set should be in the correct format for the device, as an
@@ -472,7 +476,7 @@ class BetterDeck():
         with self._lock:
             self.deck.set_key_image(physical_key, image)
 
-    def set_touchscreen_image(self, image, x_pos=0, y_pos=0, width=0, height=0):
+    def set_touchscreen_image(self, image: bytes, x_pos: int = 0, y_pos: int = 0, width: int = 0, height: int = 0) -> None:
         """
         Draws an image on the touchscreen in a certain position. The image
         should be in the correct format for the devices, as an enumerable
@@ -493,7 +497,7 @@ class BetterDeck():
         with self._lock:
             self.deck.set_touchscreen_image(image, x_pos, y_pos, width, height)
 
-    def set_key_color(self, key, r, g, b):
+    def set_key_color(self, key: int, r: int, g: int, b: int) -> None:
         """
         Sets the color of the touch buttons. These buttons are indexed
         in order after the standard keys.
@@ -509,7 +513,7 @@ class BetterDeck():
         with self._lock:
             self.deck.set_key_color(physical_key, r, g, b)
 
-    def set_screen_image(self, image):
+    def set_screen_image(self, image: bytes) -> None:
         """
         Draws an image on the touchless screen of the StreamDeck.
 
@@ -523,38 +527,38 @@ class BetterDeck():
         with self._lock:
             self.deck.set_screen_image(image)
 
-    def set_rotation(self, value: int):
+    def set_rotation(self, value: int) -> None:
         if not value in [0, 90, 180, 270]:
             value = 0
         self.rotation = value
 
-    def get_physical_index(self, logical_index):
+    def get_physical_index(self, logical_index: int) -> int:
         physical_rows, physical_cols = self.deck.key_layout()
         if self.rotation == 0:
             return logical_index
         elif self.rotation == 90:
-            return ((physical_rows - 1 - (logical_index % physical_rows)) ) * physical_cols + (logical_index // physical_rows )
+            return cast(int, ((physical_rows - 1 - (logical_index % physical_rows)) ) * physical_cols + (logical_index // physical_rows ))
         elif self.rotation == 180:
-            return (physical_rows * physical_cols) - logical_index - 1
+            return cast(int, (physical_rows * physical_cols) - logical_index - 1)
         elif self.rotation == 270:
-            return ((logical_index % physical_rows) * physical_cols ) + (physical_cols - 1 - (logical_index // physical_rows ))
+            return cast(int, ((logical_index % physical_rows) * physical_cols ) + (physical_cols - 1 - (logical_index // physical_rows )))
     
         raise ValueError("Invalid rotation")
     
-    def get_logical_index(self, physical_index):
+    def get_logical_index(self, physical_index: int) -> "int | None":
         rows, cols = self.deck.key_layout()
         if self.rotation == 0:
             return physical_index
         elif self.rotation == 90:
-            return (physical_index % cols) * rows + (rows - 1 - (physical_index // cols))
+            return cast("int | None", (physical_index % cols) * rows + (rows - 1 - (physical_index // cols)))
         elif self.rotation == 180:
-            return rows * cols - physical_index - 1
+            return cast("int | None", rows * cols - physical_index - 1)
         elif self.rotation == 270:
-            return (cols - 1 - (physical_index % cols)) * rows + (physical_index // cols)
+            return cast("int | None", (cols - 1 - (physical_index % cols)) * rows + (physical_index // cols))
         else:
             return None
     
-    def reorder_physical_for_rotation(self, original_list):
+    def reorder_physical_for_rotation(self, original_list: "list[Any]") -> "list[Any]":
         """Maps a physical-indexed list into logical indexing.
 
         The device reports physical indexes, e.g. key_states(). The mapping
@@ -575,5 +579,5 @@ class BetterDeck():
 
         return reordered
         
-    def get_rotation(self):
+    def get_rotation(self) -> int:
         return self.rotation

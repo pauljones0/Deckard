@@ -23,6 +23,8 @@ gi.require_version("Adw", "1")
 from gi.repository import Gtk, Adw, GLib
 
 import threading
+from src.backend import services
+
 import globals as gl
 from src.backend import timer_wheel
 from src.backend.Store.store_result import Err
@@ -33,7 +35,7 @@ class MissingRow(Adw.PreferencesRow):
                  install_label: str,
                  install_failed_label: str,
                  installing_label: str,
-                 identifier: InputIdentifier):
+                 identifier: InputIdentifier | None):
         super().__init__(css_classes=["no-padding"])
         self.action_id = action_id
         self.identifier = identifier
@@ -75,7 +77,7 @@ class MissingRow(Adw.PreferencesRow):
         # self.button_box.append(self.remove_button)
         self.main_overlay.add_overlay(self.remove_button)
 
-    def on_click(self, button):
+    def on_click(self, button: Gtk.Button) -> None:
         self.spinner.set_visible(True)
         self.spinner.start()
         self.label.set_text(self.installing_label)
@@ -84,16 +86,21 @@ class MissingRow(Adw.PreferencesRow):
         threading.Thread(target=self.install, name="asset_install_thread").start()
 
     @log.catch
-    def install(self):
+    def install(self) -> None:
         # Get missing plugin from id
-        plugin = gl.store_backend.get_plugin_for_id(self.action_id.split("::")[0])
+        backend = gl.store_backend
+        if backend is None:
+            log.error("Store backend unavailable; cannot install the missing plugin")
+            self.show_install_error()
+            return
+        plugin = backend.get_plugin_for_id(self.action_id.split("::")[0])
         if plugin is None:
             self.show_install_error()
             return
         # Install the plugin. An Err is a failure, and any other result is
         # the one success. The read of the result keeps a failed install from
         # reaching the installed UI reset.
-        result = gl.store_backend.install_plugin(plugin)
+        result = backend.install_plugin(plugin)
         if isinstance(result, Err):
             self.show_install_error()
             return
@@ -106,7 +113,7 @@ class MissingRow(Adw.PreferencesRow):
         # Reload pages
         
 
-    def show_install_error(self):
+    def show_install_error(self) -> None:
         GLib.idle_add(self.spinner.set_visible, False)
         GLib.idle_add(self.spinner.stop)
         GLib.idle_add(self.label.set_text, self.install_failed_label)
@@ -118,20 +125,29 @@ class MissingRow(Adw.PreferencesRow):
         # changes GTK widgets, and a wheel callback runs on a worker thread.
         timer_wheel.schedule(3, lambda: GLib.idle_add(self.hide_install_error), name="missing_row_hide_install_error")
 
-    def hide_install_error(self):
+    def hide_install_error(self) -> None:
         self.label.set_text(self.install_label)
         self.remove_css_class("error")
         self.set_sensitive(True)
         self.main_button.set_sensitive(True)
 
-    def on_remove_click(self, button):
-        controller = gl.app.main_win.leftArea.deck_stack.get_visible_child().deck_controller
+    def on_remove_click(self, button: Gtk.Button) -> None:
+        identifier = self.identifier
+        deck_stack_child = services.require_main_window().leftArea.deck_stack.get_visible_child()
+        if identifier is None or deck_stack_child is None:
+            # No input bound, or no deck child to read one from, so there is
+            # no action entry to remove.
+            return
+        controller = deck_stack_child.deck_controller
         page = controller.active_page
+        if page is None:
+            # No page on this deck, so there is no action entry to remove.
+            return
 
         # Remove only the action entry that the caller names. A delete of the
         # whole action_objects[type][key] subtree also drops the action of
         # every other state and index on this input.
-        state_dict = page.action_objects.get(self.identifier.input_type, {}).get(self.identifier.json_identifier, {}).get(self.state, {})
+        state_dict = page.action_objects.get(identifier.input_type, {}).get(identifier.json_identifier, {}).get(self.state, {})
         action = state_dict.pop(self.index, None)
         # The framework owns the teardown. It notifies, then calls clean_up()
         # on the removed object. It does nothing for None, and for an object
@@ -139,13 +155,13 @@ class MissingRow(Adw.PreferencesRow):
         ActionCore.teardown(action)
 
         # Remove from page json
-        self.identifier.get_state_dict(page, self.state)["actions"].pop(self.index)
+        identifier.get_state_dict(page, self.state)["actions"].pop(self.index)
         page.save()
 
         # Reload configurator ui
-        gl.app.main_win.sidebar.key_editor.action_editor.load_for_identifier(self.identifier, self.state)
+        services.require_main_window().sidebar.key_editor.action_editor.load_for_identifier(identifier, self.state)
 
         # Update input - to remove warning dot if present
-        c_input = controller.get_input(self.identifier)
+        c_input = controller.get_input(identifier)
         if c_input is not None:
             c_input.update()

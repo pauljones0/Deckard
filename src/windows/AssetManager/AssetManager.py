@@ -17,7 +17,7 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Gtk
+from gi.repository import Gtk, GObject
 
 # Import Python modules
 
@@ -39,7 +39,7 @@ from src.windows.AssetManager.SDPlusBarWallpaperPacks.Stack import SDPlusBarWall
 
 
 class AssetManager(Gtk.ApplicationWindow):
-    def __init__(self, main_window: "MainWindow", *args, **kwargs):
+    def __init__(self, main_window: "MainWindow", *args: Any, **kwargs: Any):
         super().__init__(  # type: ignore[misc]  # gi stub: the stub models GObject properties as positional-or-keyword params, so *args reads as a second binding for them; at runtime GObject.__init__ takes properties by keyword only
             title="Asset Manager",
             default_width=1050,
@@ -58,12 +58,12 @@ class AssetManager(Gtk.ApplicationWindow):
 
         self.connect("close-request", self.on_close)
 
-    def on_close(self, *args, **kwargs):
+    def on_close(self, *args: Any, **kwargs: Any) -> None:
         gl.asset_manager = None
         if gl.app is not None and getattr(gl.app, "asset_manager", None) is self:
             gl.app.asset_manager = None
 
-    def build(self):
+    def build(self) -> None:
         self.main_stack = Gtk.Stack(transition_duration=200, transition_type=Gtk.StackTransitionType.SLIDE_LEFT_RIGHT, hexpand=True, vexpand=True)
         self.set_child(self.main_stack)
         self.asset_chooser = AssetChooser(self)
@@ -83,7 +83,7 @@ class AssetManager(Gtk.ApplicationWindow):
         self.back_button.connect("clicked", self.on_back_button_click)
         self.header_bar.pack_start(self.back_button)
 
-    def show_for_path(self, path, callback_func=None, *callback_args, **callback_kwargs):
+    def show_for_path(self, path: str | None, callback_func: Callable[..., Any] | None = None, *callback_args: Any, **callback_kwargs: Any) -> None:
         self.callback_func = callback_func
         self.callback_args = callback_args
         self.callback_kwargs = callback_kwargs
@@ -158,21 +158,21 @@ class AssetManager(Gtk.ApplicationWindow):
             callback_func(path, *callback_args, **callback_kwargs)
         self.hide()
 
-    def show_info_for_asset(self, asset:dict):
+    def show_info_for_asset(self, asset:dict[str, Any]) -> None:
         self.asset_info.show_for_asset(asset)
         self.main_stack.set_visible_child(self.asset_info)
         self.back_button.set_visible(True)
         self.present()
 
-    def show_info(self, internal_path:str = None , licence_name: str = None, license_url: str = None, author: str = None, license_comment: str = None,
-                  original_url: str = None):
+    def show_info(self, internal_path:str | None = None , licence_name: str | None = None, license_url: str | None = None, author: str | None = None, license_comment: str | None = None,
+                  original_url: str | None = None) -> None:
         self.asset_info.show_info(internal_path, licence_name, license_url, author, license_comment, original_url)
 
         self.main_stack.set_visible_child(self.asset_info)
         self.back_button.set_visible(True)
         self.present()
 
-    def on_back_button_click(self, button):
+    def on_back_button_click(self, button: Gtk.Button) -> None:
         if self.main_stack.get_visible_child() == self.asset_info:
             # Switch from info page to chooser page
             self.main_stack.set_visible_child(self.asset_chooser)
@@ -197,13 +197,13 @@ class AssetManager(Gtk.ApplicationWindow):
 
 
 class AssetChooser(Gtk.Stack):
-    def __init__(self, asset_manager: AssetManager, *args, **kwargs):
+    def __init__(self, asset_manager: AssetManager, *args: Any, **kwargs: Any):
         super().__init__(*args, **kwargs)
         self.asset_manager = asset_manager
 
         self.build()
 
-    def build(self):
+    def build(self) -> None:
         self.custom_asset_chooser = CustomAssetChooser(self.asset_manager)
         self.add_titled(self.custom_asset_chooser, "custom-assets", "Custom Assets")
 
@@ -218,8 +218,10 @@ class AssetChooser(Gtk.Stack):
 
         self.connect("notify::visible-child-name", self.on_switch)
 
-    def show_for_path(self, path):
-        if gl.asset_manager_backend.has_by_internal_path(path):
+    def show_for_path(self, path: str | None) -> None:
+        # path is None when the caller has no current selection, e.g. a key
+        # without a background image. Only a real path can be a custom asset.
+        if path is not None and gl.asset_manager_backend.has_by_internal_path(path):
             # This is a custom asset, so switch the tab too. The icon-pack
             # branch does that inside IconPackChooserStack.show_for_path.
             # Without it, a reopen after a drill-in shows the old grid.
@@ -232,7 +234,7 @@ class AssetChooser(Gtk.Stack):
             self.icon_pack_chooser.show_for_path(path)
 
 
-    def on_switch(self, stack, name):
+    def on_switch(self, stack: Gtk.Stack, name: GObject.ParamSpec) -> None:
         self.asset_manager.back_button.set_visible(False)
 
         if self.get_visible_child() is self.icon_pack_chooser:

@@ -9,7 +9,7 @@ import appinfo
 from collections import deque
 from loguru import logger as log
 
-from cli_args import argparser
+from cli_args import argparser as argparser
 
 MAIN_PATH: str
 # Data root. Flatpak uses its per-app dir, ~/.var/app/<id>. A native install
@@ -133,7 +133,7 @@ threads_running: bool = True
 # them on the main thread and discards the return values.
 app_loading_finished_tasks: list[Callable[[], Any]] = []
 api_page_requests: dict[str, str] = {} # Stores api page requests made my --change-page
-api_state_requests: dict[str, dict] = {} # Stores api state change requests made by --change-state
+api_state_requests: dict[str, dict[str, Any]] = {} # Stores api state change requests made by --change-state
 tray_icon: "TrayIcon" = None  # type: ignore[assignment]  # late-init: main.create_global_objects
 showed_donate_window: bool = False
 screen_locked: bool = False
@@ -180,7 +180,7 @@ release_notes: str = """
 """
 
 
-def __getattr__(name: str):
+def __getattr__(name: str) -> Any:
     """PEP 562 module-level lazy attribute.
 
     fallback_font costs one fontconfig round trip, so the lookup waits for the

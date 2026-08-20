@@ -14,6 +14,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 """
 # Import gtk modules
 import gi
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from src.windows.mainWindow.elements.Sidebar.Sidebar import Sidebar
+
 
 from src.backend.DeckManagement.InputIdentifier import InputIdentifier
 
@@ -24,6 +29,8 @@ from gi.repository import Gtk, Adw
 # Import Python modules
 
 # Import globals
+from src.backend import services
+
 import globals as gl
 
 # Import own modules
@@ -32,12 +39,12 @@ from GtkHelper.GtkHelper import RevertButton
 
 
 class ImageEditor(Gtk.Box):
-    def __init__(self, sidebar, **kwargs):
+    def __init__(self, sidebar: "Sidebar", **kwargs: Any) -> None:
         self.sidebar = sidebar
         super().__init__(**kwargs)
         self.build()
 
-    def build(self):
+    def build(self) -> None:
         self.clamp = Adw.Clamp()
         self.append(self.clamp)
 
@@ -47,36 +54,36 @@ class ImageEditor(Gtk.Box):
         self.image_group = ImageGroup(self.sidebar)
         self.main_box.append(self.image_group)
 
-    def load_for_identifier(self, identifier: InputIdentifier, state: int):
+    def load_for_identifier(self, identifier: InputIdentifier, state: int) -> None:
         self.image_group.load_for_identifier(identifier, state)
 
 
 class ImageGroup(Adw.PreferencesGroup):
-    def __init__(self, sidebar, **kwargs):
+    def __init__(self, sidebar: "Sidebar", **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.sidebar = sidebar
 
         self.build()
 
-    def build(self):
+    def build(self) -> None:
         self.expander = Layout(self)
         self.add(self.expander)
 
         return
 
-    def load_for_identifier(self, identifier: InputIdentifier, state: int):
+    def load_for_identifier(self, identifier: InputIdentifier, state: int) -> None:
         self.expander.load_for_identifier(identifier, state)
 
 
 class Layout(Adw.ExpanderRow):
-    def __init__(self, margin_group):
+    def __init__(self, margin_group: Any) -> None:
         super().__init__(title=gl.lm.get("right-area.image-editor.layout.header"), subtitle=gl.lm.get("right-area.image-editor.layout.subtitle"))
         self.margin_group = margin_group
-        self.identifier: InputIdentifier = None
-        self.active_state: int = None
+        self.identifier: InputIdentifier = None  # type: ignore[assignment]  # late-init: load_for_identifier
+        self.active_state: int = None  # type: ignore[assignment]  # late-init: load_for_identifier
         self.build()
 
-    def build(self):
+    def build(self) -> None:
         self.size_row = SizeRow(sidebar=self.margin_group.sidebar)
         self.add_row(self.size_row)
 
@@ -86,7 +93,7 @@ class Layout(Adw.ExpanderRow):
         self.halign_row = HalignRow(sidebar=self.margin_group.sidebar)
         self.add_row(self.halign_row)
 
-    def load_for_identifier(self, identifier: InputIdentifier, state: int):
+    def load_for_identifier(self, identifier: InputIdentifier, state: int) -> None:
         self.active_identifier = identifier
         self.active_state = state
 
@@ -96,15 +103,15 @@ class Layout(Adw.ExpanderRow):
 
 
 class SizeRow(Adw.PreferencesRow):
-    def __init__(self, sidebar, **kwargs):
+    def __init__(self, sidebar: "Sidebar", **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.sidebar = sidebar
-        self.active_identifier: InputIdentifier = None
+        self.active_identifier: InputIdentifier = None  # type: ignore[assignment]  # late-init: load_for_identifier
         self.build()
 
         self.connect_signals()
 
-    def build(self):
+    def build(self) -> None:
         self.main_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, hexpand=True,
                                 margin_start=15, margin_end=15, margin_top=15, margin_bottom=15)
         self.set_child(self.main_box)
@@ -117,18 +124,20 @@ class SizeRow(Adw.PreferencesRow):
 
         self.size_spinner.revert_button.connect("clicked", self.on_size_reset)
 
-    def load_for_identifier(self, identifier: InputIdentifier, state: int):
+    def load_for_identifier(self, identifier: InputIdentifier, state: int) -> None:
         self.disconnect_signals()
         self.active_identifier = identifier
         self.active_state = state
 
         if gl.app is None:
             return
-        controller = gl.app.main_win.get_active_controller()
+        controller = services.require_main_window().get_active_controller()
         if controller is None:
             return
 
         controller_input = controller.get_input(identifier)
+        if controller_input is None:
+            return
         use_page_properties = controller_input.get_active_state().layout_manager.get_use_page_layout_properties()
         self.size_spinner.revert_button.set_visible(use_page_properties.get("size", False))
 
@@ -136,45 +145,52 @@ class SizeRow(Adw.PreferencesRow):
 
         self.connect_signals()
 
-    def update_values(self, composed_label: ImageLayout | None = None):
+    def update_values(self, composed_label: ImageLayout | None = None) -> None:
         self.disconnect_signals()
-        if composed_label is None:
-            if gl.app is None:
-                return
-            visible_child = gl.app.main_win.leftArea.deck_stack.get_visible_child()
-            if visible_child is None:
-                return
-            controller = visible_child.deck_controller
-            if controller is None:
-                return
-            controller_input = controller.get_input(self.active_identifier)
-            composed_label = controller_input.get_active_state().layout_manager.get_composed_layout()
+        try:
+            if composed_label is None:
+                if gl.app is None:
+                    return
+                visible_child = services.require_main_window().leftArea.deck_stack.get_visible_child()
+                if visible_child is None:
+                    return
+                controller = visible_child.deck_controller
+                controller_input = controller.get_input(self.active_identifier)
+                if controller_input is None:
+                    return
+                composed_label = controller_input.get_active_state().layout_manager.get_composed_layout()
 
-        # ImageLayout.size is optional, and an unset one leaves the spinner
-        # on the value it shows.
-        size = composed_label.size
-        if size is not None:
-            self.size_spinner.button.set_value(size*100)
+            # ImageLayout.size is optional, and an unset one leaves the spinner
+            # on the value it shows.
+            size = composed_label.size
+            if size is not None:
+                self.size_spinner.button.set_value(size*100)
+        finally:
+            # Every arm above must reconnect. A return in between leaves the
+            # spinner silently unable to save for the life of the window.
+            self.connect_signals()
 
-        self.connect_signals()
-
-    def on_size_changed(self, widget):
-        active_page = gl.app.main_win.get_active_page()
+    def on_size_changed(self, widget: Gtk.SpinButton) -> None:
+        active_page = services.require_main_window().get_active_page()
+        if active_page is None:
+            return
         active_page.set_media_size(identifier=self.active_identifier, state=self.active_state, size=widget.get_value()/100)
 
         self.size_spinner.revert_button.set_visible(True)
 
-    def on_size_reset(self, widget):
-        active_page = gl.app.main_win.get_active_page()
+    def on_size_reset(self, widget: Gtk.Button) -> None:
+        active_page = services.require_main_window().get_active_page()
+        if active_page is None:
+            return
         active_page.set_media_size(identifier=self.active_identifier, state=self.active_state, size=None)
 
         self.size_spinner.revert_button.set_visible(False)
         self.update_values()
 
-    def connect_signals(self):
+    def connect_signals(self) -> None:
         self.size_spinner.button.connect("value-changed", self.on_size_changed)
 
-    def disconnect_signals(self):
+    def disconnect_signals(self) -> None:
         try:
             self.size_spinner.button.disconnect_by_func(self.on_size_changed)
         except TypeError:
@@ -183,17 +199,17 @@ class SizeRow(Adw.PreferencesRow):
 
 
 class AlignmentRow(Adw.PreferencesRow):
-    def __init__(self, sidebar, label_text, property_name, **kwargs):
+    def __init__(self, sidebar: "Sidebar", label_text: str, property_name: str, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.sidebar = sidebar
         self.property_name = property_name
-        self.active_identifier: InputIdentifier = None
-        self.active_state: int = None
+        self.active_identifier: InputIdentifier = None  # type: ignore[assignment]  # late-init: load_for_identifier
+        self.active_state: int = None  # type: ignore[assignment]  # late-init: load_for_identifier
         self.build(label_text)
 
         self.connect_signals()
 
-    def build(self, label_text):
+    def build(self, label_text: str) -> None:
         self.main_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, hexpand=True,
                                 margin_start=15, margin_end=15, margin_top=15, margin_bottom=15)
         self.set_child(self.main_box)
@@ -206,49 +222,53 @@ class AlignmentRow(Adw.PreferencesRow):
 
         self.alignment_spinner.revert_button.connect("clicked", self.on_alignment_reset)
 
-    def load_for_identifier(self, identifier: InputIdentifier, state: int):
+    def load_for_identifier(self, identifier: InputIdentifier, state: int) -> None:
         self.active_identifier = identifier
         self.active_state = state
         self.disconnect_signals()
 
         if gl.app is None:
             return
-        controller = gl.app.main_win.get_active_controller()
+        controller = services.require_main_window().get_active_controller()
         if controller is None:
             return
 
         controller_input = controller.get_input(identifier)
+        if controller_input is None:
+            return
         use_page_properties = controller_input.get_active_state().layout_manager.get_use_page_layout_properties()
         self.alignment_spinner.revert_button.set_visible(use_page_properties.get(self.property_name, False))
 
         self.connect_signals()
         self.update_values()
 
-    def update_values(self, composed_label: ImageLayout | None = None):
+    def update_values(self, composed_label: ImageLayout | None = None) -> None:
         self.disconnect_signals()
         if composed_label is None:
             if gl.app is None:
                 return
-            controller = gl.app.main_win.get_active_controller()
+            controller = services.require_main_window().get_active_controller()
             if controller is None:
                 return
             controller_input = controller.get_input(self.active_identifier)
+            if controller_input is None:
+                return
             composed_label = controller_input.get_active_state().layout_manager.get_composed_layout()
 
         self.alignment_spinner.button.set_value(getattr(composed_label, self.property_name))
 
         self.connect_signals()
 
-    def on_alignment_changed(self, widget):
-        active_page = gl.app.main_win.get_active_page()
+    def on_alignment_changed(self, widget: Gtk.SpinButton) -> None:
+        active_page = services.require_main_window().get_active_page()
 
         page_method = getattr(active_page, f"set_media_{self.property_name}")
         page_method(self.active_identifier, self.active_state, widget.get_value())
 
         self.alignment_spinner.revert_button.set_visible(True)
 
-    def on_alignment_reset(self, widget):
-        active_page = gl.app.main_win.get_active_page()
+    def on_alignment_reset(self, widget: Gtk.Button) -> None:
+        active_page = services.require_main_window().get_active_page()
 
         page_method = getattr(active_page, f"set_media_{self.property_name}")
         page_method(self.active_identifier, self.active_state, None)
@@ -256,23 +276,23 @@ class AlignmentRow(Adw.PreferencesRow):
         self.alignment_spinner.revert_button.set_visible(False)
         self.update_values()
 
-    def connect_signals(self):
+    def connect_signals(self) -> None:
         self.alignment_spinner.button.connect("value-changed", self.on_alignment_changed)
 
-    def disconnect_signals(self):
+    def disconnect_signals(self) -> None:
         self.alignment_spinner.button.disconnect_by_func(self.on_alignment_changed)
 
 class ValignRow(AlignmentRow):
-    def __init__(self, sidebar, **kwargs):
+    def __init__(self, sidebar: "Sidebar", **kwargs: Any) -> None:
         super().__init__(sidebar, label_text=gl.lm.get("right-area.image-editor.layout.valign.label"), property_name="valign", **kwargs)
 
 class HalignRow(AlignmentRow):
-    def __init__(self, sidebar, **kwargs):
+    def __init__(self, sidebar: "Sidebar", **kwargs: Any) -> None:
         super().__init__(sidebar, label_text=gl.lm.get("right-area.image-editor.layout.halign.label"), property_name="halign", **kwargs)
 
 
 class SpinButton(Gtk.Box):
-    def __init__(self, start: float, end: float, step: float, **kwargs):
+    def __init__(self, start: float, end: float, step: float, **kwargs: Any) -> None:
         super().__init__(css_classes=["linked"], **kwargs)
 
         self.button = Gtk.SpinButton.new_with_range(start, end, step)

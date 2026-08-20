@@ -19,12 +19,12 @@ from src.backend.DeckManagement.Subclasses.SingleKeyAsset import SingleKeyAsset
 from src.backend.DeckManagement.Subclasses import mp4_tile_cache
 from PIL import Image
 
-from typing import TYPE_CHECKING
+from typing import Any, TYPE_CHECKING, cast
 if TYPE_CHECKING:
     from src.backend.DeckManagement.deck_controller.inputs import ControllerInput
 
 class InputVideo(SingleKeyAsset):
-    def __init__(self, controller_input: "ControllerInput", video_path: str, fps: int = 30, loop: bool = True,
+    def __init__(self, controller_input: "ControllerInput[Any]", video_path: str, fps: int = 30, loop: bool = True,
                  natural_speed: bool = False):
         super().__init__(
             controller_input=controller_input,
@@ -73,7 +73,9 @@ class InputVideo(SingleKeyAsset):
         if self.video_cache is None:
             return None
         with self._close_lock:
-            cache = self.video_cache
+            # A declared re-read: the outer check narrowed the attribute, and
+            # narrowing cannot see a close() nulling it before the lock.
+            cache: mp4_tile_cache.KeyVideoCache | None = self.video_cache
             if cache is None:
                 return None
 
@@ -129,7 +131,7 @@ class InputVideo(SingleKeyAsset):
                 if self.active_frame >= cache.n_frames and self.loop:
                     self.active_frame = 0
 
-            return cache.get_frame(self.active_frame)
+            return cast("Image.Image | None", cache.get_frame(self.active_frame))
 
     def set_playback(self, fps: int, loop: bool) -> None:
         """Applies a new fps and loop to a playing video, at the same position.

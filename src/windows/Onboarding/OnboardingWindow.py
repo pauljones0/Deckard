@@ -23,6 +23,7 @@ from loguru import logger as log
 from GtkHelper.GtkHelper import LoadingScreen, run_on_main
 from autostart import is_flatpak
 from src.backend.DeckManagement.HelperMethods import open_web
+from src.backend import services
 from src.backend.Store.store_result import Err
 from src.windows.Onboarding.PluginRecommendations import PluginRecommendations
 
@@ -36,11 +37,12 @@ import globals as gl
 # Import typing
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
+    from src.app import App
     from windows.mainWindow.mainWindow import MainWindow
 
 
 class OnboardingWindow(Adw.Dialog):
-    def __init__(self, application, main_win: "MainWindow"):
+    def __init__(self, application: "App", main_win: "MainWindow") -> None:
         super().__init__()
         self.set_title("Onboarding")
         self.set_presentation_mode(Adw.DialogPresentationMode.FLOATING)
@@ -51,7 +53,7 @@ class OnboardingWindow(Adw.Dialog):
 
         self.build()
 
-    def build(self):
+    def build(self) -> None:
         self.main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, hexpand=True, vexpand=True)
         self.set_child(self.main_box)
 
@@ -117,7 +119,7 @@ class OnboardingWindow(Adw.Dialog):
         self.loading_box = LoadingScreen()
         self.stack.add_named(self.loading_box, "loading")
 
-    def on_forward_button_click(self, button):
+    def on_forward_button_click(self, button: Gtk.Button) -> None:
         pos = self.carousel.get_position()
         pos += 1
 
@@ -126,10 +128,11 @@ class OnboardingWindow(Adw.Dialog):
             self.forward_button.set_visible(False)
         self.back_button.set_visible(True)
 
-        scroll_to_widget = self.carousel.get_nth_page(pos)
+        # get_position answers a float, and the C call truncates it.
+        scroll_to_widget = self.carousel.get_nth_page(int(pos))
         self.carousel.scroll_to(scroll_to_widget, True)
 
-    def on_back_button_click(self, button):
+    def on_back_button_click(self, button: Gtk.Button) -> None:
         pos = self.carousel.get_position()
         pos -= 1
 
@@ -138,7 +141,8 @@ class OnboardingWindow(Adw.Dialog):
             self.back_button.set_visible(False)
         self.forward_button.set_visible(True)
 
-        scroll_to_widget = self.carousel.get_nth_page(pos)
+        # get_position answers a float, and the C call truncates it.
+        scroll_to_widget = self.carousel.get_nth_page(int(pos))
         self.carousel.scroll_to(scroll_to_widget, True)
 
     def on_page_changed(self, carousel: Adw.Carousel, page_index: int) -> None:
@@ -152,7 +156,7 @@ class OnboardingWindow(Adw.Dialog):
         else:
             self.forward_button.set_visible(False)
 
-    def get_udev_version(self):
+    def get_udev_version(self) -> str | None:
         command = ["udevadm", "--version"]
 
         if is_flatpak():
@@ -174,20 +178,22 @@ class ImageOnboardingScreen(Gtk.Box):
     def __init__(self, image_path: str, label: str, detail: str):
         super().__init__(orientation=Gtk.Orientation.VERTICAL, hexpand=True)
         self.image_path = image_path
-        self.label = label
-        self.detail = detail
+        # Held apart from the labels built out of them below: the four screens
+        # that take no captions already use self.label for the widget.
+        self.label_text = label
+        self.detail_text = detail
 
         self.build()
 
-    def build(self):
+    def build(self) -> None:
         self.image = Gtk.Image(file=self.image_path, css_classes=["onboarding-image"], margin_top=70)
         self.append(self.image)
 
-        self.label = Gtk.Label(label=self.label, css_classes=["onboarding-welcome-label"],
+        self.label = Gtk.Label(label=self.label_text, css_classes=["onboarding-welcome-label"],
                                margin_top=20)
         self.append(self.label)
 
-        self.detail = Gtk.Label(label=self.detail, css_classes=["onboarding-welcome-detail-label"],
+        self.detail = Gtk.Label(label=self.detail_text, css_classes=["onboarding-welcome-detail-label"],
                                 margin_top=8)
         self.append(self.detail)
 
@@ -195,31 +201,32 @@ class IconOnboardingScreen(Gtk.Box):
     def __init__(self, icon_name: str, label: str, detail: str):
         super().__init__(orientation=Gtk.Orientation.VERTICAL, hexpand=True)
         self.icon_name = icon_name
-        self.label = label
-        self.detail = detail
+        # See ImageOnboardingScreen: the caption strings keep their own names.
+        self.label_text = label
+        self.detail_text = detail
 
         self.build()
 
-    def build(self):
+    def build(self) -> None:
         self.image = Gtk.Image(icon_name=self.icon_name, pixel_size=350, margin_top=20)
         self.append(self.image)
 
-        self.label = Gtk.Label(label=self.label, css_classes=["onboarding-welcome-label"],
+        self.label = Gtk.Label(label=self.label_text, css_classes=["onboarding-welcome-label"],
                                margin_top=0)
         self.append(self.label)
 
-        self.detail = Gtk.Label(label=self.detail, css_classes=["onboarding-welcome-detail-label"],
+        self.detail = Gtk.Label(label=self.detail_text, css_classes=["onboarding-welcome-detail-label"],
                                 margin_top=8)
         self.append(self.detail)
 
 
 class ExtensionOnboardingScreen(Gtk.Box):
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__(orientation=Gtk.Orientation.VERTICAL, hexpand=True)
 
         self.build()
 
-    def build(self):
+    def build(self) -> None:
         self.image = Gtk.Image(icon_name="folder-download-symbolic", pixel_size=250, margin_top=70)
         self.append(self.image)
 
@@ -270,7 +277,7 @@ class ExtensionOnboardingScreen(Gtk.Box):
         return False
 
 
-    def on_install_button_click(self, button):
+    def on_install_button_click(self, button: Gtk.Button) -> None:
         result = gl.gnome_extensions.request_installation("streamcontroller@core447.com")
         if result:
             self.set_button_status("installed")
@@ -283,12 +290,12 @@ class ExtensionOnboardingScreen(Gtk.Box):
 
 
 class UdevOnboardingScreen(Gtk.Box):
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__(orientation=Gtk.Orientation.VERTICAL, hexpand=True)
 
         self.build()
 
-    def build(self):
+    def build(self) -> None:
         self.image = Gtk.Image(icon_name="dialog-error-symbolic", pixel_size=250, margin_top=70)
         self.append(self.image)
 
@@ -303,7 +310,7 @@ class UdevOnboardingScreen(Gtk.Box):
         self.open_wiki_button.connect("clicked", self.on_button_click)
         self.append(self.open_wiki_button)
 
-    def on_button_click(self, button):
+    def on_button_click(self, button: Gtk.Button) -> None:
         open_web("https://streamcontroller.github.io/docs/latest/installation/#udev")
 
 class OnboardingScreen5(Gtk.Box):
@@ -314,7 +321,7 @@ class OnboardingScreen5(Gtk.Box):
 
         self.build()
 
-    def build(self):
+    def build(self) -> None:
         self.label = Gtk.Label(label=gl.lm.get("onboarding.ready.header"), css_classes=["onboarding-welcome-label"],
                                margin_top=0)
         self.append(self.label)
@@ -323,10 +330,10 @@ class OnboardingScreen5(Gtk.Box):
         self.start_button.connect("clicked", self.on_start_button_click)
         self.append(self.start_button)
 
-    def on_start_button_click(self, button):
+    def on_start_button_click(self, button: Gtk.Button) -> None:
         threading.Thread(target=self._on_start_button_click).start()
 
-    def _on_start_button_click(self):
+    def _on_start_button_click(self) -> None:
         GLib.idle_add(self.onboarding_window.stack.set_visible_child_name, "loading")
         GLib.idle_add(self.onboarding_window.loading_box.loading_label.set_label, "Installing plugins")
         GLib.idle_add(self.onboarding_window.loading_box.set_spinning, True)
@@ -337,25 +344,28 @@ class OnboardingScreen5(Gtk.Box):
 
         GLib.idle_add(self.onboarding_window.loading_box.progress_bar.set_visible, len(plugins) > 0)
 
+        backend = gl.store_backend
         failed: list[str] = []
         for i, plugin_data in enumerate(plugins):
             GLib.idle_add(self.onboarding_window.loading_box.progress_bar.set_text, f"Installing {plugin_data.plugin_name}")
             GLib.idle_add(self.onboarding_window.loading_box.progress_bar.set_fraction, i / len(plugins))
-            plugin = gl.store_backend.get_plugin_for_id(plugin_data.plugin_id)
+            if backend is None:
+                raise RuntimeError("the store backend is unavailable")
+            plugin = backend.get_plugin_for_id(plugin_data.plugin_id)
             if plugin is None:
                 log.error(f"Onboarding: could not resolve {plugin_data.plugin_name} for install")
-                failed.append(plugin_data.plugin_name)
+                failed.append(plugin_data.plugin_name or plugin_data.plugin_id or "unknown plugin")
                 continue
-            result = gl.store_backend.install_plugin(plugin)
+            result = backend.install_plugin(plugin)
             if isinstance(result, Err):
                 log.error(f"Onboarding: failed to install {plugin_data.plugin_name}: {result!r}")
-                failed.append(plugin_data.plugin_name)
+                failed.append(plugin_data.plugin_name or plugin_data.plugin_id or "unknown plugin")
                 GLib.idle_add(self.onboarding_window.loading_box.progress_bar.set_text,
                               f"Failed to install {plugin_data.plugin_name}")
 
         GLib.idle_add(self.onboarding_window.loading_box.set_spinning, False)
         GLib.idle_add(self.onboarding_window.close)
-        GLib.idle_add(gl.app.main_win.show)
+        GLib.idle_add(services.require_main_window().show)
         if failed:
             # The progress-bar text above dies with the closing window, and
             # the user then reaches the main window with no plugins and no
@@ -379,7 +389,7 @@ class DiscordOnboardingScreen(Gtk.Box):
 
         self.build()
 
-    def build(self):
+    def build(self) -> None:
         self.label = Gtk.Label(label="Join our Discord", css_classes=["onboarding-welcome-label"],
                                 margin_top=20)
         self.append(self.label)
@@ -392,19 +402,19 @@ class DiscordOnboardingScreen(Gtk.Box):
         self.join_button.connect("clicked", self.on_join_button_clicked)
         self.append(self.join_button)
 
-    def on_join_button_clicked(self, button):
+    def on_join_button_clicked(self, button: Gtk.Button) -> None:
         open_web("https://discord.gg/MSyHM8TN3u")
 
 
 class SupportAppOnboardingScreen(Gtk.Box):
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__(orientation=Gtk.Orientation.VERTICAL, hexpand=True, vexpand=True,
                          halign=Gtk.Align.CENTER, valign=Gtk.Align.CENTER,
                          margin_start=50, margin_end=50, margin_top=50, margin_bottom=50)
 
         self.build()
 
-    def build(self):
+    def build(self) -> None:
         self.label = Gtk.Label(label="Support the app\ndevelopment", css_classes=["onboarding-welcome-label"],
                                margin_bottom=70, use_markup=True, justify=Gtk.Justification.CENTER)
         self.append(self.label)
@@ -417,5 +427,5 @@ class SupportAppOnboardingScreen(Gtk.Box):
         self.support_button.connect("clicked", self.on_support_button_clicked)
         self.append(self.support_button)
 
-    def on_support_button_clicked(self, button):
+    def on_support_button_clicked(self, button: Gtk.Button) -> None:
         open_web("https://ko-fi.com/core447")

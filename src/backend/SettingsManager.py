@@ -21,22 +21,23 @@ from src.backend import settings_store
 from src.backend.settings_store import (  # noqa: F401
     APP_DEFAULTS as DEFAULTS,
     APP_FONT_DEFAULTS as FONT_DEFAULTS,
-    AppSettings,
+    AppSettings as AppSettings,
 )
+from typing import cast, Any
 
 
 class SettingsManager:
-    def __init__(self):
-        self.font_defaults: dict = {} # Used by the LabelManager to get the default font settings
+    def __init__(self) -> None:
+        self.font_defaults: dict[str, Any] = {} # Used by the LabelManager to get the default font settings
         self.load_font_defaults()
 
     @staticmethod
-    def load_settings_from_file(file_path: str) -> dict:
+    def load_settings_from_file(file_path: str) -> dict[str, Any]:
         data, _corrupt = SettingsManager.load_settings_reporting_corruption(file_path)
         return data
 
     @staticmethod
-    def load_settings_reporting_corruption(file_path: str) -> tuple[dict, bool]:
+    def load_settings_reporting_corruption(file_path: str) -> tuple[dict[str, Any], bool]:
         """Load JSON and return (data, corrupt).
 
         corrupt is True only for a file that exists and does not parse. An
@@ -51,7 +52,7 @@ class SettingsManager:
         return settings_store.get().load_file(file_path)
 
     @staticmethod
-    def save_settings_to_file(file_path: str, settings: dict) -> None:
+    def save_settings_to_file(file_path: str, settings: dict[str, Any]) -> None:
         # This forwards to the store, which writes atomically (a temp file, an
         # fsync and an os.replace, so an interrupted write cannot truncate the
         # settings file) and drops the cached surface at that path. Nothing
@@ -59,7 +60,7 @@ class SettingsManager:
         # by the file the write landed on.
         settings_store.get().save_file(file_path, settings)
 
-    def get_deck_settings(self, deck_serial_number: str) -> dict:
+    def get_deck_settings(self, deck_serial_number: str) -> dict[str, Any]:
         """
         Retrieves the deck settings for a given deck serial number.
         The store caches the settings, drops the cache on a save, and
@@ -71,9 +72,9 @@ class SettingsManager:
         Returns:
             dict: The deck settings loaded from the file.
         """
-        return settings_store.get().read(settings_store.DECK, deck_serial_number)
+        return cast(dict[str, Any], settings_store.get().read(settings_store.DECK, deck_serial_number))
 
-    def save_deck_settings(self, deck_serial_number: str, settings: dict) -> None:
+    def save_deck_settings(self, deck_serial_number: str, settings: dict[str, Any]) -> None:
         """
         Saves the settings for a deck.
 
@@ -101,7 +102,7 @@ class SettingsManager:
             self.get_deck_settings(deck_serial_number), deck_serial_number
         )
 
-    def deck_view(self, settings: dict) -> settings_store.DeckSettings:
+    def deck_view(self, settings: dict[str, Any]) -> settings_store.DeckSettings:
         """The same view over deck settings the caller already read.
 
         For a reader that decides whether to read the file at all. The deck
@@ -110,7 +111,7 @@ class SettingsManager:
         """
         return settings_store.DeckSettings(settings)
 
-    def get_app_settings(self) -> dict:
+    def get_app_settings(self) -> dict[str, Any]:
         """The app settings, as the one dict every reader of them holds.
 
         This hands out the shared dict. The settings dialog rows, the store
@@ -119,7 +120,7 @@ class SettingsManager:
         store caches it and drops the cache on a write, so this dict never
         falls behind the disk.
         """
-        return settings_store.get().read(settings_store.APP)
+        return cast(dict[str, Any], settings_store.get().read(settings_store.APP))
 
     def app(self) -> AppSettings:
         """Typed view onto the shared app-settings dict."""
@@ -135,10 +136,10 @@ class SettingsManager:
         """
         return AppSettings(settings_store.get().read_fresh(settings_store.APP))
 
-    def save_app_settings(self, settings: dict) -> None:
+    def save_app_settings(self, settings: dict[str, Any]) -> None:
         settings_store.get().write(settings_store.APP, settings)
 
-    def get_static_settings(self) -> dict:
+    def get_static_settings(self) -> dict[str, Any]:
         """
         Returns always the same settings, no matter what the data path is set to.
 
@@ -147,9 +148,9 @@ class SettingsManager:
         in globals.py, which runs before this module imports and which defines
         the data path.
         """
-        return settings_store.get().read(settings_store.STATIC)
+        return cast(dict[str, Any], settings_store.get().read(settings_store.STATIC))
 
-    def save_static_settings(self, settings: dict) -> None:
+    def save_static_settings(self, settings: dict[str, Any]) -> None:
         settings_store.get().write(settings_store.STATIC, settings)
 
     def load_font_defaults(self) -> None:

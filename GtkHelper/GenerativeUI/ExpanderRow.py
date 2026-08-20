@@ -4,7 +4,7 @@ from GtkHelper.GenerativeUI.GenerativeUI import GenerativeUI
 from gi.repository import Gtk
 
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any
+from typing import cast, TYPE_CHECKING, Any
 from GtkHelper.GtkHelper import better_disconnect, on_main
 
 if TYPE_CHECKING:
@@ -26,8 +26,8 @@ class ExpanderRow(GenerativeUI[bool]):
     def __init__(self, action_core: "ActionCore",
                  var_name: str,
                  default_value: bool,
-                 title: str = None,
-                 subtitle: str = None,
+                 title: str | None = None,
+                 subtitle: str | None = None,
                  show_enable_switch: bool = False,
                  start_expanded: bool = False,
                  on_change: Callable[..., Any] | None = None,
@@ -51,12 +51,12 @@ class ExpanderRow(GenerativeUI[bool]):
             auto_add (bool, optional): Whether to automatically add this entry to the UI. Defaults to True.
         """
         # GenerativeUI children added via add_row; destroyed in clear_rows().
-        self._child_generative_ui: list = []
+        self._child_generative_ui: list[Any] = []
 
         self._switch_enabled = show_enable_switch
 
-        def build():
-            self._widget: BetterExpander = BetterExpander(
+        def build() -> None:
+            self._widget: BetterExpander | None = BetterExpander(
                 title=self.get_translation(title),
                 subtitle=self.get_translation(subtitle),
                 expanded=start_expanded,
@@ -67,7 +67,7 @@ class ExpanderRow(GenerativeUI[bool]):
             self.connect_signals()
         super().__init__(action_core, var_name, default_value, can_reset, auto_add, complex_var_name, on_change, build=build)
 
-    def connect_signals(self):
+    def connect_signals(self) -> None:
         """
         Connects the signal handler for the 'notify::enable-expansion' signal to track changes
         in the expansion state of the expander widget.
@@ -76,7 +76,7 @@ class ExpanderRow(GenerativeUI[bool]):
         """
         self.widget.connect("notify::enable-expansion", self._value_changed)
 
-    def disconnect_signals(self):
+    def disconnect_signals(self) -> None:
         """
         Disconnects the signal handler for the 'notify::enable-expansion' signal.
 
@@ -85,7 +85,7 @@ class ExpanderRow(GenerativeUI[bool]):
         """
         better_disconnect(self.widget, self._value_changed)
 
-    def set_enable_expansion(self, enable_expansion: bool, update_setting: bool = False):
+    def set_enable_expansion(self, enable_expansion: bool, update_setting: bool = False) -> None:
         """
         Sets the expansion state for the expander and optionally updates the associated setting.
 
@@ -109,10 +109,10 @@ class ExpanderRow(GenerativeUI[bool]):
         """
         if self._widget is None:
             return self.get_value()
-        return self.widget.get_enable_expansion()
+        return cast(bool, self.widget.get_enable_expansion())
 
     @on_main
-    def add_row(self, widget: Gtk.Widget):
+    def add_row(self, widget: Gtk.Widget) -> None:
         """
         Adds a widget as a row to the expander. If the widget already has a parent,
         it is removed before being added to the expander.
@@ -130,7 +130,7 @@ class ExpanderRow(GenerativeUI[bool]):
         self.widget.add_row(widget)
 
     @on_main
-    def clear_rows(self):
+    def clear_rows(self) -> None:
         # child.destroy() unregisters the children from the action; the
         # _widget guard keeps a repeat destroy() a no-op.
         if self._widget is not None:
@@ -139,12 +139,12 @@ class ExpanderRow(GenerativeUI[bool]):
         for child in children:
             child.destroy()
 
-    def destroy(self):
+    def destroy(self) -> None:
         # Tear down tracked children first so nested expanders don't leak.
         self.clear_rows()
         super().destroy()
 
-    def _value_changed(self, expander_row: BetterExpander, _):
+    def _value_changed(self, expander_row: BetterExpander, _: Any) -> None:
         """
         Handles the change in the expander's expansion state.
 
@@ -157,13 +157,13 @@ class ExpanderRow(GenerativeUI[bool]):
         """
         self._handle_value_changed(expander_row.get_enable_expansion())
 
-    def _handle_value_changed(self, new_value: bool, update_setting: bool = True, trigger_callback: bool = True):
+    def _handle_value_changed(self, new_value: bool, update_setting: bool = True, trigger_callback: bool = True) -> None:
         if not self._switch_enabled:
             return
         super()._handle_value_changed(new_value, update_setting, trigger_callback)
 
     @GenerativeUI.signal_manager
-    def set_ui_value(self, value: bool):
+    def set_ui_value(self, value: bool) -> None:
         """
         Sets the expansion state of the expander in the UI widget.
 
@@ -176,8 +176,8 @@ class ExpanderRow(GenerativeUI[bool]):
         self.widget.set_enable_expansion(value)
 
     @on_main
-    def set_expanded(self, value: bool):
+    def set_expanded(self, value: bool) -> None:
         self.widget.set_expanded(value)
 
-    def get_expanded(self):
-        return self.widget.get_expanded()
+    def get_expanded(self) -> bool:
+        return cast(bool, self.widget.get_expanded())

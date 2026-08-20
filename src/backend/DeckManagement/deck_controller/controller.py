@@ -38,20 +38,18 @@ import math
 import os
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from threading import Thread
 
 from PIL import Image
 from StreamDeck.Devices import StreamDeck
-from StreamDeck.Devices.StreamDeckPlus import StreamDeckPlus
 from StreamDeck.ImageHelpers import PILHelper
 from loguru import logger as log
 
 from src.backend.DeckManagement.BetterDeck import BetterDeck
 from src.backend.DeckManagement.InputIdentifier import Input, InputIdentifier
 from src.backend.DeckManagement.Subclasses import cache_budget
-from src.backend.DeckManagement.Subclasses.FakeDeck import FakeDeck
 from src.backend.DeckManagement.Subclasses.ScreenSaver import ScreenSaver
 from src.backend.DeckManagement.Subclasses.encoded_image_cache import EncodedImageCache
 from src.backend.DeckManagement.Subclasses.native_tile_cache import NativeTileCache, native_tile_cache_max_bytes
@@ -72,7 +70,8 @@ from src.Signals import Signals
 
 import globals as gl
 
-from typing import TYPE_CHECKING, Any, overload
+from collections.abc import Sequence
+from typing import cast, TYPE_CHECKING, Any, overload
 if TYPE_CHECKING:
     from src.backend.DeckManagement.DeckManager import DeckManager
     from src.backend.DeckManagement.deck_controller.background_media import BackgroundVideo
@@ -108,7 +107,7 @@ class DeckController:
         self._serial_number: str | None = None
         self._key_image_size: tuple[int, int] | None = None
         self._touchscreen_image_size: tuple[int, int] | None = None
-        self._native_key_format_sig: tuple | None = None
+        self._native_key_format_sig: tuple[Any, ...] | None = None
 
         # Store the raw handle as self.deck so get_alive() returns True inside
         # get_deck_settings. The raw handle answers is_open() the same way the
@@ -149,11 +148,12 @@ class DeckController:
         self.allow_interaction = True
         self.has_animated_keys = False
 
+        # Every deck tiles its background at this spacing. An SD+ probe that
+        # once widened it to (52, 36) never matched: self.deck is always the
+        # BetterDeck wrapper here, never the raw device class it tested for.
+        # A working probe must test the wrapped handle, and the change is
+        # visible on real SD+ hardware, so it needs a hardware pass first.
         self.key_spacing = (36, 36)
-
-        if isinstance(self.deck, StreamDeckPlus) or (isinstance(self.deck, FakeDeck) and self.deck.key_layout() == [2, 4]):
-            log.error("Deck recognized as StreamDeckPlus")
-            self.key_spacing = (52, 36)
 
         # Per-deck saturation boost, a PIL ImageEnhance.Color factor over the
         # UI range 1.0 to 1.5. It is read once at boot and refreshed by
@@ -169,7 +169,7 @@ class DeckController:
         # ScreenBar.load_from_changes recomposite the current frame for each
         # dirty identifier and push it through the same set-image path a live
         # update uses.
-        self.ui_image_changes_while_hidden: dict = {}
+        self.ui_image_changes_while_hidden: dict[InputIdentifier, bool] = {}
 
         # close() sets this once and never clears it. It gates the re-entrant
         # producer paths, ScreenSaver.show, hide, on_key_change and load_page,
@@ -201,7 +201,7 @@ class DeckController:
         # Serializes background loads on the pool. A superseded load must not
         # overwrite a newer page's background.
         self._background_load_lock = threading.Lock()
-        self._bg_future = None
+        self._bg_future: Future[Any] | None = None
 
         # Native encoded key image caches. Build them before the inputs and
         # the background, because the paint path dereferences both directly
@@ -304,7 +304,7 @@ class DeckController:
 
             # None so the first set_brightness() below always writes to the device,
             # even when the stored value equals the skip-write guard's default.
-            self.brightness = None
+            self.brightness: "float | None" = None
             brightness = deck_settings.get("brightness", "value")
             self.set_brightness(brightness)
 
@@ -359,18 +359,20 @@ class DeckController:
             except Exception:
                 log.opt(exception=True).warning("Failed to release the deck handle after a failed init")
 
-    def init_inputs(self):
+    def init_inputs(self) -> None:
         # Build then swap. The media writer reads self.inputs concurrently,
         # and a fill in place gives it an empty or partial view, which raises
         # a KeyError at screensaver entry. Build the whole dict, then publish
         # it with one GIL-atomic assignment.
-        new_inputs = {}
+        new_inputs: dict[type[InputIdentifier], list[Any]] = {}
         for i in Input.All:
             new_inputs[i] = []
             input_class = CONTROLLER_CLASSES[i]
 
             for k in input_class.Available_Identifiers(self.deck):
-                controller_input = input_class(self, Input.FromTypeIdentifier(i.input_type, k))
+                # The dict key and the identifier constructor share the same input
+                # type, so each input class receives its own identifier kind.
+                controller_input = input_class(self, cast(Any, Input.FromTypeIdentifier(i.input_type, k)))
                 # Stamp with the current generation so a paint from a freshly
                 # built input, such as the screensaver's, is not dropped as
                 # stale.
@@ -378,7 +380,7 @@ class DeckController:
                 new_inputs[i].append(controller_input)
         self.inputs = new_inputs
 
-    def get_inputs(self, identifier: InputIdentifier) -> list["ControllerInput"]:
+    def get_inputs(self, identifier: InputIdentifier) -> list["ControllerInput[Any]"]:
         input_type = type(identifier)
         if input_type not in self.inputs:
             raise ValueError(f"Unknown input type: {input_type}")
@@ -397,9 +399,9 @@ class DeckController:
     def get_input(self, identifier: Input.Touchscreen) -> "ControllerTouchScreen | None": ...
 
     @overload
-    def get_input(self, identifier: InputIdentifier) -> "ControllerInput | None": ...
+    def get_input(self, identifier: InputIdentifier) -> "ControllerInput[Any] | None": ...
 
-    def get_input(self, identifier: InputIdentifier) -> "ControllerInput | None":
+    def get_input(self, identifier: InputIdentifier) -> "ControllerInput[Any] | None":
         for i in self.get_inputs(identifier):
             if i.identifier == identifier:
                 return i
@@ -413,14 +415,14 @@ class DeckController:
     def is_visual(self) -> bool:
         return self.deck.is_visual()
 
-    def update_input(self, identifier: InputIdentifier):
+    def update_input(self, identifier: InputIdentifier) -> None:
         i = self.get_input(identifier)
         if not i:
             return
         i.update()
 
     @log.catch
-    def update_all_inputs(self, gen=None):
+    def update_all_inputs(self, gen: "int | None" = None) -> None:
         if not self._page_is_current(gen):
             return
         start = time.time()
@@ -464,7 +466,7 @@ class DeckController:
                 i.update()
         log.debug(f"Updating all inputs took {time.time() - start} seconds")
 
-    def _update_all_inputs_awaiting_background(self, bg_future, gen=None):
+    def _update_all_inputs_awaiting_background(self, bg_future: "Future[Any]", gen: "int | None" = None) -> None:
         # This runs on the media thread. Skip at once when superseded, then
         # wait out the background decode under a bound, so the keys composite
         # over the new background. The wait blocks the sole writer, and it
@@ -568,7 +570,7 @@ class DeckController:
             self._had_write_failure = True
             self._full_repaint_pending = True
 
-    def event_callback(self, ident: InputIdentifier, *args, **kwargs):
+    def event_callback(self, ident: InputIdentifier, *args: Any, **kwargs: Any) -> None:
         if not self.allow_interaction:
             return
         i = self.get_input(ident)
@@ -576,18 +578,20 @@ class DeckController:
             return
         i.event_callback(*args, **kwargs)
 
-    def key_event_callback(self, deck, key, *args, **kwargs):
+    def key_event_callback(self, deck: Any, key: int, *args: Any, **kwargs: Any) -> None:
+        # deck is the raw handle from the reader thread; its key_layout is
+        # unrotated, and the swap below applies the rotation.
         coords = ControllerKey.Index_To_Coords(deck, key)
         if self.deck.rotation % 180 != 0:
             coords = (coords[1], coords[0])
         ident = Input.Key(f"{coords[0]}x{coords[1]}")
         self.event_callback(ident,*args, **kwargs)
 
-    def dial_event_callback(self, deck, dial, *args, **kwargs):
+    def dial_event_callback(self, deck: Any, dial: Any, *args: Any, **kwargs: Any) -> None:
         ident = Input.Dial(str(dial))
         self.event_callback(ident, *args, **kwargs)
 
-    def touchscreen_event_callback(self, deck, *args, **kwargs):
+    def touchscreen_event_callback(self, deck: Any, *args: Any, **kwargs: Any) -> None:
         ident = Input.Touchscreen("sd-plus")
         self.event_callback(ident, *args, **kwargs)
 
@@ -617,9 +621,9 @@ class DeckController:
         else:
             size = max(size[0], 72), max(size[1], 72)
         self._key_image_size = size
-        return size
+        return cast(tuple[int, int], size)
 
-    def native_key_format_sig(self) -> tuple:
+    def native_key_format_sig(self) -> tuple[Any, ...]:
         """Hashable signature of the deck's native key image format. It is
         part of every native tile cache key, so bytes encoded for one device
         format can never be served for another. It is memoized because the
@@ -654,7 +658,7 @@ class DeckController:
         cache_budget.register(self.encode_memo, label=f"encode_memo:{serial}")
         cache_budget.register(self.native_tile_cache, label=f"native_tiles:{serial}")
 
-    def refresh_tile_cache_min_age(self, video: "BackgroundVideo" = None) -> None:
+    def refresh_tile_cache_min_age(self, video: "BackgroundVideo | None" = None) -> None:
         """Retune how long the native tile cache shields its entries from
         global eviction, to the duration of the background video now playing,
         clamped to DEFAULT_MIN_AGE_S..MAX_MIN_AGE_S. It returns to the
@@ -707,14 +711,18 @@ class DeckController:
         else:
             size = max(size[0], 800), max(size[1], 100)
         self._touchscreen_image_size = size
-        return size
+        return cast(tuple[int, int], size)
 
     # ------------ #
     # Page Loading #
     # ------------ #
 
-    def load_default_page(self):
+    def load_default_page(self) -> None:
         if not self.get_alive(): return
+
+        page_manager = gl.page_manager
+        if page_manager is None:
+            return
 
         queue = startup_queue.get()
 
@@ -722,10 +730,10 @@ class DeckController:
         # because the request is one-shot. See src/backend/startup_queue.py.
         api_page_path = queue.claim_page_request(self.serial_number())
         if api_page_path is not None:
-            api_page_path = gl.page_manager.find_matching_page_path(api_page_path)
+            api_page_path = page_manager.find_matching_page_path(api_page_path)
 
         if api_page_path is None:
-            default_page_path = gl.page_manager.get_default_page(self.deck.get_serial_number())
+            default_page_path = page_manager.get_default_page(self.deck.get_serial_number())
         else:
             default_page_path = api_page_path
 
@@ -735,15 +743,12 @@ class DeckController:
             
         if default_page_path is None:
             # Use the first page
-            pages = gl.page_manager.get_pages()
+            pages = page_manager.get_pages()
             if len(pages) == 0:
                 return
-            default_page_path = gl.page_manager.get_pages()[0]
+            default_page_path = page_manager.get_pages()[0]
 
-        if default_page_path is None:
-            return
-        
-        page = gl.page_manager.get_page(default_page_path, self)
+        page = page_manager.get_page(default_page_path, self)
         self.load_page(page)
 
         # Handle a state change request. This peeks now and resolves at the
@@ -767,7 +772,7 @@ class DeckController:
             queue.resolve_state_request(self.serial_number())
 
     @log.catch
-    def load_background(self, page: Page, update: bool = True, gen=None):
+    def load_background(self, page: Page, update: bool = True, gen: "int | None" = None) -> None:
         deck_background_settings = gl.settings_manager.deck_view(self.get_deck_settings()).section("background")
         page_background_settings = page.dict.get("settings", {}).get("background", {})
 
@@ -797,7 +802,7 @@ class DeckController:
             )
 
     @log.catch
-    def load_brightness(self, page: Page):
+    def load_brightness(self, page: Page) -> None:
         if not self.get_alive():
             return
 
@@ -814,7 +819,7 @@ class DeckController:
         self.set_brightness(value)
 
     @log.catch
-    def load_screensaver(self, page: Page):
+    def load_screensaver(self, page: Page) -> None:
         deck_screensaver_settings = gl.settings_manager.deck_view(self.get_deck_settings()).section("screensaver")
         page_screensaver_settings = page.dict.get("settings", {}).get("screensaver", {})
 
@@ -828,7 +833,7 @@ class DeckController:
 
         self._apply_screensaver_config(config)
 
-    def _apply_screensaver_config(self, config: dict) -> None:
+    def _apply_screensaver_config(self, config: dict[str, Any]) -> None:
         """Push one screensaver config onto the ScreenSaver. The deck arm
         arrives with DECK_DEFAULTS already filled in. The literals below
         belong to the page arm and the nothing-configured arm, because a page
@@ -840,7 +845,7 @@ class DeckController:
         self.screen_saver.set_fps(config.get("fps", 30))
         self.screen_saver.set_brightness(config.get("brightness", 30))
 
-    def _page_is_current(self, gen) -> bool:
+    def _page_is_current(self, gen: "int | None") -> bool:
         # gen is None for a caller outside the page-load path, which always
         # runs. A paint that load_page issued is stale once a newer load_page
         # bumped the generation.
@@ -851,7 +856,7 @@ class DeckController:
     LOAD_INPUTS_TIMEOUT = 10.0
 
     @log.catch
-    def load_all_inputs(self, page: Page, update: bool = True, gen=None):
+    def load_all_inputs(self, page: Page, update: bool = True, gen: "int | None" = None) -> None:
         if not self._page_is_current(gen):
             return
         start = time.time()
@@ -900,7 +905,7 @@ class DeckController:
             old_executor.shutdown(wait=False, cancel_futures=True)
         log.info(f"Loading all inputs took {time.time() - start} seconds")
 
-    def _load_input_if_current(self, controller_input: "ControllerInput", page: Page, update: bool = True, gen=None):
+    def _load_input_if_current(self, controller_input: "ControllerInput[Any]", page: Page, update: bool = True, gen: "int | None" = None) -> None:
         # A slower in-flight page load must not paint the previous page's
         # images onto the current page's keys, so skip when a newer load
         # superseded this one. This does not stamp config_gen. load_page
@@ -918,16 +923,16 @@ class DeckController:
         self._screensaver_pending_page = None
         return pending
 
-    def load_input_from_identifier(self, identifier: InputIdentifier, page: Page, update: bool = True):
+    def load_input_from_identifier(self, identifier: InputIdentifier, page: Page, update: bool = True) -> None:
         controller_input = self.get_input(identifier)
         if controller_input is not None:
             self.load_input(controller_input, page, update)
 
-    def load_input(self, controller_input: "ControllerInput", page: Page, update: bool = True):
+    def load_input(self, controller_input: "ControllerInput[Any]", page: Page, update: bool = True) -> None:
         input_dict = controller_input.identifier.get_config(page)
         controller_input.load_from_input_dict(input_dict, update)
 
-    def close_image_ressources(self):
+    def close_image_ressources(self) -> None:
         """Release every input's media, the key and dial images and videos,
         plus the background image and video. close() calls this from its
         resource sweep."""
@@ -955,7 +960,7 @@ class DeckController:
     # a few lines down. The page store also answers None for a page it could
     # not build, and every caller hands that answer straight here.
     @log.catch
-    def load_page(self, page: Page | None, load_brightness: bool = True, load_screensaver: bool = True, load_background: bool = True, load_inputs: bool = True, allow_reload: bool = True):
+    def load_page(self, page: Page | None, load_brightness: bool = True, load_screensaver: bool = True, load_background: bool = True, load_inputs: bool = True, allow_reload: bool = True) -> None:
         if not self.get_alive(): return
         if self._closing:
             # A straggling caller raced close(), from a screensaver
@@ -1120,20 +1125,20 @@ class DeckController:
     # switching does not pay a full GC pause on every switch.
     GC_MIN_INTERVAL = 10.0
 
-    def maybe_collect_garbage(self):
+    def maybe_collect_garbage(self) -> None:
         now = time.time()
         if now - self._last_gc_time < self.GC_MIN_INTERVAL:
             return
         self._last_gc_time = now
         gc.collect()
 
-    def reload_page(self):
+    def reload_page(self) -> None:
         self.load_page(
             page=self.active_page,
             allow_reload=True
         )
 
-    def set_brightness(self, value):
+    def set_brightness(self, value: float) -> None:
         value = min(100, max(0, value))
         if not self.get_alive(): return
         if value == self.brightness:
@@ -1148,7 +1153,7 @@ class DeckController:
         self.brightness = value
         self.media_player.submit_control(SetBrightnessMsg(value))
 
-    def set_rotation(self, value):
+    def set_rotation(self, value: int) -> None:
         self.deck.set_rotation(value)
         # Both native cache keys hold the rotation, so nothing stale can be
         # served. This clear is memory hygiene, because every entry encoded
@@ -1208,13 +1213,15 @@ class DeckController:
     # Helper methods #
     # -------------- #
 
-    def coords_to_index(self, coords: tuple) -> int:
+    # Callers pass an "XxY" string, which Coords_To_Index splits itself, or an
+    # already-split pair as a list or a tuple.
+    def coords_to_index(self, coords: "str | Sequence[Any]") -> int:
         return ControllerKey.Coords_To_Index(self.deck, coords)
-    
-    def index_to_coords(self, index: int) -> tuple:
+
+    def index_to_coords(self, index: int) -> tuple[int, int]:
         return ControllerKey.Index_To_Coords(self.deck, index)
-    
-    def get_key_by_coords(self, coords: tuple) -> "ControllerKey | None":
+
+    def get_key_by_coords(self, coords: "str | Sequence[Any]") -> "ControllerKey | None":
         index = self.coords_to_index(coords)
         return self.get_key_by_index(index)
     
@@ -1222,16 +1229,16 @@ class DeckController:
         keys = self.inputs.get(Input.Key, [])
         if index < 0 or index >= len(keys):
             return None
-        return keys[index]
+        return cast("ControllerKey | None", keys[index])
 
-    def mark_page_ready_to_clear(self, ready_to_clear: bool, page: "Page" = None):
+    def mark_page_ready_to_clear(self, ready_to_clear: bool, page: "Page | None" = None) -> "Page | None":
         """Pin the page that bracketed work must outlive with False, release
         it with True, and return it. PagePins.bracket holds the pass-back
         rule."""
         page = self.active_page if page is None else page
         return page if (pm := gl.page_manager) is None else pm.pins.bracket(page, ready_to_clear)
     
-    def get_deck_settings(self):
+    def get_deck_settings(self) -> "dict[str, Any]":
         if not self.get_alive():
             return {}
         return gl.settings_manager.get_deck_settings(self.deck.get_serial_number())
@@ -1292,7 +1299,7 @@ class DeckController:
         if self.active_page is not None:
             self.load_page(self.active_page, allow_reload=True)
     
-    def get_own_deck_stack_child(self):
+    def get_own_deck_stack_child(self) -> "object | None":
         """Deprecated in-process shim, kept for out-of-tree plugins.
 
         The engine caches and resolves no widget. The attached UI owns the
@@ -1346,11 +1353,11 @@ class DeckController:
         seq = self.media_player.next_submit_seq()
         self.media_player.submit_control(ClearMsg(seq=seq, expects_repaint=expects_repaint))
 
-    def get_own_key_grid(self):
+    def get_own_key_grid(self) -> "object | None":
         """Deprecated in-process shim. See get_own_deck_stack_child."""
         return ui_port.get().query_deck_widget(self, "key_grid")
     
-    def clear_media_player_tasks(self, gen=None):
+    def clear_media_player_tasks(self, gen: "int | None" = None) -> None:
         # Skip the clear when a newer page load superseded this one, so a late
         # clear cannot strand the newer load's freshly queued tasks. The lock
         # spans the check and the clear, so a generation bump cannot land
@@ -1535,8 +1542,9 @@ class DeckController:
         # cached for this deck before it drops the entries that hold them.
         # Otherwise the dead controller's active_page stays unevictable and
         # distorts every other deck's budget.
-        if gl.page_manager is not None:
-            gl.page_manager.discard_controller(self)
+        page_manager = gl.page_manager
+        if page_manager is not None:
+            page_manager.discard_controller(self)
         self.active_page = None
         # A page change deferred while the screensaver showed otherwise pins
         # its whole page object graph on this dead controller. This runs at
@@ -1566,7 +1574,8 @@ class DeckController:
         the real page's 50-150MB of media lives then, not on active_page. No
         caller runs this under _load_page_lock, and none runs it at
         app_quit."""
-        cached_pages = gl.page_manager.pages_for_controller(self) if gl.page_manager is not None else []
+        page_manager = gl.page_manager
+        cached_pages = page_manager.pages_for_controller(self) if page_manager is not None else []
         for page in cached_pages:
             try:
                 page.clear_action_objects()

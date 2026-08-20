@@ -25,19 +25,19 @@ from gi.repository import Gtk
 from src.windows.AssetManager.IconPacks.Preview import IconPackPreview
 # Import typing
 
-from typing import TYPE_CHECKING
+from typing import Any, Callable, TYPE_CHECKING
 if TYPE_CHECKING:
-    from windows.AssetManager.IconPacks.PackChooser import IconPackChooser
+    from src.windows.AssetManager.IconPacks.PackChooser import IconPackChooser
 
 class IconPackFlowBox(Gtk.Box):
-    def __init__(self, icon_chooser, *args, **kwargs):
+    def __init__(self, icon_chooser: "IconPackChooser", *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self.set_orientation(Gtk.Orientation.HORIZONTAL)
         self.set_hexpand(True)
 
-        self.callback_func = None
-        self.callback_args = ()
-        self.callback_kwargs = {}
+        self.callback_func: Callable[..., Any] | None = None
+        self.callback_args: tuple[Any, ...] = ()
+        self.callback_kwargs: dict[str, Any] = {}
 
         self.icon_chhoser:"IconPackChooser" = icon_chooser
 
@@ -45,6 +45,6 @@ class IconPackFlowBox(Gtk.Box):
 
         self.build()
 
-    def build(self):
+    def build(self) -> None:
         self.flow_box = Gtk.FlowBox(hexpand=True, orientation=Gtk.Orientation.HORIZONTAL, selection_mode=Gtk.SelectionMode.NONE)
         self.append(self.flow_box)

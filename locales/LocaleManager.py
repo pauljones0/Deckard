@@ -26,7 +26,9 @@ class LocaleManager:
         self.FALLBACK_LOCALE = "en_US"
 
         self.available_locales: list[str] = []
-        self.locale_data: dict[str, dict[str, str]] = {}
+        # A locale value can be absent for a key, which the CSV loader stores
+        # as None, so the fallback path below is reachable.
+        self.locale_data: dict[str, dict[str, str | None]] = {}
 
         self.load_csv()
 
@@ -52,7 +54,7 @@ class LocaleManager:
     def set_fallback_language(self, language: str) -> None:
         self.FALLBACK_LOCALE = language
 
-    def set_to_os_default(self):
+    def set_to_os_default(self) -> None:
         os_locale = locale.getlocale()[0]
         self.set_language(self.FALLBACK_LOCALE if os_locale is None else os_locale)
 
@@ -69,7 +71,7 @@ class LocaleManager:
                 return language
         return self.FALLBACK_LOCALE
 
-    def get_custom_translation(self, locale_json:dict[str, str]):
+    def get_custom_translation(self, locale_json: dict[str, str] | None) -> str | None:
         if locale_json is None:
             return ""
         result = locale_json.get(self.language)
@@ -77,7 +79,7 @@ class LocaleManager:
             return locale_json.get(self.FALLBACK_LOCALE)
         return result
 
-    def get(self, key: str, fallback: str = None) -> str:
+    def get(self, key: str, fallback: str | None = None) -> str:
         key_dict = self.locale_data.get(key, {})
 
         if fallback is None:

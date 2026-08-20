@@ -23,7 +23,7 @@ from __future__ import annotations
 import copy
 import os
 from collections.abc import Mapping
-from typing import Any
+from typing import cast, Any
 
 from loguru import logger as log
 
@@ -79,8 +79,8 @@ class SchemaView:
     later reader of that key.
     """
 
-    def __init__(self, data: dict, schema: Mapping[str, Any], shared: bool = False):
-        self.data: dict = data
+    def __init__(self, data: dict[str, Any], schema: Mapping[str, Any], shared: bool = False):
+        self.data: dict[str, Any] = data
         self.schema: Mapping[str, Any] = schema
         #: Hand stored values back by reference rather than as copies.
         self.shared: bool = shared
@@ -185,7 +185,7 @@ class DeckSettings(SchemaView):
     stay its own until it saves them.
     """
 
-    def __init__(self, data: dict, serial: str | None = None):
+    def __init__(self, data: dict[str, Any], serial: str | None = None):
         super().__init__(data, DECK_DEFAULTS)
         self.serial: str | None = serial
 
@@ -220,7 +220,7 @@ class AppSettings(SchemaView):
     carried a different inline default in every module that read it.
     """
 
-    def __init__(self, data: dict):
+    def __init__(self, data: dict[str, Any]):
         super().__init__(data, APP_DEFAULTS, shared=True)
 
     def save(self) -> None:
@@ -231,7 +231,7 @@ class AppSettings(SchemaView):
     # General settings
     @property
     def hold_time(self) -> float:
-        return self.get("general", "hold-time")
+        return cast(float, self.get("general", "hold-time"))
 
     @hold_time.setter
     def hold_time(self, value: float) -> None:
@@ -239,7 +239,7 @@ class AppSettings(SchemaView):
 
     @property
     def rolling_labels(self) -> bool:
-        return self.get("general", "rolling-labels")
+        return cast(bool, self.get("general", "rolling-labels"))
 
     @rolling_labels.setter
     def rolling_labels(self, value: bool) -> None:
@@ -247,7 +247,7 @@ class AppSettings(SchemaView):
 
     @property
     def app_launches(self) -> int:
-        return self.get("general", "app-launches")
+        return cast(int, self.get("general", "app-launches"))
 
     @app_launches.setter
     def app_launches(self, value: int) -> None:
@@ -255,18 +255,18 @@ class AppSettings(SchemaView):
 
     @property
     def show_donate_window(self) -> bool:
-        return self.get("general", "show-donate-window")
+        return cast(bool, self.get("general", "show-donate-window"))
 
     @show_donate_window.setter
     def show_donate_window(self, value: bool) -> None:
         self.set("general", "show-donate-window", value)
 
     @property
-    def default_font(self) -> dict:
-        return self.get("general", "default-font")
+    def default_font(self) -> dict[str, Any]:
+        return cast(dict[str, Any], self.get("general", "default-font"))
 
     @default_font.setter
-    def default_font(self, value: dict) -> None:
+    def default_font(self, value: dict[str, Any]) -> None:
         self.set("general", "default-font", value)
 
     def font_default(self, key: str) -> Any:
@@ -280,7 +280,7 @@ class AppSettings(SchemaView):
     # UI settings
     @property
     def tray_icon(self) -> bool:
-        return self.get("ui", "tray-icon")
+        return cast(bool, self.get("ui", "tray-icon"))
 
     @tray_icon.setter
     def tray_icon(self, value: bool) -> None:
@@ -288,7 +288,7 @@ class AppSettings(SchemaView):
 
     @property
     def allow_white_mode(self) -> bool:
-        return self.get("ui", "allow-white-mode")
+        return cast(bool, self.get("ui", "allow-white-mode"))
 
     @allow_white_mode.setter
     def allow_white_mode(self, value: bool) -> None:
@@ -296,7 +296,7 @@ class AppSettings(SchemaView):
 
     @property
     def show_notifications(self) -> bool:
-        return self.get("ui", "show-notifications")
+        return cast(bool, self.get("ui", "show-notifications"))
 
     @show_notifications.setter
     def show_notifications(self, value: bool) -> None:
@@ -304,7 +304,7 @@ class AppSettings(SchemaView):
 
     @property
     def auto_open_action_config(self) -> bool:
-        return self.get("ui", "auto-open-action-config")
+        return cast(bool, self.get("ui", "auto-open-action-config"))
 
     @auto_open_action_config.setter
     def auto_open_action_config(self, value: bool) -> None:
@@ -313,7 +313,7 @@ class AppSettings(SchemaView):
     # Key-grid settings
     @property
     def emulate_at_double_click(self) -> bool:
-        return self.get("key-grid", "emulate-at-double-click")
+        return cast(bool, self.get("key-grid", "emulate-at-double-click"))
 
     @emulate_at_double_click.setter
     def emulate_at_double_click(self, value: bool) -> None:
@@ -322,7 +322,7 @@ class AppSettings(SchemaView):
     # Warnings settings
     @property
     def enable_fps_warnings(self) -> bool:
-        return self.get("warnings", "enable-fps-warnings")
+        return cast(bool, self.get("warnings", "enable-fps-warnings"))
 
     @enable_fps_warnings.setter
     def enable_fps_warnings(self, value: bool) -> None:
@@ -331,7 +331,7 @@ class AppSettings(SchemaView):
     # System settings
     @property
     def keep_running(self) -> bool | None:
-        return self.get("system", "keep-running")
+        return cast(bool | None, self.get("system", "keep-running"))
 
     @keep_running.setter
     def keep_running(self, value: bool | None) -> None:
@@ -339,7 +339,7 @@ class AppSettings(SchemaView):
 
     @property
     def autostart(self) -> bool:
-        return self.get("system", "autostart")
+        return cast(bool, self.get("system", "autostart"))
 
     @autostart.setter
     def autostart(self, value: bool) -> None:
@@ -347,7 +347,7 @@ class AppSettings(SchemaView):
 
     @property
     def lock_on_lock_screen(self) -> bool:
-        return self.get("system", "lock-on-lock-screen")
+        return cast(bool, self.get("system", "lock-on-lock-screen"))
 
     @lock_on_lock_screen.setter
     def lock_on_lock_screen(self, value: bool) -> None:
@@ -356,7 +356,7 @@ class AppSettings(SchemaView):
     # Performance settings
     @property
     def n_cached_pages(self) -> int:
-        return self.get("performance", "n-cached-pages")
+        return cast(int, self.get("performance", "n-cached-pages"))
 
     @n_cached_pages.setter
     def n_cached_pages(self, value: int) -> None:
@@ -364,7 +364,7 @@ class AppSettings(SchemaView):
 
     @property
     def cache_videos(self) -> bool:
-        return self.get("performance", "cache-videos")
+        return cast(bool, self.get("performance", "cache-videos"))
 
     @cache_videos.setter
     def cache_videos(self, value: bool) -> None:
@@ -372,7 +372,7 @@ class AppSettings(SchemaView):
 
     @property
     def animation_pause_mode(self) -> str:
-        return self.get("performance", "animation-pause-mode")
+        return cast(str, self.get("performance", "animation-pause-mode"))
 
     @animation_pause_mode.setter
     def animation_pause_mode(self, value: str) -> None:
@@ -380,7 +380,7 @@ class AppSettings(SchemaView):
 
     @property
     def animation_idle_minutes(self) -> int:
-        return self.get("performance", "animation-idle-minutes")
+        return cast(int, self.get("performance", "animation-idle-minutes"))
 
     @animation_idle_minutes.setter
     def animation_idle_minutes(self, value: int) -> None:
@@ -389,7 +389,7 @@ class AppSettings(SchemaView):
     # Store settings
     @property
     def auto_update(self) -> bool:
-        return self.get("store", "auto-update")
+        return cast(bool, self.get("store", "auto-update"))
 
     @auto_update.setter
     def auto_update(self, value: bool) -> None:
@@ -397,7 +397,7 @@ class AppSettings(SchemaView):
 
     @property
     def responsibility_notes_agreed(self) -> bool:
-        return self.get("store", "responsibility-notes-agreed")
+        return cast(bool, self.get("store", "responsibility-notes-agreed"))
 
     @responsibility_notes_agreed.setter
     def responsibility_notes_agreed(self, value: bool) -> None:
@@ -405,7 +405,7 @@ class AppSettings(SchemaView):
 
     @property
     def enable_custom_stores(self) -> bool:
-        return self.get("store", "enable-custom-stores")
+        return cast(bool, self.get("store", "enable-custom-stores"))
 
     @enable_custom_stores.setter
     def enable_custom_stores(self, value: bool) -> None:
@@ -413,32 +413,32 @@ class AppSettings(SchemaView):
 
     @property
     def enable_custom_plugins(self) -> bool:
-        return self.get("store", "enable-custom-plugins")
+        return cast(bool, self.get("store", "enable-custom-plugins"))
 
     @enable_custom_plugins.setter
     def enable_custom_plugins(self, value: bool) -> None:
         self.set("store", "enable-custom-plugins", value)
 
     @property
-    def custom_stores(self) -> list:
-        return self.get("store", "custom-stores")
+    def custom_stores(self) -> list[Any]:
+        return cast(list[Any], self.get("store", "custom-stores"))
 
     @custom_stores.setter
-    def custom_stores(self, value: list) -> None:
+    def custom_stores(self, value: list[Any]) -> None:
         self.set("store", "custom-stores", value)
 
     @property
-    def custom_plugins(self) -> list:
-        return self.get("store", "custom-plugins")
+    def custom_plugins(self) -> list[Any]:
+        return cast(list[Any], self.get("store", "custom-plugins"))
 
     @custom_plugins.setter
-    def custom_plugins(self, value: list) -> None:
+    def custom_plugins(self, value: list[Any]) -> None:
         self.set("store", "custom-plugins", value)
 
     # Dev settings
     @property
     def n_fake_decks(self) -> int:
-        return self.get("dev", "n-fake-decks")
+        return cast(int, self.get("dev", "n-fake-decks"))
 
     @n_fake_decks.setter
     def n_fake_decks(self, value: int) -> None:
@@ -446,7 +446,7 @@ class AppSettings(SchemaView):
 
     @property
     def n_remote_decks(self) -> int:
-        return self.get("dev", "n-remote-decks")
+        return cast(int, self.get("dev", "n-remote-decks"))
 
     @n_remote_decks.setter
     def n_remote_decks(self, value: int) -> None:
@@ -531,7 +531,7 @@ class PluginSettings:
         if document is None:
             return {}
         if document.get("file-version") == PLUGIN_FILE_VERSION:
-            return document.get("settings", {})
+            return cast(dict[str, Any], document.get("settings", {}))
         # This file predates the envelope, so the whole file holds the
         # settings. Write it back wrapped, and return what it held either way.
         # A migration that cannot write must not also cost the plugin its

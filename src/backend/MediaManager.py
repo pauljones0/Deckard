@@ -16,6 +16,8 @@ import os
 import uuid
 import cv2
 from loguru import logger as log
+from typing import cast
+
 from PIL import Image, ImageDraw, ImageSequence
 
 import os, psutil
@@ -27,7 +29,7 @@ from src.backend.DeckManagement.HelperMethods import is_svg, sha256, file_in_dir
 import globals as gl
 
 class MediaManager:
-    def __init__(self):
+    def __init__(self) -> None:
         pass
 
     def get_fallback_thumbnail(self) -> Image.Image:
@@ -60,7 +62,7 @@ class MediaManager:
                 except OSError:
                     pass
 
-    def get_thumbnail(self, file_path):
+    def get_thumbnail(self, file_path: str) -> Image.Image:
         # Guard the whole body. sha256() raises on an unreadable file (chmod
         # 000), Image.open raises on a poisoned cache entry, and .thumbnail()
         # forces a lazy decode. Every caller is a UI path that needs an image
@@ -83,7 +85,7 @@ class MediaManager:
                 try:
                     with Image.open(thumbnail_path) as img:
                         img.thumbnail((250, 250), resample=Image.Resampling.LANCZOS)
-                        return img.copy()
+                        return cast(Image.Image, img.copy())
                 except Exception as e:
                     # A poisoned cache entry, from a crash mid-write for
                     # example. A bad cache file must not pin a valid source
@@ -108,7 +110,7 @@ class MediaManager:
             log.opt(exception=True).warning(f"Could not create thumbnail for {file_path}: {e}")
             return self.get_fallback_thumbnail()
 
-    def generate_thumbnail(self, file_path):
+    def generate_thumbnail(self, file_path: str) -> Image.Image:
         # This never raises. One corrupt or unreadable file must not kill the
         # import worker thread, the Custom Assets build or app startup
         # (AssetManagerBackend.fill_missing_thumbnails). A decode failure logs
@@ -155,13 +157,13 @@ class MediaManager:
         pil_image = Image.fromarray(frame_rgb)
         return pil_image
     
-    def generate_svg_thumbnail(self, file_path):
+    def generate_svg_thumbnail(self, file_path: str) -> Image.Image:
         return svg_to_pil(file_path, 1024)
 
-    def generate_image_thumbnail(self, file_path):
+    def generate_image_thumbnail(self, file_path: str) -> Image.Image:
         return Image.open(file_path)
     
-    def generate_gif_thumbnail(self, file_path):
+    def generate_gif_thumbnail(self, file_path: str) -> Image.Image:
         # Same as the video path, plus transparency support.
         gif = Image.open(file_path)
         iterator = ImageSequence.Iterator(gif)
@@ -170,8 +172,6 @@ class MediaManager:
         frame = iterator[n_frames // 2] # A GIF often starts with an empty frame
         frame = frame.convert("RGBA")
 
-        gif = None
-        iterator = None
-        n_frames = None
+        del gif, iterator, n_frames
 
         return frame

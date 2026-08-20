@@ -20,7 +20,7 @@ gi.require_version("Adw", "1")
 from gi.repository import Gtk, Adw, Pango, GLib
 
 # Import typing
-from typing import TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 if TYPE_CHECKING:
     from src.windows.PageManager.PageManager import PageManager
 
@@ -45,7 +45,7 @@ class PageSelector(Adw.NavigationPage):
 
         self.list_box.select_row(None)
 
-    def build(self):
+    def build(self) -> None:
         self.main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, hexpand=True)
         self.set_child(self.main_box)
 
@@ -77,7 +77,7 @@ class PageSelector(Adw.NavigationPage):
         self.add_new_button = AddNewButton(page_manager=self.page_manager, margin_top=7, margin_start=7, margin_end=7, margin_bottom=7)
         self.main_box.append(self.add_new_button)
 
-    def activate_page(self, page_path: str):
+    def activate_page(self, page_path: str) -> None:
         for page_row in self.page_rows:
             if page_row.page_path == page_path:
                 self.list_box.select_row(page_row)
@@ -93,7 +93,7 @@ class PageSelector(Adw.NavigationPage):
         for page_path in pages:
             self.add_row_by_path(page_path)
 
-    def on_row_activated(self, list_box: Gtk.ListBox, row: "PageRow") -> None:
+    def on_row_activated(self, list_box: Gtk.ListBox, row: "PageRow | None") -> None:
         if row is None:
             self.page_manager.page_editor.main_stack.set_visible_child_name("no-page")
             self.page_manager.page_editor.menu_button.set_page_specific_actions_enabled(False)
@@ -119,7 +119,7 @@ class PageSelector(Adw.NavigationPage):
         self.page_rows.append(page_row)
         self.list_box.append(page_row)
 
-    def sort_func(self, item1, item2) -> int:
+    def sort_func(self, item1: "PageRow", item2: "PageRow") -> int:
         """
         -1 if child1 should come before child2
         1 if child1 should come after child2
@@ -152,7 +152,7 @@ class PageSelector(Adw.NavigationPage):
             return 1
         return 0
     
-    def filter_func(self, item) -> bool:
+    def filter_func(self, item: "PageRow") -> bool:
         search = self.search_entry.get_text()
         if search == "":
             return True
@@ -163,9 +163,9 @@ class PageSelector(Adw.NavigationPage):
     
     @staticmethod
     @lru_cache(maxsize=1000)
-    def calc_ratio(str1, str2) -> float:
+    def calc_ratio(str1: str, str2: str) -> float:
         # staticmethod so the cache keys only on the strings, not on self.
-        return fuzz.ratio(str1.lower(), str2.lower())
+        return float(fuzz.ratio(str1.lower(), str2.lower()))
 
         
     def on_search_changed(self, search_entry: Gtk.SearchEntry) -> None:
@@ -175,7 +175,7 @@ class PageSelector(Adw.NavigationPage):
         GLib.idle_add(self.list_box.invalidate_sort)
 
 class AddNewButton(Gtk.Button):
-    def __init__(self, page_manager: "PageManager", *args, **kwargs):
+    def __init__(self, page_manager: "PageManager", *args: Any, **kwargs: Any) -> None:
         self.page_manager = page_manager
         super().__init__(*args, **kwargs)
         self.set_label(gl.lm.get("page-manager.page-selector.add-new"))
@@ -206,7 +206,7 @@ class PageRow(Gtk.ListBoxRow):
         self.page_path = page_path
         self.build()
 
-    def build(self):
+    def build(self) -> None:
         self.main_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, hexpand=True)
         self.set_child(self.main_box)
 
@@ -223,12 +223,12 @@ class PageRow(Gtk.ListBoxRow):
         self.page_path = page_path
         self.label.set_text(os.path.splitext(os.path.basename(self.page_path))[0])
 
-    def on_menu_click(self, *args):
+    def on_menu_click(self, *args: Any) -> None:
         dialog = DeletePageConfirmationDialog(self.page_path, self.page_manager)
         dialog.present()
 
 class DeletePageConfirmationDialog(Adw.MessageDialog):
-    def __init__(self, path: str, page_manager, *args, **kwargs):
+    def __init__(self, path: str, page_manager: "PageManager", *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self.page_path = path
         self.page_manager = page_manager
@@ -247,7 +247,7 @@ class DeletePageConfirmationDialog(Adw.MessageDialog):
 
         self.connect("response", self.on_response)
 
-    def on_response(self, dialog: Adw.MessageDialog, response: int) -> None:
+    def on_response(self, dialog: Adw.MessageDialog, response: str) -> None:
         if response == "delete":
             self.page_manager.remove_page_by_path(self.page_path)
         self.destroy()

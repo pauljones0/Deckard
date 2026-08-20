@@ -34,7 +34,8 @@ from src.backend.DeckManagement.Subclasses import mp4_tile_cache
 from src.backend.DeckManagement.Subclasses.SingleKeyAsset import SingleKeyAsset
 from src.backend.DeckManagement.Subclasses.mp4_tile_cache import get_video_md5
 
-from typing import TYPE_CHECKING
+from collections.abc import Generator
+from typing import Any, TYPE_CHECKING, cast
 if TYPE_CHECKING:
     from src.backend.DeckManagement.deck_controller.controller import DeckController
     from src.backend.DeckManagement.deck_controller.inputs import ControllerKey
@@ -221,9 +222,9 @@ def frame_has_alpha(frame: Image.Image) -> bool:
     return len(extrema) >= 4 and extrema[3][0] < 255
 
 
-def gif_frame_walk(path: str, max_size: "tuple[int, int]" = None,
-                   fit_size: "tuple[int, int]" = None,
-                   saturation: float = 1.0):
+def gif_frame_walk(path: str, max_size: "tuple[int, int] | None" = None,
+                   fit_size: "tuple[int, int] | None" = None,
+                   saturation: float = 1.0) -> "Generator[tuple[Image.Image, int], None, None]":
     """Generator over one GIF's frames: PIL composites each frame, converts
     it to RGBA, sizes it, bakes the saturation, and yields (frame, delay_ms).
     This is the one GIF compositor in the app, so the retained frame list,
@@ -249,10 +250,10 @@ def gif_frame_walk(path: str, max_size: "tuple[int, int]" = None,
         gif.close()
 
 
-def decode_gif_frames(path: str, max_size: "tuple[int, int]" = None,
-                      fit_size: "tuple[int, int]" = None,
+def decode_gif_frames(path: str, max_size: "tuple[int, int] | None" = None,
+                      fit_size: "tuple[int, int] | None" = None,
                       saturation: float = 1.0,
-                      budget_bytes: int = None) -> "tuple[list[Image.Image], list[int], list[float]]":
+                      budget_bytes: int | None = None) -> "tuple[list[Image.Image], list[int], list[float]]":
     """Every frame of the GIF at path, decoded to RGBA and retained, plus
     its delay timeline. This is GifBackground's entry point; KeyGIF drives
     gif_frame_walk itself so it can decide frame by frame what to keep.
@@ -384,9 +385,9 @@ class GifBackground:
         # (frame index, entries) of the last cropped frame. Most ticks land
         # on the frame already cut, because a 10fps GIF under a 30Hz tick
         # re-uses each crop set about 3 times. The caller always gets copies.
-        self._tiles_memo: tuple = (None, None)
+        self._tiles_memo: tuple[Any, ...] = (None, None)
 
-    def _pick_frame(self, now: float = None) -> int:
+    def _pick_frame(self, now: float | None = None) -> int:
         """Wall-clock frame index for now, from a bisect over the cumulative
         delay timeline plus the away-gap clamp. KeyGIF.get_next_frame runs
         the same arithmetic; see its comments for each branch."""
@@ -421,7 +422,7 @@ class GifBackground:
         self.active_frame = frame
         return frame
 
-    def get_next_tiles(self) -> "tuple[list[Image.Image], tuple | None]":
+    def get_next_tiles(self) -> "tuple[list[Image.Image], tuple[Any, ...] | None]":
         """(entries, identity) for the frame this tick lands on, per the
         BackgroundVideo.get_next_tiles contract: key tiles, plus the strip
         slice as one extra entry when extended. identity is (md5, frame
@@ -521,7 +522,7 @@ class KeyGIF(SingleKeyAsset):
     # Class-level default. The tests build instances attribute by attribute
     # through __new__ to exercise the picking arithmetic, and those instances
     # never take the video route.
-    video_cache = None
+    video_cache: "mp4_tile_cache.KeyVideoCache | None" = None
 
     def __init__(self, controller_key: "ControllerKey", gif_path: str, fps: int = 30, loop: bool = True):
         super().__init__(controller_key)
@@ -630,7 +631,7 @@ class KeyGIF(SingleKeyAsset):
         self._total_delay = self._cum_delays[-1] if self._cum_delays else 0.0
 
     def _composited_walk(self, fit_size: "tuple[int, int]", saturation: float,
-                         delays_out: "list[int]", alpha_out: "list[bool]"):
+                         delays_out: "list[int]", alpha_out: "list[bool]") -> "Generator[Image.Image, None, None]":
         """The single PIL pass. It composites with PIL, never FFmpeg, fits
         shrink-only to 2x tile, and bakes the saturation, while it records each
         frame's delay and its exact rendered-alpha verdict. It yields the
@@ -735,7 +736,7 @@ class KeyGIF(SingleKeyAsset):
             delays = probe_gif_timeline(self.gif_path).frame_delays
         self._adopt_timeline(delays)
 
-    def _source_index(self, cache, index: int) -> int:
+    def _source_index(self, cache: Any, index: int) -> int:
         """Map a timeline frame index to the reader's frame index. The cache
         is written frame-for-frame from the PIL walk, so this is usually the
         identity. The reader's count moves at runtime, because a promoted
@@ -746,7 +747,7 @@ class KeyGIF(SingleKeyAsset):
         n_timeline = len(self._cum_delays)
         if n_video <= 0 or n_timeline <= 0 or n_video == n_timeline:
             return index
-        return min(n_video - 1, index * n_video // n_timeline)
+        return cast(int, min(n_video - 1, index * n_video // n_timeline))
 
     def _video_frame(self, index: int) -> Image.Image | None:
         """One frame off the shared tile cache. Check then hold, as
@@ -756,10 +757,12 @@ class KeyGIF(SingleKeyAsset):
         if self.video_cache is None:
             return None
         with self._close_lock:
-            cache = self.video_cache
+            # A declared re-read: the outer check narrowed the attribute, and
+            # narrowing cannot see a close() nulling it before the lock.
+            cache: mp4_tile_cache.KeyVideoCache | None = self.video_cache
             if cache is None:
                 return None
-            return cache.get_frame(self._source_index(cache, index))
+            return cast("Image.Image | None", cache.get_frame(self._source_index(cache, index)))
 
     def _frame_at(self, index: int) -> Image.Image | None:
         """The payload for a picked timeline index, from whichever route
@@ -831,9 +834,12 @@ class KeyGIF(SingleKeyAsset):
         return self.frame_delays[self.active_frame] / 1000.0
     
     def get_raw_image(self) -> Image.Image:
-        # get_next_frame() returns None after close() releases the frames. A
-        # wider return type on this override alone is incompatible.
-        return self.get_next_frame()  # type: ignore[return-value]  # SingleKeyAsset.get_raw_image declares Image.Image, which is too narrow
+        # get_next_frame() returns None after close() releases the frames, so
+        # its return type is wider than this override may declare. Narrow to
+        # the declared Image.Image with a cast: a cast reads the same whether
+        # the checker sees Pillow's real types or treats them as Any, unlike a
+        # `# type: ignore` whose used-or-not status flips between those envs.
+        return cast(Image.Image, self.get_next_frame())
     
     def close(self) -> None:
         """Drop the retained frame list, which is the whole footprint, and

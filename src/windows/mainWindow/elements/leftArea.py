@@ -19,6 +19,12 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Gtk
 
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from src.windows.mainWindow.mainWindow import MainWindow
+    from src.backend.DeckManagement.DeckManager import DeckManager
+
 # Import Python modules
 
 # Import own modules
@@ -26,13 +32,13 @@ from src.windows.mainWindow.elements.DeckStack import DeckStack
 from GtkHelper.GtkHelper import ErrorPage
 
 class LeftArea(Gtk.Stack):
-    def __init__(self, main_window, deck_manager, **kwargs):
+    def __init__(self, main_window: "MainWindow", deck_manager: "DeckManager", **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.deck_manager = deck_manager
         self.main_window = main_window
         self.build()
 
-    def build(self):
+    def build(self) -> None:
         self.error_page = ErrorPage()
         self.error_page.set_error_text("No Decks Available")
         self.add_titled(self.error_page, "error", "Error")
@@ -43,8 +49,8 @@ class LeftArea(Gtk.Stack):
         self.deck_stack.add_pages()
         self.deck_stack.build()
 
-    def show_no_decks_error(self):
+    def show_no_decks_error(self) -> None:
         self.set_visible_child(self.error_page)
 
-    def hide_no_decks_error(self):
+    def hide_no_decks_error(self) -> None:
         self.set_visible_child(self.deck_stack)

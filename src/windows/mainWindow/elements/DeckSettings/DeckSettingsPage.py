@@ -15,6 +15,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 # Import gtk modules
 import gi
 
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from src.backend.DeckManagement.deck_controller.controller import DeckController
+
+
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Gtk, Adw
@@ -29,7 +35,7 @@ from src.windows.mainWindow.elements.DeckSettings.FakeDeckGroup import FakeDeckG
 # Import globals
 
 class DeckSettingsPage(Gtk.Overlay):
-    def __init__(self, deck_stack_child, deck_controller, **kwargs):
+    def __init__(self, deck_stack_child: Any, deck_controller: "DeckController", **kwargs: Any) -> None:
         super().__init__(hexpand=True, vexpand=True,
                          margin_start=50, margin_end=50,
                          margin_top=0, margin_bottom=50, **kwargs)
@@ -42,7 +48,7 @@ class DeckSettingsPage(Gtk.Overlay):
             self.show_no_page_error()
             return
 
-    def build(self):
+    def build(self) -> None:
         self.main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, hexpand=True)
         self.set_child(self.main_box)
 
@@ -69,18 +75,18 @@ class DeckSettingsPage(Gtk.Overlay):
         ## Hide the fake deck group if own deck is not fake
         deck = self.deck_controller.deck
         fake = False
-        if hasattr(deck, "is_fake"):
-            fake = deck.is_fake
+        # The fake marker lives on the wrapped device, not the wrapper.
+        fake = getattr(deck.deck, "is_fake", fake)
 
         self.fake_deck_group.set_visible(fake)
 
         self.serial_number_label = Gtk.Label(label=f"Serial: {self.deck_controller.serial_number()}", margin_top=20, css_classes=["dim-label"], selectable=False, sensitive=False)
         self.clamp_box.append(self.serial_number_label)
 
-    def on_open_page_settings_button_click(self, button):
+    def on_open_page_settings_button_click(self, button: Gtk.Button) -> None:
         self.deck_stack_child.set_visible_child_name("page-settings")
 
-    def show_no_page_error(self):
+    def show_no_page_error(self) -> None:
         self.clear()
         self.error_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, halign=Gtk.Align.CENTER, valign=Gtk.Align.CENTER)
         self.main_box.append(self.error_box)
@@ -93,13 +99,15 @@ class DeckSettingsPage(Gtk.Overlay):
         self.retry_button.connect("clicked", self.on_retry_button_click)
         self.error_box.append(self.retry_button)
 
-    def on_retry_button_click(self, button):
+    def on_retry_button_click(self, button: Gtk.Button) -> None:
         if self.deck_controller.active_page is None:
             return
         
         self.clear()
         self.build()
 
-    def clear(self):
-        while self.main_box.get_first_child() is not None:
-            self.main_box.remove(self.main_box.get_first_child())
+    def clear(self) -> None:
+        child = self.main_box.get_first_child()
+        while child is not None:
+            self.main_box.remove(child)
+            child = self.main_box.get_first_child()

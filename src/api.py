@@ -9,7 +9,10 @@ import json
 import os
 import re
 from collections import namedtuple
-from typing import Any, Tuple
+from typing import Any, Tuple, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from src.backend.DeckManagement.deck_controller.controller import DeckController
 from src.Signals import Signals
 from loguru import logger as log
 
@@ -34,7 +37,7 @@ ERROR_PAGE_EXISTS = f"{appinfo.APP_ID}.Error.PageExists"
 
 
 def _emit_properties_changed(object_path: str, interface: str,
-                             changed: dict, invalidated: list[str] | None = None):
+                             changed: dict[str, Any], invalidated: list[str] | None = None) -> None:
     """Emit org.freedesktop.DBus.Properties.PropertiesChanged on the bus."""
     if _bus is None:
         return
@@ -68,7 +71,7 @@ def _serial_to_dbus_path(serial: str) -> str:
 class ControllerInstanceAPI:
     """DBus interface for a single StreamDeck controller."""
 
-    def __init__(self, controller):
+    def __init__(self, controller: "DeckController") -> None:
         self._controller = controller
         self._active_page_name: str = ""
         self._object_path: str = ""  # set by _publish_controller
@@ -101,7 +104,7 @@ class ControllerInstanceAPI:
         return self._active_page_name
 
     @ActivePageName.setter
-    def ActivePageName(self, value: Str):
+    def ActivePageName(self, value: Str) -> None:
         self._active_page_name = value
         log.debug(f"DBus API [{self._controller.serial_number()}]: ActivePageName changed to {value!r}")
         if self._object_path:
@@ -117,7 +120,7 @@ class ControllerInstanceAPI:
 class DeckardAPI:
     """DBus interface for Deckard (top-level)."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._foreground_window: WindowInfo = WindowInfo("", "")
 
     # Methods
@@ -278,7 +281,7 @@ class DeckardAPI:
         return (self._foreground_window.name, self._foreground_window.wm_class)
 
     @ForegroundWindow.setter
-    def ForegroundWindow(self, value: Tuple[Str, Str]):
+    def ForegroundWindow(self, value: Tuple[Str, Str]) -> None:
         self._foreground_window = WindowInfo(*value)
         log.debug(f"DBus API: ForegroundWindow changed to {self._foreground_window!r}")
         _emit_properties_changed(
@@ -294,7 +297,7 @@ _api_instance = None
 _controller_instances: dict[str, ControllerInstanceAPI] = {}
 
 
-def start_dbus_service():
+def start_dbus_service() -> None:
     """Publish the Deckard API on the session bus."""
     global _bus, _api_instance
     try:
@@ -315,7 +318,7 @@ def start_dbus_service():
         log.error(f"Failed to start DBus API service: {e}")
 
 
-def publish_controller(controller) -> None:
+def publish_controller(controller: "DeckController") -> None:
     """Put a deck controller on the bus, from any registration thread.
 
     Decks register from the USB monitor thread, the boot re-enumeration thread
@@ -330,7 +333,7 @@ def publish_controller(controller) -> None:
     GLib.idle_add(_publish_on_main, controller)
 
 
-def unpublish_controller(controller) -> None:
+def unpublish_controller(controller: "DeckController") -> None:
     """Take a deck controller off the bus when the deck goes away.
 
     This guards and marshals as publish_controller does. A client that holds a
@@ -342,7 +345,7 @@ def unpublish_controller(controller) -> None:
     GLib.idle_add(_unpublish_on_main, controller)
 
 
-def _known_serial(controller) -> str:
+def _known_serial(controller: "DeckController") -> str:
     """The controller serial, read without a call to the device.
 
     A failure path can use it, where the deck itself may be the fault.
@@ -350,7 +353,7 @@ def _known_serial(controller) -> str:
     return getattr(controller, "_serial_number", None) or "<unknown>"
 
 
-def _publish_on_main(controller) -> bool:
+def _publish_on_main(controller: "DeckController") -> bool:
     """Idle worker for publish_controller. Main context only."""
     try:
         _publish_controller(controller)
@@ -362,7 +365,7 @@ def _publish_on_main(controller) -> bool:
     return GLib.SOURCE_REMOVE
 
 
-def _unpublish_on_main(controller) -> bool:
+def _unpublish_on_main(controller: "DeckController") -> bool:
     """Idle worker for unpublish_controller. Main context only."""
     try:
         _unpublish_controller(controller)
@@ -374,7 +377,7 @@ def _unpublish_on_main(controller) -> bool:
     return GLib.SOURCE_REMOVE
 
 
-def _publish_controller(controller) -> None:
+def _publish_controller(controller: "DeckController") -> None:
     """Publish a ControllerInstanceAPI for a single deck controller.
 
     Main context only. See publish_controller.
@@ -429,7 +432,7 @@ def _publish_controller(controller) -> None:
     _emit_controllers_changed()
 
 
-def _unpublish_controller(controller) -> None:
+def _unpublish_controller(controller: "DeckController") -> None:
     """Remove a controller's object from the bus.
 
     Main context only. See unpublish_controller.
@@ -456,7 +459,7 @@ def _serial_published_at(obj_path: str) -> str | None:
     return None
 
 
-def _serial_published_for(controller) -> str | None:
+def _serial_published_for(controller: "DeckController") -> str | None:
     """The serial this exact controller is published under, if any."""
     for serial, instance in _controller_instances.items():
         if instance._controller is controller:
@@ -480,7 +483,7 @@ def _emit_controllers_changed() -> None:
     )
 
 
-def stop_dbus_service():
+def stop_dbus_service() -> None:
     """Disconnect from the session bus."""
     global _bus
     try:

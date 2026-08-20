@@ -2,12 +2,13 @@ from collections.abc import Callable
 from typing import Any
 
 from src.backend.services import tr
-from gi.repository import Adw
+from gi.repository import Adw, Gtk
 
 class ConfirmationDialog(Adw.MessageDialog):
-    def __init__(self, title: str, body: str, confirm: str, transient_for,
+    def __init__(self, title: str, body: str, confirm: str, transient_for: Gtk.Window,
                  on_cancel: Callable[[], Any] | None = None,
-                 on_confirm: Callable[[], Any] | None = None, *args, **kwargs):
+                 on_confirm: Callable[[], Any] | None = None,
+                 *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
 
         self.on_cancel: Callable[[], Any] | None = on_cancel

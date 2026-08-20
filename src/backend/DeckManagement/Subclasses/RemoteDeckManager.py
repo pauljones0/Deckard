@@ -7,20 +7,23 @@ from src.backend.DeckManagement.Subclasses.RemoteDeck import RemoteDeck
 from src.backend.DeckManagement.Subclasses.RemoteDecksLocalServerHandler import create_handler
 
 PORT = 8765
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
+    from PIL import Image
+
     from src.backend.DeckManagement.DeckManager import DeckManager
 
 class RemoteDeckManager:
     def __init__(self, deck_manager: "DeckManager"):
         self.deck_manager = deck_manager
         self.deck_controllers: list[DeckController] = []
-        self.httpd = None
-        self.server_thread = None
-        self.handler_class = None
+        self.httpd: HTTPServer | None = None
+        self.server_thread: threading.Thread | None = None
+        # create_handler builds the class at runtime, so Any is its real type.
+        self.handler_class: Any = None
         self._is_running = False
 
-    def start(self):
+    def start(self) -> None:
         if self._is_running:
             return
         self._is_running = True
@@ -29,7 +32,7 @@ class RemoteDeckManager:
         deck = RemoteDeck(self, serial_number="remote-deck-1", deck_type="Remote Deck 1")
         self.deck_controllers.append(DeckController(self.deck_manager, deck))
 
-    def stop(self):
+    def stop(self) -> None:
         if not self._is_running:
             return
         self._is_running = False
@@ -38,7 +41,7 @@ class RemoteDeckManager:
         self.deck_controllers.clear()
     
 
-    def start_server(self):
+    def start_server(self) -> None:
         """Start the HTTP server in a separate thread."""
         server_address = ('0.0.0.0', PORT)
         self.handler_class = create_handler(self)
@@ -64,7 +67,7 @@ class RemoteDeckManager:
         self.server_thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
         self.server_thread.start()
 
-    def stop_server(self):
+    def stop_server(self) -> None:
         """Stop the HTTP server."""
         if self.httpd:
             print("\n\nStopping Remote Deck Server...")
@@ -74,13 +77,13 @@ class RemoteDeckManager:
                 self.server_thread.join(timeout=5)
                 self.server_thread = None
 
-    def on_key_event(self, key: int, state: bool):
+    def on_key_event(self, key: int, state: bool) -> None:
         print(f"Remote Deck Manager: Key event: {key}, {state}")
         print(self.deck_controllers)
         for deck_controller in self.deck_controllers:
             deck_controller.deck.deck.key_callback(deck_controller.deck.deck, key, state)
     
-    def send_button_image(self, button_id: int, image):
+    def send_button_image(self, button_id: int, image: "Image.Image") -> None:
         """
         Send a PIL image for a specific button to the browser.
         

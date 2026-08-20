@@ -4,7 +4,7 @@ import base64
 from gi.repository import Adw
 
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any
+from typing import cast, TYPE_CHECKING, Any
 
 from GtkHelper.GtkHelper import better_disconnect
 
@@ -26,7 +26,7 @@ class PasswordEntryRow(GenerativeUI[str]):
     def __init__(self, action_core: "ActionCore",
                  var_name: str,
                  default_value: str,
-                 title: str = None,
+                 title: str | None = None,
                  on_change: Callable[..., Any] | None = None,
                  can_reset: bool = True,
                  auto_add: bool = True,
@@ -44,8 +44,8 @@ class PasswordEntryRow(GenerativeUI[str]):
             can_reset (bool, optional): Whether the password can be reset. Defaults to True.
             auto_add (bool, optional): Whether to automatically add this entry to the UI. Defaults to True.
         """
-        def build():
-            self._widget: Adw.PasswordEntryRow = Adw.PasswordEntryRow(
+        def build() -> None:
+            self._widget: Adw.PasswordEntryRow | None = Adw.PasswordEntryRow(
                 title=self.get_translation(title, title),
                 text=self._default_value
             )
@@ -54,7 +54,7 @@ class PasswordEntryRow(GenerativeUI[str]):
             self.connect_signals()
         super().__init__(action_core, var_name, default_value, can_reset, auto_add, complex_var_name, on_change, build=build)
 
-    def connect_signals(self):
+    def connect_signals(self) -> None:
         """
         Connects the signal handler for the 'changed' signal to track changes in the password entry.
 
@@ -62,7 +62,7 @@ class PasswordEntryRow(GenerativeUI[str]):
         """
         self.widget.connect("changed", self._value_changed)
 
-    def disconnect_signals(self):
+    def disconnect_signals(self) -> None:
         """
         Disconnects the signal handler for the 'changed' signal.
 
@@ -71,7 +71,7 @@ class PasswordEntryRow(GenerativeUI[str]):
         """
         better_disconnect(self.widget, self._value_changed)
 
-    def set_password(self, password: str, update_setting: bool = False):
+    def set_password(self, password: str, update_setting: bool = False) -> None:
         """
         Sets the password in the password entry widget and optionally updates the associated setting.
 
@@ -96,9 +96,9 @@ class PasswordEntryRow(GenerativeUI[str]):
         """
         if self._widget is None:
             return self.get_value()
-        return self.widget.get_text()
+        return cast(str, self.widget.get_text())
 
-    def _value_changed(self, entry_row: Adw.EntryRow):
+    def _value_changed(self, entry_row: Adw.EntryRow) -> None:
         """
         Handles the change in password input in the password entry row.
 
@@ -110,7 +110,7 @@ class PasswordEntryRow(GenerativeUI[str]):
         """
         self._handle_value_changed(entry_row.get_text())
 
-    def get_value(self, fallback: str = None):
+    def get_value(self, fallback: str | None = None) -> str:
         """
         Retrieves the stored password value, decoding it from base64.
 
@@ -125,7 +125,7 @@ class PasswordEntryRow(GenerativeUI[str]):
         value = super().get_value(fallback)
         return base64.b64decode(value).decode("utf-8")
 
-    def set_value(self, new_value: str):
+    def set_value(self, new_value: str) -> None:
         """
         Encodes and sets the new password value in the settings.
 
@@ -136,14 +136,14 @@ class PasswordEntryRow(GenerativeUI[str]):
         """
         # A local annotation, not a cast. ActionCore.get_settings declares a
         # return type of dir, a typo for dict, so this file cannot use it.
-        settings: dict = self._action_core.get_settings()
+        settings: dict[str, Any] = self._action_core.get_settings()
 
         encoded = base64.b64encode(new_value.encode("utf-8")).decode("utf-8")
         settings[self._var_name] = encoded
         self._action_core.set_settings(settings)
 
     @GenerativeUI.signal_manager
-    def set_ui_value(self, value: str):
+    def set_ui_value(self, value: str) -> None:
         """
         Sets the password value in the UI password entry widget.
 

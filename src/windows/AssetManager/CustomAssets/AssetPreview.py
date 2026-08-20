@@ -17,7 +17,7 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Adw
+from gi.repository import Adw, Gtk
 
 # Import own modules
 from src.windows.AssetManager.Preview import Preview
@@ -26,20 +26,20 @@ import globals as gl
 import os
 
 # Import typing
-from typing import TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 if TYPE_CHECKING:
     from src.windows.AssetManager.CustomAssets.FlowBox import CustomAssetChooserFlowBox
 
 class AssetPreview(Preview):
-    def __init__(self):
+    def __init__(self) -> None:
         # DynamicFlowBox recycles a fixed pool of placeholders that take no
         # constructor arguments. set_asset() binds the asset later, from the
         # factory function.
         super().__init__(can_be_deleted=True)
-        self.asset: dict = None
-        self.flow: "CustomAssetChooserFlowBox" = None
+        self.asset: dict[str, Any] = None  # type: ignore[assignment]  # late-init: set_asset
+        self.flow: "CustomAssetChooserFlowBox" = None  # type: ignore[assignment]  # late-init: set_asset
 
-    def set_asset(self, flow: "CustomAssetChooserFlowBox", asset: dict) -> None:
+    def set_asset(self, flow: "CustomAssetChooserFlowBox", asset: dict[str, Any]) -> None:
         self.flow = flow
         self.asset = asset
 
@@ -51,7 +51,7 @@ class AssetPreview(Preview):
         self.set_text(asset["name"])
         self.set_image(asset["thumbnail"])
 
-    def on_click_info(self, button):
+    def on_click_info(self, button: Gtk.Button) -> None:
         self.flow.asset_chooser.asset_manager.show_info(
             internal_path = self.asset["internal-path"],
             licence_name = self.asset["license"].get("name"),
@@ -60,11 +60,11 @@ class AssetPreview(Preview):
             license_comment = self.asset["license"].get("comment")
         )
 
-    def on_click_remove(self, *args):
+    def on_click_remove(self, *args: Any) -> None:
         dial = DeleteConfirmationDialog(self)
         dial.present()
 
-    def on_remove_confirmed(self):
+    def on_remove_confirmed(self) -> None:
         # self.flow owns a fixed pool of recycled placeholders. A removal of
         # self from its native FlowBox shrinks that pool below
         # N_ITEMS_PER_PAGE, so the removal goes through the flow instead of
@@ -73,7 +73,7 @@ class AssetPreview(Preview):
 
 
 class DeleteConfirmationDialog(Adw.MessageDialog):
-    def __init__(self, asset_preview: AssetPreview, *args, **kwargs):
+    def __init__(self, asset_preview: AssetPreview, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self.asset_preview = asset_preview
 
@@ -91,7 +91,7 @@ class DeleteConfirmationDialog(Adw.MessageDialog):
 
         self.connect("response", self.on_response)
 
-    def on_response(self, dialog: Adw.MessageDialog, response: int) -> None:
+    def on_response(self, dialog: Adw.MessageDialog, response: str) -> None:
         if response == "remove":
             self.asset_preview.on_remove_confirmed()
         self.destroy()

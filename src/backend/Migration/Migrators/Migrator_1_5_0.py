@@ -20,10 +20,10 @@ import os
 import globals as gl
 
 class Migrator_1_5_0(Migrator):
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__("1.5.0")
         
-    def migrate(self):
+    def migrate(self) -> None:
         self.migrate_pages()
         self.migrate_deck_settings()
 
@@ -36,7 +36,7 @@ class Migrator_1_5_0(Migrator):
 
         self.set_migrated(True)
 
-    def migrate_deck_settings(self):
+    def migrate_deck_settings(self) -> None:
         path = os.path.join(gl.DATA_PATH, "settings", "decks")
         if not os.path.exists(path):
             return
@@ -65,7 +65,7 @@ class Migrator_1_5_0(Migrator):
 
             atomic_write_json(deck_path, deck)
 
-    def migrate_pages(self):
+    def migrate_pages(self) -> None:
         pages_dir = os.path.join(gl.DATA_PATH, "pages")
         if not os.path.exists(pages_dir):
             return

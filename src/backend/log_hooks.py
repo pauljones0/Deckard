@@ -31,6 +31,7 @@ is the one allowed sibling import, on the same contract, and
 install_exception_hooks() installs its scrubbing patcher, so no hook routes an
 unredacted traceback into a sink.
 """
+import asyncio
 import atexit
 import faulthandler
 import fcntl
@@ -44,7 +45,7 @@ import time
 from collections.abc import Callable
 from datetime import datetime
 from types import TracebackType
-from typing import Any
+from typing import cast, Any, TextIO
 
 from loguru import logger as _LOG
 
@@ -72,7 +73,7 @@ _prev_sys_hook: _ExceptHook = None  # type: ignore[assignment]  # late-init: ins
 # faulthandler stores the raw fd and not the file object, so this
 # module-level reference must keep the file alive for the life of the
 # process. Otherwise a fatal-signal dump writes into a recycled fd.
-_fault_file = None
+_fault_file: TextIO | None = None
 
 
 # Per-site rate limiting.
@@ -126,10 +127,11 @@ _RATE_LOCK_TIMEOUT_S = 0.5
 # Maps a site key to [window start, suppressed, last hit]. An allowed record
 # refreshes the window start, and every occurrence refreshes the last hit. The
 # eviction reads the last hit; see _prune_locked.
-_rate_state: dict[tuple, list] = {}
+_rate_state: dict[tuple[Any, ...], list[Any]] = {}
 
 
-def _exc_site(exc_type, exc_value, exc_tb) -> tuple[tuple, str]:
+def _exc_site(exc_type: type[BaseException] | None, exc_value: BaseException | None,
+              exc_tb: TracebackType | None) -> tuple[tuple[Any, ...], str]:
     """Returns (key, printable label) for the code site that raised. The key
     holds the exception type and the innermost traceback frame. One handler
     that fails on every emission collapses onto one key, and one exception
@@ -144,6 +146,9 @@ def _exc_site(exc_type, exc_value, exc_tb) -> tuple[tuple, str]:
     tb = exc_tb
     while tb is not None and tb.tb_next is not None:
         tb = tb.tb_next
+    # Two shapes on purpose, per the docstring: a file and a line number when
+    # there is a traceback, and the message text when there is not.
+    where: tuple[str, str | int]
     if tb is not None:
         where = (tb.tb_frame.f_code.co_filename, tb.tb_lineno)
     else:
@@ -151,7 +156,7 @@ def _exc_site(exc_type, exc_value, exc_tb) -> tuple[tuple, str]:
     return (type_name, where), _label_for_key((type_name, where))
 
 
-def _label_for_key(key: tuple) -> str:
+def _label_for_key(key: tuple[Any, ...]) -> str:
     """The printable site for a key. It builds from the key alone, so a
     pending count still reports after its exception object is gone. The prune
     and the atexit flush hold keys and never exceptions."""
@@ -159,7 +164,7 @@ def _label_for_key(key: tuple) -> str:
     return f"{where[0]}:{where[1]} [{type_name}]"
 
 
-def _emit_pending(key: tuple, count: int, reason: str) -> None:
+def _emit_pending(key: tuple[Any, ...], count: int, reason: str) -> None:
     """Report a pending count that gets no next record to ride on. It follows
     the never-raise contract of _log_exc, with loguru first, __stderr__
     second, and a swallow last. It keeps the "Uncaught exception" prefix,
@@ -178,7 +183,7 @@ def _emit_pending(key: tuple, count: int, reason: str) -> None:
             pass
 
 
-def _prune_locked(now: float) -> list[tuple[tuple, int]]:
+def _prune_locked(now: float) -> list[tuple[tuple[Any, ...], int]]:
     """Cap the dict. The caller holds _rate_lock and calls this only once the
     dict is oversized, so a broad storm across many distinct sites cannot turn
     the guard into an unbounded leak. Returns the pending counts of everything
@@ -195,9 +200,9 @@ def _prune_locked(now: float) -> list[tuple[tuple, int]]:
     bounds the dict. This lists the items up front, so a re-entrant hook at GC
     time that mutates the dict cannot turn a prune into a RuntimeError of
     "changed size during iteration"."""
-    dropped: list[tuple[tuple, int]] = []
+    dropped: list[tuple[tuple[Any, ...], int]] = []
 
-    def evict(key: tuple) -> None:
+    def evict(key: tuple[Any, ...]) -> None:
         entry = _rate_state.pop(key, None)
         if entry is not None and entry[1]:
             dropped.append((key, entry[1]))
@@ -241,7 +246,7 @@ def _flush_pending_counts() -> None:
 atexit.register(_flush_pending_counts)
 
 
-def _rate_limit_bypass(key: tuple) -> int:
+def _rate_limit_bypass(key: tuple[Any, ...]) -> int:
     """Take a site's pending count, clear it, and throttle nothing.
 
     The terminal path enters here. That record is the last one this site gets,
@@ -255,19 +260,19 @@ def _rate_limit_bypass(key: tuple) -> int:
             return 0
         pending, entry[1] = entry[1], 0
         entry[2] = time.monotonic()
-        return pending
+        return cast(int, pending)
     finally:
         _rate_lock.release()
 
 
-def _rate_limit(key: tuple) -> tuple[bool, int]:
+def _rate_limit(key: tuple[Any, ...]) -> tuple[bool, int]:
     """Returns (suppress this occurrence, failures suppressed since the last
     record).
 
     The first hit of a site always logs at once. A throttle must never delay
     the record that says the failure exists, and only delays what follows."""
     now = time.monotonic()
-    dropped: list[tuple[tuple, int]] = []
+    dropped: list[tuple[tuple[Any, ...], int]] = []
     if not _rate_lock.acquire(timeout=_RATE_LOCK_TIMEOUT_S):
         # Never wait without a bound inside a crash handler. With the guard's
         # state wedged, log this occurrence rather than park the failing
@@ -320,7 +325,7 @@ def _announce_disabled() -> None:
         pass
 
 
-def _is_terminal(exc_tb) -> bool:
+def _is_terminal(exc_tb: TracebackType | None) -> bool:
     """True when the interpreter called sys.excepthook for an exception that
     unwound the whole program, and False when PyGObject's PyErr_Print called
     it for a GLib or GTK callback.
@@ -341,15 +346,17 @@ def _is_terminal(exc_tb) -> bool:
     if frame is None:
         return False
     try:
-        return (
+        return cast(
+            bool,
             frame.f_code.co_name == "<module>"
-            and frame.f_globals.get("__name__") == "__main__"
+            and frame.f_globals.get("__name__") == "__main__",
         )
     except Exception:
         return False
 
 
-def _log_exc(kind: str, exc_type, exc_value, exc_tb, extra: str = "",
+def _log_exc(kind: str, exc_type: type[BaseException] | None, exc_value: BaseException | None,
+             exc_tb: TracebackType | None, extra: str = "",
              rate_limit: bool = True) -> None:
     # The rate limit sits here rather than in each hook, so all four hook
     # surfaces get it. A failure inside the guard falls through to the log. It
@@ -390,7 +397,8 @@ def _log_exc(kind: str, exc_type, exc_value, exc_tb, extra: str = "",
             pass
 
 
-def _sys_hook(exc_type, exc_value, exc_tb) -> None:
+def _sys_hook(exc_type: type[BaseException], exc_value: BaseException,
+              exc_tb: TracebackType | None) -> None:
     if issubclass(exc_type, KeyboardInterrupt):
         # Keep Ctrl-C quiet. Delegate to the hook installed before this one.
         _prev_sys_hook(exc_type, exc_value, exc_tb)
@@ -403,7 +411,7 @@ def _sys_hook(exc_type, exc_value, exc_tb) -> None:
              rate_limit=not _is_terminal(exc_tb))
 
 
-def _thread_hook(args) -> None:
+def _thread_hook(args: threading.ExceptHookArgs) -> None:
     if args.exc_type is SystemExit:
         return
     name = getattr(args.thread, "name", "?")
@@ -413,7 +421,10 @@ def _thread_hook(args) -> None:
     )
 
 
-def _unraisable_hook(unraisable) -> None:
+# sys.UnraisableHookArgs is a typeshed-only name: the runtime sys module has
+# no such attribute on any interpreter. The deployment floor is 3.13, which
+# evaluates annotations eagerly, so this one has to stay a string.
+def _unraisable_hook(unraisable: "sys.UnraisableHookArgs") -> None:
     _log_exc(
         "unraisable", unraisable.exc_type, unraisable.exc_value,
         unraisable.exc_traceback,
@@ -421,7 +432,7 @@ def _unraisable_hook(unraisable) -> None:
     )
 
 
-def asyncio_exception_handler(loop, context) -> None:
+def asyncio_exception_handler(loop: asyncio.AbstractEventLoop, context: dict[str, Any]) -> None:
     """The loop.set_exception_handler target for a long-lived loop; see
     event_dispatch._get_loop. Without it an unread task exception, or a
     failing call_soon callback, dies in asyncio's default stderr handler."""

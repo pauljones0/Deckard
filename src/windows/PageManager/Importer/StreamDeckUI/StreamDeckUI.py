@@ -1,7 +1,9 @@
 from functools import lru_cache
 import os
+from collections.abc import Iterable
 import json
 
+from src.backend import services
 from src.backend.DeckManagement.HelperMethods import recursive_hasattr
 from src.backend.PageManagement import page_flush
 from src.backend import settings_store
@@ -14,13 +16,14 @@ from loguru import logger as log
 import globals as gl
 
 from gi.repository import GLib
+from typing import Any
 
 class StreamDeckUIImporter:
     def __init__(self, json_export_path: str):
         self.json_export_path = json_export_path
 
     @lru_cache(maxsize=None)
-    def index_to_page_coords(self, index: int, deck_serial: int) -> str:
+    def index_to_page_coords(self, index: int, deck_serial: str) -> str:
         # Find deck
         rows, cols = 3, 5
         deck_manager = gl.app.deck_manager if gl.app is not None else None
@@ -32,7 +35,7 @@ class StreamDeckUIImporter:
         x = index % cols
         return f"{x}x{y}"
     
-    def save_json(self, json_path: str, data: dict, _retries: int = 3):
+    def save_json(self, json_path: str, data: dict[str, Any], _retries: int = 3) -> None:
         # Writes a whole page file, past the page-settings setters. That is
         # safe only because a StreamDeck-UI profile carries no window
         # auto-change rule. An importer that emits one must also call
@@ -54,7 +57,7 @@ class StreamDeckUIImporter:
             else:
                 log.error(f"Failed to save {json_path} after all retries, giving up")
             
-    def allocate_page_paths(self, deck: str, page_names) -> dict[str, str]:
+    def allocate_page_paths(self, deck: str, page_names: Iterable[str]) -> dict[str, str]:
         """Map each export page name to a target path that collides with none.
 
         The whole deck resolves first, so a ChangePage cross-reference points
@@ -78,7 +81,7 @@ class StreamDeckUIImporter:
 
         return page_paths
 
-    def get_state_map(self, available_states: list[str]):
+    def get_state_map(self, available_states: list[str]) -> dict[str, str]:
         state_numbers = [int(state) for state in available_states]
         state_numbers.sort()
 
@@ -88,7 +91,7 @@ class StreamDeckUIImporter:
 
         return state_map
 
-    def perform_import(self):
+    def perform_import(self) -> None:
         with open(self.json_export_path) as f:
             self.export = json.load(f)
 
@@ -115,7 +118,7 @@ class StreamDeckUIImporter:
 
             for page_name in self.export["state"][deck].get("buttons", {}):
                 ## Keys
-                page = {}
+                page: dict[str, Any] = {}
                 page["keys"] = {}
 
                 for button in self.export["state"][deck]["buttons"][page_name]:
@@ -165,7 +168,11 @@ class StreamDeckUIImporter:
                         if export_icon not in [None, ""]:
                             if os.path.exists(export_icon):
                                 asset_id = gl.asset_manager_backend.add(asset_path=export_icon)
-                                asset = gl.asset_manager_backend.get_by_id(asset_id)
+                                # add() answers None for a file it refused,
+                                # and get_by_id answers None for that, so the
+                                # else below already covers both.
+                                asset = (gl.asset_manager_backend.get_by_id(asset_id)
+                                         if asset_id is not None else None)
                                 if asset is not None:
                                     page["keys"][coords]["states"][page_state]["media"]["path"] = asset["internal-path"]
                                 else:
@@ -196,7 +203,7 @@ class StreamDeckUIImporter:
                                     # This export holds no target page, so
                                     # keep the historical naming.
                                     page_path = os.path.join(gl.DATA_PATH, "pages", f"ui_{deck}_{export_switch_page}.json")
-                                action = {
+                                action: dict[str, Any] = {
                                     "id": "com_core447_DeckPlugin::ChangePage",
                                     "settings": {
                                         "selected_page": page_path,
@@ -207,7 +214,10 @@ class StreamDeckUIImporter:
 
                         # Hotkey
                         if state_data.get("keys") not in [None, ""]:
-                            parsed = ""
+                            # "" while unparsed, so a failed parse stays out
+                            # of the check below and an empty parse result
+                            # keeps whatever meaning it had.
+                            parsed: list[int] | str = ""
                             try:
                                 parsed = parse_keys_as_keycodes(state_data["keys"])[0]
                             except Exception as e:
@@ -253,7 +263,6 @@ class StreamDeckUIImporter:
                         # Brightness
                         export_brightness_change = state_data.get("brightness_change")
                         if export_brightness_change not in [None, "", 0]:
-                            action = None
                             if export_brightness_change > 0:
                                 action = {
                                     "id": "com_core447_DeckPlugin::IncreaseBrightness",
@@ -277,16 +286,19 @@ class StreamDeckUIImporter:
                 # gl.signal_manager.trigger_signal(Signals.PageAdd, page_path) # We don't trigger the action to save ressources
                 # time.sleep(0.005) # Otherwise the app can't hold up - The problem is the signal call, but is is necessary to
 
-                gl.page_manager.refresh_document(page_path)
-                gl.page_manager.reload_pages_with_path(page_path)
+                page_manager = services.require_page_manager()
+                page_manager.refresh_document(page_path)
+                page_manager.reload_pages_with_path(page_path)
                 log.success(f"Imported page {page_name} as page {os.path.basename(page_path)} on deck {deck}")
 
             log.success(f"Imported all pages of deck {deck}")
 
         log.success("Imported all pages from StreamDeck UI")
 
-        if recursive_hasattr(gl, "app.main_win.sidebar.page_selector"):
-            GLib.idle_add(gl.app.main_win.sidebar.page_selector.update)
-        if recursive_hasattr(gl, "page_manager_window.page_selector"):
-            GLib.idle_add(gl.page_manager_window.page_selector.load_pages)
+        main_win = services.main_window()
+        if main_win is not None and recursive_hasattr(main_win, "sidebar.page_selector"):
+            GLib.idle_add(main_win.sidebar.page_selector.update)
+        page_manager_window = gl.page_manager_window
+        if page_manager_window is not None and recursive_hasattr(page_manager_window, "page_selector"):
+            GLib.idle_add(page_manager_window.page_selector.load_pages)
         log.success("Updated ui")

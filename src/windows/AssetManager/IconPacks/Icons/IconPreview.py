@@ -24,22 +24,31 @@ from src.windows.AssetManager.Preview import Preview
 # Import python modules
 import os
 
+from loguru import logger as log
+
 # Import globals
 import globals as gl
 
 # Import typing
-from typing import TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 if TYPE_CHECKING:
     from src.backend.IconPackManagement.Icon import Icon
 
 class IconPreview(Preview):
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
 
-        self.icon: "Icon" = None
+        self.icon: "Icon" = None  # type: ignore[assignment]  # late-init: set_icon
 
-    def on_click_info(self, *args):
-        gl.asset_manager.show_info(
+    def on_click_info(self, *args: Any) -> None:
+        # The window that owns this preview nulls the slot as it closes, and a
+        # recycled child can outlive that, so answer a closed window with a log
+        # line rather than a traceback out of the click handler.
+        asset_manager = gl.asset_manager
+        if asset_manager is None:
+            log.error("The asset manager window is gone; cannot show asset info")
+            return
+        asset_manager.show_info(
             internal_path = self.icon.path,
             licence_name = self.icon.get_attribution().get("license"),
             license_url = self.icon.get_attribution().get("license-url"),

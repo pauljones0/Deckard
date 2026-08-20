@@ -12,6 +12,15 @@ and its docstring says why.
 # in the rotation path.
 import threading
 import time
+from typing import Any, TYPE_CHECKING, cast
+
+if TYPE_CHECKING:
+    from PIL import Image
+    from gi.repository import Gio
+
+    from src.backend.DeckManagement.deck_controller.controller import DeckController
+    from src.backend.DeckManagement.InputIdentifier import InputIdentifier
+    from src.windows.mainWindow.mainWindow import MainWindow
 
 from gi.repository import GLib
 from loguru import logger as log
@@ -29,7 +38,7 @@ TOUCHSCREEN_UI_INTERVAL_S = 0.1
 KEY_UI_INTERVAL_S = 0.0
 
 
-def mark_dirty(controller, identifier) -> None:
+def mark_dirty(controller: "DeckController", identifier: "InputIdentifier") -> None:
     """Record a frame that the adapter accepted and then dropped.
 
     push_input_image returns True as soon as a frame reaches the mirror slot of
@@ -105,26 +114,26 @@ class _MirrorSlot:
 
 
 class GtkUIAdapter(ui_port.UIPort):
-    def __init__(self):
+    def __init__(self) -> None:
         # Maps a controller to its DeckStackChild. DeckStack.add_page and
         # DeckStack.remove_page maintain it. The bind uses object identity at
         # add time, with no serial match and no ListModel scan from the media
         # thread.
-        self._children: dict = {}
-        self._window = None
+        self._children: dict[Any, Any] = {}
+        self._window: "MainWindow | None" = None
         # The map and unmap handlers of the window write this bool, and the
         # media thread reads it without a lock. It replaces an off-main
         # main_win.get_mapped() widget read.
         self._window_mapped: bool = False
         # Maps (controller, identifier) to a _MirrorSlot. One slot per input,
         # so a stalled main loop holds one frame per input, not a queue.
-        self._mirror_slots: dict = {}
+        self._mirror_slots: dict[Any, Any] = {}
         # Maps a controller to a bool. This is the page-sync coalescer.
-        self._page_sync_queued: dict = {}
+        self._page_sync_queued: dict[Any, Any] = {}
 
     # Setup
 
-    def attach_window(self, window) -> None:
+    def attach_window(self, window: "MainWindow") -> None:
         """Bind to a built MainWindow.
 
         It runs after the constructor, because the map and unmap handlers need
@@ -154,7 +163,7 @@ class GtkUIAdapter(ui_port.UIPort):
         # the USB monitor plugs in then gets no stack child, and a deck that it
         # unplugs leaves a stale one.
         window = self._window
-        if not recursive_hasattr(window, "leftArea.deck_stack"):
+        if window is None or not recursive_hasattr(window, "leftArea.deck_stack"):
             return
         deck_stack = window.leftArea.deck_stack
         registered = getattr(getattr(gl, "deck_manager", None), "deck_controller", None)
@@ -186,9 +195,13 @@ class GtkUIAdapter(ui_port.UIPort):
         heals a rebuilt window.
         """
         window = self._window
-        if not recursive_hasattr(window, "leftArea.deck_stack"):
+        if window is None or not recursive_hasattr(window, "leftArea.deck_stack"):
             return
-        for page in window.leftArea.deck_stack.get_pages():
+        # The stub's SelectionModel misses the ListModel iteration that
+        # PyGObject provides at runtime. The Any item type also keeps the
+        # trailing-None guard below alive for the checker.
+        pages = cast("Gio.ListModel[Any]", window.leftArea.deck_stack.get_pages())
+        for page in pages:
             if page is None:
                 # The ListModel iteration reads the length once, so a removed
                 # trailing index yields None. Only trailing entries are None.
@@ -198,10 +211,10 @@ class GtkUIAdapter(ui_port.UIPort):
             if controller is not None:
                 self._children[controller] = child
 
-    def bind(self, controller, child) -> None:
+    def bind(self, controller: "DeckController", child: Any) -> None:
         self._children[controller] = child
 
-    def unbind(self, controller) -> None:
+    def unbind(self, controller: "DeckController") -> None:
         self._children.pop(controller, None)
         self._page_sync_queued.pop(controller, None)
         # Snapshot the keys, then delete without a KeyError. This method runs
@@ -215,25 +228,25 @@ class GtkUIAdapter(ui_port.UIPort):
         for key in [k for k in list(self._mirror_slots) if k[0] is controller]:
             self._mirror_slots.pop(key, None)
 
-    def _on_window_map(self, *args) -> None:
+    def _on_window_map(self, *args: Any) -> None:
         self._window_mapped = True
 
-    def _on_window_unmap(self, *args) -> None:
+    def _on_window_unmap(self, *args: Any) -> None:
         self._window_mapped = False
 
     # Resolvers
 
-    def _grid(self, child):
+    def _grid(self, child: Any) -> Any:
         if not recursive_hasattr(child, "page_settings.deck_config.grid"):
             return None
         return child.page_settings.deck_config.grid
 
-    def _screenbar(self, child):
+    def _screenbar(self, child: Any) -> Any:
         if not recursive_hasattr(child, "page_settings.deck_config.screenbar.image"):
             return None
         return child.page_settings.deck_config.screenbar
 
-    def _mirror_widget(self, child, identifier):
+    def _mirror_widget(self, child: Any, identifier: "InputIdentifier") -> Any:
         """The widget that mirrors identifier, or None when there is none.
 
         This raises during a grid rebuild, because buttons[x][y] can be short
@@ -252,7 +265,7 @@ class GtkUIAdapter(ui_port.UIPort):
 
     # Render mirror
 
-    def push_input_image(self, controller, identifier, image) -> bool:
+    def push_input_image(self, controller: "DeckController", identifier: "InputIdentifier", image: "Image.Image | None") -> bool:
         try:
             if image is None or not self._window_mapped:
                 return False
@@ -306,7 +319,7 @@ class GtkUIAdapter(ui_port.UIPort):
             log.opt(exception=True).warning(f"Failed to mirror {identifier} into the UI")
             return False
 
-    def _drain_mirror(self, controller, identifier) -> bool:
+    def _drain_mirror(self, controller: "DeckController", identifier: "InputIdentifier") -> bool:
         # On the main loop, paint the newest frame of this input. Return
         # False, because a GLib callback that returns a true value re-arms.
         slot = self._mirror_slots.get((controller, identifier))
@@ -340,7 +353,7 @@ class GtkUIAdapter(ui_port.UIPort):
 
     # Deck sync
 
-    def on_page_changed(self, controller) -> None:
+    def on_page_changed(self, controller: "DeckController") -> None:
         # Coalesce the page-load completions into one pending idle, so a burst
         # of page changes does not queue a sidebar rebuild for each one. Each
         # callback renders the live state, so the last completion wins. The
@@ -351,13 +364,13 @@ class GtkUIAdapter(ui_port.UIPort):
         self._page_sync_queued[controller] = True
         GLib.idle_add(self._run_page_changed, controller)
 
-    def _run_page_changed(self, controller) -> bool:
+    def _run_page_changed(self, controller: "DeckController") -> bool:
         # Use pop, not an assignment of False. An idle queued before unbind()
         # still runs after it, and a re-inserted key pins the whole graph of an
         # unplugged controller.
         self._page_sync_queued.pop(controller, None)
         window = self._window
-        if not recursive_hasattr(window, "sidebar"):
+        if window is None or not recursive_hasattr(window, "sidebar"):
             return False
         child = self._children.get(controller)
         if child is None:
@@ -382,10 +395,10 @@ class GtkUIAdapter(ui_port.UIPort):
         "background": "background_editor",
     }
 
-    def on_input_visuals_changed(self, controller, identifier, state, aspect) -> None:
+    def on_input_visuals_changed(self, controller: "DeckController", identifier: "InputIdentifier", state: int, aspect: str) -> None:
         GLib.idle_add(self._run_input_visuals_changed, controller, identifier, state, aspect)
 
-    def _run_input_visuals_changed(self, controller, identifier, state, aspect) -> bool:
+    def _run_input_visuals_changed(self, controller: "DeckController", identifier: "InputIdentifier", state: int, aspect: str) -> bool:
         editor_name = self._EDITOR_FOR_ASPECT.get(aspect)
         if editor_name is None:
             log.warning(f"Unknown UI aspect {aspect!r}")
@@ -396,20 +409,20 @@ class GtkUIAdapter(ui_port.UIPort):
         getattr(sidebar.key_editor, editor_name).load_for_identifier(identifier, state)
         return False
 
-    def on_input_states_changed(self, controller, identifier, n_states) -> None:
+    def on_input_states_changed(self, controller: "DeckController", identifier: "InputIdentifier", n_states: int) -> None:
         GLib.idle_add(self._run_input_states_changed, controller, identifier, n_states)
 
-    def _run_input_states_changed(self, controller, identifier, n_states) -> bool:
+    def _run_input_states_changed(self, controller: "DeckController", identifier: "InputIdentifier", n_states: int) -> bool:
         sidebar = self._sidebar_for(controller, identifier, require_active_deck=False)
         if sidebar is None:
             return False
         sidebar.key_editor.state_switcher.set_n_states(n_states)
         return False
 
-    def on_input_state_selected(self, controller, identifier, state) -> None:
+    def on_input_state_selected(self, controller: "DeckController", identifier: "InputIdentifier", state: int) -> None:
         GLib.idle_add(self._run_input_state_selected, controller, identifier, state)
 
-    def _run_input_state_selected(self, controller, identifier, state) -> bool:
+    def _run_input_state_selected(self, controller: "DeckController", identifier: "InputIdentifier", state: int) -> bool:
         sidebar = self._sidebar_for(controller, identifier)
         if sidebar is None:
             return False
@@ -417,13 +430,13 @@ class GtkUIAdapter(ui_port.UIPort):
         sidebar.update()
         return False
 
-    def _sidebar_for(self, controller, identifier, require_active_deck: bool = True):
+    def _sidebar_for(self, controller: "DeckController", identifier: "InputIdentifier", require_active_deck: bool = True) -> Any:
         """The sidebar, only while it shows identifier of controller.
 
         This runs on the main loop, and it holds the widget reads.
         """
         window = self._window
-        if not recursive_hasattr(window, "sidebar.active_identifier"):
+        if window is None or not recursive_hasattr(window, "sidebar.active_identifier"):
             return None
         sidebar = window.sidebar
         if sidebar.active_identifier != identifier:
@@ -432,17 +445,17 @@ class GtkUIAdapter(ui_port.UIPort):
             return None
         return sidebar
 
-    def set_low_fps_warning(self, controller, shown) -> None:
+    def set_low_fps_warning(self, controller: "DeckController", shown: bool) -> None:
         GLib.idle_add(self._run_set_low_fps_warning, controller, shown)
 
-    def _run_set_low_fps_warning(self, controller, shown) -> bool:
+    def _run_set_low_fps_warning(self, controller: "DeckController", shown: bool) -> bool:
         child = self._children.get(controller)
         if child is None or not hasattr(child, "low_fps_banner"):
             return False
         child.low_fps_banner.set_revealed(shown)
         return False
 
-    def on_deck_layout_changed(self, controller) -> None:
+    def on_deck_layout_changed(self, controller: "DeckController") -> None:
         """Rebuild the key grid of the deck for a new rotation.
 
         This runs inline on the main loop, because the one caller of
@@ -455,7 +468,7 @@ class GtkUIAdapter(ui_port.UIPort):
             return
         GLib.idle_add(self._run_deck_layout_changed, controller)
 
-    def _run_deck_layout_changed(self, controller) -> bool:
+    def _run_deck_layout_changed(self, controller: "DeckController") -> bool:
         # Function-local, because KeyGrid imports this module for mark_dirty.
         from src.windows.mainWindow.elements.KeyGrid import KeyGrid
 
@@ -471,41 +484,41 @@ class GtkUIAdapter(ui_port.UIPort):
 
     # Deprecated queries
 
-    def query_input_widget(self, controller, identifier):
+    def query_input_widget(self, controller: "DeckController", identifier: "InputIdentifier") -> "object | None":
         child = self._children.get(controller)
         if child is None:
             return None
         try:
-            return self._mirror_widget(child, identifier)
+            return cast("object | None", self._mirror_widget(child, identifier))
         except Exception:
             log.opt(exception=True).warning(f"Could not resolve the widget for {identifier}")
         return None
 
-    def query_deck_widget(self, controller, part: str):
+    def query_deck_widget(self, controller: "DeckController", part: str) -> "object | None":
         child = self._children.get(controller)
         if child is None:
             return None
         if part == "deck_stack_child":
-            return child
+            return cast("object | None", child)
         if part == "key_grid":
-            return self._grid(child)
+            return cast("object | None", self._grid(child))
         return None
 
     # App level
 
-    def on_deck_added(self, controller) -> None:
+    def on_deck_added(self, controller: "DeckController") -> None:
         window = self._window
-        if not recursive_hasattr(window, "leftArea.deck_stack"):
+        if window is None or not recursive_hasattr(window, "leftArea.deck_stack"):
             return
         GLib.idle_add(window.leftArea.deck_stack.add_page, controller)
 
-    def on_deck_removed(self, controller) -> None:
+    def on_deck_removed(self, controller: "DeckController") -> None:
         # Queue the detach idle here, before the return. The caller starts the
         # slow close thread at once, and a fast unplug and replug must not race
         # a late detach against a new add_page idle, which leaves two stack
         # children for one serial.
         window = self._window
-        if recursive_hasattr(window, "leftArea.deck_stack"):
+        if window is not None and recursive_hasattr(window, "leftArea.deck_stack"):
             GLib.idle_add(window.leftArea.deck_stack.remove_page, controller)
         self.unbind(controller)
 
@@ -517,7 +530,7 @@ class GtkUIAdapter(ui_port.UIPort):
 
     def on_page_list_changed(self) -> None:
         window = self._window
-        if not recursive_hasattr(window, "sidebar.page_selector"):
+        if window is None or not recursive_hasattr(window, "sidebar.page_selector"):
             return
         GLib.idle_add(window.sidebar.page_selector.update)
 

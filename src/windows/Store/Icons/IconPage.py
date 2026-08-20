@@ -46,9 +46,14 @@ class IconPage(StorePage):
 
     # Carry no @log.catch here. StorePage._load_guarded must see the failure,
     # so it can show the error page and arm the tab for a retry.
-    def load(self):
+    def load(self) -> None:
         self.set_loading()
-        result = self.store.backend.get_all_icons()
+        backend = self.store.backend
+        if backend is None:
+            # _load_guarded turns this into the error page and re-arms the
+            # tab, the same as any other failure this fetch can raise.
+            raise RuntimeError("the store backend is unavailable")
+        result = backend.get_all_icons()
         if isinstance(result, Err):
             self.show_connection_error()
             return
@@ -126,19 +131,24 @@ class IconPreview(StorePreview):
         GLib.idle_add(self.set_install_state, 1)
         return True
 
-    def notify_install_failure(self):
+    def notify_install_failure(self) -> None:
         name = self.icon_data.icon_name or self.icon_data.icon_id
         gl.notify.error(f"The icon pack {name} could not be installed",
                         title="Icon pack install failed")
 
-    def uninstall(self):
-        self.store.backend.uninstall_icon(icon_data=self.icon_data)
+    def uninstall(self) -> None:
+        backend = self.store.backend
+        if backend is None:
+            log.error("Store backend unavailable; cannot uninstall "
+                      f"{self.icon_data.icon_id}")
+            return
+        backend.uninstall_icon(icon_data=self.icon_data)
         self.set_install_state(0)
 
-    def update(self):
+    def update(self) -> None:
         self.install()
 
-    def on_click_main(self, button: Gtk.Button):
+    def on_click_main(self, button: Gtk.Button) -> None:
         self.icon_page.set_info_visible(True)
 
         # Update info page
@@ -150,4 +160,5 @@ class IconPreview(StorePreview):
         self.icon_page.info_page.set_license(self.icon_data.license)
         self.icon_page.info_page.set_copyright(self.icon_data.copyright)
         self.icon_page.info_page.set_original_url(self.icon_data.original_url)
-        self.icon_page.info_page.set_license_description(self.icon_data.license_descriptions)
+        self.icon_page.info_page.set_license_description(
+            gl.lm.get_custom_translation(self.icon_data.license_descriptions))

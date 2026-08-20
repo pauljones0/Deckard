@@ -26,9 +26,14 @@ if TYPE_CHECKING:
     from src.backend.DeckManagement.Subclasses.RemoteDeckManager import RemoteDeckManager
 
 class RemoteDeck:
-    def __init__(self, remote_deck_manager: "RemoteDeckManager", serial_number = None, deck_type = None):
-        self.remote_deck_manager: "RemoteDeckManager" = remote_deck_manager
-        self.serial_number = serial_number
+    def __init__(self, remote_deck_manager: "RemoteDeckManager | None", serial_number: "str | None" = None, deck_type: "str | None" = None) -> None:
+        self.remote_deck_manager: "RemoteDeckManager | None" = remote_deck_manager
+        if serial_number is None:
+            # The settings store is keyed by the deck serial and refuses a
+            # None key, so the first settings access, in set_key_layout,
+            # failed anyway.
+            raise ValueError("RemoteDeck needs a serial number")
+        self.serial_number: str = serial_number
         self._deck_type = deck_type
 
         self.is_fake = True
@@ -43,43 +48,46 @@ class RemoteDeck:
         # leaves the attribute missing until set_key_callback runs.
         self.key_callback: Callable[..., Any] | None = None
 
-    def deck_type(self):
+    def deck_type(self) -> "str | None":
         return self._deck_type
-    def get_serial_number(self):
+    def get_serial_number(self) -> str:
         return self.serial_number
-    def key_layout(self):
+    def key_layout(self) -> "list[int]":
         return self._key_layout
-    def is_open(self):
+    def is_open(self) -> bool:
         return True
-    def reset(self):
+    def reset(self) -> None:
         return
-    def key_count(self):
+    def key_count(self) -> int:
         return self.key_layout()[0] * self.key_layout()[1]
-    def set_key_callback(self, callback: Callable[..., Any]):
+    def set_key_callback(self, callback: Callable[..., Any]) -> None:
         self.key_callback = callback
-    def set_dial_callback(self, *args, **kwargs):
+    def set_dial_callback(self, *args: Any, **kwargs: Any) -> None:
         return
-    def set_touchscreen_callback(self, *args, **kwargs):
+    def set_touchscreen_callback(self, *args: Any, **kwargs: Any) -> None:
         return
-    def set_brightness(self, *args, **kwargs):
+    def set_brightness(self, *args: Any, **kwargs: Any) -> None:
         return
-    def set_key_image(self, key: int, image: bytes):
+    def set_key_image(self, key: int, image: bytes) -> None:
+        if self.remote_deck_manager is None:
+            # A deck built without a manager has no browser to send to.
+            return
         pillow_image = Image.open(BytesIO(image)).rotate(180)
         self.remote_deck_manager.send_button_image(key, pillow_image)
-    def key_states(self):
+    def key_states(self) -> "list[bool]":
         return [False] * self.key_count()
-    def key_image_format(self):
+    def key_image_format(self) -> "dict[str, Any]":
         return {'size': (72, 72), 'format': 'JPEG', 'flip': (True, True), 'rotation': 0}
-    def id(self):
+    def id(self) -> str:
         return str(uuid.uuid4())
-    def connected(self):
+    def connected(self) -> bool:
         return True
-    def __enter__(self):
+    def __enter__(self) -> "RemoteDeck":
         return self
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> bool:
         return True
     
-    def set_key_layout(self, layout: list[int]):
+    def set_key_layout(self, layout: list[int]) -> None:
         """
         Sets and saves a new key layout
         """
@@ -89,10 +97,10 @@ class RemoteDeck:
         settings["key-layout"] = layout
         gl.settings_manager.save_deck_settings(self.serial_number, settings)
 
-    def open(self, *args, **kwargs):
+    def open(self, *args: Any, **kwargs: Any) -> None:
         return
     
-    def close(self):
+    def close(self) -> None:
         return
     
     def is_visual(self) -> bool:
@@ -107,7 +115,7 @@ class RemoteDeck:
     def dial_count(self) -> int:
         return self._dial_count
     
-    def touchscreen_image_format(self) -> dict:
+    def touchscreen_image_format(self) -> dict[str, Any]:
         return{
             "size": (800, 100),
             "format": "JPEG",
@@ -115,5 +123,5 @@ class RemoteDeck:
             "rotation": 0
         }
     
-    def set_touchscreen_image(self, *args, **kwargs):
+    def set_touchscreen_image(self, *args: Any, **kwargs: Any) -> None:
         return

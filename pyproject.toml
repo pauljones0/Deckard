@@ -19,29 +19,60 @@ select = [
   "B030",  # `except` handlers that aren't exception classes/tuples
 ]
 
+[tool.pyright]
+# Editor/LSP navigation config only — the type gate is mypy (lint:types).
+# Every checkout root carries this section, so a server or CLI rooted in a git
+# worktree resolves that branch's own files. The server reads it once, at
+# start; a change here needs a fresh server, not a config touch.
+venvPath = "."
+venv = ".venv"               # resolves loguru, rpyc, gi (PyGObject-stubs), ... for hover and go-to-definition.
+                             # Worktrees carry no venv: run scripts/worktree-env.sh there once, which
+                             # symlinks the primary checkout's (gitignored, and excluded below via **/.*).
+pythonVersion = "3.13"       # deployment floor, same as ruff target-version and mypy python_version
+exclude = [
+  "aur-deckard-git",         # holds a full copy of the tree; indexing it duplicates every symbol
+  "**/__pycache__",          # from here down: pyright's defaults, restated because exclude replaces them
+  "**/.*",                   # covers .venv, .typecheck-ci-venv, .claude/worktrees
+]
+executionEnvironments = [
+  { root = "tests", extraPaths = [".", "tests"] },  # scenarios do `import fixtures` (harness sys.path) plus repo-root `src...` imports
+]
+
 [tool.mypy]
 python_version = "3.13"
 files = ["src", "GtkHelper"]
 mypy_path = "."
 explicit_package_bases = true   # src/ has no __init__.py files; imports are `src.backend...` from repo root
 ignore_missing_imports = true   # dasbus, evdev, pulsectl, StreamDeck, ... ship no stubs
-implicit_optional = true        # large pre-PEP-484 population; ratchet later
 
-# Zero errors under THIS config is not "fully type-checked": the tree reached
-# zero without changing a single value above, so the blind spots the defaults
-# leave are still there. Ratchet candidates, each a separate campaign (each
-# would resurface a batch of real errors):
+# The whole --strict family is on: strict = true pins it, and the two
+# members not restated below (disallow_untyped_calls, warn_redundant_casts)
+# are on through strict alone. An addition to --strict in a future mypy
+# surfaces here as an error and not as a silent gap.
+strict = true
+warn_unused_configs = true      # not part of strict: an override section that matches no module prints a note (the run still passes)
+
+# Tightened ratchets. Each was flipped once its whole tree was clean.
+extra_checks = true             # stricter TypedDict/overload/other core checks
+strict_equality = true          # a non-overlapping == is a comparison bug or a lie
+disallow_subclassing_any = true # subclassing an unstubbed base hides its whole surface
+no_implicit_reexport = true     # a name is public only where it is defined or explicitly re-exported
+implicit_optional = false       # a parameter that may be None says `| None` in its annotation
+disallow_any_generics = true    # a bare generic decays to Any; the type arguments are written out
+check_untyped_defs = true       # the body of an unannotated def is checked like any other
+warn_return_any = true          # an Any returned from a typed function launders itself into the caller's declared type
+warn_unreachable = true         # dead code is deleted, and a guard a wrong annotation kills gets the annotation fixed
+disallow_untyped_decorators = true  # an untyped decorator erases the wrapped function's signature
+warn_unused_ignores = true      # a stale `# type: ignore` self-reports instead of rotting
+disallow_untyped_defs = true    # an unannotated signature is a Callable[..., Any] at every call site
+disallow_incomplete_defs = true # a def with some parameters annotated and not others; zero errors at enablement
+
+# Zero errors under strict still leaves deliberate blind spots:
 #
-#   check_untyped_defs    -- bodies of unannotated defs are not checked at all;
-#                            e.g. the ActionCore has_*_control derefs, which are
-#                            invisible today. Biggest blind spot by volume.
-#   warn_unreachable      -- `if x is None:` on a non-Optional narrows to
-#                            uninhabited and the branch body is SILENTLY SKIPPED,
-#                            so a wrong late-init annotation reads as clean
-#                            (it once hid seven real optionals).
-#   implicit_optional     -- `def f(x: str = None)` is silently rewritten to
-#                            `str | None`, so parameter lies never surface.
-#   warn_unused_ignores   -- stale `# type: ignore`s do not self-report; finding
-#                            them needs a manual diagnostic run.
-#   disallow_any_generics -- bare generics decay to Any; DeckController.inputs
-#                            (list[Any]) is the load-bearing example.
+#   disallow_any_explicit -- flags every explicit Any annotation. Most of the
+#                            tree's Any is a deliberate boundary type at the
+#                            plugin, gi and duck-typed surfaces, so zero is
+#                            not the goal there.
+
+# check_untyped_defs and disallow_untyped_defs cover everything mypy checks,
+# with no per-module exemption, so no ratchet guard remains for them.

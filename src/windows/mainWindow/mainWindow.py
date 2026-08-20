@@ -22,7 +22,6 @@ from src.windows.mainWindow.elements.DeckSettingsButton import DeckSettingsButto
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Gtk, Adw, GLib, Gio, Gdk
-GLib.threads_init()
 
 # Import Python modules
 from loguru import logger as log
@@ -40,20 +39,26 @@ from src.backend.DeckManagement.deck_controller.controller import DeckController
 from src.backend.PageManagement.Page import Page
 
 from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, cast, Any
+
+if TYPE_CHECKING:
+    from src.backend.DeckManagement.DeckManager import DeckManager
+
 
 
 # Import globals
+from src.backend import services
+
 import globals as gl
 
 class MainWindow(Adw.ApplicationWindow):
-    def __init__(self, deck_manager, **kwargs):
-        gl.app.main_win = self
+    def __init__(self, deck_manager: "DeckManager", **kwargs: Any) -> None:
+        services.require_app().main_win = self
         super().__init__(**kwargs)
         self.deck_manager = deck_manager
 
         # Store copied stuff
-        self.key_dict = {}
+        self.key_dict: "dict[Any, Any]" = {}
 
         # Add tasks to run if build is complete
         self.on_finished: list[Callable[[], Any]] = []
@@ -65,12 +70,15 @@ class MainWindow(Adw.ApplicationWindow):
         self.set_default_size(1400, 900)
         self.connect("close-request", self.on_close)
 
-        self.key_clipboard: Gdk.Clipboard = Gdk.Display.get_default().get_clipboard()
+        display = Gdk.Display.get_default()
+        if display is None:
+            raise RuntimeError("there is no default display to take a clipboard from")
+        self.key_clipboard: Gdk.Clipboard = display.get_clipboard()
 
         if gl.argparser.parse_args().devel:
             self.add_css_class("devel")
 
-    def on_close(self, *args, **kwargs):
+    def on_close(self, *args: Any, **kwargs: Any) -> bool:
         keep_running = gl.settings_manager.app().keep_running
         if keep_running is None:
             dialog = KeepRunningDialog(self, self.on_close)
@@ -90,7 +98,7 @@ class MainWindow(Adw.ApplicationWindow):
         return True
 
     @log.catch
-    def build(self):
+    def build(self) -> None:
         #TODO: Put the objects in classes
         log.trace("Building main window")
         self.split_view = Adw.NavigationSplitView()
@@ -107,7 +115,10 @@ class MainWindow(Adw.ApplicationWindow):
         self.main_box.append(self.main_stack)
 
         # Add the main stack as the content widget of the split view
-        self.split_view.set_show_content(self.content_page)
+        # set_content above binds the page. This only asks the collapsed
+        # view to show content rather than sidebar, and the page it used to
+        # carry reached the C call as a plain True.
+        self.split_view.set_show_content(True)
 
         # Main toast
         self.toast_overlay = Adw.ToastOverlay()
@@ -163,57 +174,56 @@ class MainWindow(Adw.ApplicationWindow):
         gl.tray_icon.initialize(self)
         
 
-    def on_toggle_sidebar(self, button):
+    def on_toggle_sidebar(self, button: Gtk.Button) -> None:
+        # The toggle is inert. Collapsing the split view from here fought the
+        # width handling that sizes the sidebar.
         return
-        if button.get_active():
-            self.split_view.set_collapsed(False)
-        else:
-            self.split_view.set_collapsed(True)
 
-    def init_actions(self):
+    def init_actions(self) -> None:
         # Copy paste actions
         self.copy_action = Gio.SimpleAction.new("copy", None)
         self.cut_action = Gio.SimpleAction.new("cut", None)
         self.paste_action = Gio.SimpleAction.new("paste", None)
-        self.remove_action = Gio.SimpleAction.new("remove", None)
+        # Not self.remove_action: Gio.ActionMap gives every window a
+        # remove_action() method, and binding over it makes that method
+        # uncallable on this window.
+        self.remove_input_action = Gio.SimpleAction.new("remove", None)
 
         # Connect actions
         self.copy_action.connect("activate", self.on_copy)
         self.cut_action.connect("activate", self.on_cut)
         self.paste_action.connect("activate", self.on_paste)
-        self.remove_action.connect("activate", self.on_remove)
+        self.remove_input_action.connect("activate", self.on_remove)
 
         # Set accels
-        gl.app.set_accels_for_action("win.copy", ["<Primary>c"])
-        gl.app.set_accels_for_action("win.cut", ["<Primary>x"])
-        gl.app.set_accels_for_action("win.paste", ["<Primary>v"])
-        gl.app.set_accels_for_action("win.remove", ["Delete"])
+        app = services.require_app()
+        app.set_accels_for_action("win.copy", ["<Primary>c"])
+        app.set_accels_for_action("win.cut", ["<Primary>x"])
+        app.set_accels_for_action("win.paste", ["<Primary>v"])
+        app.set_accels_for_action("win.remove", ["Delete"])
         self.add_accel_actions()
 
 
-    def add_accel_actions(self):
+    def add_accel_actions(self) -> None:
+        # Inert, so the four actions init_actions builds never reach this
+        # window and the accelerators for them resolve to nothing. Every
+        # KeyButton and every Dial adds a Gtk.ShortcutController of its own
+        # for the same keys, as does each ScreenBar, and that is what serves
+        # them.
         return
-        self.add_action(self.copy_action)
-        self.add_action(self.cut_action)
-        self.add_action(self.paste_action)
-        self.add_action(self.remove_action)
 
-    def remove_accel_actions(self):
+    def remove_accel_actions(self) -> None:
         return
-        self.remove_action(self.copy_action)
-        self.remove_action("win.cut")
-        self.remove_action("win.paste")
-        self.remove_action("win.remove")
 
 
-    def change_ui_to_no_connected_deck(self):
+    def change_ui_to_no_connected_deck(self) -> None:
         if not hasattr(self, "leftArea"):
             self.add_on_finished(self.change_ui_to_no_connected_deck)
             return
         
         self.leftArea.show_no_decks_error()
 
-    def change_ui_to_connected_deck(self):
+    def change_ui_to_connected_deck(self) -> None:
         if not hasattr(self, "leftArea"):
             self.add_on_finished(self.change_ui_to_connected_deck)
             return
@@ -221,7 +231,7 @@ class MainWindow(Adw.ApplicationWindow):
         self.leftArea.hide_no_decks_error()
         self.deck_switcher.set_show_switcher(True)
 
-    def set_main_error(self, error: str=None):
+    def set_main_error(self, error: str | None=None) -> None:
         """
         error: str
             no-decks: Shows the no decks available error
@@ -232,7 +242,7 @@ class MainWindow(Adw.ApplicationWindow):
         # the window can't be observed halfway between the two modes.
         GLib.idle_add(self._apply_main_error, error)
 
-    def _apply_main_error(self, error: str=None) -> None:
+    def _apply_main_error(self, error: str | None=None) -> None:
         if error is None:
             self.main_stack.set_visible_child(self.toast_overlay)
             self.deck_switcher.set_show_switcher(True)
@@ -256,11 +266,11 @@ class MainWindow(Adw.ApplicationWindow):
         self.split_view.set_collapsed(True)
         self.deck_settings_button.set_visible(False)
 
-    def check_for_errors(self):
-        if len(gl.deck_manager.deck_controller) == 0:
+    def check_for_errors(self) -> None:
+        if len(services.require_deck_manager().deck_controller) == 0:
             self.set_main_error("no-decks")
 
-        elif len(gl.page_manager.get_page_names(add_custom_pages=False)) == 0:
+        elif len(services.require_page_manager().get_page_names(add_custom_pages=False)) == 0:
             self.set_main_error("no-pages")
 
         else:
@@ -268,48 +278,50 @@ class MainWindow(Adw.ApplicationWindow):
 
     def add_on_finished(self, task: Callable[[], Any]) -> None:
         if not callable(task):
-            return
+            # Plugins call this untyped, so the runtime check stays even
+            # though the annotation reads it as impossible.
+            return  # type: ignore[unreachable]
         if task in self.on_finished:
             return
         self.on_finished.append(task)
 
 
-    def reload_sidebar(self):
+    def reload_sidebar(self) -> None:
         if not hasattr(self, "sidebar"):
             self.add_on_finished(self.reload_sidebar)
             return
         
         self.sidebar.update()
 
-    def do_after_build_tasks(self):
+    def do_after_build_tasks(self) -> None:
         for task in self.on_finished:
             if callable(task):
                 task()
 
-    def on_copy(self, *args):
+    def on_copy(self, *args: Any) -> bool:
         child = get_deepest_focused_widget_with_attr(self, "on_copy")
-        if hasattr(child, "on_copy"):
+        if child is not None and hasattr(child, "on_copy"):
             child.on_copy()
 
         return False
 
-    def on_cut(self, *args):
+    def on_cut(self, *args: Any) -> bool:
         child = get_deepest_focused_widget_with_attr(self, "on_cut")
-        if hasattr(child, "on_cut"):
+        if child is not None and hasattr(child, "on_cut"):
             child.on_cut()
 
         return False
 
-    def on_paste(self, *args):
+    def on_paste(self, *args: Any) -> bool:
         child = get_deepest_focused_widget_with_attr(self, "on_paste")
-        if hasattr(child, "on_paste"):
+        if child is not None and hasattr(child, "on_paste"):
             child.on_paste()
 
         return False
 
-    def on_remove(self, *args):
+    def on_remove(self, *args: Any) -> bool:
         child = get_deepest_focused_widget_with_attr(self, "on_remove")
-        if hasattr(child, "on_remove"):
+        if child is not None and hasattr(child, "on_remove"):
             child.on_remove()
 
         return False
@@ -339,7 +351,7 @@ class MainWindow(Adw.ApplicationWindow):
         visible_child = self.leftArea.deck_stack.get_visible_child()
         if visible_child is None:
             return None
-        return visible_child.deck_controller
+        return cast("DeckController | None", visible_child.deck_controller)
 
     def get_active_page(self) -> Page | None:
         """The page that the selected deck shows, or None.

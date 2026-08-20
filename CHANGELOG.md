@@ -20,6 +20,44 @@ bundle as a release asset.
 
 ### Fixed
 
+- An icon pack, wallpaper pack or SD+ bar wallpaper pack whose manifest leaves
+  out its asset folder no longer stops every pack of that kind from loading.
+  One such pack used to fail the whole list, so the asset chooser showed none
+  of them; now that pack alone is reported as unusable. A manifest that leaves
+  out its thumbnail used to leave the chooser loading forever, and now loads
+  the pack without a thumbnail.
+- Tray menus now answer a host that asks for a single menu property. The
+  property was looked up in the wrong place and the reply was built in the
+  wrong shape, so the host got no reply at all and waited for its timeout.
+- Onboarding no longer fails to report which recommended plugins could not be
+  installed. A plugin whose store record carries no name put nothing in the
+  list, and building the summary message then failed.
+- A plugin's settings window now opens when one of the plugin's custom icons
+  has had its image file deleted. The window failed to build at all, so none
+  of that plugin's settings could be reached.
+- The info button on an icon inside an icon pack now works when the pack
+  ships no attribution for that icon. The dialog failed to open instead.
+- Reverting a background colour no longer leaves the colour picker unable to
+  save. A failure part-way through the revert used to disconnect the row's
+  signals and never reconnect them, so later colour changes on that row were
+  quietly dropped.
+- The deck pickers in the page editor now open when one deck cannot be
+  identified. A deck whose serial number could not be read used to stop the
+  whole list from building, so neither the default-page row nor the
+  auto-change row could pick a deck.
+- Changing a page's brightness, background or screensaver override now
+  reaches every connected deck. A deck that had not loaded a page yet used to
+  stop the update, so any deck listed after it kept the old setting until the
+  next page load.
+- Opening the details of a store icon pack, wallpaper or SD+ bar wallpaper no
+  longer fails when the asset carries translated licence descriptions. The
+  details panel raised an error and stayed on the previous asset's values;
+  now it shows the description for the active language.
+- The About dialog of a plugin now opens when the plugin's manifest omits its
+  name, version or repository. It used to fail silently and show nothing.
+- Editing or resetting a custom plugin icon whose image file has since been
+  deleted no longer fails. The icon editor now reports that there is no image
+  behind the entry instead of doing nothing.
 - The store no longer marks an icon pack or wallpaper as installed when its
   download actually failed. An install button used to flip to "installed" over
   a pack that a 404, a rejected file, or an unreachable store had never

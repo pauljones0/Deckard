@@ -1,6 +1,6 @@
 from gi.repository import Gtk, Adw
 
-from typing import TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 
 from src.windows.mainWindow.elements.Sidebar.elements.ActionManager import ActionManager
 from src.windows.mainWindow.elements.Sidebar.elements.BackgroundEditor import BackgroundEditor
@@ -10,7 +10,8 @@ from src.windows.mainWindow.elements.Sidebar.elements.StateSwitcher import State
 if TYPE_CHECKING:
     from src.windows.mainWindow.elements.Sidebar.Sidebar import Sidebar
 
-import globals as gl
+from src.backend import services
+from src.backend.DeckManagement.InputIdentifier import InputIdentifier
 
 class ScreenEditor(Gtk.ScrolledWindow):
     def __init__(self, sidebar: "Sidebar"):
@@ -19,7 +20,7 @@ class ScreenEditor(Gtk.ScrolledWindow):
 
         self.build()
 
-    def build(self):
+    def build(self) -> None:
         self.clamp = Adw.Clamp(hexpand=True, vexpand=True)
         self.set_child(self.clamp)
 
@@ -49,62 +50,63 @@ class ScreenEditor(Gtk.ScrolledWindow):
         self.main_box.append(self.remove_state_button)
 
 
-    def on_state_switch(self, *args):
+    def on_state_switch(self, *args: Any) -> None:
         state = self.state_switcher.get_selected_state()
         # self.sidebar.active_state = self.state_switcher.get_selected_state()
 
-        visible_child = gl.app.main_win.leftArea.deck_stack.get_visible_child()
+        visible_child = services.require_main_window().leftArea.deck_stack.get_visible_child()
         if visible_child is None:
             return
         controller = visible_child.deck_controller
+
+        # get_input answers the one input for this identifier. A controller
+        # carries no touchscreens list to walk.
+        touchscreen = controller.get_input(self.sidebar.active_identifier)
+        if touchscreen is None:
+            return
+        touchscreen.set_state(state, update_sidebar=True)
+
+    def on_add_new_state(self, state: int) -> None:
+        controller = services.require_main_window().get_active_controller()
+
         if controller is None:
             return
         
-        for t in controller.touchscreens:
-            if t.identifier == self.sidebar.active_identifier:
-                t.set_state(state, update_sidebar=True)
-                break
-
-    def on_add_new_state(self, state):
-        controller = gl.app.main_win.get_active_controller()
-
-        if controller is None:
+        touchscreen = controller.get_input(self.sidebar.active_identifier)
+        if touchscreen is None:
             return
-        
-        for t in controller.touchscreens:
-            if t.identifier == self.sidebar.active_identifier:
-                t.add_new_state()
-                self.remove_state_button.set_visible(self.state_switcher.get_n_states() > 1)
-                break
+        touchscreen.add_new_state()
+        self.remove_state_button.set_visible(self.state_switcher.get_n_states() > 1)
 
-    def on_remove_state(self, button):
+    def on_remove_state(self, button: Gtk.Button) -> None:
         if self.state_switcher.get_n_states() <= 1:
             return
 
-        controller = gl.app.main_win.get_active_controller()
+        controller = services.require_main_window().get_active_controller()
         if controller is None:
             return
         
         active_state = self.state_switcher.get_selected_state()
         
-        for t in controller.touchscreens:
-            if t.identifier == self.sidebar.active_identifier:
-                t.remove_state(active_state)
-                break
+        touchscreen = controller.get_input(self.sidebar.active_identifier)
+        if touchscreen is None:
+            return
+        touchscreen.remove_state(active_state)
 
         self.remove_state_button.set_visible(self.state_switcher.get_n_states() > 1)
 
 
-    def load_for_identifier(self, identifier, state):
+    def load_for_identifier(self, identifier: InputIdentifier, state: int) -> None:
         self.sidebar.active_identifier = identifier
 
-        controller = gl.app.main_win.get_active_controller()
+        controller = services.require_main_window().get_active_controller()
         if controller is None:
             return
         
         controller_input = controller.get_input(identifier)
         self.state_switcher.load_for_identifier(identifier, state)
-        controller_input.set_state(state, update_sidebar=False)
+        if controller_input is not None:
+            controller_input.set_state(state, update_sidebar=False)
 
         self.remove_state_button.set_visible(self.state_switcher.get_n_states() > 1)
 

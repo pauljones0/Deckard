@@ -3,7 +3,7 @@ Author: G4PLS
 Year: 2024
 """
 
-from typing import TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 
 from .Manager import Manager
 from .Asset import Color, Icon
@@ -34,7 +34,7 @@ class AssetManager:
         keeps pointing at a file the plugin stopped using."""
         return PluginSettings(self.plugin_base.settings_path)
 
-    def load_assets(self):
+    def load_assets(self) -> "dict[str, Any] | None":
         # The first reader of this file. PluginBase.__init__ runs before
         # register(), and a plugin that never registers, because a version gate
         # or an incomplete manifest stops it, has no other reader. A corrupt
@@ -48,8 +48,9 @@ class AssetManager:
         assets = content.get("assets", {})
         self.icons.load_json(assets)
         self.colors.load_json(assets)
+        return None
 
-    def save_assets(self):
+    def save_assets(self) -> None:
         assets = {}
         assets[self.colors.get_save_key()] = self.colors.get_override_json()
         assets[self.icons.get_save_key()] = self.icons.get_override_json()

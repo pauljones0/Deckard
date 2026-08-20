@@ -14,7 +14,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 """
 
 import gi
-from gi.repository import GLib
+gi.require_version("Gtk", "4.0")
+from gi.repository import GLib, Gtk
 
 gi.require_version("Xdp", "1.0")
 from gi.repository import Xdp
@@ -32,11 +33,11 @@ from src.windows.Permissions.FlatpakPermissionRequest import FlatpakPermissionRe
 
 
 class FlatpakPermissionManager:
-    def __init__(self):
+    def __init__(self) -> None:
         self.portal = Xdp.Portal.new()
         self.app_id = appinfo.APP_ID
 
-    def get_is_flatpak(self):
+    def get_is_flatpak(self) -> bool:
         return self.portal.running_under_flatpak()
     
     def add_spawn_prefix_if_needed(self, command: str) -> str:
@@ -103,7 +104,9 @@ class FlatpakPermissionManager:
 
         return command
     
-    def show_dbus_permission_request_dialog(self, name: str, bus: str="session", description: str="None"):
+    # The default was the string "None", so the is-None substitution below
+    # never fired and the dialog carried a literal "None" description.
+    def show_dbus_permission_request_dialog(self, name: str, bus: str="session", description: str | None = None) -> None:
         if not self.get_is_flatpak():
             return
         if self.has_dbus_permission(name, bus):
@@ -115,7 +118,7 @@ class FlatpakPermissionManager:
             description = gl.lm.get("permissions.request.default-description")
 
         command = self.get_dbus_permission_add_command(name, bus)
-        window = None
+        window: Gtk.Window | None = None
         # The request can arrive before the main window exists, so check both.
         app = gl.app
         if app is not None and hasattr(app, "main_win"):
@@ -126,6 +129,6 @@ class FlatpakPermissionManager:
             if gl.store is not None:
                 window = gl.store
 
-        window = FlatpakPermissionRequestWindow(gl.app, window, command=command, description=description)
+        request_window = FlatpakPermissionRequestWindow(gl.app, window, command=command, description=description)
         # window.present()
-        GLib.idle_add(window.present) # Present on the idle loop, because a direct present() flickers
+        GLib.idle_add(request_window.present) # Present on the idle loop, because a direct present() flickers

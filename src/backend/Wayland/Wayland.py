@@ -11,27 +11,27 @@ from src.backend.Wayland import WaylandSignals
 
 
 class Wayland:
-    def __on_wl_registry_global(self, name, interface, version):
+    def __on_wl_registry_global(self, name: int, interface: str, version: int) -> None:
         if interface == "hyprland_lock_notifier_v1":
             log.debug("Hyprland lock notifier found, hooking...")
             wayland.wl_registry.bind(name, interface, version, name)
             wayland.hyprland_lock_notifier_v1.get_lock_notification()
 
-    def __on_lock(self):
+    def __on_lock(self) -> None:
         gl.signal_manager.trigger_signal(WaylandSignals.HyprlandLock)
 
-    def __on_unlock(self):
+    def __on_unlock(self) -> None:
         gl.signal_manager.trigger_signal(WaylandSignals.HyprlandUnlock)
 
-    def __on_quit(self):
+    def __on_quit(self) -> None:
         self.__quit = True
 
-    def __tick_wayland_messages_threaded(self):
+    def __tick_wayland_messages_threaded(self) -> None:
         while not self.__quit:
             wayland.process_messages()
             time.sleep(self.__TICK_DELAY)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.__quit = False
         self.__TICK_DELAY = 0.1
         if not getenv("WAYLAND_DISPLAY", False):

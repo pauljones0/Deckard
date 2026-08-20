@@ -18,14 +18,14 @@ import os
 
 import globals as gl
 
-from typing import TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 if TYPE_CHECKING:
     from src.backend.DeckManagement.deck_controller.inputs import ControllerInput
 
 _error_image: Image.Image | None = None
 
 class SingleKeyAsset:
-    def __init__(self, controller_input: "ControllerInput"):
+    def __init__(self, controller_input: "ControllerInput[Any]"):
         self.controller_input = controller_input
         self.deck_controller = controller_input.deck_controller
 
@@ -45,5 +45,5 @@ class SingleKeyAsset:
         # Return a copy so callers can composite or close it freely.
         return _error_image.copy()
     
-    def close(self):
+    def close(self) -> None:
         pass

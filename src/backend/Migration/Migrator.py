@@ -21,6 +21,7 @@ from packaging import version
 from loguru import logger as log
 
 from src.backend.atomic_json import atomic_write_json, prune_corrupt_sidecars, quarantine_corrupt_file
+from typing import cast, Any
 
 class Migrator:
     SETTINGS_DIR = os.path.join(gl.DATA_PATH, "settings", "migrations.json")
@@ -42,13 +43,13 @@ class Migrator:
         settings[self.app_version] = migrated
         self.set_settings(settings)
 
-    def get_settings(self) -> dict:
+    def get_settings(self) -> dict[str, Any]:
         """SettingsManager does not exist yet when a caller reaches this."""
         if not os.path.exists(self.SETTINGS_DIR):
             return {}
         try:
             with open(self.SETTINGS_DIR, "r") as f:
-                return json.load(f)
+                return cast(dict[str, Any], json.load(f))
         except ValueError as e:
             # Catch ValueError. A file of garbage bytes raises
             # UnicodeDecodeError while the reader decodes it, and json raises
@@ -87,9 +88,13 @@ class Migrator:
             )
             return {}
         
-    def set_settings(self, settings: dict) -> None:
+    def set_settings(self, settings: dict[str, Any]) -> None:
         """SettingsManager does not exist yet when a caller reaches this."""
         atomic_write_json(self.SETTINGS_DIR, settings)
+
+    def migrate(self) -> None:
+        """Apply this migrator's changes. Every concrete migrator defines it."""
+        raise NotImplementedError
 
     def create_backup(self) -> None:
         # Back up every tree a migrator can rewrite or delete, which are

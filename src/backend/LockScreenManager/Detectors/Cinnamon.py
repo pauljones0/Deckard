@@ -12,6 +12,8 @@ This programm comes with ABSOLUTELY NO WARRANTY!
 You should have received a copy of the GNU General Public License
 along with this program. If not, see <https://www.gnu.org/licenses/>.
 """
+from gi.repository import Gio, GLib
+
 from src.backend.LockScreenManager.LockScreenDetector import LockScreenDetector
 
 from typing import TYPE_CHECKING
@@ -28,10 +30,12 @@ class CinnamonLockScreenDetector(LockScreenDetector):
             self.on_dbus_signal
         )
 
-    def screen_saver_active_changed(self, active):
+    def screen_saver_active_changed(self, active: bool) -> None:
         active = True if active == 1 else False
 
         self.lock_screen_manager.lock(active)
 
-    def on_dbus_signal(self, connection, sender_name, object_path, interface_name, signal_name, parameters):
+    def on_dbus_signal(self, connection: Gio.DBusConnection, sender_name: str,
+                       object_path: str, interface_name: str, signal_name: str,
+                       parameters: GLib.Variant) -> None:
         self.screen_saver_active_changed(parameters.unpack()[0])
