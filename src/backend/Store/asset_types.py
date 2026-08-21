@@ -2,11 +2,11 @@
 of work that four types share.
 
 The four asset classes, which are plugins, icon packs, wallpapers and SD+ bar
-wallpapers, differ in a handful of names. Which catalog file lists them, which
-directory they install into, which dataclass describes them, and what the id,
-name and version fields on that dataclass are called. A descriptor names those
-differences as data, so the prepare, install and update pipelines exist once
-and look the right names up here.
+wallpapers, differ in a handful of names. Those names are the catalog file
+that lists them, the directory they install into, and the dataclass that
+describes them. They also include the id, name and version field names on
+that dataclass. A descriptor names those differences as data, so the prepare,
+install and update pipelines exist once and look the right names up here.
 
 Two constraints shape the field types, and both come from how the store is
 tested and how the data directory moves under it.

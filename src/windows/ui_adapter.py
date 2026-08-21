@@ -46,8 +46,8 @@ def mark_dirty(controller: "DeckController", identifier: "InputIdentifier") -> N
     """Record a frame that the adapter accepted and then dropped.
 
     push_input_image returns True as soon as a frame reaches the mirror slot of
-    the input, and the window can unmap before that paint runs, so no engine
-    call is left to return False. load_from_changes replays what lands here.
+    the input. The window can unmap before that paint runs. No engine call is
+    then left to return False. load_from_changes replays what lands here.
     """
     # The markers dict lives on the controller, so a detached UI client can
     # ask the engine to composite again.
@@ -74,9 +74,9 @@ class _MirrorSlot:
     """Latest-wins hand-off of the preview frames of one input.
 
     A producer leaves a paint-ready payload here and arms at most one main-loop
-    callback. That callback paints whatever the slot holds when it runs, so a
-    backlogged loop keeps one callback and one payload per input, and the
-    newest frame is the one that lands.
+    callback. That callback paints whatever the slot holds when it runs. A
+    backlogged loop therefore keeps one callback and one payload per input, and
+    the newest frame is the one that lands.
     """
 
     __slots__ = ("_interval", "_lock", "_pending", "_armed", "_last_drain")
@@ -476,8 +476,9 @@ class GtkUIAdapter(ui_port.UIPort):
 
         This runs inline on the main loop, because the one caller of
         set_rotation runs there and reloads the page at once. An idled rebuild
-        lets those repaints reach the grid from before the rotation, where the
-        transposed buttons raise IndexError and the frames drop with no marker.
+        lets those repaints reach the grid from before the rotation. The
+        transposed buttons there raise IndexError, and the frames drop with no
+        marker.
         """
         if threading.current_thread() is threading.main_thread():
             self._run_deck_layout_changed(controller)

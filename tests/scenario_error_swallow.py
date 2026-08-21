@@ -21,7 +21,7 @@ def main() -> None:
         media_player.perform_media_player_tasks()
 
     assert deck.last_op_for("key:0") is None, "a failed write must never journal"
-    assert len(deck_manager.remove_calls) == 0, (
+    assert not deck_manager.remove_calls, (
         "TransportErrors must never remove the controller -- removal comes "
         "solely from USB disconnect events now (plan §9.1)"
     )

@@ -115,8 +115,7 @@ class DynamicFlowBox(Gtk.Box, Generic[WidgetT, T]):
 
     def get_items_to_show(self) -> list[T]:
         filtered_items = self.filter_items(self.items)
-        sorted_items = self.sort_items(filtered_items)
-        return sorted_items
+        return self.sort_items(filtered_items)
     
 
     def show_range(self, start: int, end: int) -> None:

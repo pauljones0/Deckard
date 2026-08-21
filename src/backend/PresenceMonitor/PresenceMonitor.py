@@ -20,9 +20,10 @@ evaluates this rule.
 The default mode "screensaver" makes this object report False forever, which
 matches the behaviour of an app without this monitor.
 
-Those inputs arrive on three threads, which are the GLib default main context
-for a Gio callback, a timer_wheel dispatch thread for the idle deadline, and a
-deck reader thread for notify_activity. This module makes no GTK call.
+Those inputs arrive on three threads. A Gio callback arrives on the GLib
+default main context. The idle deadline arrives on a timer_wheel dispatch
+thread. notify_activity arrives on a deck reader thread. This module makes no
+GTK call.
 """
 import os
 import threading
@@ -150,12 +151,13 @@ class PresenceMonitor:
 
     def on_lock_changed(self, active: bool) -> None:
         """Called from LockScreenManager.lock() right after it publishes
-        gl.screen_locked, which that method does before its
-        lock_on_lock_screen early return, so the lock stays a usable presence
-        input for a user who keeps the decks live on lock. active carries that
-        same value, and only the log reads it. The evaluation re-reads gl.screen_locked, so this object and
-        the rest of the app cannot disagree about the lock state. The
-        constructor's seeding evaluation has no argument to read."""
+        gl.screen_locked. That method publishes before its
+        lock_on_lock_screen early return. The lock therefore stays a usable
+        presence input for a user who keeps the decks live on lock. active
+        carries that same value, and only the log reads it. The evaluation
+        re-reads gl.screen_locked, so this object and the rest of the app
+        cannot disagree about the lock state. The constructor's seeding
+        evaluation has no argument to read."""
         log.debug(f"PresenceMonitor: screen lock -> {active}")
         if not active:
             # An unlock means a person at the machine. On a session whose idle
@@ -299,9 +301,9 @@ class PresenceMonitor:
             self._wake_media_threads()
 
     def _wake_media_threads(self) -> None:
-        """Cuts short every media loop's inter-tick wait so a presence
-        transition takes effect on the next tick instead of after up to half
-        a second of gated cadence."""
+        """Cuts short every media loop's inter-tick wait. A presence
+        transition then takes effect on the next tick, instead of after up to
+        half a second of gated cadence."""
         deck_manager = getattr(gl, "deck_manager", None)
         if deck_manager is None:
             return

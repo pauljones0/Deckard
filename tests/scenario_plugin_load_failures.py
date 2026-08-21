@@ -219,7 +219,7 @@ def main() -> None:
                 # dict gives a torn value.
                 assert 0 <= n_failed <= 8, f"torn load_errors read: {n_failed}"
                 assert n_disabled >= 0
-        except BaseException as e:  # noqa: BLE001 -- surface to the main thread
+        except BaseException as e:  # noqa: BLE001 (surfaced to the main thread)
             reader_error.append(e)
 
     reader_thread = threading.Thread(target=reader, name="load_health_reader")

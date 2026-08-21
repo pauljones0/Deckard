@@ -175,7 +175,7 @@ class TouchScreenAction(InputAction, ActionCore):
         pass
 
 
-###### Usage example
+# Usage example.
 
 # class VolumeAction(ActionCore):
 #     def increase():

@@ -89,7 +89,7 @@ def quarantine_corrupt_file(file_path: str) -> tuple[bool, str]:
     so a caller must not gate its recovery on moved. dest is the sidecar on
     success and the untouched original path on failure.
 
-    This takes the first free .corrupt, .corrupt.1, .corrupt.2 and so on, and
+    This takes the first free .corrupt, .corrupt.1, .corrupt.2 and so on. It
     keeps an earlier sidecar, so a second corruption cannot destroy the first
     forensic copy. os.replace of the chosen name stays atomic. Two threads can
     pick one free slot; the loser then overwrites an equally corrupt file, or
@@ -128,11 +128,12 @@ def prune_corrupt_sidecars(primary_path: str, keep: int = CORRUPT_SIDECAR_KEEP,
     protect names sidecars that survive whatever their age. Pass the sidecar
     the caller just created. Age is the sidecar's mtime, which os.replace
     carries over from the corrupt primary. That is the time the corrupt
-    content was written, and not the time the sidecar appeared. A backup tool that restores a
-    corrupt primary keeps its old mtime, so the fresh forensic copy sorts
-    older than the sidecars already on disk and prunes first without protect.
-    A protected entry still counts toward keep, so the surviving total holds
-    and the next-oldest unprotected sidecar goes instead.
+    content was written, and not the time the sidecar appeared. A backup tool
+    that restores a corrupt primary keeps its old mtime. The fresh forensic
+    copy then sorts older than the sidecars already on disk, and prunes first
+    without protect. A protected entry still counts toward keep, so the
+    surviving total holds and the next-oldest unprotected sidecar goes
+    instead.
 
     Names hold no age order. quarantine_corrupt_file takes the first free slot,
     so the next corruption recycles a pruned .corrupt. The name breaks a tie
@@ -201,11 +202,11 @@ def atomic_write_json(file_path: str, data: Any, indent: int | None = 4) -> None
     """Write data as JSON to file_path atomically and durably.
 
     This serializes the payload into a temp file in the target's real
-    directory, fsyncs it, chmods it (an existing file keeps its mode, a new
-    file follows the process umask), and moves it in with os.replace(). It
-    then fsyncs the directory, so the rename survives a crash. An interrupted
-    write leaves no partial file at file_path, and a reader sees the old
-    content or the new content.
+    directory, fsyncs it, chmods it, and moves it in with os.replace(). An
+    existing file keeps its mode, and a new file follows the process umask.
+    It then fsyncs the directory, so the rename survives a crash. An
+    interrupted write leaves no partial file at file_path, and a reader sees
+    the old content or the new content.
 
     This follows a symlinked target. The write lands in the link's real file
     and the link stays a link. os.replace on the link path detaches a managed

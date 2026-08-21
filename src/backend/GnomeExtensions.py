@@ -54,8 +54,7 @@ class GnomeExtensions:
         if proxy is None:
             return extensions
         reply = proxy.call_sync("ListExtensions", None, Gio.DBusCallFlags.NONE, -1, None)
-        for extension in reply.unpack()[0]:
-            extensions.append(extension)
+        extensions.extend(reply.unpack()[0])
         return extensions
 
     def request_installation(self, uuid: str) -> bool:

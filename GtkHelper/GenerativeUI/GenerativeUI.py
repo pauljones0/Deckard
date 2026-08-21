@@ -173,9 +173,9 @@ class GenerativeUI[T](ABC):
     @property
     def is_built(self) -> bool:
         """True once the widget has actually been constructed. Value-layer
-        operations (get_value/set_value/settings sync) never need this;
-        widget-sync code paths use it to skip work when there's no widget to
-        sync yet, instead of forcing a build just to find that out."""
+        operations (get_value/set_value/settings sync) never need this.
+        Widget-sync code paths use it to skip work when no widget exists yet,
+        instead of forcing a build to find that out."""
         return self._widget is not None
 
     @property

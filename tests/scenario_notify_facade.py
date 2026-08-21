@@ -59,7 +59,7 @@ def call_from_worker(fn, *args, **kwargs) -> None:
     def worker():
         try:
             fn(*args, **kwargs)
-        except BaseException as e:  # noqa: BLE001 -- surfaced below
+        except BaseException as e:  # noqa: BLE001  (surfaced below)
             errors.append(e)
 
     t = threading.Thread(target=worker, name="notify_caller")

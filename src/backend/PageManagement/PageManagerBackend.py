@@ -118,10 +118,10 @@ class PageManagerBackend:
                 entry = self.pages.get(deck_controller, {}).get(path)
                 if entry is not None:
                     entry["page_number"] = self.page_number
-                    page_object: Page | None = entry["page"]
+                    page: Page | None = entry["page"]
                     self.page_number += 1
-                    self.pins.reserve_fetch(page_object, deck_controller)
-                    return page_object
+                    self.pins.reserve_fetch(page, deck_controller)
+                    return page
 
                 in_flight = self._loads_in_flight.get(in_flight_key)
                 if in_flight is None:
@@ -135,10 +135,10 @@ class PageManagerBackend:
                 # where a plugin loads the same page during action init. A wait
                 # here self-deadlocks, so construct directly. This builds a twin
                 # Page, which only this rare case can reach.
-                page_object = self.load_page(path, deck_controller)
-                self.pins.reserve_fetch(page_object, deck_controller)
+                page = self.load_page(path, deck_controller)
+                self.pins.reserve_fetch(page, deck_controller)
                 self.clear_old_cached_pages()
-                return page_object
+                return page
 
             done.wait()
             # The builder ended, so re-check the cache. After a failed load
@@ -149,7 +149,7 @@ class PageManagerBackend:
         # construction does file I/O outside that hold, so a slow load stalls
         # no lookup of another controller.
         try:
-            page_object = self.load_page(path, deck_controller)
+            page = self.load_page(path, deck_controller)
         finally:
             # Release the waiters even when the construction raises. They
             # re-check the cache and take over while it stays empty.
@@ -159,9 +159,9 @@ class PageManagerBackend:
 
         # Reserve before this fetch's own eviction pass. That pass sorts a
         # fresh page last, so it reaches one only when the excess covers all.
-        self.pins.reserve_fetch(page_object, deck_controller)
+        self.pins.reserve_fetch(page, deck_controller)
         self.clear_old_cached_pages()
-        return page_object
+        return page
 
     def discard_controller(self, deck_controller: "DeckController") -> None:
         """Drop every cached page entry of a torn-down controller.
@@ -271,12 +271,12 @@ class PageManagerBackend:
                 if controller.active_page is None:
                     continue
                 for path, page_data in controller_pages.items():
-                    page_obj = page_data["page"]
-                    if page_obj is controller.active_page:
+                    page = page_data["page"]
+                    if page is controller.active_page:
                         continue
-                    if self.pins.is_pinned(page_obj):
+                    if self.pins.is_pinned(page):
                         continue
-                    evictable.append((page_data["page_number"], controller_pages, path, page_obj))
+                    evictable.append((page_data["page_number"], controller_pages, path, page))
 
             evictable.sort(key=lambda entry: entry[0])
             to_evict = evictable[:excess]
@@ -284,7 +284,7 @@ class PageManagerBackend:
         # A concurrent discard_controller() can pop the whole entry of one of
         # these controllers first. controller_pages stays the same dict object,
         # now orphaned, so the pop below is a no-op and not a KeyError.
-        for _, controller_pages, path, page_obj in to_evict:
+        for _, controller_pages, path, page in to_evict:
             # Re-validate under the lock, just before the teardown. Since the
             # snapshot the page can have become live: a load_page activated it
             # (WindowGrabber cycling makes this cache pressure), a controller
@@ -294,18 +294,18 @@ class PageManagerBackend:
             # gutted one.
             with self._pages_lock:
                 current_entry = controller_pages.get(path)
-                if current_entry is None or current_entry.get("page") is not page_obj:
+                if current_entry is None or current_entry.get("page") is not page:
                     continue  # discarded or replaced already
-                if self.pins.is_pinned(page_obj):
+                if self.pins.is_pinned(page):
                     continue
-                if self._page_is_live(page_obj):
+                if self._page_is_live(page):
                     continue
                 controller_pages.pop(path, None)
             log.info(f"Evicting cached page {path}")
             # The teardown stays outside the lock. It can run plugin hooks,
             # and a wedged hook must not stall a close() or a get_page() that
             # waits on this lock.
-            page_obj.clear_action_objects()
+            page.clear_action_objects()
 
     def _page_is_live(self, page_obj: "Page") -> bool:
         """Answer True when a controller depends on this Page object.
@@ -756,8 +756,8 @@ class PageManagerBackend:
         """Replace a whole page with data, for the whole-page editor.
 
         It goes through the document and not over the file. A file write leaves
-        the page holding its old content, so an edit of that page still on its
-        timer writes the pre-replacement content back over this one. A
+        the page holding its old content. An edit of that page still on its
+        timer then writes the pre-replacement content back over this one. A
         replacement of the content makes the two one thing.
         """
         self.get_document(path).replace(data)
@@ -978,8 +978,8 @@ class PageManagerBackend:
         background poll for every user who never touches the feature.
 
         It reads through the per-page accessor the matcher uses, so the gate
-        and the matcher agree on what counts as a rule, and it stops at the
-        first hit.
+        and the matcher agree on what counts as a rule. It stops at the first
+        hit.
         """
         # The pages hold these rules and no index lists them. A page is small,
         # about 16 KB for a full deck, and boot reads every one of them for the

@@ -106,7 +106,7 @@ _LIBC = ctypes.CDLL("libc.so.6", use_errno=True)
 def _die_with_parent() -> None:
     """Ask the kernel to SIGKILL this child when its parent dies.
 
-    The scenario kills the daemon in a finally, but the harness watchdog and a
+    The scenario kills the daemon in a finally. The harness watchdog and a
     hard failure both end the process with os._exit and run no finally.
     """
     _LIBC.prctl(PR_SET_PDEATHSIG, signal.SIGKILL)
@@ -116,8 +116,8 @@ def start_private_bus() -> tuple[subprocess.Popen, str]:
     """Run a private dbus-daemon and point the process at it.
 
     Gio.TestDBus waits at teardown for the shared session connection to be
-    finalized, and GDBus holds a reference per dispatched call, so the wait
-    burns its full 30-second timeout here. Owning the daemon drops the wait.
+    finalized. GDBus holds a reference per dispatched call, so the wait burns
+    its full 30-second timeout here. Owning the daemon drops the wait.
     """
     assert shutil.which("dbus-daemon") is not None, (
         "dbus-daemon is not on PATH, so this scenario cannot start an isolated "

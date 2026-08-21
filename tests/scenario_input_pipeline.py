@@ -33,16 +33,16 @@ _DELIVERED: list = []
 _DELIVERED_LOCK = threading.Lock()
 
 
-def _record(ident_str, event, data):
+def _record(ident, event, data):
     with _DELIVERED_LOCK:
-        _DELIVERED.append((ident_str, event, data))
+        _DELIVERED.append((ident, event, data))
 
 
-def _delivered_events(ident_str=None):
+def _delivered_events(ident=None):
     with _DELIVERED_LOCK:
-        if ident_str is None:
+        if ident is None:
             return [(e, d) for (i, e, d) in _DELIVERED]
-        return [(e, d) for (i, e, d) in _DELIVERED if i == ident_str]
+        return [(e, d) for (i, e, d) in _DELIVERED if i == ident]
 
 
 def _reset_delivered():
@@ -74,7 +74,7 @@ class RecordingAction(ActionCore):
 
     def __init__(self, *a, **k):
         super().__init__(*a, **k)
-        ident_str = self.input_ident.json_identifier
+        ident = self.input_ident.json_identifier
         input_type = self.input_ident.input_type
         if input_type == Input.Key.input_type:
             events = self._KEY_EVENTS
@@ -85,12 +85,12 @@ class RecordingAction(ActionCore):
 
         for ev in events:
             # A fresh closure per event, so the recorded event is the right one.
-            def make_cb(event=ev, ident=ident_str):
+            def make_cb(event=ev, ident=ident):
                 def cb(data=None):
                     _record(ident, event, data)
                 return cb
             self.add_event_assigner(EventAssigner(
-                id=f"rec_{ident_str}_{ev.string_name}",
+                id=f"rec_{ident}_{ev.string_name}",
                 ui_label=ev.string_name,
                 callback=make_cb(),
                 default_events=[ev],

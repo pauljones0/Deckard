@@ -2,8 +2,9 @@
 Regression scenario for Migrator_1_5_0_beta_5.migrate_plugin_settings.
 
 The migrator writes each plugin's settings.json to the new path before it
-removes the old file, writes atomically, and never clobbers settings that
-already sit at the new path. A re-run after a crash finishes the remainder.
+removes the old file. The write is atomic. The migrator never clobbers
+settings that already sit at the new path. A re-run after a crash finishes
+the remainder.
 """
 import json
 import os

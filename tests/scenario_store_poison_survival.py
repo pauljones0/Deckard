@@ -1,9 +1,9 @@
 """
 Regression test for poison-entry survival across all four preparers.
 
-A failed thumbnail or asset fetch lists the entry with image None, and only a
-failed manifest, which leaves no id or name to list, still drops it. No network
-is involved.
+A failed thumbnail or asset fetch lists the entry with image None. Only a
+failed manifest still drops the entry, because it leaves no id or name to
+list. No network is involved.
 """
 
 # Under a partial 429 storm the catalogs must therefore keep their entries

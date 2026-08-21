@@ -334,8 +334,8 @@ class ScreenBarImage(Gtk.Picture):
 
         The crop comes out of this same strip frame, and the conversion runs
         here on the producer. It travels in the payload of the strip, because
-        the crop matches the frame it came from, so one payload keeps the two
-        in step and costs no second callback. A direct call to
+        the crop matches the frame it came from. One payload keeps the two in
+        step and costs no second callback. A direct call to
         IconSelector.set_image would add one uncoalesced idle per frame.
         """
         if gl.app is None or not recursive_hasattr(gl, "app.main_win.sidebar"):

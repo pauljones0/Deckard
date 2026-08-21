@@ -2,8 +2,8 @@
 Unit-tier scenario for the suspend and resume repaint.
 
 MediaPlayerThread.check_resume_gap detects a wall-clock gap of 5s or more
-between iterations and arms a pending full repaint, which nulls the dedup
-hashes and re-enqueues every input.
+between iterations. It then arms a pending full repaint. The repaint nulls
+the dedup hashes and re-enqueues every input.
 """
 
 # A repaint whose writes fail re-arms itself, because a static page produces no

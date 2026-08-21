@@ -43,8 +43,9 @@ def run_on_main(func: Callable[_Params, _Return], *args: _Params.args, **kwargs:
 
     A timeout cancels the queued idle source, so either the timeout path or
     the idle callback proceeds, never both. An idle source left in place fires
-    after the caller gives up and runs func a second time against the state
-    the caller rebuilt (GenerativeUI._ensure_built builds the same row twice).
+    after the caller gives up. It then runs func a second time against the
+    state the caller rebuilt (GenerativeUI._ensure_built builds the same row
+    twice).
     """
     if threading.current_thread() is threading.main_thread():
         return func(*args, **kwargs)

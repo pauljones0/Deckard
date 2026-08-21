@@ -40,7 +40,7 @@ class PluginRegistration(TypedDict):
     """One registered plugin's registry entry. register() is the sole writer.
 
     register() always writes object, and a reader still tolerates an entry
-    without it: the warm-up skip over a malformed entry is a tested
+    without it. The warm-up skip over a malformed entry is a tested
     contract, so the key stays NotRequired.
     """
 
@@ -636,7 +636,7 @@ class PluginBase(rpyc.Service):  # type: ignore[misc]  # rpyc.Service is unstubb
 
         A missing about.json, an undecodable one and one that holds no object
         each give an empty dict. An OSError from an unreadable file still
-        propagates, because an unreadable file is a system problem and not bad
+        propagates. An unreadable file is a system problem and not bad
         content, and this file comes from the plugin's source tree.
 
         Returns:
@@ -690,8 +690,8 @@ class PluginBase(rpyc.Service):  # type: ignore[misc]  # rpyc.Service is unstubb
         """Add a CSS stylesheet to the style context of the application.
 
         This marshals the work onto the GTK main loop, because a plugin calls
-        it from __init__, which runs on a store worker thread on the install
-        path. On the main thread the marshal runs inline.
+        it from __init__. __init__ runs on a store worker thread on the
+        install path. On the main thread the marshal runs inline.
 
         Args:
             path (str): The path to the CSS file.
@@ -730,8 +730,8 @@ class PluginBase(rpyc.Service):  # type: ignore[misc]  # rpyc.Service is unstubb
     def get_selector_icon(self) -> Gtk.Widget:
         """Return a Gtk.Image widget with the icon "view-paged".
 
-        This marshals the work onto the GTK main loop, because GTK4 works on
-        the main thread alone and a plugin override can reach this from another
+        This marshals the work onto the GTK main loop. GTK4 works on the main
+        thread alone, and a plugin override can reach this from another
         thread. On the main thread the marshal runs inline.
 
         Returns:

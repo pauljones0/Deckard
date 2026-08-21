@@ -69,7 +69,7 @@ def main() -> None:
         )
 
         # 3. A decodable video produces no error log.
-        assert len(error_logs) == 0, f"unexpected background errors: {error_logs}"
+        assert not error_logs, f"unexpected background errors: {error_logs}"
 
         # 3b. The loop and fps page settings reach the playing video. The
         # sidebar rows persist through these setters.

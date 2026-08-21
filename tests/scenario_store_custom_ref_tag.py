@@ -1,8 +1,8 @@
 """
 clone_repo must never install a tree it did not move onto.
 
-git checkout handles a branch and a tag alike, and the return codes of the
-checkout and of the reset --hard are both checked, so an unreachable ref or sha
+git checkout handles a branch and a tag alike. The return codes of the checkout
+and of the reset --hard are both checked. An unreachable ref or sha therefore
 fails the install rather than staging the default tip.
 """
 

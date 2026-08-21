@@ -98,8 +98,8 @@ def encode_native_touchscreen(deck: "BetterDeck", image: "Image.Image", quality:
     and with no mutation of the caller's image. The library hardcodes q100,
     and its _to_native_format calls image.thumbnail() in place when it
     resizes, which corrupts the caller's copy. The touchscreen strip is the
-    largest single USB write on the deck, so a smaller JPEG here buys back
-    time under the device write mutex, which is dial-latency margin.
+    largest single USB write on the deck. A smaller JPEG here buys back time
+    under the device write mutex. That time is dial-latency margin.
     ControllerTouchScreen.update reuses the same image object afterward for
     the UI mirror, so any resize here must work on a copy."""
     fmt = deck.touchscreen_image_format()
@@ -218,7 +218,7 @@ class ClearMsg:
     """Control message that blanks the deck. seq holds the submitting
     thread's monotonic submit-sequence counter value at submission time, from
     MediaPlayerThread.next_submit_seq(). Executing this wipes only image and
-    touchscreen tasks stamped with a lower submit_seq, so a frame submitted
+    touchscreen tasks stamped with a lower submit_seq. A frame submitted
     after this Clear was requested survives and paints afterward, which
     preserves the caller's clear-then-paint order.
 
@@ -246,8 +246,9 @@ class ClearAndCloseMsg:
 class ReleaseStashedInputsMsg:
     """Control message that closes every stashed input's media resources,
     then empties the dict in place. ScreenSaver.show() uses it to release the
-    previous page's input set shortly after it swaps the set out, instead of
-    pinning it for the whole screensaver duration.
+    previous page's input set shortly after it swaps the set out. That
+    release frees the set instead of pinning it for the whole screensaver
+    duration.
 
     This is a control message and not a generic add_task(). An add_task task
     is dropped unrun when task.page is not active_page by the time the batch
@@ -282,9 +283,9 @@ def _install_fair_transport_lock(deck: Any) -> bool:
     deck.device.mutex, a stock threading.Lock. Unfair ordering there lets a
     write burst out-race the HID read poll, which is what dial input
     starvation is. The swap is one attribute assignment on an object this
-    process owns. The library is neither vendored nor patched, so an upstream
-    rename degrades to the unfair lock with the env knobs still available,
-    and every guard below returns False instead of raising.
+    process owns. The library is neither vendored nor patched. An upstream
+    rename therefore degrades to the unfair lock, with the env knobs still
+    available, and every guard below returns False instead of raising.
 
     This must run before deck.open(), which starts the reader thread. Before
     that, no thread can be inside the old lock, so the swap cannot leave two
@@ -761,9 +762,9 @@ class MediaPlayerThread(threading.Thread):
 
         It rejects a message once the writer stops or closes. The loop is gone
         by then, so nothing would ever drain a message appended after that
-        point, and control_q would grow unbounded for the rest of the
-        process's life if a late plugin or API callback kept calling
-        set_brightness() on a torn-down deck."""
+        point. If a late plugin or API callback kept calling set_brightness()
+        on a torn-down deck, control_q would grow unbounded for the rest of
+        the process's life."""
         if self._stop:
             return
         self.control_q.append(msg)
@@ -773,7 +774,7 @@ class MediaPlayerThread(threading.Thread):
         """Execute every pending control message, FIFO. Returns False after
         it processes a terminal ClearAndCloseMsg, and the caller must then
         stop the loop. It is split out of run() so a unit-tier scenario drives
-        the control queue without a running thread; the harness's stub
+        the control queue without a running thread. The harness's stub
         controller never starts the thread. See tests/fixtures.py."""
         while self.control_q:
             msg = self.control_q.popleft()
@@ -971,9 +972,9 @@ class MediaPlayerThread(threading.Thread):
         because it only calls Event.set(). The in-module producers
         submit_control, add_task, add_image_task, add_touchscreen_task and
         stop poke _wake_event directly. This is the public name for an
-        external caller with no task to submit, such as the presence monitor's
-        transition fan-out, whose whole effect is that the next tick evaluates
-        the gate differently."""
+        external caller with no task to submit. The presence monitor's
+        transition fan-out is one such caller. Its only effect is that the
+        next tick evaluates the gate differently."""
         self._wake_event.set()
 
     def stop(self, timeout: float = 2.0) -> None:
@@ -1082,8 +1083,8 @@ class MediaPlayerThread(threading.Thread):
         # serializes the reads and writes of a deck on one mutex, so under an
         # unfair lock the writer releases and re-acquires ahead of the waiting
         # 20Hz HID read poll, which starves the dials. A yield between bulk
-        # writes hands the reader a mutex slot, and the FIFO transport lock
-        # hands it one by construction, so DECKARD_WRITE_YIELD_MS defaults to
+        # writes hands the reader a mutex slot. The FIFO transport lock hands
+        # it one in queue order. DECKARD_WRITE_YIELD_MS therefore defaults to
         # 0 and this loop is a straight write. The machinery stays as the
         # field bisection tool if dial latency regresses; 1.5 restores the
         # older pacing with no rebuild. An interactive paint, in a small
@@ -1137,9 +1138,9 @@ class MediaPlayerThread(threading.Thread):
 
     def _note_executed(self, task: "MediaPlayerSetImageTask | MediaPlayerSetTouchscreenImageTask") -> None:
         """Record that the task's device write was attempted and did not
-        raise. A caller reaches this only after the task's own run() returns,
-        never for a task dropped as stale or deferred by the touchscreen write
-        budget, because a frame that was never sent must not advance this.
+        raise. A caller reaches this only after the task's own run() returns.
+        A task dropped as stale, or deferred by the touchscreen write budget,
+        never reaches it. A frame that was never sent must not advance this.
 
         This is not quite the same as reaching the device. The task classes
         swallow StreamDeck.TransportError, so a write that failed at the

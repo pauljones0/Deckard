@@ -37,7 +37,7 @@ def call_from_worker(fn, *args):
     def worker():
         try:
             result.append(fn(*args))
-        except BaseException as e:  # noqa: BLE001 -- surfaced below
+        except BaseException as e:  # noqa: BLE001 (surfaced below)
             errors.append(e)
 
     t = threading.Thread(target=worker, name="startup_queue_caller")

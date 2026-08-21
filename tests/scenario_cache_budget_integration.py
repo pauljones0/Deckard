@@ -49,8 +49,8 @@ def _deck_bytes(controller) -> int:
 def _present(cache, prefix: str, total_bytes: int) -> int:
     """Count how many entries _fill filed are still cached.
 
-    Counted per key rather than by byte total, because a real repaint can file
-    an entry at any moment and these assertions are about the synthetic ones.
+    Counted per key rather than by byte total. A real repaint can file an
+    entry at any moment, and these assertions are about the synthetic ones.
     """
     return sum(1 for i in range(total_bytes // ENTRY) if cache.get((prefix, i)) is not None)
 

@@ -1,6 +1,6 @@
 """Peer checks and a loopback rewrite for the plugin-backend rpyc sockets.
 
-The app imports this module as library code: the frontend servers gate
+The app imports this module as library code. The frontend servers gate
 accepted connections with refusal_reason, and register_backend pins the
 offered port to the launched process with listen_rows_of_port and
 pid_owns_inode. launch_backend also copies this file into every plugin venv
@@ -113,7 +113,7 @@ def uid_of_peer(sock: socket.socket) -> int | None:
     """UID that owns the peer end of an established loopback connection.
 
     The peer's socket appears in the table as the row whose local endpoint is
-    the peer's and whose remote endpoint is this socket's; the full 4-tuple
+    the peer's and whose remote endpoint is this socket's. The full 4-tuple
     match keeps a TIME_WAIT ghost of an earlier connection out. None when no
     row matches; the caller decides the fail direction.
     """

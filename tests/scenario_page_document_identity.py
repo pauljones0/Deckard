@@ -1,9 +1,9 @@
 """
 One page file holds one dict, shared by every deck that shows it.
 
-The page manager hands out one document per page file, so two Pages on one path
-share a dict and an edit crosses with no write. A refresh refills that dict in
-place and never blanks a section.
+The page manager hands out one document per page file. Two Pages on one path
+therefore share a dict, and an edit crosses with no write. A refresh refills
+that dict in place and never blanks a section.
 """
 
 # Two spellings of one path are one document, one save lock and one pending
@@ -230,7 +230,7 @@ def check_refresh_never_blanks_section() -> int:
     """The reader's view across a refresh is stale, never missing.
 
     This drives the document rather than a file, because the order of its two
-    mutations is what matters; the new content goes in first and the dropped
+    mutations is what matters. The new content goes in first, and the dropped
     sections go second.
     """
     path = seed_page("Concurrent")

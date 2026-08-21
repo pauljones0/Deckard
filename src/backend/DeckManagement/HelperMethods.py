@@ -453,7 +453,7 @@ def open_web(url: str) -> None:
 
     Uses Gio instead of a shell call to xdg-open. GLib routes the call through
     the OpenURI portal when sandboxed, so this works in the flatpak without
-    flatpak-spawn --host, and a URL with shell metacharacters cannot become a
+    flatpak-spawn --host. A URL with shell metacharacters cannot become a
     command.
     """
     if not url.startswith("http"):

@@ -199,7 +199,7 @@ def terminate_refused_backend(process: subprocess.Popen[bytes] | None, owner: st
     A refused backend is exposed or unverifiable, and refusing the connection
     leaves it listening. Killing the child closes that port. This runs off
     the caller's thread, because register_backend runs on an rpyc service
-    thread and terminate_backend_process can wait several seconds; the
+    thread and terminate_backend_process can wait several seconds. The
     frontend server and connection then tear down through on_disconnect when
     the child's own connection drops.
     """
@@ -262,7 +262,7 @@ def backend_guard_env() -> dict[str, str]:
     """Environment for a backend launch: the guard directory on PYTHONPATH.
 
     sitecustomize.py next to the guard imports it in a child that runs on
-    the app's own interpreter, where no plugin venv exists to carry the .pth
+    the app's own interpreter. No plugin venv exists there to carry the .pth
     file. The app's own site-packages stays untouched, so the app process
     itself never imports the hook.
     """
@@ -314,8 +314,8 @@ class PluginManager:
         """Initialize the plugin backends early, without a block on the caller.
 
         It calls the on_app_ready() hook of every registered plugin that has
-        not fired one yet, on one background daemon thread, one plugin at a
-        time, each isolated from the exceptions of the rest.
+        not fired one yet. The calls run on one background daemon thread, one
+        plugin at a time, each isolated from the exceptions of the rest.
         """
         # This is the supported point for an early backend launch. Background
         # mode with -b opens no config UI, and without an enumerable deck at

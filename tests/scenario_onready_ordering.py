@@ -92,11 +92,11 @@ def check_gates() -> int:
         ident = Input.Key("0x0")
         action = make_action(GatedAction, controller, page, ident)
 
-        input_obj = controller.get_input(ident)
-        if input_obj is None:
+        controller_input = controller.get_input(ident)
+        if controller_input is None:
             print("FAIL: controller has no key 0x0 input")
             return 1
-        state_obj = input_obj.states[0]
+        state = controller_input.states[0]
 
         # Schedule the ready callbacks on the pool. on_ready blocks on the
         # gate. The controller's background tick loop is live and calls
@@ -108,10 +108,10 @@ def check_gates() -> int:
 
         # Ticks while on_ready is in flight must be skipped.
         for _ in range(3):
-            state_obj.own_actions_tick()
+            state.own_actions_tick()
         # An update while on_ready is in flight must be skipped. Otherwise
         # on_update runs the compat on_ready beside the pool's on_ready.
-        state_obj.own_actions_update()
+        state.own_actions_update()
         time.sleep(0.1)  # give the background tick loop a few laps
 
         failed = False
@@ -142,8 +142,8 @@ def check_gates() -> int:
 
         # The gates are open now. The background tick loop counts too.
         updates_before = action.update_calls
-        state_obj.own_actions_tick()
-        state_obj.own_actions_update()
+        state.own_actions_tick()
+        state.own_actions_update()
         if action.tick_calls < 1 or action.update_calls < updates_before + 1:
             print(f"FAIL: post-ready dispatch broken (ticks={action.tick_calls}, updates={action.update_calls})")
             return 1
@@ -159,7 +159,7 @@ def check_gates() -> int:
         page2 = controller2.active_page
         ident = Input.Key("0x0")
         action2 = make_action(RaisingReadyAction, controller2, page2, ident)
-        state_obj2 = controller2.get_input(ident).states[0]
+        state2 = controller2.get_input(ident).states[0]
         # on_ready raises here and _run_ready_callbacks logs the traceback.
         # Silence loguru until wait_until sees completion, so the expected
         # noise stays out of the run.
@@ -172,7 +172,7 @@ def check_gates() -> int:
         if not ready:
             print("FAIL: raising on_ready left on_ready_finished unset (action dead forever)")
             return 1
-        state_obj2.own_actions_tick()
+        state2.own_actions_tick()
         if action2.tick_calls < 1:
             print("FAIL: tick not delivered after raising on_ready")
             return 1

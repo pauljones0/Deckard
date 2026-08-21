@@ -1,7 +1,7 @@
 """Pins the fuzzy-search contract the seven search call sites rely on.
 
-rapidfuzz returns a float in [0, 100] where fuzzywuzzy returned a rounded int,
-so the result shape, the thresholds and the int sort comparator are pinned.
+rapidfuzz returns a float in [0, 100] where fuzzywuzzy returned a rounded int.
+The result shape, the thresholds and the int sort comparator are pinned.
 """
 from functools import lru_cache
 

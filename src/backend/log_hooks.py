@@ -144,16 +144,17 @@ def _exc_site(exc_type: type[BaseException] | None, exc_value: BaseException | N
     that fails on every emission collapses onto one key, and one exception
     type raised from two places keeps two keys.
 
-    The key holds the type name and not the type object, so it never pins a
-    plugin's exception class, and through it that plugin's module, alive for
-    the life of the dict. A call with no traceback, such as an asyncio
-    message-only context or a synthesized error, falls back to the message
-    text, so two unrelated failures of that shape keep separate budgets."""
+    The key holds the type name and not the type object. It therefore never
+    pins a plugin's exception class alive for the life of the dict, and never
+    pins that plugin's module through the class. A call with no traceback,
+    such as an asyncio message-only context or a synthesized error, falls back
+    to the message text, so two unrelated failures of that shape keep separate
+    budgets."""
     type_name = getattr(exc_type, "__name__", None) or str(exc_type)
     tb = exc_tb
     while tb is not None and tb.tb_next is not None:
         tb = tb.tb_next
-    # Two shapes on purpose, per the docstring: a file and a line number when
+    # Two shapes, as the docstring states: a file and a line number when
     # there is a traceback, and the message text when there is not.
     where: tuple[str, str | int]
     if tb is not None:
@@ -192,11 +193,11 @@ def _emit_pending(key: SiteKey, count: int, reason: str) -> None:
 
 def _prune_locked(now: float) -> list[tuple[SiteKey, int]]:
     """Cap the dict. The caller holds _rate_lock and calls this only once the
-    dict is oversized, so a broad storm across many distinct sites cannot turn
-    the guard into an unbounded leak. Returns the pending counts of everything
-    it dropped, and the caller reports them once it releases the lock. An
-    evicted count gets no next record to ride on, and a silent discard lets
-    the guard turn a flood into silence.
+    dict is oversized. A broad storm across many distinct sites therefore
+    cannot turn the guard into an unbounded leak. Returns the pending counts
+    of everything it dropped, and the caller reports them once it releases the
+    lock. An evicted count gets no next record to ride on, and a silent
+    discard lets the guard turn a flood into silence.
 
     The eviction reads the last hit and never the window start. An allowed
     record alone refreshes entry[0], so a site that storms right now looks old
@@ -228,10 +229,10 @@ def _flush_pending_counts() -> None:
     """The atexit hook. It reports every count that still waits for a next
     record to ride on.
 
-    Without this hook a storm that stops, because a handler got disconnected,
-    the page changed, or the process quits mid-window, loses its last window's
-    failures, which this guard must never do. atexit needs no thread of its
-    own, because it runs on the thread that shuts the interpreter down.
+    A storm can stop, because a handler got disconnected, the page changed, or
+    the process quits mid-window. Without this hook that storm loses its last
+    window's failures, which this guard must never do. atexit needs no thread
+    of its own, because it runs on the thread that shuts the interpreter down.
 
     The acquire takes a bounded wait and skips the flush on a failure, because
     a process exit must not hang on a wedged holder. The non-blocking flock in
@@ -256,9 +257,9 @@ atexit.register(_flush_pending_counts)
 def _rate_limit_bypass(key: SiteKey) -> int:
     """Take a site's pending count, clear it, and throttle nothing.
 
-    The terminal path enters here. That record is the last one this site gets,
-    so whatever its window swallowed must ride on it rather than wait for a
-    next record that never comes."""
+    The terminal path enters here. That record is the last one this site gets.
+    Whatever its window swallowed must ride on it, because no next record
+    comes."""
     if not _rate_lock.acquire(timeout=_RATE_LOCK_TIMEOUT_S):
         return 0
     try:
@@ -313,10 +314,10 @@ def _announce_disabled() -> None:
 
     redirect_faulthandler() announces this, and install_exception_hooks()
     does not. main() installs the hooks before config_logger() opens logs.log
-    and the About-dialog ring, so a line emitted there reaches stderr alone,
-    and a detached run under autostart or flatpak loses it, which is the run
-    this flag debugs. redirect_faulthandler() runs right after the sinks come
-    up, so the line lands where an incident reader finds it."""
+    and the About-dialog ring. A line emitted there reaches stderr alone, and
+    a detached run under autostart or flatpak loses it. That detached run is
+    the run this flag debugs. redirect_faulthandler() runs right after the
+    sinks come up, so the line lands where an incident reader finds it."""
     global _announced_disabled
     if _announced_disabled:
         return
@@ -334,16 +335,16 @@ def _announce_disabled() -> None:
 
 def _is_terminal(exc_tb: TracebackType | None) -> bool:
     """True when the interpreter called sys.excepthook for an exception that
-    unwound the whole program, and False when PyGObject's PyErr_Print called
-    it for a GLib or GTK callback.
+    unwound the whole program. False when PyGObject's PyErr_Print called it
+    for a GLib or GTK callback.
 
     This app reaches sys.excepthook mostly along the callback path, so the
     distinction decides the throttle. PyGObject routes every uncaught callback
-    exception through it (see the module docstring), which is the storm at 20
-    to 30 Hz that the rate limit exists for, so an exemption for the whole
-    surface reopens that storm. An exemption for the terminal shape alone
-    keeps a fatal exception out of a window that a hot handler opened, and
-    costs nothing else.
+    exception through it (see the module docstring). That path is the storm at
+    20 to 30 Hz that the rate limit exists for. An exemption for the whole
+    surface therefore reopens that storm. An exemption for the terminal shape
+    alone keeps a fatal exception out of a window that a hot handler opened,
+    and costs nothing else.
 
     The shape test reads the frames. A terminal exception unwound through the
     entry script's module frame, so its outermost traceback frame is <module>
@@ -464,9 +465,9 @@ def install_exception_hooks() -> None:
     before any code that can throw on a background thread or a GLib callback.
 
     This closes four surfaces. The main thread and every GLib or Gio callback,
-    which covers idle_add, timeout_add, signal handlers and Gio actions,
-    because PyGObject routes their uncaught exceptions through PyErr_Print,
-    which calls sys.excepthook. A plain threading.Thread target, through
+    which covers idle_add, timeout_add, signal handlers and Gio actions.
+    PyGObject routes their uncaught exceptions through PyErr_Print, which
+    calls sys.excepthook. A plain threading.Thread target, through
     threading.excepthook. An error inside __del__, a weakref finalizer or a GC
     sweep, through sys.unraisablehook. The plugin-dispatch asyncio loop,
     through asyncio_exception_handler, which event_dispatch._get_loop wires up.
@@ -506,10 +507,10 @@ def _scrub_fault_log(path: str) -> None:
     the dump still lands while the interpreter is wedged. The loguru redaction
     patcher therefore never sees it, and a traceback frame path such as
     File "/home/<user>/..." reaches disk raw. A live intercept would break the
-    wedged-interpreter guarantee, so this scrubs the file at boot, right
-    before the next boot marker appends, because a reader opens this file
-    after a restart. One known limitation stays. A dump written during the
-    current session stays raw on disk until the next boot.
+    wedged-interpreter guarantee. This therefore scrubs the file at boot,
+    right before the next boot marker appends. A reader opens this file after
+    a restart. One known limitation stays. A dump written during the current
+    session stays raw on disk until the next boot.
 
     This streams line by line, because a dump is line-oriented and every
     scrub() pattern fits one line, so a years-old multi-boot file cannot
@@ -525,21 +526,21 @@ def _scrub_fault_log(path: str) -> None:
     somebody chmod'd read-only, and logs the warning below. os.replace instead
     swaps such a file.
 
-    The flock does not block. On contention this skips the scrub, because the
-    only legitimate holder is another boot that scrubs this same file to the
-    same result, and a wait lets a wedged holder, under SIGSTOP or a stalled
-    disk, block every later launch. The flock is advisory and excludes another
-    scrubber only. A dump that another instance appends at the C level during
-    the writeback window lands past the read snapshot and truncate() drops it.
-    A replace instead loses the same dump to the unlinked inode and strands
-    the fd for good. A scrub of faulthandler content is idempotent, because a
-    frame path and a boot marker are fixed points, and scrub() is not
-    idempotent in general. A second boot's scrub therefore changes no content,
-    and the unchanged check below turns it into no write at all. The file is
-    rewritten only when a line changed, so the partial-writeback window, from
-    a crash or an ENOSPC mid-copy, opens only on a boot that had raw PII to
-    redact. Any failure logs and returns, because a scrub problem must not
-    block startup."""
+    The flock does not block. On contention this skips the scrub, for two
+    reasons. The only legitimate holder is another boot that scrubs this same
+    file to the same result. A wait lets a wedged holder, under SIGSTOP or a
+    stalled disk, block every later launch. The flock is advisory and excludes
+    another scrubber only. A dump that another instance appends at the C level
+    during the writeback window lands past the read snapshot and truncate()
+    drops it. A replace instead loses the same dump to the unlinked inode and
+    strands the fd for good. A scrub of faulthandler content is idempotent,
+    because a frame path and a boot marker are fixed points, and scrub() is
+    not idempotent in general. A second boot's scrub therefore changes no
+    content, and the unchanged check below turns it into no write at all. The
+    file is rewritten only when a line changed, so the partial-writeback
+    window, from a crash or an ENOSPC mid-copy, opens only on a boot that had
+    raw PII to redact. Any failure logs and returns, because a scrub problem
+    must not block startup."""
     if not os.path.exists(path):
         return
     tmp_path = None
@@ -585,9 +586,9 @@ def redirect_faulthandler(directory: str) -> None:
     <directory>/faulthandler.log, so a native crash dump and a SIGQUIT dump
     survive a detached run.
 
-    This stays apart from install_exception_hooks(), because gl.DATA_PATH does
-    not resolve at import time, since --data or the static settings file can
-    set it, and because a short-lived CLI call that returns before
+    This stays apart from install_exception_hooks() for two reasons.
+    gl.DATA_PATH does not resolve at import time, because --data or the static
+    settings file can set it. A short-lived CLI call that returns before
     config_logger() must not touch the running app's files. Any failure falls
     back to the stderr enable(), because a missing dump target must not block
     startup. Idempotent.

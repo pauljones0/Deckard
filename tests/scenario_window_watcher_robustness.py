@@ -18,9 +18,7 @@ from src.backend.WindowGrabber.Integrations.X11 import WatchForActiveWindowChang
 from src.backend.WindowGrabber.Window import Window
 
 
-# ===================================================================== #
 # Stubs. Exactly what on_active_window_changed dereferences
-# ===================================================================== #
 
 class StubPage:
     def __init__(self, json_path: str):
@@ -70,9 +68,7 @@ class StubWGDeckController:
         self.active_page = page
 
 
-# ===================================================================== #
 # Part 1. Pageless deck must not abort routing for the other decks
-# ===================================================================== #
 
 def check_pageless_deck_routing() -> None:
     deck_manager = fixtures.install_stub_globals()
@@ -113,16 +109,14 @@ def check_pageless_deck_routing() -> None:
     )
 
 
-# ===================================================================== #
 # Part 1b. The None-guard itself, isolated from the per-deck try/except
-# ===================================================================== #
 
 def check_pageless_guard_is_noop() -> None:
     """The None-guard on its own, isolated from the per-deck try and except.
 
-    This calls _apply_auto_change directly, which is the per-deck body with
-    no surrounding handler, so a pageless deck is a clean no-op and an
-    unguarded deref raises straight out to here.
+    This calls _apply_auto_change directly. That method is the per-deck body
+    with no surrounding handler. A pageless deck is therefore a clean no-op,
+    and an unguarded deref raises straight out to here.
     """
     # Part 1 routes through on_active_window_changed, whose per-deck handler
     # swallows that same deref, so Part 1 alone stays green with the guard
@@ -161,15 +155,13 @@ def check_pageless_guard_is_noop() -> None:
     )
 
 
-# ===================================================================== #
 # Part 2. The X11 watch loop must survive raising iterations
-# ===================================================================== #
 
 class ScriptedX11:
     """Stands in for the X11 integration inside WatchForActiveWindowChange.
-    get_active_window pops the next scripted item; an Exception item is
-    raised (the real integration can raise out of any of its subprocess
-    plumbing), a Window/None item is returned."""
+    get_active_window pops the next scripted item. It raises an Exception
+    item, because the real integration can raise out of any of its subprocess
+    plumbing. It returns a Window or None item."""
 
     def __init__(self, script: list, window_grabber):
         self._script = list(script)
@@ -238,8 +230,9 @@ def check_gnome_install_extension_uuid() -> None:
     """The GNOME integration must ask for its shell extension by bare uuid.
 
     A uuid wrapped in a list does not marshal against InstallRemoteExtension's
-    "(s)" signature, and never equals an entry of get_installed_extensions, so
-    the already-installed short-circuit cannot fire.
+    "(s)" signature. It also never equals an entry of
+    get_installed_extensions, so the already-installed short-circuit cannot
+    fire.
     """
     # The method never touches self, so no D-Bus proxy is built here.
     # The method has no call site today, because onboarding drives

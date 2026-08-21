@@ -87,8 +87,8 @@ def _sat_centi(saturation: float) -> int:
 
     The registry key, the cache-file suffix and the factor baked into frames
     must fall into the same bucket for a given raw float. Two independent
-    roundings, round(sat, 2) for the key against int(round(sat * 100)) for the
-    path, disagree at the half-hundredth boundaries, and a reader then polls
+    roundings disagree at the half-hundredth boundaries: round(sat, 2) for
+    the key against int(round(sat * 100)) for the path. A reader then polls
     forever for a file its entry's builder writes under a different name.
     """
     return int(round(float(saturation) * 100))
@@ -215,10 +215,10 @@ class Mp4FrameCache(Generic[PayloadT]):
         """Estimated image RAM held by this reader, for the image-cache census.
 
         This method takes no lock. self.lock is held across whole decode, seek
-        and build-frame operations, so a lock here lets one slow source stall
-        the budget daemon and, through it, every deck's eviction. Every read
-        below is a single attribute load, which the GIL makes atomic, and it
-        goes into a local so a concurrent close() can null the original
+        and build-frame operations. A lock here lets one slow source stall the
+        budget daemon, and through it every deck's eviction. Every read
+        below is a single attribute load, which the GIL makes atomic. Each
+        read goes into a local, so a concurrent close() can null the original
         without a raise here. A torn read costs one diagnostic sample a stale
         number, which is the right trade for a census.
         """
@@ -264,9 +264,9 @@ class Mp4FrameCache(Generic[PayloadT]):
         raise NotImplementedError
 
     def _fallback_payload(self) -> "PayloadT | None":
-        """Used when no decoded frame exists yet, on the first request during
-        a build or after an unrecoverable early failure, and when there is no
-        previous payload to repeat."""
+        """Used when no decoded frame exists yet and no previous payload is
+        there to repeat. That is the first request during a build, or a
+        request after an unrecoverable early failure."""
         return None
 
     def _on_promoted(self) -> None:
@@ -343,9 +343,10 @@ class Mp4FrameCache(Generic[PayloadT]):
         The index names what the payload is and not what the caller asked
         for. This clamps a request to the readable range, and a transient
         decode failure repeats the last good frame. The index is None when the
-        payload provenance is unknown, that is for a fallback frame or a
-        repeat served before any index existed, so a caller that keys a cache
-        off it never files one frame's pixels under another frame's identity.
+        payload provenance is unknown. That covers a fallback frame, and a
+        repeat served before any index existed. A caller that keys a cache off
+        the index then never files one frame's pixels under another frame's
+        identity.
         """
         if not self._complete:
             self._maybe_adopt_shared_cache()
@@ -385,11 +386,12 @@ class Mp4FrameCache(Generic[PayloadT]):
         """Switches a registry consumer over to a promoted shared cache file.
 
         This applies to registry consumers only (see KeyVideoCache and
-        acquire() below). When this instance is a non-builder reader still
-        decoding the source, and the registry reports that another builder
-        promoted the shared cache file, it switches over and closes the source
-        capture. It does nothing for BackgroundVideoCache, which never sets
-        _registry_entry, and nothing for the builder instance itself.
+        acquire() below). The switch needs two conditions. This instance is a
+        non-builder reader still decoding the source. The registry reports
+        that another builder promoted the shared cache file. The instance then
+        switches over and closes the source capture. It does nothing for
+        BackgroundVideoCache, which never sets _registry_entry, and nothing
+        for the builder instance itself.
         """
         entry = getattr(self, "_registry_entry", None)
         if entry is None or not entry.ready:
@@ -516,8 +518,8 @@ class Mp4FrameCache(Generic[PayloadT]):
         It promotes whatever the writer produced, or it clamps n_frames when
         the source metadata promised more frames than it delivered. It always
         releases the source capture. A decode failure that wrote and decoded
-        no frame must not leak self.cap, which is what a break out of a decode
-        loop with no release does.
+        no frame must not leak self.cap. A break out of a decode loop with no
+        release leaks it.
         """
         if self._writer is not None:
             self._writer.release()
@@ -849,8 +851,8 @@ def _attach_promoted_reader(source_path: str, out_size: tuple[int, int], saturat
 
     It rejects a reader that did not open the promoted cache.
     Mp4FrameCache.__init__ falls back to opening the source when the cache
-    file is missing or unreadable, and that is the FFmpeg demux of a GIF these
-    entry points exist to make impossible.
+    file is missing or unreadable. That fallback is the FFmpeg demux of a GIF
+    these entry points exist to make impossible.
     """
     reader = KeyVideoCache(source_path, out_size, saturation, cache_path=path, is_builder=False)
     reader._registry_key = key

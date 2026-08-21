@@ -1,9 +1,9 @@
 """Startup sweep of the video cache directory.
 
-Cache entries are keyed by the md5 of the source video, so an entry for a
-video that no deck settings and no page reference becomes unreachable garbage
-the moment the user picks a different file. This sweep removes those, plus
-legacy pickle caches and abandoned writer temp files.
+Cache entries are keyed by the md5 of the source video. An entry for a video
+that no deck settings and no page reference becomes unreachable garbage. That
+happens the moment the user picks a different file. This sweep removes those,
+plus legacy pickle caches and abandoned writer temp files.
 """
 import hashlib
 import math
@@ -42,9 +42,9 @@ def _clamp_saturation(raw: Any) -> float:
     """Maps a persisted saturation to the factor the runtime applies.
 
     A non-numeric or non-finite value, that is NaN or inf, falls back to the
-    default, and then this clamps the value to the MIN and MAX range. It
-    matches DeckController._read_display_saturation, so the sweep and playback
-    agree on the cache filename.
+    default. This then clamps the value to the MIN and MAX range. It matches
+    DeckController._read_display_saturation, so the sweep and playback agree
+    on the cache filename.
     """
     try:
         value = float(raw)
@@ -199,7 +199,7 @@ def collect_active_sat_suffixes() -> set[str]:
 
     The unsuffixed cache is the upstream-format file, and it becomes live
     again the moment a deck resets to 1.0. Any other .satNNN variant of a
-    referenced video is a leftover from a factor tried and abandoned, which is
+    referenced video is a leftover from a factor tried and abandoned. It is
     bounded but permanent disk growth unless the sweep removes it.
     """
     suffixes = {""}

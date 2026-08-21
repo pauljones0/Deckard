@@ -46,7 +46,7 @@ def main() -> None:
     hz = media_player._video_write_hz
     assert hz == 30.0, f"fixture sanity: expected the default 30Hz budget, got {hz}"
 
-    # --- 1. A tick-rate flood must be capped to the _video_write_hz budget. ---
+    # 1. A tick-rate flood must be capped to the _video_write_hz budget.
     deck.clear_journal()
     elapsed = flood(media_player, controller, touch, n_frames=40, spacing_s=0.005)
     writes = deck.ops_by_name("set_touchscreen_image")
@@ -59,7 +59,7 @@ def main() -> None:
     )
     print(f"PASS: flood capped ({len(writes)} writes in {elapsed:.3f}s @ {hz}Hz budget)")
 
-    # --- 2. Latest-wins. A deferred frame is delayed, never lost. ---
+    # 2. Latest-wins. A deferred frame is delayed, never lost.
     final_payload = b"\xab" * 64
     media_player.add_touchscreen_task(
         final_payload,
@@ -77,7 +77,7 @@ def main() -> None:
     )
     print("PASS: deferred frame landed after the budget window (nothing lost)")
 
-    # --- 3. Budget 0 disables the cap (documented contract of the knob). ---
+    # 3. Budget 0 disables the cap (documented contract of the knob).
     media_player._video_write_hz = 0
     deck.clear_journal()
     flood(media_player, controller, touch, n_frames=10, spacing_s=0.0)

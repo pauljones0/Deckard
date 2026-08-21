@@ -11,12 +11,12 @@ below. Exit 1 prints what changed and names the fix.
 mypy's disallow_any_explicit is on for the whole tree. An explicit Any is
 visible dynamism: honest at a boundary (JSON payloads, plugin callbacks, gi
 values, *args forwarding), lazy everywhere else. The modules that still carry
-one are exempted one by one in pyproject.toml; giving the lazy ones real types
-is the work, and the boundary ones stay until the boundary spelling itself
+one are exempted one by one in pyproject.toml. Giving the lazy ones real types
+is the work. The boundary ones stay until the boundary spelling itself
 changes. So this list shrinks, but unlike the retired signature ratchets it
 does not reach zero.
 
-The list names modules and not packages on purpose. A package pattern would
+The list names modules. It names no packages. A package pattern would
 un-cover every module inside it that is already clean.
 
 An exemption list with nothing watching it grows. A module that starts failing

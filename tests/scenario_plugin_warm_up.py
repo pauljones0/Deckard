@@ -2,7 +2,7 @@
 PluginManager.warm_up_plugins calls on_app_ready once per plugin.
 
 The call runs off the caller's GTK main thread and returns at once, even when a
-hook is slow, and one raising hook must not stop the others. A second warm-up
+hook is slow. One raising hook must not stop the others. A second warm-up
 re-fires nothing, and a plugin loaded after activation still gets its hook.
 """
 

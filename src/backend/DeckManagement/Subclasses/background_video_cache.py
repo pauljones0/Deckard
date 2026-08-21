@@ -20,8 +20,9 @@ class BackgroundVideoCache(Mp4FrameCache[list[Image.Image]]):
     Mp4FrameCache (mp4_tile_cache.py) owns the build, promote and
     decode-ahead discipline, which decodes the source once and then decodes
     each frame on demand from the cache mp4. This class keeps the tiling,
-    strip and saturation-crop logic of the background path: one instance, a
-    build interleaved with playback ticks, and the on-disk layout and naming.
+    strip and saturation-crop logic of the background path. That covers one
+    instance, a build interleaved with playback ticks, and the on-disk layout
+    and naming.
     """
 
     def __init__(self, video_path: str, deck_controller: "DeckController", extend_touchscreen: bool = False) -> None:

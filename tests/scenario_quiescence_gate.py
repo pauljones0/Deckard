@@ -60,8 +60,8 @@ def _window_closed(media_player, for_s: float = 0.25) -> bool:
     """True once the settle window has stopped rendering ticks for for_s.
 
     gate_window_ticks is the loop's own count of ticks the window rendered
-    instead of gating, so this reads the mechanism directly rather than
-    inferring it from device writes a producer generates anyway."""
+    instead of gating. This reads the mechanism directly. It does not infer
+    the mechanism from device writes a producer generates anyway."""
     seen = media_player.gate_window_ticks
     deadline = time.monotonic() + for_s
     while time.monotonic() < deadline:

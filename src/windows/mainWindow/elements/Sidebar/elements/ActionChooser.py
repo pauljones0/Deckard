@@ -102,9 +102,10 @@ class ActionChooser(Gtk.Box):
         self.main_box.append(self.open_store_button)
 
     def update_empty_state(self, n_plugins: int) -> None:
-        """Explains an empty action list instead of leaving a blank page:
-        distinguishes 'plugins failed to load' / 'plugins disabled by the
-        version gate' / 'nothing installed'. Main-thread only (called from
+        """Explains an empty action list instead of leaving a blank page.
+
+        It distinguishes 'plugins failed to load', 'plugins disabled by the
+        version gate' and 'nothing installed'. Main-thread only (called from
         PluginGroup.update, which store code dispatches via GLib.idle_add)."""
         if n_plugins > 0:
             self.empty_state_label.set_visible(False)

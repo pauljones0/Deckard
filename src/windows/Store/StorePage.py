@@ -78,8 +78,8 @@ class StorePage(Gtk.Stack):
     def _load_guarded(self) -> None:
         """Run the subclass load() and keep the tab retryable.
 
-        Without this wrapper, an exception dies in the log.catch of load(),
-        the spinner keeps running, and _loaded stays True, so the tab retries
+        Without this wrapper, an exception dies in the log.catch of load().
+        The spinner keeps running, _loaded stays True, and the tab retries
         only after a rebuild of the store window. A failed load here shows the
         error page and clears _loaded, so the next visit tries again.
         """
@@ -130,10 +130,11 @@ class StorePage(Gtk.Stack):
                                factory: "Callable[..., StorePreview]") -> None:
         """Construct a preview widget on the GTK main loop, then append it.
 
-        Callable[..., ...] and not Callable[[], ...]: the loaders bind the
-        loop variable with a lambda default (lambda x=x: ...), and a lambda
-        with a defaulted parameter does not unify with an empty parameter
-        list. The call below passes nothing, so the defaults are what run.
+        The annotation is Callable[..., ...], and not Callable[[], ...]. The
+        loaders bind the loop variable with a lambda default
+        (lambda x=x: ...). A lambda with a defaulted parameter does not unify
+        with an empty parameter list. The call below passes nothing, so the
+        defaults are what run.
 
         The page loaders run on worker threads. A call of the form
         GLib.idle_add(section.append_child, XPreview(...)) marshals the append

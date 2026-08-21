@@ -134,7 +134,7 @@ def check_engine_runs_headless() -> None:
         page_a = gl.page_manager.get_page(page_a_path, controller)
         controller.load_page(page_a, allow_reload=True)
         assert fixtures.wait_until(
-            lambda: len(deck.ops_by_name("set_key_image")) > 0, timeout=10), (
+            lambda: deck.ops_by_name("set_key_image"), timeout=10), (
             "page A never reached the device"
         )
         a_hashes = {e[4] for e in deck.ops_by_name("set_key_image")}

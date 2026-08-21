@@ -137,7 +137,7 @@ class InputVideo(SingleKeyAsset):
         """Applies a new fps and loop to a playing video, at the same position.
 
         Without natural_speed, wall-clock picking computes frame = elapsed *
-        fps, so a change of fps with no rebase of the start time jumps the
+        fps. A change of fps with no rebase of the start time then jumps the
         position by the whole elapsed factor. With natural_speed the timebase
         runs on the source fps, and fps is only the owner's render cap.
         """

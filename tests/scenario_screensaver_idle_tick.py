@@ -2,8 +2,8 @@
 An idle deck showing a static screensaver must cost nothing per tick.
 
 While ScreenSaver.show owns the deck, deck_controller.inputs holds a freshly
-built set with no action, no media and no label, and the screensaver's own
-imagery lives in background.
+built set with no action, no media and no label. The screensaver's own imagery
+lives in background.
 """
 
 # The tick loop therefore calls update() on no input at all, and hide() still

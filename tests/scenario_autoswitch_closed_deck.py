@@ -64,10 +64,10 @@ def main() -> None:
             controller_boom.serial_number = boom
 
             # Order the raising deck before the open one.
-            dc_list = gl.deck_manager.deck_controller
-            dc_list.remove(controller_open)
-            dc_list.append(controller_open)
-            assert dc_list.index(controller_boom) < dc_list.index(controller_open)
+            controllers = gl.deck_manager.deck_controller
+            controllers.remove(controller_open)
+            controllers.append(controller_open)
+            assert controllers.index(controller_boom) < controllers.index(controller_open)
 
             mail_path = fixtures.seed_page("MailPage")
             gl.page_manager.set_auto_change_settings(

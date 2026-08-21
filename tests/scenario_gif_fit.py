@@ -41,7 +41,7 @@ def _make_test_gif(path: str, size=(320, 320), n_frames: int = 6) -> None:
     """A small animated GIF with a transparent background and a shifting disc.
 
     It is well above twice any tile size this test uses, so the fit has work to
-    do, and it carries real alpha for the preservation assertion.
+    do. It carries real alpha for the preservation assertion.
     """
     frames = []
     for i in range(n_frames):
@@ -161,8 +161,8 @@ def check_disposal_method_1_gif() -> None:
     """A disposal-method-1 GIF must decode to coalesced frames.
 
     With disposal 1 each frame composites onto the previous result rather than
-    a cleared canvas, so a decode that reads raw frame buffers loses the pixels
-    of earlier frames. The fitted frames must stay RGBA and keep them.
+    a cleared canvas. A decode that reads raw frame buffers then loses the
+    pixels of earlier frames. The fitted frames must stay RGBA and keep them.
     """
     gif_path = os.path.join(gl.DATA_PATH, "media", "disposal1_test.gif")
     os.makedirs(os.path.dirname(gif_path), exist_ok=True)

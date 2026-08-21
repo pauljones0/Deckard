@@ -198,7 +198,7 @@ def drive_engine_workload() -> None:
         page_a = gl.page_manager.get_page(page_a_path, controller)
         controller.load_page(page_a, allow_reload=True)
         assert fixtures.wait_until(
-            lambda: len(deck.ops_by_name("set_key_image")) > 0, timeout=10), (
+            lambda: deck.ops_by_name("set_key_image"), timeout=10), (
             "page A never reached the device"
         )
 
@@ -249,7 +249,8 @@ def check_recorder_records_and_restores() -> None:
 
     It records, so a read inside the context shows up with this file as its
     caller. It also undoes the class swap on the way out even when the body
-    raises, so a failing drive cannot route every later read through a double.
+    raises. A failing drive therefore cannot route every later read through a
+    double.
     """
     baseline = type(gl)
     probe = ("DATA_PATH", __file__)
@@ -381,8 +382,8 @@ def static_engine_references() -> dict:
     """Map every loaded engine module to the gl slots its source mentions.
 
     Attribute stores are collected alongside loads. A gl.X assignment from the
-    engine is as much a dependency on X as a read, and the ones that exist
-    today are in the list on their own merit.
+    engine is as much a dependency on X as a read. The ones that exist today
+    are in the list on their own merit.
     """
     references: dict = {}
     for module in list(sys.modules.values()):
@@ -437,8 +438,9 @@ def check_static_absent(references: dict) -> None:
     """The same five slots, statically.
 
     The exemption is per file and per slot. Leg A of the startup queue is the
-    only place in the import closure of the engine that may name gl.app, and
-    only because the protocol of the App shares a module with the CLI legs.
+    only place in the import closure of the engine that may name gl.app. It
+    gets that exemption because the protocol of the App shares a module with
+    the CLI legs.
     """
     for relative, slots in sorted(references.items()):
         exempt = LEG_A_HOST_EXEMPTION.get(relative, frozenset())

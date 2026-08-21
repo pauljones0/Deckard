@@ -325,14 +325,14 @@ UI_ASSET_MANAGER = SurfaceSpec(
 
 
 
-#: One plugin's settings file, keyed by the path the plugin resolved for
-#: itself and not by its id. PluginBase.__init__ decides that path once, and
-#: it moves an old folder-name directory to the manifest-id one. A second
-#: derivation here gives the store another opinion about where a plugin's
-#: settings live. It carries no schema, because the app owns the envelope and
-#: nothing inside it. A defaults table could describe only keys that the
-#: plugin knows, and the write-side check refuses every one of them. It
-#: stays uncached, because a cache saves a parse that nothing repeats, and
+#: One plugin's settings file. The key is the path the plugin resolved for
+#: itself. The plugin id does not key it. PluginBase.__init__ decides that
+#: path once, and it moves an old folder-name directory to the manifest-id
+#: one. A second derivation here gives the store another opinion about where
+#: a plugin's settings live. It carries no schema, because the app owns the
+#: envelope and nothing inside it. A defaults table could describe only keys
+#: that the plugin knows, and the write-side check refuses every one of them.
+#: It stays uncached, because a cache saves a parse that nothing repeats, and
 #: owes a coherence answer for a backend in another process.
 PLUGIN = SurfaceSpec(
     name="plugin settings",
@@ -466,8 +466,8 @@ class SettingsStore:
         This serves a caller that a cache cannot. An editor takes a snapshot,
         changes several things against it, and writes the whole snapshot back
         at the end. It must stay off a shared surface, because every other
-        reader takes its half-finished edits as settled, and it must not
-        get a cache entry, because what it writes must match what it was
+        reader takes its half-finished edits as settled. It must not get a
+        cache entry, because what it writes must match what it was
         shown. Corruption heals as in any other read, and a cached surface's
         entry stays neither read nor filled.
         """
@@ -504,7 +504,7 @@ class SettingsStore:
         same surface lands whenever it lands, and the last writer wins.
 
         The read always comes from disk, for a cached surface too. The block
-        exists so that the write matches the read that opened it, and a cache
+        exists so that the write matches the read that opened it. A cache
         holds a copy of something the store did not watch.
         """
         path = spec.path(key)
@@ -564,9 +564,9 @@ class SettingsStore:
     def save_file(self, file_path: str, data: Any) -> None:
         """Write one JSON file atomically, then invalidate that path.
 
-        The invalidation follows the write rather than the surface, so a
-        caller that reaches a cached file through this path-level entry point
-        leaves no stale reader behind.
+        The invalidation follows the write rather than the surface. A caller
+        that reaches a cached file through this path-level entry point
+        therefore leaves no stale reader behind.
         """
         # An atomic write, with a temp file, an fsync and an os.replace, so an
         # interrupted write cannot truncate the settings file. It also creates

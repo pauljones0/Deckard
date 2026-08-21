@@ -92,8 +92,8 @@ class IconPackChooserStack(Gtk.Stack):
         """Run from both build worker threads, the pack one and the icon one.
 
         It snapshots and clears the deferred-task queue in one step under the
-        lock, so a show_for_path that read a flag as False cannot add its task
-        after this drain took the snapshot, and two callers cannot run or
+        lock. A show_for_path that read a flag as False then cannot add its
+        task after this drain took the snapshot. Two callers cannot run or
         remove the same task twice. The tasks run outside the lock, because
         they re-enter show_for_path, which takes the same lock.
         """

@@ -1,8 +1,8 @@
 """
 Regression test for Change Page and Run Command on one button.
 
-ControllerKey snapshots the state and the resolved action objects at key DOWN,
-then dispatches every event of the gesture to that snapshot, whatever page
+ControllerKey snapshots the state and the resolved action objects at key DOWN.
+It then dispatches every event of the gesture to that snapshot, whatever page
 swaps happen in between.
 """
 

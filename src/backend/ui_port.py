@@ -8,7 +8,7 @@ implements.
 
 The base class is the null implementation. With no UI attached every method
 does nothing and push_input_image returns False, which is the headless
-behaviour, so the engine dirty-marks and the UI recomposites on map.
+behaviour. The engine then dirty-marks, and the UI recomposites on map.
 
 The pull direction stays outside this port. On map, KeyGrid and
 ScreenBar.load_from_changes call controller.get_input(...).get_current_image()
@@ -29,12 +29,13 @@ if TYPE_CHECKING:
 class UIPort:
     """Engine-side view of the attached UI, if a UI is attached.
 
-    Threading contract. Every method accepts a call from any thread (the media
-    thread, the USB monitor, tick and action threads, the GLib main loop) and
-    must return without a block on the GTK loop. An implementation marshals a
-    widget mutation with GLib.idle_add and must not call run_on_main, because
-    a wedged main loop must not stall the media writer. push_input_image shows
-    the pattern, which converts on the calling thread and idles the paint.
+    Threading contract. Every method accepts a call from any thread and must
+    return without a block on the GTK loop. Those threads include the media
+    thread, the USB monitor, tick and action threads, and the GLib main loop.
+    An implementation marshals a widget mutation with GLib.idle_add and must
+    not call run_on_main, because a wedged main loop must not stall the media
+    writer. push_input_image shows the pattern, which converts on the calling
+    thread and idles the paint.
     """
 
     # Render mirror on the hot path. The media thread calls it up to keys x

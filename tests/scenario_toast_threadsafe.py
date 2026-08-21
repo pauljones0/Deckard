@@ -78,7 +78,7 @@ def main() -> None:
         try:
             MainWindow.show_error_toast(fake_win, "Failed to update store assets")
             MainWindow.show_info_toast(fake_win, "3 assets updated")
-        except Exception as e:  # noqa: BLE001 -- reraised via assert below
+        except Exception as e:  # noqa: BLE001 (the assert below reraises it)
             worker_errors.append(e)
 
     t = threading.Thread(target=worker, name="update_assets")

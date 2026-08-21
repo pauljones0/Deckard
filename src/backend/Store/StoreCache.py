@@ -48,8 +48,8 @@ class _AtomicCacheWriter:
     index's "fetched" clock. An exception inside the caller's with block, or
     an explicit abort(), discards the temp file and leaves the previous
     content and its stamp. A stamp before the write would let a crash
-    mid-write leave a truncated file that the index calls fresh, and the
-    stale fallback would serve it for up to DAYS_TO_KEEP.
+    mid-write leave a truncated file that the index calls fresh. The stale
+    fallback would then serve it for up to DAYS_TO_KEEP.
 
     This holds the per-file lock that StoreCache hands in, from construction
     until close or abort, so two writers on one cache key serialize.
@@ -152,8 +152,8 @@ class StoreCache:
     A content commit writes synchronously. _stamp_committed runs after a
     blob's os.replace lands, and remove_old_cache_files evicts, and both
     write files.json at once. A lost "path" or "fetched" stamp orphans the
-    blob forever, because remove_old_cache_files walks index entries only, so
-    no pass ages out a file with no entry and nothing finds it again. Crash
+    blob forever, because remove_old_cache_files walks index entries only. No
+    pass ages out a file with no entry, and nothing finds it again. Crash
     safety demands this write, so it must not defer.
 
     A read-clock renewal defers. The read path, and the first sighting of a
@@ -162,9 +162,9 @@ class StoreCache:
     mark arms that timer, and a later mark leaves the pending timer alone. A
     synchronous renewal would rewrite the whole files.json, with a json.dump
     of every entry and an fsync, once per catalog file opened. This costs one
-    write per burst. A hard kill inside the window loses that much renewal,
-    which makes an entry look FLUSH_DEBOUNCE_S older against a DAYS_TO_KEEP
-    (3 day) eviction bound, and the next read renews it again.
+    write per burst. A hard kill inside the window loses that much renewal.
+    An entry then looks FLUSH_DEBOUNCE_S older against a DAYS_TO_KEEP (3 day)
+    eviction bound, and the next read renews it again.
 
     An entry mutation and the index write both run under write_lock. The
     hazard is not the top-level files.copy(), because dict.copy() is one
@@ -245,13 +245,13 @@ class StoreCache:
         """Dump the index to disk. The caller must hold write_lock.
 
         A write of the live index also covers what the pending timer would
-        flush, so the dirty flag clears and the armed timer then does
+        flush. The dirty flag clears, and the armed timer then does
         nothing. This does not cancel that timer, because a Timer cancel from
         an arbitrary thread gains nothing over one idle wake-up within
         FLUSH_DEBOUNCE_S. The flag clears only after the write returns. A
         write that raises (ENOSPC, a read-only filesystem) must leave the
-        index dirty, so the next flush from the timer, the quit path or the
-        exit hook retries the renewals rather than drop them. A caller that
+        index dirty. The next flush from the timer, the quit path or the exit
+        hook then retries the renewals rather than drop them. A caller that
         passes another dict, which only the harness does, persists no live
         index, so the flag stands."""
         if files is None:
@@ -484,8 +484,8 @@ class StoreCache:
     def get_fetched_date(self, url: str, path: str, branch: "str | None" = "main", data_type: str = "text") -> float | None:
         """When a write last landed the cached content, or None when that is
         unknown. An entry older than the "fetched" field falls back to the
-        cache file's mtime, which a read never touches and which os.replace
-        carries over from the temp file. It must not fall back to the index
+        cache file's mtime. A read never touches that mtime, and os.replace
+        carries it over from the temp file. It must not fall back to the index
         clock "date", which every read renews and which would keep an old
         entry fresh for the stale fallback."""
         entry = self.files.get(self.generate_cache_string(url, path, branch, data_type), {})

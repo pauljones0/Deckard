@@ -124,7 +124,7 @@ class _FontConfig:
     It initializes lazily, so no work happens at import time. It loads one
     FcConfig and reuses it for the life of the process, behind a lock. The
     fontconfig match calls are not documented as safe for concurrent use from
-    several threads on a shared FcConfig, and label rendering can run off the
+    several threads on a shared FcConfig. Label rendering can run off the
     main thread.
     """
 

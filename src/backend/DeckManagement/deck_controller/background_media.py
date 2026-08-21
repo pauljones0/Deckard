@@ -136,9 +136,10 @@ class Background:
                            allow_keep: bool = True) -> "tuple[str, BackgroundVideo | GifBackground | BackgroundImage | str | None]":
         """Build the new background object lock-free, without a touch on
         self.video, self.image or the deck. apply_prebuilt() swaps it in.
-        Returns (kind, payload): blank clears the background, noop keeps the
-        current one, keep refreshes page, fps and loop only, and video or
-        image carries a new object."""
+
+        Returns (kind, payload). blank clears the background. noop keeps the
+        current one. keep refreshes page, fps and loop only. video or image
+        carries a new object."""
         if path == "":
             path = None
         if path is None:
@@ -231,10 +232,10 @@ class Background:
                 self.deck_controller.update_all_inputs()
 
     def set_from_path(self, path: str | None, fps: int = 30, loop: bool = True, update: bool = True, allow_keep: bool = True) -> None:
-        """Prebuild and apply in one call, for a caller that does not need the
-        lock-free split: load_background, which already holds
-        _background_load_lock, and the ScreenSaver setters that act while it
-        shows."""
+        """Prebuild and apply in one call, for a caller that does not need
+        the lock-free split. Those callers are load_background, which already
+        holds _background_load_lock, and the ScreenSaver setters that act
+        while it shows."""
         kind, payload = self.prebuild_from_path(path, fps=fps, loop=loop, allow_keep=allow_keep)
         self.apply_prebuilt(kind, payload, fps=fps, loop=loop, update=update)
 

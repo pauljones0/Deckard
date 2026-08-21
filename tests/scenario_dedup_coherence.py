@@ -83,7 +83,7 @@ def main() -> None:
         time.sleep(0.3)  # let a would-be regression write land
 
         extra_ts_writes = [e for e in deck.ops_after(seq_after_first_ts) if e[2] == "set_touchscreen_image"]
-        assert len(extra_ts_writes) == 0, (
+        assert not extra_ts_writes, (
             f"identical touchscreen composite must be hash-skipped, got "
             f"{len(extra_ts_writes)} additional write(s)"
         )

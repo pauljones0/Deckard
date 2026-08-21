@@ -1,8 +1,8 @@
 """Trailing debounce for GTK handlers whose follow-up work is expensive.
 
 Without it, the four Settings font rows each start a reload-all-pages thread
-from on_set, so a change of family, size and colour runs up to three full page
-reloads at once, and one colour-picker drag alone fires several.
+from on_set. A change of family, size and colour then runs up to three full
+page reloads at once. One colour-picker drag alone fires several.
 """
 import threading
 from typing import Callable, Generic, Optional, Protocol, TypeVar, cast

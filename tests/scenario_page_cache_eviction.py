@@ -31,8 +31,8 @@ def reset_world() -> None:
     """Isolate a leg by clearing the controller list and the page cache.
 
     total sums across every controller in gl.page_manager.pages, and the legs
-    share one gl.page_manager, so a prior leg's cached pages would inflate the
-    budget and displace evictions."""
+    share one gl.page_manager. A prior leg's cached pages would then inflate
+    the budget and displace evictions."""
     gl.deck_manager.deck_controller.clear()
     gl.page_manager.pages.clear()
     gl.page_manager._loads_in_flight.clear()

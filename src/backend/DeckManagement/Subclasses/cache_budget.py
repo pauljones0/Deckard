@@ -65,7 +65,7 @@ class BudgetParticipant(Protocol):
 
     register() stamps the four budget_* fields; the methods come from the
     registrant itself. An accounting-only registrant answers budget_bytes
-    and nothing more; the evictable gate keeps the sweep off the other two
+    and nothing more. The evictable gate keeps the sweep off the other two
     methods for it, exactly as the register() docstring states.
     """
 
@@ -287,7 +287,7 @@ def set_min_age(cache: BudgetParticipant, min_age_s: float) -> None:
     Group-A entries are keyed per frame, so a given entry is re-touched once
     per content-loop period and not once per tick. A flat 2 s leaves a playing
     video's frame set eligible for eviction exactly one loop before it is
-    needed again, which silently reinstates the per-frame encode the frame
+    needed again. That silently reinstates the per-frame encode the frame
     identity cache exists to avoid. The tile cache therefore tracks the active
     loop duration.
     """
@@ -347,8 +347,8 @@ def eviction_stats() -> tuple[int, int]:
     Both are monotonic for the life of the process.
 
     The read takes _lock, because the writes do. Any thread can drive
-    _drain_once(). The daemon drives it, and the scenarios call it directly,
-    so a += on a module global is a read-modify-write that two passes
+    _drain_once(). The daemon drives it, and the scenarios call it directly.
+    A += on a module global is a read-modify-write that two passes
     interleave, and telemetry then reports a torn pair.
     """
     with _lock:
@@ -376,9 +376,9 @@ def _ensure_thread() -> None:
     One caller claims the latch under the lock, so exactly one caller spawns,
     and it releases the latch again when the spawn fails. This is the only
     place that creates the daemon, and register() swallows what escapes it. A
-    latch left standing over a failed start(), such as a thread-limit
-    RuntimeError under memory pressure, leaves enforcement dead for the life
-    of the process with nothing to retry it. Released, the next registrant
+    latch left standing over a failed start() leaves enforcement dead for the
+    life of the process, with nothing to retry it. A thread-limit RuntimeError
+    under memory pressure is one such failure. Released, the next registrant
     tries again.
     """
     global _thread_started
@@ -550,8 +550,8 @@ def _warn_degenerate(total: int, ceiling: int) -> None:
     Every registrant sits at its floor or is entirely younger than its
     min-age. That requires a live working set physically larger than the
     ceiling protects, so an eviction only re-encodes the frames the painter
-    draws this instant. The pass therefore stops and warns, the sum of the
-    local caps still bounds the total, the operator gets a log line naming the
+    draws this instant. The pass therefore stops and warns. The sum of the
+    local caps still bounds the total. The operator gets a log line naming the
     knob, and the thrash tripwire counts any key that comes straight back.
     """
     # Count unconditionally, before the rate-limiter below. That limiter stops

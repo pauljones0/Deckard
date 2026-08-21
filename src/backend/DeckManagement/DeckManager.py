@@ -340,9 +340,7 @@ class DeckManager:
             decks = DeviceManager().enumerate()
 
             # Get already loaded deck serial ids
-            loaded_deck_ids = []
-            for controller in self.deck_controller:
-                loaded_deck_ids.append(controller.deck.id())
+            loaded_deck_ids = [controller.deck.id() for controller in self.deck_controller]
 
             for deck in decks:
                 if deck.id() in loaded_deck_ids:

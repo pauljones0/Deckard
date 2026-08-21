@@ -5,8 +5,8 @@ every row a group constructs reads the path while it is still None. A reader
 that refuses the absence stops the whole Page Manager window from opening,
 and nothing else in the suite constructs this widget.
 
-The override rows are the other half of the contract: they write, and a None
-path reaches canonical_path() in the page manager, so they must refuse.
+The override rows are the other half of the contract: they write. A None path
+reaches canonical_path() in the page manager, so they must refuse.
 """
 
 import fixtures  # noqa: F401  (must be first: isolates DATA_PATH)

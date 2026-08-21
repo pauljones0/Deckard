@@ -312,7 +312,7 @@ def check_wait_for_backend_event() -> None:
 def check_register_backend_verifies_port() -> None:
     """register_backend refuses a port the launched backend does not own.
 
-    This asserts the wiring, not the check in isolation: with no launched
+    This asserts the wiring, not the check in isolation. With no launched
     process, every port is unowned, so a register_backend that skipped the
     port check would connect anyway.
     """

@@ -43,9 +43,9 @@ class X11(Integration):
 
     @log.catch
     def _run_command(self, command: list[str]) -> subprocess.Popen[bytes] | None:
-        # stdout=PIPE is load-bearing: the two callers read communicate()[0]
-        # and decode() it with no None guard, which holds only while stdout is
-        # a pipe.
+        # The two callers read communicate()[0] and decode() it with no None
+        # guard. That holds only while stdout is a pipe, so stdout=PIPE is
+        # required here.
         if self.flatpak:
             command.insert(0, "flatpak-spawn")
             command.insert(1, "--host")

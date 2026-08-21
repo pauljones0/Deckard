@@ -48,13 +48,6 @@ def _is_symbol_font(font_path: str) -> bool:
         return False
 
 
-def _find_font_path(font_name: str | None, font_weight: int | None, style: str | None) -> str | None:
-    # font_resolver.resolve() carries its own lru_cache on these attributes.
-    # Size does not affect which file it picks, so size is not part of the
-    # key. It returns None only when fontconfig is unreachable.
-    return font_resolver.resolve(font_name, font_weight, style)
-
-
 from typing import Any, TYPE_CHECKING
 if TYPE_CHECKING:
     from src.backend.DeckManagement.deck_controller.inputs import ControllerInput
@@ -83,7 +76,10 @@ class KeyLabel:
         if font_name is None or font_name == "":
             font_name = gl.fallback_font
 
-        return _find_font_path(font_name, self.font_weight, self.style)
+        # font_resolver.resolve() carries its own lru_cache on these
+        # attributes. Size does not affect which file it picks, so size is not
+        # part of the key. It returns None only when fontconfig is unreachable.
+        return font_resolver.resolve(font_name, self.font_weight, self.style)
 
     def clear_values(self) -> None:
         self.text = None

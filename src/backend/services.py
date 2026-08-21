@@ -1,11 +1,11 @@
 """Typed accessors for the process-wide services that live on globals.
 
-The gl module is a namespace of late-initialised slots, and well over six
-hundred places read the hottest of them, which are the locale manager, the
-App, the settings manager, the deck manager and the page manager backend. Each raw read is
-an invisible dependency edge. An accessor is checked once and hands its
-callers a concrete type, holds the None guard in one place, gives a seam a
-test can substitute, and leaves an import edge that a rename follows.
+The gl module is a namespace of late-initialised slots. Well over six hundred
+places read the hottest of them: the locale manager, the App, the settings
+manager, the deck manager and the page manager backend. Each raw read is an
+invisible dependency edge. An accessor is checked once and hands its callers a
+concrete type, holds the None guard in one place, gives a seam a test can
+substitute, and leaves an import edge that a rename follows.
 
 It is no service locator, no registry and no container. Nothing registers here
 and nothing is constructed here. Every function reads the same slot the raw
@@ -46,8 +46,8 @@ def tr(key: str, fallback: str | None = None) -> str:
     HTML-escaped for GTK markup.
 
     No fallback and a fallback of None mean the same thing to the locale
-    manager, so this hands the call over in two shapes rather than forward a
-    None that the parameter is not typed to take.
+    manager. This hands the call over in two shapes, because the parameter is
+    not typed to take a None.
 
     key is typed str and this guards it in no way. get resolves a None key to
     None, and that None comes back out through the "-> str". mypy rejects it
@@ -57,7 +57,7 @@ def tr(key: str, fallback: str | None = None) -> str:
 
     Raises RuntimeError before main.create_global_objects() builds the locale
     manager. The raw read raises there too, with an AttributeError on None
-    that names neither the slot nor the phase, and this is the same crash with
+    that names neither the slot nor the phase. This is the same crash with
     the cause written on it.
     """
     # gl.lm carries a concrete annotation, because the slot is late-init, so
@@ -137,12 +137,12 @@ def require_main_window() -> MainWindow:
     """The main window, never None.
 
     This is what the raw gl.app.main_win dereference means at almost every
-    one of its sites, such as a window handler, a dialog, a page or action
-    editor, and a plugin's UI callback. None of them carries a None branch,
-    and neither other accessor fits. main_window() makes each one invent a
-    branch it never had, and require_app().main_win types as Any, because
-    App.on_activate carries no annotation and nothing declares the attribute.
-    This one hands back a concrete window.
+    one of its sites. Such sites include a window handler, a dialog, a page
+    or action editor, and a plugin's UI callback. None of them carries a None
+    branch, and neither other accessor fits. main_window() makes each one
+    invent a branch it never had, and require_app().main_win types as Any,
+    because App.on_activate carries no annotation and nothing declares the
+    attribute. This one hands back a concrete window.
 
     An absence here means that nothing built the window yet, before
     App.on_activate, because the App itself has not published or because the
@@ -237,8 +237,8 @@ def deck_manager() -> DeckManager | None:
     """The deck manager, or None before main() builds it.
 
     This is the honest read, so a caller that runs during boot sees the
-    absence. That window is wider than it looks: main() constructs the deck
-    manager well after create_global_objects() returns, so every slot that
+    absence. That window is wider than it looks. main() constructs the deck
+    manager well after create_global_objects() returns. Every slot that
     function fills is already live while this one is still None.
     """
     return gl.deck_manager

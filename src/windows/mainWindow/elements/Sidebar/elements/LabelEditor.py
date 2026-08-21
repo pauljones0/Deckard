@@ -360,9 +360,9 @@ class LabelRow(Adw.PreferencesRow):
 
         MainWindow.get_active_page answers None between the deck selection
         and the first page load, which its own docstring calls the normal
-        state, and active_identifier stays None until load_for_identifier
-        binds one. Every setter below keys its write by both, and Page keys
-        its dict path off identifier.input_type, so neither may be None.
+        state. active_identifier stays None until load_for_identifier binds
+        one. Every setter below keys its write by both, and Page keys its
+        dict path off identifier.input_type, so neither may be None.
         """
         page = services.require_main_window().get_active_page()
         identifier = self.active_identifier

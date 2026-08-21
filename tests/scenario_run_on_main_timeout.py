@@ -44,7 +44,7 @@ def _call_in_thread(fn) -> tuple[threading.Thread, dict]:
     def target():
         try:
             box["result"] = fn()
-        except BaseException as e:  # noqa: BLE001 -- the assertions need it
+        except BaseException as e:  # noqa: BLE001  (the assertions need it)
             box["exc"] = e
 
     t = threading.Thread(target=target, name="scenario-worker", daemon=True)

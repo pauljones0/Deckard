@@ -263,8 +263,9 @@ class DeckardAPI:
         """Serial numbers of the controllers a client can address.
 
         The value comes from the published object set, not from the deck
-        manager list, so each serial here has an object at the path composed
-        from it, because _publish_controller lists and publishes in one step.
+        manager list. Each serial here therefore has an object at the path
+        composed from it, because _publish_controller lists and publishes in
+        one step.
         Main context only, like every registration change.
         """
         # Publishing marshals onto the main context, so between a deck
@@ -337,7 +338,7 @@ def unpublish_controller(controller: "DeckController") -> None:
     """Take a deck controller off the bus when the deck goes away.
 
     This guards and marshals as publish_controller does. A client that holds a
-    proxy for the removed deck then gets UnknownObject, and the Controllers
+    proxy for the removed deck then gets UnknownObject. The Controllers
     property stops naming it in the same step, because both read one registry.
     """
     if _bus is None:
@@ -470,10 +471,10 @@ def _serial_published_for(controller: "DeckController") -> str | None:
 def _emit_controllers_changed() -> None:
     """Tell the clients that the deck inventory changed.
 
-    The publish and unpublish workers send this after they update the registry,
-    so the payload carries the current object set and corrects a client that
-    read the property early. The payload comes from the property itself, so it
-    never names a deck that no client can address.
+    The publish and unpublish workers send this after they update the
+    registry. The payload therefore carries the current object set and
+    corrects a client that read the property early. The payload comes from the
+    property itself, so it never names a deck that no client can address.
     """
     if _api_instance is None:
         return

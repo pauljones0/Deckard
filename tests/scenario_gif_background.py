@@ -71,8 +71,8 @@ def _seed_deck_background(serial: str, gif_path: str) -> None:
 def _await_startup_background(controller) -> None:
     """Wait out the background load of the controller before touching it.
 
-    That load runs on a worker thread and goes through the same setters, so
-    anything it does after the check begins lands in the middle of it. The
+    That load runs on a worker thread and goes through the same setters.
+    Anything it does after the check begins lands in the middle of it. The
     published tile is the signal, and the lock then fences the worker exit.
     """
     assert fixtures.wait_until(

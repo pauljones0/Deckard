@@ -2,8 +2,8 @@
 Which cached pages the cache must not tear down.
 
 Eviction is an in-memory teardown. It destroys the page's action objects and
-pops its cache slot. A holder of an evicted page then drives dead objects, and
-the next fetch for the same (controller, path) mints a second Page, so one key
+pops its cache slot. A holder of an evicted page then drives dead objects. The
+next fetch for the same (controller, path) mints a second Page. One key then
 carries two sets of action objects that register live event handlers. The cache
 sees two holders by itself: a controller's active_page and its
 screensaver-pending page. A pin is how every other holder says so. It is a

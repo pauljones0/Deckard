@@ -292,11 +292,11 @@ class KeyButton(Gtk.Frame):
         with active_page.edit() as page_dict:
             own_section = page_dict.setdefault(self.identifier.input_type, {})
             dropped_section = page_dict.setdefault(dropped_identifier.input_type, {})
-            target_key_dict = own_section.get(self.identifier.json_identifier, {})
-            dropped_key_dict = dropped_section.get(dropped_identifier.json_identifier, {})
+            own_content = own_section.get(self.identifier.json_identifier, {})
+            dropped_content = dropped_section.get(dropped_identifier.json_identifier, {})
 
-            own_section[self.identifier.json_identifier] = dropped_key_dict
-            dropped_section[dropped_identifier.json_identifier] = target_key_dict
+            own_section[self.identifier.json_identifier] = dropped_content
+            dropped_section[dropped_identifier.json_identifier] = own_content
 
         active_page.switch_actions_of_inputs(self.identifier, dropped_identifier)
 
@@ -388,8 +388,8 @@ class KeyButton(Gtk.Frame):
         """The paint-ready payload for paint_mirror_frame.
 
         Any thread may call it. image2pixbuf uses only PIL and GdkPixbuf, so
-        the conversion runs on the caller, which is the media thread for a live
-        frame, and only the widget change needs the loop.
+        the conversion runs on the caller. The caller is the media thread for
+        a live frame. Only the widget change needs the loop.
         """
         # This carries no staleness stamp, unlike the screenbar. One slot
         # coalesces the live frames of a key, so they cannot queue out of

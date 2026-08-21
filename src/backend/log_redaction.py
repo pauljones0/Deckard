@@ -283,9 +283,9 @@ def scrub(text: str) -> str:
 
 
 def redact_record(record: "Record") -> None:
-    """The loguru patcher. It scrubs the message. When an exception rides
+    """The loguru patcher. It scrubs the message. An exception can ride
     along, from opt(exception=...), from @log.catch or from the central
-    exception hooks, it replaces that exception with a scrubbed traceback
+    exception hooks. It replaces that exception with a scrubbed traceback,
     formatted by the stdlib and folded into the message. It clears
     record["exception"] first, so no sink formats the raw frames even when the
     traceback formatting fails. It must never raise, because a patcher

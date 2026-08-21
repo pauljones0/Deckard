@@ -67,8 +67,8 @@ class InputIdentifier:
     def ensure_state_dict(self, page: "Page", state: "int | str") -> dict[str, Any]:
         """Like get_state_dict, but creates the input, states and state chain,
         so the returned dict is part of the page."""
-        input_dict = page.dict.setdefault(self.input_type, {}).setdefault(self.json_identifier, {})
-        return cast(dict[str, Any], input_dict.setdefault("states", {}).setdefault(str(state), {}))
+        input_config = page.dict.setdefault(self.input_type, {}).setdefault(self.json_identifier, {})
+        return cast(dict[str, Any], input_config.setdefault("states", {}).setdefault(str(state), {}))
 
     # DeckController.get_input answers None when this identifier is not among
     # the controller's inputs, e.g. a wrong deck model or a stale identifier.

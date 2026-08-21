@@ -131,8 +131,8 @@ def check_stale_sat_variants_swept() -> None:
 
 def check_out_of_range_saturation_protects_variant() -> None:
     """A persisted display.saturation outside the valid 1.0 to 1.5 range is
-    clamped before the runtime derives a cache filename, so playback writes
-    the clamped variant and the sweep must protect that same variant.
+    clamped before the runtime derives a cache filename. Playback therefore
+    writes the clamped variant, and the sweep must protect that same variant.
     """
     # A raw read protects a name the runtime never writes, ".sat200" for a
     # stored 2.0, and sweeps away the ".sat150" playback does write.
@@ -168,7 +168,7 @@ def check_out_of_range_saturation_protects_variant() -> None:
 
 def check_tmp_age_gate() -> None:
     """The ".tmp." age gate. A writer temp file younger than TMP_MAX_AGE_S
-    may be a build in progress and must survive, and an older one is a crash
+    may be a build in progress and must survive. An older one is a crash
     leftover and must be swept.
     """
     # The sweep keys purely on ".tmp." in the name and on the file's mtime, so
@@ -204,7 +204,7 @@ def check_legacy_dir_sweep_idempotent() -> None:
     """Legacy-dir sweep idempotence.
 
     The two legacy top-level dirs the old JPEG-per-frame format wrote are
-    dead whatever else holds, so they go even when the source video's hash is
+    dead whatever else holds. They go even when the source video's hash is
     still referenced.
     """
     # A normal layout dir with the same referenced content survives, and a

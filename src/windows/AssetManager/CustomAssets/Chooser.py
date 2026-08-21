@@ -97,8 +97,8 @@ class CustomAssetChooser(ChooserPage):
     def _finish_build(self) -> None:
         """Set build_finished and snapshot the deferred-task queue in one step.
 
-        show_for_path reads the flag and appends under the same lock, so a
-        caller that read build_finished as False cannot add its task after
+        show_for_path reads the flag and appends under the same lock. A caller
+        that read build_finished as False therefore cannot add its task after
         this drain took the snapshot. Such a task would stay in the list, and
         the requested path would never show.
         """

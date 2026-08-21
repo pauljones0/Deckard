@@ -76,15 +76,15 @@ def _write_marker(marker_path: str, state: str) -> bool:
     Returns True on success. A truncated marker that survives a crash matches
     no state, reads as a fresh install, and strands the data with no symlink.
     """
-    tmp = marker_path + ".tmp"
+    tmp_path = marker_path + ".tmp"
     try:
-        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
+        fd = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
         try:
             os.write(fd, (state + "\n").encode())
             os.fsync(fd)
         finally:
             os.close(fd)
-        os.replace(tmp, marker_path)
+        os.replace(tmp_path, marker_path)
         dir_fd = os.open(os.path.dirname(marker_path), os.O_RDONLY)
         try:
             os.fsync(dir_fd)
@@ -94,7 +94,7 @@ def _write_marker(marker_path: str, state: str) -> bool:
     except OSError as e:
         _log(f"could not durably write marker {marker_path} ({e})")
         try:
-            os.unlink(tmp)
+            os.unlink(tmp_path)
         except OSError:
             pass
         return False
@@ -406,8 +406,9 @@ def _copy_migrate_locked(old_root: str, new_root: str, marker_path: str,
     """Cross-filesystem variant of _migrate_locked.
 
     os.rename cannot cross a filesystem. This copies old_root to a staging
-    sibling on the new_root filesystem, fsyncs it, marks it pending, renames it
-    into place, and only then removes the original. It ignores running_check.
+    sibling on the new_root filesystem, fsyncs it, and marks it pending. It
+    then renames the copy into place, and only then removes the original. It
+    ignores running_check.
     """
     # Each crash point recovers. A crash before the publish leaves old_root
     # intact, and the copy repeats. A crash after the publish leaves a pending

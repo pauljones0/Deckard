@@ -43,8 +43,8 @@ class SettingsManager:
         corrupt is True only for a file that exists and does not parse. An
         empty {} and a missing file both read as not corrupt. A caller that
         holds a backup (get_page_data) heals on this flag, not on the
-        quarantine rename, because a corrupt file stays corrupt whether or not
-        the rename succeeds.
+        quarantine rename. A corrupt file stays corrupt whether or not the
+        rename succeeds.
 
         This forwards to the settings store, which owns the read-with-heal.
         About 30 call sites reach it through this name.
@@ -115,8 +115,8 @@ class SettingsManager:
         """The app settings, as the one dict every reader of them holds.
 
         This hands out the shared dict. The settings dialog rows, the store
-        pages and the launch counter read it, write into it and save it back,
-        and they must see one object for a write to show before the save. The
+        pages and the launch counter read it, write into it and save it back.
+        They must see one object for a write to show before the save. The
         store caches it and drops the cache on a write, so this dict never
         falls behind the disk.
         """
@@ -129,10 +129,11 @@ class SettingsManager:
     def app_snapshot(self) -> AppSettings:
         """Typed view onto a private copy of the app settings, read from disk.
 
-        For an editor that collects several changes against one picture of the
-        file and writes the whole picture back at the end, such as the
-        settings dialog. It must stay off the shared dict, because every other
-        reader would take its unfinished edits as settled.
+        This serves an editor that collects several changes against one
+        picture of the file, and writes the whole picture back at the end.
+        The settings dialog is one. Such an editor must stay off the shared
+        dict, because every other reader would take its unfinished edits as
+        settled.
         """
         return AppSettings(settings_store.get().read_fresh(settings_store.APP))
 

@@ -1,7 +1,7 @@
 """A wedged plugin observer must be loud and attributable.
 
 An observer that blocks past the threshold produces an error log naming it
-and the queued backlog, and a piled-up backlog warns on the submit side too.
+and the queued backlog. A piled-up backlog warns on the submit side too.
 """
 import fixtures  # noqa: F401  (import first: sets up the isolated data dir)
 

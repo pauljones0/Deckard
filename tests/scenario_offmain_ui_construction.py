@@ -184,7 +184,7 @@ def check_selection_read() -> int:
             pass
     worker = threading.Thread(target=_drive_worker, daemon=True)
     worker.start()
-    pump_until(lambda: len(read_threads) > 0, 5,
+    pump_until(lambda: bool(read_threads), 5,
                "selection read never happened")
     worker.join(timeout=5)
 

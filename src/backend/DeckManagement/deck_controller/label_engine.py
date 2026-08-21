@@ -85,8 +85,8 @@ class _BitmapRecorder:
     """Capture the bitmap blits that ImageDraw.text() issues, instead of
     running them.
 
-    ImageDraw.text() runs two steps: FreeType rasterizes the stroked glyph
-    run into a coverage mask, which is expensive, then a blit puts that mask
+    ImageDraw.text() runs two steps. FreeType rasterizes the stroked glyph
+    run into a coverage mask, which is expensive. A blit then puts that mask
     on the target with a solid ink, which is cheap. A static label re-runs
     both on every media tick, although only the pixels under it change. This
     object stands in for the draw core while text() runs and records the blit
@@ -210,15 +210,15 @@ class LabelManager:
         _bbox_cache, _scroll_strips and _static_ops need no epoch and do not
         reset here. Each entry stores its own content key beside the value,
         and every reader re-checks that key on the hit path. The keys cover
-        every input to the value: text, resolved font file, which encodes
-        family, weight and style, and size for the bbox; plus colors,
-        outline, alignment, anchor, absolute draw coordinates and target
-        geometry for the blits and the strip. An equal key means equal
-        pixels, so a store after a clear can only resurrect an entry that is
-        still correct for the current label, or one whose key does not match
-        and which the next reader rebuilds. The size caps below bound
-        the retained bytes. The reset calls that do exist release memory
-        early."""
+        every input to the value. The bbox key holds the text, the resolved
+        font file, which encodes family, weight and style, and the size. The
+        blit and strip keys add the colors, the outline, the alignment, the
+        anchor, the absolute draw coordinates and the target geometry. An
+        equal key means equal pixels. A store after a clear can therefore
+        resurrect only two kinds of entry. The first is still correct for the
+        current label. The second has a key that does not match, and the next
+        reader rebuilds it. The size caps below bound the retained bytes. The
+        reset calls that do exist release memory early."""
         self._label_epoch += 1
         self._scroll_widths_cache = None
         self._has_visible_labels_cache = None
@@ -228,7 +228,7 @@ class LabelManager:
         """Drop the derived label caches so the next render recomputes scroll
         detection and geometry. Any path that mutates a label's attributes in
         place, and not through set_page_label or set_action_label, must call
-        this; Page.set_label_* pokes page_labels[pos] directly and is such a
+        this. Page.set_label_* pokes page_labels[pos] directly and is such a
         path. Without it get_scroll_label_widths() keeps the old overflow set
         and the render composites a stale strip: a shortened label scrolls
         forever, and a lengthened one never starts until a page reload. This
@@ -366,7 +366,7 @@ class LabelManager:
         A change to the app-wide font defaults is not a label mutation and
         needs no separate channel. All four Settings writers that touch
         gl.settings_manager.font_defaults call
-        page_manager.reload_all_pages(), and a page reload runs
+        page_manager.reload_all_pages(). A page reload runs
         create_n_states(), which replaces every input state object and every
         LabelManager with it. A font-defaults change destroys the object that
         holds this memo, and that covers dials and touchscreens too.
@@ -502,7 +502,7 @@ class LabelManager:
         return widths
 
     def get_has_scroll_labels(self) -> bool:
-        return len(self.get_scroll_label_widths()) > 0
+        return bool(self.get_scroll_label_widths())
 
     # The scroll cadence in wall time, not loop iterations. At the nominal
     # 30 FPS it advances 1px per two ticks and holds for scroll_wait ticks.
@@ -598,13 +598,13 @@ class LabelManager:
         and the media-thread stall, decided from measurements the caller
         already has, with no rasterization.
 
-        text() masks each line separately and runs the whole thing twice when
-        there is an outline, so the op count is 2 per line and the stroke
-        padding costs per line, not once per block. That over-estimates the
-        real mask total, about 2x on measured cases, because a mask is the
-        glyph run's tight bbox and not the block rectangle. An over-estimate
-        is the safe direction here, because _BitmapRecorder enforces the
-        exact bound."""
+        text() masks each line separately, and it runs the whole thing twice
+        when there is an outline. The op count is therefore 2 per line. The
+        stroke padding costs per line, not once per block. That
+        over-estimates the real mask total, about 2x on measured cases,
+        because a mask is the glyph run's tight bbox and not the block
+        rectangle. An over-estimate is the safe direction here, because
+        _BitmapRecorder enforces the exact bound."""
         lines = label.text.count("\n") + 1
         if lines * 2 > self._MAX_LABEL_OPS:
             return False
@@ -618,19 +618,19 @@ class LabelManager:
         """Draw a scrolling label by compositing a window of its precomposed
         text strip at this tick's offset. The strip rasterizes once per
         (text, font, colors) and serves every frame of the sweep. A direct
-        draw.text with stroke costs ~2.5ms per frame and the composite
-        ~0.014ms, with identical pixels, because the target coordinates keep
-        constant fractional parts across the sweep and bake them into the
-        strip, so the paste offset is always a whole pixel.
+        draw.text with stroke costs ~2.5ms per frame, and the composite
+        ~0.014ms. The pixels are identical, because the target coordinates
+        keep constant fractional parts across the sweep and bake them into
+        the strip. The paste offset is therefore always a whole pixel.
 
-        The composite matches a direct draw for opaque ink only. A
-        semi-transparent fill or outline, which only the plugin set_label API
-        or hand-edited page JSON can set, blends with straight-alpha OVER
-        here and with PIL's coverage blend in draw.text, so a scrolling frame
-        differs from the static draw. _draw_static_label caches one layer
-        lower, the glyph masks rather than a composited strip, which is exact
-        for any ink; it needs a fixed paste position, so it does not
-        generalize back to the sweep."""
+        The composite matches a direct draw for opaque ink only. Only the
+        plugin set_label API or hand-edited page JSON can set a
+        semi-transparent fill or outline. Such ink blends with straight-alpha
+        OVER here, and with PIL's coverage blend in draw.text. A scrolling
+        frame therefore differs from the static draw. _draw_static_label
+        caches one layer lower, the glyph masks rather than a composited
+        strip, which is exact for any ink; it needs a fixed paste position,
+        so it does not generalize back to the sweep."""
         font = label.get_font()
         outline_width = label.outline_width
         pad = outline_width + 6
@@ -700,8 +700,8 @@ class LabelManager:
         """Draw a non-scrolling label by replaying its cached glyph blits.
 
         A static label's pixels are a pure function of the text, the font,
-        the colors, the outline, the alignment and the image geometry, and
-        none of those change between media ticks. A per-frame draw.text()
+        the colors, the outline, the alignment and the image geometry. None
+        of those change between media ticks. A per-frame draw.text()
         re-rasterizes the stroked glyph run at ~820us per key, ~50% of the
         whole tick on a populated page over an animated background. This
         records the rasterization once, through _BitmapRecorder standing in
@@ -792,12 +792,12 @@ class LabelManager:
         also the interception tripwire. A recording is safe to replay only if
         the recorder saw the whole draw, and a blank probe is the proof.
         Anything text() writes through another channel lands on this probe as
-        residue, and only a full-size probe still shows it; PIL's
+        residue, and only a full-size probe still shows it. PIL's
         embedded-color route pastes onto the target image directly and
         bypasses the draw core. A 1x1 probe records the identical ops,
         because text() derives the blit coordinates from xy, anchor and mask
-        rather than from the canvas, but it clips every escaped write away
-        and blinds this check.
+        rather than from the canvas. That probe still clips every escaped
+        write away, and it blinds this check.
 
         So the bar is non-empty ops and a blank probe. An empty ops list
         alone catches total loss only. A stroke pass that records while the

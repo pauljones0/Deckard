@@ -72,9 +72,10 @@ def unix_signal_add(priority: int, signum: int, callback: Callable[[], bool]) ->
     """Install a GLib main-loop source for signum. True if one went in.
 
     GLib 2.80 moved the Unix API from the GLib-2.0 introspection namespace to
-    GLibUnix-2.0, so the runtime GLib carries exactly one of the two spellings:
-    GLib.unix_signal_add on older distributions, GLibUnix.signal_add on current
-    ones. This tries both, and returns False when neither is introspectable.
+    GLibUnix-2.0. The runtime GLib therefore carries exactly one of the two
+    spellings: GLib.unix_signal_add on older distributions,
+    GLibUnix.signal_add on current ones. This tries both, and returns False
+    when neither is introspectable.
     """
     add = getattr(GLib, "unix_signal_add", None)
     if add is None:
@@ -499,9 +500,9 @@ class App(Adw.Application):
     def _on_unix_signal(self, *args: Any) -> bool:
         """SIGTERM and SIGHUP entry point. Runs on_quit and keeps the source.
 
-        The Gio quit action and the GLib.idle_add(on_quit) routes do not use
-        this method, because a true return on an idle source means run again,
-        which spins the main loop.
+        A true return on an idle source means run again, which spins the main
+        loop. The Gio quit action and the GLib.idle_add(on_quit) routes
+        therefore do not use this method.
         """
         # An exception from on_quit propagates. GLib then drops the source, and
         # a later TERM kills the process, which keeps a broken teardown from

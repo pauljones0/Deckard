@@ -6,7 +6,7 @@ dump from an already running instance to the unlinked old file.
 import os
 import tempfile
 
-import fixtures  # noqa: F401  -- sys.path setup for src imports
+import fixtures  # noqa: F401  (sets sys.path up for the src imports)
 
 from src.backend.log_hooks import _scrub_fault_log
 from src.backend.log_redaction import install_log_redaction, scrub

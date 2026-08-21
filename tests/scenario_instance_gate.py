@@ -277,8 +277,8 @@ def leg_close_running_mid_boot(observer: Observer) -> None:
     """A close-running against an instance that is still starting up.
 
     It owns the name and dispatches nothing, exactly as a booting instance
-    does. The quit must be held back until it can be heard, or it would be
-    acted on after this launch had already given up, leaving nothing running.
+    does. The quit must be held back until it can be heard. A quit acted on
+    after this launch had already given up would leave nothing running.
     """
     dispatch_delay = 2.0
     child = spawn("primary-quit", ID_MIDBOOT,

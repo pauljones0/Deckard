@@ -11,7 +11,7 @@ and names the fix. The --self-test flag runs the check against a throwaway tree
 with a planted bare reader and proves it goes red. It prints PASS or FAIL and
 is not part of the ordinary run.
 
-The app owns a set of JSON settings files, which are the deck settings, the app
+The app owns a set of JSON settings files. They are the deck settings, the app
 settings, the page-manager bookkeeping, the asset library index, the plugin
 settings, and the UI state of the asset chooser. Each one needs the same three
 answers. Where does it live, what happens when it is corrupt, and who may write
@@ -324,7 +324,7 @@ def check_allowlist_use(allowlist: dict[str, str], used: set[str], failures: lis
     """Drop an allowlist entry once its reader is gone.
 
     An exemption that outlives its json call is a standing permission for a read
-    that nobody makes, and a standing permission is how the next one arrives
+    that nobody makes. A standing permission is how the next one arrives
     unremarked.
     """
     for name in sorted(allowlist):
@@ -353,13 +353,13 @@ def run_check(
 def self_test() -> int:
     """Prove the check goes red on a planted bare reader and a stale entry."""
     problems: list[str] = []
-    tmp = Path(tempfile.mkdtemp(prefix="settings-json-selftest-"))
+    tree_root = Path(tempfile.mkdtemp(prefix="settings-json-selftest-"))
     try:
-        backend = tmp / "src" / "backend"
+        backend = tree_root / "src" / "backend"
         backend.mkdir(parents=True)
-        (tmp / "GtkHelper").mkdir()
-        (tmp / "globals.py").write_text("x = 1\n")
-        (tmp / "main.py").write_text("y = 2\n")
+        (tree_root / "GtkHelper").mkdir()
+        (tree_root / "globals.py").write_text("x = 1\n")
+        (tree_root / "main.py").write_text("y = 2\n")
         (backend / "settings_store.py").write_text(
             "import json\n\n\ndef load(p):\n    with open(p) as h:\n        return json.load(h)\n"
         )
@@ -368,13 +368,13 @@ def self_test() -> int:
         gfiles = ("globals.py", "main.py")
         gtrees = ("src", "GtkHelper")
 
-        failures, _, _ = run_check(tmp, gfiles, gtrees, allow)
+        failures, _, _ = run_check(tree_root, gfiles, gtrees, allow)
         if failures:
             problems.append(f"a clean tree was reported red: {failures}")
 
         rogue = backend / "rogue.py"
         rogue.write_text("import json\n\n\ndef g(p):\n    return json.load(open(p))\n")
-        failures, _, _ = run_check(tmp, gfiles, gtrees, allow)
+        failures, _, _ = run_check(tree_root, gfiles, gtrees, allow)
         if not any("rogue.py" in f for f in failures):
             problems.append(f"a planted bare json.load was NOT caught red: {failures}")
         rogue.unlink()
@@ -382,18 +382,18 @@ def self_test() -> int:
         # A from json import load must go red too.
         hidden = backend / "hidden.py"
         hidden.write_text("from json import load\n\n\ndef g(p):\n    return load(open(p))\n")
-        failures, _, _ = run_check(tmp, gfiles, gtrees, allow)
+        failures, _, _ = run_check(tree_root, gfiles, gtrees, allow)
         if not any("hidden.py" in f for f in failures):
             problems.append(f"a `from json import load` was NOT caught red: {failures}")
         hidden.unlink()
 
         # A stale allowlist entry goes red when the file stops reading json.
         (backend / "settings_store.py").write_text("still_no_json = True\n")
-        failures, _, _ = run_check(tmp, gfiles, gtrees, allow)
+        failures, _, _ = run_check(tree_root, gfiles, gtrees, allow)
         if not any("settings_store.py" in f for f in failures):
             problems.append(f"a stale allowlist entry was NOT caught red: {failures}")
     finally:
-        shutil.rmtree(tmp, ignore_errors=True)
+        shutil.rmtree(tree_root, ignore_errors=True)
 
     if problems:
         print("settings-json ratchet self-test: FAIL", file=sys.stderr)

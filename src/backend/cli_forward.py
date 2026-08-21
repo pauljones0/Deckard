@@ -8,7 +8,7 @@ that has not enumerated yet and boots; see legs B and C in
 src/backend/startup_queue.py. With an instance running, the requests go over
 the bus to that instance and this process ends.
 
-Parking happens before the process knows which of the two it is, so a launch
+Parking happens before the process knows which of the two it is. A launch
 that parks and then loses the race for the application name holds requests
 that belong to another process. forward_parked_requests takes them there.
 
@@ -137,11 +137,11 @@ def _parse_state_requests(raw: list[Any]) -> tuple[list[tuple[str, str, str, int
 
     This judges shape alone, which needs no device. Do the coordinates read as
     two non-negative integers, and does the state read as a non-negative
-    integer. The running instance answers whether (9,9) sits on the deck,
-    whether state 19 exists on that input, and whether the page or the serial
-    is real, and it answers from the device itself. A cap here, such as
-    coordinates at most 10 and state at most 20, matches no hardware and
-    rejects a valid request for a large deck before a device sees it.
+    integer. The running instance answers from the device itself. It says
+    whether (9,9) sits on the deck, whether state 19 exists on that input,
+    and whether the page or the serial is real. A cap here, such as
+    coordinates at most 10 and state at most 20, matches no hardware. Such a
+    cap rejects a valid request for a large deck before a device sees it.
     """
     parsed: list[tuple[str, str, str, int]] = []
     failures: list[str] = []
@@ -205,9 +205,9 @@ def _forward(transport: Transport, page_requests: list[Any],
     """Send every request to the running instance and collect what it said.
 
     This sends every request. A return after the first send moves deck A and
-    leaves deck B alone for --change-page A X --change-page B Y, and it keeps
-    a --change-state on a command that also carries a --change-page inside
-    the process.
+    leaves deck B alone for --change-page A X --change-page B Y. It keeps a
+    --change-state inside the process, on a command that also carries a
+    --change-page.
 
     The order is every page request as argv gave them, then every state
     request as argv gave them. argparse collects the two flags into two lists,
@@ -216,7 +216,7 @@ def _forward(transport: Transport, page_requests: list[Any],
 
     The caller must see a failure. The bus methods answer with a sentence, and
     those sentences reach the verdict for main.py to print. A failed request
-    does not stop the ones behind it, because each one is independent, and a
+    does not stop the ones behind it, because each one is independent. A
     person who asked for four changes is better served by three applied and
     one explained than by a prefix.
     """
@@ -279,8 +279,8 @@ def forward_parked_requests(transport: Transport | None = None) -> list[str]:
     the race for the application name settles, and it must, because the
     requests exist for the boot that follows. So an invocation parks, gets as
     far as registering, and learns there that another launch took the name
-    first. The requests then sit in a process that exits without a deck open,
-    and without this call they leave with it, apply nothing, and report
+    first. The requests then sit in a process that exits without a deck open.
+    Without this call they leave with it, apply nothing, and report
     success.
 
     This probes nothing first. The caller just learned that another instance

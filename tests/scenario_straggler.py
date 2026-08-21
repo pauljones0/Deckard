@@ -2,7 +2,7 @@
 Unit-tier scenario for the straggler drop at the present boundary.
 
 A paint enqueued for generation G is dropped once a newer load_page bumps the
-generation past G, and a paint against the current generation still lands.
+generation past G. A paint against the current generation still lands.
 This drives perform_media_player_tasks directly, so one call is one cycle.
 """
 import fixtures

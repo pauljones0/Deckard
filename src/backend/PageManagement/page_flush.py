@@ -1,8 +1,8 @@
 """
 The page-flush seam is the one place that turns a Page's in-memory dict into
 the bytes in pages/<name>.json, and the one place that decides when. An inline
-write in each mutator asks that question at about 30 call sites and answers it
-"now, twice per keystroke, on the GTK main thread".
+write in each mutator asks that question at about 30 call sites. Each one
+answers "now, twice per keystroke, on the GTK main thread".
 
 What this module owns
 
@@ -392,7 +392,7 @@ class PageFlush:
         """Throw the pending edits of path away without a write.
 
         For a page that goes away. A flush of a deleted page writes the file
-        back into existence, and a flush of a move's source writes a file the
+        back into existence. A flush of a move's source writes a file the
         move removes next.
         """
         # The backup record goes with them. Every caller gives the file to a

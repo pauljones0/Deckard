@@ -284,7 +284,7 @@ def check_validation_is_syntax_only() -> None:
 def check_large_decks_not_pre_rejected() -> None:
     """Large coordinates and state numbers travel to the instance untouched.
 
-    A cap of x,y <= 10 and state <= 20 matches no device and rejects valid
+    A cap of x,y <= 10 and state <= 20 matches no device. It rejects valid
     requests for large decks before anything that knows a deck sees them.
     """
     argv = ["--change-state", "deck-a", "Alpha", "9,9", "19",

@@ -113,11 +113,12 @@ def _image_cache_fields() -> tuple[int, int, int, int, int]:
     image-cache budget.
 
     This attributes the memory, which is why it stays on by default. The
-    ceiling tunes against the field once the CSV says how much image RAM the
-    process holds, how hard the ceiling bites, and how much of the rest sits
-    in holders that the ceiling does not govern, which are the video readers
-    and above all the GIF frame lists, which carry no byte cap. Every value is
-    a cheap sum of per-cache counters, and nothing walks a cache."""
+    ceiling tunes against the field from the CSV. The CSV says how much image
+    RAM the process holds, how hard the ceiling bites, and how much of the
+    rest sits in holders that the ceiling does not govern. Those holders are
+    the video readers and above all the GIF frame lists, which carry no byte
+    cap. Every value is a cheap sum of per-cache counters, and nothing walks a
+    cache."""
     try:
         totals = cache_budget.totals()
         evictions, evicted_bytes = cache_budget.eviction_stats()
@@ -150,12 +151,12 @@ class MemTelemetrySampler(threading.Thread):
     """The process memory sampler, and the idle malloc_trim.
 
     The trim side always runs. An overnight A/B measured 64 trims at 0 to 3ms
-    each, with no arena-lock stall under MALLOC_ARENA_MAX=2, which reclaimed 2
-    to 5MB each and pulled a post-burst high-water down by about 29MB. That
-    cost is small, so the trim is on by default, and SC_MALLOC_TRIM=0 turns it
-    off. The CSV recording stays opt-in through SC_MEM_TELEMETRY=1. Without it
-    the loop skips the smaps walk and reads /proc/self/status alone, which
-    costs microseconds, to log the trim deltas.
+    each, with no arena-lock stall under MALLOC_ARENA_MAX=2. The trims
+    reclaimed 2 to 5MB each and pulled a post-burst high-water down by about
+    29MB. That cost is small, so the trim is on by default, and
+    SC_MALLOC_TRIM=0 turns it off. The CSV recording stays opt-in through
+    SC_MEM_TELEMETRY=1. Without it the loop skips the smaps walk and reads
+    /proc/self/status alone, which costs microseconds, to log the trim deltas.
     """
 
     def __init__(self) -> None:

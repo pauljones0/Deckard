@@ -453,8 +453,8 @@ def check_gate_off_restores_auto_loaded_decks() -> None:
     """A deck the watcher switched away from its manual page is restored by
     the next window change that matches no rule.
 
-    Once the last rule is gone no window change follows, so the gate going
-    off has to carry the restore itself or the deck stays stranded.
+    Once the last rule is gone, no window change follows. The gate going off
+    must therefore carry the restore itself, or the deck stays stranded.
     """
     _clear_pages()
     page_path = _write_page("Armed", auto_change={

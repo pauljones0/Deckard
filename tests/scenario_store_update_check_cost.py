@@ -1,9 +1,9 @@
 """
 Regression test for the cost and the identity of the boot update check.
 
-install_* stamps the origin repository into the tree beside VERSION, and
-identity is that stamp, because the catalog cannot say which repository an
-install came from. No network is involved.
+install_* stamps the origin repository into the tree beside VERSION. Identity
+is that stamp, because the catalog cannot say which repository an install came
+from. No network is involved.
 """
 
 # Once the installs are stamped, an update check fetches the catalog files and
@@ -792,8 +792,8 @@ def test_stamp_naming_dropped_repo_re_resolved() -> None:
 
 
 def test_stamp_matches_catalog_case_insensitive() -> None:
-    """GitHub owner and repository names are case-insensitive, so a tree
-    stamped Acme/Widget is the same install the catalog spells acme/Widget,
+    """GitHub owner and repository names are case-insensitive. A tree stamped
+    Acme/Widget is therefore the same install the catalog spells acme/Widget,
     and must not be identified again."""
     _stub_globals()
     _reset_local_state()

@@ -1,9 +1,10 @@
 """One place decides whether a page or state switch is valid.
 
 "Switch deck S to page P" and "set input (x,y) on page P of deck S to state N"
-arrive from several transports. Those are the D-Bus methods that an external
-tool or a second CLI invocation calls on the running instance, and the argv
-requests that a booting process parks for a deck which has not enumerated yet.
+arrive from several transports. D-Bus methods carry them to the running
+instance, from an external tool or from a second CLI invocation. Argv
+requests carry them into a booting process, which parks each one for a deck
+that has not enumerated yet.
 A copy of the rules per transport drifts apart, so this module is the one rule
 set they all ask. The decision lives here, and the rendering stays at the
 surface. Nothing here logs, and nothing here touches the toolkit.
@@ -13,9 +14,10 @@ No blanket except
 An invalid request is a result. An unexpected exception, such as a load_page
 that raises or a device gone mid-call, propagates to the caller untouched. The
 boot path peeks a parked state request, applies it through here, and resolves
-it once the apply returns, so an exception on the way through leaves the
-request parked for the next load to retry (see src/backend/startup_queue.py).
-A catch here turns that retry into a silent drop.
+it once the apply returns. An exception on the way through therefore leaves
+the request parked for the next load to retry
+(see src/backend/startup_queue.py). A catch here turns that retry into a
+silent drop.
 """
 from __future__ import annotations
 
@@ -46,7 +48,7 @@ class ControlResult:
     code is the vocabulary a caller branches on. message says the same thing
     to a person, and every current surface renders that part alone. A message
     names the deck only where the failure is about the deck, which is an
-    unknown serial or a state changed, and each surface adds its own context.
+    unknown serial or a state changed. Each surface adds its own context.
 
       ""                      the request applied
       "already-active"        the deck already shows that page, so nothing
@@ -109,8 +111,8 @@ def _no_such_page(page_ref: str, page_manager: PageManagerBackend) -> ControlRes
 
 class ControlPlane:
     """The rules. This holds no state, and every call reads the gl slots it
-    needs, so a controller list or a page store rebound underneath it, which
-    the test harness does, still applies.
+    needs. A controller list or a page store rebound underneath it, which the
+    test harness does, still applies.
 
     The caller's thread runs every method, whichever it is, which covers the
     boot thread, a USB hotplug thread, the GTK main thread and the D-Bus
@@ -132,7 +134,7 @@ class ControlPlane:
         The load is skipped while that page is already the active one. That
         no-op is why this check has one home. A repeated switch request
         otherwise reloads the deck on one transport and does nothing on the
-        others, and on a real deck a reload flickers and re-renders every key.
+        others. On a real deck a reload flickers and re-renders every key.
         """
         page_manager = gl.page_manager
         if page_manager is None:
@@ -173,7 +175,7 @@ class ControlPlane:
         The page comes first, because the requested page defines the input
         this addresses, and that input's state count bounds the state number.
         The bounds come from this device's own key layout and this input's own
-        state list, and never from a constant, because no constant holds for
+        state list. No constant supplies them, because no constant holds for
         every deck.
         """
         page_result = self.change_page_on(controller, page_ref)

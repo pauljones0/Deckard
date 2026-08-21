@@ -136,9 +136,9 @@ def check_mixed_durations_normalized() -> None:
 def check_probe_matches_full_decode() -> None:
     """The pixel-free timeline probe and the full decode must agree exactly.
 
-    A warm KeyGIF builds its timeline from the probe and a cold one from the
-    decode walk, so any drift would change playback with the cache state. The
-    frame count and the O(1) RAM contract are pinned here too.
+    A warm KeyGIF builds its timeline from the probe, and a cold one from the
+    decode walk. Any drift would then change playback with the cache state.
+    The frame count and the O(1) RAM contract are pinned here too.
     """
     from src.backend.DeckManagement.DeckController import probe_gif_timeline
 
@@ -167,7 +167,7 @@ def check_close_leaves_late_ticks_harmless() -> None:
 
     Teardown races the media loop, so a tick can land after close(). Empty
     containers make the late tick, get_frame_delay(), get_raw_image() and a
-    double close() all no-ops by construction.
+    double close() all no-ops.
     """
     path = _make_gif(os.path.join(gl.DATA_PATH, "media", "close_noop.gif"),
                      [100, 100, 100])

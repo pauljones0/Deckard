@@ -141,9 +141,9 @@ class AssetManager(Gtk.ApplicationWindow):
         """Run the selection callback of the opener, then hide the window.
 
         The callback needs a guard, because the window can be up without one.
-        This calls hide() and not close(), because the default GTK4
-        close-request handling destroys the window on the next main-loop
-        iteration, and each open reuses this window.
+        This calls hide() and not close(). The default GTK4 close-request
+        handling destroys the window on the next main-loop iteration, and
+        each open reuses this window.
         """
         callback_func = self.callback_func
         callback_args = self.callback_args

@@ -1,21 +1,22 @@
 """Uniqueness, decided once, before this launch does anything exclusive.
 
-Nothing can import main.py, because its module body re-execs the process and
-runs the rename migration against the real user directories, so a uniqueness
-decision that lives there is untestable. main.py keeps the argv read, the
-wiring and the exit. The decision lives here, where a scenario drives it
-against a real bus daemon, and establish() states the order it decides in.
+Nothing can import main.py. Its module body re-execs the process and runs
+the rename migration against the real user directories. A uniqueness
+decision that lives there is therefore untestable. main.py keeps the argv
+read, the wiring and the exit. The decision lives here, where a scenario
+drives it against a real bus daemon, and establish() states the order it
+decides in.
 
 Why nothing here claims the name first
 
 A claim on the application name up front, before the expensive work, settles a
 race earlier, and this module does not take that shape. A connection that owns
-the application name makes GApplication's own register() find the name taken,
-and register() then demotes the process that holds it to a remote instance, so
-a pre-claim defeats the mechanism it means to help. A claim on a different
-name works, and that is the second owner of uniqueness this module replaced.
-It meant two names to keep in step, and a winner that held one of them while
-the other stayed unowned for a whole boot. What stays is an ask rather than a
+the application name makes GApplication's own register() find the name taken.
+Then register() demotes the process that holds it to a remote instance. A
+pre-claim therefore defeats the mechanism it means to help. A claim on a
+different name works, and that is the second owner of uniqueness this module
+replaced. It meant two names to keep in step, and a winner that held one of
+them while the other stayed unowned for a whole boot. What stays is an ask rather than a
 claim. A NameHasOwner probe and a release poll own nothing, which leaves
 register() as the one claim in the tree and its verdict as the only one.
 
@@ -81,7 +82,7 @@ class CloseRunningFailed(LaunchAborted):
     """--close-running was asked for and the running instance is still there.
 
     A launch that was told to close what is running, and did not, must not
-    report success, and must not boot a second instance next to the one it
+    report success. It must not boot a second instance next to the one it
     failed to close.
     """
 
@@ -101,7 +102,7 @@ class Application(Protocol):
     """What the gate needs from the application it decides for.
 
     A structural protocol, so a scenario drives establish() with a plain
-    Gio.Application and a test-scoped id, which is the real registration
+    Gio.Application and a test-scoped id. That gives the real registration
     machinery without a display and without the app's own construction.
     """
 
@@ -177,8 +178,9 @@ def is_no_reply(error: GLib.Error) -> bool:
 def _session_bus() -> Gio.DBusConnection | None:
     """The shared session connection, or None if there is no bus to be had.
 
-    The same connection the application registers on and the API publishes on,
-    which is what lets step 2 and step 3 of establish() be about one thing.
+    The same connection the application registers on and the API publishes
+    on. That is what lets step 2 and step 3 of establish() be about one
+    thing.
     """
     try:
         return Gio.bus_get_sync(Gio.BusType.SESSION, None)
@@ -216,13 +218,14 @@ def _wait_for_release(session_bus: Gio.DBusConnection, name: str,
 def _is_dispatching(session_bus: Gio.DBusConnection, app_id: str) -> bool:
     """Does the owner of app_id dispatch its main loop right now?
 
-    This asks the owner's action group, and not the process. GDBus answers
-    org.freedesktop.DBus.Peer.Ping, and Introspect, from its own worker thread,
-    so an instance that registered and has not reached its main loop answers
-    both at once, which measurement confirms, and neither answer says whether
-    it is live. The same action group that receives a quit request dispatches
-    DescribeAll, so an answer says more than "the process exists". It says
-    that a quit sent now gets acted on rather than queued behind a boot.
+    This asks the owner's action group. The process-level probes,
+    org.freedesktop.DBus.Peer.Ping and Introspect, answer from the GDBus
+    worker thread. An instance that registered and has not reached its main
+    loop answers both at once, which measurement confirms. Neither answer
+    says whether it is live. The same action group that receives a quit
+    request dispatches DescribeAll, so an answer says more than "the process
+    exists". It says that a quit sent now gets acted on rather than queued
+    behind a boot.
     """
     try:
         session_bus.call_sync(
@@ -262,15 +265,15 @@ def _close_running_instance(session_bus: Gio.DBusConnection, app_id: str) -> Non
 
     The order carries weight. An instance that still boots owns the name and
     dispatches nothing, so it refuses no quit sent at it. That quit waits in
-    the incoming queue and gets acted on once that instance starts its main
-    loop, which usually comes after this process gave up and exited. Nothing
-    then runs at all, which costs more than either outcome the flag can
-    produce. So this asks only once the target can hear, and it leaves a target
-    that never answers alone and reports it.
+    the incoming queue. It gets acted on once that instance starts its main
+    loop, usually after this process gave up and exited. Nothing then runs at
+    all, which costs more than either outcome the flag can produce. So this
+    asks only once the target can hear, and it leaves a target that never
+    answers alone and reports it.
 
     Each wait gets its own grace. An instance that took most of one grace to
     start dispatching must not then get a quit and a failure report a moment
-    later, which is the same "asked, dying, reported as never started" shape.
+    later. That is the same "asked, dying, reported as never started" shape.
     """
     log.info("Checking if another instance is running")
     try:
@@ -318,14 +321,14 @@ def _close_running_instance(session_bus: Gio.DBusConnection, app_id: str) -> Non
 def _shoo_pre_rename_instance(session_bus: Gio.DBusConnection) -> None:
     """Ask a still-running pre-rename instance to quit, before any deck opens.
 
-    A build from before the rename owns the old bus name, and this launch's
-    own name says nothing about that name, so without this call it opens decks
-    that the other instance holds. Probe with NameHasOwner, and never address
-    the old name directly. A plain call to a well-known name activates it, and
-    for the old id that starts an upstream install through its D-Bus service
-    file, which is the race this call prevents. A NameHasOwner of False is
-    the normal case and is also the end state. Once nothing owns the old name,
-    this check costs one cheap round trip per launch.
+    A build from before the rename owns the old bus name. This launch's own
+    name says nothing about that name. Without this call the launch opens
+    decks that the other instance holds. Probe with NameHasOwner, and never
+    address the old name directly. A plain call to a well-known name
+    activates it. For the old id, that starts an upstream install through its
+    D-Bus service file. This call prevents that race. A NameHasOwner of False
+    is the normal case and is also the end state. Once nothing owns the old
+    name, this check costs one cheap round trip per launch.
 
     The primary alone runs this, and only after registration. A launch that
     hands off to another instance must send nothing away.
@@ -355,10 +358,10 @@ def _registration_failed(app: Application, session_bus: Gio.DBusConnection | Non
     """Decide what a failed register() means, and never guess "primary".
 
     The case that fails here is a launch that becomes the remote of a running
-    application. A join of the owner takes a round trip to it, and an owner
-    that registered and has not reached its main loop answers nothing until it
-    does. Past the bus's own timeout the launch has no options left, and it
-    must not decide that it is the primary, because the instance it could not
+    application. A join of the owner takes a round trip to it. An owner that
+    registered and has not reached its main loop answers nothing until it
+    does. Past the bus's own timeout the launch has no options left. It must
+    not decide that it is the primary, because the instance it could not
     reach holds the decks.
 
     A failure while nothing owns the name is another case, such as a daemon
@@ -387,17 +390,17 @@ def establish(app: Application, *, publish: Callable[[], None],
     """Decide what this launch is, and leave the application registered.
 
     GApplication's own register() claims the application name, and nothing
-    else in the tree does. Everything expensive or exclusive, which is the
-    migrations, the plugin load and the deck open, runs after that call
-    returns, on the primary alone, so a launch that loses the race performs
+    else in the tree does. Everything expensive or exclusive runs after that
+    call returns, on the primary alone. That covers the migrations, the
+    plugin load and the deck open. A launch that loses the race performs
     nothing that collides with the winner. This function therefore does four
     things, in this order.
 
     1. --close-running first, because a process registers once. An
        application that registered as a remote can never register as the
-       primary, so the ask to quit, and the wait for the release, must happen
-       before this process registers anything. That step is a probe and a
-       wait, and it never requests the name.
+       primary. The ask to quit, and the wait for the release, must therefore
+       happen before this process registers anything. That step is a probe
+       and a wait, and it never requests the name.
     2. publish() before register(), so the moment the daemon grants the name,
        the object set behind it already answers.
     3. register(), which fails open where that is safe. See

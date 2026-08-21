@@ -1,7 +1,7 @@
 """The frontend rpyc servers accept only same-UID loopback peers.
 
 frontend_authenticator runs on the accepted socket before the rpyc protocol
-starts, so a refusal closes the socket with no protocol exchange and a
+starts. A refusal therefore closes the socket with no protocol exchange. A
 legitimate backend child needs no cooperation to pass.
 """
 import os

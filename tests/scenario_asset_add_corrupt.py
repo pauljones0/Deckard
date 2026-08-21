@@ -3,7 +3,7 @@
 generate_thumbnail never raises; it returns a placeholder tagged sc_broken.
 The import gate keys off that marker and runs before the copy.
 """
-import fixtures  # noqa: F401  (must be first -- see fixtures.py docstring)
+import fixtures  # noqa: F401  (must be first, see fixtures.py docstring)
 
 import json
 import os

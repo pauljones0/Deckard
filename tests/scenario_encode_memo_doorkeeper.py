@@ -1,6 +1,6 @@
 """Pins the doorkeeper admission of EncodedImageCache and the memo clear.
 
-A key is cached on its second put, the doorkeeper ring is bounded, clear()
+A key is cached on its second put, and the doorkeeper ring is bounded. clear()
 resets both, and a background content change clears the deck encode memo.
 """
 import fixtures  # noqa: F401  (isolated data dir + sys.path, house convention)
@@ -145,9 +145,9 @@ def check_set_video_clears_memo() -> None:
 def check_byte_cap_lru_eviction() -> None:
     """Pins the byte-size cap and its LRU eviction order.
 
-    Total bytes stay at or under max_bytes, the least recently used entry is
-    the one evicted, a get() promotes an older key, and a fresh key is never
-    admitted on its first put even under memory pressure.
+    Total bytes stay at or under max_bytes, and the least recently used entry
+    is the one evicted. A get() promotes an older key. A fresh key is never
+    admitted on its first put, even under memory pressure.
     """
     # Each admitted value is 100 bytes and the cap holds three of them.
     # Admission needs two puts per key, so warm each key with two puts.
@@ -334,7 +334,7 @@ def check_put_vs_clear_race() -> None:
         "clear() must reset total_bytes to zero -- a clear() that empties the "
         "entries without resetting the byte counter leaves torn accounting"
     )
-    assert len(cache._entries) == 0, "clear() must empty the entries"
+    assert not cache._entries, "clear() must empty the entries"
 
     # Still usable. A fresh two-put admit works after the storm.
     cache.put(("after", 0), val)

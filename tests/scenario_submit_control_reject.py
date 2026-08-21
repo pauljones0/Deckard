@@ -2,7 +2,7 @@
 Unit-tier scenario for submit_control after a terminal ClearAndClose.
 
 MediaPlayerThread.submit_control must silently reject a message once the writer
-is stopped, because nothing drains the control queue again and the queue would
+is stopped. Nothing drains the control queue again, and the queue would
 otherwise grow for the life of the process.
 """
 

@@ -61,7 +61,7 @@ def check_alpha_round_trip() -> None:
     """Alpha arrives as 0-255, like the other three channels, and CSS wants 0-1.
 
     Feeding the raw value into the CSS string clamps every alpha of 1 or more
-    to fully opaque, so only 0 and 255 survive the round trip.
+    to fully opaque. Only 0 and 255 then survive the round trip.
     """
     for alpha in (0, 1, 64, 128, 200, 254, 255):
         rgba = HelperMethods.color_values_to_gdk((10, 20, 30, alpha))

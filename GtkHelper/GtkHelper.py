@@ -254,7 +254,7 @@ class BetterPreferencesGroup(Adw.PreferencesGroup):
         # None. Only get_rows below checks for that: the other callers
         # dereference the result, so a layout that does not match surfaces
         # there as an AttributeError. Do not add a guard to clear() without
-        # reading the note on BetterExpander.clear -- a silent clear that the
+        # reading the note on BetterExpander.clear. A silent clear that the
         # matching add_row does not skip duplicates every row.
         first_box = self.get_first_child()
         second_box = first_box.get_first_child() if first_box is not None else None

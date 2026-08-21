@@ -53,11 +53,12 @@ class ByteLRUCache:
 
     This is the shared core of EncodedImageCache (pixel-hash keys plus a
     doorkeeper) and NativeTileCache (frame-identity keys plus a kill switch).
-    The core is an OrderedDict whose iteration order is the LRU order, through
-    a move_to_end on every hit and every put, plus exact byte accounting and
-    one instance lock. A subclass adds its admission policy through _admit()
-    and its teardown bookkeeping through _on_clear_locked(). Neither overrides
-    get or put.
+    The core is an OrderedDict whose iteration order is the LRU order. A
+    move_to_end on every hit and every put keeps that order. The core also
+    holds exact byte accounting and one instance lock.
+
+    A subclass adds its admission policy through _admit() and its teardown
+    bookkeeping through _on_clear_locked(). Neither overrides get or put.
     """
 
     def __init__(self, max_bytes: int) -> None:
@@ -225,8 +226,8 @@ class ByteLRUCache:
 
         Returns 0 when this cache is at or below floor_bytes, when it is
         empty, or when its head is younger than min_age_s. It sheds one entry
-        per call, because the manager re-picks the globally oldest head after
-        every eviction, and that granularity makes the cross-cache merge order
+        per call. The manager re-picks the globally oldest head after every
+        eviction, and that granularity makes the cross-cache merge order
         exact. want_bytes is a hint for a future batching policy and not
         license to bulk-shed.
         """

@@ -15,7 +15,8 @@ import fixtures  # must be first, to isolate DATA_PATH
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
-# Assembled, never literal, so this tracked file does not trip its own scan.
+# Built from pieces at runtime. A literal spelling would make this tracked
+# file trip its own scan.
 MODULE = "d" + "bus"
 PATTERNS = [
     re.compile(r"\bimport\s+" + MODULE + r"\b"),

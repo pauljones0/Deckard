@@ -155,9 +155,9 @@ def check_retention(path: str, corrupting_read, label: str) -> None:
 
 
 def check_fresh_sidecar_survives_prune(plugin) -> None:
-    """os.replace carries the primary's mtime onto the new sidecar, so a
-    corrupt file that is old on disk produces a fresh forensic copy that looks
-    older than every sidecar already there. The prune must keep it."""
+    """os.replace carries the primary's mtime onto the new sidecar. A corrupt
+    file that is old on disk therefore produces a fresh forensic copy that
+    looks older than every sidecar already there. The prune must keep it."""
     path = plugin.settings_path
     os.makedirs(os.path.dirname(path), exist_ok=True)
 

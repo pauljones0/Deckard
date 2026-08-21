@@ -186,8 +186,8 @@ def check_clear_half() -> int:
 def check_writecap_putback() -> int:
     """The write cap defers an over-budget touchscreen frame back into the
     single slot while that slot is still None. The check and the set must be
-    atomic, so a producer assigning a newer frame in between wins, and the
-    older deferred frame never reaches the device."""
+    atomic. A producer assigning a newer frame in between wins, and the older
+    deferred frame never reaches the device."""
     from src.backend.DeckManagement.InputIdentifier import Input
 
     controller, media_player, _ = fixtures.make_stub_controller(

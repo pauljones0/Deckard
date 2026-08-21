@@ -160,8 +160,8 @@ class StoreBackend:
     def is_safe_asset_id(cls, asset_id: object) -> TypeGuard[str]:
         """Whether a manifest-supplied id is safe as a single path component.
         Reject a bad id and never normalize it. An id that fails this check
-        comes from a hostile or broken manifest, and a quiet repair would
-        install into, or delete, a path the author never named."""
+        comes from a hostile or broken manifest. A quiet repair would install
+        into, or delete, a path the author never named."""
         return isinstance(asset_id, str) and bool(cls.ASSET_ID_PATTERN.fullmatch(asset_id))
 
     # A git commit sha holds exactly 40 hex characters. commit_sha reaches
@@ -200,8 +200,8 @@ class StoreBackend:
     def is_safe_ref_name(cls, ref_name: object) -> TypeGuard[str]:
         """Whether a remote-catalog branch or ref name is safe to pass to
         git. It rejects a shell metacharacter, whitespace, a newline and a
-        leading dash, so a catalog branch of "main; rm -rf ~" injects no
-        shell and git reads no option."""
+        leading dash. A catalog branch of "main; rm -rf ~" then injects no
+        shell, and git reads no option."""
         return isinstance(ref_name, str) and bool(cls.SAFE_REF_PATTERN.fullmatch(ref_name))
 
     def __init__(self) -> None:
@@ -467,9 +467,9 @@ class StoreBackend:
         the catalog fan-out, and an uncapped requests.get() would evade the
         cap.
 
-        Returns the sha str, or None when no sha resolves, for a url that
-        names no repository, a non-200 answer, or an empty or unparseable
-        commit list. A network failure raises StoreFetchError, like
+        Returns the sha str. It returns None when no sha resolves, for a url
+        that names no repository, a non-200 answer, or an empty or
+        unparseable commit list. A network failure raises StoreFetchError, like
         request_from_url does.
         """
         ref = parse_repo_url(repo_url)
@@ -494,7 +494,7 @@ class StoreBackend:
         except ValueError as e:
             log.error(f"Unparseable commits answer for {repo_url}@{branch_name}: {e}")
             return None
-        if not isinstance(commits, list) or len(commits) == 0:
+        if not isinstance(commits, list) or not commits:
             return None
         return cast("str | None", commits[0].get("sha"))
     
@@ -829,7 +829,7 @@ class StoreBackend:
 
         Every field serves identity or the verdict. The ORIGIN stamp names
         the repository the tree came from. The local manifest id says whether
-        the directory holds the canonical install of that tree, and a renamed
+        the directory holds the canonical install of that tree. A renamed
         copy answers with the id it was copied from. The sha names the commit
         the tree sits on. is_symlink marks a checkout the user manages rather
         than an install this app owns.
@@ -907,9 +907,9 @@ class StoreBackend:
         """Record which repository an installed tree came from.
 
         The catalog cannot supply this link. A catalog entry names a
-        repository, an install directory takes its name from a manifest id,
-        and nothing else on disk connects the two without a fetch of the
-        remote manifest. Every install writes this stamp, and the first
+        repository. An install directory takes its name from a manifest id.
+        Nothing else on disk connects the two without a fetch of the remote
+        manifest. Every install writes this stamp, and the first
         identification of an older install backfills it, so the update check
         answers "is this entry installed" from local state alone.
 
@@ -935,8 +935,8 @@ class StoreBackend:
         gets overwritten. A renamed or transferred repository otherwise keeps
         a stamp that no catalog entry claims, and the install then stops
         receiving updates. Where a broken catalog lists one asset id under two
-        urls, the last prepare to identify the tree wins, and the sweep
-        resolves the same collision in catalog order.
+        urls, the last prepare to identify the tree wins. The sweep resolves
+        the same collision in catalog order.
         """
         if not self.is_safe_asset_id(asset_id) or not isinstance(repo_url, str):
             return
@@ -957,7 +957,7 @@ class StoreBackend:
         Only a canonical directory can answer, which is one whose name
         equals the id its own manifest claims. A copy kept aside, such as
         com_x_Alpha_backup, carries the same origin stamp and otherwise
-        claims the entry. An install over it cannot work, because download_repo
+        claims the entry. An install over it cannot work. download_repo
         refuses a staged tree whose manifest id differs from the directory
         name, so every launch would download an archive and throw it away. An
         install with no readable manifest stays eligible. It is broken rather
@@ -986,15 +986,15 @@ class StoreBackend:
     def resolve_unstamped_installs(self, base_dir: str, entries: list[Any]) -> None:
         """Identifies an install that the origin stamp cannot answer for.
         This fetches a candidate entry's manifest, matches its id against the
-        directory names, and stamps what it identifies, so no later pass
-        looks it up again.
+        directory names, and stamps what it identifies. No later pass looks
+        it up again.
 
-        A directory stays pending while it carries no stamp, which an install
-        made before the stamp existed does, or while its stamp names a
-        repository that no entry in this catalog claims. A renamed or
-        transferred repository otherwise keeps a stamp that nothing matches,
-        and the install then stops receiving updates, which is the failure the
-        stamp prevents.
+        A directory stays pending while it carries no stamp. An install made
+        before the stamp existed carries no stamp. A directory also stays
+        pending while its stamp names a repository that no entry in this
+        catalog claims. A renamed or transferred repository otherwise keeps a
+        stamp that nothing matches, and the install then stops receiving
+        updates, which is the failure the stamp prevents.
 
         This runs once per update-check pass, before the fan-out, and only
         while something is pending. An entry whose repository name appears in
@@ -1106,8 +1106,8 @@ class StoreBackend:
 
         Identity must not come from a match of the catalog's commit shas
         against what is installed. The store rewrites an entry's sha in place
-        under the same version key, so the sha an install sits on leaves the
-        listing at the moment an update exists.
+        under the same version key. The sha an install sits on then leaves
+        the listing at the moment an update exists.
 
         One case still costs a request. A branch-pinned entry, which a custom
         plugin is, names a branch rather than a version map, and its tip must
@@ -1285,7 +1285,7 @@ class StoreBackend:
     def zip_has_unsafe_members(self, zip_path: str) -> bool:
         """A second Zip-Slip check on a downloaded archive.
 
-        This app downloads a GitHub-generated .zip archive only, and CPython's
+        This app downloads a GitHub-generated .zip archive only. CPython's
         zipfile strips a leading "/" and ".." during extraction, so that
         library is the first guard. This check keeps a later change safe, such
         as another archive source, or a tar or other format that CPython does
@@ -1342,8 +1342,8 @@ class StoreBackend:
 
         This first moves the staged tree next to the destination. That move is
         the one step that can cross a filesystem, because an environment
-        variable can put PLUGIN_DIR on another device, and it runs while the
-        old install stays intact. The two renames that follow share a parent
+        variable can put PLUGIN_DIR on another device. It runs while the old
+        install stays intact. The two renames that follow share a parent
         and are atomic. The transient siblings carry a dot prefix, so the
         plugin and pack directory scanners never read a crash leftover as a
         real install. The next install of the same asset sweeps a leftover."""
@@ -1770,7 +1770,7 @@ class StoreBackend:
 
         Nothing deletes the installed pack first. download_repo stages and
         validates the new tree, and swaps it over the installed one at the
-        end, so a failed download leaves the installed pack in place. An
+        end. A failed download leaves the installed pack in place. An
         uninstall first would lose the pack when a download failed
         mid-update."""
         asset_id = data.asset_id
@@ -1820,9 +1820,9 @@ class StoreBackend:
         """The catalog plugin with this id, or None, which an unreachable
         store also gives. get_all_plugins returns a StoreResult, so this
         narrows an Err rather than iterates it. A loop over an Err raises
-        TypeError under an @log.catch, which swallows it and strands the
-        caller with a stuck install spinner or an onboarding page that never
-        loads."""
+        TypeError under an @log.catch. The @log.catch swallows the TypeError
+        and strands the caller with a stuck install spinner, or with an
+        onboarding page that never loads."""
         result = self.get_all_plugins()
         if isinstance(result, Err):
             log.error(f"Cannot resolve plugin {plugin_id!r}: {result.detail or result.reason.value}")
@@ -1880,7 +1880,7 @@ class StoreBackend:
         with the number of reinstalls that succeeded, or the catalog's Err
         when the catalog was unreachable. Every reinstall goes through the
         install method, so this deregisters nothing itself. For a plugin the
-        installer deregisters the old version only after a good download, so a
+        installer deregisters the old version only after a good download. A
         failed update leaves the old version on disk and registered."""
         to_update = getattr(self, desc.get_to_update_attr)()
         if isinstance(to_update, Err):

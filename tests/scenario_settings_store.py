@@ -1,13 +1,13 @@
 """
 The settings store, the one owner of the app's settings files.
 
-The store answers where each file is, what an absent or corrupt one reads as,
-who may write it, and what a write does to a cached copy.
+The store answers where each file is and what an absent or corrupt one reads
+as. It also answers who may write it, and what a write does to a cached copy.
 """
 
 # A corrupt Assets.json must boot as an empty library rather than take the app
 # down from inside AssetManagerBackend.__init__.
-import fixtures  # noqa: F401  (must be first -- see fixtures.py docstring)
+import fixtures  # noqa: F401  (must be first, see fixtures.py docstring)
 
 import json  # noqa: E402
 import os  # noqa: E402
@@ -125,8 +125,8 @@ def check_corrupt_flag_describes_read() -> None:
     """corrupt is a fact about the read, not a property of the surface.
 
     A cached surface could keep the flag next to the content and hand it back
-    forever. A caller that heals on the flag, as a page load does, would then
-    heal on every read of a file that has been fine since the quarantine.
+    forever. A page load heals on the flag. Such a caller would then heal on
+    every read of a file that has been fine since the quarantine.
     """
     serial = "STORE-FLAG"
     path = os.path.join(DECKS_DIR, f"{serial}.json")

@@ -118,7 +118,7 @@ def test_lookup_respects_fetch_limiter() -> None:
 
 
 def test_network_failure_raises_store_fetch_error() -> None:
-    """A requests exception must come back as a StoreFetchError, and
+    """A requests exception must come back as a StoreFetchError.
     prepare_plugin must let it propagate without fetching a manifest for an
     unresolved commit, so the fan-out drops just that entry."""
     def failing_get(url, timeout=30):

@@ -85,7 +85,7 @@ def gif_key_budget_bytes() -> int:
     DECKARD_GIF_KEY_BUDGET_MB. Zero or less disables the frame list, and
     every GIF then plays off the mp4 tile cache and trades alpha for a bound.
     A malformed value degrades to the default with a warning, because a typo
-    must not cost a key its media at page load; nan, inf and 1e400 count as
+    must not cost a key its media at page load. nan, inf and 1e400 count as
     malformed. A value below 1 MiB also warns, because it is smaller than one
     fitted frame at any tile size, so every alpha GIF drops transparency."""
     raw = os.environ.get("DECKARD_GIF_KEY_BUDGET_MB")
@@ -155,8 +155,8 @@ def normalize_gif_delay(raw: "int | None") -> int:
 
 def cumulative_gif_delays(delays_ms: "list[int]") -> "list[float]":
     """A delay list in ms as a cumulative timeline in seconds. Element i is
-    the wall-clock time at which frame i's display window ends, so a pick for
-    elapsed time t is one bisect instead of a per-tick loop."""
+    the wall-clock time at which frame i's display window ends. A pick for
+    elapsed time t is then one bisect instead of a per-tick loop."""
     return list(itertools.accumulate(d / 1000.0 for d in delays_ms))
 
 
@@ -186,11 +186,11 @@ def gif_header_geometry(path: str) -> "tuple[int, tuple[int, int]]":
 def probe_gif_timeline(path: str) -> GifTimeline:
     """The playback timeline of the GIF at path, with nothing retained. PIL
     exposes a frame duration only after a seek, and a seek composes the
-    previous frame, so this walk runs the decoder but converts, fits,
-    saturates and keeps nothing: ~49 ms and O(1) RAM on a 200-frame 500x500
-    GIF, against ~320 ms and the full frame list for decode_gif_frames. It
-    raises what PIL raises on a corrupt file, and the caller treats that as a
-    failed decode."""
+    previous frame. This walk therefore runs the decoder, and it converts,
+    fits, saturates and keeps nothing. It costs ~49 ms and O(1) RAM on a
+    200-frame 500x500 GIF, against ~320 ms and the full frame list for
+    decode_gif_frames. It raises what PIL raises on a corrupt file, and the
+    caller treats that as a failed decode."""
     gif = Image.open(path)
     try:
         size = gif.size
@@ -213,8 +213,8 @@ def probe_gif_timeline(path: str) -> GifTimeline:
 def frame_has_alpha(frame: Image.Image) -> bool:
     """Does this rendered frame carry transparency? Test the pixels, not the
     header. Of 396 real animated GIFs, 75% declare a transparent index on
-    frame 0 and 11% render a pixel with alpha under 255, because disposal 1
-    declares the index to mean "leave this pixel alone". One extrema pass per
+    frame 0 and 11% render a pixel with alpha under 255. Disposal 1 declares
+    the index to mean "leave this pixel alone". One extrema pass per
     frame; the caller stops asking once the answer is yes."""
     if frame.mode != "RGBA":
         return False
@@ -227,13 +227,13 @@ def gif_frame_walk(path: str, max_size: "tuple[int, int] | None" = None,
                    saturation: float = 1.0) -> "Generator[tuple[Image.Image, int], None, None]":
     """Generator over one GIF's frames: PIL composites each frame, converts
     it to RGBA, sizes it, bakes the saturation, and yields (frame, delay_ms).
-    This is the one GIF compositor in the app, so the retained frame list,
-    the GIF backgrounds and the KeyGIF tile mp4 cannot disagree about frame
-    N. Pass max_size or fit_size, or neither: max_size contains shrink-only,
-    because upscaling multiplies retained memory; fit_size fits every frame
-    to exactly that size, so a background fills the canvas and the per-key
-    crop coordinates hold. The walk closes the source handle when it ends,
-    and when the consumer abandons it."""
+    This is the one GIF compositor in the app. The retained frame list, the
+    GIF backgrounds and the KeyGIF tile mp4 therefore cannot disagree about
+    frame N. Pass max_size or fit_size, or neither. max_size contains
+    shrink-only, because upscaling multiplies retained memory. fit_size fits
+    every frame to exactly that size, so a background fills the canvas and
+    the per-key crop coordinates hold. The walk closes the source handle when
+    it ends, and when the consumer abandons it."""
     gif = Image.open(path)
     try:
         for frame in ImageSequence.Iterator(gif):
@@ -293,11 +293,11 @@ def decode_gif_frames(path: str, max_size: "tuple[int, int] | None" = None,
 class GifBackground:
     """RGBA GIF provider for deck and strip backgrounds.
 
-    It meets the BackgroundVideo contract: get_next_tiles() returns
+    It meets the BackgroundVideo contract. get_next_tiles() returns
     (entries, identity), with the strip slice as one extra entry when
-    extended, plus the video_path, extend_touchscreen, saturation, page, fps
-    and loop attributes that the prebuild keep-check, the media tick and the
-    screensaver setters read. PIL decodes it, so alpha and the per-frame
+    extended. It also carries the video_path, extend_touchscreen, saturation,
+    page, fps and loop attributes. The prebuild keep-check, the media tick and
+    the screensaver setters read them. PIL decodes it, so alpha and the per-frame
     delay timeline survive; the cv2 demuxer drops both.
 
     Construction decodes every frame once, fits it to exactly the deck canvas
@@ -491,14 +491,15 @@ class KeyGIF(SingleKeyAsset):
 
     It holds its frames one of two ways. An opaque GIF uses the shared mp4
     tile registry: one refcounted cache file per (source, size, saturation),
-    and one decoded frame in hand, so RAM is O(1) per key instead of O(frame
-    count). A 200-frame GIF costs ~29MB retained, and a page of them ~0.9GiB.
+    and one decoded frame in hand. RAM is then O(1) per key instead of
+    O(frame count). A 200-frame GIF costs ~29MB retained, and a page of them
+    ~0.9GiB.
     An alpha-carrying GIF uses the retained RGBA frame list, the only form
     that keeps transparency, because an mp4 has no alpha channel.
 
-    Two rules make the split safe. PIL is the only compositor, so the tile
-    mp4 is written from PIL-composited frames and FFmpeg never demuxes a GIF
-    here, because FFmpeg disagrees with PIL on disposal and partial-extent
+    Two rules make the split safe. PIL is the only compositor. The tile mp4
+    is therefore written from PIL-composited frames, and FFmpeg never demuxes
+    a GIF here. FFmpeg disagrees with PIL on disposal and partial-extent
     frames (7 of 15 frames on a stock test file, ~48% of pixels off). The
     route follows the rendered alpha, not the header declaration. 75% of real
     GIFs declare a transparent index and 11% ever render one, so the
@@ -633,7 +634,7 @@ class KeyGIF(SingleKeyAsset):
     def _composited_walk(self, fit_size: "tuple[int, int]", saturation: float,
                          delays_out: "list[int]", alpha_out: "list[bool]") -> "Generator[Image.Image, None, None]":
         """The single PIL pass. It composites with PIL, never FFmpeg, fits
-        shrink-only to 2x tile, and bakes the saturation, while it records each
+        shrink-only to 2x tile, and bakes the saturation. It also records each
         frame's delay and its exact rendered-alpha verdict. It yields the
         frames; the caller decides whether to keep them for the RAM route, or
         hand them to the writer and stay at O(1). The alpha check stops once
@@ -659,7 +660,7 @@ class KeyGIF(SingleKeyAsset):
     def _hold_frame_list(self, frames: "list[Image.Image]") -> None:
         """Keep the decoded frames as this key's per-frame memo, the only
         form that carries alpha. It registers with the image-cache census for
-        accounting only, and only on this route; the video route's RAM belongs
+        accounting only, and only on this route. The video route's RAM belongs
         to the reader and counts under video_readers. The entry is not
         evictable, because an eviction re-decodes the GIF on every tick."""
         self.frames = frames
@@ -675,8 +676,8 @@ class KeyGIF(SingleKeyAsset):
         they are decide where they live. An alpha GIF keeps them in RAM. An opaque
         GIF writes them into the shared tile cache and drops them, so the key
         runs at O(1) RAM on pixels that PIL composited. The peak is one fitted
-        frame list, held for one encode: ~40ms per 200 frames at 2x tile,
-        which is why this stays on the constructing thread."""
+        frame list, held for one encode: ~40ms per 200 frames at 2x tile.
+        That cost is why this work stays on the constructing thread."""
         frames, has_alpha = self._decode_all(fit_size, saturation)
         if has_alpha:
             self._hold_frame_list(frames)
@@ -782,8 +783,8 @@ class KeyGIF(SingleKeyAsset):
 
     def _frame_count(self) -> int:
         """Frames this object can serve: the retained list on the alpha
-        route, and the timeline length on the video route, where the frames
-        live in the cache file instead of this object."""
+        route, and the timeline length on the video route. On that route the
+        frames live in the cache file instead of in this object."""
         if self.frames:
             return len(self.frames)
         return len(self._cum_delays) if self.video_cache is not None else 0
@@ -854,7 +855,7 @@ class KeyGIF(SingleKeyAsset):
         count stops reporting frames that are gone.
 
         On the video route it detaches this reader from the shared tile-cache
-        registry; the shared cache file and its builder stay for any other key
+        registry. The shared cache file and its builder stay for any other key
         that wants them. The timeline empties first, so a racing tick sees
         zero frames and returns before it asks a released reader for pixels.
         The lock then waits out any fetch in flight."""

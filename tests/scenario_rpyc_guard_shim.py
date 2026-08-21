@@ -2,7 +2,7 @@
 
 A child interpreter with the guard directory on PYTHONPATH imports it via
 sitecustomize at startup. rpyc resolves a missing server hostname to the
-wildcard address, so an unguarded backend serves every interface; the guard
+wildcard address, so an unguarded backend serves every interface. The guard
 rewrites exactly that case and leaves explicit arguments alone.
 """
 import json

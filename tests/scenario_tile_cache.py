@@ -282,7 +282,7 @@ def check_saturation_key_and_path_agree() -> None:
     """The registry key's saturation component and the cache-file suffix must
     be pure functions of one rounding. Two roundings let two acquires share
     one entry while the second reader targets a file the builder never
-    writes, which costs uncached playback and a per-frame stat."""
+    writes. That costs uncached playback and a per-frame stat."""
     fixtures.install_stub_globals()
     video_path = os.path.join(gl.DATA_PATH, "sat_agreement.mp4")
     _make_test_video(video_path, n_frames=10, size=(120, 90))
@@ -387,8 +387,8 @@ class _HandoffLock:
 
 def check_close_drops_last_payload() -> None:
     """get_frame must publish last_payload under the lock. A publish after
-    the release lets a close() in that window have its None overwritten,
-    which retains one decoded frame for the life of the closed cache."""
+    the release lets a close() in that window have its None overwritten.
+    That retains one decoded frame for the life of the closed cache."""
     fixtures.install_stub_globals()
     video_path = os.path.join(gl.DATA_PATH, "close_race.mp4")
     _make_test_video(video_path, n_frames=10, size=(120, 90))

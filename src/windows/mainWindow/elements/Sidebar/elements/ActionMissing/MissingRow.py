@@ -147,8 +147,8 @@ class MissingRow(Adw.PreferencesRow):
         # Remove only the action entry that the caller names. A delete of the
         # whole action_objects[type][key] subtree also drops the action of
         # every other state and index on this input.
-        state_dict = page.action_objects.get(identifier.input_type, {}).get(identifier.json_identifier, {}).get(self.state, {})
-        action = state_dict.pop(self.index, None)
+        state_actions = page.action_objects.get(identifier.input_type, {}).get(identifier.json_identifier, {}).get(self.state, {})
+        action = state_actions.pop(self.index, None)
         # The framework owns the teardown. It notifies, then calls clean_up()
         # on the removed object. It does nothing for None, and for an object
         # that is not an ActionCore.

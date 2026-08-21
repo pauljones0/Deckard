@@ -3,7 +3,7 @@
 An unreadable or corrupt file must never raise out of generate_thumbnail,
 get_thumbnail, add() or fill_missing_data. No library entry is ever deleted.
 """
-import fixtures  # noqa: F401  (must be first -- see fixtures.py docstring)
+import fixtures  # noqa: F401  (must be first: see fixtures.py docstring)
 
 import os
 import shutil

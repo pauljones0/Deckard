@@ -13,8 +13,9 @@ if TYPE_CHECKING:
     from src.backend.PluginManager.ActionCore import ActionCore
 
 class ToggleRow(GenerativeUI[int]):
-    """The stored value is the *index* of the active toggle, not a flag --
-    hence GenerativeUI[int] (see default_value/set_ui_value below)."""
+    """The stored value is the *index* of the active toggle, not a flag.
+    That is why this is GenerativeUI[int] (see default_value/set_ui_value
+    below)."""
 
     def __init__(self, action_core: "ActionCore",
                  var_name: str,

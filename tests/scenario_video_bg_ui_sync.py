@@ -1,9 +1,9 @@
 """
 update_all_inputs must sync the in-app key previews under a background video.
 
-An early return after the dials skips set_ui_key_image for every key, and the
-video loop skips an opaque key's per-frame render as well, so the in-app grid
-diverges from the deck.
+An early return after the dials skips set_ui_key_image for every key. The
+video loop skips an opaque key's per-frame render as well. The in-app grid
+then diverges from the deck.
 """
 
 # No UI is attached here, so the null port refuses each push and

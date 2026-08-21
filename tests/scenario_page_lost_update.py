@@ -28,9 +28,9 @@ HANDOFF_TIMEOUT_S = 20
 class NoTimers:
     """A timer source that arms nothing.
 
-    Every write in this scenario is one the test asks for, so the moment a
-    page reaches its file is a line in the test rather than a race with a
-    background thread.
+    Every write in this scenario is one the test asks for. A line in the
+    test therefore fixes the moment a page reaches its file, with no
+    background-thread race.
     """
 
     def schedule(self, delay_s, callback):
@@ -246,8 +246,8 @@ def check_no_loss_under_contention(controller) -> int:
     """The same two writers, unsynchronised, with writes going out under them.
 
     Three parties contend for one lock per page file. A settings edit, a page
-    save and a write of the same page, all running flat out, must neither
-    deadlock nor leave the file and the page disagreeing.
+    save and a write of the same page all run flat out. They must not
+    deadlock. They must not leave the file and the page disagreeing.
     """
     fresh_flush()
     path = seed_page_with_action("Contention")
@@ -260,7 +260,7 @@ def check_no_loss_under_contention(controller) -> int:
         try:
             for i in range(rounds):
                 gl.page_manager.overwrite_brightness_settings(path, brightness=i)
-        except Exception as e:  # noqa: BLE001 -- reported, not swallowed
+        except Exception as e:  # noqa: BLE001 (the handler reports it below)
             failures.append(f"settings writer raised: {e!r}")
 
     def page_writer() -> None:

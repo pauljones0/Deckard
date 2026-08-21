@@ -448,7 +448,7 @@ def check_composed_memo_race() -> None:
 
 
 def check_visible_labels_memo_race() -> None:
-    """The same race on the visible-labels memo, with a worse blast radius.
+    """The same race on the visible-labels memo, with wider consequences.
 
     A stale False makes ControllerKey._tile_passthrough_ok classify the key as
     bare, so the composite short-circuits to the shared background tile and
@@ -635,9 +635,9 @@ def check_many_line_scroll_not_cached() -> None:
 def check_partial_interception_refused() -> None:
     """A partial recording must be refused, not only a total loss.
 
-    The embedded-color route of PIL pastes onto the target image directly, so
-    with an outline the stroke pass records and the fill pass escapes, leaving
-    an op list that replays an outline-only label. A blank probe is the gate.
+    The embedded-color route of PIL pastes onto the target image directly.
+    With an outline, the stroke pass records and the fill pass escapes. The op
+    list that remains replays an outline-only label. A blank probe is the gate.
     """
     # Patch label_engine, not DeckController. _record_label_blits resolves
     # _BitmapRecorder from the module the code lives in, so a stand-in on the
@@ -723,7 +723,8 @@ def check_mutation_round_gaps() -> None:
 
     The reset of the recorded blits by the setters, multiline parity, the dial
     label stage, and the two post-label composite steps that operate on
-    whatever add_labels_to_image handed back, which can be the caller buffer.
+    whatever add_labels_to_image handed back. That return value can be the
+    caller buffer.
     """
     from src.backend.DeckManagement.InputIdentifier import Input
     from src.backend.DeckManagement.Subclasses.KeyLabel import KeyLabel

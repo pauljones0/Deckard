@@ -65,7 +65,7 @@ def main() -> None:
     portal = FakeXdp.Portal.instances[-1]
     assert portal.requests, "flatpak path must issue a portal request"
     _, callback = portal.requests[-1]
-    callback(portal, object(), None)  # async failure arrives AFTER the removal
+    callback(portal, object(), None)  # async failure arrives after the removal
     assert not os.path.exists(path), (
         "the portal's failure callback re-installed the autostart entry after "
         "disable -- disable must be authoritative"

@@ -157,9 +157,7 @@ class ControllerInputState:
         active_page = self.deck_controller.active_page
         if active_page is None:
             return []
-        actions = active_page.get_all_actions_for_input(self.controller_input.identifier, self.state)
-
-        return actions
+        return active_page.get_all_actions_for_input(self.controller_input.identifier, self.state)
 
     def update(self) -> None:
         if self.controller_input.state == self.state:
@@ -418,8 +416,8 @@ class ControllerInput(Generic[StateT]):
             self.states[i] = self.ControllerStateClass(self, i)
 
     def load_from_page(self, page: Page) -> None:
-        input_dict = self.identifier.get_config(page)
-        self.load_from_input_dict(input_dict)
+        config = self.identifier.get_config(page)
+        self.load_from_input_dict(config)
 
     def get_current_image(self) -> "Image.Image":
         """The input's current composition. The key and touchscreen inputs
@@ -443,7 +441,7 @@ class ControllerInput(Generic[StateT]):
         d = self.identifier.get_config(page)
 
         self.states[len(self.states)] = self.ControllerStateClass(self, len(self.states))
-        for state in self.states.keys():
+        for state in self.states:
             d["states"].setdefault(str(state), {})
 
         page.save()
@@ -512,8 +510,9 @@ class ControllerInput(Generic[StateT]):
     def update_state_switcher(self) -> None:
         """Kept as the plugin-facing name; the widget work belongs to the
         adapter. The adapter guards the sidebar reach and marshals it to the
-        main thread, so a plugin or action thread cannot raise AttributeError
-        before the window exists, or mutate a widget off main after it.
+        main thread. A plugin or action thread therefore cannot raise
+        AttributeError before the window exists, and cannot mutate a widget
+        off main after it.
         """
         ui_port.get().on_input_states_changed(
             self.deck_controller, self.identifier, len(self.states))
@@ -577,8 +576,8 @@ class ControllerInput(Generic[StateT]):
     def close_resources(self) -> None:
         """Framework teardown hook that releases every state's media
         resources. It serves the input's own end of life, at a deck close or
-        a screensaver-stash sweep, and not a fresh page load as clear() does,
-        so it never triggers a repaint."""
+        a screensaver-stash sweep. clear() serves a fresh page load instead.
+        This hook never triggers a repaint."""
         for state in self.states.values():
             state.close_resources()
 
@@ -745,8 +744,8 @@ class ControllerKey(ControllerInput["ControllerKeyState"]):
     def _to_rotated_rgb(self, image: Image.Image) -> Image.Image:
         """The device-ready RGB form of a composited key image. It
         composites RGBA onto RGB to keep the edges smooth. It never mutates
-        image, because both branches build a new one, which lets the
-        frame-identity path pass the shared background tile in with no copy
+        image, because both branches build a new one. The frame-identity
+        path can therefore pass the shared background tile in with no copy
         first."""
         rotation = self.deck_controller.deck.get_rotation()
         if image.mode == "RGBA":
@@ -1470,8 +1469,8 @@ class ControllerDial(ControllerInput["ControllerDialState"]):
         events. It drops the DOWN-time snapshot, the gesture clock and the
         pending hold timer, on the same contract as
         ControllerKey.cancel_gesture. It serves the paths where the physical
-        release can never reach this dial; ScreenSaver.show() confiscates the
-        whole input set mid-hold, and the release then lands on the
+        release can never reach this dial. ScreenSaver.show() confiscates
+        the whole input set mid-hold. The release then lands on the
         replacement dial and is swallowed."""
         self.down_start_time = None
         self.stop_hold_timer()

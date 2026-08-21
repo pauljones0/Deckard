@@ -299,7 +299,7 @@ class RemoveButton(Gtk.Button):
 
         #TODO: Also update if action before this one has the access
         if action.input_ident.input_type == "keys" and state_dict.get("image-control-action") == self.index:
-            if len(state_dict["actions"]) > 0:
+            if state_dict["actions"]:
                 state_dict["image-control-action"] = 0
             else:
                 state_dict["image-control-action"] = None

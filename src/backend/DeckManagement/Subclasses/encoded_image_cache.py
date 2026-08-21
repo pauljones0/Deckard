@@ -52,11 +52,11 @@ class EncodedImageCache(ByteLRUCache):
         records a first sighting and returns False, and put() spends a
         bookkeeping slot instead of a real cache slot.
 
-        Looping content, which is any video or GIF background and the common
-        case, repeats the same small key set every cycle and warms fully by the
-        second or third wrap. High-entropy content, such as background video
-        noise or any source whose composited hash never repeats, gets no second
-        sighting and displaces no reusable entry.
+        Looping content is any video or GIF background, and it is the common
+        case. It repeats the same small key set every cycle, and warms fully
+        by the second or third wrap. High-entropy content, such as background
+        video noise or any source whose composited hash never repeats, gets no
+        second sighting and displaces no reusable entry.
         """
         if key in self._doorkeeper_seen:
             return True

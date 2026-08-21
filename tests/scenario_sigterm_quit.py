@@ -620,8 +620,8 @@ def check_quit_drains_store_cache_index() -> None:
     """on_quit must flush the deferred store index, behind the watchdog.
 
     Without the flush, the deferred read-clock renewals of the last store
-    browse are lost on every quit, because os._exit(0) skips the atexit hook
-    and the debounce timer is a daemon.
+    browse are lost on every quit. os._exit(0) skips the atexit hook, and the
+    debounce timer is a daemon.
     """
     # A flush before the watchdog is armed parks the quit forever on a wedged
     # filesystem.

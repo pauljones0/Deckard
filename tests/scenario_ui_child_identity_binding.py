@@ -2,8 +2,8 @@
 A controller's UI child must be resolved by object identity.
 
 A lookup that re-reads the device serial and matches it against the
-stack-child name misses forever once the two disagree, and the preview push
-then dirty-marks instead of painting. GtkUIAdapter binds by object.
+stack-child name misses forever once the two disagree. The preview push then
+dirty-marks instead of painting. GtkUIAdapter binds by object.
 """
 
 # The binding lands at DeckStack.add_page and lifts at remove_page. The fakes

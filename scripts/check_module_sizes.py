@@ -24,9 +24,10 @@ landed, each pinned at the size it had that day. Such a file may shrink and
 nothing else, and one line of growth fails the build.
 
 A GRANDFATHER cap tightens by itself. When a listed file drops more than
-TIGHTEN_SLACK lines below its cap, the check fails and asks for a cap at the new
-size, so a refactor cannot bank headroom for later growth. When a listed file
-falls to DEFAULT_CAP or below, its entry goes away and the default cap governs.
+TIGHTEN_SLACK lines below its cap, the check fails and asks for a cap at the
+new size. A refactor therefore cannot bank headroom for later growth. When a
+listed file falls to DEFAULT_CAP or below, its entry goes away and the default
+cap governs.
 
 The deck controller shim takes a separate hard cap of SHIM_CAP lines. It holds
 only re-exports, which are import statements and __all__, and the cap stops code
@@ -102,7 +103,7 @@ def iter_modules(failures: list[str]) -> list[Path]:
     """Every .py file under the governed roots, sorted, without the caches.
 
     The walk does not follow a symlink. It reports whatever makes it cover less
-    than it claims, which is a root that is not a directory, or a symlinked
+    than it claims. That is a root that is not a directory, or a symlinked
     directory whose contents it cannot reach.
     """
     found: list[Path] = []

@@ -59,16 +59,16 @@ class NativeTileCache(ByteLRUCache):
 
     The key is the frame identity: video md5, frame index, key index,
     rotation, quality and native format. It is not the composited pixels. A
-    bare key over a video background composites to the shared background tile,
-    so its native bytes are a pure function of that tuple, and the tile needs
-    no serialization and no hash. A looping video pays its encodes on the
+    bare key over a video background composites to the shared background tile.
+    Its native bytes are therefore a pure function of that tuple, and the tile
+    needs no serialization and no hash. A looping video pays its encodes on the
     first playthrough, and every later loop is a dict lookup.
 
     This class keeps ByteLRUCache's default first-sighting admission and adds
     no doorkeeper. EncodedImageCache's doorkeeper protects a pixel-hash
     namespace where high-entropy content produces keys that never repeat.
-    Identity keys come from a finite, repeating space, the frames times the
-    keys of the loaded video, so first-sighting admission is what makes the
+    Identity keys come from a finite, repeating space: the frames times the
+    keys of the loaded video. First-sighting admission therefore makes the
     second loop encode-free, and the byte cap bounds it.
 
     Keep this separate from encode_memo. In one shared key space the two kinds

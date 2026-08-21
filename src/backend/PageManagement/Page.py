@@ -85,8 +85,8 @@ class Page:
 
         For a page rename, the one operation that changes which file a live
         Page belongs to. The rename re-points json_path in place and calls
-        this, so a Page minted under the old name during the rename shares the
-        content of every other Page of the renamed page.
+        this. A Page minted under the old name during the rename then shares
+        the content of every other Page of the renamed page.
         """
         self._document = document
 
@@ -142,10 +142,11 @@ class Page:
         """Write this page's file now, and return the path written.
 
         It is the counterpart to save(). A mutator marks and a boundary
-        flushes. A boundary is the last chance the edits get: a deck that
-        leaves this page, a deck that goes away, the app that quits, or a read
-        of the file. It returns the path, because such a boundary names the
-        file it made current, as the page switch does for plugins and DBus.
+        flushes. A boundary is the last chance the edits get. The boundaries
+        are a deck that leaves this page, a deck that goes away, the app that
+        quits, and a read of the file. It returns the path, because such a
+        boundary names the file it made current, as the page switch does for
+        plugins and DBus.
         """
         page_flush.get().flush_path(self.json_path)
         return self.json_path
@@ -304,8 +305,8 @@ class Page:
         if plugin_manager is None:
             return False
 
-        plugin_obj = plugin_manager.get_plugin_by_id(plugin_id)
-        if plugin_obj is None:
+        plugin = plugin_manager.get_plugin_by_id(plugin_id)
+        if plugin is None:
             return False
 
         # Collect first, then delete and tear down. A del of the local variable
@@ -319,7 +320,7 @@ class Page:
                         action = self.action_objects[type][key][state][index]
                         if not isinstance(action, ActionCore):
                             continue
-                        if action.plugin_base == plugin_obj:
+                        if action.plugin_base == plugin:
                             to_remove.append((type, key, state, index, action))
 
         for type, key, state, index, action in to_remove:

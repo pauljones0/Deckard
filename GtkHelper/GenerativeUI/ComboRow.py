@@ -100,7 +100,7 @@ class ComboRow(GenerativeUI[BaseComboRowItem | str | None]):
         """Reset the selection to its default.
 
         An unbuilt row has no item list to resolve the old and new
-        BaseComboRowItem values against, so it persists the default and skips
+        BaseComboRowItem values against. It persists the default and skips
         the on_change callback. A reset must not force a build.
         """
         if self._widget is None:

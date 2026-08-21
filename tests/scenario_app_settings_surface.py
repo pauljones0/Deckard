@@ -3,7 +3,7 @@
 Every holder of settings/settings.json shares one dict. Absent keys read the
 table default without a write-back. The settings dialog keeps a private copy.
 """
-import fixtures  # noqa: F401  (must be first -- isolates the data dir)
+import fixtures  # noqa: F401  (must be first: isolates the data dir)
 
 import inspect  # noqa: E402
 import json  # noqa: E402
@@ -480,7 +480,7 @@ def check_launch_counter_path_unchanged() -> None:
     """The launch counter reads, increments and saves through the shared view.
 
     It is the app's own second writer, the one that lands while a settings
-    window can be open, so its shape is pinned here rather than assumed.
+    window can be open. This check pins its shape.
     """
     import src.app as app_mod
 

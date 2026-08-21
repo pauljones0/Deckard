@@ -55,7 +55,7 @@ def _make_plugin(server, connection, process) -> PluginBase:
     return plugin
 
 
-def main() -> None:  # noqa: C901 -- linear scenario script
+def main() -> None:  # noqa: C901 (a linear scenario script)
     fixtures.start_watchdog(30, label="scenario_plugin_backend_teardown")
 
     server = _SlowClosable("server")

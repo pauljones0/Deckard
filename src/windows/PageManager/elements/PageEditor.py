@@ -130,8 +130,8 @@ class PageEditor(Adw.NavigationPage):
 
         Every override row writes through this. A None reaches canonical_path()
         inside the page manager and raises TypeError there, naming neither the
-        editor nor the row, and an override row is reachable only once the
-        stack leaves its no-page child.
+        editor nor the row. An override row is reachable only once the stack
+        leaves its no-page child.
 
         The readers do not come through here. get_page_data answers {} for a
         None path, and a group builds its rows before load_for_page binds one,

@@ -2,7 +2,7 @@
 
 verify_backend_port pins the LISTEN socket on the offered port to the
 spawned process through /proc/<pid>/fd. The frontend authenticator gates who
-may call register_backend; this gates the argument, so a lure or squatter
+may call register_backend. This gates the argument, so a lure or squatter
 port is refused instead of served the app's netref surface.
 """
 import socket

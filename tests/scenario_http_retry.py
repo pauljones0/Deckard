@@ -185,9 +185,9 @@ def test_session_is_shared_and_pooled(server, base) -> None:
 def test_connect_failures_are_not_retried(server, base) -> None:
     """connect=0 keeps the status retries and drops the connect amplification.
 
-    A total of 2 alone would spend the budget on connect errors too, which buys
-    nothing against a down host and triples the wall clock of every offline
-    failure, including on the GTK main thread.
+    A total of 2 alone would spend the budget on connect errors too. That
+    buys nothing against a down host. It also triples the wall clock of every
+    offline failure, including on the GTK main thread.
     """
     retry = http_client.get_session().adapters["https://"].max_retries
     assert retry.connect == 0, (
@@ -224,9 +224,9 @@ def test_connect_failures_are_not_retried(server, base) -> None:
 def test_non_200_returns_connection(server, base) -> None:
     """The non-200 branch of request_from_url must consume the error body.
 
-    Closing a streamed response with an unread body closes the socket, so the
-    routine 404s of a catalog would cost the next fetch a fresh handshake and
-    defeat the pooled session.
+    Closing a streamed response with an unread body closes the socket. The
+    routine 404s of a catalog would then cost the next fetch a fresh
+    handshake and defeat the pooled session.
     """
     from src.backend.Store.StoreBackend import StoreBackend
     from src.backend.Store.store_result import StoreFetchError

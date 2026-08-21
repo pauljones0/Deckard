@@ -10,10 +10,10 @@ floor the flatpak and the AUR package both target.
 
 Python 3.14 defers annotation evaluation (PEP 649); 3.13 evaluates a parameter
 and return annotation at def time. The local .venv is 3.14 and every shipped
-build is 3.13, so an annotation that names something the runtime does not have
-imports fine for a developer and raises for a user. mypy never imports, ruff
-never imports, and compileall compiles without executing, so nothing in the
-gate sees it.
+build is 3.13. An annotation that names something the runtime does not have
+therefore imports fine for a developer and raises for a user. mypy never
+imports, ruff never imports, and compileall compiles without executing, so
+nothing in the gate sees it.
 
 Two failures are reported:
 
@@ -72,9 +72,9 @@ def annotations_of(tree: ast.Module) -> list[tuple[int, ast.expr]]:
 
     A parameter and a return annotation evaluate when the def executes, and a
     module-level or class-level AnnAssign evaluates where it sits. An AnnAssign
-    inside a function body, whether on a local or on self.x, is never evaluated
-    (PEP 526), so a name that does not exist there is harmless. Verified on
-    3.13 before this exclusion was written.
+    inside a function body is never evaluated (PEP 526), whether on a local or
+    on self.x. A name that does not exist there is therefore harmless. Verified
+    on 3.13 before this exclusion was written.
     """
     out: list[tuple[int, ast.expr]] = []
 

@@ -76,7 +76,7 @@ def leg_concurrent_swap() -> int:
                 # closed image this raises ValueError.
                 img.tobytes()
                 img.resize((32, 32))
-        except Exception as e:  # noqa: BLE001 -- the point is to catch it
+        except Exception as e:  # noqa: BLE001  (the point is to catch it)
             errors.append(f"compositor: {type(e).__name__}: {e}")
 
     def resizer():

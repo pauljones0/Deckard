@@ -345,9 +345,8 @@ class DeckController:
         not close(), which assumes a registered controller with plugin hooks,
         a UI attachment and page registration; nobody ever received this
         object. Nothing here writes to the device. The handle is released only
-        after the writer stops, because a writer wedged mid-frame holds the
-        device lock and a wait on it is the hang this avoids. Raises
-        nothing."""
+        after the writer stops. A writer wedged mid-frame holds the device
+        lock, and a wait on it is the hang this avoids. Raises nothing."""
         self.keep_actions_ticking = False
         if getattr(self, "tick_thread", None) is not None and self.tick_thread.is_alive():
             self._tick_stop_event.set()  # created by the same statement pair as the thread
@@ -506,13 +505,13 @@ class DeckController:
         tick because nobody is looking.
 
         Two terms decide it. gl.presence_monitor is the process-wide presence
-        signal, and it reports False forever in the default pause mode, so
-        this returns False for anyone who did not opt in. The second term is
-        screen_saver.showing. While the screensaver owns the deck its
-        animation is the intended visible content, and the physical deck is
-        visible even when the monitor is locked, so the gate never applies to
-        it. show() already released the underlying page's media, so a showing
-        screensaver has nothing else to decode.
+        signal. It reports False forever in the default pause mode, so this
+        returns False for anyone who did not opt in. The second term is
+        screen_saver.showing. While the screensaver owns the deck, its
+        animation is the intended visible content. The physical deck is
+        visible even when the monitor is locked. The gate therefore never
+        applies to it. show() already released the underlying page's media,
+        so a showing screensaver has nothing else to decode.
 
         The writer reads this once per tick on its critical path. Both terms
         are plain attribute reads and neither takes a lock."""
@@ -536,8 +535,8 @@ class DeckController:
         _run_pending_repaint() when the 2s rate window allows. A rate limit
         defers it and never drops it, and every write failure re-arms it. A
         repaint attempted while the library's read thread still reopens the
-        handle after a suspend fails wholesale, and on a fully static page no
-        later write re-triggers it, so the pending flag makes the loop retry
+        handle after a suspend fails wholesale. On a fully static page no
+        later write re-triggers it. The pending flag then makes the loop retry
         every 2s until the writes stick."""
         self._full_repaint_pending = True
 
@@ -564,7 +563,7 @@ class DeckController:
         attempt. The error policy is attempt and swallow, and only a USB
         disconnect event removes a deck. Recovery is the remaining job. Every
         failure arms the pending repaint, because content written into that
-        failure window can be lost on the device, and the loop's 2s cadence
+        failure window can be lost on the device. The loop's 2s cadence
         retries until a repaint lands cleanly. Only the media thread calls
         this, so it needs no lock."""
         if success:
@@ -668,15 +667,15 @@ class DeckController:
         A native tile entry is keyed per frame, so an entry is re-touched
         once per loop of the content, not once per media tick. Under a
         binding ceiling a flat 2 s min-age makes a playing video's whole
-        frame set eligible for eviction exactly one loop before it is needed
-        again, which reinstates the per-frame encode this cache removes. A
-        closed video's frames become eligible again at once, which is
-        correct, because they are stale.
+        frame set eligible for eviction. That happens exactly one loop before
+        the set is needed again, and it reinstates the per-frame encode this
+        cache removes. A closed video's frames become eligible again at once,
+        which is correct, because they are stale.
 
         frames/source_fps is the loop period only once the tile cache is
         built. While it builds, get_next_tiles() advances the frame
-        sequentially, one frame per media tick, so no frame is skipped and no
-        seek is forced, and the media tick can run slower than the source
+        sequentially, one frame per media tick. No frame is skipped and no
+        seek is forced, so the media tick can run slower than the source
         fps. The real loop period is then unknown and strictly longer than
         frames/fps, so that number under-protects exactly the frame set the
         build is racing to fill. The clamp maximum goes in instead, and the
@@ -714,9 +713,7 @@ class DeckController:
         self._touchscreen_image_size = size
         return size
 
-    # ------------ #
-    # Page Loading #
-    # ------------ #
+    # Page loading
 
     def load_default_page(self) -> None:
         if not self.get_alive(): return
@@ -745,7 +742,7 @@ class DeckController:
         if default_page_path is None:
             # Use the first page
             pages = page_manager.get_pages()
-            if len(pages) == 0:
+            if not pages:
                 return
             default_page_path = page_manager.get_pages()[0]
 
@@ -930,8 +927,8 @@ class DeckController:
             self.load_input(controller_input, page, update)
 
     def load_input(self, controller_input: "ControllerInput[Any]", page: Page, update: bool = True) -> None:
-        input_dict = controller_input.identifier.get_config(page)
-        controller_input.load_from_input_dict(input_dict, update)
+        config = controller_input.identifier.get_config(page)
+        controller_input.load_from_input_dict(config, update)
 
     def close_image_ressources(self) -> None:
         """Release every input's media, the key and dial images and videos,
@@ -1210,9 +1207,7 @@ class DeckController:
             wait = max(0.1, self.TICK_DELAY - (end - start))
             self._tick_stop_event.wait(wait)
 
-    # -------------- #
-    # Helper methods #
-    # -------------- #
+    # Helper methods
 
     # Callers pass an "XxY" string, which Coords_To_Index splits itself, or an
     # already-split pair as a list or a tuple.
@@ -1282,8 +1277,8 @@ class DeckController:
         value, and reload the active page so static media re-enhances at once.
         A playing background or key video keeps showing its already-baked
         cache until the reload builds a fresh cache object under the new
-        factor's cache filename, so video content upgrades on its first
-        playthrough after that."""
+        factor's cache filename. Video content therefore upgrades on its
+        first playthrough after that."""
         value = round(float(value), 2)
         if abs(value - self.display_saturation) <= 0.001:
             # Same-value echo. A persist and a page reload change nothing here
@@ -1304,9 +1299,9 @@ class DeckController:
         """Deprecated in-process shim, kept for out-of-tree plugins.
 
         The engine caches and resolves no widget. The attached UI owns the
-        binding from a controller to its child, by object identity at add_page
-        time, never by a match of a re-read serial against a stack child's
-        name. Returns None when no UI is attached.
+        binding from a controller to its child. The binding is by object
+        identity at add_page time, never by a match of a re-read serial
+        against a stack child's name. Returns None when no UI is attached.
         """
         return ui_port.get().query_deck_widget(self, "deck_stack_child")
 
@@ -1341,16 +1336,16 @@ class DeckController:
         """Generation-agnostic async clear. It submits a seq-stamped ClearMsg
         to the media thread's control queue instead of a direct write. The seq
         stamp orders this against in-flight and future frame submissions. A
-        task already queued with a lower submit_seq is wiped, and a task
+        task already queued with a lower submit_seq is wiped. A task
         submitted after this call survives and paints afterward, even on the
         same tick. That keeps the caller's clear-then-paint order as
         blank-then-content on the device.
 
         Pass expects_repaint=True when this clear is the blank half of a
-        blank-then-paint transition, so a Clear that executes after its own
-        paints landed can be recovered from instead of leaving the deck blank.
-        See MediaPlayerThread._exec_clear. Leave it False when a blank deck is
-        the intended end state."""
+        blank-then-paint transition. A Clear that executes after its own
+        paints landed can then be recovered from, instead of leaving the deck
+        blank. See MediaPlayerThread._exec_clear. Leave it False when a blank
+        deck is the intended end state."""
         seq = self.media_player.next_submit_seq()
         self.media_player.submit_control(ClearMsg(seq=seq, expects_repaint=expects_repaint))
 
@@ -1570,11 +1565,11 @@ class DeckController:
 
     def _teardown_actions(self) -> None:
         """Tear down every action this controller ever cached a page for, not
-        only active_page, plus the screensaver's stashed input set and
-        background when the deck closes during the screensaver. That is where
-        the real page's 50-150MB of media lives then, not on active_page. No
-        caller runs this under _load_page_lock, and none runs it at
-        app_quit."""
+        only active_page. Also tear down the screensaver's stashed input set
+        and background when the deck closes during the screensaver. That is
+        where the real page's 50-150MB of media lives then, not on
+        active_page. No caller runs this under _load_page_lock, and none runs
+        it at app_quit."""
         page_manager = gl.page_manager
         cached_pages = page_manager.pages_for_controller(self) if page_manager is not None else []
         for page in cached_pages:

@@ -3,7 +3,7 @@
 DECK_DEFAULTS is the one table. A literal second copy of every value catches a
 transcription slip, and the legs follow each default down to the device.
 """
-import fixtures  # noqa: F401  (must be first -- see fixtures.py docstring)
+import fixtures  # noqa: F401  (must be first: see fixtures.py docstring)
 
 import hashlib  # noqa: E402
 import json  # noqa: E402

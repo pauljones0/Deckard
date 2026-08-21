@@ -59,7 +59,7 @@ def get_session() -> requests.Session:
 
     connect=0 takes connect errors out of the budget that total covers. This
     policy retries a status. A retry of a failed CONNECT gains nothing,
-    because a black-holed or down host stays down for those seconds, and it
+    because a black-holed or down host stays down for those seconds. It also
     costs three times the wall clock on every offline failure, so a 10s asset
     download becomes a 31s block. KeyGrid's GTK drop handler calls
     HelperMethods.download_file synchronously on the main thread. Read errors
@@ -90,8 +90,8 @@ def get(url: str, *, timeout: float, stream: bool = False) -> requests.Response:
 
     timeout is keyword-only and required, so every HTTP call passes an
     explicit timeout. A request without a timeout parks its worker thread on a
-    black-holed connection, and a required argument holds that rule for a new
-    call site too.
+    black-holed connection. A required argument holds that rule for a new call
+    site too.
     """
     return get_session().get(url, timeout=timeout, stream=stream)
 
@@ -100,9 +100,9 @@ def download_to_file(url: str, target_path: str, *, timeout: float = 30, chunk_s
     """Stream url into target_path through the shared session.
 
     Raises the usual requests exceptions on a network error and on an HTTP
-    error status, so an error page never lands on disk as the requested file.
-    It leaves no partial or zero-byte file, because a failure mid-download
-    removes the target again.
+    error status. An error page therefore never lands on disk as the requested
+    file. It leaves no partial or zero-byte file, because a failure
+    mid-download removes the target again.
     """
     directory = os.path.dirname(target_path)
     if directory != "":

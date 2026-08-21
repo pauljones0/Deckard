@@ -206,9 +206,9 @@ def test_ref_and_sha_validator_cases() -> None:
 
 def test_clone_repo_rejects_injection() -> None:
     """The devel clone path passes remote-catalog values to git. A branch of
-    'main; touch <marker>' must be refused with 400 before any git call, the
-    injected side effect must never happen, and git must only ever run as an
-    argv list."""
+    'main; touch <marker>' must be refused with 400 before any git call. The
+    injected side effect must never happen. git must only ever run as an argv
+    list."""
     sb = _make_backend()
 
     marker = os.path.join(gl.DATA_PATH, "mr16_injection_marker")

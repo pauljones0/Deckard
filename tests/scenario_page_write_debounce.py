@@ -117,7 +117,7 @@ class ManualScheduler:
 
     VirtualTime models the wheel's clock and this models its concurrency. A
     fire runs on a real thread, so a mark can land while a write is in
-    flight, which is the interleaving that decides whether an edit lands.
+    flight. That interleaving decides whether an edit lands.
     """
 
     def __init__(self):
@@ -172,8 +172,8 @@ VT = VirtualTime()
 
 def install_write_recorder() -> None:
     """Counts writes. Records whether the path was still marked pending while
-    its bytes went down, which pins the retire-after-write order, and records
-    the virtual moment of the write."""
+    its bytes went down, which pins the retire-after-write order. Records the
+    virtual moment of the write too."""
     real_write = page_flush.atomic_write_json
 
     def recording_write(path, data):
@@ -735,9 +735,9 @@ def check_discard_reopens_backup(controller) -> None:
 def check_discard_waits_for_flush(controller) -> None:
     """A discard arriving while a flush holds the path must wait for it.
 
-    The flush finishes its backup bookkeeping after the copy, so a discard that
-    slips through mid-copy is overwritten by the record the flush adds on its
-    way out. Real threads open that window.
+    The flush finishes its backup bookkeeping after the copy. The record the
+    flush adds on its way out then overwrites a discard that slips through
+    mid-copy. Real threads open that window.
     """
     # The flush's own write then lands on top of the file the importer wrote.
     scheduler = ManualScheduler()
@@ -956,8 +956,8 @@ def check_every_reader_takes_barrier() -> None:
     """The six sites that touch a page file without going through
     get_page_data, each pinned so that removing its barrier turns red.
 
-    A reader without a barrier sees a page as it was up to a second ago, and
-    an importer without one has its work undone a second later.
+    A reader without a barrier sees a page as it was up to a second ago. An
+    importer without one has its work undone a second later.
     """
     # Two sites run headless through a counting seam. The four behind GTK are
     # pinned at the source, where the call must also come before the read or

@@ -3,7 +3,7 @@ Pins the typed gl accessors in src/backend/services.py.
 
 An accessor is a one-line forward, so it breaks by forwarding less than the raw
 expression did. A dropped argument, a cached slot or a None branch turned into
-a crash are the shapes, and every check below aims at one of them.
+a crash are the shapes. Every check below aims at one of them.
 """
 
 # The accessors know nothing about GTK, and neither does this scenario.
@@ -254,8 +254,8 @@ def check_page_manager_pair() -> None:
 
 def check_runtime_imports_are_globals_only() -> None:
     """Any layer can import this module. That holds only while its runtime
-    imports are globals plus stdlib, because a first-party import is a cycle
-    risk and, for the engine closure, a toolkit risk."""
+    imports are globals plus stdlib. A first-party import is a cycle risk,
+    and, for the engine closure, a toolkit risk."""
     tree = ast.parse(open(MODULE_PATH, encoding="utf-8").read(), MODULE_PATH)
 
     type_checking_bodies: set[int] = set()

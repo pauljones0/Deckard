@@ -327,8 +327,8 @@ def test_failed_thumbnail_lists_without_image() -> None:
 
 def test_fetches_receive_resolved_ref() -> None:
     """The manifest, thumbnail and attribution are all fetched at one
-    resolved ref, the commit sha for a version-map entry and the branch tip
-    for the plugin branch arm. This pins ref_for_fetch."""
+    resolved ref. That ref is the commit sha for a version-map entry, and the
+    branch tip for the plugin branch arm. This pins ref_for_fetch."""
     _stub_globals()
     sb = _make_backend()
     _reset_dirs(sb)
@@ -358,7 +358,7 @@ def test_fetches_receive_resolved_ref() -> None:
 
 def test_prepare_backfills_origin_stamp() -> None:
     """A full prepare identifies an install through its manifest, which is
-    the expensive way, so it records the origin link for the update check to
+    the expensive way. It records the origin link for the update check to
     reuse. An install directory with no ORIGIN stamp gets one written."""
     _stub_globals()
     sb = _make_backend()

@@ -12,9 +12,9 @@ first use and never dropped, and each one holds a whole page dict, tens of
 kilobytes. Only the registry can promise one content per file. An entry dropped
 while a Page still reads through it gives the next Page a second copy, silently.
 
-edit() is the mutation seam for everything that is not a Page: the page
-settings, the whole-file editor, and the sweep that strips a deleted asset out
-of every page. The lock rules live at edit() and at adopt(), and the refresh
+edit() is the mutation seam for everything that is not a Page. That covers the
+page settings, the whole-file editor, and the sweep that strips a deleted asset
+out of every page. The lock rules live at edit() and at adopt(), and the refresh
 rules at refresh_from_disk() and _apply().
 
 Page delegates four names here: the json-shaped snapshot, the removal of live
@@ -41,8 +41,8 @@ from src.backend.PageManagement import page_flush
 def snapshot_json_tree(value: Any) -> Any:
     """Copy a json-shaped tree structurally, and share the leaves.
 
-    dict.copy() and list() run in C under the GIL, so each container snapshots
-    atomically while another thread mutates it, where json.dump and
+    dict.copy() and list() run in C under the GIL. Each container therefore
+    snapshots atomically while another thread mutates it. json.dump and
     copy.deepcopy raise over a live page document. It shares the leaves,
     because an action entry holds a live ActionCore that must stay unique."""
     if isinstance(value, dict):
@@ -138,7 +138,7 @@ def _apply(data: dict[str, Any], content: dict[str, Any]) -> None:
 class PageDocument:
     """The single in-memory copy of one page file.
 
-    json_path is the file this content belongs to, and Page carries the same
+    json_path is the file this content belongs to. Page carries the same
     attribute name, because the flush seam takes either as the holder of a
     page's unwritten edits. data is the dict every Page on this path mutates.
     It is read-only, so nothing can leave the Pages aliasing a dropped dict.
@@ -264,7 +264,7 @@ class PageDocument:
 
         The flush passes the path it holds the save lock for. A page move
         re-points this document in place while a write for the old path is
-        still pending, and a backup of any file but the one about to be
+        still pending. A backup of any file but the one about to be
         overwritten copies the wrong page over the wrong backup.
         """
         back_up_page_file(json_path if json_path is not None else self.json_path)

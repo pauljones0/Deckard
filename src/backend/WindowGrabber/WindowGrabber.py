@@ -42,9 +42,9 @@ def select_integration_class(environment_components: list[str], server: str | No
 
     environment_components holds the XDG_CURRENT_DESKTOP components, and this
     matches them one by one. The variable is a colon-separated list
-    ("ubuntu:GNOME", "sway:wlroots:swayfx"), so a comparison against the whole
-    string leaves a stock distro session with no integration, and automatic
-    page switching then does nothing.
+    ("ubuntu:GNOME", "sway:wlroots:swayfx"). A comparison against the whole
+    string leaves a stock distro session with no integration. Automatic page
+    switching then does nothing.
 
     The order of the checks matters. The X11 session check sits above the KDE
     component, so a KDE session on Xorg reads windows through xprop and not
@@ -73,7 +73,7 @@ class WindowGrabber:
     integrations poll their helper binary five subprocesses at a time every
     200 ms, and the Sway one runs swaymsg as often. The watch helps only while
     some page carries an enabled window auto-change rule, so a rule gates it.
-    The watcher starts with the first rule and stops with the last one, and a
+    The watcher starts with the first rule and stops with the last one. A
     session that never uses the feature polls no windows at all.
 
     The integration builds on first use, not in the constructor, because it
@@ -334,8 +334,8 @@ class WindowGrabber:
         returns a list of [wm_class, title] lists
 
         This blocks. It builds the integration on first use and then queries
-        the desktop, which runs subprocesses on most of them, so a caller on
-        the GTK main thread must marshal it off.
+        the desktop. The query runs subprocesses on most desktops. A caller on
+        the GTK main thread must therefore marshal it off.
         """
         integration = self._ensure_integration()
         if integration is None:
@@ -435,8 +435,10 @@ class WindowGrabber:
             self._restore_manual_page(deck_controller)
 
     def _restore_manual_page(self, deck_controller: "DeckController") -> None:
-        """Returns one deck to its last manually loaded page, if the page it
-        shows got there by an automatic switch and does not ask to stay.
+        """Returns one deck to its last manually loaded page.
+
+        This applies if the page it shows got there by an automatic switch
+        and does not ask to stay.
 
         Two paths reach this. No rule matches the current window, or the last
         rule goes away and turns the gate off, which leaves no further window

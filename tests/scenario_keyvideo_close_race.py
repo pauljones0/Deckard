@@ -82,7 +82,7 @@ def check_close_race_hammer(rounds: int = 150) -> None:
             try:
                 while not stop.is_set():
                     video.get_next_frame()
-            except Exception as e:  # noqa: BLE001 -- the whole point
+            except Exception as e:  # noqa: BLE001  (records any exception)
                 errors.append(e)
 
         t = threading.Thread(target=render_loop, name=f"hammer-{r}", daemon=True)

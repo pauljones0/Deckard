@@ -22,7 +22,7 @@ CONTROLLER_THREAD_PREFIXES = ("MediaPlayerThread", "tick_actions", "action_cb", 
 
 
 class FlakySerialDeck(FaultyFakeDeck):
-    """A deck whose serial read flakes, scriptable by construction window.
+    """A deck whose serial read flakes, scriptable per construction window.
 
     open() runs once per construction attempt, before any serial read, so it
     doubles as the per-attempt reset and snapshots the threads that predate the
@@ -98,8 +98,8 @@ class FlakySerialDeck(FaultyFakeDeck):
 class WedgedTransportDeck(FlakySerialDeck):
     """A deck whose writes block forever instead of raising.
 
-    A write that never returns holds the device lock of the wrapper, so
-    anything the teardown writes, or waits on that lock for, never comes back.
+    A write that never returns holds the device lock of the wrapper. Anything
+    the teardown writes, or waits on that lock for, then never comes back.
     This separates a bounded teardown from a hung one.
     """
 

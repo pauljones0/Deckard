@@ -2,7 +2,7 @@
 
 This module owns two handshakes for the whole process. Leg A defers a call
 until the App runs, and App.on_activate drains it. Legs B and C park a CLI
-request, named by deck serial, until that deck appears, and the controller for
+request, named by deck serial, until that deck appears. The controller for
 the serial claims it on its first default-page load.
 
 This module imports globals and nothing else first-party, so any layer,
@@ -27,8 +27,8 @@ class StartupQueue:
     """The boot-phase deferral protocols.
 
     This holds no state. Every method reads the gl slot it works on, per call,
-    and caches nothing, so a test that swaps gl.app_loading_finished_tasks,
-    and plugin code that appends to it, both keep working.
+    and caches nothing. A test that swaps gl.app_loading_finished_tasks
+    therefore keeps working, and so does plugin code that appends to it.
     """
 
     # Leg A. Deliveries that wait on the running App.
@@ -46,7 +46,7 @@ class StartupQueue:
         publishes in Main.__init__ before app.run(), and again in
         App.on_activate right before the drain. A call that lands in that
         window must skip the queue and marshal itself onto the main loop that
-        starts next, which a ready flag flipped at on_activate prevents.
+        starts next. A ready flag flipped at on_activate prevents that.
 
         The append races the drain. on_activate can publish gl.app and finish
         popping the queue between the None check and the append, which strands
@@ -75,12 +75,12 @@ class StartupQueue:
         Drain by atomic pop, and never iterate and then clear. A background
         thread races its append against this drain, and a clear drops a task
         appended mid-iteration unrun. pop(0) gives every task to exactly one
-        side, this loop or the appender's reclaim after its append, and a task
+        side, this loop or the appender's reclaim after its append. A task
         that appends further tasks while it runs gets those drained too.
 
         Nothing reads a return value. This skips an entry that is not callable
-        rather than raise on it, because plugin code reaches the list, and an
-        append of f() where f was meant must not end the drain. A task that
+        rather than raise on it. Plugin code reaches the list. An append of
+        f() where f was meant must therefore not end the drain. A task that
         raises is another case, and nothing catches it. The exception
         propagates out of the drain and the tasks behind it stay queued. A
         catch here hides a failure on the activation path.
@@ -112,17 +112,18 @@ class StartupQueue:
 
         Pop it rather than read it. A --change-page request applies once. Left
         in place, it re-applies itself on every later load_default_page() call
-        for this serial, which covers every unplug and replug and every "no
+        for this serial. That covers every unplug and replug and every "no
         page found" fallback. A state request instead peeks and resolves, so
         it survives a raise; see peek_state_request.
 
         The lookup and the removal are one dict operation, so two threads that
         race the same serial up cannot both hold the request. Nearly every
         thread in the process reaches this, which is why it is one operation.
-        The main thread on the boot path, the boot rescan thread, the USB
-        hotplug monitor, a deck's HID reader thread through a screensaver
-        dismissal, a plugin or action thread through Page.update_input, and
-        the GTK main thread on the no-pages fallback all claim from here.
+        The main thread claims on the boot path, and the GTK main thread
+        claims on the no-pages fallback. The boot rescan thread and the USB
+        hotplug monitor claim too. A deck's HID reader thread claims through
+        a screensaver dismissal, and a plugin or action thread claims through
+        Page.update_input.
         """
         return gl.api_page_requests.pop(serial_number, None)
 
@@ -132,9 +133,9 @@ class StartupQueue:
         """Park a state change for a deck that has not appeared yet.
 
         The last write wins per serial. The request stores as given. The CLI
-        parser owns the argument validation and the state-number conversion,
-        because it is the one layer that can still report a bad argument to
-        the person who typed it.
+        parser owns the argument validation and the state-number conversion.
+        It is the one layer that can still report a bad argument to the person
+        who typed it.
         """
         gl.api_state_requests[serial_number] = request
 
@@ -142,8 +143,8 @@ class StartupQueue:
         """This serial's parked state request, left parked, or None.
 
         A peek rather than a claim lets the request survive an exception
-        thrown while something applies it, which loads the page it names,
-        resolves the coordinates and sets the state. The next
+        thrown while something applies it. Applying it loads the page it
+        names, resolves the coordinates and sets the state. The next
         load_default_page() for this serial sees it again and retries. One
         claim in place of the peek and the resolve turns that retry into a
         drop, which is why a page request claims and a state request does not.
@@ -171,7 +172,7 @@ class StartupQueue:
         This claims rather than peeks. The caller is a launch that lost the
         race for the application name and passes its requests to the instance
         that won (see src/backend/cli_forward.py). This process applies none
-        of them, so a copy left behind serves a retry that never runs, and a
+        of them. A copy left behind serves a retry that never runs, and a
         retry that did run applies them twice.
 
         The insertion order is the argv order within each kind. The CLI parks

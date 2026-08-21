@@ -61,7 +61,7 @@ def seed_gif_action_page(page_name: str, key_ident: str, dial_ident: str) -> str
     return path
 
 
-PAGE_MEDIA_BG_COLOR = [10, 200, 30, 255]  # applied AFTER the media block in the loader
+PAGE_MEDIA_BG_COLOR = [10, 200, 30, 255]  # applied after the media block in the loader
 
 
 def seed_gif_page_media_page(page_name: str, key_ident: str, media_path: str) -> str:
@@ -90,8 +90,9 @@ def _make_repainting_action_class():
     """A LatchAction variant that repaints until its media slot holds a video.
 
     The plain latch paints once, and the load-time state wipe restores
-    action-owned media on key states only, so a single dial paint can be wiped
-    and never re-established. Converging keeps the composite probe race-free.
+    action-owned media on key states only. A single dial paint can therefore
+    be wiped and never re-established. Converging keeps the composite probe
+    race-free.
     """
     base = fixtures.make_latch_action_class()
 

@@ -182,8 +182,8 @@ def check_min_age_and_floor() -> None:
     """Age protects a hot working set, and no cache is emptied under playback.
 
     The floor ends the shed here, not the drain target. The only cache old
-    enough to shed cannot reach the target alone, so the pass runs it down to
-    its floor and stops with the sum still over the ceiling.
+    enough to shed cannot reach the target alone. The pass runs it down to
+    its floor, and stops with the sum still over the ceiling.
     """
     clock = _FakeClock()
     byte_lru_cache.time = clock
@@ -302,7 +302,8 @@ class _BoomThreading:
 
     Only Thread is looked up there, so a two-line shim covers it. Swapping the
     module reference keeps the failure injection out of the real threading
-    module, which every other thread in this process uses at the same time.
+    module. Every other thread in this process uses that module at the same
+    time.
     """
 
     @staticmethod
@@ -314,8 +315,8 @@ def check_thread_latch_survives_failed_spawn() -> None:
     """A failed daemon spawn must not leave the started latch standing.
 
     _ensure_thread() is the only place that creates the daemon, and register()
-    swallows what escapes it, so a latched failure kills enforcement silently
-    for the life of the process.
+    swallows what escapes it. A latched failure therefore kills enforcement
+    silently for the life of the process.
     """
     saved_started = cache_budget._thread_started
     saved_threading = cache_budget.threading

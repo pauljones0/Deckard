@@ -1,8 +1,8 @@
 """
 The no-blank contract, the second half of the wipe-restore behavior.
 
-set_media stamps the painting action on the state, and load_from_input_dict
-detaches owned media before create_n_states and restores it when that same
+set_media stamps the painting action on the state. load_from_input_dict
+detaches owned media before create_n_states, and restores it when that same
 action still drives the recreated state.
 """
 

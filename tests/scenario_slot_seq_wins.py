@@ -2,8 +2,8 @@
 Single-slot assignment must be highest-seq-wins.
 
 add_touchscreen_task and add_image_task stamp the seq inside _slot_lock,
-atomically with the assignment, so seq order is assignment order and the slot
-always ends holding the maximum allocated seq.
+atomically with the assignment. Seq order is therefore assignment order. The
+slot always ends holding the maximum allocated seq.
 """
 
 # A seq-ordered sleep after allocation makes an inversion deterministic rather

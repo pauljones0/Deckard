@@ -143,7 +143,7 @@ def check_close_gen_invalidation() -> int:
 def check_close_load_race() -> int:
     """A load already past its gen gate, parked inside the prebuild.
 
-    The gen bump and future.cancel() in close() do not cover it, so its freshly
+    The gen bump and future.cancel() in close() do not cover it. Its freshly
     built BackgroundVideo would land on self.background.video after the step-7
     sweep and leak. This drives that interleaving through apply_prebuilt.
     """

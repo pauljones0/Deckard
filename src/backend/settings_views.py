@@ -1,8 +1,8 @@
 """The typed views over the settings surfaces.
 
 A SchemaView is a settings dict read through its schema. An absent key reads
-as the schema's default, a write of an unknown key raises, and the storage
-stays sparse, so a load path persists no default. DeckSettings, AppSettings
+as the schema's default. A write of an unknown key raises. The storage stays
+sparse, so a load path persists no default. DeckSettings, AppSettings
 and PluginSettings build on it and add the named accessors and the envelope
 handling for one surface each.
 
@@ -55,7 +55,7 @@ class SchemaView:
 
     This wraps a mapping that somebody already read, and copies nothing, so a
     writer that still holds the same dict stays valid. An absent key reads as
-    the schema's default, and a read fills nothing in, because a filled key
+    the schema's default. A read fills nothing in, because a filled key
     becomes a persisted key on the next save (see the module docstring). A
     write of a key the schema does not describe raises, so a misspelled key
     never lands on disk unread.
@@ -107,8 +107,8 @@ class SchemaView:
         """Section name, with every absent key filled from the schema.
 
         This is the shape a load path destructures. It returns a copy, on an
-        aliasing view as much as on a copying one, because it is a
-        destructuring shape and no handle on the settings. A mutation of it
+        aliasing view as much as on a copying one. It is a destructuring
+        shape and no handle on the settings. A mutation of it
         reaches neither the schema nor the stored settings, and a save of it
         persists the defaults it just filled in. A stored key that the schema
         does not describe stays, because this fills gaps and prunes no file it
@@ -180,7 +180,7 @@ class DeckSettings(SchemaView):
     and cannot save.
 
     This is a copying view. The deck surface hands out a deep copy per store
-    read, so the dict under this view already belongs to the caller, and this
+    read, so the dict under this view already belongs to the caller. This
     view copies what it hands back for the same reason. One caller's edits
     stay its own until it saves them.
     """
@@ -208,12 +208,12 @@ class AppSettings(SchemaView):
     private snapshot. The mapping it wraps decides who sees a write before the
     save, and the caller makes that decision.
 
-    This view always aliases. A stored list or dict comes back by reference,
-    so settings.custom_stores.append(entry) plus a save persists the entry,
-    and the font-defaults dict that the label engine holds is the one inside
+    This view always aliases. A stored list or dict comes back by reference.
+    settings.custom_stores.append(entry) plus a save then persists the entry.
+    The font-defaults dict that the label engine holds is the one inside
     the settings rather than a snapshot. A copy would accept both calls and
     keep neither. An absent key still reads as a copy of the table's default,
-    because nothing stored exists to alias, and the table must survive the
+    because nothing stored exists to alias. The table must also survive the
     first holder that mutates what it read.
 
     The named accessors, one per setting, replace raw keys, because one key
@@ -467,9 +467,9 @@ class PluginSettings:
     Every other surface lets an OSError out, because the content is unknown
     and an empty answer invites a write that destroys it. This class catches
     it. These reads run inside a plugin __init__ and inside the plugin
-    settings dialog, where a raise costs the user the whole plugin, or the
-    dialog, over a file they may never have written to. The plugin starts with
-    no settings and logs that loudly.
+    settings dialog. There a raise costs the user the whole plugin, or the
+    dialog, over a file they may never have written to. The plugin starts
+    with no settings and logs that loudly.
 
     The loader still quarantines a decode failure. The bytes exist and do not
     parse, and the next save overwrites the only copy of a configuration

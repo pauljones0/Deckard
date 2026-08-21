@@ -53,9 +53,9 @@ def _make_gif(name: str, *, opaque: bool, durations_ms: list[int],
               size=(200, 200), disposal=2) -> str:
     """An animated GIF with explicit per-frame durations and a shifting disc.
 
-    opaque decides the route under test. disposal may be a per-frame list, and
-    mixing 2 with 1 makes PIL write sub-canvas extents for some frames and
-    full-canvas ones for others, which is where a second compositor goes wrong.
+    opaque decides the route under test. disposal may be a per-frame list.
+    Mixing 2 with 1 makes PIL write sub-canvas extents for some frames and
+    full-canvas ones for others. That is where a second compositor goes wrong.
     """
     frames = []
     for i in range(len(durations_ms)):
@@ -202,9 +202,9 @@ def _declare_unused_transparency(path: str) -> None:
 def check_opaque_gif_takes_video_route() -> None:
     """A GIF that declares transparency and renders none takes the video route.
 
-    75 percent of real GIFs declare an index and 11 percent render one, so
-    routing on the declaration makes the dominant population pay for a frame
-    list it does not need.
+    75 percent of real GIFs declare an index and 11 percent render one.
+    Routing on the declaration therefore makes the dominant population pay for
+    a frame list it does not need.
     """
     path = _make_gif("declared_opaque.gif", opaque=True,
                      durations_ms=[100, 100, 100, 100])
@@ -306,8 +306,9 @@ def _make_partial_extent_gif(name: str, n_frames: int, disposals: list[int]) -> 
     """A GIF whose frames, frame 0 included, cover part of the logical screen.
 
     The PIL writer cannot produce this, because it always writes frame 0 at
-    full extent. Only the LZW-coded pixel data is borrowed from PIL, by saving
-    each patch as its own GIF and splicing its image block in at a position.
+    full extent. Only the LZW-coded pixel data is borrowed from PIL. This
+    saves each patch as its own GIF and splices its image block in at a
+    position.
     """
     def image_block(patch: Image.Image, left: int, top: int) -> bytes:
         buffer = io.BytesIO()

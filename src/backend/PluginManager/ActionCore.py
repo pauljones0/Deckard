@@ -898,8 +898,8 @@ class ActionCore(rpyc.Service):  # type: ignore[misc]  # rpyc.Service is unstubb
         """Detach and tear down the rpyc server, connection and process.
 
         It is idempotent and safe against a concurrent call from clean_up and
-        from the rpyc on_disconnect hook, because close and terminate both
-        tolerate a lost race."""
+        from the rpyc on_disconnect hook. close and terminate both tolerate a
+        lost race."""
         if self.backend_connection is None and self.server is None and self.backend_process is None:
             return
 

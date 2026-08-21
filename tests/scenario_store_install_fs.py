@@ -308,8 +308,9 @@ def _seed_install(dest: str, content: str = "previous good install") -> str:
 
 def test_swap_failure_restores_existing_install() -> None:
     """If the final atomic rename of the staged tree fails, _swap_into_place
-    must put the old install back (it was only renamed aside, never deleted)
-    and clean up its transient siblings."""
+    must put the old install back. The old install is only renamed aside,
+    never deleted. _swap_into_place must also clean up its transient
+    siblings."""
     sb = _make_backend()
     dest = os.path.join(gl.DATA_PATH, "plugins", "com_test_SwapFail")
     sentinel = _seed_install(dest)
@@ -346,9 +347,9 @@ def test_swap_failure_restores_existing_install() -> None:
 
 
 def test_manifest_id_mismatch_refused() -> None:
-    """expected_id is the staged-tree choke point. A downloaded tree whose
-    manifest.json id disagrees with the catalog id, which also names the
-    install dir, is refused with 400 before it replaces the pack."""
+    """expected_id is the staged-tree choke point. The catalog id also names
+    the install dir. A downloaded tree whose manifest.json id disagrees with
+    that catalog id is refused with 400 before it replaces the pack."""
     sb = _make_backend()
     dest = os.path.join(gl.DATA_PATH, "plugins", "com_test_IdMismatch")
     sentinel = _seed_install(dest)
@@ -375,8 +376,8 @@ def test_manifest_id_mismatch_refused() -> None:
 
 def test_update_replaces_pack_and_stamps() -> None:
     """A successful update. The staged tree carries VERSION before the swap,
-    because a tree without it reads as not installed and is never retried,
-    the old content is fully replaced, and no transient tree remains."""
+    because a tree without it reads as not installed and is never retried.
+    The old content is fully replaced. No transient tree remains."""
     sb = _make_backend()
     dest = os.path.join(gl.DATA_PATH, "plugins", "com_test_Replace")
     sentinel = _seed_install(dest, content="old version file")

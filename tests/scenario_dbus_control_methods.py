@@ -169,8 +169,8 @@ def leg_state_errors(client, controller) -> None:
 def leg_signatures_match_cli(client) -> None:
     """The published signatures are the ones the CLI composes calls from.
 
-    The CLI builds the (ss) and (sssi) variants by hand, and a wire signature
-    has no other guard, so a change here fails at the bus.
+    The CLI builds the (ss) and (sssi) variants by hand. A wire signature has
+    no other guard, so a change here fails at the bus.
     """
     xml = client.introspect()
     assert '<method name="ChangePage">' in xml, xml
@@ -261,9 +261,9 @@ def leg_cli_transport_reaches_service(controller) -> None:
 def leg_instance_never_answers(controller) -> None:
     """What the CLI says when the methods are not on the bus.
 
-    GDBus reports a missing object the same way it reports a missing method, so
-    a build without the methods and an instance shutting down look alike. The
-    name stays owned here and the top-level object goes off the bus.
+    GDBus reports a missing object the same way it reports a missing method. A
+    build without the methods and an instance shutting down therefore look
+    alike. The name stays owned here and the top-level object goes off the bus.
     """
     from src.backend import cli_forward
 

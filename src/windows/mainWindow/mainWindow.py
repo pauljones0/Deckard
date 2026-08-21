@@ -267,10 +267,10 @@ class MainWindow(Adw.ApplicationWindow):
         self.deck_settings_button.set_visible(False)
 
     def check_for_errors(self) -> None:
-        if len(services.require_deck_manager().deck_controller) == 0:
+        if not services.require_deck_manager().deck_controller:
             self.set_main_error("no-decks")
 
-        elif len(services.require_page_manager().get_page_names(add_custom_pages=False)) == 0:
+        elif not services.require_page_manager().get_page_names(add_custom_pages=False):
             self.set_main_error("no-pages")
 
         else:

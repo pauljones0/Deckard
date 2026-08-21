@@ -99,12 +99,12 @@ def phase_pickup_exactly_once() -> None:
     manager.load_hardware_decks()  # empty enumeration -> arms the rescan
     assert manager._boot_rescan_thread is not None, "rescan not armed on empty enumeration"
     assert manager._boot_rescan_thread.is_alive(), "rescan thread not running"
-    assert len(manager.deck_controller) == 0
+    assert not manager.deck_controller
 
     # Let at least one empty retry complete. The startup call was the first.
     ok = fixtures.wait_until(lambda: ScriptedDeviceManager.enumerate_calls >= 2, timeout=3)
     assert ok, "rescan never re-enumerated"
-    assert len(manager.deck_controller) == 0, "controller appeared from an empty enumeration"
+    assert not manager.deck_controller, "controller appeared from an empty enumeration"
 
     # The deck becomes enumerable now. Race a simulated hotplug event, where
     # the on_connect path of the USB monitor calls connect_new_decks directly,

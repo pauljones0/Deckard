@@ -2,7 +2,8 @@
 Unit and integration scenario for the frame-identity native tile cache.
 
 NativeTileCache keys the encoded bytes by frame identity, not by composited
-pixels, so a looping video encodes once and every later loop is a dict lookup.
+pixels. A looping video therefore encodes once, and every later loop is a dict
+lookup.
 """
 
 # A key with a visible label keeps the pixel-hash path, and a background swap
@@ -241,9 +242,9 @@ def _settle(controller) -> None:
 
 def _start_video(controller, path: str) -> "BackgroundVideo":
     """Installs path as the deck background, detached from the media thread,
-    so only the scenario advances frames. Call _settle() first, because the
-    media thread ticks a video whose page is the active page, and before a
-    page loads that predicate matches page None and drives the build."""
+    so only the scenario advances frames. Call _settle() first. The media
+    thread ticks a video whose page is the active page. Before a page loads,
+    that predicate matches page None and drives the build."""
     assert controller.active_page is not None, (
         "fixture sanity: _start_video needs a loaded page -- with active_page "
         "still None, `video.page = None` matches the media thread's tick "
@@ -294,9 +295,9 @@ _frame_retries = 0
 
 def _show_frame(video, controller, index: int) -> None:
     """Advances the background to one named frame. get_next_tiles picks by
-    wall clock once the cache is complete, so this rewinds the timebase to put
-    index at now and clears _last_frame_tick, which stops the resume-gap clamp
-    from moving it."""
+    wall clock once the cache is complete. This rewinds the timebase to put
+    index at now, and clears _last_frame_tick. That clear stops the resume-gap
+    clamp from moving it."""
     # A budgeted retry absorbs one deschedule between the two wall-clock
     # reads, which costs one frame at the 15fps source.
     global _frame_retries

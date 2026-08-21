@@ -219,7 +219,7 @@ class Lane:
     def name(self) -> str:
         return self.label or "default"
 
-    # --- producer side ------------------------------------------------
+    # Producer side.
 
     def dispatch(self, observers: Iterable[Callable[..., Any]], args: tuple[Any, ...], kwargs: dict[str, Any],
                  label: str | None = None) -> None:
@@ -291,7 +291,7 @@ class Lane:
             self._runner = None
             raise
 
-    # --- consumer side ------------------------------------------------
+    # Consumer side.
 
     def _run(self) -> None:
         try:
@@ -387,7 +387,7 @@ class Lane:
                 self.backlog -= 1
                 _backlog -= 1
 
-    # --- watchdog -----------------------------------------------------
+    # Watchdog.
 
     def _check_wedge(self) -> None:
         with _watch_lock:

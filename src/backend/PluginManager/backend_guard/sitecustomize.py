@@ -1,7 +1,7 @@
 """Imported by `site` when this directory rides on a child's PYTHONPATH.
 
 It arms the rpyc loopback guard in a backend that runs on the app's own
-interpreter, where no plugin venv exists to carry the .pth file. A failure
+interpreter. No plugin venv exists there to carry the .pth file. A failure
 here must never stop the child interpreter.
 """
 try:

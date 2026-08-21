@@ -62,9 +62,9 @@ def _page_and_input(row: _InputBoundRow) -> "tuple[Page, InputIdentifier, int] |
     """The page and the input a row writes to, or None when there is no pair.
 
     MainWindow.get_active_page answers None between the deck selection and
-    the first page load, which its own docstring calls the normal state, and
-    a row carries no identifier and no state until load_for_identifier binds
-    them. Every Page setter below keys its write by all three, and Page reads
+    the first page load, which its own docstring calls the normal state. A row
+    carries no identifier and no state until load_for_identifier binds them.
+    Every Page setter below keys its write by all three, and Page reads
     identifier.input_type to build the dict path.
     """
     page = services.require_main_window().get_active_page()

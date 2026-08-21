@@ -139,10 +139,11 @@ class _ChooserBuildPage(ChooserPage):
     """Build bookkeeping and failure recovery for both chooser bases.
 
     run_on_main raises RuntimeError when the main loop does not run its idle
-    within RUN_ON_MAIN_TIMEOUT_S, which is 30 s, and anything that stalls the
-    loop reaches that. Without this handling, log.catch swallows the raise and
-    the page stays stuck. The spinner runs, build_finished stays unset, a
-    deferred show_for_path strands, and no retry and no message follow.
+    within RUN_ON_MAIN_TIMEOUT_S, which is 30 s. Anything that stalls the
+    loop reaches that limit. Without this handling, log.catch swallows the
+    raise and the page stays stuck. The spinner runs, build_finished stays
+    unset, a deferred show_for_path strands, and no retry and no message
+    follow.
     """
 
     build_finished = False
