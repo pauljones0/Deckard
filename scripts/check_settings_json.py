@@ -119,7 +119,6 @@ ALLOWLIST: dict[str, str] = {
     # A pack manifest is a read-only source file inside a pack, not an app
     # setting. The app never writes one, so nothing overwrites a corrupt one.
     "src/backend/PackManagement/pack_family.py": "a pack's read-only manifest, for every pack family",
-    "src/backend/SDPlusBarWallpaperPackManagement/SDPlusBarWallpaperPack.py": "an SD+ wallpaper pack's read-only manifest",
     # The plugin manifest.json and about.json are read-only source files that
     # the app never writes, under a log-and-leave policy that the store omits.
     "src/backend/PluginManager/PluginBase.py": "a plugin's read-only manifest/about source files",

@@ -156,8 +156,6 @@ module = [
     "src.backend.PluginManager.PluginSettings.Observer",
     "src.backend.PluginManager.PluginSettings.PluginAssetManager",
     "src.backend.PresenceMonitor.PresenceMonitor",
-    "src.backend.SDPlusBarWallpaperPackManagement.SDPlusBarWallpaperPack",
-    "src.backend.SDPlusBarWallpaperPackManagement.SDPlusBarWallpaper",
     "src.backend.services",
     "src.backend.SettingsManager",
     "src.backend.settings_store",

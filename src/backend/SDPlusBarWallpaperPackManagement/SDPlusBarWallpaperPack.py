@@ -13,121 +13,16 @@ You should have received a copy of the GNU General Public License
 along with this program. If not, see <https://www.gnu.org/licenses/>.
 """
 
-import os
-from typing import Any, cast
-
-import json
-from pathlib import Path
-
-from src.backend.DeckManagement.HelperMethods import instance_cache
-
+from src.backend.PackManagement.pack_family import Pack
 from src.backend.SDPlusBarWallpaperPackManagement.SDPlusBarWallpaper import SDPlusBarWallpaper
 
-class SDPlusBarWallpaperPack:
-    def __init__(self, path: str):
-        self.path = path
-        self.is_valid = True
-        self.name = self.get_manifest().get("name") or os.path.basename(path)
-        self.pack_structure: dict[str, list[SDPlusBarWallpaper]] = {}
+class SDPlusBarWallpaperPack(Pack[SDPlusBarWallpaper]):
+    """One SD+ bar wallpaper pack folder. Its manifest names the asset folder under "images"."""
 
-        self.generate_folder_structure("images")
+    ASSET_MANIFEST_KEY = "images"
 
-
-    @instance_cache
-    def get_manifest(self) -> dict[str, Any]:
-        path = Path(os.path.join(self.path, "manifest.json"))
-
-        if not path.exists(follow_symlinks=True):
-            self.is_valid = False
-            return {}
-
-        return self.get_json(path)
-
-    @instance_cache
-    def get_attribution_json(self) -> dict[str, Any]:
-        path = Path(os.path.join(self.path, "attribution.json"))
-
-        return self.get_json(path)
-
-    @instance_cache
-    def get_pack_attribution(self) -> dict[str, Any]:
-        attribution = self.get_attribution_json()
-        return cast(dict[str, Any],
-                    attribution.get("default", attribution.get("general", attribution.get("generic", {}))))
-
-    @instance_cache
-    def get_json(self, json_path: Path) -> dict[str, Any]:
-        if not json_path.exists(follow_symlinks=True):
-            return {}
-
-        with open(json_path) as f:
-            return cast(dict[str, Any], json.load(f))
-
-    @instance_cache
-    def get_thumbnail_path(self) -> Path | None:
-        manifest = self.get_manifest()
-        thumbnail = manifest.get("thumbnail")
-        if thumbnail is None:
-            # A manifest with no thumbnail key is as unusable as one whose
-            # thumbnail is missing from disk, and joining None raises.
-            self.is_valid = False
-            return None
-        path = Path(os.path.join(self.path, thumbnail))
-        if path.exists(follow_symlinks=True):
-            return path
-        self.is_valid = False
-        return None
+    def make_asset(self, path: str) -> SDPlusBarWallpaper:
+        return SDPlusBarWallpaper(wallpaper_pack=self, path=path)
 
     def get_wallpapers(self) -> list[SDPlusBarWallpaper]:
         return self.get_content_from_structure()
-
-    def get_content_from_structure(self) -> list[SDPlusBarWallpaper]:
-        content: list[SDPlusBarWallpaper] = []
-
-        for folder_name, folder_entry in self.pack_structure.items():
-            for entry in folder_entry:
-                content.append(entry)
-
-        return content
-
-    def generate_folder_structure(self, asset_path: str) -> None:
-        manifest = self.get_manifest()
-
-        if self.is_valid is False:
-            return
-
-        # Not asset_path again: the parameter names the manifest key, and
-        # what comes back is the folder it points at. A manifest that omits
-        # the key leaves the pack unusable, and joining None raises.
-        asset_folder = manifest.get(asset_path)
-        if asset_folder is None:
-            self.is_valid = False
-            return
-        pack_path = Path(os.path.join(self.path, asset_folder))
-
-        if not pack_path.exists(follow_symlinks=True):
-            self.is_valid = False
-            return
-
-        base_dir_content = self.load_content(pack_path)
-        if base_dir_content:
-            self.pack_structure["Base"] = base_dir_content
-
-        subfolders = [entry for entry in os.scandir(pack_path) if entry.is_dir()]
-
-        for folder in subfolders:
-            if not self.pack_structure.__contains__(folder.name):
-                self.pack_structure[folder.name] = []
-            icons = self.load_content(folder.path)
-            self.pack_structure[folder.name] = icons
-
-    def load_content(self, folder_path: str | os.PathLike[str]) -> list[SDPlusBarWallpaper]:
-        content: list[SDPlusBarWallpaper] = []
-
-        for entry in os.scandir(folder_path):
-            if os.path.isdir(entry.path):
-                continue
-            content.append(SDPlusBarWallpaper(wallpaper_pack=self, path=entry.path))
-
-        return content
-

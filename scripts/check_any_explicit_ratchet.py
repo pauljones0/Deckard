@@ -117,8 +117,6 @@ BASELINE = {
     "src.backend.PluginManager.backend_guard.deckard_rpyc_guard",
     "src.backend.PluginManager.event_dispatch",
     "src.backend.PresenceMonitor.PresenceMonitor",
-    "src.backend.SDPlusBarWallpaperPackManagement.SDPlusBarWallpaper",
-    "src.backend.SDPlusBarWallpaperPackManagement.SDPlusBarWallpaperPack",
     "src.backend.SettingsManager",
     "src.backend.Store.StoreBackend",
     "src.backend.Store.StoreCache",
