@@ -9,10 +9,20 @@ the previous page's content on it until someone presses it.
 
 A key that is not fully opaque must stay with the video loop and take the
 preview-only path, even when its content just changed.
+
+This overlaps scenario_deck_lifecycle_trio.check_opaque_initial_paint on
+purpose, and neither covers the other. That one drives a stopped writer and
+a hand-drained queue, and proves the content assertion is not vacuous by
+varying the color. This one runs against the live writer, pins the alpha
+boundary one step below opaque, and proves the silence on the non-opaque
+keys is the branch and not a hash skip, by repainting one of them directly.
 """
 import time
 
 import fixtures
+# The trio's expected-native helper, shared rather than copied. Importing it
+# only defines helpers, because its own legs run under its __main__ guard.
+import scenario_deck_lifecycle_trio as trio
 from src.backend.DeckManagement.InputIdentifier import Input
 
 
@@ -43,8 +53,8 @@ def main() -> None:
     deck = fixtures.raw_deck(controller)
     try:
         keys = controller.inputs[Input.Key]
-        assert len(keys) >= 2, "fixture sanity: expected at least two keys"
-        opaque, translucent = keys[0], keys[1]
+        assert len(keys) >= 3, "fixture sanity: expected at least three keys"
+        opaque, boundary, translucent = keys[0], keys[1], keys[2]
 
         # Let the default page's own paints land, so the writes below are the
         # ones this scenario caused.
@@ -52,13 +62,21 @@ def main() -> None:
             lambda: deck.last_op_for(f"key:{opaque.index}") is not None, timeout=3)
         time.sleep(0.1)
 
-        # Both keys get new content. Only the first is fully opaque.
+        # All three keys get new content. Only the first is fully opaque, and
+        # the second sits one step below it, where the video loop still owns
+        # the key.
         opaque.get_active_state().background_manager.set_page_color(
             [10, 20, 30, 255], update=False)
+        boundary.get_active_state().background_manager.set_page_color(
+            [200, 50, 50, 254], update=False)
         translucent.get_active_state().background_manager.set_page_color(
             [200, 50, 50, 128], update=False)
 
         controller.background.video = _FakeBGVideo()
+
+        # What the device must receive for the opaque key: the new color, not
+        # whatever it held before.
+        expected_hash = trio._expected_native_hash(controller, opaque)
 
         seq_before = deck.current_seq()
         controller.update_all_inputs()
@@ -70,25 +88,32 @@ def main() -> None:
             "under a background video -- the per-frame video loop skips it, so "
             "nothing else would ever write it"
         )
-
-        time.sleep(0.3)  # let a would-be regression's write land
-        extra = key_writes_after(deck, seq_before, translucent.index)
-        assert not extra, (
-            f"a key that is not fully opaque must keep the preview-only path "
-            f"under a background video, and not be written here, got "
-            f"{len(extra)} device write(s)"
+        written_hash = key_writes_after(deck, seq_before, opaque.index)[-1][4]
+        assert written_hash == expected_hash, (
+            f"the opaque key was painted with the wrong content (journal "
+            f"{written_hash} != expected {expected_hash} for its new color) -- "
+            f"a stale frame reached the device"
         )
 
+        time.sleep(0.3)  # let a would-be regression's write land
+        for key, alpha in ((boundary, 254), (translucent, 128)):
+            extra = key_writes_after(deck, seq_before, key.index)
+            assert not extra, (
+                f"a key at alpha {alpha} is not fully opaque, so it must keep "
+                f"the preview-only path under a background video and not be "
+                f"written here, got {len(extra)} device write(s)"
+            )
+
         # Control leg. The silence above must come from the opacity branch and
-        # not from dedup: the same key's content is new, so its own update()
-        # writes it.
+        # not from dedup: the boundary key's content is new, so its own
+        # update() writes it.
         seq_before_direct = deck.current_seq()
-        translucent.update()
+        boundary.update()
         ok = fixtures.wait_until(
-            lambda: key_writes_after(deck, seq_before_direct, translucent.index),
+            lambda: key_writes_after(deck, seq_before_direct, boundary.index),
             timeout=3)
         assert ok, (
-            "fixture sanity: the translucent key's content changed, so a direct "
+            "fixture sanity: the boundary key's content changed, so a direct "
             "update() must reach the device (otherwise the assertion above "
             "proves nothing)"
         )
