@@ -145,6 +145,7 @@ class MediaPlayerSetTouchscreenImageTask:
     class carries the device call it ends in."""
     deck_controller: "DeckController"
     ticket: "PaintTicket"
+    submit_seq: int | None = None  # the writer's stamp, set under _slot_lock
 
     def run(self) -> None:
         if not self.deck_controller.deck.is_touch():
@@ -174,6 +175,7 @@ class MediaPlayerSetImageTask:
     deck_controller: "DeckController"
     ticket: "PaintTicket"
     key_index: int
+    submit_seq: int | None = None  # the writer's stamp, set under _slot_lock
 
     def run(self) -> None:
         ticket = self.ticket
@@ -427,8 +429,8 @@ class MediaPlayerThread(threading.Thread):
         # nothing left to compare.
         #
         # Per-writer monotonic stamp counter. add_image_task and
-        # add_touchscreen_task stamp a ticket with next(self._submit_seq)
-        # under _slot_lock, atomically with the slot assignment. A stamp taken
+        # add_touchscreen_task stamp a task with next(self._submit_seq) under
+        # _slot_lock, atomically with the slot assignment. A stamp taken
         # before the lock lets racing producers assign out of seq order and
         # leaves a slot holding an older frame. A Clear captures the counter
         # at its own submission through next_submit_seq(), so it can tell
@@ -844,11 +846,11 @@ class MediaPlayerThread(threading.Thread):
         with self._slot_lock:
             for key in list(self.image_tasks.keys()):
                 task = self.image_tasks.get(key)
-                if task is not None and task.ticket.submit_seq is not None and task.ticket.submit_seq < msg.seq:
+                if task is not None and task.submit_seq is not None and task.submit_seq < msg.seq:
                     del self.image_tasks[key]
             ts_task = self.touchscreen_task
-            if (ts_task is not None and ts_task.ticket.submit_seq is not None
-                    and ts_task.ticket.submit_seq < msg.seq):
+            if (ts_task is not None and ts_task.submit_seq is not None
+                    and ts_task.submit_seq < msg.seq):
                 self.touchscreen_task = None
         # Reset the dedup state on every current input before the blanks go
         # out. Otherwise an identical repaint after this Clear matches the
@@ -1011,7 +1013,7 @@ class MediaPlayerThread(threading.Thread):
         # with the newest frame, and a Clear's survives-if-submitted-after
         # test stays consistent with what the slot holds.
         with self._slot_lock:
-            task.ticket = task.ticket.stamped(self.next_submit_seq())
+            task.submit_seq = self.next_submit_seq()
             self.touchscreen_task = task
         self._wake_event.set()
 
@@ -1030,7 +1032,7 @@ class MediaPlayerThread(threading.Thread):
         # Stamp inside the lock as add_touchscreen_task does. The per-key
         # slots have the same producer-against-producer shape.
         with self._slot_lock:
-            task.ticket = task.ticket.stamped(self.next_submit_seq())
+            task.submit_seq = self.next_submit_seq()
             self.image_tasks[key_index] = task
         self._wake_event.set()
 
@@ -1153,6 +1155,6 @@ class MediaPlayerThread(threading.Thread):
         happens either way.
 
         Writer thread only, so the read-compare-write needs no lock."""
-        seq = task.ticket.submit_seq
+        seq = task.submit_seq
         if seq is not None and seq > self._max_executed_seq:
             self._max_executed_seq = seq

@@ -15,11 +15,13 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 The paint protocol: the value a producer hands the media thread for one
 paint, and the state that judges the next one.
 
-A PaintTicket holds every field the write boundary reads. The producer that
-rendered a frame fills the page, the generation, the encoded bytes and the
-hash of what those bytes show; the writer adds its submit stamp. The media
-writer's two image task classes wrap one ticket each, so a paint is one
-object from the render that made it to the device write that presents it.
+A PaintTicket holds what the render decided: the present state the paint
+belongs to, the page and generation it was rendered for, the encoded bytes
+and the hash of what those bytes show. The media writer's two image task
+classes wrap one ticket each, so a paint is one object from the render that
+made it to the device write that presents it. The writer's own bookkeeping,
+the submit stamp and the ordering it feeds, stays on the task and off the
+ticket.
 
 A PresentState is what one target shows and what is on its way to it. Each
 key and each touchscreen owns one, and a ticket carries the one its paint
@@ -159,9 +161,8 @@ class PaintTicket:
     """One paint, from the render that produced it to the device write.
 
     It is frozen, because a producer and the media thread hold the same
-    ticket. Only the writer changes one, and it does so by building a
-    successor: the submit stamp under the slot lock, and the payload release
-    after the write.
+    ticket. The one change the writer makes is the payload release after the
+    write, and it builds a successor for that rather than mutating this one.
     """
 
     # The present state this paint belongs to, or None for a paint submitted
@@ -179,14 +180,6 @@ class PaintTicket:
     native_image: bytes
     # Hash of the image these bytes show. run() records it as presented.
     img_hash: int | None
-    # The writer's monotonic submit-seq stamp, None until the writer assigns
-    # the ticket to a slot.
-    submit_seq: int | None = None
-
-    def stamped(self, submit_seq: int) -> "PaintTicket":
-        """This ticket with the writer's submit stamp on it. The writer builds
-        it inside the slot lock, atomically with the slot assignment."""
-        return replace(self, submit_seq=submit_seq)
 
     def released(self) -> "PaintTicket":
         """This ticket with its encoded bytes dropped.
@@ -195,7 +188,7 @@ class PaintTicket:
         frame's bytes are freed as it reaches the device instead of at the end
         of the batch. It matters most for the touchscreen strip, the largest
         single write on the deck and the one native no cache holds. Every
-        other field survives, because the writer still reads the submit stamp
-        afterwards.
+        other field survives, so an empty payload means exactly one thing:
+        this paint was already written.
         """
         return replace(self, native_image=b"")
