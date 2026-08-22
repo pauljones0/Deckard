@@ -19,6 +19,7 @@ from src.backend.DeckManagement.DeckController import (
     ClearAndCloseMsg,
     SetBrightnessMsg,
 )
+from src.backend.DeckManagement.InputIdentifier import Input
 
 
 def wait_until(pred, timeout=5.0, interval=0.01):
@@ -228,11 +229,51 @@ def leg_control_drain() -> None:
     print("  leg PASS: control drain (brightness + terminal close land under persistent tick failure)")
 
 
+def leg_released_ticket_refused() -> None:
+    """A task that already wrote must refuse to run a second time.
+
+    The write releases the ticket's bytes as the frame reaches the device. A
+    second run would then write an empty frame and record it as presented,
+    which leaves the device blank and the dedup state agreeing with the
+    blank.
+    """
+    controller, media_player, deck_manager = fixtures.make_stub_controller(n_keys=1)
+    deck = controller.deck
+    key = controller.inputs[Input.Key][0]
+
+    media_player.add_image_task(
+        0, fixtures.make_native_image(fill=7),
+        page=controller.active_page, config_gen=controller._page_load_generation,
+        present=key.present_state, img_hash=4242,
+    )
+    task = media_player.image_tasks[0]  # the drain pops it, so hold it here
+    media_player.perform_media_player_tasks()
+
+    writes = len(deck.ops_by_name("set_key_image"))
+    assert writes == 1, f"fixture sanity: expected one write, got {writes}"
+    assert key.present_state.last_presented_hash == 4242, (
+        "fixture sanity: the write must record its hash as presented"
+    )
+
+    key.present_state.last_presented_hash = None  # make a second stamp visible
+    task.run()
+    assert len(deck.ops_by_name("set_key_image")) == writes, (
+        "a task whose payload was released must not write again -- the empty "
+        "payload would blank the key"
+    )
+    assert key.present_state.last_presented_hash is None, (
+        "a refused run must not record anything as presented"
+    )
+
+    print("  leg PASS: released ticket refused")
+
+
 def main() -> None:
     fixtures.start_watchdog(60, label="scenario_writer_survival")
     leg_guard_survival()
     leg_batch_recovery()
     leg_control_drain()
+    leg_released_ticket_refused()
 
     # The guarded loop must not have leaked threads.
     stray = [t.name for t in threading.enumerate()

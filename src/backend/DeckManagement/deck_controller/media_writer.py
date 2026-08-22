@@ -151,6 +151,11 @@ class MediaPlayerSetTouchscreenImageTask:
         if not self.deck_controller.deck.is_touch():
             return
         ticket = self.ticket
+        if not ticket.native_image:
+            # Released, so this task already wrote. A second run would put an
+            # empty frame on the strip and then record it as presented, which
+            # is the bleed the present stamp exists to prevent.
+            return
         try:
             touchscreen_size = self.deck_controller.get_touchscreen_image_size()
             self.deck_controller.deck.set_touchscreen_image(ticket.native_image, x_pos=0, y_pos=0, width=touchscreen_size[0], height=touchscreen_size[1])  # maybe avoid merging the dial images before every apply
@@ -179,6 +184,9 @@ class MediaPlayerSetImageTask:
 
     def run(self) -> None:
         ticket = self.ticket
+        if not ticket.native_image:
+            # Released, so this task already wrote. See the touchscreen task.
+            return
         try:
             if media_prof:
                 _t0 = time.perf_counter()
