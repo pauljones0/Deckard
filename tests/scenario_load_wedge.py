@@ -32,6 +32,9 @@ DEADLINE = 0.4
 # The hang is bounded. A load task that outlives the scenario would keep a
 # non-daemon pool thread and stop the interpreter from exiting.
 HANG_CAP = 30.0
+# The wedge warning carries the running leak count. A leak nobody can see is
+# a leak nobody fixes.
+LEAK_REPORT = "Leaked loader threads on this deck so far: {count}."
 
 
 class LogCapture:
@@ -148,6 +151,9 @@ def case_wedge_names_only_the_started_task() -> None:
         if boot_pool is not None:
             boot_pool.shutdown(wait=False)
 
+        assert controller.leaked_loader_threads == 0, (
+            f"nothing has wedged yet, but the counter reads {controller.leaked_loader_threads}")
+
         with LogCapture() as capture:
             began = time.monotonic()
             controller.load_all_inputs(controller.active_page)
@@ -171,6 +177,11 @@ def case_wedge_names_only_the_started_task() -> None:
             f"every queued task should be reported late, expected {len(queued)}, "
             f"listed [{late_region}]")
 
+        assert controller.leaked_loader_threads == 1, (
+            f"the hung task pins one worker of the abandoned pool, but the "
+            f"counter reads {controller.leaked_loader_threads}")
+        assert LEAK_REPORT.format(count=1) in capture.text(), (
+            f"the wedge warning must report the leak count. Log was:\n{capture.text()}")
         assert controller.load_executor is not wedged_pool, (
             "the wedged pool must be replaced, or every later page load queues behind the hang")
 
@@ -188,13 +199,14 @@ def case_wedge_names_only_the_started_task() -> None:
         assert set(loader.finished) == {str(i.identifier) for i in order}, (
             "every input must load, late or not")
 
-        print("PASS: wedge names and replaces for the started task only")
+        print("PASS: wedge names, counts and replaces for the started task only")
     finally:
         teardown(controller)
 
 
 def case_healthy_batch_keeps_its_pool() -> None:
-    """A batch that finishes inside the deadline replaces nothing."""
+    """A batch that finishes inside the deadline replaces nothing and leaks
+    nothing."""
     controller = make_headless_controller(serial="load-wedge-ok")
     try:
         order = submit_order(controller)
@@ -208,12 +220,14 @@ def case_healthy_batch_keeps_its_pool() -> None:
             controller.load_all_inputs(controller.active_page)
 
         assert controller.load_executor is pool, "a healthy batch must keep its pool"
+        assert controller.leaked_loader_threads == 0, (
+            f"nothing wedged, but the counter reads {controller.leaked_loader_threads}")
         assert set(loader.finished) == {str(i.identifier) for i in order}, (
             f"expected every input loaded, got {len(loader.finished)} of {len(order)}")
         assert not capture.listed("did not finish within"), (
             f"a healthy batch must log no wedge. Log was:\n{capture.text()}")
 
-        print("PASS: healthy batch keeps its pool")
+        print("PASS: healthy batch keeps its pool and leaks nothing")
     finally:
         teardown(controller)
 
@@ -264,6 +278,7 @@ def case_a_refused_submit_is_reported_but_a_closing_pool_is_not() -> None:
         assert dropped.count("Input(") == 1, f"only one input was refused, listed [{dropped}]"
         assert not capture.listed("did not finish within"), "a refused submit is not a wedge"
         assert not capture.listed("had not started within"), "a refused submit is not a late task"
+        assert controller.leaked_loader_threads == 0, "a refused submit strands no thread"
         assert set(loader.finished) == {str(i.identifier) for i in order[1:]}, (
             f"every other input must still load, got {len(loader.finished)} of {len(order) - 1}")
 

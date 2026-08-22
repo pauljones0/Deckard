@@ -853,6 +853,12 @@ class DeckController:
     # can block forever, and none of them may wedge the media-player thread.
     LOAD_INPUTS_TIMEOUT = 10.0
 
+    # Load tasks still running at the deadline, summed over every loader pool
+    # this deck abandoned. Each pinned a worker thread. An upper bound on the
+    # threads genuinely stranded: a load that merely ran long frees its worker
+    # later, and nothing here tells that from a callback that never returns.
+    leaked_loader_threads: int = 0
+
     @log.catch
     def load_all_inputs(self, page: Page, update: bool = True, gen: "int | None" = None) -> None:
         if not self._page_is_current(gen):
@@ -914,12 +920,16 @@ class DeckController:
                 f"{self.LOAD_INPUTS_TIMEOUT}s. They keep their place in the "
                 f"queue and load late.")
         if stuck:
+            # One worker per started-and-overdue task, and it comes back only
+            # if the callback does. See the attribute: an upper bound.
+            self.leaked_loader_threads += len(stuck)
             log.warning(
                 f"Loading inputs [{', '.join(stuck)}] did not finish within "
                 f"{self.LOAD_INPUTS_TIMEOUT}s; continuing without them (a plugin "
                 f"callback is likely blocked). Replacing this deck's loader pool "
                 f"so the stuck task(s) leak their pool's thread(s) once, instead "
-                f"of wedging every future page load behind them.")
+                f"of wedging every future page load behind them. Leaked loader "
+                f"threads on this deck so far: {self.leaked_loader_threads}.")
             old_executor = executor
             total_inputs = sum(len(inputs) for inputs in self.inputs.values())
             # close() may have run while this batch waited, so this can put a
