@@ -128,6 +128,22 @@ def run_legs(controller, deck) -> None:
         "otherwise the key keeps whatever survived the failure"
     )
 
+    # The strip has its own write and its own present stamp, so it needs the
+    # same check. A stamp on this failure path leaves the strip showing the
+    # content of a write the transport rejected.
+    if controller.deck.is_touch():
+        from src.backend.DeckManagement.InputIdentifier import Input
+
+        touchscreen = controller.inputs[Input.Touchscreen][0]
+        touchscreen.present_state.reset()
+        deck.fail_next("set_touchscreen_image", count=1)
+        touchscreen.update()
+        controller.media_player.perform_media_player_tasks()
+        assert touchscreen.present_state.last_presented_hash is None, (
+            "a touchscreen write that raised must not record its image as "
+            "presented -- the strip never took it"
+        )
+
 
 if __name__ == "__main__":
     main()
