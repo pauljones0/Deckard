@@ -122,8 +122,6 @@ BASELINE = {
     "src.backend.SettingsManager",
     "src.backend.Store.StoreBackend",
     "src.backend.Store.StoreCache",
-    "src.backend.WallpaperPackManagement.Wallpaper",
-    "src.backend.WallpaperPackManagement.WallpaperPack",
     "src.backend.WindowGrabber.Integrations.Sway",
     "src.backend.atomic_json",
     "src.backend.cli_forward",

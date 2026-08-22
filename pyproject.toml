@@ -166,8 +166,6 @@ module = [
     "src.backend.Store.StoreBackend",
     "src.backend.Store.StoreCache",
     "src.backend.trayicon",
-    "src.backend.WallpaperPackManagement.WallpaperPack",
-    "src.backend.WallpaperPackManagement.Wallpaper",
     "src.backend.WindowGrabber.Integrations.Sway",
     "src.Signals.SignalManager",
     "src.Signals.weak_callbacks",
