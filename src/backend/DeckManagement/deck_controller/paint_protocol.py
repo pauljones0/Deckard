@@ -1,0 +1,89 @@
+"""
+Author: Core447
+Year: 2026
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+any later version.
+
+This programm comes with ABSOLUTELY NO WARRANTY!
+
+You should have received a copy of the GNU General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+The paint protocol: the value a producer hands the media thread for one
+paint.
+
+A PaintTicket holds every field the write boundary reads. The producer that
+rendered a frame fills the page, the generation, the encoded bytes and the
+hash of what those bytes show; the writer adds its submit stamp. The media
+writer's two image task classes wrap one ticket each, so a paint is one
+object from the render that made it to the device write that presents it.
+
+This module imports nothing from its siblings in the deck_controller package
+at runtime, so it sits under both the writer and the inputs.
+"""
+from dataclasses import dataclass, replace
+
+from typing import TYPE_CHECKING, Protocol
+
+if TYPE_CHECKING:
+    from src.backend.PageManagement.Page import Page
+
+
+class PaintTarget(Protocol):
+    """The input a paint belongs to.
+
+    The writer reaches exactly one thing on it, the dedup slot it stamps with
+    the presented hash after a device write that did not raise.
+    """
+
+    _last_img_hash: int | None
+
+
+@dataclass(frozen=True, slots=True)
+class PaintTicket:
+    """One paint, from the render that produced it to the device write.
+
+    It is frozen, because a producer and the media thread hold the same
+    ticket. Only the writer changes one, and it does so by building a
+    successor: the submit stamp under the slot lock, and the payload release
+    after the write.
+    """
+
+    # The input this paint belongs to, or None for a paint submitted with no
+    # input behind it, as the writer scenarios do. The write boundary stamps
+    # the target's dedup slot and reads nothing else off it.
+    target: "PaintTarget | None"
+    # None when the deck has no active page, at boot or during teardown. The
+    # write boundary only identity-compares it against active_page and never
+    # dereferences it, so a page-less paint is judged stale, not crashed on.
+    page: "Page | None"
+    # Generation of the content rendered; the paint is dropped at present if
+    # a newer generation superseded it.
+    config_gen: int | None
+    # Device-ready encoded bytes, dropped by released() once written.
+    native_image: bytes
+    # Hash of the image these bytes show. run() records it as presented.
+    img_hash: int | None
+    # The writer's monotonic submit-seq stamp, None until the writer assigns
+    # the ticket to a slot.
+    submit_seq: int | None = None
+
+    def stamped(self, submit_seq: int) -> "PaintTicket":
+        """This ticket with the writer's submit stamp on it. The writer builds
+        it inside the slot lock, atomically with the slot assignment."""
+        return replace(self, submit_seq=submit_seq)
+
+    def released(self) -> "PaintTicket":
+        """This ticket with its encoded bytes dropped.
+
+        The task replaces its own ticket with this right after the write, so a
+        frame's bytes are freed as it reaches the device instead of at the end
+        of the batch. It matters most for the touchscreen strip, the largest
+        single write on the deck and the one native no cache holds. Every
+        other field survives, because the writer still reads the submit stamp
+        afterwards.
+        """
+        return replace(self, native_image=b"")

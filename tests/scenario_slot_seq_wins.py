@@ -97,7 +97,7 @@ def check_touchscreen_slot() -> int:
 
     def read_slot():
         t = media_player.touchscreen_task
-        return t.submit_seq if t is not None else None
+        return t.ticket.submit_seq if t is not None else None
 
     rc = _run_rounds(media_player, submit, read_slot, "ts")
     if rc == 0:
@@ -121,7 +121,7 @@ def check_key_slot() -> int:
 
     def read_slot():
         t = media_player.image_tasks.get(0)
-        return t.submit_seq if t is not None else None
+        return t.ticket.submit_seq if t is not None else None
 
     rc = _run_rounds(media_player, submit, read_slot, "key")
     if rc == 0:
