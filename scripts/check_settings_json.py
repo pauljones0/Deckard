@@ -118,7 +118,7 @@ ALLOWLIST: dict[str, str] = {
     "src/backend/Migration/Migrators/Migrator_1_5_0_beta_5.py": "a migrator reading legacy page/settings files",
     # A pack manifest is a read-only source file inside a pack, not an app
     # setting. The app never writes one, so nothing overwrites a corrupt one.
-    "src/backend/IconPackManagement/IconPack.py": "an icon pack's read-only manifest",
+    "src/backend/PackManagement/pack_family.py": "a pack's read-only manifest, for every pack family",
     "src/backend/WallpaperPackManagement/WallpaperPack.py": "a wallpaper pack's read-only manifest",
     "src/backend/SDPlusBarWallpaperPackManagement/SDPlusBarWallpaperPack.py": "an SD+ wallpaper pack's read-only manifest",
     # The plugin manifest.json and about.json are read-only source files that
