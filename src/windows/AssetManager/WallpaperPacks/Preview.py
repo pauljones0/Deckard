@@ -21,7 +21,7 @@ from gi.repository import Gtk, GdkPixbuf
 
 # Import own modules
 from src.windows.AssetManager.Preview import _PIXBUF_UNSET, Preview, _PixbufUnset
-from src.backend.IconPackManagement.IconPack import IconPack
+from src.backend.WallpaperPackManagement.WallpaperPack import WallpaperPack
 
 # Import typing
 from typing import TYPE_CHECKING
@@ -29,7 +29,7 @@ if TYPE_CHECKING:
     from src.windows.AssetManager.WallpaperPacks.PackChooser import WallpaperPackChooser
 
 class WallpaperPackPreview(Preview):
-    def __init__(self, wallpaper_pack_chooser: "WallpaperPackChooser", pack: IconPack, pixbuf: "GdkPixbuf.Pixbuf | None | _PixbufUnset" = _PIXBUF_UNSET) -> None:
+    def __init__(self, wallpaper_pack_chooser: "WallpaperPackChooser", pack: WallpaperPack, pixbuf: "GdkPixbuf.Pixbuf | None | _PixbufUnset" = _PIXBUF_UNSET) -> None:
         # The build worker of the chooser decodes pixbuf. This constructor
         # decodes the thumbnail itself, on its own thread, only when the
         # caller supplies no pixbuf.
