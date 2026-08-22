@@ -13,28 +13,17 @@ You should have received a copy of the GNU General Public License
 along with this program. If not, see <https://www.gnu.org/licenses/>.
 """
 
-import os
-from loguru import logger as log
-
-import globals as gl
-
+from src.backend.PackManagement.pack_family import PackManager
 from src.backend.WallpaperPackManagement.WallpaperPack import WallpaperPack
 
-class WallpaperPackManager:
-    def __init__(self) -> None:
-        self.packs: dict[str, WallpaperPack] = {}
+class WallpaperPackManager(PackManager[WallpaperPack]):
+    """Discovery for the wallpaper packs under the data path."""
+
+    DATA_DIR = "wallpapers"
+    LABEL = "Wallpaper"
+
+    def make_pack(self, path: str) -> WallpaperPack:
+        return WallpaperPack(path)
 
     def get_wallpaper_packs(self) -> dict[str, WallpaperPack]:
-        packs: dict[str, WallpaperPack] = {}
-        os.makedirs(os.path.join(gl.DATA_PATH, "wallpapers"), exist_ok=True)
-        for pack in os.listdir(os.path.join(gl.DATA_PATH, "wallpapers")):
-            if pack.startswith("."):
-                # Transient install-swap trees (StoreBackend._swap_into_place)
-                # and other hidden entries are not packs.
-                continue
-            wallpaper_pack = WallpaperPack(os.path.join(gl.DATA_PATH, "wallpapers", pack))
-            if wallpaper_pack.is_valid:
-                packs[pack] =  wallpaper_pack
-            else:
-                log.warning(f"Wallpaper pack {pack} is not valid.")
-        return packs
+        return self.get_packs()

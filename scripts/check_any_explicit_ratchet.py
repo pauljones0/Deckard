@@ -22,7 +22,12 @@ un-cover every module inside it that is already clean.
 An exemption list with nothing watching it grows. A module that starts failing
 gets added, the addition reads as a one-line diff, and the ratchet quietly runs
 backwards. BASELINE pins the list as it stood when this guard landed. An entry
-may leave it and never join.
+may leave it and never join. Code that moves to a new module is the one case
+that reads as a join: the new module carries the exemption its sources held, so
+its entry belongs in the same commit that deletes theirs. This check counts no
+lengths and cannot see that pairing, so reading a join together with the
+deletions it stands for is a review duty. A join that stands alone is the
+ratchet running backwards.
 
 A guard that fails open reads as green and covers nothing, so this check also
 fails when its own footing moves: a missing pyproject.toml, a missing or
@@ -90,11 +95,10 @@ BASELINE = {
     "src.backend.DeckManagement.deck_controller.label_engine",
     "src.backend.DeckManagement.deck_controller.media_writer",
     "src.backend.DeckManagement.font_resolver",
-    "src.backend.IconPackManagement.Icon",
-    "src.backend.IconPackManagement.IconPack",
     "src.backend.LockScreenManager.LockScreenDetector",
     "src.backend.Logger",
     "src.backend.Migration.Migrator",
+    "src.backend.PackManagement.pack_family",
     "src.backend.PageManagement.Page",
     "src.backend.PageManagement.PageManagerBackend",
     "src.backend.PageManagement.page_document",
@@ -115,13 +119,9 @@ BASELINE = {
     "src.backend.PluginManager.backend_guard.deckard_rpyc_guard",
     "src.backend.PluginManager.event_dispatch",
     "src.backend.PresenceMonitor.PresenceMonitor",
-    "src.backend.SDPlusBarWallpaperPackManagement.SDPlusBarWallpaper",
-    "src.backend.SDPlusBarWallpaperPackManagement.SDPlusBarWallpaperPack",
     "src.backend.SettingsManager",
     "src.backend.Store.StoreBackend",
     "src.backend.Store.StoreCache",
-    "src.backend.WallpaperPackManagement.Wallpaper",
-    "src.backend.WallpaperPackManagement.WallpaperPack",
     "src.backend.WindowGrabber.Integrations.Sway",
     "src.backend.atomic_json",
     "src.backend.cli_forward",

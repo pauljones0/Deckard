@@ -224,9 +224,7 @@ class DeckardAPI:
         log.info("DBus API: IconPacks read")
         try:
             if gl.icon_pack_manager is not None:
-                # Annotate locally, because IconPackManager.get_icon_packs
-                # declares a return type of dir, a typo for dict, not a type.
-                packs: dict[str, Any] = gl.icon_pack_manager.get_icon_packs()
+                packs = gl.icon_pack_manager.get_icon_packs()
                 return list(packs.keys())
         except Exception as e:
             log.error(f"DBus API: IconPacks error: {e}")
@@ -237,7 +235,7 @@ class DeckardAPI:
         log.info(f"DBus API: GetIconNames called – icon_pack_id={icon_pack_id!r}")
         try:
             if gl.icon_pack_manager is not None:
-                packs: dict[str, Any] = gl.icon_pack_manager.get_icon_packs()
+                packs = gl.icon_pack_manager.get_icon_packs()
                 pack = packs.get(icon_pack_id)
                 if pack is None:
                     log.warning(f"DBus API: GetIconNames – pack not found: {icon_pack_id}")

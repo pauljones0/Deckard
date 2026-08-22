@@ -13,28 +13,17 @@ You should have received a copy of the GNU General Public License
 along with this program. If not, see <https://www.gnu.org/licenses/>.
 """
 
-import os
-from loguru import logger as log
-
-import globals as gl
-
+from src.backend.PackManagement.pack_family import PackManager
 from src.backend.SDPlusBarWallpaperPackManagement.SDPlusBarWallpaperPack import SDPlusBarWallpaperPack
 
-class SDPlusBarWallpaperPackManager:
-    def __init__(self) -> None:
-        self.packs: dict[str, SDPlusBarWallpaperPack] = {}
+class SDPlusBarWallpaperPackManager(PackManager[SDPlusBarWallpaperPack]):
+    """Discovery for the SD+ bar wallpaper packs under the data path."""
+
+    DATA_DIR = "sd_plus_bar_wallpapers"
+    LABEL = "SD+ Bar Wallpaper"
+
+    def make_pack(self, path: str) -> SDPlusBarWallpaperPack:
+        return SDPlusBarWallpaperPack(path)
 
     def get_wallpaper_packs(self) -> dict[str, SDPlusBarWallpaperPack]:
-        packs: dict[str, SDPlusBarWallpaperPack] = {}
-        os.makedirs(os.path.join(gl.DATA_PATH, "sd_plus_bar_wallpapers"), exist_ok=True)
-        for pack in os.listdir(os.path.join(gl.DATA_PATH, "sd_plus_bar_wallpapers")):
-            if pack.startswith("."):
-                # Transient install-swap trees (StoreBackend._swap_into_place)
-                # and other hidden entries are not packs.
-                continue
-            wallpaper_pack = SDPlusBarWallpaperPack(os.path.join(gl.DATA_PATH, "sd_plus_bar_wallpapers", pack))
-            if wallpaper_pack.is_valid:
-                packs[pack] =  wallpaper_pack
-            else:
-                log.warning(f"SD+ Bar Wallpaper pack {pack} is not valid.")
-        return packs
+        return self.get_packs()

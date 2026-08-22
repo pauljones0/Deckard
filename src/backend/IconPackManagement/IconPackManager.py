@@ -13,28 +13,17 @@ You should have received a copy of the GNU General Public License
 along with this program. If not, see <https://www.gnu.org/licenses/>.
 """
 
-import os
-from loguru import logger as log
-
 from src.backend.IconPackManagement.IconPack import IconPack
+from src.backend.PackManagement.pack_family import PackManager
 
-import globals as gl
+class IconPackManager(PackManager[IconPack]):
+    """Discovery for the icon packs under the data path."""
 
-class IconPackManager:
-    def __init__(self) -> None:
-        self.packs: dict[str, IconPack] = {}
+    DATA_DIR = "icons"
+    LABEL = "Icon"
+
+    def make_pack(self, path: str) -> IconPack:
+        return IconPack(path)
 
     def get_icon_packs(self) -> dict[str, IconPack]:
-        packs: dict[str, IconPack] = {}
-        os.makedirs(os.path.join(gl.DATA_PATH, "icons"), exist_ok=True)
-        for pack in os.listdir(os.path.join(gl.DATA_PATH, "icons")):
-            if pack.startswith("."):
-                # Transient install-swap trees (StoreBackend._swap_into_place)
-                # and other hidden entries are not packs.
-                continue
-            icon_pack = IconPack(os.path.join(gl.DATA_PATH, "icons", pack))
-            if icon_pack.is_valid:
-                packs[pack] = icon_pack
-            else:
-                log.warning(f"Icon pack {pack} is not valid.")
-        return packs
+        return self.get_packs()

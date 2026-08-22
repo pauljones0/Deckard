@@ -13,23 +13,21 @@ You should have received a copy of the GNU General Public License
 along with this program. If not, see <https://www.gnu.org/licenses/>.
 """
 
-import os
+from src.backend.PackManagement.pack_family import AttributionKey, PackAsset
 
-from typing import Any, TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, cast
 if TYPE_CHECKING:
     from src.backend.IconPackManagement.IconPack import IconPack
 
-class Icon:
+class Icon(PackAsset):
+    """One icon file inside an icon pack."""
+
+    ATTRIBUTION_KEY = AttributionKey.BASENAME
+
     def __init__(self, icon_pack: "IconPack", path: str):
-        self.icon_pack = icon_pack
-        self.path = path
+        super().__init__(pack=icon_pack, path=path)
 
-        self.name = os.path.splitext(os.path.basename(path))[0]
-
-    def get_attribution(self) -> dict[str, Any]:
-        attribution = self.icon_pack.get_attribution_json()
-
-        if os.path.basename(self.path) in attribution:
-            return cast("dict[str, Any]", attribution[os.path.basename(self.path)])
-        else:
-            return cast("dict[str, Any]", attribution.get("default", attribution.get("general", attribution.get("generic", {}))))
+    @property
+    def icon_pack(self) -> "IconPack":
+        """The pack this icon came from, under the name the family publishes."""
+        return cast("IconPack", self.pack)
