@@ -5,6 +5,7 @@ A frame submitted after the Clear must paint after the blank, never be wiped.
 """
 import fixtures
 from src.backend.DeckManagement.DeckController import ClearMsg
+from src.backend.DeckManagement.InputIdentifier import Input
 
 
 def main() -> None:
@@ -81,7 +82,67 @@ def main() -> None:
         "the deck must not be left permanently blank"
     )
 
+    leg_executed_seq_is_deck_wide()
+
     print("PASS: scenario_clear_ordering")
+
+
+def leg_executed_seq_is_deck_wide() -> None:
+    """The mark of the highest frame that reached the device belongs to the
+    deck, and moves only for a frame whose write ran.
+
+    A Clear that executes after the paints it was meant to precede asks one
+    question about the whole deck: did anything go out after I was submitted?
+    It compares its own seq against that one mark, so a mark kept per target
+    would answer for a target the Clear never names. Here one key of two
+    paints, and the Clear must still see it.
+    """
+    controller, media_player, _ = fixtures.make_stub_controller(
+        serial="clearorder-exec", n_keys=2)
+    page = controller.active_page
+    gen = controller._page_load_generation
+
+    # The screensaver's shape: the Clear is submitted first, the paints land
+    # first, and the blanks overwrite them.
+    clear_seq = media_player.next_submit_seq()
+    media_player.add_image_task(0, fixtures.make_native_image(fill=9),
+                                page=page, config_gen=gen,
+                                present=controller.inputs[Input.Key][0].present_state)
+    media_player.perform_media_player_tasks()
+    assert not controller._full_repaint_pending, (
+        "fixture sanity: nothing must have armed the repaint before the Clear"
+    )
+
+    media_player.submit_control(ClearMsg(seq=clear_seq, expects_repaint=True))
+    media_player.drain_control_queue()
+    assert controller._full_repaint_pending, (
+        "a Clear that executed after a frame reached the device must arm the "
+        "repaint -- its blanks overwrote content the submitter still expects, "
+        "and behind a screensaver nothing else would repaint it"
+    )
+
+    # A frame whose run() raised never reached the device. Only a
+    # TransportError is swallowed inside run(); anything else escapes the
+    # drain, and the mark must stay where it was.
+    def boom() -> None:
+        raise TypeError("boom-executed-seq")
+
+    before = media_player._max_executed_seq
+    media_player.add_image_task(1, fixtures.make_native_image(fill=4),
+                                page=page, config_gen=gen)
+    media_player.image_tasks[1].run = boom
+    try:
+        media_player.perform_media_player_tasks()
+    except TypeError:
+        pass
+    else:
+        raise AssertionError("fixture sanity: the poisoned run() must escape the drain")
+    assert media_player._max_executed_seq == before, (
+        "the executed mark must not advance for a frame whose run() raised -- "
+        "a later Clear would read it as content that reached the device"
+    )
+
+    print("  leg PASS: executed seq is deck-wide and write-gated")
 
 
 if __name__ == "__main__":
