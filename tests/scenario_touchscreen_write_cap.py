@@ -26,7 +26,7 @@ def flood(media_player, controller, touch, n_frames: int, spacing_s: float) -> f
             payload,
             page=controller.active_page,
             config_gen=controller._page_load_generation,
-            controller_touchscreen=touch,
+            present=touch.present_state,
             img_hash=hash(payload),
         )
         media_player.perform_media_player_tasks()
@@ -65,7 +65,7 @@ def main() -> None:
         final_payload,
         page=controller.active_page,
         config_gen=controller._page_load_generation,
-        controller_touchscreen=touch,
+        present=touch.present_state,
         img_hash=hash(final_payload),
     )
     media_player.perform_media_player_tasks()  # may defer (inside the budget window)

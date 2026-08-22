@@ -23,8 +23,8 @@ wake, and always executes, FIFO.
 
 This module also holds the native JPEG encoders that every paint funnels
 through, and the FIFO transport lock that stops a write burst from starving
-the device's HID read poll. It imports nothing from its sibling modules in
-the deck_controller package.
+the device's HID read poll. At runtime it imports one sibling module, the
+paint protocol, and nothing else from the deck_controller package.
 """
 import collections
 import io
@@ -42,6 +42,7 @@ from loguru import logger as log
 from src.backend.DeckManagement.fair_lock import FairLock
 from src.backend.DeckManagement.InputIdentifier import Input, InputIdentifier
 from src.backend.DeckManagement.Subclasses.media_pipeline_profiler import media_prof
+from src.backend.DeckManagement.deck_controller.paint_protocol import PaintTicket
 from src.backend.PageManagement.Page import Page
 from src.backend import ui_port
 
@@ -59,6 +60,7 @@ if TYPE_CHECKING:
         ControllerKey,
         ControllerTouchScreen,
     )
+    from src.backend.DeckManagement.deck_controller.paint_protocol import PresentState
 
 
 # JPEG quality every key native is encoded at. It is part of the native
@@ -139,30 +141,31 @@ class MediaPlayerTask:
 
 @dataclass
 class MediaPlayerSetTouchscreenImageTask:
+    """The touchscreen write of one paint. The ticket carries the paint; this
+    class carries the device call it ends in."""
     deck_controller: "DeckController"
-    # None when the deck has no active page, at boot or during teardown. The
-    # write boundary only identity-compares it against active_page and never
-    # dereferences it, so a page-less paint is judged stale, not crashed on.
-    page: Page | None
-    native_image: bytes
-    config_gen: int | None = None  # generation of the content rendered; dropped at present if stale
-    submit_seq: int | None = None  # writer's monotonic submit-seq stamp; None when unstamped
-    controller_touchscreen: "ControllerTouchScreen | None" = None  # stamped once this paint is presented
-    img_hash: int | None = None  # hash of the presented image, recorded in run()
+    ticket: "PaintTicket"
+    submit_seq: int | None = None  # the writer's stamp, set under _slot_lock
 
     def run(self) -> None:
         if not self.deck_controller.deck.is_touch():
             return
+        ticket = self.ticket
+        if not ticket.native_image:
+            # Released, so this task already wrote. A second run would put an
+            # empty frame on the strip and then record it as presented, which
+            # is the bleed the present stamp exists to prevent.
+            return
         try:
             touchscreen_size = self.deck_controller.get_touchscreen_image_size()
-            self.deck_controller.deck.set_touchscreen_image(self.native_image, x_pos=0, y_pos=0, width=touchscreen_size[0], height=touchscreen_size[1])  # maybe avoid merging the dial images before every apply
+            self.deck_controller.deck.set_touchscreen_image(ticket.native_image, x_pos=0, y_pos=0, width=touchscreen_size[0], height=touchscreen_size[1])  # maybe avoid merging the dial images before every apply
             # Record the presented image's hash here, not at render time. A
             # paint dropped at the write boundary must not advance the hash,
             # or the correcting render hash-skips and the touchscreen bleeds
             # forever. MediaPlayerSetImageTask does the same.
-            if self.controller_touchscreen is not None:
-                self.controller_touchscreen._last_img_hash = self.img_hash
-            del self.native_image
+            if ticket.present is not None:
+                ticket.present.note_presented(ticket.img_hash)
+            self.ticket = ticket.released()
             self.deck_controller._on_write_result(True)
         except StreamDeck.TransportError as e:
             log.error(f"Failed to set deck touchscreen image. Error: {e}")
@@ -172,31 +175,30 @@ class MediaPlayerSetTouchscreenImageTask:
 
 @dataclass
 class MediaPlayerSetImageTask:
+    """The key write of one paint. The ticket carries the paint; this class
+    carries the device call it ends in, and the key index it lands on."""
     deck_controller: "DeckController"
-    # None when the deck has no active page, at boot or during teardown. The
-    # write boundary only identity-compares it against active_page and never
-    # dereferences it, so a page-less paint is judged stale, not crashed on.
-    page: Page | None
+    ticket: "PaintTicket"
     key_index: int
-    native_image: bytes
-    config_gen: int | None = None  # generation of the content rendered; dropped at present if stale
-    controller_key: "ControllerKey | None" = None  # stamped once this paint is presented
-    img_hash: int | None = None  # hash of the presented image, recorded in run()
-    submit_seq: int | None = None  # writer's monotonic submit-seq stamp; None when unstamped
+    submit_seq: int | None = None  # the writer's stamp, set under _slot_lock
 
     def run(self) -> None:
+        ticket = self.ticket
+        if not ticket.native_image:
+            # Released, so this task already wrote. See the touchscreen task.
+            return
         try:
             if media_prof:
                 _t0 = time.perf_counter()
-            self.deck_controller.deck.set_key_image(self.key_index, self.native_image)
+            self.deck_controller.deck.set_key_image(self.key_index, ticket.native_image)
             if media_prof:
                 media_prof.add("usb_write", time.perf_counter() - _t0)
             # Record the presented image's hash here, not at render time. A
             # paint dropped at the write boundary must not advance the hash,
             # or the correcting render hash-skips and the key bleeds forever.
-            if self.controller_key is not None:
-                self.controller_key._last_img_hash = self.img_hash
-            del self.native_image
+            if ticket.present is not None:
+                ticket.present.note_presented(ticket.img_hash)
+            self.ticket = ticket.released()
             self.deck_controller._on_write_result(True)
         except StreamDeck.TransportError as e:
             log.error(f"Failed to set deck key image. Error: {e}")
@@ -417,9 +419,9 @@ class MediaPlayerThread(threading.Thread):
         # Guards the single-slot task stores against a producer and consumer
         # interleave. The drain's read-then-null on touchscreen_task and the
         # Clear's get-then-del on image_tasks can both discard a task assigned
-        # in between, and the producer already stamped _last_enqueued_hash, so
-        # static content stays stale forever with no tick to re-enqueue it.
-        # The critical sections are a few instructions.
+        # in between, and the producer already stamped the target's enqueued
+        # hash, so static content stays stale forever with no tick to
+        # re-enqueue it. The critical sections are a few instructions.
         self._slot_lock = threading.Lock()
         self._wake_event = threading.Event()
 
@@ -428,6 +430,12 @@ class MediaPlayerThread(threading.Thread):
         # of any animation tick or task work, so a brightness or clear op
         # never waits behind them.
         self.control_q: "collections.deque[SetBrightnessMsg | ClearMsg | ClearAndCloseMsg | ReleaseStashedInputsMsg]" = collections.deque()
+        # Deck-wide ordering state, both fields. A target's own present state
+        # holds what that target shows; these two order every target's frames
+        # against each other, because a Clear judges the whole deck against
+        # one seq of its own. Split either per target and that comparison has
+        # nothing left to compare.
+        #
         # Per-writer monotonic stamp counter. add_image_task and
         # add_touchscreen_task stamp a task with next(self._submit_seq) under
         # _slot_lock, atomically with the slot assignment. A stamp taken
@@ -876,9 +884,9 @@ class MediaPlayerThread(threading.Thread):
         # reached the device. An arm on an ordinary transition is harmful,
         # because _run_pending_repaint composites the whole deck unlocked from
         # the media thread ahead of the task drain, racing an
-        # update_all_inputs() under _load_page_lock, and ControllerKey.update()
-        # leaves _last_enqueued_hash and add_image_task unsynchronised, so a
-        # pre-swap repaint can land last and stick with both dedup hashes
+        # update_all_inputs() under _load_page_lock, and the producer leaves
+        # the enqueued-hash stamp and the slot assignment unsynchronised, so a
+        # pre-swap repaint can land last and stick with both present hashes
         # agreeing. Queue occupancy cannot tell the two apart, because the
         # screensaver clears the slots between its Clear and its paints. This
         # counter moves only when a frame goes out, so it exceeds this Clear's
@@ -994,14 +1002,16 @@ class MediaPlayerThread(threading.Thread):
         ))
         self._wake_event.set()
 
-    def add_touchscreen_task(self, native_image: bytes, page: "Page | None" = None, config_gen: "int | None" = None, controller_touchscreen: "ControllerTouchScreen | None" = None, img_hash: "int | None" = None) -> None:
+    def add_touchscreen_task(self, native_image: bytes, page: "Page | None" = None, config_gen: "int | None" = None, present: "PresentState | None" = None, img_hash: "int | None" = None) -> None:
         task = MediaPlayerSetTouchscreenImageTask(
             deck_controller=self.deck_controller,
-            page=page if page is not None else self.deck_controller.active_page,
-            native_image=native_image,
-            config_gen=config_gen,
-            controller_touchscreen=controller_touchscreen,
-            img_hash=img_hash
+            ticket=PaintTicket(
+                present=present,
+                page=page if page is not None else self.deck_controller.active_page,
+                config_gen=config_gen,
+                native_image=native_image,
+                img_hash=img_hash,
+            ),
         )
         # Stamp inside the slot lock. A seq allocated before the lock lets
         # two racing producers, the media tick and a dial update on another
@@ -1015,15 +1025,17 @@ class MediaPlayerThread(threading.Thread):
             self.touchscreen_task = task
         self._wake_event.set()
 
-    def add_image_task(self, key_index: int, native_image: bytes, page: "Page | None" = None, config_gen: "int | None" = None, controller_key: "ControllerKey | None" = None, img_hash: "int | None" = None) -> None:
+    def add_image_task(self, key_index: int, native_image: bytes, page: "Page | None" = None, config_gen: "int | None" = None, present: "PresentState | None" = None, img_hash: "int | None" = None) -> None:
         task = MediaPlayerSetImageTask(
             deck_controller=self.deck_controller,
-            page=page if page is not None else self.deck_controller.active_page,
+            ticket=PaintTicket(
+                present=present,
+                page=page if page is not None else self.deck_controller.active_page,
+                config_gen=config_gen,
+                native_image=native_image,
+                img_hash=img_hash,
+            ),
             key_index=key_index,
-            native_image=native_image,
-            config_gen=config_gen,
-            controller_key=controller_key,
-            img_hash=img_hash
         )
         # Stamp inside the lock as add_touchscreen_task does. The per-key
         # slots have the same producer-against-producer shape.
@@ -1051,7 +1063,7 @@ class MediaPlayerThread(threading.Thread):
                 continue
 
         # Take _slot_lock. A producer that assigns between the read and the
-        # null loses its frame, and with _last_enqueued_hash already stamped a
+        # null loses its frame, and with the enqueued hash already stamped a
         # static strip stays stale forever. clear_media_player_tasks also
         # nulls this, from the GTK thread.
         with self._slot_lock:
@@ -1068,9 +1080,10 @@ class MediaPlayerThread(threading.Thread):
         def _is_current(task: "MediaPlayerSetImageTask | MediaPlayerSetTouchscreenImageTask") -> bool:
             # Drop a paint for a page the deck left, or for a superseded
             # generation. config_gen is the generation the paint rendered at.
-            if task.page is not active_page:
+            ticket = task.ticket
+            if ticket.page is not active_page:
                 return False
-            if task.config_gen is not None and task.config_gen != current_gen:
+            if ticket.config_gen is not None and ticket.config_gen != current_gen:
                 return False
             return True
 

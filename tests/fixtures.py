@@ -51,6 +51,9 @@ if gl.DATA_PATH.startswith(_REAL_DATA_ROOTS):
     raise RuntimeError("refusing to run the harness against the real user data dir")
 
 from src.backend.DeckManagement.InputIdentifier import Input  # noqa: E402
+from src.backend.DeckManagement.deck_controller.paint_protocol import (  # noqa: E402
+    KeyPresentState, TouchscreenPresentState,
+)
 from src.backend.settings_store import DeckSettings  # noqa: E402
 from faulty_fake_deck import FaultyFakeDeck  # noqa: E402
 
@@ -204,36 +207,31 @@ _QUIET_STATE = _QuietInputState()
 class StubInput:
     """Minimal ControllerKey and ControllerTouchScreen stand-in.
 
-    Exposes the dedup hash attrs _reset_dedup_hashes touches. update() always
-    enqueues a fresh task; the unit tier renders no content to dedup against.
+    Owns the present state _reset_dedup_hashes resets and the write boundary
+    stamps. update() goes through it, the way a real input's paint path does,
+    and forces the paint: the unit tier renders no content to dedup against.
     """
 
     def __init__(self, controller: "StubDeckController", index: int, touchscreen: bool = False):
         self.controller = controller
         self.index = index
         self.touchscreen = touchscreen
-        self._last_img_hash = None
-        self._last_enqueued_hash = None
+        self.present_state = (TouchscreenPresentState() if touchscreen
+                              else KeyPresentState(index))
 
     def get_active_state(self) -> _QuietInputState:
         return _QUIET_STATE
 
     def update(self) -> None:
         img = make_native_image(fill=self.index)
-        img_hash = hash(img)
-        media_player = self.controller.media_player
-        if self.touchscreen:
-            media_player.add_touchscreen_task(
-                img, page=self.controller.active_page,
-                config_gen=self.controller._page_load_generation,
-                controller_touchscreen=self, img_hash=img_hash,
-            )
-        else:
-            media_player.add_image_task(
-                self.index, img, page=self.controller.active_page,
-                config_gen=self.controller._page_load_generation,
-                controller_key=self, img_hash=img_hash,
-            )
+        self.present_state.offer(
+            self.controller.media_player,
+            page=self.controller.active_page,
+            config_gen=self.controller._page_load_generation,
+            img_hash=hash(img),
+            encode=lambda: img,
+            force=True,
+        )
 
 
 class StubDeckController:

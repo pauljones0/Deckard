@@ -83,7 +83,7 @@ def check_drain_half() -> int:
             b"\x42" * 64,
             page=controller.active_page,
             config_gen=controller._page_load_generation,
-            controller_touchscreen=touch,
+            present=touch.present_state,
             img_hash=4242,
         )
         produced.set()
@@ -100,7 +100,7 @@ def check_drain_half() -> int:
         b"\x01" * 64,
         page=controller.active_page,
         config_gen=controller._page_load_generation,
-        controller_touchscreen=touch,
+        present=touch.present_state,
         img_hash=1,
     )
 
@@ -115,7 +115,7 @@ def check_drain_half() -> int:
     time.sleep(0.1)
 
     survivor = media_player.__dict__.get("_ts_slot")
-    if survivor is None or survivor.img_hash != 4242:
+    if survivor is None or survivor.ticket.img_hash != 4242:
         print("FAIL(1): the frame produced during the drain window was lost "
               "(slot nulled over it) -- a static strip would stay stale "
               "forever")
@@ -138,7 +138,7 @@ def check_clear_half() -> int:
             0, payload,
             page=controller.active_page,
             config_gen=controller._page_load_generation,
-            controller_key=key0,
+            present=key0.present_state,
             img_hash=hash(payload),
         )
 
@@ -175,7 +175,7 @@ def check_clear_half() -> int:
     time.sleep(0.1)
 
     survivor = media_player.image_tasks.get(0)
-    if survivor is None or survivor.img_hash != hash(b"\x99" * 64):
+    if survivor is None or survivor.ticket.img_hash != hash(b"\x99" * 64):
         print("FAIL(2): _exec_clear deleted a newer task whose submit_seq "
               "contractually survives the Clear")
         return 1
@@ -209,7 +209,7 @@ def check_writecap_putback() -> int:
             b"\x99" * 64,
             page=controller.active_page,
             config_gen=controller._page_load_generation,
-            controller_touchscreen=touch,
+            present=touch.present_state,
             img_hash=9999,
         )
         produced.set()
@@ -226,7 +226,7 @@ def check_writecap_putback() -> int:
         b"\x01" * 64,
         page=controller.active_page,
         config_gen=controller._page_load_generation,
-        controller_touchscreen=touch,
+        present=touch.present_state,
         img_hash=1,
     )
 
@@ -243,7 +243,7 @@ def check_writecap_putback() -> int:
     time.sleep(0.1)
 
     survivor = media_player.__dict__.get("_ts_slot")
-    if survivor is None or survivor.img_hash != 9999:
+    if survivor is None or survivor.ticket.img_hash != 9999:
         print("FAIL(3): the newer frame produced in the putback check->set "
               "window was lost (clobbered by the older deferred frame)")
         return 1
@@ -279,7 +279,7 @@ def check_slot_wipes() -> int:
             b"\x01" * 64,
             page=controller.active_page,
             config_gen=controller._page_load_generation,
-            controller_touchscreen=touch,
+            present=touch.present_state,
             img_hash=1,
         )
 
