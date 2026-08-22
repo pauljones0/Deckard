@@ -15,7 +15,7 @@ import os
 import threading
 import time
 
-import src.backend.DeckManagement.deck_controller.inputs as inputs_module
+import src.backend.DeckManagement.deck_controller.native_encode as native_encode_module
 from src.backend.DeckManagement.DeckController import BackgroundVideo
 from src.backend.DeckManagement.InputIdentifier import Input
 from src.backend.DeckManagement.Subclasses.KeyLabel import KeyLabel
@@ -157,26 +157,26 @@ def _make_test_mp4(path: str, base_green: int, size=(320, 240), n_frames=6, fps=
 
 
 class _EncodeCounter:
-    """Counts encode_native_key calls through deck_controller.inputs. Both
-    paint paths call it as a module global, so the patch belongs in that
-    namespace."""
+    """Counts encode_native_key calls through deck_controller.native_encode.
+    Both paint paths call it as a module global there, so the patch belongs in
+    that namespace."""
 
     def __init__(self):
         self.calls = 0
         self._original = None
 
     def __enter__(self) -> "_EncodeCounter":
-        self._original = inputs_module.encode_native_key
+        self._original = native_encode_module.encode_native_key
 
         def counted(*args, **kwargs):
             self.calls += 1
             return self._original(*args, **kwargs)
 
-        inputs_module.encode_native_key = counted
+        native_encode_module.encode_native_key = counted
         return self
 
     def __exit__(self, *exc) -> None:
-        inputs_module.encode_native_key = self._original
+        native_encode_module.encode_native_key = self._original
 
 
 def _record_enqueued_natives(controller) -> dict:

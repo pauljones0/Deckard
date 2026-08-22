@@ -190,23 +190,23 @@ def check_memo_used_on_encode_path() -> None:
     """
     import time
     from src.backend.DeckManagement.InputIdentifier import Input
-    import src.backend.DeckManagement.deck_controller.inputs as inputs_mod
+    import src.backend.DeckManagement.deck_controller.native_encode as native_encode_mod
 
     controller = fixtures.make_headless_controller(serial="encode-memo-realpath-1")
     fixtures.wait_until(lambda: controller.active_page is not None, timeout=3)
     assert controller.is_visual(), "fixture sanity: the encode path only runs on a visual deck"
 
     # Count real encodes, so a memo hit shows up as encode_native_key not being
-    # called again. ControllerKey.update resolves the name from its own module,
-    # so that is where the counter has to be installed.
+    # called again. The key encode wrapper resolves the name from its own
+    # module, so that is where the counter has to be installed.
     encode_calls = {"n": 0}
-    real_encode = inputs_mod.encode_native_key
+    real_encode = native_encode_mod.encode_native_key
 
     def counting_encode(deck, img):
         encode_calls["n"] += 1
         return real_encode(deck, img)
 
-    inputs_mod.encode_native_key = counting_encode
+    native_encode_mod.encode_native_key = counting_encode
     try:
         key = controller.inputs[Input.Key][0]
 
@@ -257,7 +257,7 @@ def check_memo_used_on_encode_path() -> None:
                 "proving .get() was consulted rather than re-encoding"
             )
     finally:
-        inputs_mod.encode_native_key = real_encode
+        native_encode_mod.encode_native_key = real_encode
         fixtures.teardown(controller)
 
     print("PASS: the encode memo is consulted (and hits) on the real ControllerKey.update() path")
