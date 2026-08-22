@@ -30,7 +30,9 @@ if TYPE_CHECKING:
     from src.windows.AssetManager.IconPacks.PackChooser import IconPackChooser
 
 class IconPackFlowBox(Gtk.Box):
-    def __init__(self, icon_chooser: "IconPackChooser", *args: Any, **kwargs: Any) -> None:
+    def __init__(self, pack_chooser: "IconPackChooser", *args: Any, **kwargs: Any) -> None:
+        # The chooser passes itself first and positionally. Nothing in this
+        # widget reads it back, so it is not stored.
         super().__init__(*args, **kwargs)
         self.set_orientation(Gtk.Orientation.HORIZONTAL)
         self.set_hexpand(True)
@@ -38,8 +40,6 @@ class IconPackFlowBox(Gtk.Box):
         self.callback_func: Callable[..., Any] | None = None
         self.callback_args: tuple[Any, ...] = ()
         self.callback_kwargs: dict[str, Any] = {}
-
-        self.icon_chhoser:"IconPackChooser" = icon_chooser
 
         self.all_assets:list["IconPackPreview"] = []
 

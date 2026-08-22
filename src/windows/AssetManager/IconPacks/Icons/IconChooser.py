@@ -20,7 +20,7 @@ gi.require_version("Adw", "1")
 
 # Import own modules
 from src.windows.AssetManager.GenericAssetChooser import GenericAssetChooserPage
-from src.windows.AssetManager.IconPacks.Icons.IconFlowBox import WallpaperFlowBox
+from src.windows.AssetManager.IconPacks.Icons.IconFlowBox import IconFlowBox
 from src.windows.AssetManager.IconPacks.Icons.IconPreview import IconPreview
 
 # Import python modules
@@ -37,8 +37,7 @@ class IconChooserPage(GenericAssetChooserPage["IconPack", "Icon", IconPreview, "
     # The concrete stack, restated so the quoted name in the base subscript
     # has a checked in-file use.
     stack: "IconPackChooserStack"
-    # NOTE: IconFlowBox.py's class is (mis)named WallpaperFlowBox upstream.
-    FLOW_BOX_CLASS = WallpaperFlowBox
+    FLOW_BOX_CLASS = IconFlowBox
     PREVIEW_CLASS = IconPreview
 
     def get_assets(self, pack: "IconPack") -> "list[Icon]":

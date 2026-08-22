@@ -14,7 +14,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 """
 
 import os
-from typing import cast, Any
 from loguru import logger as log
 
 import globals as gl
@@ -39,26 +38,3 @@ class SDPlusBarWallpaperPackManager:
             else:
                 log.warning(f"SD+ Bar Wallpaper pack {pack} is not valid.")
         return packs
-
-    def get_pack_wallpapers(self, wallpaper_pack: dict[str, Any]) -> dict[str, Any]:
-        path = wallpaper_pack.get("path")
-        if path is None:
-            return {}
-        wallpaper_path = os.path.join(path, "wallpapers")
-
-        attribution: dict[str, Any] = wallpaper_pack.get("attribution") or {}
-
-        wallpapers: dict[str, Any] = {}
-        if os.path.exists(wallpaper_path):
-            for wallpaper in os.listdir(wallpaper_path):
-                wallpapers.setdefault(wallpaper, {})
-                wallpapers[wallpaper] =  self.get_wallpaper_attribution(attribution, wallpaper)
-
-        return wallpapers
-
-    def get_wallpaper_attribution(self, attribution: dict[str, Any], wallpaper_name: str) -> dict[str, Any] | None:
-        if wallpaper_name in attribution:
-            return cast(dict[str, Any] | None, attribution[wallpaper_name])
-        else:
-            return attribution.get("generic", attribution.get("default", attribution.get("general")))
-

@@ -30,7 +30,9 @@ if TYPE_CHECKING:
     from src.windows.AssetManager.WallpaperPacks.Preview import WallpaperPackPreview
 
 class WallpaperPackFlowBox(Gtk.Box):
-    def __init__(self, wallpaper_chooser: "WallpaperPackChooser", *args: Any, **kwargs: Any) -> None:
+    def __init__(self, pack_chooser: "WallpaperPackChooser", *args: Any, **kwargs: Any) -> None:
+        # The chooser passes itself first and positionally. Nothing in this
+        # widget reads it back, so it is not stored.
         super().__init__(*args, **kwargs)
         self.set_orientation(Gtk.Orientation.HORIZONTAL)
         self.set_hexpand(True)
@@ -38,8 +40,6 @@ class WallpaperPackFlowBox(Gtk.Box):
         self.callback_func = None
         self.callback_args: tuple[Any, ...] = ()
         self.callback_kwargs: dict[str, Any] = {}
-
-        self.icon_chhoser:"WallpaperPackChooser" = wallpaper_chooser
 
         self.all_assets:list["WallpaperPackPreview"] = []
 

@@ -14,7 +14,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 """
 
 import os
-from typing import cast, Any
 from loguru import logger as log
 
 from src.backend.IconPackManagement.IconPack import IconPack
@@ -39,31 +38,3 @@ class IconPackManager:
             else:
                 log.warning(f"Icon pack {pack} is not valid.")
         return packs
-
-    def get_pack_icons(self, icon_pack: dict[str, Any]) -> dict[str, Any]:
-        path = icon_pack.get("path")
-        if path is None:
-            return {}
-        icons_path = os.path.join(path, "icons")
-
-        attribution: dict[str, Any] = icon_pack.get("attribution") or {}
-
-        icons: dict[str, Any] = {}
-        if os.path.exists(icons_path):
-            for icon in os.listdir(icons_path):
-                icons.setdefault(icon, {})
-                icons[icon] =  self.get_icon_attribution(attribution, icon)
-
-        return icons
-
-    def get_icon_attribution(self, attribution: dict[str, Any], icon_name: str) -> dict[str, Any]:
-        if icon_name in attribution:
-            return cast(dict[str, Any], attribution[icon_name])
-        else:
-            return cast(dict[str, Any],
-                        attribution.get("generic", attribution.get("default", attribution.get("general", {}))))
-            
-    def prepare_icon_packs(self) -> None:
-        # Disabled. The body that followed returned a {pack: icons} map and
-        # never ran.
-        return
