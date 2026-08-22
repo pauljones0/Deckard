@@ -49,13 +49,13 @@ from src.backend.DeckManagement.deck_controller.label_engine import (
     BackgroundManager, LabelManager, LayoutManager, _BitmapRecorder,
     _RecordingTooLarge, _label_measure_draw,
 )
-from src.backend.DeckManagement.deck_controller.paint_protocol import PaintTicket
 from src.backend.DeckManagement.deck_controller.media_writer import (
     KEY_ENCODE_QUALITY, ClearAndCloseMsg, ClearMsg, MediaPlayerSetImageTask,
     MediaPlayerSetTouchscreenImageTask, MediaPlayerTask, MediaPlayerThread,
     ReleaseStashedInputsMsg, SetBrightnessMsg, _env_float,
     _install_fair_transport_lock, encode_native_key, encode_native_touchscreen,
 )
+from src.backend.DeckManagement.deck_controller.paint_protocol import PaintTicket
 
 # Upstream binds these names at this path, so this module binds them too.
 from src.backend.DeckManagement.BetterDeck import BetterDeck
@@ -85,8 +85,7 @@ __all__ = [
     "InputImage", "InputVideo", "KEY_ENCODE_QUALITY", "KeyGIF", "KeyLabel",
     "LabelManager", "LayoutManager", "MediaConfig", "MediaPlayerSetImageTask",
     "MediaPlayerSetTouchscreenImageTask", "MediaPlayerTask", "MediaPlayerThread",
-    "PaintTicket",
-    "ReleaseStashedInputsMsg", "ScreenSaver", "SetBrightnessMsg", "StateT",
+    "PaintTicket", "ReleaseStashedInputsMsg", "ScreenSaver", "SetBrightnessMsg", "StateT",
     "_BitmapRecorder", "_RecordingTooLarge", "_STRIP_GEOMETRY_MISSING",
     "_env_float", "_install_fair_transport_lock", "_label_measure_draw",
     "contained_size", "cumulative_gif_delays", "decode_gif_frames",
