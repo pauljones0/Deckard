@@ -28,7 +28,7 @@ cast at the call site.
 Nothing here runs on a thread it owns. The HID reader delivers key, dial and
 touchscreen events, the media thread drives on_media_player_tick, plugin
 callbacks arrive on the action pool, and page loads arrive on the loader
-pool. The DOWN-time gesture snapshot, the dual-hash dedup slots and
+pool. The DOWN-time gesture snapshot, the two hashes of a present state and
 _states_lock all exist for that, each documented at the code it protects.
 Nothing here writes to the deck either. A paint is encoded and enqueued for
 the media thread, which is the sole writer.
@@ -58,6 +58,7 @@ from src.backend.DeckManagement.deck_controller.media_writer import (
     encode_native_key,
     encode_native_touchscreen,
 )
+from src.backend.DeckManagement.deck_controller.paint_protocol import PresentState
 from src.backend.PageManagement import page_pins
 from src.backend.PageManagement.Page import ActionOutdated, NoActionHolderFound, Page
 from src.backend.PluginManager.ActionCore import ActionCore
@@ -341,12 +342,12 @@ class _KeyLayoutLike(Protocol):
 
 
 class ControllerInput(Generic[StateT]):
-    # Per-input dedup slots, which the paint path creates lazily. update()
-    # reads them through getattr with a None default before the first paint
-    # writes them. They are declared and not assigned, so the annotation adds
-    # no attribute at runtime and the lazy-creation contract stands.
-    _last_img_hash: int | None
-    _last_enqueued_hash: int | None
+    # What this input's device slot shows, and what is on its way to it. Only
+    # an input that owns a slot builds one, which is a key and the
+    # touchscreen; the two assign it in their own __init__. A dial renders
+    # into the touchscreen's composite and paints no slot of its own, so it
+    # has none, and the declaration here binds nothing at runtime.
+    present_state: PresentState
 
     def __init__(self, deck_controller: "DeckController", state_class: type[StateT], identifier: InputIdentifier):
         self.deck_controller = deck_controller
@@ -604,6 +605,7 @@ class ControllerKey(ControllerInput["ControllerKeyState"]):
     def __init__(self, deck_controller: "DeckController", ident: Input.Key):
         super().__init__(deck_controller, ControllerKeyState, ident)
         self.index = ident.get_index(deck_controller)
+        self.present_state = PresentState()
         # Seed the cached press state from the device so event_callback can
         # compare against it. key_states() is indexed logically, with the
         # rotation applied there, so self.index selects this key's own state.
@@ -716,8 +718,9 @@ class ControllerKey(ControllerInput["ControllerKeyState"]):
         if media_prof:
             _t2 = time.perf_counter()
             media_prof.add("hash", _t2 - _t1)
-        if (not force and img_hash == getattr(self, '_last_img_hash', None)
-                and img_hash == getattr(self, '_last_enqueued_hash', None)):
+        present_state = self.present_state
+        if (not force and img_hash == present_state.last_presented_hash
+                and img_hash == present_state.last_enqueued_hash):
             if media_prof:
                 media_prof.count("hash_skip")
             image.close()
@@ -736,7 +739,7 @@ class ControllerKey(ControllerInput["ControllerKeyState"]):
                     media_prof.count("memo_miss")
             elif media_prof:
                 media_prof.count("memo_hit")
-            self._last_enqueued_hash = img_hash
+            present_state.last_enqueued_hash = img_hash
             self.deck_controller.media_player.add_image_task(self.index, native_image, page=page, config_gen=config_gen, controller_key=self, img_hash=img_hash)
 
         self.set_ui_key_image(image)
@@ -770,8 +773,9 @@ class ControllerKey(ControllerInput["ControllerKeyState"]):
         # Either one alone can be stale, after a dropped paint or an in-flight
         # revert, and would wrongly skip the correcting repaint.
         img_hash = hash(("vidtile", video_md5, frame_index, self.index))
-        if (not force and img_hash == getattr(self, '_last_img_hash', None)
-                and img_hash == getattr(self, '_last_enqueued_hash', None)):
+        present_state = self.present_state
+        if (not force and img_hash == present_state.last_presented_hash
+                and img_hash == present_state.last_enqueued_hash):
             if media_prof:
                 media_prof.count("hash_skip")
             return
@@ -792,7 +796,7 @@ class ControllerKey(ControllerInput["ControllerKeyState"]):
                     media_prof.count("native_id_miss")
             elif media_prof:
                 media_prof.count("native_id_hit")
-            self._last_enqueued_hash = img_hash
+            present_state.last_enqueued_hash = img_hash
             self.deck_controller.media_player.add_image_task(self.index, native_image, page=page, config_gen=config_gen, controller_key=self, img_hash=img_hash)
 
         # The in-app preview wants a PIL image, and every other reader of
@@ -1275,6 +1279,7 @@ class ControllerKey(ControllerInput["ControllerKeyState"]):
 class ControllerTouchScreen(ControllerInput["ControllerTouchScreenState"]):
     def __init__(self, deck_controller: "DeckController", ident: InputIdentifier):
         super().__init__(deck_controller, ControllerTouchScreenState, ident)
+        self.present_state = PresentState()
 
         self.enable_states = False
 
@@ -1297,8 +1302,9 @@ class ControllerTouchScreen(ControllerInput["ControllerTouchScreenState"]):
         # same dual-hash guard. It saves a redundant 800x100 JPEG write on an
         # unchanged composite.
         img_hash = hash(image.tobytes())
-        if (img_hash == getattr(self, '_last_img_hash', None)
-                and img_hash == getattr(self, '_last_enqueued_hash', None)):
+        present_state = self.present_state
+        if (img_hash == present_state.last_presented_hash
+                and img_hash == present_state.last_enqueued_hash):
             image.close()
             return
 
@@ -1312,7 +1318,7 @@ class ControllerTouchScreen(ControllerInput["ControllerTouchScreenState"]):
             device_image = image
 
         native_image = encode_native_touchscreen(self.deck_controller.deck, device_image)
-        self._last_enqueued_hash = img_hash
+        present_state.last_enqueued_hash = img_hash
         self.deck_controller.media_player.add_touchscreen_task(native_image, page=page, config_gen=config_gen, controller_touchscreen=self, img_hash=img_hash)
 
         self.set_ui_image(image)

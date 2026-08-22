@@ -51,6 +51,7 @@ if gl.DATA_PATH.startswith(_REAL_DATA_ROOTS):
     raise RuntimeError("refusing to run the harness against the real user data dir")
 
 from src.backend.DeckManagement.InputIdentifier import Input  # noqa: E402
+from src.backend.DeckManagement.deck_controller.paint_protocol import PresentState  # noqa: E402
 from src.backend.settings_store import DeckSettings  # noqa: E402
 from faulty_fake_deck import FaultyFakeDeck  # noqa: E402
 
@@ -204,16 +205,16 @@ _QUIET_STATE = _QuietInputState()
 class StubInput:
     """Minimal ControllerKey and ControllerTouchScreen stand-in.
 
-    Exposes the dedup hash attrs _reset_dedup_hashes touches. update() always
-    enqueues a fresh task; the unit tier renders no content to dedup against.
+    Owns the present state _reset_dedup_hashes resets and the write boundary
+    stamps. update() always enqueues a fresh task; the unit tier renders no
+    content to dedup against.
     """
 
     def __init__(self, controller: "StubDeckController", index: int, touchscreen: bool = False):
         self.controller = controller
         self.index = index
         self.touchscreen = touchscreen
-        self._last_img_hash = None
-        self._last_enqueued_hash = None
+        self.present_state = PresentState()
 
     def get_active_state(self) -> _QuietInputState:
         return _QUIET_STATE

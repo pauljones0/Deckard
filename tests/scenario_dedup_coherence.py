@@ -66,8 +66,7 @@ def main() -> None:
         touchscreen = controller.inputs[Input.Touchscreen][0]
         # Force a clean slate, so the first update() below lands. That decouples
         # this from whatever the boot and dial-tick machinery already painted.
-        touchscreen._last_img_hash = None
-        touchscreen._last_enqueued_hash = None
+        touchscreen.present_state.reset()
 
         seq_before_ts = deck.current_seq()
         touchscreen.update()

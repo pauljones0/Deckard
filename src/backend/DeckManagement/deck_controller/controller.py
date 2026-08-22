@@ -519,16 +519,14 @@ class DeckController:
         return pm is not None and pm.is_quiescent() and not self.screen_saver.showing
 
     def _reset_dedup_hashes(self) -> None:
-        """Set _last_img_hash and _last_enqueued_hash to None on every
-        current key and on the touchscreen. Clear and full-repaint scheduling
-        share it. Without it, a repaint of visually identical content matches
-        the stale cached hash and is wrongly skipped."""
+        """Reset the present state of every current key and of the
+        touchscreen. Clear and full-repaint scheduling share it. Without it, a
+        repaint of visually identical content matches the stale cached hash
+        and is wrongly skipped."""
         for key in self.inputs.get(Input.Key, []):
-            key._last_img_hash = None
-            key._last_enqueued_hash = None
+            key.present_state.reset()
         for touchscreen in self.inputs.get(Input.Touchscreen, []):
-            touchscreen._last_img_hash = None
-            touchscreen._last_enqueued_hash = None
+            touchscreen.present_state.reset()
 
     def _schedule_full_repaint(self) -> None:
         """Arm a pending full repaint. The media loop fires it through

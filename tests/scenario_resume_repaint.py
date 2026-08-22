@@ -16,8 +16,8 @@ from src.backend.DeckManagement.InputIdentifier import Input
 
 def seed_hashes(controller, value=123):
     for i in controller.inputs[Input.Key] + controller.inputs[Input.Touchscreen]:
-        i._last_img_hash = value
-        i._last_enqueued_hash = value
+        i.present_state.last_presented_hash = value
+        i.present_state.last_enqueued_hash = value
 
 
 def main() -> None:
@@ -40,8 +40,10 @@ def main() -> None:
     assert fired and controller.repaint_count == 1, "the loop hook must fire the armed repaint"
 
     for i in controller.inputs[Input.Key] + controller.inputs[Input.Touchscreen]:
-        assert i._last_img_hash is None, "dedup hashes must be nulled by the resume repaint"
-        assert i._last_enqueued_hash is None
+        assert i.present_state.last_presented_hash is None, (
+            "the present state must be reset by the resume repaint"
+        )
+        assert i.present_state.last_enqueued_hash is None
 
     media_player.perform_media_player_tasks()  # flush the repaint's enqueued tasks
 

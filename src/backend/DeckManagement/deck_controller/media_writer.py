@@ -157,7 +157,7 @@ class MediaPlayerSetTouchscreenImageTask:
             # or the correcting render hash-skips and the touchscreen bleeds
             # forever. MediaPlayerSetImageTask does the same.
             if ticket.target is not None:
-                ticket.target._last_img_hash = ticket.img_hash
+                ticket.target.present_state.note_presented(ticket.img_hash)
             self.ticket = ticket.released()
             self.deck_controller._on_write_result(True)
         except StreamDeck.TransportError as e:
@@ -186,7 +186,7 @@ class MediaPlayerSetImageTask:
             # paint dropped at the write boundary must not advance the hash,
             # or the correcting render hash-skips and the key bleeds forever.
             if ticket.target is not None:
-                ticket.target._last_img_hash = ticket.img_hash
+                ticket.target.present_state.note_presented(ticket.img_hash)
             self.ticket = ticket.released()
             self.deck_controller._on_write_result(True)
         except StreamDeck.TransportError as e:
@@ -408,9 +408,9 @@ class MediaPlayerThread(threading.Thread):
         # Guards the single-slot task stores against a producer and consumer
         # interleave. The drain's read-then-null on touchscreen_task and the
         # Clear's get-then-del on image_tasks can both discard a task assigned
-        # in between, and the producer already stamped _last_enqueued_hash, so
-        # static content stays stale forever with no tick to re-enqueue it.
-        # The critical sections are a few instructions.
+        # in between, and the producer already stamped the target's enqueued
+        # hash, so static content stays stale forever with no tick to
+        # re-enqueue it. The critical sections are a few instructions.
         self._slot_lock = threading.Lock()
         self._wake_event = threading.Event()
 
@@ -419,9 +419,15 @@ class MediaPlayerThread(threading.Thread):
         # of any animation tick or task work, so a brightness or clear op
         # never waits behind them.
         self.control_q: "collections.deque[SetBrightnessMsg | ClearMsg | ClearAndCloseMsg | ReleaseStashedInputsMsg]" = collections.deque()
+        # Deck-wide ordering state, both fields. A target's own present state
+        # holds what that target shows; these two order every target's frames
+        # against each other, because a Clear judges the whole deck against
+        # one seq of its own. Split either per target and that comparison has
+        # nothing left to compare.
+        #
         # Per-writer monotonic stamp counter. add_image_task and
-        # add_touchscreen_task stamp a task with next(self._submit_seq) under
-        # _slot_lock, atomically with the slot assignment. A stamp taken
+        # add_touchscreen_task stamp a ticket with next(self._submit_seq)
+        # under _slot_lock, atomically with the slot assignment. A stamp taken
         # before the lock lets racing producers assign out of seq order and
         # leaves a slot holding an older frame. A Clear captures the counter
         # at its own submission through next_submit_seq(), so it can tell
@@ -867,9 +873,9 @@ class MediaPlayerThread(threading.Thread):
         # reached the device. An arm on an ordinary transition is harmful,
         # because _run_pending_repaint composites the whole deck unlocked from
         # the media thread ahead of the task drain, racing an
-        # update_all_inputs() under _load_page_lock, and ControllerKey.update()
-        # leaves _last_enqueued_hash and add_image_task unsynchronised, so a
-        # pre-swap repaint can land last and stick with both dedup hashes
+        # update_all_inputs() under _load_page_lock, and the producer leaves
+        # the enqueued-hash stamp and the slot assignment unsynchronised, so a
+        # pre-swap repaint can land last and stick with both present hashes
         # agreeing. Queue occupancy cannot tell the two apart, because the
         # screensaver clears the slots between its Clear and its paints. This
         # counter moves only when a frame goes out, so it exceeds this Clear's
@@ -1046,7 +1052,7 @@ class MediaPlayerThread(threading.Thread):
                 continue
 
         # Take _slot_lock. A producer that assigns between the read and the
-        # null loses its frame, and with _last_enqueued_hash already stamped a
+        # null loses its frame, and with the enqueued hash already stamped a
         # static strip stays stale forever. clear_media_player_tasks also
         # nulls this, from the GTK thread.
         with self._slot_lock:

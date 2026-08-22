@@ -13,13 +13,19 @@ You should have received a copy of the GNU General Public License
 along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 The paint protocol: the value a producer hands the media thread for one
-paint.
+paint, and the state that judges the next one.
 
 A PaintTicket holds every field the write boundary reads. The producer that
 rendered a frame fills the page, the generation, the encoded bytes and the
 hash of what those bytes show; the writer adds its submit stamp. The media
 writer's two image task classes wrap one ticket each, so a paint is one
 object from the render that made it to the device write that presents it.
+
+A PresentState is what one target shows and what is on its way to it. Each
+key and each touchscreen owns one. The writer's own ordering state, the
+submit-seq counter and the high-water mark of executed seqs, is deck-wide
+and stays on the writer: a Clear compares its seq against every target's in
+one pass, so splitting either per target would break that comparison.
 
 This module imports nothing from its siblings in the deck_controller package
 at runtime, so it sits under both the writer and the inputs.
@@ -35,11 +41,53 @@ if TYPE_CHECKING:
 class PaintTarget(Protocol):
     """The input a paint belongs to.
 
-    The writer reaches exactly one thing on it, the dedup slot it stamps with
-    the presented hash after a device write that did not raise.
+    The writer reaches exactly one thing on it, the present state it stamps
+    after a device write that did not raise.
     """
 
-    _last_img_hash: int | None
+    @property
+    def present_state(self) -> "PresentState": ...
+
+
+class PresentState:
+    """What one target shows now, and what is on its way to it.
+
+    The two hashes have two writers. last_presented_hash moves on the media
+    thread, right after a device write that did not raise, so it names what
+    the device holds. last_enqueued_hash moves on whichever thread rendered
+    the paint, at the moment that paint is handed to the writer, so it names
+    what is in flight.
+
+    A repaint is skipped only when the new image matches both. Either alone
+    can be stale, after a paint the write boundary dropped or an in-flight
+    revert, and would wrongly skip the correcting repaint.
+
+    One target owns one of these. The writer's submit-seq counter and its
+    high-water mark of executed seqs stay deck-wide on the writer, because a
+    Clear judges every target's frames against one seq of its own.
+    """
+
+    def __init__(self) -> None:
+        self.last_presented_hash: int | None = None
+        self.last_enqueued_hash: int | None = None
+
+    def reset(self) -> None:
+        """Forget both hashes, so the next paint reaches the device whatever
+        it shows. A Clear and a full repaint both need it: without it a
+        repaint of visually identical content matches the hash cached before
+        the clear, is skipped, and the device stays on the blank."""
+        self.last_presented_hash = None
+        self.last_enqueued_hash = None
+
+    def note_presented(self, img_hash: int | None) -> None:
+        """Record that img_hash is on the device now.
+
+        The write boundary calls it right after a device write that did not
+        raise, and never at render time. A paint dropped at that boundary must
+        not advance this, or the correcting render is hash-skipped and the
+        target bleeds forever.
+        """
+        self.last_presented_hash = img_hash
 
 
 @dataclass(frozen=True, slots=True)
