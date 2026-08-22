@@ -620,11 +620,15 @@ def make_latch_action_class():
 class _StubActionHolder:
     """Minimal ActionHolder stand-in.
 
-    The loader calls only get_is_compatible() and init_and_get_action().
+    The page loader calls init_and_get_action() and reads action_core, which
+    tells it whether an object already loaded into the same slot still fits
+    this holder. A second load of one page takes that branch. get_is_compatible()
+    is the real holder's own gate inside init_and_get_action, which this
+    replaces, so nothing calls the copy below.
     """
 
     def __init__(self, action_cls, action_id: str, icon_path):
-        self._action_cls = action_cls
+        self.action_core = action_cls
         self._action_id = action_id
         self._icon_path = icon_path
 
@@ -632,8 +636,8 @@ class _StubActionHolder:
         return True
 
     def init_and_get_action(self, deck_controller, page, state, input_ident):
-        self._action_cls.icon_path = self._icon_path
-        return self._action_cls(
+        self.action_core.icon_path = self._icon_path
+        return self.action_core(
             action_id=self._action_id, action_name="LatchAction",
             deck_controller=deck_controller, page=page,
             plugin_base=_FAKE_PLUGIN_BASE, state=state, input_ident=input_ident,

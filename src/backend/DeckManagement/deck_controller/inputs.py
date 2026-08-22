@@ -272,6 +272,14 @@ class ControllerInputState:
                 self._tick_stuck_warned = True
                 log.warning(f"on_tick for {self.controller_input.identifier} has been running >10s; this input's updates are paused until it returns")
             return
+        # Submit only what the worker would run: it skips every entry that is
+        # not an ActionCore, and the pool it runs on retires no worker. This
+        # sits after the stuck-tick warning and before the flag a return strands.
+        try:
+            has_action = any(isinstance(a, ActionCore) for a in self.get_own_actions())
+        except Exception:
+            has_action = True  # the worker repeats the read; log.catch reports it
+        if not has_action: return
         self._tick_running = True
         self._tick_stuck_warned = False
         self._tick_started_at = time.monotonic()
