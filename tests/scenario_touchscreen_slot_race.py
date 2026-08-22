@@ -83,7 +83,7 @@ def check_drain_half() -> int:
             b"\x42" * 64,
             page=controller.active_page,
             config_gen=controller._page_load_generation,
-            controller_touchscreen=touch,
+            present=touch.present_state,
             img_hash=4242,
         )
         produced.set()
@@ -100,7 +100,7 @@ def check_drain_half() -> int:
         b"\x01" * 64,
         page=controller.active_page,
         config_gen=controller._page_load_generation,
-        controller_touchscreen=touch,
+        present=touch.present_state,
         img_hash=1,
     )
 
@@ -138,7 +138,7 @@ def check_clear_half() -> int:
             0, payload,
             page=controller.active_page,
             config_gen=controller._page_load_generation,
-            controller_key=key0,
+            present=key0.present_state,
             img_hash=hash(payload),
         )
 
@@ -209,7 +209,7 @@ def check_writecap_putback() -> int:
             b"\x99" * 64,
             page=controller.active_page,
             config_gen=controller._page_load_generation,
-            controller_touchscreen=touch,
+            present=touch.present_state,
             img_hash=9999,
         )
         produced.set()
@@ -226,7 +226,7 @@ def check_writecap_putback() -> int:
         b"\x01" * 64,
         page=controller.active_page,
         config_gen=controller._page_load_generation,
-        controller_touchscreen=touch,
+        present=touch.present_state,
         img_hash=1,
     )
 
@@ -279,7 +279,7 @@ def check_slot_wipes() -> int:
             b"\x01" * 64,
             page=controller.active_page,
             config_gen=controller._page_load_generation,
-            controller_touchscreen=touch,
+            present=touch.present_state,
             img_hash=1,
         )
 

@@ -42,7 +42,7 @@ from loguru import logger as log
 from src.backend.DeckManagement.fair_lock import FairLock
 from src.backend.DeckManagement.InputIdentifier import Input, InputIdentifier
 from src.backend.DeckManagement.Subclasses.media_pipeline_profiler import media_prof
-from src.backend.DeckManagement.deck_controller.paint_protocol import PaintTarget, PaintTicket
+from src.backend.DeckManagement.deck_controller.paint_protocol import PaintTicket
 from src.backend.PageManagement.Page import Page
 from src.backend import ui_port
 
@@ -60,6 +60,7 @@ if TYPE_CHECKING:
         ControllerKey,
         ControllerTouchScreen,
     )
+    from src.backend.DeckManagement.deck_controller.paint_protocol import PresentState
 
 
 # JPEG quality every key native is encoded at. It is part of the native
@@ -156,8 +157,8 @@ class MediaPlayerSetTouchscreenImageTask:
             # paint dropped at the write boundary must not advance the hash,
             # or the correcting render hash-skips and the touchscreen bleeds
             # forever. MediaPlayerSetImageTask does the same.
-            if ticket.target is not None:
-                ticket.target.present_state.note_presented(ticket.img_hash)
+            if ticket.present is not None:
+                ticket.present.note_presented(ticket.img_hash)
             self.ticket = ticket.released()
             self.deck_controller._on_write_result(True)
         except StreamDeck.TransportError as e:
@@ -185,8 +186,8 @@ class MediaPlayerSetImageTask:
             # Record the presented image's hash here, not at render time. A
             # paint dropped at the write boundary must not advance the hash,
             # or the correcting render hash-skips and the key bleeds forever.
-            if ticket.target is not None:
-                ticket.target.present_state.note_presented(ticket.img_hash)
+            if ticket.present is not None:
+                ticket.present.note_presented(ticket.img_hash)
             self.ticket = ticket.released()
             self.deck_controller._on_write_result(True)
         except StreamDeck.TransportError as e:
@@ -991,11 +992,11 @@ class MediaPlayerThread(threading.Thread):
         ))
         self._wake_event.set()
 
-    def add_touchscreen_task(self, native_image: bytes, page: "Page | None" = None, config_gen: "int | None" = None, controller_touchscreen: "PaintTarget | None" = None, img_hash: "int | None" = None) -> None:
+    def add_touchscreen_task(self, native_image: bytes, page: "Page | None" = None, config_gen: "int | None" = None, present: "PresentState | None" = None, img_hash: "int | None" = None) -> None:
         task = MediaPlayerSetTouchscreenImageTask(
             deck_controller=self.deck_controller,
             ticket=PaintTicket(
-                target=controller_touchscreen,
+                present=present,
                 page=page if page is not None else self.deck_controller.active_page,
                 config_gen=config_gen,
                 native_image=native_image,
@@ -1014,11 +1015,11 @@ class MediaPlayerThread(threading.Thread):
             self.touchscreen_task = task
         self._wake_event.set()
 
-    def add_image_task(self, key_index: int, native_image: bytes, page: "Page | None" = None, config_gen: "int | None" = None, controller_key: "PaintTarget | None" = None, img_hash: "int | None" = None) -> None:
+    def add_image_task(self, key_index: int, native_image: bytes, page: "Page | None" = None, config_gen: "int | None" = None, present: "PresentState | None" = None, img_hash: "int | None" = None) -> None:
         task = MediaPlayerSetImageTask(
             deck_controller=self.deck_controller,
             ticket=PaintTicket(
-                target=controller_key,
+                present=present,
                 page=page if page is not None else self.deck_controller.active_page,
                 config_gen=config_gen,
                 native_image=native_image,

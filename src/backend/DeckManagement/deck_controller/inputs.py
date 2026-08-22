@@ -346,11 +346,11 @@ class _KeyLayoutLike(Protocol):
 
 
 class ControllerInput(Generic[StateT]):
-    # What this input's device slot shows, and what is on its way to it. Only
-    # an input that owns a slot builds one, which is a key and the
-    # touchscreen; the two assign it in their own __init__. A dial renders
-    # into the touchscreen's composite and paints no slot of its own, so it
-    # has none, and the declaration here binds nothing at runtime.
+    # What this input's device slot shows, and what is on its way to it. A
+    # key and the touchscreen own a slot and assign one in their own
+    # __init__, the key narrowing this type because its paint path reads the
+    # key index back off it. A dial composites into the touchscreen and owns
+    # no slot, so this declaration binds nothing at runtime.
     present_state: PresentState
 
     def __init__(self, deck_controller: "DeckController", state_class: type[StateT], identifier: InputIdentifier):
@@ -609,7 +609,7 @@ class ControllerKey(ControllerInput["ControllerKeyState"]):
     def __init__(self, deck_controller: "DeckController", ident: Input.Key):
         super().__init__(deck_controller, ControllerKeyState, ident)
         self.index = ident.get_index(deck_controller)
-        self.present_state = KeyPresentState(self, self.index)
+        self.present_state: KeyPresentState = KeyPresentState(self.index)
         # Seed the cached press state from the device so event_callback can
         # compare against it. key_states() is indexed logically, with the
         # rotation applied there, so self.index selects this key's own state.
@@ -774,7 +774,7 @@ class ControllerKey(ControllerInput["ControllerKeyState"]):
         # bookkeeping needs one. It is stable for a frame and distinct across
         # frames and keys, so the present state judges it as it judges a pixel
         # hash, and nothing has to serialize a tile to know what it holds.
-        img_hash = hash(("vidtile", video_md5, frame_index, self.index))
+        img_hash = hash(("vidtile", video_md5, frame_index, self.present_state.key_index))
         if self.deck_controller.is_visual() and not self.present_state.offer(
                 self.deck_controller.media_player,
                 page=page, config_gen=config_gen, img_hash=img_hash, force=force,
@@ -793,7 +793,7 @@ class ControllerKey(ControllerInput["ControllerKeyState"]):
         cache key carries every input those bytes depend on."""
         if media_prof:
             _t0 = time.perf_counter()
-        cache_key = (video_md5, frame_index, self.index,
+        cache_key = (video_md5, frame_index, self.present_state.key_index,
                      self.deck_controller.deck.get_rotation(),
                      KEY_ENCODE_QUALITY,
                      self.deck_controller.native_key_format_sig())
@@ -1286,7 +1286,7 @@ class ControllerKey(ControllerInput["ControllerKeyState"]):
 class ControllerTouchScreen(ControllerInput["ControllerTouchScreenState"]):
     def __init__(self, deck_controller: "DeckController", ident: InputIdentifier):
         super().__init__(deck_controller, ControllerTouchScreenState, ident)
-        self.present_state = TouchscreenPresentState(self)
+        self.present_state = TouchscreenPresentState()
 
         self.enable_states = False
 

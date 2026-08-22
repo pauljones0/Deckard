@@ -91,7 +91,7 @@ def check_touchscreen_slot() -> int:
             bytes([thread_index]) * 64,
             page=controller.active_page,
             config_gen=controller._page_load_generation,
-            controller_touchscreen=touch,
+            present=touch.present_state,
             img_hash=(thread_index,),
         )
 

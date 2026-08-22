@@ -118,7 +118,7 @@ def test_unplug_mid_render_survives() -> int:
             0, b"\x55" * 64,
             page=controller.active_page,
             config_gen=controller._page_load_generation,
-            controller_key=key0, img_hash=5555,
+            present=key0.present_state, img_hash=5555,
         )
         # The task run() attempts set_key_image on the dead transport. The
         # handler must swallow the TransportError, so this call must not raise.
@@ -168,7 +168,7 @@ def test_unplug_mid_render_survives() -> int:
             0, b"\x66" * 64,
             page=controller2.active_page,
             config_gen=controller2._page_load_generation,
-            controller_key=key0b, img_hash=6666,
+            present=key0b.present_state, img_hash=6666,
         )
         # Give the live loop time to drain and fail the write, then confirm it
         # registered the failure and is still alive.

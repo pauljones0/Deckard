@@ -216,8 +216,8 @@ class StubInput:
         self.controller = controller
         self.index = index
         self.touchscreen = touchscreen
-        self.present_state = (TouchscreenPresentState(self) if touchscreen
-                              else KeyPresentState(self, index))
+        self.present_state = (TouchscreenPresentState() if touchscreen
+                              else KeyPresentState(index))
 
     def get_active_state(self) -> _QuietInputState:
         return _QUIET_STATE
@@ -230,13 +230,13 @@ class StubInput:
             media_player.add_touchscreen_task(
                 img, page=self.controller.active_page,
                 config_gen=self.controller._page_load_generation,
-                controller_touchscreen=self, img_hash=img_hash,
+                present=self.present_state, img_hash=img_hash,
             )
         else:
             media_player.add_image_task(
                 self.index, img, page=self.controller.active_page,
                 config_gen=self.controller._page_load_generation,
-                controller_key=self, img_hash=img_hash,
+                present=self.present_state, img_hash=img_hash,
             )
 
 

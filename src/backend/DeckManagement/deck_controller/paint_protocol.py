@@ -22,10 +22,16 @@ writer's two image task classes wrap one ticket each, so a paint is one
 object from the render that made it to the device write that presents it.
 
 A PresentState is what one target shows and what is on its way to it. Each
-key and each touchscreen owns one. The writer's own ordering state, the
-submit-seq counter and the high-water mark of executed seqs, is deck-wide
-and stays on the writer: a Clear compares its seq against every target's in
-one pass, so splitting either per target would break that comparison.
+key and each touchscreen owns one, and a ticket carries the one its paint
+belongs to. The writer's own ordering state, the submit-seq counter and the
+high-water mark of executed seqs, is deck-wide and stays on the writer: a
+Clear compares its seq against every target's in one pass, so splitting
+either per target would break that comparison.
+
+Nothing here holds the input back. The input owns its present state, the
+present state owns two hashes and an index, and a ticket is dropped after
+its write, so an input set the screensaver retires falls by reference count
+and never waits for the cycle collector.
 
 This module imports nothing from its siblings in the deck_controller package
 at runtime, so it sits under both the writer and the inputs.
@@ -33,22 +39,11 @@ at runtime, so it sits under both the writer and the inputs.
 from dataclasses import dataclass, replace
 
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from src.backend.DeckManagement.deck_controller.media_writer import MediaPlayerThread
     from src.backend.PageManagement.Page import Page
-
-
-class PaintTarget(Protocol):
-    """The input a paint belongs to.
-
-    The writer reaches exactly one thing on it, the present state it stamps
-    after a device write that did not raise.
-    """
-
-    @property
-    def present_state(self) -> "PresentState": ...
 
 
 class PresentState:
@@ -72,8 +67,7 @@ class PresentState:
     index, TouchscreenPresentState the single strip.
     """
 
-    def __init__(self, target: "PaintTarget") -> None:
-        self.target = target
+    def __init__(self) -> None:
         self.last_presented_hash: int | None = None
         self.last_enqueued_hash: int | None = None
 
@@ -139,14 +133,14 @@ class PresentState:
 class KeyPresentState(PresentState):
     """The present state of one key, whose slot is its key index."""
 
-    def __init__(self, target: "PaintTarget", key_index: int) -> None:
-        super().__init__(target)
+    def __init__(self, key_index: int) -> None:
+        super().__init__()
         self.key_index = key_index
 
     def _enqueue(self, media_player: "MediaPlayerThread", native_image: bytes,
                  page: "Page | None", config_gen: int | None, img_hash: int) -> None:
         media_player.add_image_task(self.key_index, native_image, page=page,
-                                    config_gen=config_gen, controller_key=self.target,
+                                    config_gen=config_gen, present=self,
                                     img_hash=img_hash)
 
 
@@ -157,8 +151,7 @@ class TouchscreenPresentState(PresentState):
     def _enqueue(self, media_player: "MediaPlayerThread", native_image: bytes,
                  page: "Page | None", config_gen: int | None, img_hash: int) -> None:
         media_player.add_touchscreen_task(native_image, page=page, config_gen=config_gen,
-                                          controller_touchscreen=self.target,
-                                          img_hash=img_hash)
+                                          present=self, img_hash=img_hash)
 
 
 @dataclass(frozen=True, slots=True)
@@ -171,10 +164,10 @@ class PaintTicket:
     after the write.
     """
 
-    # The input this paint belongs to, or None for a paint submitted with no
-    # input behind it, as the writer scenarios do. The write boundary stamps
-    # the target's dedup slot and reads nothing else off it.
-    target: "PaintTarget | None"
+    # The present state this paint belongs to, or None for a paint submitted
+    # with no target behind it, as the writer scenarios do. The write boundary
+    # stamps it and reads nothing else off it.
+    present: "PresentState | None"
     # None when the deck has no active page, at boot or during teardown. The
     # write boundary only identity-compares it against active_page and never
     # dereferences it, so a page-less paint is judged stale, not crashed on.
