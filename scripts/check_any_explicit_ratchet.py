@@ -24,8 +24,10 @@ gets added, the addition reads as a one-line diff, and the ratchet quietly runs
 backwards. BASELINE pins the list as it stood when this guard landed. An entry
 may leave it and never join. Code that moves to a new module is the one case
 that reads as a join: the new module carries the exemption its sources held, so
-its entry arrives in the same commit that deletes theirs, and the list is
-shorter afterwards. A join that stands alone is the ratchet running backwards.
+its entry belongs in the same commit that deletes theirs. This check counts no
+lengths and cannot see that pairing, so reading a join together with the
+deletions it stands for is a review duty. A join that stands alone is the
+ratchet running backwards.
 
 A guard that fails open reads as green and covers nothing, so this check also
 fails when its own footing moves: a missing pyproject.toml, a missing or

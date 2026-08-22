@@ -20,13 +20,18 @@ files the manifest also names, and an optional attribution.json. A manager
 scans one folder under the data path and returns the packs it can describe,
 keyed by folder name.
 
-The three families read that layout the same way and disagree in four places,
-each one a class attribute or an override that a family module supplies:
+The three families read that layout the same way and disagree in four places.
+A family supplies each one as a class attribute:
 
 - the folder under the data path that the manager scans (DATA_DIR)
 - the manifest key that names the asset folder (ASSET_MANIFEST_KEY)
 - the key an asset reads out of attribution.json (ATTRIBUTION_KEY)
 - the word a rejection warning prints (LABEL)
+
+A family also overrides two factories, make_pack and make_asset, so that a
+manager builds packs of its own class and a pack builds assets of its own.
+__init_subclass__ checks all six the moment a family class is written, so an
+incomplete family fails at import rather than at the first pack it builds.
 
 Two behaviours here are load-bearing and easy to lose.
 
@@ -46,7 +51,7 @@ import json
 import os
 from enum import Enum
 from pathlib import Path
-from typing import Any, ClassVar, Generic, TypeVar, cast
+from typing import Any, ClassVar, Generic, TypeVar, assert_never, cast
 
 from loguru import logger as log
 
@@ -77,11 +82,39 @@ def pack_wide_entry(attribution: dict[str, Any]) -> dict[str, Any]:
                 attribution.get("default", attribution.get("general", attribution.get("generic", {}))))
 
 
+def check_family_contract(cls: type, base: type, attributes: tuple[str, ...],
+                          overrides: tuple[str, ...]) -> None:
+    """Fail at class definition when a family leaves part of the contract out.
+
+    The trio states its four values as bare annotations and its two factories
+    as bodies that raise. A type checker reads a family that supplies neither
+    kind as complete, so without this the first sign of the omission is an
+    exception from deep inside discovery, at the first pack the family builds.
+    Here it is a TypeError naming what is missing, raised while the class body
+    runs.
+
+    Python calls __init_subclass__ for subclasses only, never for the class
+    that defines it, so the three bases need no exemption of their own.
+    """
+    missing = [name for name in attributes if not hasattr(cls, name)]
+    missing += [name for name in overrides
+                if getattr(cls, name) is getattr(base, name)]
+    if missing:
+        raise TypeError(
+            f"{cls.__name__} is an incomplete pack family: it supplies no "
+            f"{', '.join(missing)}. {base.__name__} says what a family owes."
+        )
+
+
 class PackAsset:
     """One asset file inside a pack."""
 
     # The family supplies this. See AttributionKey.
     ATTRIBUTION_KEY: ClassVar[AttributionKey]
+
+    def __init_subclass__(cls) -> None:
+        super().__init_subclass__()
+        check_family_contract(cls, PackAsset, ("ATTRIBUTION_KEY",), ())
 
     def __init__(self, pack: Pack[Any], path: str):
         self.pack = pack
@@ -91,9 +124,15 @@ class PackAsset:
 
     def get_attribution_key(self) -> str:
         """The key this asset carries in attribution.json."""
-        if self.ATTRIBUTION_KEY is AttributionKey.BASENAME:
-            return os.path.basename(self.path)
-        return os.path.relpath(self.path, self.pack.path)
+        # Exhaustive on purpose: a third member added to AttributionKey fails
+        # the type gate here rather than reading as a relative path.
+        match self.ATTRIBUTION_KEY:
+            case AttributionKey.BASENAME:
+                return os.path.basename(self.path)
+            case AttributionKey.RELPATH:
+                return os.path.relpath(self.path, self.pack.path)
+            case _:
+                assert_never(self.ATTRIBUTION_KEY)
 
     def get_attribution(self) -> dict[str, Any]:
         attribution = self.pack.get_attribution_json()
@@ -117,6 +156,10 @@ class Pack(Generic[AssetT]):
 
     # The family supplies this: the manifest key that names the asset folder.
     ASSET_MANIFEST_KEY: ClassVar[str]
+
+    def __init_subclass__(cls) -> None:
+        super().__init_subclass__()
+        check_family_contract(cls, Pack, ("ASSET_MANIFEST_KEY",), ("make_asset",))
 
     def __init__(self, path: str):
         self.path = path
@@ -230,6 +273,10 @@ class PackManager(Generic[PackT]):
     # The family supplies both of these.
     DATA_DIR: ClassVar[str]
     LABEL: ClassVar[str]
+
+    def __init_subclass__(cls) -> None:
+        super().__init_subclass__()
+        check_family_contract(cls, PackManager, ("DATA_DIR", "LABEL"), ("make_pack",))
 
     def __init__(self) -> None:
         self.packs: dict[str, PackT] = {}
