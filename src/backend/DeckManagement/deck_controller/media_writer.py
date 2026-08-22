@@ -23,8 +23,8 @@ wake, and always executes, FIFO.
 
 This module also holds the native JPEG encoders that every paint funnels
 through, and the FIFO transport lock that stops a write burst from starving
-the device's HID read poll. The paint protocol is the one sibling module it
-imports; nothing else in the deck_controller package reaches it.
+the device's HID read poll. It imports one sibling module, the paint
+protocol, and nothing else from the deck_controller package.
 """
 import collections
 import io

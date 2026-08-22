@@ -51,11 +51,12 @@ if TYPE_CHECKING:
 class PresentState:
     """What one target shows now, and what is on its way to it.
 
-    The two hashes have two writers. last_presented_hash moves on the media
-    thread, right after a device write that did not raise, so it names what
-    the device holds. last_enqueued_hash moves on whichever thread rendered
-    the paint, at the moment that paint is handed to the writer, so it names
-    what is in flight.
+    The two hashes have three writers. last_presented_hash moves on the
+    media thread, once the device call for a paint has returned, so it names
+    what the device holds. last_enqueued_hash moves on whichever thread
+    rendered the paint, at the moment that paint is handed to the writer, so
+    it names what is in flight. reset() clears both, from a Clear on the
+    media thread and from the full repaint that same thread fires.
 
     A repaint is skipped only when the new image matches both. Either alone
     can be stale, after a paint the write boundary dropped or an in-flight
@@ -84,10 +85,11 @@ class PresentState:
     def note_presented(self, img_hash: int | None) -> None:
         """Record that img_hash is on the device now.
 
-        The write boundary calls it right after a device write that did not
-        raise, and never at render time. A paint dropped at that boundary must
-        not advance this, or the correcting render is hash-skipped and the
-        target bleeds forever.
+        The write boundary calls it once the device call for that paint has
+        returned, and never at render time. A paint the boundary dropped, and
+        a write that raised, never reach it. Either would advance this past
+        what the device holds, so the correcting render is hash-skipped and
+        the target bleeds forever.
         """
         self.last_presented_hash = img_hash
 

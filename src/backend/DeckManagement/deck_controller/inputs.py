@@ -718,12 +718,14 @@ class ControllerKey(ControllerInput["ControllerKeyState"]):
             media_prof.add("hash", time.perf_counter() - _t1)
 
         # The offer hash-skips an unchanged composite, encodes the rest and
-        # hands it to the writer. A deck with no screens, such as a pedal, has
-        # nothing to present, so only the in-app preview below runs for it.
+        # hands it to the writer. A deck with no screens short-circuits it and
+        # falls through to the preview below. Judging the hashes first gave the
+        # same result: on such a deck both stay None forever, because only an
+        # enqueue stamps one and only a device write stamps the other, and no
+        # image hash is None.
         if self.deck_controller.is_visual() and not self.present_state.offer(
-                self.deck_controller.media_player,
-                page=page, config_gen=config_gen, img_hash=img_hash, force=force,
-                encode=lambda: self._encode_key_native(image, img_hash)):
+                self.deck_controller.media_player, page=page, config_gen=config_gen,
+                img_hash=img_hash, force=force, encode=lambda: self._encode_key_native(image, img_hash)):
             if media_prof:
                 media_prof.count("hash_skip")
             image.close()
@@ -732,9 +734,8 @@ class ControllerKey(ControllerInput["ControllerKeyState"]):
         self.set_ui_key_image(image)
 
     def _encode_key_native(self, image: Image.Image, img_hash: int) -> bytes:
-        """The device-ready JPEG for a composited key image, taken from the
-        encode memo when the same composite was encoded before. The present
-        state calls it for a paint it accepted, and never for a skipped one."""
+        """The device-ready JPEG for a composited key image, from the encode
+        memo when the same composite was encoded before."""
         if media_prof:
             _t0 = time.perf_counter()
         memo_key = (img_hash, self.deck_controller.deck.get_rotation())
@@ -775,10 +776,10 @@ class ControllerKey(ControllerInput["ControllerKeyState"]):
         # frames and keys, so the present state judges it as it judges a pixel
         # hash, and nothing has to serialize a tile to know what it holds.
         img_hash = hash(("vidtile", video_md5, frame_index, self.present_state.key_index))
+        # is_visual short-circuits the offer as in update(), equivalently.
         if self.deck_controller.is_visual() and not self.present_state.offer(
-                self.deck_controller.media_player,
-                page=page, config_gen=config_gen, img_hash=img_hash, force=force,
-                encode=lambda: self._encode_tile_native(tile, video_md5, frame_index)):
+                self.deck_controller.media_player, page=page, config_gen=config_gen,
+                img_hash=img_hash, force=force, encode=lambda: self._encode_tile_native(tile, video_md5, frame_index)):
             if media_prof:
                 media_prof.count("hash_skip")
             return
@@ -788,9 +789,9 @@ class ControllerKey(ControllerInput["ControllerKeyState"]):
         self.set_ui_key_image(copy(tile))
 
     def _encode_tile_native(self, tile: Image.Image, video_md5: str, frame_index: int) -> bytes:
-        """The device-ready JPEG for one background-video tile, taken from the
-        native tile cache when this frame was encoded for this key before. The
-        cache key carries every input those bytes depend on."""
+        """The device-ready JPEG for one background-video tile, from the native
+        tile cache when this frame was encoded for this key before. The cache
+        key carries every input those bytes depend on."""
         if media_prof:
             _t0 = time.perf_counter()
         cache_key = (video_md5, frame_index, self.present_state.key_index,
@@ -1303,11 +1304,12 @@ class ControllerTouchScreen(ControllerInput["ControllerTouchScreenState"]):
 
         # The offer hash-skips an unchanged composite, which saves a redundant
         # 800x100 JPEG encode and write, the largest single write on the deck.
+        # It also finishes every device read of image before the UI mirror
+        # below gets it, so GTK never copies it under the media thread.
         img_hash = hash(image.tobytes())
         if not self.present_state.offer(
-                self.deck_controller.media_player,
-                page=page, config_gen=config_gen, img_hash=img_hash,
-                encode=lambda: self._encode_strip_native(image)):
+                self.deck_controller.media_player, page=page, config_gen=config_gen,
+                img_hash=img_hash, encode=lambda: self._encode_strip_native(image)):
             image.close()
             return
 
@@ -1315,9 +1317,7 @@ class ControllerTouchScreen(ControllerInput["ControllerTouchScreenState"]):
 
     def _encode_strip_native(self, image: Image.Image) -> bytes:
         """The device-ready JPEG for the composited strip. The touchscreen
-        takes JPEG only, so an RGBA composite goes onto black first. It runs
-        before the UI mirror gets the image, so the media thread never reads
-        it while GTK copies it."""
+        takes JPEG only, so an RGBA composite goes onto black first."""
         if image.mode == "RGBA":
             device_image = Image.new("RGB", image.size, (0, 0, 0))
             device_image.paste(image, (0, 0), image)
