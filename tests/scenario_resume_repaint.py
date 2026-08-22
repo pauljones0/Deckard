@@ -14,7 +14,10 @@ import fixtures
 from src.backend.DeckManagement.InputIdentifier import Input
 
 
-def seed_hashes(controller, value=123):
+SEED_HASH = 123
+
+
+def seed_hashes(controller, value=SEED_HASH):
     for i in controller.inputs[Input.Key] + controller.inputs[Input.Touchscreen]:
         i.present_state.last_presented_hash = value
         i.present_state.last_enqueued_hash = value
@@ -43,7 +46,11 @@ def main() -> None:
         assert i.present_state.last_presented_hash is None, (
             "the present state must be reset by the resume repaint"
         )
-        assert i.present_state.last_enqueued_hash is None
+        # The repaint resets the pair and re-enqueues in one call, so the
+        # enqueued half holds the new paint. The seed is what must be gone.
+        assert i.present_state.last_enqueued_hash != SEED_HASH, (
+            "the reset must clear the seeded enqueued hash before the repaint"
+        )
 
     media_player.perform_media_player_tasks()  # flush the repaint's enqueued tasks
 

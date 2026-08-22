@@ -208,8 +208,8 @@ class StubInput:
     """Minimal ControllerKey and ControllerTouchScreen stand-in.
 
     Owns the present state _reset_dedup_hashes resets and the write boundary
-    stamps. update() always enqueues a fresh task; the unit tier renders no
-    content to dedup against.
+    stamps. update() goes through it, the way a real input's paint path does,
+    and forces the paint: the unit tier renders no content to dedup against.
     """
 
     def __init__(self, controller: "StubDeckController", index: int, touchscreen: bool = False):
@@ -224,20 +224,14 @@ class StubInput:
 
     def update(self) -> None:
         img = make_native_image(fill=self.index)
-        img_hash = hash(img)
-        media_player = self.controller.media_player
-        if self.touchscreen:
-            media_player.add_touchscreen_task(
-                img, page=self.controller.active_page,
-                config_gen=self.controller._page_load_generation,
-                present=self.present_state, img_hash=img_hash,
-            )
-        else:
-            media_player.add_image_task(
-                self.index, img, page=self.controller.active_page,
-                config_gen=self.controller._page_load_generation,
-                present=self.present_state, img_hash=img_hash,
-            )
+        self.present_state.offer(
+            self.controller.media_player,
+            page=self.controller.active_page,
+            config_gen=self.controller._page_load_generation,
+            img_hash=hash(img),
+            encode=lambda: img,
+            force=True,
+        )
 
 
 class StubDeckController:
