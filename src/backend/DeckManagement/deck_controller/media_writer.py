@@ -42,7 +42,7 @@ from loguru import logger as log
 from src.backend.DeckManagement.fair_lock import FairLock
 from src.backend.DeckManagement.InputIdentifier import Input, InputIdentifier
 from src.backend.DeckManagement.Subclasses.media_pipeline_profiler import media_prof
-from src.backend.DeckManagement.deck_controller.paint_protocol import PaintTicket
+from src.backend.DeckManagement.deck_controller.paint_protocol import PaintTarget, PaintTicket
 from src.backend.PageManagement.Page import Page
 from src.backend import ui_port
 
@@ -991,7 +991,7 @@ class MediaPlayerThread(threading.Thread):
         ))
         self._wake_event.set()
 
-    def add_touchscreen_task(self, native_image: bytes, page: "Page | None" = None, config_gen: "int | None" = None, controller_touchscreen: "ControllerTouchScreen | None" = None, img_hash: "int | None" = None) -> None:
+    def add_touchscreen_task(self, native_image: bytes, page: "Page | None" = None, config_gen: "int | None" = None, controller_touchscreen: "PaintTarget | None" = None, img_hash: "int | None" = None) -> None:
         task = MediaPlayerSetTouchscreenImageTask(
             deck_controller=self.deck_controller,
             ticket=PaintTicket(
@@ -1014,7 +1014,7 @@ class MediaPlayerThread(threading.Thread):
             self.touchscreen_task = task
         self._wake_event.set()
 
-    def add_image_task(self, key_index: int, native_image: bytes, page: "Page | None" = None, config_gen: "int | None" = None, controller_key: "ControllerKey | None" = None, img_hash: "int | None" = None) -> None:
+    def add_image_task(self, key_index: int, native_image: bytes, page: "Page | None" = None, config_gen: "int | None" = None, controller_key: "PaintTarget | None" = None, img_hash: "int | None" = None) -> None:
         task = MediaPlayerSetImageTask(
             deck_controller=self.deck_controller,
             ticket=PaintTicket(

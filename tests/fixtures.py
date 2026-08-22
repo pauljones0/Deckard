@@ -51,7 +51,9 @@ if gl.DATA_PATH.startswith(_REAL_DATA_ROOTS):
     raise RuntimeError("refusing to run the harness against the real user data dir")
 
 from src.backend.DeckManagement.InputIdentifier import Input  # noqa: E402
-from src.backend.DeckManagement.deck_controller.paint_protocol import PresentState  # noqa: E402
+from src.backend.DeckManagement.deck_controller.paint_protocol import (  # noqa: E402
+    KeyPresentState, TouchscreenPresentState,
+)
 from src.backend.settings_store import DeckSettings  # noqa: E402
 from faulty_fake_deck import FaultyFakeDeck  # noqa: E402
 
@@ -214,7 +216,8 @@ class StubInput:
         self.controller = controller
         self.index = index
         self.touchscreen = touchscreen
-        self.present_state = PresentState()
+        self.present_state = (TouchscreenPresentState(self) if touchscreen
+                              else KeyPresentState(self, index))
 
     def get_active_state(self) -> _QuietInputState:
         return _QUIET_STATE

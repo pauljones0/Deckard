@@ -32,9 +32,11 @@ at runtime, so it sits under both the writer and the inputs.
 """
 from dataclasses import dataclass, replace
 
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
+    from src.backend.DeckManagement.deck_controller.media_writer import MediaPlayerThread
     from src.backend.PageManagement.Page import Page
 
 
@@ -65,9 +67,13 @@ class PresentState:
     One target owns one of these. The writer's submit-seq counter and its
     high-water mark of executed seqs stay deck-wide on the writer, because a
     Clear judges every target's frames against one seq of its own.
+
+    A subclass binds the target's slot on the device: KeyPresentState a key
+    index, TouchscreenPresentState the single strip.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, target: "PaintTarget") -> None:
+        self.target = target
         self.last_presented_hash: int | None = None
         self.last_enqueued_hash: int | None = None
 
@@ -88,6 +94,71 @@ class PresentState:
         target bleeds forever.
         """
         self.last_presented_hash = img_hash
+
+    def offer(self, media_player: "MediaPlayerThread", *, page: "Page | None",
+              config_gen: int | None, img_hash: int,
+              encode: "Callable[[], bytes]", force: bool = False) -> bool:
+        """Offer a rendered image to the device, and report whether it was
+        enqueued.
+
+        The caller has an image and its hash. This decides whether that image
+        is worth a device write, encodes it if it is, records it as in flight
+        and hands it to the writer's slot for this target.
+
+        An image is skipped when its hash matches both what the device shows
+        and what is already on its way there. Either alone can be stale, after
+        a paint the write boundary dropped or an in-flight revert, and would
+        wrongly skip the correcting repaint. force runs the paint through
+        whatever the hashes say.
+
+        encode runs only for a paint that is not skipped, which is what keeps
+        an unchanged composite off the JPEG encoder. page and config_gen are
+        the pair the caller captured before it rendered, so a page switch
+        mid-render invalidates this paint at the write boundary.
+
+        The enqueued-hash stamp lands before the slot assignment and is not
+        synchronised with it. That edge is known: a paint that loses the race
+        to the slot leaves a hash saying it is in flight. The writer's Clear
+        and the pending-repaint retry are what recover from it.
+        """
+        if (not force and img_hash == self.last_presented_hash
+                and img_hash == self.last_enqueued_hash):
+            return False
+        native_image = encode()
+        self.last_enqueued_hash = img_hash
+        self._enqueue(media_player, native_image, page, config_gen, img_hash)
+        return True
+
+    def _enqueue(self, media_player: "MediaPlayerThread", native_image: bytes,
+                 page: "Page | None", config_gen: int | None, img_hash: int) -> None:
+        """Hand the encoded bytes to this target's slot on the writer. The two
+        subclasses name the slot; nothing reaches this body."""
+        raise NotImplementedError
+
+
+class KeyPresentState(PresentState):
+    """The present state of one key, whose slot is its key index."""
+
+    def __init__(self, target: "PaintTarget", key_index: int) -> None:
+        super().__init__(target)
+        self.key_index = key_index
+
+    def _enqueue(self, media_player: "MediaPlayerThread", native_image: bytes,
+                 page: "Page | None", config_gen: int | None, img_hash: int) -> None:
+        media_player.add_image_task(self.key_index, native_image, page=page,
+                                    config_gen=config_gen, controller_key=self.target,
+                                    img_hash=img_hash)
+
+
+class TouchscreenPresentState(PresentState):
+    """The present state of the touchscreen, whose slot is the single strip
+    every dial, label and background video composites into."""
+
+    def _enqueue(self, media_player: "MediaPlayerThread", native_image: bytes,
+                 page: "Page | None", config_gen: int | None, img_hash: int) -> None:
+        media_player.add_touchscreen_task(native_image, page=page, config_gen=config_gen,
+                                          controller_touchscreen=self.target,
+                                          img_hash=img_hash)
 
 
 @dataclass(frozen=True, slots=True)

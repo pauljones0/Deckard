@@ -58,7 +58,11 @@ from src.backend.DeckManagement.deck_controller.media_writer import (
     encode_native_key,
     encode_native_touchscreen,
 )
-from src.backend.DeckManagement.deck_controller.paint_protocol import PresentState
+from src.backend.DeckManagement.deck_controller.paint_protocol import (
+    KeyPresentState,
+    PresentState,
+    TouchscreenPresentState,
+)
 from src.backend.PageManagement import page_pins
 from src.backend.PageManagement.Page import ActionOutdated, NoActionHolderFound, Page
 from src.backend.PluginManager.ActionCore import ActionCore
@@ -605,7 +609,7 @@ class ControllerKey(ControllerInput["ControllerKeyState"]):
     def __init__(self, deck_controller: "DeckController", ident: Input.Key):
         super().__init__(deck_controller, ControllerKeyState, ident)
         self.index = ident.get_index(deck_controller)
-        self.present_state = PresentState()
+        self.present_state = KeyPresentState(self, self.index)
         # Seed the cached press state from the device so event_callback can
         # compare against it. key_states() is indexed logically, with the
         # rotation applied there, so self.index selects this key's own state.
@@ -709,40 +713,43 @@ class ControllerKey(ControllerInput["ControllerKeyState"]):
             _t1 = time.perf_counter()
             media_prof.add("composite", _t1 - _t0)
 
-        # Quick hash check. Skip the expensive conversion only when the image
-        # matches both the last presented hash, which the task's run() sets,
-        # and the last enqueued hash. Either one alone can be stale, after a
-        # dropped paint or an in-flight revert, and would wrongly skip the
-        # correcting repaint.
         img_hash = hash(image.tobytes())
         if media_prof:
-            _t2 = time.perf_counter()
-            media_prof.add("hash", _t2 - _t1)
-        present_state = self.present_state
-        if (not force and img_hash == present_state.last_presented_hash
-                and img_hash == present_state.last_enqueued_hash):
+            media_prof.add("hash", time.perf_counter() - _t1)
+
+        # The offer hash-skips an unchanged composite, encodes the rest and
+        # hands it to the writer. A deck with no screens, such as a pedal, has
+        # nothing to present, so only the in-app preview below runs for it.
+        if self.deck_controller.is_visual() and not self.present_state.offer(
+                self.deck_controller.media_player,
+                page=page, config_gen=config_gen, img_hash=img_hash, force=force,
+                encode=lambda: self._encode_key_native(image, img_hash)):
             if media_prof:
                 media_prof.count("hash_skip")
             image.close()
             return
 
-        if self.deck_controller.is_visual():
-            memo_key = (img_hash, self.deck_controller.deck.get_rotation())
-            native_image = self.deck_controller.encode_memo.get(memo_key)
-            if native_image is None:
-                rgb_image = self._to_rotated_rgb(image)
-                native_image = encode_native_key(self.deck_controller.deck, rgb_image)
-                rgb_image.close()
-                self.deck_controller.encode_memo.put(memo_key, native_image)
-                if media_prof:
-                    media_prof.add("encode", time.perf_counter() - _t2)
-                    media_prof.count("memo_miss")
-            elif media_prof:
-                media_prof.count("memo_hit")
-            present_state.last_enqueued_hash = img_hash
-            self.deck_controller.media_player.add_image_task(self.index, native_image, page=page, config_gen=config_gen, controller_key=self, img_hash=img_hash)
-
         self.set_ui_key_image(image)
+
+    def _encode_key_native(self, image: Image.Image, img_hash: int) -> bytes:
+        """The device-ready JPEG for a composited key image, taken from the
+        encode memo when the same composite was encoded before. The present
+        state calls it for a paint it accepted, and never for a skipped one."""
+        if media_prof:
+            _t0 = time.perf_counter()
+        memo_key = (img_hash, self.deck_controller.deck.get_rotation())
+        native_image = self.deck_controller.encode_memo.get(memo_key)
+        if native_image is None:
+            rgb_image = self._to_rotated_rgb(image)
+            native_image = encode_native_key(self.deck_controller.deck, rgb_image)
+            rgb_image.close()
+            self.deck_controller.encode_memo.put(memo_key, native_image)
+            if media_prof:
+                media_prof.add("encode", time.perf_counter() - _t0)
+                media_prof.count("memo_miss")
+        elif media_prof:
+            media_prof.count("memo_hit")
+        return native_image
 
     def _to_rotated_rgb(self, image: Image.Image) -> Image.Image:
         """The device-ready RGB form of a composited key image. It
@@ -763,45 +770,45 @@ class ControllerKey(ControllerInput["ControllerKeyState"]):
         Background handed out as one read."""
         tile, (video_md5, frame_index) = identified
 
-        if media_prof:
-            _t0 = time.perf_counter()
-
         # This stands in for the pixel hash wherever the write-boundary
         # bookkeeping needs one. It is stable for a frame and distinct across
-        # frames and keys. The skip still needs both the last presented hash,
-        # which the task's run() sets, and the last enqueued one to match.
-        # Either one alone can be stale, after a dropped paint or an in-flight
-        # revert, and would wrongly skip the correcting repaint.
+        # frames and keys, so the present state judges it as it judges a pixel
+        # hash, and nothing has to serialize a tile to know what it holds.
         img_hash = hash(("vidtile", video_md5, frame_index, self.index))
-        present_state = self.present_state
-        if (not force and img_hash == present_state.last_presented_hash
-                and img_hash == present_state.last_enqueued_hash):
+        if self.deck_controller.is_visual() and not self.present_state.offer(
+                self.deck_controller.media_player,
+                page=page, config_gen=config_gen, img_hash=img_hash, force=force,
+                encode=lambda: self._encode_tile_native(tile, video_md5, frame_index)):
             if media_prof:
                 media_prof.count("hash_skip")
             return
 
-        if self.deck_controller.is_visual():
-            cache_key = (video_md5, frame_index, self.index,
-                         self.deck_controller.deck.get_rotation(),
-                         KEY_ENCODE_QUALITY,
-                         self.deck_controller.native_key_format_sig())
-            native_image = self.deck_controller.native_tile_cache.get(cache_key)
-            if native_image is None:
-                rgb_image = self._to_rotated_rgb(tile)
-                native_image = encode_native_key(self.deck_controller.deck, rgb_image)
-                rgb_image.close()
-                self.deck_controller.native_tile_cache.put(cache_key, native_image)
-                if media_prof:
-                    media_prof.add("encode", time.perf_counter() - _t0)
-                    media_prof.count("native_id_miss")
-            elif media_prof:
-                media_prof.count("native_id_hit")
-            present_state.last_enqueued_hash = img_hash
-            self.deck_controller.media_player.add_image_task(self.index, native_image, page=page, config_gen=config_gen, controller_key=self, img_hash=img_hash)
-
         # The in-app preview wants a PIL image, and every other reader of
         # this frame shares the tile, so hand the UI its own copy.
         self.set_ui_key_image(copy(tile))
+
+    def _encode_tile_native(self, tile: Image.Image, video_md5: str, frame_index: int) -> bytes:
+        """The device-ready JPEG for one background-video tile, taken from the
+        native tile cache when this frame was encoded for this key before. The
+        cache key carries every input those bytes depend on."""
+        if media_prof:
+            _t0 = time.perf_counter()
+        cache_key = (video_md5, frame_index, self.index,
+                     self.deck_controller.deck.get_rotation(),
+                     KEY_ENCODE_QUALITY,
+                     self.deck_controller.native_key_format_sig())
+        native_image = self.deck_controller.native_tile_cache.get(cache_key)
+        if native_image is None:
+            rgb_image = self._to_rotated_rgb(tile)
+            native_image = encode_native_key(self.deck_controller.deck, rgb_image)
+            rgb_image.close()
+            self.deck_controller.native_tile_cache.put(cache_key, native_image)
+            if media_prof:
+                media_prof.add("encode", time.perf_counter() - _t0)
+                media_prof.count("native_id_miss")
+        elif media_prof:
+            media_prof.count("native_id_hit")
+        return native_image
 
     def get_active_state(self) -> "ControllerKeyState":
         return super().get_active_state()
@@ -1279,7 +1286,7 @@ class ControllerKey(ControllerInput["ControllerKeyState"]):
 class ControllerTouchScreen(ControllerInput["ControllerTouchScreenState"]):
     def __init__(self, deck_controller: "DeckController", ident: InputIdentifier):
         super().__init__(deck_controller, ControllerTouchScreenState, ident)
-        self.present_state = PresentState()
+        self.present_state = TouchscreenPresentState(self)
 
         self.enable_states = False
 
@@ -1294,34 +1301,29 @@ class ControllerTouchScreen(ControllerInput["ControllerTouchScreenState"]):
         config_gen = self.config_gen
         image = self.get_current_image()
 
-        # Quick hash check. Skip the expensive encode and enqueue only when
-        # the image matches both the last presented hash, which the task's
-        # run() sets, and the last enqueued hash. Either one alone can be
-        # stale, after a dropped paint or an in-flight revert, and would
-        # wrongly skip the correcting repaint. ControllerKey.update uses the
-        # same dual-hash guard. It saves a redundant 800x100 JPEG write on an
-        # unchanged composite.
+        # The offer hash-skips an unchanged composite, which saves a redundant
+        # 800x100 JPEG encode and write, the largest single write on the deck.
         img_hash = hash(image.tobytes())
-        present_state = self.present_state
-        if (img_hash == present_state.last_presented_hash
-                and img_hash == present_state.last_enqueued_hash):
+        if not self.present_state.offer(
+                self.deck_controller.media_player,
+                page=page, config_gen=config_gen, img_hash=img_hash,
+                encode=lambda: self._encode_strip_native(image)):
             image.close()
             return
 
-        # Finish the device work with image before the UI mirror gets it, so
-        # the media thread does not read it while GTK copies it. The
-        # touchscreen supports JPEG only, so composite RGBA onto black.
+        self.set_ui_image(image)
+
+    def _encode_strip_native(self, image: Image.Image) -> bytes:
+        """The device-ready JPEG for the composited strip. The touchscreen
+        takes JPEG only, so an RGBA composite goes onto black first. It runs
+        before the UI mirror gets the image, so the media thread never reads
+        it while GTK copies it."""
         if image.mode == "RGBA":
             device_image = Image.new("RGB", image.size, (0, 0, 0))
             device_image.paste(image, (0, 0), image)
         else:
             device_image = image
-
-        native_image = encode_native_touchscreen(self.deck_controller.deck, device_image)
-        present_state.last_enqueued_hash = img_hash
-        self.deck_controller.media_player.add_touchscreen_task(native_image, page=page, config_gen=config_gen, controller_touchscreen=self, img_hash=img_hash)
-
-        self.set_ui_image(image)
+        return encode_native_touchscreen(self.deck_controller.deck, device_image)
 
     def generate_empty_image(self) -> Image.Image:
         return Image.new("RGBA", self.get_screen_dimensions(), (0, 0, 0, 0))
