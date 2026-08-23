@@ -54,8 +54,8 @@ class Sidebar(Adw.NavigationPage):
     def __init__(self, main_window: "MainWindow", **kwargs: Any) -> None:
         super().__init__(hexpand=True, title="Sidebar", **kwargs)
         self.main_window = main_window
-        self.active_identifier: InputIdentifier = None  # type: ignore[assignment]  # late-init: load_for_identifier
-        self.active_state: int = None  # type: ignore[assignment]  # late-init: load_for_identifier
+        self.active_identifier: InputIdentifier = None  # ty: ignore[invalid-assignment]  # late-init: load_for_identifier
+        self.active_state: int = None  # ty: ignore[invalid-assignment]  # late-init: load_for_identifier
         
         """
         To save performance and memory, we only load the thumbnail when the user sees the row

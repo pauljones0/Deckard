@@ -20,6 +20,9 @@ class EntryRow(GenerativeUI[str]):
         filter_func (Callable[[str], str]): Optional function to filter or transform the input text.
     """
 
+    # build() assigns it. None passes the text through unfiltered.
+    filter_func: Callable[[str], str] | None = None
+
     def __init__(self, action_core: "ActionCore",
                  var_name: str,
                  default_value: str,

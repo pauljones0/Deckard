@@ -56,7 +56,7 @@ class PluginPreview(StoreAssetPreview):
     shows_incompatible_border = False
 
     @staticmethod
-    def get_install_state_for(plugin_data: StoreAssetData) -> int:
+    def get_install_state_for(asset_data: StoreAssetData) -> int:
         """0 is not installed, 1 is installed, and 2 is update available.
 
         An installed plugin whose pinned store version is incompatible reads
@@ -69,18 +69,18 @@ class PluginPreview(StoreAssetPreview):
         the data-only gate. Every field it reads is one that all four classes
         carry.
         """
-        if plugin_data.local_sha is None:
+        if asset_data.local_sha is None:
             return 0
-        if plugin_data.local_sha == plugin_data.commit_sha:
+        if asset_data.local_sha == asset_data.commit_sha:
             return 1
-        if plugin_data.commit_sha is None:
+        if asset_data.commit_sha is None:
             # The remote tip is unresolved, because get_last_commit returned
             # None for a branch-pinned plugin, after a 429 or an empty answer.
             # A None commit_sha differs from local_sha, which would show an
             # update-available badge whose install can only return 404. No
             # known target exists to update to.
             return 1
-        if plugin_data.is_compatible is False:
+        if asset_data.is_compatible is False:
             return 1
         return 2
 

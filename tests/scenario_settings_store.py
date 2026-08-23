@@ -228,7 +228,7 @@ def check_write_during_cold_read() -> None:
     reader_in_file = threading.Event()
     may_leave = threading.Event()
 
-    def stalled_load_file(self, file_path, root=dict):  # type: ignore[no-untyped-def]
+    def stalled_load_file(self, file_path, root=dict):
         parsed = real_load_file(self, file_path, root=root)
         if os.path.basename(file_path) == f"{serial}.json":
             # Parsed but not yet cached, which is where the writer must get
@@ -238,7 +238,7 @@ def check_write_during_cold_read() -> None:
         return parsed
 
     read_result: list = []
-    settings_store.SettingsStore.load_file = stalled_load_file  # type: ignore[method-assign]
+    settings_store.SettingsStore.load_file = stalled_load_file
     try:
         reader = threading.Thread(
             target=lambda: read_result.append(gl.settings_manager.get_deck_settings(serial)))
@@ -252,7 +252,7 @@ def check_write_during_cold_read() -> None:
         reader.join(timeout=15)
         assert not reader.is_alive(), "the stalled reader never finished"
     finally:
-        settings_store.SettingsStore.load_file = real_load_file  # type: ignore[method-assign]
+        settings_store.SettingsStore.load_file = real_load_file
 
     assert read_result and read_result[0]["marker"] == "before-the-write", (
         f"the racing reader was supposed to read the pre-write content: {read_result!r}"

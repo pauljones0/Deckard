@@ -15,7 +15,6 @@ from loguru import logger as log
 import rpyc
 from rpyc.utils.server import ThreadedServer
 from rpyc.core.protocol import Connection
-from rpyc.core import netref
 
 import gi
 
@@ -58,17 +57,26 @@ class DisabledPluginRegistration(PluginRegistration):
     reason: "str | None"
 
 
-class PluginBase(rpyc.Service):  # type: ignore[misc]  # rpyc.Service is unstubbed (Any)
+class PluginBase(rpyc.Service):
     """The base class of every plugin."""
 
     # {plugin_id: registration}. See register().
     plugins: "dict[str, PluginRegistration]" = {}
     disabled_plugins: "dict[str, DisabledPluginRegistration]" = {}
+    # The app-ready warm-up sets this once per instance, so a later plugin
+    # load does not fire on_app_ready a second time. Nothing in __init__ sets
+    # it, so an instance carries the class default until the warm-up runs.
+    _on_app_ready_fired: bool = False
 
     def __init__(self, use_legacy_locale: bool = True, legacy_dir: str = "locales"):
-        self.backend_connection: Connection = None
-        self.backend: netref = None
-        self.server: ThreadedServer = None
+        self.backend_connection: "Connection | None" = None
+        # launch_backend() puts an rpyc netref proxy here, but a plugin is free
+        # to assign an in-process object instead and skip the backend process
+        # altogether, so the attribute holds either shape. ActionCore declares
+        # the same name as a netref, because only launch_backend writes it
+        # there.
+        self.backend: Any = None
+        self.server: "ThreadedServer | None" = None
         self.backend_process: subprocess.Popen[bytes] | None = None
         # Bookkeeping for the registration watchdog in
         # _watch_backend_registration. The generation counter disarms a stale
@@ -822,7 +830,7 @@ class PluginBase(rpyc.Service):  # type: ignore[misc]  # rpyc.Service is unstubb
                                      authenticator=frontend_authenticator)
         threading.Thread(target=self.server.start, name="server_start", daemon=True).start()
 
-    def on_disconnect(self, conn: Connection) -> None:
+    def on_disconnect(self, conn: "Connection | None") -> None:
         """Handle the disconnection of the rpyc server.
 
         It releases the rpyc server, the backend connection and the backend
@@ -832,7 +840,8 @@ class PluginBase(rpyc.Service):  # type: ignore[misc]  # rpyc.Service is unstubb
         uninstall path through on_uninstall, therefore never stalls.
 
         Args:
-            conn (Connection): The connection to disconnect.
+            conn (Connection | None): The connection to disconnect. It is None
+                when the plugin already dropped the connection.
 
         Returns:
             None
@@ -920,6 +929,8 @@ class PluginBase(rpyc.Service):  # type: ignore[misc]  # rpyc.Service is unstubb
                 terminal window. Defaults to False.
 
         Raises:
+            RuntimeError: When the rpyc server is not running after
+                start_server(), so the backend has no port to register on.
             ValueError: When backend_path is None or absent, or when a given
                 venv_path is absent. The validation stops a bad path here,
                 before Popen receives it.
@@ -934,6 +945,10 @@ class PluginBase(rpyc.Service):  # type: ignore[misc]  # rpyc.Service is unstubb
         )
 
         self.start_server()
+        if self.server is None:
+            # start_server() sets self.server. An override that does not set
+            # it would launch a backend with no port to register on.
+            raise RuntimeError("the rpyc server is not running, so the backend has no port to register on")
         port = self.server.port
 
         # It validates the paths and returns argv, and not a shell string.

@@ -127,7 +127,7 @@ class ActionChooser(Gtk.Box):
         self.empty_state_label.set_label(text)
         self.empty_state_label.set_visible(True)
 
-    def show(self, callback_function: "Callable[..., Any] | None", current_stack_page: "Gtk.Widget | None", identifier: InputIdentifier, callback_args: "tuple[Any, ...]", callback_kwargs: "dict[str, Any]") -> None:  # type: ignore[override]  # gi stub: shadows Gtk.Widget.show() with the show-for-this-action-slot entry point of the chooser; its one caller is Sidebar.let_user_select_action
+    def show(self, callback_function: "Callable[..., Any] | None", current_stack_page: "Gtk.Widget | None", identifier: InputIdentifier, callback_args: "tuple[Any, ...]", callback_kwargs: "dict[str, Any]") -> None:  # ty: ignore[invalid-method-override]  # gi stub: shadows Gtk.Widget.show() with the show-for-this-action-slot entry point of the chooser; its one caller is Sidebar.let_user_select_action
         # current_stack_page matters when a plugin action in the
         # action_configurator calls let_user_select_action.
 
@@ -263,7 +263,7 @@ class ActionChooserExpander(BetterExpander):
         self.plugin_name = plugin_name
         self.plugin_dir = plugin_dir
 
-        self.input_type: InputIdentifier = None  # type: ignore[assignment]  # late-init: show
+        self.input_type: InputIdentifier = None  # ty: ignore[invalid-assignment]  # late-init: show
 
         self.highest_fuzz_score: float = 0
 
@@ -523,7 +523,7 @@ class PluginActionRow(Adw.ActionRow):
         self.icon = action_holder.icon
         icon_parent = action_holder.icon.get_parent()
         if icon_parent is not None:
-            icon_parent.remove(self.action_holder.icon)  # type: ignore[attr-defined]  # gi stub: remove() lives on the container subclasses (Gtk.Box here), not on Gtk.Widget, which is all get_parent() promises
+            icon_parent.remove(self.action_holder.icon)  # ty: ignore[unresolved-attribute]  # gi stub: remove() lives on the container subclasses (Gtk.Box here), not on Gtk.Widget, which is all get_parent() promises
         self.main_box.append(self.icon)
 
         self.label = Gtk.Label(label=self.action_holder.action_name, margin_start=10, css_classes=["bold", "large-text"])

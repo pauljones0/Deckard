@@ -52,7 +52,7 @@ class ActionHolderGroup:
             # answers UNSUPPORTED. That is a defect. The correct fix needs an InputIdentifier
             # that this method never receives, which changes a plugin-visible
             # signature. No caller in this tree reaches the method.
-            if action_holder.get_input_compatibility(action_holder.action_id) >= action_input_support:  # type: ignore[arg-type]  # root cause: get_input_compatibility passed action_id, not an InputIdentifier
+            if action_holder.get_input_compatibility(action_holder.action_id) >= action_input_support:  # ty: ignore[invalid-argument-type]  # root cause: get_input_compatibility passed action_id, not an InputIdentifier
                 action_holders.add(action_holder)
 
         return action_holders

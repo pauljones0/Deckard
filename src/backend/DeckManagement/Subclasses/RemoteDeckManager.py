@@ -81,7 +81,11 @@ class RemoteDeckManager:
         print(f"Remote Deck Manager: Key event: {key}, {state}")
         print(self.deck_controllers)
         for deck_controller in self.deck_controllers:
-            deck_controller.deck.deck.key_callback(deck_controller.deck.deck, key, state)
+            raw_deck = deck_controller.deck.deck
+            # The handle holds no callback until the controller installs its
+            # key remapper. A browser key event can arrive before that.
+            if raw_deck.key_callback is not None:
+                raw_deck.key_callback(raw_deck, key, state)
     
     def send_button_image(self, button_id: int, image: "Image.Image") -> None:
         """

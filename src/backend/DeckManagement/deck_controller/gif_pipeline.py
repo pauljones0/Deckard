@@ -95,6 +95,9 @@ def gif_key_budget_bytes() -> int:
         mb = float(raw)
         usable = math.isfinite(mb)
     except ValueError:
+        # Bind mb so the name exists on every path. The usable test below
+        # returns before any read of it here.
+        mb = 0.0
         usable = False
     if not usable:
         if raw not in _warned_gif_budget_values:
@@ -218,7 +221,9 @@ def frame_has_alpha(frame: Image.Image) -> bool:
     frame; the caller stops asking once the answer is yes."""
     if frame.mode != "RGBA":
         return False
-    extrema = frame.getextrema()
+    # The mode test above proves four bands, so getextrema returns four
+    # (min, max) pairs, never the two-float shape of a single-band image.
+    extrema = cast("tuple[tuple[int, int], ...]", frame.getextrema())
     return len(extrema) >= 4 and extrema[3][0] < 255
 
 
@@ -834,13 +839,11 @@ class KeyGIF(SingleKeyAsset):
             return 1.0 / self.fps  # fall back to fps-based timing
         return self.frame_delays[self.active_frame] / 1000.0
     
-    def get_raw_image(self) -> Image.Image:
-        # get_next_frame() returns None after close() releases the frames, so
-        # its return type is wider than this override may declare. Narrow to
-        # the declared Image.Image with a cast: a cast reads the same whether
-        # the checker sees Pillow's real types or treats them as Any, unlike a
-        # `# type: ignore` whose used-or-not status flips between those envs.
-        return cast(Image.Image, self.get_next_frame())
+    def get_raw_image(self) -> "Image.Image | None":
+        # None after close(), which empties the frame list so a late tick reads
+        # zero frames. The siblings in Subclasses/ declare the same union for
+        # the same reason, and that is the hierarchy contract.
+        return self.get_next_frame()
     
     def close(self) -> None:
         """Drop the retained frame list, which is the whole footprint, and

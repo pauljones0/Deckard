@@ -23,7 +23,7 @@ class LegacyLocaleManager:
         self.locales_path: str = locales_path
         self.locales_json: dict[str, Any] = {}
         self.fallback_json: dict[str, Any] = {}
-        self.locales: str = None  # type: ignore[assignment]  # late-init: set_language(), reached via the set_to_os_default() every constructor caller makes
+        self.locales: str = None  # ty: ignore[invalid-assignment]  # late-init: set_language(), reached via the set_to_os_default() every constructor caller makes
         self.FALLBACK_LOCALE: str = "en_US"
         self.set_fallback_language(self.FALLBACK_LOCALE)
 

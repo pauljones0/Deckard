@@ -165,9 +165,10 @@ class BackgroundMediaRow(Adw.PreferencesRow):
     def load_defaults_from_page(self) -> None:
         # The early return below disables this method, so the unguarded
         # active_page.dict["background"] reads that follow never run. Guard
-        # them before anything calls this method again.
+        # them before anything calls this method again. The dead body stays
+        # as the record of what that guard has to cover.
         return
-        if not hasattr(self.settings_page.deck_page.deck_controller, "active_page"):  # type: ignore[unreachable]  # kept as the record of what the guard note above asks for
+        if not hasattr(self.settings_page.deck_page.deck_controller, "active_page"):
             return
         if self.settings_page.deck_page.deck_controller.active_page is None:
             return

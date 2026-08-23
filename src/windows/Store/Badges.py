@@ -24,7 +24,7 @@ import globals as gl
 
 class Badge(Gtk.Button):
     def __init__(self, label: str, tooltip: str | None = None, *args: Any, **kwargs: Any) -> None:
-        super().__init__(  # type: ignore[misc]  # gi stub: the stub models GObject properties as positional-or-keyword params, so *args reads as a second binding for them; at runtime GObject.__init__ takes properties by keyword only
+        super().__init__(  # GObject.__init__ takes properties by keyword only, so the properties are named and *args only forwards what a caller added
             label=gl.lm.get(label),
             *args, **kwargs
         )

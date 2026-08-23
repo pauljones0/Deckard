@@ -99,8 +99,8 @@ class CommentGroup(Adw.PreferencesGroup):
     def __init__(self, parent: "ActionConfigurator", **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.parent = parent
-        self.action: ActionCore = None  # type: ignore[assignment]  # late-init: load_for_action
-        self.index: int = None  # type: ignore[assignment]  # late-init: load_for_action
+        self.action: ActionCore = None  # ty: ignore[invalid-assignment]  # late-init: load_for_action
+        self.index: int = None  # ty: ignore[invalid-assignment]  # late-init: load_for_action
         self.build()
 
     def build(self) -> None:
@@ -329,7 +329,7 @@ class EventAssignerUI(BetterPreferencesGroup):
     def __init__(self, action_configurator: ActionConfigurator, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.action_configurator = action_configurator
-        self.action: ActionCore = None  # type: ignore[assignment]  # late-init: EventAssignerUI.load_for_action
+        self.action: ActionCore = None  # ty: ignore[invalid-assignment]  # late-init: EventAssignerUI.load_for_action
         self.build()
 
     def build(self) -> None:

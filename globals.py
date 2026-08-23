@@ -61,7 +61,6 @@ os.makedirs(PLUGIN_DIR, exist_ok=True)
 sys.path.append(DATA_PATH)
 
 if TYPE_CHECKING:
-    import Pyro5.api
     from src.app import App
     from locales.LocaleManager import LocaleManager
     from src.backend.AssetManagerBackend import AssetManagerBackend
@@ -94,18 +93,19 @@ top_level_dir:str = os.path.dirname(__file__)
 # A slot typed X | None means code observes the None, because a reader runs
 # before main.create_global_objects() publishes the value, or a later step
 # nulls the slot. Each such slot has a real is None branch. A concrete type
-# narrows that branch to an uninhabited type, and mypy then skips the body.
+# narrows that branch to an uninhabited type, and the checker then skips the
+# body.
 # A slot typed X with a late-init ignore means nothing observes the None. The
 # type stays concrete, because a union pushes union-attr into hundreds of use
 # sites.
-lm:"LocaleManager" = None  # type: ignore[assignment]  # late-init: main.create_global_objects
-media_manager:"MediaManager" = None  # type: ignore[assignment]  # late-init: main.create_global_objects
-asset_manager_backend:"AssetManagerBackend" = None  # type: ignore[assignment]  # late-init: main.create_global_objects
+lm:"LocaleManager" = None  # ty: ignore[invalid-assignment]  # late-init: main.create_global_objects
+media_manager:"MediaManager" = None  # ty: ignore[invalid-assignment]  # late-init: main.create_global_objects
+asset_manager_backend:"AssetManagerBackend" = None  # ty: ignore[invalid-assignment]  # late-init: main.create_global_objects
 asset_manager: "AssetManager | None" = None # Only while the window is open
 page_manager_window: "PageManager | None" = None # Only if opened
 page_manager:"PageManagerBackend | None" = None # None-checked in DeckController teardown + the DBus API #TODO: Rename to page_manager_backend in 2.0.0
-gnome_extensions:"GnomeExtensions" = None  # type: ignore[assignment]  # late-init: main.create_global_objects
-settings_manager:"SettingsManager" = None  # type: ignore[assignment]  # late-init: main.create_global_objects
+gnome_extensions:"GnomeExtensions" = None  # ty: ignore[invalid-assignment]  # late-init: main.create_global_objects
+settings_manager:"SettingsManager" = None  # ty: ignore[invalid-assignment]  # late-init: main.create_global_objects
 app:"App | None" = None # Absent until App.on_activate; notify/PluginManager defer onto app_loading_finished_tasks while it is
 deck_manager:"DeckManager | None" = None # None-checked in the DBus API
 plugin_manager:"PluginManager | None" = None # None-checked in ActionChooser's load-health readout
@@ -113,28 +113,27 @@ video_extensions = ["mp4", "mov", "MP4", "MOV", "mkv", "MKV", "webm", "WEBM", "g
 image_extensions = ["png", "jpg", "jpeg"]
 svg_extensions = ["svg", "SVG"]
 icon_pack_manager: "IconPackManager | None" = None # None-checked in the DBus API
-wallpaper_pack_manager: "WallpaperPackManager" = None  # type: ignore[assignment]  # late-init: main.create_global_objects
-sd_plus_bar_wallpaper_pack_manager: "SDPlusBarWallpaperPackManager" = None  # type: ignore[assignment]  # late-init: main.create_global_objects
+wallpaper_pack_manager: "WallpaperPackManager" = None  # ty: ignore[invalid-assignment]  # late-init: main.create_global_objects
+sd_plus_bar_wallpaper_pack_manager: "SDPlusBarWallpaperPackManager" = None  # ty: ignore[invalid-assignment]  # late-init: main.create_global_objects
 store_backend: "StoreBackend | None" = None # None-checked in App.on_quit's cache flush
-notify: "Notify" = None  # type: ignore[assignment]  # late-init: main.create_global_objects; see src/backend/notify.py
-pyro_daemon: "Pyro5.api.Daemon | None" = None  # never set or read; Pyro5 stays TYPE_CHECKING-only
-signal_manager: "SignalManager" = None  # type: ignore[assignment]  # late-init: main.create_global_objects
+notify: "Notify" = None  # ty: ignore[invalid-assignment]  # late-init: main.create_global_objects; see src/backend/notify.py
+signal_manager: "SignalManager" = None  # ty: ignore[invalid-assignment]  # late-init: main.create_global_objects
 window_grabber: "WindowGrabber | None" = None # None-checked in the DBus API
 # Constructed only when WAYLAND_DISPLAY is set, so None is the normal state on
 # X11. Nothing reads this slot; the Wayland object sends its lock and unlock
 # notifications through signal_manager from its own thread.
 wayland: "Wayland | None" = None
-lock_screen_detector: "LockScreenManager" = None  # type: ignore[assignment]  # late-init: main.create_global_objects
+lock_screen_detector: "LockScreenManager" = None  # ty: ignore[invalid-assignment]  # late-init: main.create_global_objects
 presence_monitor: "PresenceMonitor | None" = None  # quiescence signal; see src/backend/PresenceMonitor
 store: "Store | None" = None # Only if opened
-flatpak_permission_manager: "FlatpakPermissionManager" = None  # type: ignore[assignment]  # late-init: main.create_global_objects
+flatpak_permission_manager: "FlatpakPermissionManager" = None  # ty: ignore[invalid-assignment]  # late-init: main.create_global_objects
 threads_running: bool = True
 # Zero-argument deliveries queued before gl.app exists. App.on_activate drains
 # them on the main thread and discards the return values.
 app_loading_finished_tasks: list[Callable[[], Any]] = []
 api_page_requests: dict[str, str] = {} # Stores api page requests made my --change-page
 api_state_requests: dict[str, dict[str, Any]] = {} # Stores api state change requests made by --change-state
-tray_icon: "TrayIcon" = None  # type: ignore[assignment]  # late-init: main.create_global_objects
+tray_icon: "TrayIcon" = None  # ty: ignore[invalid-assignment]  # late-init: main.create_global_objects
 showed_donate_window: bool = False
 screen_locked: bool = False
 loggers: dict[str, "Logger"] = {}

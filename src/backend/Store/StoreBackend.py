@@ -585,9 +585,9 @@ class StoreBackend:
                     # fetch and for any other fault. Only a failure of every
                     # store, below, counts as an error.
                     log.error(f"Store item preparation failed: {e!r}")
-            results = [result for result in results if isinstance(result, data_class)]
+            narrowed: list[StoreDataT] = [result for result in results if isinstance(result, data_class)]
 
-            return results
+            return narrowed
         finally:
             if not include_images:
                 # Drop the snapshot with the pass that took it. A later
@@ -753,7 +753,7 @@ class StoreBackend:
         # identifies the same install with no fetch.
         self.note_installed_origin(base_dir, manifest.get("id"), url)
 
-        fields = {
+        full_fields: dict[str, Any] = {
             "descriptions": descriptions,
             "short_descriptions": short_descriptions,
             "description": translated_description or manifest.get("description"),
@@ -787,8 +787,8 @@ class StoreBackend:
             "verified": verified,
         }
         if desc.is_plugin:
-            fields["branch"] = branch
-        return desc.data_cls(**fields)
+            full_fields["branch"] = branch
+        return desc.data_cls(**full_fields)
 
     def prepare_plugin(self, plugin: dict[str, Any], include_image: bool = True, verified: bool = False) -> "StoreData | None":
         return self._prepare_asset(plugin, PLUGIN, include_image, verified)

@@ -157,10 +157,10 @@ class ExpanderRow(GenerativeUI[bool]):
         """
         self._handle_value_changed(expander_row.get_enable_expansion())
 
-    def _handle_value_changed(self, new_value: bool, update_setting: bool = True, trigger_callback: bool = True) -> None:
+    def _handle_value_changed(self, new_value: bool, update_settings: bool = True, trigger_callback: bool = True) -> None:
         if not self._switch_enabled:
             return
-        super()._handle_value_changed(new_value, update_setting, trigger_callback)
+        super()._handle_value_changed(new_value, update_settings, trigger_callback)
 
     @GenerativeUI.signal_manager
     def set_ui_value(self, value: bool) -> None:

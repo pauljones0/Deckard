@@ -69,7 +69,7 @@ _announced_disabled = False
 _installed = False
 # The same shape as sys.excepthook, which install() stores here.
 _ExceptHook = Callable[[type[BaseException], BaseException, TracebackType | None], object]
-_prev_sys_hook: _ExceptHook = None  # type: ignore[assignment]  # late-init: install(); only read from _sys_hook, which install() wires up
+_prev_sys_hook: _ExceptHook = None  # ty: ignore[invalid-assignment]  # late-init: install(); only read from _sys_hook, which install() wires up
 # faulthandler stores the raw fd and not the file object, so this
 # module-level reference must keep the file alive for the life of the
 # process. Otherwise a fatal-signal dump writes into a recycled fd.

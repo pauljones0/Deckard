@@ -607,7 +607,7 @@ class Page:
                         if isinstance(action, ActionCore):
                             # The action is torn down; page describes the
                             # live phase, so the detach steps outside it.
-                            action.page = None  # type: ignore[assignment]
+                            action.page = None  # ty: ignore[invalid-assignment]  # the slot is typed for the live phase, which this teardown ends
                     state_dict.clear()
             self.action_objects[input_type] = {}
 
@@ -984,7 +984,7 @@ class Page:
 
     def set_media_path(self, identifier: InputIdentifier, state: int, path: "str | None", update: bool = True) -> None:
         for key_state in self.get_controller_input_states(identifier, state):
-            key_state.layout_manager.page_layout.path = path  # type: ignore[attr-defined]  # ImageLayout (Subclasses/KeyLayout.py) declares no `path` field; nothing reads this write
+            key_state.layout_manager.page_layout.path = path  # ty: ignore[unresolved-attribute]  # ImageLayout (Subclasses/KeyLayout.py) declares no `path` field; nothing reads this write
 
         self._set_dict_value([identifier.input_type, identifier.json_identifier, "states", str(state), "media", "path"], path)
 

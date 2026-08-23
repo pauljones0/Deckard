@@ -24,8 +24,8 @@ from StreamDeck.Devices import StreamDeck
 from StreamDeck.Devices.StreamDeck import DialEventType, TouchscreenEventType
 
 class BetterDeck():
-    def __init__(self, deck: StreamDeck, rotation: int = 0):
-        self.deck: StreamDeck = deck
+    def __init__(self, deck: StreamDeck.StreamDeck, rotation: int = 0):
+        self.deck: StreamDeck.StreamDeck = deck
         self.rotation: int = rotation # [0, 90, 180, 270]
         # Serializes device I/O. hidapi is not thread-safe, and several
         # threads write to the deck. Reentrant for nested wrapped calls.

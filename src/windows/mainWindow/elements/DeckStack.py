@@ -152,7 +152,7 @@ class DeckStack(Gtk.Stack):
             unbind(deck_controller)
 
         was_visible: bool = False
-        for i, page in enumerate(self.get_pages()):  # type: ignore[arg-type, var-annotated]  # gi stub: PyGObject's Gio.ListModel override makes the returned SelectionModel iterable/sized/indexable; gi-stubs declares none of that
+        for i, page in enumerate(self.get_pages()):  # ty: ignore[invalid-argument-type]  # gi stub: PyGObject's Gio.ListModel override makes the returned SelectionModel iterable/sized/indexable; gi-stubs declares none of that
             if page.get_child().deck_controller == deck_controller:
                 if self.get_visible_child() == page.get_child():
                     was_visible = True
@@ -180,18 +180,18 @@ class DeckStack(Gtk.Stack):
             
         pages = self.get_pages()
         # Show message if no decks are connected
-        if len(pages) == 0:  # type: ignore[arg-type]  # gi stub: PyGObject's Gio.ListModel override makes the returned SelectionModel iterable/sized/indexable; gi-stubs declares none of that
+        if len(pages) == 0:  # ty: ignore[invalid-argument-type]  # gi stub: PyGObject's Gio.ListModel override makes the returned SelectionModel iterable/sized/indexable; gi-stubs declares none of that
             self.main_window.change_ui_to_no_connected_deck()
             return
 
-        self.set_visible_child(pages[0].get_child())  # type: ignore[index]  # gi stub: PyGObject's Gio.ListModel override makes the returned SelectionModel iterable/sized/indexable; gi-stubs declares none of that
+        self.set_visible_child(pages[0].get_child())  # ty: ignore[not-subscriptable]  # gi stub: PyGObject's Gio.ListModel override makes the returned SelectionModel iterable/sized/indexable; gi-stubs declares none of that
 
     def focus_controller(self, deck_controller: "DeckController") -> None:
-        for page in self.get_pages():  # type: ignore[attr-defined]  # gi stub: PyGObject's Gio.ListModel override makes the returned SelectionModel iterable/sized/indexable; gi-stubs declares none of that
+        for page in self.get_pages():  # ty: ignore[not-iterable]  # gi stub: PyGObject's Gio.ListModel override makes the returned SelectionModel iterable/sized/indexable; gi-stubs declares none of that
             if page.get_child().deck_controller == deck_controller:
                 self.set_visible_child(page.get_child())
                 return
             
     def get_visible_child(self) -> DeckStackChild | None:
         # None while the stack is empty (no deck connected yet).
-        return super().get_visible_child()  # type: ignore[return-value]  # gi stub: Gtk.Stack.get_visible_child is typed Gtk.Widget | None; every child of this stack is a DeckStackChild
+        return super().get_visible_child()  # ty: ignore[invalid-return-type]  # gi stub: Gtk.Stack.get_visible_child is typed Gtk.Widget | None; every child of this stack is a DeckStackChild

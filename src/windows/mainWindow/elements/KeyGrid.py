@@ -267,7 +267,7 @@ class KeyButton(Gtk.Frame):
         else:
             # The gtype pin above makes this unreachable for the checker,
             # and the reject stays for whatever GTK marshals anyway.
-            drop.reject()  # type: ignore[unreachable]
+            drop.reject()
             return False
         return None
         

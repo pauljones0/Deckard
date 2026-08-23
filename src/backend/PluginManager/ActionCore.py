@@ -73,14 +73,14 @@ if TYPE_CHECKING:
     from src.backend.DeckManagement.deck_controller.inputs import ControllerInput, ControllerInputState, ControllerKey
     from src.backend.PageManagement.Page import Page
 
-class ActionCore(rpyc.Service):  # type: ignore[misc]  # rpyc.Service is unstubbed (Any)
+class ActionCore(rpyc.Service):
     # Change to match your action
     def __init__(self, action_id: str, action_name: str,
                  deck_controller: "DeckController", page: "Page", plugin_base: "PluginBase", state: int,
                  input_ident: "InputIdentifier"):
-        self.backend_connection: Connection = None
-        self.backend: netref = None
-        self.server: ThreadedServer = None
+        self.backend_connection: "Connection | None" = None
+        self.backend: "netref.BaseNetref | None" = None
+        self.server: "ThreadedServer | None" = None
         self.backend_process: subprocess.Popen[bytes] | None = None
         # register_backend relaxes its port-ownership check for a terminal
         # launch, where the backend is not a child of the Popen handle.
@@ -493,7 +493,7 @@ class ActionCore(rpyc.Service):  # type: ignore[misc]  # rpyc.Service is unstubb
             # A plugin can construct or drive an action untyped over rpyc, so
             # the runtime check stays even though the annotation says the
             # page is always set.
-            return {}  # type: ignore[unreachable]
+            return {}
         return cast(dict[str, Any], self.page.get_action_settings(action_object=self))
     
     def set_settings(self, settings: dict[str, Any]) -> None:
@@ -501,7 +501,7 @@ class ActionCore(rpyc.Service):  # type: ignore[misc]  # rpyc.Service is unstubb
             # A plugin can construct or drive an action untyped over rpyc, so
             # the runtime check stays even though the annotation says the
             # page is always set.
-            return  # type: ignore[unreachable]
+            return
         self.page.set_action_settings(action_object=self, settings=settings)
 
     def connect(self, signal: type[Signal], callback: Callable[..., Any]) -> None:
@@ -589,7 +589,7 @@ class ActionCore(rpyc.Service):  # type: ignore[misc]  # rpyc.Service is unstubb
     def get_is_present(self) -> bool:
         # A plugin can drive an action untyped over rpyc, so the runtime check
         # stays even though the annotation says the page is always set.
-        if self.page is None: return False  # type: ignore[unreachable]
+        if self.page is None: return False
         if self.page.deck_controller.active_page is not self.page: return False
         if self.page.deck_controller.screen_saver.showing: return False
         # if self.state != self.get_state().state: return False #TODO: Check for touchscreen and dial states
@@ -724,6 +724,15 @@ class ActionCore(rpyc.Service):  # type: ignore[misc]  # rpyc.Service is unstubb
         self._release_backend_resources()
     
     def launch_backend(self, backend_path: str, venv_path: str | None = None, open_in_terminal: bool = False) -> None:
+        """Launch the backend process of the action, as PluginBase does for a plugin.
+
+        Raises:
+            RuntimeError: When the rpyc server is not running after
+                start_server(), so the backend has no port to register on.
+            ValueError: When backend_path is None or absent, or when a given
+                venv_path is absent. The validation stops a bad path here,
+                before Popen receives it.
+        """
         from src.backend.PluginManager.PluginManager import (
             backend_guard_env,
             build_backend_launch_command,
@@ -731,6 +740,10 @@ class ActionCore(rpyc.Service):  # type: ignore[misc]  # rpyc.Service is unstubb
         )
 
         self.start_server()
+        if self.server is None:
+            # start_server() sets self.server. An override that does not set
+            # it would launch a backend with no port to register on.
+            raise RuntimeError("the rpyc server is not running, so the backend has no port to register on")
         port = self.server.port
 
         # It validates the paths and returns argv, and not a shell string.

@@ -35,7 +35,7 @@ class FileDialogRow(Adw.ActionRow):
                  filters: list[FileDialogFilter] | None = None,
                  file_change_callback: Callable[[Gio.File], None] | None = None
                  ):
-        super().__init__(title=title, subtitle=subtitle)  # type: ignore[arg-type]  # gi stub: Adw string props accept None (PyGObject maps it to NULL, i.e. empty string)
+        super().__init__(title=title, subtitle=subtitle)  # ty: ignore[invalid-argument-type]  # gi stub: Adw string props accept None (PyGObject maps it to NULL, i.e. empty string)
 
         self._dialog_title = dialog_title
         self._initial_path = initial_path

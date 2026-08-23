@@ -188,6 +188,9 @@ class MediaPlayerSetImageTask:
             # Released, so this task already wrote. See the touchscreen task.
             return
         try:
+            # The profiling timestamp needs a definite binding. Its only read
+            # sits under the same media_prof guard as its write.
+            _t0 = 0.0
             if media_prof:
                 _t0 = time.perf_counter()
             self.deck_controller.deck.set_key_image(self.key_index, ticket.native_image)

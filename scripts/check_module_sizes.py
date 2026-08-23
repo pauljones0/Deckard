@@ -40,10 +40,10 @@ GRANDFATHER entry that names a file which does not exist or which sits outside
 the roots, a missing shim, and a symlinked directory under a root, because the
 walk does not descend into one and its contents would go uncapped.
 
-The roots are src/ and GtkHelper/, which match the mypy files setting in
-pyproject.toml, so both tools govern the same trees. The root-level modules,
-such as main.py and globals.py, stay ungoverned. They are small and few. Widen
-the roots when that stops being true.
+The roots are src/ and GtkHelper/. The type checker covers more than that: its
+include set also names locales/ and the root-level modules, such as main.py and
+globals.py. Those stay ungoverned by the cap. They are small and few. Widen the
+roots when that stops being true.
 
 To lower a GRANDFATHER number, or to delete an entry that the check calls
 obsolete, edit the table in the commit that shrinks the file. To raise a number,
@@ -65,9 +65,9 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-# Trees that the cap governs. They match the mypy files setting in
-# pyproject.toml. They hold application and helper code only, because a test is
-# a fixture or a scenario, where the length comes from the case.
+# Trees that the cap governs, a subset of the type checker's include set. They
+# hold application and helper code only, because a test is a fixture or a
+# scenario, where the length comes from the case.
 ROOTS = ("src", "GtkHelper")
 
 DEFAULT_CAP = 1200
@@ -85,8 +85,12 @@ SHIM_CAP = 100
 # Files that were already over DEFAULT_CAP when this check landed, pinned at the
 # size they had then. They may shrink only. See the tightening rule above.
 GRANDFATHER: dict[str, int] = {
-    "src/backend/DeckManagement/deck_controller/controller.py": 1604,
-    "src/backend/DeckManagement/deck_controller/inputs.py": 2111,
+    # The two deck-controller caps hold the declarations the type gate needs:
+    # a constructor signature that names every deck handle it accepts, and a
+    # class-level declaration of the narrowed present state, which a subclass
+    # must state at class level for a reader of the attribute to see it.
+    "src/backend/DeckManagement/deck_controller/controller.py": 1609,
+    "src/backend/DeckManagement/deck_controller/inputs.py": 2118,
     "src/backend/Store/StoreBackend.py": 1948,
 }
 

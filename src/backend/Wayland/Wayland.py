@@ -40,9 +40,12 @@ class Wayland:
 
         gl.signal_manager.connect_signal(AppQuit, self.__on_quit)
 
-        wayland.wl_registry.events.global_ += self.__on_wl_registry_global
-        wayland.hyprland_lock_notification_v1.events.locked += self.__on_lock
-        wayland.hyprland_lock_notification_v1.events.unlocked += self.__on_unlock
+        # The wayland package ships a stub for code completion only. That stub
+        # declares each event as a plain function. At run time each event is an
+        # object that adds a handler with +=.
+        wayland.wl_registry.events.global_ += self.__on_wl_registry_global  # ty: ignore[unsupported-operator]
+        wayland.hyprland_lock_notification_v1.events.locked += self.__on_lock  # ty: ignore[unsupported-operator]
+        wayland.hyprland_lock_notification_v1.events.unlocked += self.__on_unlock  # ty: ignore[unsupported-operator]
 
         wayland.wl_display.get_registry()
 

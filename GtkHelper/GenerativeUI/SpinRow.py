@@ -26,6 +26,9 @@ class SpinRow(GenerativeUI[float]):
         digits (int): The number of digits to display for the value.
     """
 
+    # build() creates it beside the widget.
+    _adjustment: Gtk.Adjustment
+
     def __init__(self, action_core: "ActionCore",
                  var_name: str,
                  default_value: float,

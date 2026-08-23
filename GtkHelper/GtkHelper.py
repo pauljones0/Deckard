@@ -383,7 +383,7 @@ class EntryDialog(Gtk.ApplicationWindow):
             self.confirm_button.set_sensitive(True)
             self.confirm_button.set_css_classes(['confirm-button'])
 
-    def show(self, callback_func: Callable[[str], Any] | None) -> None:  # type: ignore[override]  # shadows Gtk.Widget.show with this dialog's callback form
+    def show(self, callback_func: Callable[[str], Any] | None) -> None:  # ty: ignore[invalid-method-override]  # shadows Gtk.Widget.show with this dialog's callback form
         self.callback_func = callback_func
         self.present()
 

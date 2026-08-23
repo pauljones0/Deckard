@@ -41,7 +41,7 @@ Deckard shares StreamController's UI and plugin ecosystem but has rebuilt most o
 ### Modernization
 
 - `dbus-python` is gone; all D-Bus work goes through GLib/Gio.
-- The entire tree type-checks clean under mypy, and mypy and ruff are blocking CI gates.
+- The entire tree type-checks clean under ty, and ty and ruff are blocking CI gates.
 - An extensive headless regression harness (`tests/`) exercises the render pipeline, persistence, plugin events and store against fake deck hardware.
 
 ### Releases and packaging

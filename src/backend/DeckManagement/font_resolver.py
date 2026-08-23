@@ -93,9 +93,10 @@ def _ot_weight_to_fc(weight: int | None) -> int:
     table = _OT_TO_FC_WEIGHT
     for (ot_lo, fc_lo), (ot_hi, fc_hi) in zip(table, table[1:]):
         if ot_lo <= weight <= ot_hi:
-            if ot_hi == ot_lo:
+            span = ot_hi - ot_lo
+            if span == 0:
                 return fc_lo
-            frac = (weight - ot_lo) / (ot_hi - ot_lo)
+            frac = (weight - ot_lo) / span
             return round(fc_lo + frac * (fc_hi - fc_lo))
     return table[-1][1]
 

@@ -69,6 +69,13 @@ variables:
 # a raw reader (instead of routing it through the settings store, which heals a
 # corrupt file and writes atomically) is a deliberate, reviewed edit. Its
 # allowlist and rules live in that script; --self-test proves it goes red.
+#
+# The type-gate coverage guard is the same shape a fourth time, and it is what
+# makes lint:types mean anything. The type checker takes an explicit list of
+# paths to check. A path in that list that does not exist is not an error to
+# it: it drops the entry, checks what is left, and exits 0. So a renamed tree,
+# or a new top-level package nobody added to the list, silently stops being
+# checked while the gate stays green. This guard fails on either.
 test:compile:
   stage: test
   image: python:3.13-slim   # 3.13 = the runtime python req2flatpak targets
@@ -79,7 +86,7 @@ test:compile:
     - python scripts/check_module_sizes.py
     - python scripts/check_gl_slots.py
     - python scripts/check_settings_json.py
-    - python scripts/check_any_explicit_ratchet.py
+    - python scripts/check_type_gate.py
     # This job's image is the deployment floor, and 3.13 evaluates a parameter
     # and return annotation at def time where the 3.14 dev venv defers it, so
     # this is the only place an unevaluatable annotation shows up.
@@ -99,24 +106,47 @@ lint:ruff:
     - ruff --version
     - ruff check .
 
-lint:types:                # blocking type-check gate: the tree is at zero mypy errors and must stay there
+# Blocking type-check gate: the tree is at zero ty diagnostics and must stay
+# there. ty exits 1 on a warning too, so a warning-level rule blocks the same
+# way an error does.
+#
+# ty resolves third-party imports from a real Python environment, not from
+# stubs alone, so this job builds .venv from requirements.txt and the checker
+# sees the same types a developer sees. That is why the job needs no
+# CI-versus-local reconciliation: a suppression that is right here is right
+# there. PyGObject is the one exception -- its pycairo chain needs GObject
+# headers no python image carries -- so gi types come from PyGObject-stubs,
+# exactly as they do locally.
+#
+# Not the slim image: evdev ships no wheel and builds from source, and the
+# checker needs its real types.
+lint:types:
   stage: test
-  image: python:3.13-slim
+  image: python:3.13   # deployment floor, and it carries the toolchain evdev needs
   interruptible: true
   needs: []
+  variables:
+    PIP_CACHE_DIR: "$CI_PROJECT_DIR/.pip-cache"
+  cache:
+    key:
+      files:
+        - requirements.txt
+        - requirements-dev.txt
+    paths:
+      - .pip-cache
   script:
+    - python -m venv .venv
+    - .venv/bin/pip install --quiet --upgrade pip
+    - grep -v '^PyGObject==' requirements.txt > /tmp/req-typecheck.txt
+    - .venv/bin/pip install --quiet -r /tmp/req-typecheck.txt
     # quoted: the ' #' inside the regex would otherwise start a YAML comment
-    - "pip install --quiet $(grep -oE '^(mypy|types-setuptools|types-requests)==[^ #]+' requirements-dev.txt) typing_extensions"
-    # loguru ships py.typed and is pure-Python (no C deps), so install the real
-    # package: without it @log.catch reads as Any and disallow_untyped_decorators
-    # flags every decorated function. Installing it matches the local checker.
-    - "pip install --quiet $(grep -oE '^loguru==[^ #]+' requirements.txt)"
-    # --no-deps: PyGObject-stubs >= 2.13 hard-depends on PyGObject, whose
-    # pycairo chain needs a C toolchain this slim image lacks. The stubs are
-    # type-time-only (mypy reads the .pyi files, never imports the package),
-    # so their runtime deps are dead weight here.
-    - "pip install --quiet --no-deps $(grep -oE '^PyGObject-stubs==[^ #]+' requirements-dev.txt)"
-    - mypy
+    - ".venv/bin/pip install --quiet $(grep -oE '^(types-setuptools|types-requests)==[^ #]+' requirements-dev.txt)"
+    # --no-deps: the stubs hard-depend on PyGObject, which this image cannot
+    # build. They are type-time-only, so their runtime deps are dead weight.
+    - ".venv/bin/pip install --quiet --no-deps $(grep -oE '^PyGObject-stubs==[^ #]+' requirements-dev.txt)"
+    - "pip install --quiet $(grep -oE '^ty==[^ #]+' requirements-dev.txt)"
+    - ty version
+    - ty check
 
 # Advisory nudge: an MR should either add a bullet under ## [Unreleased] in
 # CHANGELOG.md or carry the no-changelog label. auto-release adds MR-title

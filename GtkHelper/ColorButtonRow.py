@@ -30,7 +30,7 @@ class ColorButtonRow(Adw.ActionRow):
                  subtitle: str | None = None,
                  default_color: tuple[int, int, int, int] = (0, 0, 0, 255),
                  ):
-        super().__init__(title=title, subtitle=subtitle)  # type: ignore[arg-type]  # gi stub: Adw string props accept None (PyGObject maps it to NULL, i.e. empty string)
+        super().__init__(title=title, subtitle=subtitle)  # ty: ignore[invalid-argument-type]  # gi stub: Adw string props accept None (PyGObject maps it to NULL, i.e. empty string)
         self.color_button = Gtk.ColorButton(valign=Gtk.Align.CENTER)
 
         self.add_suffix(self.color_button)

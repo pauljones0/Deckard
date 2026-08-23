@@ -61,7 +61,7 @@ class StartupQueue:
             # The docstring's append-recheck-remove race: on_activate can
             # publish gl.app between the two checks, which narrowing cannot
             # see, so this recovery path is live.
-            try:  # type: ignore[unreachable]
+            try:
                 gl.app_loading_finished_tasks.remove(task)
             except ValueError:
                 # The drain took it first and delivers it.

@@ -45,6 +45,7 @@ class CustomAssetChooser(ChooserPage):
         self.asset_manager = asset_manager
 
         self.asset_chooser: CustomAssetChooserFlowBox | None = None
+        self.browse_files_button: Gtk.Button | None = None
         self.build_finished = False
         self.build_task_finished_tasks: list[Callable[[], Any]] = []
         # Serializes build_finished with the deferred-task queue. See

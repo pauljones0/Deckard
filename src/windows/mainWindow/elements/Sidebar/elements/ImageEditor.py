@@ -79,8 +79,8 @@ class Layout(Adw.ExpanderRow):
     def __init__(self, margin_group: "ImageGroup") -> None:
         super().__init__(title=gl.lm.get("right-area.image-editor.layout.header"), subtitle=gl.lm.get("right-area.image-editor.layout.subtitle"))
         self.margin_group = margin_group
-        self.identifier: InputIdentifier = None  # type: ignore[assignment]  # late-init: load_for_identifier
-        self.active_state: int = None  # type: ignore[assignment]  # late-init: load_for_identifier
+        self.identifier: InputIdentifier = None  # ty: ignore[invalid-assignment]  # late-init: load_for_identifier
+        self.active_state: int = None  # ty: ignore[invalid-assignment]  # late-init: load_for_identifier
         self.build()
 
     def build(self) -> None:
@@ -106,7 +106,7 @@ class SizeRow(Adw.PreferencesRow):
     def __init__(self, sidebar: "Sidebar", **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.sidebar = sidebar
-        self.active_identifier: InputIdentifier = None  # type: ignore[assignment]  # late-init: load_for_identifier
+        self.active_identifier: InputIdentifier = None  # ty: ignore[invalid-assignment]  # late-init: load_for_identifier
         self.build()
 
         self.connect_signals()
@@ -203,8 +203,8 @@ class AlignmentRow(Adw.PreferencesRow):
         super().__init__(**kwargs)
         self.sidebar = sidebar
         self.property_name = property_name
-        self.active_identifier: InputIdentifier = None  # type: ignore[assignment]  # late-init: load_for_identifier
-        self.active_state: int = None  # type: ignore[assignment]  # late-init: load_for_identifier
+        self.active_identifier: InputIdentifier = None  # ty: ignore[invalid-assignment]  # late-init: load_for_identifier
+        self.active_state: int = None  # ty: ignore[invalid-assignment]  # late-init: load_for_identifier
         self.build(label_text)
 
         self.connect_signals()

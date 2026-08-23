@@ -49,7 +49,7 @@ class Settings(Adw.PreferencesWindow):
         # Keep the settings dialog on top of (and blocking) the main window
         self.set_modal(True)
 
-        self.settings_json: dict[str, Any] = None  # type: ignore[assignment]  # late-init: load_json
+        self.settings_json: dict[str, Any] = None  # ty: ignore[invalid-assignment]  # late-init: load_json
         self.load_json()
 
         self.general_page = GeneralPage(settings=self)
