@@ -32,7 +32,14 @@ their order does not matter: "up volume" and "volume up" both find volume_up.
 
 Separators do not: the name and the query both collapse `_`, `-`, `.`, `/`,
 `\\` and `+` to a single space before anything compares, so "media next" finds
-media-next, media_next and media.next alike.
+media-next, media_next and media.next alike. A word that a pack writes with a
+separator inside it is found as one word as well, because a token that misses
+is tried again against the name with its separators taken out: "wifi" finds
+wi-fi that way. Such a match crosses a word boundary of the name, which is why
+it is the last thing tried.
+
+What the ladder does not do is spelling. It matches the words that are typed,
+so "batery" finds nothing where an edit ratio still offered battery.
 
 Why positions and not an edit ratio: an edit ratio scores the whole name
 against the whole query, so a long name loses for its length alone. Against
@@ -78,8 +85,9 @@ _MEMO_LIMIT = 50000
 # The ranking key of a name: the negated score first, so a plain ascending sort
 # puts the best match first; then where the query tokens sit in the name, so an
 # earlier hit wins a tie; then the length of the name, so the shorter of two
-# equal hits wins; then the name itself, so the order never depends on the
-# order the caller passed the names in.
+# equal hits wins; then the normalized name, so the order never depends on the
+# order the caller passed the names in. An empty query scores every name the
+# same and leaves the length out, so only the name orders it.
 RankKey = tuple[int, int, int, str]
 
 
@@ -150,7 +158,16 @@ class QueryRanker:
         return -self.rank_key(name)[0]
 
     def matches(self, name: str, threshold: int = SEARCH_SCORE_THRESHOLD) -> bool:
-        """Whether name earns a place in the grid."""
+        """Whether name earns a place in the grid.
+
+        A caller that wants only the names holding a whole word of the query
+        passes SCORE_WORD_PREFIX as the threshold.
+        """
+        if self.is_empty:
+            # The resting state of every grid. Answering it here costs no
+            # normalize and leaves no memo behind, which matters because this
+            # runs once per name in the pack on every pass.
+            return True
         return self.score(name) >= threshold
 
     def compare(self, name1: str, name2: str) -> int:
@@ -166,13 +183,31 @@ class QueryRanker:
 
     def _compute(self, name: str) -> RankKey:
         normalized = normalize(name)
-        if self.is_empty or normalized == self._query_normalized:
+        if self.is_empty:
+            # Every name answers an empty query alike, so the score and the
+            # position are the same for all of them and the length is left
+            # out. Only the name then orders the grid. Carrying the length
+            # here would order it by how long its names are, which reads as no
+            # order at all.
+            return (-SCORE_EXACT, 0, 0, normalized)
+        if normalized == self._query_normalized:
             return (-SCORE_EXACT, 0, len(normalized), normalized)
+
+        # Built on the first token that misses, and only for a name that
+        # holds a separator, because it is the same string otherwise.
+        stripped: str | None = None
 
         worst = SCORE_EXACT
         positions = 0
         for token in self._tokens:
             rung, position = _token_score(normalized, token)
+            if rung == SCORE_NO_MATCH and " " in normalized:
+                # A pack can write one word with a separator inside it, such
+                # as wi-fi for wifi. Try the name without its separators
+                # before giving the token up.
+                if stripped is None:
+                    stripped = normalized.replace(" ", "")
+                rung, position = _token_score(stripped, token)
             if rung == SCORE_NO_MATCH:
                 # One missed token drops the candidate, whatever the rest of
                 # the query scores.
@@ -204,6 +239,18 @@ def ranker(query: str) -> QueryRanker:
         fresh = QueryRanker(query)
         _cached_ranker = fresh
         return fresh
+
+
+def release_cache() -> None:
+    """Drop the cached ranker and the memo it holds.
+
+    A ranker that scored a whole pack holds a key per name of it. The window
+    that searched is the one to say when that is spent, because nothing in
+    here knows that the grid has gone.
+    """
+    global _cached_ranker
+    with _cache_lock:
+        _cached_ranker = None
 
 
 def score(name: str, query: str) -> int:

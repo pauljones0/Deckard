@@ -8,6 +8,7 @@ an installation: Material Icons, Tabler, Font Awesome and simple-icons.
 """
 import fixtures  # noqa: F401  (import first: isolated --data tempdir)
 
+import ast
 import functools
 import os
 
@@ -111,6 +112,66 @@ def test_empty_query_keeps_everything() -> None:
             assert score(name, query) == SCORE_EXACT
     assert not is_empty_query("battery")
     print("PASS: an empty query keeps every name")
+
+
+def test_empty_query_costs_nothing() -> None:
+    """The resting state of every grid must not build a memo.
+
+    A grid with an empty search box filters its whole pack on every pass, and
+    every name would otherwise be normalized and memoized for an answer that
+    is always the same.
+    """
+    empty = QueryRanker("")
+    for name in BATTERY + NOT_BATTERY:
+        assert empty.matches(name)
+    assert empty._keys == {}, (
+        f"the empty query memoized {len(empty._keys)} names for an answer it "
+        f"does not need to compute")
+
+    # A caller that ranks an empty query gets alphabetical order, not the
+    # length order that the scoring key would otherwise leave behind.
+    names = ["zebra", "a-very-long-name-indeed", "apple", "Bee"]
+    assert sorted(names, key=lambda name: rank_key(name, "")) == [
+        "a-very-long-name-indeed", "apple", "Bee", "zebra"]
+    print("PASS: an empty query builds no memo and sorts alphabetically")
+
+
+def test_cache_is_released_on_demand() -> None:
+    """The window that searched says when the memo is spent."""
+    held = ranker("battery")
+    held.rank_key("battery_full")
+    assert asset_search._cached_ranker is held
+
+    asset_search.release_cache()
+    assert asset_search._cached_ranker is None, "the cached ranker survived"
+
+    # The next query builds a fresh one, and scoring still answers the same.
+    assert ranker("battery") is not held
+    assert score("battery_full", "battery") == SCORE_PREFIX
+    print("PASS: the scoring cache is released on demand")
+
+
+def test_a_word_written_with_a_separator() -> None:
+    """A pack can write one word with a separator inside it.
+
+    The name is tried again with its separators taken out when a token misses,
+    so wi-fi answers "wifi". Such a match crosses a word boundary of the name,
+    so it is the last thing tried and never outranks a name that holds the
+    word as written.
+    """
+    for name in ("wi-fi", "wi_fi", "wi.fi"):
+        assert score(name, "wifi") == SCORE_EXACT, f"{name} did not answer wifi"
+    assert score("e-mail", "email") == SCORE_EXACT
+    assert score("micro-sd-card", "microsd") == SCORE_PREFIX
+
+    # The name as written still wins.
+    assert ordered(["wi-fi", "wifi"], "wifi") == ["wifi", "wi-fi"]
+
+    # It buys a real match, and it costs matches that cross a word boundary:
+    # "onoff" now finds balloon-off, which holds "on" and "off" as neighbours.
+    assert score("balloon-off", "onoff") == SCORE_CONTAINS
+    assert score("brightness", "wifi") == SCORE_NO_MATCH
+    print("PASS: a word written with a separator answers the word")
 
 
 def test_threshold_is_the_lowest_rung() -> None:
@@ -254,15 +315,28 @@ def test_module_stays_headless() -> None:
     The pack choosers, the custom-asset grid and a search across packs all
     score through it, and a GTK import here would put every one of those
     behind a display and out of reach of a headless check.
+
+    Imports only: the docstring of the module explains itself in terms of the
+    windows that use it, and naming GTK in prose costs nothing.
     """
     path = os.path.join(REPO_ROOT, "src", "windows", "AssetManager", "asset_search.py")
     with open(path, encoding="utf-8") as handle:
-        source = handle.read()
-    for banned in ("import gi", "from gi", "Gtk", "GLib", "Adw", "globals as gl"):
-        assert banned not in source, (
-            f"asset_search.py names {banned!r}; the scoring module must stay "
-            f"free of GTK and of the globals it drags in")
-    print("PASS: the scoring module names no GTK")
+        tree = ast.parse(handle.read(), path)
+
+    banned = {"gi", "gi.repository", "globals", "GtkHelper"}
+    imported: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imported |= {alias.name for alias in node.names}
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            imported.add(node.module)
+    offences = sorted(name for name in imported
+                      if name in banned or name.split(".")[0] in banned)
+    assert not offences, (
+        f"asset_search.py imports {offences}; the scoring module must stay "
+        f"free of GTK and of the globals it drags in")
+    assert imported, "the import scan found nothing, so it checks nothing"
+    print(f"PASS: the scoring module imports only {sorted(imported)}")
 
 
 def main() -> int:
@@ -272,6 +346,9 @@ def main() -> int:
     test_ladder_rungs()
     test_tokens_are_an_and()
     test_empty_query_keeps_everything()
+    test_empty_query_costs_nothing()
+    test_cache_is_released_on_demand()
+    test_a_word_written_with_a_separator()
     test_threshold_is_the_lowest_rung()
     test_battery_regression()
     test_ranking_order()
