@@ -604,11 +604,19 @@ class GenericPackChooserStack(Gtk.Stack, Generic[LeafT]):
     LEAF_CHOOSER_CLASS: "type[LeafT]" = None  # type: ignore[assignment]  # late-init: subclass override, e.g. IconPacks.Stack
     LEAF_CHILD_TITLE: str = None  # type: ignore[assignment]  # late-init: subclass override, e.g. IconPacks.Stack
 
+    # build() reads this. A page starts a build worker in its constructor, and
+    # that worker calls back into state prepare() creates, so a build that ran
+    # first would race an attribute that does not exist yet. The failure it
+    # gives is silent: @log.catch on the page build swallows the raise, and a
+    # deferred pre-selection then never drains.
+    _prepared = False
+
     def __init__(self, asset_manager: "AssetManager", *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self.asset_manager = asset_manager
 
         self.prepare()
+        self._prepared = True
         self.build()
 
     def prepare(self) -> None:
@@ -619,6 +627,11 @@ class GenericPackChooserStack(Gtk.Stack, Generic[LeafT]):
         """
 
     def build(self) -> None:
+        if not self._prepared:
+            raise RuntimeError(
+                f"{type(self).__name__}.build() ran before prepare(). Each page "
+                "starts a build worker in its constructor, and that worker "
+                "reaches state prepare() creates.")
         self.pack_chooser = self.PACK_CHOOSER_CLASS(self, self.asset_manager)
         self.add_titled(self.pack_chooser, "pack-chooser", "Chooser")
 

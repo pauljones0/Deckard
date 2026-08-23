@@ -64,7 +64,11 @@ class AssetTypeDescriptor:
     get_to_update_attr: str      # backend method name that lists the outdated
     update_all_attr: str         # backend method name that reinstalls those
     install_attr: str            # backend method name that installs one entry
-    uninstall_attr: str          # backend method name that removes one entry
+    # Backend method name that removes one entry, given the record. None where
+    # the class removes an install by another key, which the plugin class does
+    # by id: the shared record-passing uninstall then refuses to run, and the
+    # preview class of that row must carry an uninstall of its own.
+    uninstall_attr: str | None
     get_custom_attr: str | None  # backend method name for user-added entries
     badge_key_prefix: str        # locale key prefix of the preview badges
     search_placeholder_key: str  # locale key of the section search placeholder
@@ -84,10 +88,10 @@ PLUGIN = AssetTypeDescriptor(
     get_to_update_attr="get_plugins_to_update",
     update_all_attr="update_all_plugins",
     install_attr="install_plugin",
-    # uninstall_plugin takes the plugin id, where the data-only uninstallers
-    # take the record. PluginPreview.uninstall calls it, and the shared
-    # preview's record-passing uninstall does not run for this class.
-    uninstall_attr="uninstall_plugin",
+    # No record-taking uninstall. uninstall_plugin takes the plugin id, so
+    # PluginPreview.uninstall names that method itself, and the shared
+    # uninstall refuses this row rather than call it with the wrong argument.
+    uninstall_attr=None,
     get_custom_attr="get_custom_plugins",
     badge_key_prefix="store.badges.plugin",
     search_placeholder_key="store.plugins.search-placeholder",

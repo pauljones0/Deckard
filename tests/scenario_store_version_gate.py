@@ -117,7 +117,8 @@ def test_duplicate_copies_are_gone() -> None:
 COLLAPSED_PAGE_METHODS = frozenset({
     "__init__",        # the search placeholder both sections take
     "load",            # the fetch, the compatibility split and the append
-    "build_preview",   # the card class, resolved from the descriptor name
+    "preview_cls",     # the card class, resolved from the descriptor name
+    "build_preview",   # the card itself
 })
 COLLAPSED_PREVIEW_METHODS = frozenset({
     "__init__",                 # labels, image, badges, border, state, description
@@ -171,6 +172,7 @@ def _class_defs() -> "list[tuple[Path, ast.ClassDef]]":
 
 
 def _base_names(node: "ast.ClassDef") -> "set[str]":
+    """The names this class lists as its direct bases."""
     names: set[str] = set()
     for base in node.bases:
         if isinstance(base, ast.Name):
@@ -178,6 +180,45 @@ def _base_names(node: "ast.ClassDef") -> "set[str]":
         elif isinstance(base, ast.Attribute):
             names.add(base.attr)
     return names
+
+
+def _class_index(defs: "list[tuple[Path, ast.ClassDef]]") -> "dict[str, ast.ClassDef]":
+    """Class name to its definition, over the whole scanned tree.
+
+    A duplicate name would make the closure below follow the wrong bases, so
+    it fails here instead of reading as a class with no ancestry.
+    """
+    index: dict[str, ast.ClassDef] = {}
+    for path, node in defs:
+        assert node.name not in index, (
+            f"two classes under {STORE_WINDOW_DIR.name} are named {node.name} "
+            f"({path.name} is the second). The ancestry closure this guard "
+            "walks cannot tell them apart."
+        )
+        index[node.name] = node
+    return index
+
+
+def _ancestor_names(node: "ast.ClassDef",
+                    index: "dict[str, ast.ClassDef]") -> "set[str]":
+    """Every base of this class, direct and inherited.
+
+    A direct-base read alone lets a copy hide one level down: a class that
+    subclasses PluginPreview and re-grows install() is a card the descriptor
+    table can still name, and a check that looks at its bases only would see
+    a class it does not govern.
+    """
+    ancestors: set[str] = set()
+    queue = list(_base_names(node))
+    while queue:
+        name = queue.pop()
+        if name in ancestors:
+            continue
+        ancestors.add(name)
+        parent = index.get(name)
+        if parent is not None:
+            queue.extend(_base_names(parent))
+    return ancestors
 
 
 def _defined_names(node: "ast.ClassDef") -> "set[str]":
@@ -219,8 +260,15 @@ def test_no_store_tab_regrows_a_per_family_copy() -> None:
     seen_previews: set[str] = set()
     offences: list[str] = []
 
-    for path, node in _class_defs():
-        bases = _base_names(node)
+    defs = _class_defs()
+    index = _class_index(defs)
+
+    for path, node in defs:
+        # Ancestry, so a copy one level below the shared class is governed
+        # too. The direct bases stay in their own name for the reach-past
+        # check below, which is about what a class inherits from first.
+        bases = _ancestor_names(node, index)
+        direct_bases = _base_names(node)
         defined = _defined_names(node)
 
         if "StoreAssetPage" in bases:
@@ -242,7 +290,7 @@ def test_no_store_tab_regrows_a_per_family_copy() -> None:
                     "StoreAssetPreview already carries for every asset class")
 
         for base, expected in EXPECTED_BASE_SUBCLASSES.items():
-            if base in bases and node.name not in expected:
+            if base in direct_bases and node.name not in expected:
                 offences.append(
                     f"{path.name}: {node.name} subclasses {base} directly. "
                     f"Only {sorted(expected)} may, and a new asset class is a "
@@ -268,12 +316,54 @@ def test_every_asset_class_reaches_the_store_through_a_descriptor_row() -> None:
 
     for descriptor in ASSET_TYPES:
         for field in ("badge_key_prefix", "search_placeholder_key",
-                      "preview_cls_name", "uninstall_attr"):
+                      "preview_cls_name"):
             value = getattr(descriptor, field)
             assert isinstance(value, str) and value, (
                 f"{descriptor.display_name} descriptor carries no {field}; the "
                 "shared store tab reads that name at build time"
             )
+
+
+def test_uninstall_row_matches_the_card_that_reads_it() -> None:
+    """A row names a record-taking uninstall, or the card overrides it.
+
+    The shared uninstall passes the record. A row that named a method taking
+    something else, as the plugin one does by naming an id, would call it with
+    the wrong argument the moment its card stopped overriding uninstall.
+    """
+    import inspect
+
+    from src.backend.Store.StoreBackend import StoreBackend
+    from src.backend.Store.asset_types import ASSET_TYPES
+    from src.windows.Store.AssetPage import StoreAssetPage, StoreAssetPreview
+    from src.windows.Store.Plugins.PluginPage import PluginPage
+
+    # The page class that carries each row, which is the module its card name
+    # resolves in. Building one with __new__ runs the real resolution without
+    # a GTK widget.
+    page_cls_for = {True: PluginPage, False: StoreAssetPage}
+
+    for descriptor in ASSET_TYPES:
+        page = page_cls_for[descriptor.is_plugin].__new__(page_cls_for[descriptor.is_plugin])
+        page.descriptor = descriptor
+        card_cls = page.preview_cls()
+
+        if descriptor.uninstall_attr is None:
+            assert card_cls.uninstall is not StoreAssetPreview.uninstall, (
+                f"the {descriptor.display_name} row names no record-taking "
+                f"uninstall, so {card_cls.__name__} must define one of its "
+                "own. The shared uninstall refuses this row and raises."
+            )
+            continue
+
+        assert card_cls.uninstall is StoreAssetPreview.uninstall, (
+            f"{card_cls.__name__} overrides uninstall although its row names "
+            f"{descriptor.uninstall_attr}. One of the two is dead."
+        )
+        method = getattr(StoreBackend, descriptor.uninstall_attr)
+        # None stands in for self. The bind proves the named method takes the
+        # record positionally, which is how the shared uninstall calls it.
+        inspect.signature(method).bind(None, descriptor.data_cls())
 
 
 def main() -> None:
@@ -285,6 +375,7 @@ def main() -> None:
     test_shared_store_classes_carry_the_collapsed_methods()
     test_no_store_tab_regrows_a_per_family_copy()
     test_every_asset_class_reaches_the_store_through_a_descriptor_row()
+    test_uninstall_row_matches_the_card_that_reads_it()
     print("scenario_store_version_gate: PASS")
 
 

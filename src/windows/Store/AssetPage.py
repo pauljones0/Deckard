@@ -104,18 +104,21 @@ class StoreAssetPage(StorePage):
         every row its backend returns."""
         return False
 
-    def build_preview(self, asset: StoreAssetData) -> "StoreAssetPreview":
-        """Build one card. append_preview_on_main runs this on the main loop.
+    def preview_cls(self) -> "type[StoreAssetPreview]":
+        """The card class this tab builds, resolved when it is asked for.
 
-        The class comes from a name, read out of the module that defines this
-        page class when the card is built. A class captured at import time
+        The descriptor carries the name, and the lookup runs against the
+        module that defines this page class. A class captured at import time
         would run past the recording stub that the off-main construction test
         puts in that module.
         """
         page_module = sys.modules[type(self).__module__]
-        preview_cls = cast("type[StoreAssetPreview]",
-                           getattr(page_module, self.descriptor.preview_cls_name))
-        return preview_cls(page=self, asset_data=asset)
+        return cast("type[StoreAssetPreview]",
+                    getattr(page_module, self.descriptor.preview_cls_name))
+
+    def build_preview(self, asset: StoreAssetData) -> "StoreAssetPreview":
+        """Build one card. append_preview_on_main runs this on the main loop."""
+        return self.preview_cls()(page=self, asset_data=asset)
 
 
 class StoreAssetPreview(StorePreview):
@@ -200,12 +203,21 @@ class StoreAssetPreview(StorePreview):
                         title=f"{noun[:1].upper()}{noun[1:]} install failed")
 
     def uninstall(self) -> None:
+        uninstall_attr = self.descriptor.uninstall_attr
+        if uninstall_attr is None:
+            # The row names no record-taking uninstall, so this class removes
+            # an install by another key and its preview owes an uninstall of
+            # its own. Reaching here means that override is missing, and
+            # calling anything with the record would pass the wrong argument.
+            raise NotImplementedError(
+                f"{self.descriptor.display_name} takes no record-passing "
+                f"uninstall; {type(self).__name__} must define its own")
         backend = self.store.backend
         if backend is None:
             log.error("Store backend unavailable; cannot uninstall "
                       f"{self.asset_data.asset_id}")
             return
-        getattr(backend, self.descriptor.uninstall_attr)(self.asset_data)
+        getattr(backend, uninstall_attr)(self.asset_data)
         self.set_install_state(0)
 
     def update(self) -> None:

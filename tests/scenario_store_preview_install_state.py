@@ -37,16 +37,38 @@ def pump_main_context(rounds: int = 50) -> None:
             ctx.iteration(False)
 
 
+def _install_stub(descriptor, install_result):
+    """A stand-in for one backend install method, with its real signature.
+
+    A stub that swallowed every call shape would hide the trap this scenario
+    now covers. install_icon takes icon_data, install_wallpaper takes
+    wallpaper_data, and install_sd_plus_bar_wallpaper takes
+    sd_plus_bar_wallpaper_data. A shared install written with any one of those
+    keywords works for that class and raises TypeError for the rest. Binding
+    the call against the real signature raises here exactly where the real
+    backend would.
+    """
+    import inspect
+
+    from src.backend.Store.StoreBackend import StoreBackend
+
+    signature = inspect.signature(getattr(StoreBackend, descriptor.install_attr))
+
+    def stub(*args, **kwargs):
+        # None stands in for self, which a bound method would supply.
+        signature.bind(None, *args, **kwargs)
+        return install_result
+
+    return stub
+
+
 def _make_fake(descriptor, data, install_result):
     """A duck-typed preview self. It records set_install_state and notify
     calls, over a backend stub whose install_* answers install_result.
-
-    The stub takes its argument either way, because the caller's convention is
-    not what this scenario pins.
     """
     state = {"install_state": 0, "set_calls": [], "notified": 0}
     backend = types.SimpleNamespace(
-        **{descriptor.install_attr: lambda *args, **kwargs: install_result})
+        **{descriptor.install_attr: _install_stub(descriptor, install_result)})
 
     def set_install_state(s):
         state["set_calls"].append(s)
@@ -110,6 +132,29 @@ def check_sd_plus_preview_400() -> None:
         Err(ErrReason.INVALID_ASSET, "400-shaped"), "SD+ bar wallpaper")
 
 
+def check_install_rows_bind_against_the_real_backend() -> None:
+    """Every row's install method must take the record the shared install
+    passes it.
+
+    The stub above answers any call shape, so it cannot see a call the real
+    backend would refuse. A keyword call is the trap: install_icon takes
+    icon_data, install_wallpaper takes wallpaper_data, and a shared install
+    written with either name works for one class and raises TypeError for the
+    other three. This binds the row against the real signature instead.
+    """
+    import inspect
+
+    from src.backend.Store.StoreBackend import StoreBackend
+
+    for descriptor in asset_types.ASSET_TYPES:
+        method = getattr(StoreBackend, descriptor.install_attr)
+        # None stands in for self. The bind proves the record goes in
+        # positionally, which is how the shared install calls it.
+        inspect.signature(method).bind(None, descriptor.data_cls())
+    print(f"PASS: all {len(asset_types.ASSET_TYPES)} install rows take their "
+          "record positionally on the real backend")
+
+
 def check_icon_preview_success_flips_installed() -> None:
     """A successful install still flips the button. An Ok(None) reaches the
     idle-marshalled set_install_state, which this check pumps."""
@@ -135,6 +180,7 @@ def main() -> None:
     check_icon_preview_404()
     check_wallpaper_preview_offline()
     check_sd_plus_preview_400()
+    check_install_rows_bind_against_the_real_backend()
     check_icon_preview_success_flips_installed()
     print("scenario_store_preview_install_state: PASS")
 
