@@ -49,7 +49,9 @@ def _stub_asset_fetches(sb: StoreBackend, manifest: dict) -> None:
 
 
 # One entry per catalog, a store-JSON item pinned to a compatible version.
-_ENTRY = {"url": "https://github.com/Example/TestPack", "commits": {"1.5.0": "abc123"}}
+# The pinned value must be a full 40-hex sha; the resolver drops anything
+# else before the prepare paths under test here ever run.
+_ENTRY = {"url": "https://github.com/Example/TestPack", "commits": {"1.5.0": "abc123" + "0" * 34}}
 _MANIFEST = {"id": "com_example_TestPack", "name": "Test Pack",
              "version": "1.0", "thumbnail": "store/thumb.png"}
 
@@ -97,8 +99,8 @@ def test_catalog_keeps_entry_with_failed_thumbnail() -> None:
     fixtures.install_stub_globals()
     sb = _make_backend()
 
-    good = {"url": "https://github.com/Example/GoodPack", "commits": {"1.5.0": "good"}}
-    poison = {"url": "https://github.com/Example/PoisonPack", "commits": {"1.5.0": "poison"}}
+    good = {"url": "https://github.com/Example/GoodPack", "commits": {"1.5.0": "900d" + "0" * 36}}
+    poison = {"url": "https://github.com/Example/PoisonPack", "commits": {"1.5.0": "b010" + "0" * 36}}
 
     def fake_get_stores():
         return [("https://github.com/Example/store", "main")]

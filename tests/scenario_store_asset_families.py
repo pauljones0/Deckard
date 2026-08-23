@@ -431,20 +431,19 @@ def test_unparseable_url_and_missing_url_become_none() -> None:
     )
 
 
-def test_no_compatible_version_filtered() -> None:
-    """When no version resolves, prepare returns None and
+def test_unpinned_entry_filtered() -> None:
+    """When an entry pins nothing, prepare returns None and
     process_store_data's isinstance filter drops it, so the catalog list
     omits the entry."""
     _stub_globals()
     sb = _make_backend()
     _reset_dirs(sb)
     _stub_fetch_layer(sb)
-    # Force version resolution to yield nothing. Both are instance stubs, so
-    # this also confirms the getattr dispatch reaches them.
-    sb.get_newest_compatible_version = lambda versions: None
-    sb.get_newest_version = lambda versions: None
 
+    # An empty version map is the real no-resolution shape: the entry pins
+    # nothing, so resolve_pinned_revision returns None.
     entry = _catalog_entry()
+    entry["commits"] = {}
     assert sb.prepare_icon(entry, include_image=True, verified=False) is None, (
         "no resolvable version must drop the entry (prepare returns None)"
     )
@@ -678,7 +677,7 @@ def main() -> None:
     test_prepare_backfills_origin_stamp()
     test_manifest_fetch_error_propagates()
     test_unparseable_url_and_missing_url_become_none()
-    test_no_compatible_version_filtered()
+    test_unpinned_entry_filtered()
     test_canonical_properties_map_fields()
     test_update_decision_matrix_per_type()
     test_update_all_counts_only_successful_installs()

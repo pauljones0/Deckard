@@ -20,6 +20,12 @@ bundle as a release asset.
 
 ### Fixed
 
+- The plugin store reads both store catalog formats, the old per-version
+  commit map and the new single-commit form, so a store that publishes the
+  new format still lists, installs and updates its assets instead of showing
+  an empty page. A store entry that names a branch now resolves that branch
+  everywhere; a broken pin beside it no longer hides the entry from the
+  store window while updates keep following the branch.
 - The search box and the image and video buttons on the Custom Assets tab now
   filter what the grid shows, and the grid lists assets by name. The tab
   handed the grid its search filter and its sort order under names the grid
