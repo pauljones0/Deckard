@@ -192,10 +192,10 @@ class StoreCache:
         self.write_lock = threading.Lock()
 
         # One lock per cache key. A writer holds it from open to close (see
-        # _AtomicCacheWriter), so two store tabs that force a refetch of
-        # versions.json cannot interleave their writes. A reader needs no
-        # lock, because os.replace shows it the old file or the new complete
-        # file.
+        # _AtomicCacheWriter), so two store tabs that fetch the same catalog
+        # file of a custom store cannot interleave their writes. A reader
+        # needs no lock, because os.replace shows it the old file or the new
+        # complete file.
         #
         # Nothing evicts this map. Its key is the cache string
         # (user::repo::branch::type::path), so the number of distinct store

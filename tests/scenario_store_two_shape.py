@@ -6,8 +6,8 @@ carries. Both shapes stay live across catalog refs, and a few entries
 carry both. This pins the resolver's precedence and validation, drives a
 hash-only entry through the prepare, update-check and claim paths for
 every asset family, pins the branch arm's priority over any pin at all
-three sites, and pins the official-branch fallback for an app version
-that versions.json does not map.
+three sites, and pins the official ref: the vetted STORE_PIN commit,
+decided with no fetch.
 """
 
 import fixtures  # noqa: F401  (isolated --data tempdir; import first)
@@ -66,7 +66,6 @@ def _make_backend() -> StoreBackend:
     sb._fetch_limiter = threading.Semaphore(StoreBackend.MAX_CONCURRENT_REQUESTS)
     sb._prepare_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="store-prepare")
     sb.official_authors = []
-    sb.official_store_branch_cache = None
     return sb
 
 
@@ -213,35 +212,54 @@ def test_claim_reads_the_hash_revision() -> None:
     assert seen_refs == [] and pending, "a pin-less entry must not fetch or claim"
 
 
-def test_official_branch_unmapped_version_falls_back() -> None:
-    """An app version that versions.json does not map falls back to the
-    pinned store branch. A default to the tip would silently switch the
-    catalog content."""
+def test_official_ref_is_the_vetted_pin() -> None:
+    """The official catalog reads at STORE_PIN, a full commit sha the
+    resolver's own shape gate accepts, decided with no remote fetch. A
+    ref that upstream could move would let the catalog change without a
+    vet."""
+    from src.backend.Store.catalog_entry import COMMIT_SHA_RE
+
     _stub_globals()
     sb = _make_backend()
-    fetches = []
-    def get_remote_file(*args, **kwargs):
-        fetches.append(args)
-        return json.dumps({"9.9.9": "other"})
-    sb.get_remote_file = get_remote_file
-    assert sb.get_official_store_branch() == StoreBackend.STORE_BRANCH
-    # Unlike a failed fetch, an unmapped version is a stable answer, so
-    # it caches and a catalog load does not refetch versions.json.
-    assert sb.official_store_branch_cache == StoreBackend.STORE_BRANCH
-    assert sb.get_official_store_branch() == StoreBackend.STORE_BRANCH
-    assert len(fetches) == 1, "the unmapped answer must be served from the cache"
+    def no_fetch(*args, **kwargs):
+        raise AssertionError("resolving the official ref must fetch nothing")
+    sb.get_remote_file = no_fetch
 
-    # A version mapped to null also falls back, but stays uncached like
-    # the other malformed-content arms.
-    sb.official_store_branch_cache = None
-    sb.get_remote_file = lambda *args, **kwargs: json.dumps({gl.app_version: None})
-    assert sb.get_official_store_branch() == StoreBackend.STORE_BRANCH
-    assert sb.official_store_branch_cache is None
+    assert COMMIT_SHA_RE.fullmatch(StoreBackend.STORE_PIN), (
+        "STORE_PIN must be a full commit sha, not a movable ref"
+    )
+    assert sb.get_official_store_branch() == StoreBackend.STORE_PIN
+    assert sb.get_stores()[0] == (StoreBackend.STORE_REPO_URL, StoreBackend.STORE_PIN)
 
-    # A mapped version still follows the mapping, and caches it.
-    sb.get_remote_file = lambda *args, **kwargs: json.dumps({gl.app_version: "pinned-branch"})
-    assert sb.get_official_store_branch() == "pinned-branch"
-    assert sb.official_store_branch_cache == "pinned-branch"
+    # The authors file reads at the same pin, and without a forced
+    # refetch: a pinned commit is immutable, so the cache may serve it.
+    calls: list = []
+    def capture(*args, **kwargs):
+        calls.append((args, kwargs))
+        return json.dumps(["acme"])
+    sb.get_remote_file = capture
+    assert sb.get_official_authors() == ["acme"]
+    (args, kwargs), = calls
+    assert args[2] == StoreBackend.STORE_PIN, f"authors must read at the pin, got {args!r}"
+    assert not kwargs.get("force_refetch"), "an immutable ref must not force a refetch"
+
+
+def test_catalog_refetch_follows_ref_mutability() -> None:
+    """A catalog file at a pinned commit is served from cache with no
+    forced refetch, so the store works offline; a branch-named ref still
+    forces one, because a branch moves."""
+    _stub_globals()
+    sb = _make_backend()
+    seen: list = []
+    def capture(url, filename, branch, force_refetch=False):
+        seen.append(force_refetch)
+        return "[]"
+    sb.get_remote_file = capture
+    sb.fetch_and_parse_store_json(URL, "Plugins.json", StoreBackend.STORE_PIN)
+    sb.fetch_and_parse_store_json(URL, "Plugins.json", "main")
+    assert seen == [False, True], (
+        f"refetch must follow ref mutability (pin, branch), got {seen!r}"
+    )
 
 
 def main() -> None:
@@ -249,7 +267,8 @@ def main() -> None:
     test_prepare_families_on_hash_entry()
     test_branch_wins_over_any_pin()
     test_claim_reads_the_hash_revision()
-    test_official_branch_unmapped_version_falls_back()
+    test_official_ref_is_the_vetted_pin()
+    test_catalog_refetch_follows_ref_mutability()
     print("scenario_store_two_shape: OK")
 
 

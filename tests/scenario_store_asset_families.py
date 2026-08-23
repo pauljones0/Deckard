@@ -129,7 +129,6 @@ def _make_backend() -> StoreBackend:
     sb._fetch_limiter = threading.Semaphore(StoreBackend.MAX_CONCURRENT_REQUESTS)
     sb._prepare_pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="store-prepare")
     sb.official_authors = []
-    sb.official_store_branch_cache = "1.5.0"
     return sb
 
 

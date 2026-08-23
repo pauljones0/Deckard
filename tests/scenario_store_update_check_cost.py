@@ -31,8 +31,6 @@ APP_MAJOR = int(gl.app_version.split(".")[0])
 OLD_VERSION = f"{APP_MAJOR}.0.0"
 NEW_VERSION = f"{APP_MAJOR}.1.0"
 
-STORE_BRANCH = "1.5.0"
-
 
 def _sha(seed: str) -> str:
     """A 40 hex char stand-in for a commit sha, derived from a name, so a
@@ -248,8 +246,6 @@ def _make_backend(store: _FakeStore) -> StoreBackend:
     sb._fetch_limiter = threading.Semaphore(StoreBackend.MAX_CONCURRENT_REQUESTS)
     sb._prepare_pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="store-prepare")
     sb.official_authors = []
-    # Pin the branch, so the versions.json lookup stays out of the count.
-    sb.official_store_branch_cache = STORE_BRANCH
     sb.request_from_url = store.request_from_url
     return sb
 

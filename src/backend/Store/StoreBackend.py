@@ -42,7 +42,15 @@ from src.backend import http_client
 from src.Signals import Signals
 
 import globals as gl
-from src.windows.Store.StoreData import IconData, PluginData, SDPlusBarWallpaperData, StoreData, StoreDataT, WallpaperData
+from src.windows.Store.StoreData import (
+    IconData,
+    PluginData,
+    SDPlusBarWallpaperData,
+    StoreData,
+    StoreDataT,
+    WallpaperData,
+    is_min_app_version_satisfied,
+)
 from src.backend.Store.asset_types import (
     ASSET_TYPES,
     AssetTypeDescriptor,
@@ -53,11 +61,6 @@ from src.backend.Store.asset_types import (
 )
 from src.backend.Store.catalog_entry import COMMIT_SHA_RE, resolve_pinned_revision
 from src.backend.Store.store_result import Err, ErrReason, Ok, StoreFetchError, StoreResult
-
-
-# Distinguishes an app version versions.json does not map from one it
-# maps to null, so the two failure logs stay truthful.
-_UNMAPPED = object()
 
 
 class _ResolvedVersion(NamedTuple):
@@ -128,8 +131,14 @@ class UpdateCheck(NamedTuple):
 class StoreBackend:
     STORE_REPO_URL = "https://github.com/StreamController/StreamController-Store" #"https://github.com/StreamController/StreamController-Store"
     STORE_CACHE_PATH = "Store/cache"
-    # STORE_CACHE_PATH = os.path.join(gl.DATA_PATH, STORE_CACHE_PATH)
-    STORE_BRANCH = "1.5.0"
+
+    # The official catalog is read at this exact commit of the store
+    # repository, never at a branch tip or through versions.json. A
+    # hash-shape entry auto-updates to whatever the catalog pins, so the
+    # catalog itself must not move without review. Bump only after
+    # scripts/vet_store_pin.py has diffed the candidate against this value
+    # and its minimum-app-version gate passed; put the diff in the MR.
+    STORE_PIN = "aac7c77cc74f92c46bcd816fe07963d3cff641c3"
 
     # Names the repository that a tree came from. Every install writes it
     # next to VERSION. The catalog names repositories, and an install
@@ -224,8 +233,6 @@ class StoreBackend:
         # pool cannot starve itself.
         self._prepare_pool = ThreadPoolExecutor(max_workers=self.MAX_CONCURRENT_REQUESTS, thread_name_prefix="store-prepare")
 
-        self.official_store_branch_cache: str | None = None
-
         # Seed the fallback list of official authors.
         self.official_authors = ["Core447", "StreamController"]
 
@@ -244,14 +251,7 @@ class StoreBackend:
         settings = gl.settings_manager.app()
 
         stores = []
-        branch = self.get_official_store_branch()
-        if not isinstance(branch, str) or not branch:
-            # get_official_store_branch returns a str. Enforce that here too,
-            # because a non-str branch reaches build_url urls and cache keys.
-            log.error(f"Official store branch resolved to {branch!r}; using {self.STORE_BRANCH}")
-            branch = self.STORE_BRANCH
-        log.info(f"Official store branch: {branch}")
-        stores.append((self.STORE_REPO_URL, branch))
+        stores.append((self.STORE_REPO_URL, self.get_official_store_branch()))
 
         if settings.enable_custom_stores:
             for store in settings.custom_stores:
@@ -269,10 +269,10 @@ class StoreBackend:
                 custom_branch = store.get("branch")
                 if not isinstance(custom_branch, str) or not custom_branch:
                     # A third-party store follows the "main" convention. The
-                    # official store instead falls back to STORE_BRANCH,
-                    # currently "1.5.0", a version-pinned tag of this app's
-                    # own store repository, which a custom repository does
-                    # not share. The two values differ for that reason.
+                    # official store instead reads STORE_PIN, a vetted
+                    # commit of this app's own store repository, which a
+                    # custom repository does not share. The two defaults
+                    # differ for that reason.
                     custom_branch = "main"
                 stores.append((url, custom_branch))
 
@@ -298,46 +298,13 @@ class StoreBackend:
         return plugins
     
     def get_official_store_branch(self) -> str:
-        """Always returns a str branch name. Every failure falls back to
-        STORE_BRANCH, whether the fetch failed with a cache too stale, or
-        versions.json is truncated or corrupt. An error object here would
-        reach the (url, branch) tuples of get_stores, and build_url would
-        interpolate it into urls and cache keys. The fallback never enters
-        official_store_branch_cache, so a later successful fetch corrects it.
-        """
-        if self.official_store_branch_cache is not None:
-            return self.official_store_branch_cache
-        try:
-            versions_file = self.get_remote_file(self.STORE_REPO_URL, "versions.json", branch_name="versions", force_refetch=True)
-        except StoreFetchError:
-            log.warning(f"Could not fetch versions.json; falling back to store branch {self.STORE_BRANCH}")
-            return self.STORE_BRANCH
-        try:
-            versions = json.loads(versions_file)
-        except (json.decoder.JSONDecodeError, TypeError) as e:
-            # The stale-cache fallback can serve a truncated versions.json.
-            # A raise here would freeze the store tab's spinner and leave the
-            # page marked as loaded.
-            log.error(f"Corrupt versions.json; falling back to store branch {self.STORE_BRANCH}: {e}")
-            return self.STORE_BRANCH
-        if not isinstance(versions, dict):
-            log.error(f"versions.json is not an object; falling back to store branch {self.STORE_BRANCH}")
-            return self.STORE_BRANCH
-        v = versions.get(gl.app_version, _UNMAPPED)
-        if v is _UNMAPPED:
-            # No default to "main" here: an unmapped app version would then
-            # silently follow whatever catalog content the tip carries. The
-            # pinned fallback is the deliberate choice, and unlike the
-            # failure arms above it is a stable answer, not a transient
-            # one, so it enters the cache and costs no refetch per load.
-            log.error(f"versions.json does not map app version {gl.app_version}; falling back to store branch {self.STORE_BRANCH}")
-            self.official_store_branch_cache = self.STORE_BRANCH
-            return self.STORE_BRANCH
-        if not isinstance(v, str) or not v:
-            log.error(f"versions.json maps {gl.app_version} to {v!r}; falling back to store branch {self.STORE_BRANCH}")
-            return self.STORE_BRANCH
-        self.official_store_branch_cache = v
-        return v
+        """The ref every official-store fetch reads: STORE_PIN, a vetted
+        commit of the store repository. The catalog never moves because
+        upstream edited a branch or versions.json; it moves when the pin
+        is bumped, after the review scripts/vet_store_pin.py supports.
+        The name says branch because get_stores consumes (url, ref) pairs
+        that a branch name also fits."""
+        return self.STORE_PIN
 
     def request_from_url(self, url: str) -> "requests.Response":
         # Callers run on worker threads, the prepare pool and the UI install
@@ -512,13 +479,20 @@ class StoreBackend:
         return cast("str | None", commits[0].get("sha"))
     
     def get_official_authors(self) -> list[str]:
-        authors_json = self.get_remote_file(self.STORE_REPO_URL, "OfficialAuthors.json", self.STORE_BRANCH, force_refetch=True)
+        # Read at the same pin as the catalog, so the authors view and the
+        # entries it verifies are one snapshot. A pinned commit is
+        # immutable, so the cache may serve it and no refetch is forced.
+        authors_json = self.get_remote_file(self.STORE_REPO_URL, "OfficialAuthors.json", self.STORE_PIN)
         # The catalog file is a list of GitHub usernames; the cast trusts that shape.
         return cast(list[str], json.loads(authors_json))
 
     def fetch_and_parse_store_json(self, url: str, filename: str, branch: str, n_stores_with_errors: int = 0) -> "tuple[Any, int]":
         try:
-            store_file_json = self.get_remote_file(url, filename, branch, force_refetch=True)
+            # A catalog at a pinned commit is immutable, so the cache may
+            # serve it with no staleness bound, and the store then works
+            # offline. A branch ref moves, so it stays a forced fetch.
+            refetch = COMMIT_SHA_RE.fullmatch(branch) is None
+            store_file_json = self.get_remote_file(url, filename, branch, force_refetch=refetch)
             store_file_json = json.loads(store_file_json)
             return store_file_json, n_stores_with_errors
         except StoreFetchError:
@@ -906,7 +880,7 @@ class StoreBackend:
     def read_local_manifest_id(asset_path: str) -> str | None:
         """The id an installed tree claims for itself. It equals the
         directory name for a canonical install, which install_* creates and
-        _staged_tree_id_matches enforces. It differs for a renamed directory
+        _staged_tree_acceptable enforces. It differs for a renamed directory
         and for a copy kept aside."""
         try:
             with open(os.path.join(asset_path, "manifest.json")) as f:
@@ -1297,23 +1271,55 @@ class StoreBackend:
             except OSError:
                 pass
 
-    def _staged_tree_id_matches(self, staging_tree: str, expected_id: str | None) -> bool:
-        """The one staged-manifest identity check. When the caller knows the
-        asset id it installs, and that id also names the install directory,
-        the downloaded tree's manifest must agree. A drift between catalog and
-        repository, or a hostile manifest, must never swap over the installed
-        pack."""
-        if expected_id is None:
-            return True
+    def _staged_tree_acceptable(self, staging_tree: str, expected_id: str | None,
+                                gate_app_version: bool = True) -> bool:
+        """The one staged-manifest gate, before a staged tree can swap over
+        an install. Two checks on the staged manifest:
+
+        Identity. When the caller knows the asset id it installs, and that
+        id also names the install directory, the downloaded tree's manifest
+        must agree. A drift between catalog and repository, or a hostile
+        manifest, must never swap over the installed pack. Only this check
+        needs expected_id; a caller without one accepts any identity, and
+        then an unreadable manifest too, as it always has. Every production
+        caller passes an id; the no-id arm is depth, not a flow.
+
+        Compatibility, when gate_app_version. A staged plugin tree whose
+        manifest requires a newer app version is refused before the swap.
+        The loader refuses to load such a tree, so the swap would replace a
+        working install with a dead one; a hash-shape catalog pin carries
+        no version map, so this is the one gate between a bad pin and a
+        bricked install. The compare is the loader's own minimum-version
+        half, base versions with pre-release tags stripped, failing open on
+        a value it cannot parse the way the loader does. The loader's other
+        half, the app-version major match, reads a value a plugin may pass
+        in code, so the staged manifest alone cannot decide it and this
+        gate does not try. Pack installers pass False: no loader ever
+        refuses a pack, and a stale minimum in a pack manifest must not
+        make the pack uninstallable."""
         try:
             with open(os.path.join(staging_tree, "manifest.json")) as f:
-                staged_id = json.load(f).get("id")
+                manifest = json.load(f)
         except (OSError, ValueError) as e:
+            if expected_id is None:
+                return True
             log.error(f"Staged download has no readable manifest.json ({e}) -- refusing to install as {expected_id!r}")
             return False
-        if staged_id != expected_id:
-            log.error(f"Staged download identifies as {staged_id!r}, expected {expected_id!r} -- refusing to install")
+        if not isinstance(manifest, dict):
+            if expected_id is None:
+                return True
+            log.error(f"Staged manifest.json is not an object -- refusing to install as {expected_id!r}")
             return False
+        if expected_id is not None:
+            staged_id = manifest.get("id")
+            if staged_id != expected_id:
+                log.error(f"Staged download identifies as {staged_id!r}, expected {expected_id!r} -- refusing to install")
+                return False
+        if gate_app_version:
+            minimum = manifest.get("minimum-app-version")
+            if not is_min_app_version_satisfied(minimum):
+                log.error(f"Staged download requires app version {minimum!r}, this is {gl.app_version} -- refusing to install")
+                return False
         return True
 
     def _swap_into_place(self, staging_tree: str, directory: str) -> None:
@@ -1350,7 +1356,8 @@ class StoreBackend:
             raise
         self._remove_leftover(old_tree)
 
-    def download_repo(self, repo_url:str, directory:str, commit_sha:str | None = None, branch_name:str | None = None, expected_id:str | None = None) -> StoreResult[None]:
+    def download_repo(self, repo_url:str, directory:str, commit_sha:str | None = None, branch_name:str | None = None, expected_id:str | None = None,
+                      gate_app_version: bool = True) -> StoreResult[None]:
         """Returns Ok(None) on success, or an Err that names the failure.
         INSTALL_FAILED covers a hard failure, such as a missing git on the
         devel clone path or an unresolvable branch. INVALID_ASSET covers a
@@ -1364,7 +1371,7 @@ class StoreBackend:
         after the new one lands, so any failure leaves the old install
         untouched."""
         if not is_flatpak() and gl.argparser.parse_args().devel:
-            return self.clone_repo(repo_url, directory, commit_sha, branch_name, expected_id)
+            return self.clone_repo(repo_url, directory, commit_sha, branch_name, expected_id, gate_app_version)
 
 
         ref = parse_repo_url(repo_url)
@@ -1430,8 +1437,8 @@ class StoreBackend:
             # without VERSION reads as local_sha None, which means not
             # installed, so a crash after the swap and before a late VERSION
             # write leaves an install that nothing retries.
-            if not self._staged_tree_id_matches(extracted_folder, expected_id):
-                return Err(ErrReason.INVALID_ASSET, f"staged {projectname} tree does not match expected id {expected_id!r}")
+            if not self._staged_tree_acceptable(extracted_folder, expected_id, gate_app_version):
+                return Err(ErrReason.INVALID_ASSET, f"staged {projectname} tree failed the manifest checks")
             with open(os.path.join(extracted_folder, "VERSION"), "w") as f:
                 f.write(sha)
             # Stamp the staging tree, like VERSION above, so the swap
@@ -1455,7 +1462,8 @@ class StoreBackend:
 
         return Ok(None)
 
-    def clone_repo(self, repo_url:str, local_path:str, commit_sha:str | None = None, branch_name:str | None = None, expected_id:str | None = None) -> StoreResult[None]:
+    def clone_repo(self, repo_url:str, local_path:str, commit_sha:str | None = None, branch_name:str | None = None, expected_id:str | None = None,
+                   gate_app_version: bool = True) -> StoreResult[None]:
         if commit_sha is not None:
             # Clone the main branch first.
             branch_name = None
@@ -1537,8 +1545,8 @@ class StoreBackend:
 
             # Keep the order of download_repo. Validate the staged tree,
             # then stamp VERSION, then swap.
-            if not self._staged_tree_id_matches(staging, expected_id):
-                return Err(ErrReason.INVALID_ASSET, f"staged tree does not match expected id {expected_id!r}")
+            if not self._staged_tree_acceptable(staging, expected_id, gate_app_version):
+                return Err(ErrReason.INVALID_ASSET, "staged tree failed the manifest checks")
 
             # Write the version stamp.
             version_stamp = commit_sha or branch_name
@@ -1764,7 +1772,10 @@ class StoreBackend:
             return Err(ErrReason.INVALID_ASSET, f"no repository url for {desc.display_name} {asset_id!r}")
 
         asset_path = os.path.join(getattr(self, desc.base_dir_attr)(), asset_id)
-        return self.download_repo(repo_url=github, directory=asset_path, commit_sha=data.commit_sha, expected_id=asset_id)
+        # Packs skip the app-version gate: no loader refuses a pack, so a
+        # stale minimum in a pack manifest must not block its install.
+        return self.download_repo(repo_url=github, directory=asset_path, commit_sha=data.commit_sha, expected_id=asset_id,
+                                  gate_app_version=False)
 
     def _uninstall_asset(self, data: "IconData | WallpaperData | SDPlusBarWallpaperData", desc: AssetTypeDescriptor) -> "int | None":
         """Delete one data-only asset's installed directory. Returns 400 for

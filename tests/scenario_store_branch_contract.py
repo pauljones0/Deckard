@@ -1,9 +1,8 @@
 """
-Regression test for three ways the store tab froze or built garbage URLs.
+Regression test for the ways the store tab froze or built garbage URLs.
 
-get_official_store_branch answers a str and falls back to STORE_BRANCH,
-uncached. The versions.json parse is guarded and StorePage re-arms itself after
-a failed load. No network is involved.
+get_official_store_branch answers STORE_PIN with no fetch, offline or not.
+StorePage re-arms itself after a failed load. No network is involved.
 """
 
 # A url that names no GitHub repository is skipped everywhere, through one
@@ -34,7 +33,6 @@ def _make_backend() -> StoreBackend:
     sb = StoreBackend.__new__(StoreBackend)  # skip __init__, which spawns a fetch thread
     from src.backend.Store.StoreCache import StoreCache
     sb.store_cache = StoreCache()
-    sb.official_store_branch_cache = None
     # What __init__ would have built for the catalog fan-out.
     sb._fetch_limiter = threading.Semaphore(StoreBackend.MAX_CONCURRENT_REQUESTS)
     sb._prepare_pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="store-prepare")
@@ -46,42 +44,22 @@ def _fetch_fail(url):
     raise StoreFetchError(url, "offline")
 
 
-def test_branch_is_str_when_offline() -> None:
+def test_branch_is_the_pin_when_offline() -> None:
+    """The official ref is the pin constant, decided with no fetch, so an
+    offline start still yields well-formed store URLs."""
     fixtures.install_stub_globals()
     sb = _make_backend()
     sb.request_from_url = _fetch_fail
 
     branch = sb.get_official_store_branch()
-    assert isinstance(branch, str) and branch, (
-        f"offline+uncached must fall back to a str branch, got {branch!r}"
-    )
-    assert sb.official_store_branch_cache is None, (
-        "the fallback branch must not be cached -- a later successful fetch "
-        "has to be able to correct it"
+    assert branch == StoreBackend.STORE_PIN, (
+        f"the official ref must be the pin, offline or not, got {branch!r}"
     )
 
     stores = sb.get_stores()
+    assert stores[0] == (StoreBackend.STORE_REPO_URL, StoreBackend.STORE_PIN)
     for url, b in stores:
         assert isinstance(b, str) and b, f"get_stores yielded non-str branch {b!r} for {url}"
-
-
-def test_branch_survives_truncated_versions() -> None:
-    fixtures.install_stub_globals()
-    sb = _make_backend()
-
-    # Seed the cache with a truncated versions.json, stamped fresh, as a
-    # crash mid-write leaves behind.
-    with sb.store_cache.open_cache_file(
-        url=StoreBackend.STORE_REPO_URL, branch="versions", path="versions.json", mode="w"
-    ) as f:
-        f.write('{"1.5.0-beta')  # truncated, invalid JSON
-    # Then fail the live fetch, so the stale fallback serves it.
-    sb.request_from_url = _fetch_fail
-
-    branch = sb.get_official_store_branch()
-    assert isinstance(branch, str) and branch, (
-        f"truncated cached versions.json must not break the branch contract, got {branch!r}"
-    )
 
 
 def test_custom_store_entries_are_sanitized() -> None:
@@ -136,7 +114,6 @@ def test_catalog_survives_unparseable_custom_urls() -> None:
         },
     })
     sb = _make_backend()
-    sb.official_store_branch_cache = "main"
     sb.request_from_url = lambda url: _EmptyCatalog()
 
     store_urls = [url for url, _ in sb.get_stores()]
@@ -299,8 +276,7 @@ def test_store_page_rearms_after_failed_load() -> None:
 
 def main() -> None:
     fixtures.start_watchdog(30, label="scenario_store_branch_contract")
-    test_branch_is_str_when_offline()
-    test_branch_survives_truncated_versions()
+    test_branch_is_the_pin_when_offline()
     test_custom_store_entries_are_sanitized()
     test_catalog_survives_unparseable_custom_urls()
     test_prepare_plugin_skips_bad_url()

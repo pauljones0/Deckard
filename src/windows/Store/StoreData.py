@@ -28,9 +28,10 @@ def is_min_app_version_satisfied(minimum_app_version: str | None) -> bool:
         minimum = version.parse(version.parse(minimum_app_version).base_version)
         running = version.parse(version.parse(gl.app_version).base_version)
         return bool(minimum <= running)
-    except InvalidVersion:
-        # An unparseable version string returns True, which matches the None
-        # case. A malformed catalog entry must not raise out of a page build.
+    except (InvalidVersion, TypeError):
+        # An unparseable version string, or a non-string value from a raw
+        # manifest, returns True, which matches the None case. A malformed
+        # catalog entry must not raise out of a page build or an install.
         log.warning(
             f"Unparseable minimum app version {minimum_app_version!r}; assuming compatible"
         )
