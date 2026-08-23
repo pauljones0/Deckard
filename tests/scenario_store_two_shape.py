@@ -13,6 +13,7 @@ decided with no fetch.
 import fixtures  # noqa: F401  (isolated --data tempdir; import first)
 import globals as gl
 
+import json
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
@@ -230,6 +231,36 @@ def test_official_ref_is_the_vetted_pin() -> None:
     assert sb.get_official_store_branch() == StoreBackend.STORE_PIN
     assert sb.get_stores()[0] == (StoreBackend.STORE_REPO_URL, StoreBackend.STORE_PIN)
 
+    # The authors file reads at the same pin, and without a forced
+    # refetch: a pinned commit is immutable, so the cache may serve it.
+    calls: list = []
+    def capture(*args, **kwargs):
+        calls.append((args, kwargs))
+        return json.dumps(["acme"])
+    sb.get_remote_file = capture
+    assert sb.get_official_authors() == ["acme"]
+    (args, kwargs), = calls
+    assert args[2] == StoreBackend.STORE_PIN, f"authors must read at the pin, got {args!r}"
+    assert not kwargs.get("force_refetch"), "an immutable ref must not force a refetch"
+
+
+def test_catalog_refetch_follows_ref_mutability() -> None:
+    """A catalog file at a pinned commit is served from cache with no
+    forced refetch, so the store works offline; a branch-named ref still
+    forces one, because a branch moves."""
+    _stub_globals()
+    sb = _make_backend()
+    seen: list = []
+    def capture(url, filename, branch, force_refetch=False):
+        seen.append(force_refetch)
+        return "[]"
+    sb.get_remote_file = capture
+    sb.fetch_and_parse_store_json(URL, "Plugins.json", StoreBackend.STORE_PIN)
+    sb.fetch_and_parse_store_json(URL, "Plugins.json", "main")
+    assert seen == [False, True], (
+        f"refetch must follow ref mutability (pin, branch), got {seen!r}"
+    )
+
 
 def main() -> None:
     test_resolver_precedence_and_validation()
@@ -237,6 +268,7 @@ def main() -> None:
     test_branch_wins_over_any_pin()
     test_claim_reads_the_hash_revision()
     test_official_ref_is_the_vetted_pin()
+    test_catalog_refetch_follows_ref_mutability()
     print("scenario_store_two_shape: OK")
 
 

@@ -403,7 +403,8 @@ def test_incompatible_manifest_refused() -> None:
     )
     assert os.path.isfile(sentinel), "old install lost over a refused (incompatible) download"
 
-    # The same refusal without an expected id, which a custom plugin is.
+    # The same refusal without an expected id. Every production caller
+    # passes one; this pins the no-id arm as depth, not as a flow.
     sb = _make_backend()
     dest2 = os.path.join(gl.DATA_PATH, "plugins", "com_test_TooNewCustom")
     prev = _install_fake_get(_chunk(_good_zip_bytes(files={"manifest.json": manifest})))
@@ -411,8 +412,24 @@ def test_incompatible_manifest_refused() -> None:
         result = sb.download_repo(repo_url=REPO_URL, directory=dest2, commit_sha=SHA)
     finally:
         _restore_get(prev)
-    assert isinstance(result, Err), f"the gate must not need an expected id, got {result!r}"
-    assert not os.path.isdir(dest2), "an incompatible custom download must not install"
+    assert isinstance(result, Err) and result.reason is ErrReason.INVALID_ASSET, (
+        f"the gate must not need an expected id, got {result!r}"
+    )
+    assert not os.path.isdir(dest2), "an incompatible download must not install"
+
+    # A pack installer turns the gate off: no loader refuses a pack, so a
+    # stale minimum in a pack manifest must not block the install.
+    sb = _make_backend()
+    dest_pack = os.path.join(gl.DATA_PATH, "icons", "com_test_PackTooNew")
+    manifest_pack = json.dumps({"id": "com_test_PackTooNew", "minimum-app-version": too_new}).encode()
+    prev = _install_fake_get(_chunk(_good_zip_bytes(files={"manifest.json": manifest_pack})))
+    try:
+        result = sb.download_repo(
+            repo_url=REPO_URL, directory=dest_pack, commit_sha=SHA,
+            expected_id="com_test_PackTooNew", gate_app_version=False)
+    finally:
+        _restore_get(prev)
+    assert isinstance(result, Ok), f"a pack install must skip the app-version gate, got {result!r}"
 
     # A requirement above ours only in its pre-release tag installs: the
     # loader accepts it, so the gate must too.
