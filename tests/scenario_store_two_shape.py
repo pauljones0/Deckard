@@ -5,8 +5,9 @@ map of app versions to shas, and the flat "hash" sha the migrated catalog
 carries. Both shapes stay live across catalog refs, and a few entries
 carry both. This pins the resolver's precedence and validation, drives a
 hash-only entry through the prepare, update-check and claim paths for
-every asset family, and pins the official-branch fallback for an app
-version that versions.json does not map.
+every asset family, pins the branch arm's priority over any pin at all
+three sites, and pins the official-branch fallback for an app version
+that versions.json does not map.
 """
 
 import fixtures  # noqa: F401  (isolated --data tempdir; import first)
@@ -32,6 +33,7 @@ URL = "https://github.com/acme/Widget"
 HASH_SHA = "abc123" + "d" * 34
 MAP_SHA = "c0ffee" + "0" * 34
 INCOMPAT_SHA = "dead" + "b" * 36
+BRANCH_SHA = "b12345" + "a" * 34
 
 MANIFEST = {
     "id": "com_acme_Widget",
@@ -43,7 +45,6 @@ MANIFEST = {
 }
 IMAGE = Image.new("RGB", (4, 4), (0, 128, 255))
 
-# (wrapper method name, commit-bearing field is shared; id field differs.)
 PREPARE_METHODS = [
     "prepare_plugin",
     "prepare_icon",
@@ -77,20 +78,31 @@ def _stub_fetch_layer(sb: StoreBackend, seen_refs: list) -> None:
     sb.get_manifest = get_manifest
     sb.get_attribution = lambda url, commit: {}
     sb.get_web_image = lambda url, path, branch="main": IMAGE
+    sb.get_last_commit = lambda url, branch="main": BRANCH_SHA
 
 
 def test_resolver_precedence_and_validation() -> None:
-    # The flat sha alone pins, as compatible; a 7-hex abbreviation counts.
+    # The flat sha alone pins, as compatible. The shape gate is the
+    # install gate's: exactly 40 hex characters, either case.
     assert resolve_pinned_revision({"hash": HASH_SHA}) == PinnedRevision(HASH_SHA, True)
-    assert resolve_pinned_revision({"hash": "abcdef1"}) == PinnedRevision("abcdef1", True)
+    upper = HASH_SHA.upper()
+    assert resolve_pinned_revision({"hash": upper}) == PinnedRevision(upper, True)
 
-    # On a mixed entry the hash wins: the store rewrites it in place while
-    # the map stays a migration-time snapshot.
+    # On a mixed entry the hash wins: the map keys there hold the
+    # plugin's own versions, so the map's app-major verdict means
+    # nothing. That holds even when the map alone would read as
+    # incompatible; the update path trusts the pin, and the catalog ref
+    # carries that responsibility.
     mixed = {"hash": HASH_SHA, "commits": {COMPATIBLE_VERSION: MAP_SHA}}
     assert resolve_pinned_revision(mixed) == PinnedRevision(HASH_SHA, True)
+    mixed_incompat = {"hash": HASH_SHA, "commits": {INCOMPATIBLE_VERSION: INCOMPAT_SHA}}
+    assert resolve_pinned_revision(mixed_incompat) == PinnedRevision(HASH_SHA, True)
 
     # An invalid hash falls back to the map instead of hiding the entry.
-    for bad in ("not a sha", "ABCDEF1", "abcde", "a" * 41, 7, ""):
+    # An abbreviated sha is invalid: the install gate refuses anything
+    # but 40 hex characters, so resolving it would pin an uninstallable
+    # revision.
+    for bad in ("not a sha", "abcdef1", "abcde", "a" * 41, "g" * 40, 7, ""):
         entry = {"hash": bad, "commits": {COMPATIBLE_VERSION: MAP_SHA}}
         assert resolve_pinned_revision(entry) == PinnedRevision(MAP_SHA, True), (
             f"invalid hash {bad!r} must fall back to the version map"
@@ -103,6 +115,11 @@ def test_resolver_precedence_and_validation() -> None:
     both = {"commits": {COMPATIBLE_VERSION: MAP_SHA, INCOMPATIBLE_VERSION: INCOMPAT_SHA}}
     assert resolve_pinned_revision(both) == PinnedRevision(MAP_SHA, True)
     assert resolve_pinned_revision({"commits": {INCOMPATIBLE_VERSION: INCOMPAT_SHA}}) == PinnedRevision(INCOMPAT_SHA, False)
+
+    # The map arm passes the same shape gate as the hash arm, so a map
+    # value can never become a url segment or a cache-path component.
+    assert resolve_pinned_revision({"commits": {COMPATIBLE_VERSION: "../../../../escape"}}) is None
+    assert resolve_pinned_revision({"commits": {COMPATIBLE_VERSION: None}}) is None
 
     # No pin at all resolves to None, and the caller drops the entry.
     assert resolve_pinned_revision({}) is None
@@ -128,12 +145,36 @@ def test_prepare_families_on_hash_entry() -> None:
             f"{method}: the manifest must be read at the hash, got {seen_refs!r}"
         )
 
-        # The update-check view resolves the same target without a fetch.
+        # The update-check view resolves the same target with no fetch.
+        seen_refs.clear()
         checked = getattr(sb, method)(entry, include_image=False, verified=False)
         assert checked is not None and checked.commit_sha == HASH_SHA, (
             f"{method}: update view target {getattr(checked, 'commit_sha', None)!r}"
         )
         assert checked.local_sha is None, f"{method}: nothing is installed here"
+        assert seen_refs == [], f"{method}: the update view must fetch no manifest"
+
+
+def test_branch_wins_over_any_pin() -> None:
+    """A plugin entry that carries a branch resolves the branch tip at
+    every site, whether the pin beside it is valid or broken. The three
+    sites must agree; a pin-first listing would drop an entry the update
+    check still resolves."""
+    _stub_globals()
+    for pin in ({"hash": HASH_SHA}, {"hash": "NOT-A-SHA"}, {"commits": {}}):
+        sb = _make_backend()
+        seen_refs: list = []
+        _stub_fetch_layer(sb, seen_refs)
+        entry = {"url": URL, "branch": "main", **pin}
+        row = sb.prepare_plugin(entry, include_image=True, verified=False)
+        assert row is not None, f"branch entry with pin {pin!r} must list"
+        assert row.commit_sha == BRANCH_SHA and row.branch == "main", (
+            f"branch must win over pin {pin!r}, got {row.commit_sha!r}"
+        )
+        checked = sb.prepare_plugin(entry, include_image=False, verified=False)
+        assert checked is not None and checked.commit_sha == BRANCH_SHA, (
+            f"update view must resolve the branch tip for pin {pin!r}"
+        )
 
 
 def test_claim_reads_the_hash_revision() -> None:
@@ -155,6 +196,16 @@ def test_claim_reads_the_hash_revision() -> None:
     assert not pending and "com_acme_Widget" in installed, "the pending directory must be claimed"
     assert stamped == [(asset.path, URL)]
 
+    # A branch-pinned entry reads the manifest at the branch name, with
+    # no tip lookup and no glance at the pin beside it.
+    seen_refs.clear()
+    def boom(url, branch="main"):
+        raise AssertionError("the claim path must not resolve a branch tip")
+    sb.get_last_commit = boom
+    pending = {"com_acme_Widget": asset}
+    sb._claim_pending_install({"url": URL, "branch": "main", "hash": HASH_SHA}, pending, {})
+    assert seen_refs == ["main"], f"claim must read the branch name, got {seen_refs!r}"
+
     # A pin-less entry claims nothing and fetches nothing.
     seen_refs.clear()
     pending = {"com_acme_Widget": asset}
@@ -165,14 +216,27 @@ def test_claim_reads_the_hash_revision() -> None:
 def test_official_branch_unmapped_version_falls_back() -> None:
     """An app version that versions.json does not map falls back to the
     pinned store branch. A default to the tip would silently switch the
-    catalog format and content."""
+    catalog content."""
     _stub_globals()
     sb = _make_backend()
-    sb.get_remote_file = lambda *args, **kwargs: json.dumps({"9.9.9": "other"})
+    fetches = []
+    def get_remote_file(*args, **kwargs):
+        fetches.append(args)
+        return json.dumps({"9.9.9": "other"})
+    sb.get_remote_file = get_remote_file
     assert sb.get_official_store_branch() == StoreBackend.STORE_BRANCH
-    assert sb.official_store_branch_cache is None, (
-        "the fallback must not enter the cache; a later good fetch corrects it"
-    )
+    # Unlike a failed fetch, an unmapped version is a stable answer, so
+    # it caches and a catalog load does not refetch versions.json.
+    assert sb.official_store_branch_cache == StoreBackend.STORE_BRANCH
+    assert sb.get_official_store_branch() == StoreBackend.STORE_BRANCH
+    assert len(fetches) == 1, "the unmapped answer must be served from the cache"
+
+    # A version mapped to null also falls back, but stays uncached like
+    # the other malformed-content arms.
+    sb.official_store_branch_cache = None
+    sb.get_remote_file = lambda *args, **kwargs: json.dumps({gl.app_version: None})
+    assert sb.get_official_store_branch() == StoreBackend.STORE_BRANCH
+    assert sb.official_store_branch_cache is None
 
     # A mapped version still follows the mapping, and caches it.
     sb.get_remote_file = lambda *args, **kwargs: json.dumps({gl.app_version: "pinned-branch"})
@@ -183,6 +247,7 @@ def test_official_branch_unmapped_version_falls_back() -> None:
 def main() -> None:
     test_resolver_precedence_and_validation()
     test_prepare_families_on_hash_entry()
+    test_branch_wins_over_any_pin()
     test_claim_reads_the_hash_revision()
     test_official_branch_unmapped_version_falls_back()
     print("scenario_store_two_shape: OK")

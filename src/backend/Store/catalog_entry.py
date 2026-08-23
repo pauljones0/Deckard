@@ -21,9 +21,13 @@ from packaging import version
 
 import globals as gl
 
-# A pinned sha becomes a raw url segment and a cache-key component in the
-# fetch layer, so only a plain commit sha may pass.
-_COMMIT_SHA_RE = re.compile(r"^[0-9a-f]{7,40}$")
+# A git commit sha holds exactly 40 hex characters. A pinned sha becomes
+# a raw url segment, a cache-key component, and a git argv token, so one
+# pattern gates every pin arm: a malformed value must fail loudly rather
+# than reach a url, a cache path, or "git reset --hard". The install
+# gate, StoreBackend.is_safe_commit_sha, applies this same pattern, so a
+# revision this module resolves is one the install accepts.
+COMMIT_SHA_RE = re.compile(r"^[0-9a-fA-F]{40}$")
 
 
 class PinnedRevision(NamedTuple):
@@ -31,9 +35,10 @@ class PinnedRevision(NamedTuple):
 
     compatible is False when only the version map resolved and no version
     in it matches this app. The store still lists such an entry, and
-    refuses to install it. A "hash" pin carries no version map, so it
-    resolves as compatible, and the manifest's minimum-app-version gates
-    it downstream instead.
+    refuses to install it. A "hash" pin resolves as compatible: the shape
+    carries no version map to judge against. The store window still
+    badges a manifest that requires a newer app, but the update path
+    trusts the pin, so a catalog ref must only pin what the app can run.
     """
     sha: str
     compatible: bool
@@ -41,32 +46,42 @@ class PinnedRevision(NamedTuple):
 
 def resolve_pinned_revision(entry: dict[str, Any]) -> PinnedRevision | None:
     """Decide the revision one catalog entry pins. Returns None when the
-    entry pins nothing, and the caller drops or skips the entry.
+    entry pins nothing valid, and the caller drops or skips the entry.
 
-    "hash" wins over "commits" when an entry carries both: on a mixed
-    entry the store rewrites "hash" in place while the map stays a
-    migration-time snapshot. An invalid "hash" falls back to the map, so
-    one malformed field cannot hide an entry the map still resolves.
+    "hash" wins over "commits" when an entry carries both. On such mixed
+    entries the map keys hold the plugin's own versions, not app
+    versions, so the map's app-major verdict means nothing there; the
+    flat sha is the field the migrated catalog maintains. An invalid
+    "hash" falls back to the map, so one malformed field cannot hide an
+    entry the map still resolves.
 
     A garbage version key raises out of the version parse, like the
-    per-version decision always has, and every caller catches or drops per
-    entry.
+    per-version decision always has, and every caller catches or drops
+    per entry.
     """
     sha = entry.get("hash")
     if sha is not None:
-        if isinstance(sha, str) and _COMMIT_SHA_RE.fullmatch(sha):
+        if _is_commit_sha(sha):
             return PinnedRevision(sha, True)
         log.error(f"Ignoring hash {sha!r} of store entry {entry.get('url')!r}: not a commit sha")
     commits = entry.get("commits")
     if not isinstance(commits, dict) or not commits:
         return None
     newest = newest_compatible_version(commits)
-    if newest is not None:
-        return PinnedRevision(commits[newest], True)
-    newest = newest_version(list(commits.keys()))
+    compatible = newest is not None
     if newest is None:
+        newest = newest_version(list(commits.keys()))
+        if newest is None:
+            return None
+    sha = commits[newest]
+    if not _is_commit_sha(sha):
+        log.error(f"Ignoring version {newest!r} of store entry {entry.get('url')!r}: {sha!r} is not a commit sha")
         return None
-    return PinnedRevision(commits[newest], False)
+    return PinnedRevision(sha, compatible)
+
+
+def _is_commit_sha(value: object) -> bool:
+    return isinstance(value, str) and bool(COMMIT_SHA_RE.fullmatch(value))
 
 
 def newest_compatible_version(available_versions: Collection[str]) -> str | None:

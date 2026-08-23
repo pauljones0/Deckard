@@ -51,8 +51,13 @@ from src.backend.Store.asset_types import (
     SD_PLUS_BAR,
     WALLPAPER,
 )
-from src.backend.Store.catalog_entry import resolve_pinned_revision
+from src.backend.Store.catalog_entry import COMMIT_SHA_RE, resolve_pinned_revision
 from src.backend.Store.store_result import Err, ErrReason, Ok, StoreFetchError, StoreResult
+
+
+# Distinguishes an app version versions.json does not map from one it
+# maps to null, so the two failure logs stay truthful.
+_UNMAPPED = object()
 
 
 class _ResolvedVersion(NamedTuple):
@@ -164,11 +169,10 @@ class StoreBackend:
         into, or delete, a path the author never named."""
         return isinstance(asset_id, str) and bool(cls.ASSET_ID_PATTERN.fullmatch(asset_id))
 
-    # A git commit sha holds exactly 40 hex characters. commit_sha reaches
-    # git as an argv token and no shell reads it, so this gate checks the
-    # shape only. A malformed value must fail loudly rather than reach
-    # "git reset --hard".
-    COMMIT_SHA_PATTERN = re.compile(r"^[0-9a-fA-F]{40}$")
+    # The one commit-sha shape gate, shared with the pin resolver so a
+    # revision the catalog resolves is one the install accepts. The
+    # rationale sits on the pattern in catalog_entry.
+    COMMIT_SHA_PATTERN = COMMIT_SHA_RE
 
     # A branch or ref name from a remote store catalog (plugin["branch"]).
     # Even as an argv token it must carry no shell metacharacter, newline,
@@ -319,12 +323,15 @@ class StoreBackend:
         if not isinstance(versions, dict):
             log.error(f"versions.json is not an object; falling back to store branch {self.STORE_BRANCH}")
             return self.STORE_BRANCH
-        v = versions.get(gl.app_version)
-        if v is None:
+        v = versions.get(gl.app_version, _UNMAPPED)
+        if v is _UNMAPPED:
             # No default to "main" here: an unmapped app version would then
-            # silently follow whatever catalog format and content the tip
-            # carries. The pinned fallback is the deliberate choice.
+            # silently follow whatever catalog content the tip carries. The
+            # pinned fallback is the deliberate choice, and unlike the
+            # failure arms above it is a stable answer, not a transient
+            # one, so it enters the cache and costs no refetch per load.
             log.error(f"versions.json does not map app version {gl.app_version}; falling back to store branch {self.STORE_BRANCH}")
+            self.official_store_branch_cache = self.STORE_BRANCH
             return self.STORE_BRANCH
         if not isinstance(v, str) or not v:
             log.error(f"versions.json maps {gl.app_version} to {v!r}; falling back to store branch {self.STORE_BRANCH}")
@@ -643,6 +650,13 @@ class StoreBackend:
         branch tip raises out of get_last_commit, and the fan-out's collect
         loop drops that entry.
         """
+        branch: "str | None" = entry.get("branch") if desc.is_plugin else None
+        if branch is not None:
+            # The branch arm wins over any pin, the way the update check
+            # and the install identification read it, so the three sites
+            # agree on an entry that carries both a branch and a pin.
+            return _ResolvedVersion(True, self.get_last_commit(url, branch), branch)
+
         compatible = True
         commit: str | None = None
         if not desc.is_plugin or "commits" in entry or "hash" in entry:
@@ -652,13 +666,7 @@ class StoreBackend:
                 return None
             commit, compatible = pinned.sha, pinned.compatible
 
-        branch: str | None = None
-        if desc.is_plugin:
-            branch = entry.get("branch")
-            if branch is not None:
-                commit = self.get_last_commit(url, branch)
-
-        return _ResolvedVersion(compatible, commit, branch)
+        return _ResolvedVersion(compatible, commit, None)
 
     def _fetch_thumbnail(self, url: str, thumbnail_path: Any, ref: "str | None") -> "Image.Image | None":
         # List the entry without an image rather than drop it, because
