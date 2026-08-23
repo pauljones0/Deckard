@@ -565,9 +565,14 @@ class Page:
             # The deck is in teardown, so drop the call.
             return
         try:
+            # A shut-down pool hands back None and the call is dropped, the
+            # same as a missing pool above. A RuntimeError still arrives when
+            # a live pool refuses the work, out of threads. Either way the
+            # action keeps its on_ready_finished gate shut, which is the
+            # teardown case; nothing here may cancel a queued ready callback,
+            # because a cancelled one never opens that gate again.
             executor.submit(self._run_ready_callbacks, action)
         except RuntimeError:
-            # The executor shut down, because the deck disconnected mid-call.
             pass
 
     @log.catch

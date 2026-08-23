@@ -38,8 +38,9 @@ import math
 import os
 import threading
 import time
-from concurrent.futures import Future, ThreadPoolExecutor
+from concurrent.futures import Future
 from concurrent.futures import TimeoutError as FutureTimeoutError
+from functools import partial
 from threading import Thread
 
 from PIL import Image
@@ -63,6 +64,7 @@ from src.backend.DeckManagement.deck_controller.media_writer import (
     _install_fair_transport_lock,
 )
 from src.backend.PageManagement.Page import Page
+from src.backend.deadline_pool import BatchWording, DeadlinePool
 from src.backend.mem_telemetry import page_switches
 from src.backend import control_plane, startup_queue, ui_port
 from src.api import notify_active_page_changed
@@ -271,11 +273,15 @@ class DeckController:
             self.deck.set_expected_writer(self.media_player)
 
             # Bounded thread pool for the action callbacks, sized so every
-            # input runs its on_tick concurrently.
+            # input runs its on_tick concurrently. Lifecycle only: no
+            # deadline, and no replacement. A cancelled ready callback never
+            # runs the finally that opens the tick and update gates, which
+            # leaves that action dead for the life of the page. The wedge
+            # policy for this pool is the per-input stuck-tick warning.
             total_inputs = sum(len(inputs) for inputs in self.inputs.values())
             # close() sets this to None, so every reader either
             # getattr-defaults or None-checks before it submits.
-            self.action_executor: ThreadPoolExecutor | None = ThreadPoolExecutor(
+            self.action_executor: DeadlinePool | None = DeadlinePool(
                 max_workers=max(8, total_inputs + 4),
                 thread_name_prefix="action_cb",
             )
@@ -284,11 +290,17 @@ class DeckController:
             # every input loads concurrently. load_all_inputs runs on the
             # media-player thread, so a small fixed pool serializes an XL's 32
             # inputs several deep there and its deadline waits block the sole
-            # writer. load_all_inputs replaces this pool wholesale when the
-            # deadline expires with stuck tasks.
-            self.load_executor: ThreadPoolExecutor | None = ThreadPoolExecutor(
+            # writer. A stuck input load costs this pool its executor, which
+            # keeps every later page load out of the queue behind it.
+            self.load_executor: DeadlinePool | None = DeadlinePool(
                 max_workers=max(8, total_inputs),
                 thread_name_prefix=f"load_{self.serial_number()}",
+                replace_on_wedge=True,
+                wording=BatchWording(
+                    subject="Loading inputs",
+                    pool_name=f"loader pool of deck {self.serial_number()}",
+                    stuck_hint="a plugin callback is likely blocked",
+                ),
             )
 
             self.keep_actions_ticking = True
@@ -851,103 +863,32 @@ class DeckController:
     # can block forever, and none of them may wedge the media-player thread.
     LOAD_INPUTS_TIMEOUT = 10.0
 
-    # Load tasks still running at the deadline, summed over every loader pool
-    # this deck abandoned. Each pinned a worker thread. An upper bound on the
-    # threads genuinely stranded: a load that merely ran long frees its worker
-    # later, and nothing here tells that from a callback that never returns.
-    leaked_loader_threads: int = 0
-
     @log.catch
     def load_all_inputs(self, page: Page, update: bool = True, gen: "int | None" = None) -> None:
         if not self._page_is_current(gen):
             return
         start = time.time()
-        # Use the persistent per-deck pool, not a throwaway
-        # ThreadPoolExecutor per call. This runs on the media-player thread,
-        # so a pool built and torn down on every page switch is churn on the
-        # sole writer's path.
+        # Use the persistent per-deck pool, not a throwaway one per call. This
+        # runs on the media-player thread, so a pool built and torn down on
+        # every page switch is churn on the sole writer's path.
         executor = self.load_executor
         if executor is None:
             # close() sets the pools to None, so a load that started before
-            # it has nothing left to submit onto. Return like the per-submit
-            # RuntimeError guard below does. A .submit() on None raises
-            # AttributeError, which that guard does not catch.
+            # it has nothing left to submit onto. A .submit() on None raises
+            # AttributeError, which no caller of this catches.
             return
-        pending: list[tuple["ControllerInput[Any]", "Future[None]"]] = []
-        unsubmitted: list[str] = []
-        submit_error: RuntimeError | None = None
-        for t in self.inputs:
-            for controller_input in self.inputs[t]:
-                try:
-                    future = executor.submit(self._load_input_if_current, controller_input, page, update, gen)
-                except RuntimeError as error:
-                    # A pool that already shut down is the deck closing, and
-                    # there is nothing to report. Anything else is the submit
-                    # failing, "can't start new thread" above all: the input
-                    # never reaches the queue, so the sweep below neither
-                    # waits for it nor names it, and it would vanish silently.
-                    if "shutdown" in str(error):
-                        continue
-                    unsubmitted.append(str(controller_input.identifier))
-                    submit_error = error
-                    continue
-                pending.append((controller_input, future))
-        deadline = time.monotonic() + self.LOAD_INPUTS_TIMEOUT
-        stuck: list[str] = []
-        late: list[str] = []
-        for controller_input, future in pending:
-            try:
-                future.result(timeout=max(0.0, deadline - time.monotonic()))
-            except FutureTimeoutError:
-                # Overdue covers two states that need opposite handling. A
-                # started task that has not returned holds a worker and wedges
-                # the pool; one still queued behind it is only late. The
-                # executor tracks that under the future's own lock, marking it
-                # running before it calls the task. A task that returned just
-                # after the timeout reads as late, which is what it is.
-                (stuck if future.running() else late).append(str(controller_input.identifier))
-        if unsubmitted:
-            log.error(
-                f"Loading inputs [{', '.join(unsubmitted)}] never reached the "
-                f"loader pool, so this page load leaves them as they were: "
-                f"{submit_error!r}. The pool refused the work, which usually "
-                f"means the process is out of threads.")
-        if late:
-            log.info(
-                f"Loading inputs [{', '.join(late)}] had not started within "
-                f"{self.LOAD_INPUTS_TIMEOUT}s. They keep their place in the "
-                f"queue and load late.")
-        if stuck:
-            # One worker per started-and-overdue task, and it comes back only
-            # if the callback does. See the attribute: an upper bound.
-            self.leaked_loader_threads += len(stuck)
-            log.warning(
-                f"Loading inputs [{', '.join(stuck)}] did not finish within "
-                f"{self.LOAD_INPUTS_TIMEOUT}s; continuing without them (a plugin "
-                f"callback is likely blocked). Replacing this deck's loader pool "
-                f"so the stuck task(s) leak their pool's thread(s) once, instead "
-                f"of wedging every future page load behind them. Leaked loader "
-                f"threads on this deck so far: {self.leaked_loader_threads}.")
-            old_executor = executor
-            total_inputs = sum(len(inputs) for inputs in self.inputs.values())
-            # close() may have run while this batch waited, so this can put a
-            # pool back on a closed controller. It starts no thread until
-            # something submits, and nothing does: one idle object, no more.
-            self.load_executor = ThreadPoolExecutor(
-                max_workers=max(8, total_inputs),
-                thread_name_prefix=f"load_{self.serial_number()}",
-            )
-            # Do not wait, and do not cancel. A stuck task may never return,
-            # so this pool is abandoned to it. Cancelling would take the
-            # queued tasks with it and nothing re-submits those, so this pool
-            # keeps them and its free workers drain the queue before exiting.
-            # That queue is normally empty, and only because the pool above is
-            # sized to the whole batch; a narrower pool is what makes the
-            # drain real. Each drained task re-checks the page generation
-            # before touching an input, so a switch during the drain lands
-            # nothing. A task already past that check and inside the load is
-            # not covered, and can finish late; that window is the load's.
-            old_executor.shutdown(wait=False)
+        # Each task re-checks the page generation before it touches an input,
+        # which is what lets the pool abandon a wedged executor and let the
+        # queue drain late: a switch during the drain then lands nothing. A
+        # task already past that check and inside the load can still finish
+        # late, and that window is the load's.
+        tasks = [
+            (str(controller_input.identifier),
+             partial(self._load_input_if_current, controller_input, page, update, gen))
+            for t in self.inputs
+            for controller_input in self.inputs[t]
+        ]
+        executor.run_batch(tasks, deadline=self.LOAD_INPUTS_TIMEOUT)
         log.info(f"Loading all inputs took {time.time() - start} seconds")
 
     def _load_input_if_current(self, controller_input: "ControllerInput[Any]", page: Page, update: bool = True, gen: "int | None" = None) -> None:
