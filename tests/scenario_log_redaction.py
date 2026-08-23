@@ -68,6 +68,39 @@ def check_scrub_unit() -> None:
         "deck 'key' dict field must survive the colon rule"
     )
 
+    # The colon form may carry an HTTP scheme word in an unquoted value, from a
+    # header dump that pairs a scheme word with a credential. A non-Authorization
+    # key must keep the scheme word and drop the credential after it, never star
+    # the scheme word alone and leave the secret behind.
+    assert scrub("token: Token abc123") == "token: Token ***", (
+        "a scheme word in a colon value must keep the scheme and drop the secret"
+    )
+    assert "abc123" not in scrub("token: Token abc123"), (
+        "the credential after the scheme word must be gone"
+    )
+    assert scrub("api_key: Basic dXNlcjpwYXNz") == "api_key: Basic ***", (
+        "a basic|digest|token scheme word must not make the whole value leak"
+    )
+    assert "dXNlcjpwYXNz" not in scrub("api_key: Basic dXNlcjpwYXNz")
+    # With no scheme word the value still redacts whole.
+    assert scrub("token: plainsecret9") == "token: ***"
+    assert scrub("api_key: plainsecret9") == "api_key: ***"
+    # An X- header prefix on the token and api-key families redacts too, with
+    # and without a scheme word.
+    assert scrub("x-api-key: sk-plainsecret9") == "x-api-key: ***"
+    assert "sk-123abc" not in scrub("x-api-key: Bearer sk-123abc"), (
+        "an X- prefixed key must redact a scheme-word value too"
+    )
+    assert scrub("X-Auth-Token: Token deadbeef99") == "X-Auth-Token: Token ***"
+    # authorization keeps its scheme word through the header rule, colon form
+    # included, and its credential is gone.
+    assert scrub("authorization: Token abc123") == "authorization: Token ***"
+    assert "abc123" not in scrub("authorization: Token abc123")
+    # The deck 'key' field must still survive next to a scheme-shaped value.
+    assert scrub("{'key': 'basic'}") == "{'key': 'basic'}", (
+        "deck 'key' field must survive even when its value looks like a scheme"
+    )
+
     # Authorization headers. A Basic b64 value decodes straight to user and
     # pass, and BEARER in any case must not slip the fast path.
     assert scrub("Authorization: Basic dXNlcjpwYXNz") == "Authorization: Basic ***"
@@ -127,6 +160,14 @@ def check_scrub_idempotent() -> None:
         "{'access_token': 'eyJabc.def'}",
         '{"api_key": "sk-12345"}',
         "headers token: abc.def",
+        # Colon values carrying a scheme word, every scheme, X- prefix and not.
+        "token: Token abc123",
+        "api_key: Basic dXNlcjpwYXNz",
+        "x-api-key: Bearer sk-123abc",
+        "X-Auth-Token: Token deadbeef99",
+        "authorization: Token abc123",
+        "token: plainsecret9",
+        "x-api-key: sk-plainsecret9",
         # Must-not-touch vocabulary. Idempotent trivially, but a rule that
         # starts eating these would show up here too.
         "painting key=3 gen=7",
