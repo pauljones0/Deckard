@@ -80,9 +80,15 @@ cover it, and each one runs its candidate through the same allowlist.
   * A name in a private-network domain anywhere in the line, which is .local for
     mDNS and the LAN suffixes beside it. Outside a url and a user@host form a
     public name stays, because a dotted word in log prose is far more often a
-    file name, a module path or a version than a host. A "(" after the name
-    keeps a call such as threading.local() whole, and a path such as
-    ~/.local/share never matches, because a "/" before the dot leaves no label.
+    file name, a module path or a version than a host. Two guards buy that
+    precision and each one costs a case. A "(" after the name keeps a call such
+    as threading.local() whole, so a name that a "(" follows stays. A name that
+    a "/" leads never matches at all, which keeps ~/.local/share and
+    /etc/hosts.local whole, and which also leaves a host inside a path whole,
+    such as the one in a protocol-relative //ha.local/x. Two router defaults,
+    .box and .home, are out of the suffix list for the same kind of reason: as
+    suffixes they rewrite Gtk.Box and Path.home, and a traceback that names a
+    type which does not exist is worse than one leaked router name.
   * This machine's own name, as a whole word. Unlike the username, which
     redacts in path and user@ context only, this redacts bare, because an
     internal machine name has no other spelling in a log. A name that is also
@@ -164,6 +170,12 @@ _LOOPBACK_NAMES = frozenset({
 # The domain suffixes that only a private network uses. A bare name redacts on
 # these alone. Longest first, so a multi-label suffix reads before the label it
 # ends with.
+#
+# "box" and "home" are deliberately absent, though a router hands both out. As
+# suffixes they rewrite this app's own vocabulary: Gtk.Box in a type name and a
+# repr, and Path.home or a settings.home attribute. A traceback folded into a
+# log would then name a type that does not exist, which is worse than the
+# narrow leak of a fritz.box or a .home name that stays.
 _INTERNAL_SUFFIXES = (
     "home.arpa",
     "localdomain",
@@ -172,9 +184,7 @@ _INTERNAL_SUFFIXES = (
     "private",
     "local",
     "corp",
-    "home",
     "lan",
-    "box",
 )
 
 # A hostname that is also ordinary log vocabulary redacts nothing. A machine
@@ -239,34 +249,6 @@ def _username() -> str:
         return os.environ.get("USER") or os.environ.get("LOGNAME") or ""
 
 
-def _hostname_candidates() -> list[str]:
-    """Every spelling of this machine's own name, longest first. That is the
-    name the kernel reports and the name the environment carries, each in its
-    full and its short form, so a host called box.example.org redacts under
-    either spelling. A name that reads as ordinary log vocabulary, or one under
-    three characters, drops out, because a rule on it would eat prose."""
-    raw: list[str] = []
-    try:
-        raw.append(socket.gethostname())
-    except OSError:
-        pass
-    environment_name = os.environ.get("HOSTNAME")
-    if environment_name:
-        raw.append(environment_name)
-
-    names: list[str] = []
-    for candidate in raw:
-        cleaned = candidate.strip().rstrip(".").lower()
-        for variant in (cleaned, cleaned.split(".")[0]):
-            if len(variant) < 3 or variant in _GENERIC_HOSTNAMES:
-                continue
-            if not _HOSTNAME_SHAPE.fullmatch(variant):
-                continue
-            if variant not in names:
-                names.append(variant)
-    return sorted(names, key=len, reverse=True)
-
-
 def _host_token(host: str) -> str | None:
     """The replacement for one host, or None when the host must stay whole.
 
@@ -290,6 +272,38 @@ def _host_token(host: str) -> str | None:
         if name == public or name.endswith("." + public):
             return None
     return _HOST_TOKEN
+
+
+def _hostname_candidates() -> list[str]:
+    """Every spelling of this machine's own name, longest first. That is the
+    name the kernel reports and the name the environment carries, each in its
+    full and its short form, so a host called box.example.org redacts under
+    either spelling. A name that reads as ordinary log vocabulary, or one under
+    three characters, drops out, because a rule on it would eat prose, and so
+    does one the allowlist keeps, so a machine called localhost.localdomain
+    reads the same as any other loopback name."""
+    raw: list[str] = []
+    try:
+        raw.append(socket.gethostname())
+    except OSError:
+        pass
+    environment_name = os.environ.get("HOSTNAME")
+    if environment_name:
+        raw.append(environment_name)
+
+    names: list[str] = []
+    for candidate in raw:
+        cleaned = candidate.strip().rstrip(".").lower()
+        for variant in (cleaned, cleaned.split(".")[0]):
+            if len(variant) < 3 or variant in _GENERIC_HOSTNAMES:
+                continue
+            if not _HOSTNAME_SHAPE.fullmatch(variant):
+                continue
+            if _host_token(variant) is None:
+                continue
+            if variant not in names:
+                names.append(variant)
+    return sorted(names, key=len, reverse=True)
 
 
 def _url_host_replacement(match: re.Match[str]) -> str:
@@ -483,9 +497,17 @@ def _compile_rules() -> "list[_Rule]":
     # leave behind, and it also takes a raw "user@" that no userinfo rule
     # reached. The host class carries no "<", so a second scrub finds no host
     # in the "<host>" this leaves.
+    # The scheme run is bounded and the rule opens with a start guard rather
+    # than a word boundary. Both are cost, not meaning. An unbounded scheme run
+    # behind a word boundary makes the match quadratic in the line length,
+    # because every position in a long run of scheme characters starts a scan
+    # to the end of that run in search of a "://". A log line carries text an
+    # attacker can influence, and scrub() runs on the thread that logs it, so a
+    # 128 KB line stalled that thread for seconds. No scheme is 32 characters
+    # long, so the bound costs nothing.
     rules.append((
         re.compile(
-            r"(?i)\b([a-z][a-z0-9+.-]*://(?:[^/\s@]{1,256}@)?)"
+            r"(?i)(?<![\w+.-])([a-z][a-z0-9+.-]{0,31}://(?:[^/\s@]{1,256}@)?)"
             # One unbroken run of host characters, uncapped, so a run longer
             # than any real host redacts whole and never in part.
             r"(\[[0-9a-f:.]{2,45}\]|[a-z0-9._-]+)"

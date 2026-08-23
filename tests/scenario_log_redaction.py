@@ -8,6 +8,7 @@ import fixtures  # must be first; isolates DATA_PATH before any src import
 import getpass
 import os
 import threading
+import time
 
 from loguru import logger
 
@@ -226,7 +227,6 @@ def check_host_unit() -> None:
         "an mDNS host must redact and the port must stay"
     )
     assert scrub("mount nas.internal:445") == "mount <host>:445"
-    assert scrub("printer.fritz.box offline") == "<host> offline"
     assert scrub("broker mosquitto.lan reachable") == "broker <host> reachable"
 
     # user@host. The host rules run before the username rule, so both halves go
@@ -298,6 +298,16 @@ def check_host_unit() -> None:
         "reversed = frames[::-1]",
         "stride = frames[::2]",
         "File \"~/dev/Deckard/src/backend/log_redaction.py\", line 12 in scrub",
+        # A traceback folds source lines and reprs into the log, so a suffix
+        # rule on the router defaults .box and .home would rename this app's own
+        # types and attributes and make a shared traceback lie. Both suffixes
+        # stay out of the list, and the router names below stay whole with them.
+        "<Gtk.Box object at 0x7f0a1c2b3c00>",
+        "class DeckStack(Gtk.Box):",
+        "children: list[Gtk.Box] = []",
+        "value = settings.home",
+        "printer.fritz.box offline",
+        "nas.home reachable",
     ):
         assert scrub(kept) == kept, f"must not redact: {kept}"
 
@@ -306,6 +316,28 @@ def check_host_unit() -> None:
     # the two apart, so it redacts. A three-part version never reaches the
     # check, and a "v" prefix keeps a four-part one whole.
     assert scrub("plugin version 1.2.3.4") == "plugin version <ip>"
+
+
+def check_scrub_bounded_cost() -> None:
+    """A long line must cost time in proportion to its length, never to its
+    square.
+
+    A log line carries text a plugin, a device or a remote server chose, and
+    scrub() runs on the thread that logs it. The url rule once scanned to the
+    end of a run of scheme characters from every position inside that run, which
+    made a 32 KB line cost over a second and stalled the logging thread for it.
+    The bound below sits far above the linear cost and far under the quadratic
+    one, so it pins the class and still passes on a loaded runner.
+    """
+    adversarial = "a." * 16384  # 32 KB of scheme characters, and no "://"
+    start = time.perf_counter()
+    scrubbed = scrub(adversarial)
+    elapsed = time.perf_counter() - start
+    assert scrubbed == adversarial, "the probe line holds no host and must not redact"
+    assert elapsed < 0.2, (
+        f"scrub() took {elapsed * 1000:.0f} ms on a 32 KB line: a rule that "
+        "rescans the line from every position is back"
+    )
 
 
 def check_hostname_candidates() -> None:
@@ -331,6 +363,13 @@ def check_hostname_candidates() -> None:
             os.environ["HOSTNAME"] = generic
             assert generic not in _REAL_HOSTNAME_CANDIDATES(), (
                 f"a machine named {generic} must build no rule"
+            )
+        # A name the allowlist keeps builds no rule either, so a machine called
+        # after a loopback name reads like any other loopback name in a log.
+        for kept in ("localhost.localdomain", "ip6-localhost", "github.com"):
+            os.environ["HOSTNAME"] = kept
+            assert kept not in _REAL_HOSTNAME_CANDIDATES(), (
+                f"an allowlisted machine name must build no rule: {kept}"
             )
         # Too short to be worth a rule.
         os.environ["HOSTNAME"] = "pi"
@@ -430,11 +469,13 @@ def check_scrub_idempotent() -> None:
             f"scrub() is not idempotent for {text!r}: "
             f"pass 1 -> {once!r}, pass 2 -> {scrub(once)!r}"
         )
-        # Already-redacted markers must survive a re-scrub verbatim, so the
-        # count can only be what pass 1 produced and never grow.
+        # The equality above covers the second pass. This covers the first one,
+        # which equality cannot: a rule that consumed a token another rule had
+        # just written leaves a doubled marker, which reads as two redactions of
+        # one value. The auth-header rules produced exactly "*** ***" that way.
         for token in ("***", "<host>", "<ip>", UT):
-            assert once.count(token) == scrub(once).count(token), (
-                f"re-scrub changed the {token} count for {text!r}"
+            assert f"{token}{token}" not in once and f"{token} {token}" not in once, (
+                f"pass 1 doubled the {token} marker for {text!r}: {once!r}"
             )
 
     # The fast path returns unchanged text untouched.
@@ -450,6 +491,7 @@ def main() -> None:
     _compile_rules_for(INJ_HOME, INJ_USER)
     check_scrub_unit()
     check_host_unit()
+    check_scrub_bounded_cost()
     check_hostname_candidates()
     check_scrub_idempotent()
 
