@@ -20,6 +20,11 @@ bundle as a release asset.
 
 ### Fixed
 
+- The search box and the image and video buttons on the Custom Assets tab now
+  filter what the grid shows, and the grid lists assets by name. The tab
+  handed the grid its search filter and its sort order under names the grid
+  already used for something else, so both were dropped: every custom asset
+  stayed on screen, in storage order, whatever was typed or toggled.
 - An icon pack, wallpaper pack or SD+ bar wallpaper pack whose manifest leaves
   out its asset folder no longer stops every pack of that kind from loading.
   One such pack used to fail the whole list, so the asset chooser showed none
