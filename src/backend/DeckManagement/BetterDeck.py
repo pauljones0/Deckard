@@ -658,6 +658,10 @@ class BetterDeck():
 
     def set_rotation(self, value: int) -> None:
         if not value in [0, 90, 180, 270]:
+            # Reachable from persisted deck settings, where a hand edit or a
+            # half-written file can leave anything. An unhandled value makes
+            # every key write raise, so a deck comes up unrotated instead.
+            log.warning(f"Deck rotation {value!r} is not 0, 90, 180 or 270; using 0")
             value = 0
         self.rotation = value
 
