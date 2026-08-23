@@ -247,15 +247,21 @@ def _compile_rules() -> "list[_Rule]":
         r"\1***",
     ))
 
-    # The schemeless colon form. The scheme-word lookahead in the value branch
-    # keeps an already scrubbed "token: Bearer ***" out of "token: *** ***",
-    # and keeps a with-scheme line the rule above already redacted out of a
-    # second, scheme-eating pass.
+    # The schemeless colon form. The value-branch lookahead bails only when a
+    # scheme word is followed by whitespace, which is the mandatory-scheme form
+    # the rule above owns and the already scrubbed "token: Bearer ***" and
+    # "token: Token ***" forms it produces, so a second pass keeps them out of
+    # "token: *** ***". The guard tests the delimiter after the scheme word, not
+    # a bare word boundary. A secret value that merely starts with a scheme word
+    # and a non-space delimiter, such as "token: token-abc123", is one whole
+    # credential, not a scheme word with a credential after it, so it must still
+    # redact whole. A word-boundary guard here stopped redacting those and
+    # leaked them.
     rules.append((
         re.compile(
             r"(?i)(?<![\w-])(['\"]?)(" + _SECRET_KEYS + r")\1"
             r"([ \t]*:[ \t]*)"
-            r"(?:(['\"])[^'\"\r\n]*\4|(?!" + _AUTH_SCHEME + r"\b)" + _COLON_VALUE + r")"
+            r"(?:(['\"])[^'\"\r\n]*\4|(?!" + _AUTH_SCHEME + r"[ \t])" + _COLON_VALUE + r")"
         ),
         _colon_replacement,
     ))
