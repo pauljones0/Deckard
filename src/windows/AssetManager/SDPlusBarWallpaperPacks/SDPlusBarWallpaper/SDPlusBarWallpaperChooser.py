@@ -49,8 +49,8 @@ class SDPlusBarWallpaperChooserPage(
         return pack.get_wallpapers()
 
     def bind_preview(self, preview: "GenericAssetPreview[SDPlusBarWallpaper]",
-                     wallpaper: "SDPlusBarWallpaper") -> None:
-        preview.set_asset(wallpaper)
+                     asset: "SDPlusBarWallpaper") -> None:
+        preview.set_asset(asset)
 
     def get_child_asset(self,
                         child: "GenericAssetPreview[SDPlusBarWallpaper]") -> "SDPlusBarWallpaper":

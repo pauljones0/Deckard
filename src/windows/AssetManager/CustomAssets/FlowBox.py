@@ -44,7 +44,7 @@ class CustomAssetChooserFlowBox(DynamicFlowBox[AssetPreview, dict[str, Any]]):
         self.set_hexpand(True)
 
         self.asset_chooser:"CustomAssetChooser" = asset_chooser
-        self.selected_asset: str = None  # type: ignore[assignment]  # late-init: on_child_activated
+        self.selected_asset: str = None  # ty: ignore[invalid-assignment]  # late-init: on_child_activated
 
         self.set_factory(self.preview_factory)
         # These two hook methods carry names the base does not assign.

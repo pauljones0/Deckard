@@ -7,7 +7,7 @@ _get_assets_to_update) returns a StoreResult: an Ok that carries the payload,
 or an Err that names the reason.
 
 Ok holds the payload, so a caller must narrow the result before it iterates or
-indexes it. A missed failure branch is then a mypy error, and an un-narrowed
+indexes it. A missed failure branch is then a type error, and an un-narrowed
 Err raises TypeError at first use instead of reading as an empty list. Neither
 arm defines __bool__. This module imports stdlib only, so any layer can name
 these types.

@@ -19,7 +19,7 @@ gi.require_version("Adw", "1")
 from gi.repository import Gtk
 
 from collections.abc import Callable
-from typing import Any, Generic, TypeVar
+from typing import Any, Generic, TypeVar, cast
 
 from loguru import logger as log
 from functools import cmp_to_key
@@ -97,7 +97,9 @@ class DynamicFlowBox(Gtk.Box, Generic[T]):
             if child is None:
                 break
             if hasattr(child, "disconnect_signals"):
-                child.disconnect_signals()
+                # Every row that has this method takes no argument and returns
+                # None. The hasattr guard alone does not state that.
+                cast("Callable[[], None]", child.disconnect_signals)()
             self.flow_box.remove(child)
 
         for item in items:
@@ -115,7 +117,7 @@ class DynamicFlowBox(Gtk.Box, Generic[T]):
         if not callable(factory):
             # Plugins call this untyped, so the runtime check stays even
             # though the annotation reads it as impossible.
-            log.warning("Chosen factory is not callable")  # type: ignore[unreachable]
+            log.warning("Chosen factory is not callable")
             return
         self.factory = factory
 
@@ -160,7 +162,7 @@ class DynamicFlowBox(Gtk.Box, Generic[T]):
         if not callable(filter):
             # Plugins call this untyped, so the runtime check stays even
             # though the annotation reads it as impossible.
-            log.warning("Chosen filter is not callable")  # type: ignore[unreachable]
+            log.warning("Chosen filter is not callable")
             return
         self.filter = filter
         self.invalidate_filter()
@@ -169,7 +171,7 @@ class DynamicFlowBox(Gtk.Box, Generic[T]):
         if not callable(sort):
             # Plugins call this untyped, so the runtime check stays even
             # though the annotation reads it as impossible.
-            log.warning("Chosen sort function is not callable")  # type: ignore[unreachable]
+            log.warning("Chosen sort function is not callable")
             return
         self.sort = sort
         self.invalidate_sort()

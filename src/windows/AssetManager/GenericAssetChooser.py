@@ -223,7 +223,7 @@ class GenericAssetPreview(Preview, Generic[AssetT]):
     def __init__(self) -> None:
         super().__init__()
 
-        self.asset: AssetT = None  # type: ignore[assignment]  # late-init: set_asset
+        self.asset: AssetT = None  # ty: ignore[invalid-assignment]  # late-init: set_asset
 
     def on_click_info(self, button: Gtk.Button) -> None:
         # The window that owns this preview nulls the slot as it closes, and a
@@ -345,12 +345,12 @@ class GenericPackChooserPage(_ChooserBuildPage, Generic[PackT, StackT]):
 
     # Gtk.Box subclass that owns a flow_box. Its constructor takes a chooser
     # and keyword properties.
-    PACK_FLOW_BOX_CLASS: type = None  # type: ignore[assignment]  # late-init: subclass override, e.g. IconPacks.PackChooser
+    PACK_FLOW_BOX_CLASS: type = None  # ty: ignore[invalid-assignment]  # late-init: subclass override, e.g. IconPacks.PackChooser
     # Preview subclass with a pack attribute. Its constructor takes a chooser
     # and a pack.
-    PACK_PREVIEW_CLASS: type = None  # type: ignore[assignment]  # late-init: subclass override, e.g. IconPacks.PackChooser
+    PACK_PREVIEW_CLASS: type = None  # ty: ignore[invalid-assignment]  # late-init: subclass override, e.g. IconPacks.PackChooser
     # Name of the stack child holding this type's asset chooser.
-    LEAF_CHILD_NAME: str = None  # type: ignore[assignment]  # late-init: subclass override, e.g. IconPacks.PackChooser
+    LEAF_CHILD_NAME: str = None  # ty: ignore[invalid-assignment]  # late-init: subclass override, e.g. IconPacks.PackChooser
     # Pack previews constructed per main-loop callback.
     PACK_APPEND_BATCH: int = 10
 
@@ -456,9 +456,9 @@ class GenericAssetChooserPage(_ChooserBuildPage, Generic[PackT, AssetT, PreviewT
 
     # DynamicFlowBox subclass. Its constructor takes a preview class and a
     # chooser.
-    FLOW_BOX_CLASS: type = None  # type: ignore[assignment]  # late-init: subclass override, e.g. IconPacks.Icons.IconChooser
+    FLOW_BOX_CLASS: type = None  # ty: ignore[invalid-assignment]  # late-init: subclass override, e.g. IconPacks.Icons.IconChooser
     # Preview subclass; ctor takes no arguments (the flow box pools them).
-    PREVIEW_CLASS: type = None  # type: ignore[assignment]  # late-init: subclass override, e.g. IconPacks.Icons.IconChooser
+    PREVIEW_CLASS: type = None  # ty: ignore[invalid-assignment]  # late-init: subclass override, e.g. IconPacks.Icons.IconChooser
     # Attribute holding an asset's file path.
     ASSET_PATH_ATTR: str = "path"
 
@@ -600,9 +600,9 @@ class GenericPackChooserStack(Gtk.Stack, Generic[LeafT]):
     it by that name, so the two cannot drift apart.
     """
 
-    PACK_CHOOSER_CLASS: "type[GenericPackChooserPage[Any, Any]]" = None  # type: ignore[assignment]  # late-init: subclass override, e.g. IconPacks.Stack
-    LEAF_CHOOSER_CLASS: "type[LeafT]" = None  # type: ignore[assignment]  # late-init: subclass override, e.g. IconPacks.Stack
-    LEAF_CHILD_TITLE: str = None  # type: ignore[assignment]  # late-init: subclass override, e.g. IconPacks.Stack
+    PACK_CHOOSER_CLASS: "type[GenericPackChooserPage[Any, Any]]" = None  # ty: ignore[invalid-assignment]  # late-init: subclass override, e.g. IconPacks.Stack
+    LEAF_CHOOSER_CLASS: "type[LeafT]" = None  # ty: ignore[invalid-assignment]  # late-init: subclass override, e.g. IconPacks.Stack
+    LEAF_CHILD_TITLE: str = None  # ty: ignore[invalid-assignment]  # late-init: subclass override, e.g. IconPacks.Stack
 
     # build() reads this. A page starts a build worker in its constructor, and
     # that worker calls back into state prepare() creates, so a build that ran

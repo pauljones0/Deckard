@@ -36,8 +36,8 @@ class AssetPreview(Preview):
         # constructor arguments. set_asset() binds the asset later, from the
         # factory function.
         super().__init__(can_be_deleted=True)
-        self.asset: dict[str, Any] = None  # type: ignore[assignment]  # late-init: set_asset
-        self.flow: "CustomAssetChooserFlowBox" = None  # type: ignore[assignment]  # late-init: set_asset
+        self.asset: dict[str, Any] = None  # ty: ignore[invalid-assignment]  # late-init: set_asset
+        self.flow: "CustomAssetChooserFlowBox" = None  # ty: ignore[invalid-assignment]  # late-init: set_asset
 
     def set_asset(self, flow: "CustomAssetChooserFlowBox", asset: dict[str, Any]) -> None:
         self.flow = flow
@@ -60,7 +60,7 @@ class AssetPreview(Preview):
             license_comment = self.asset["license"].get("comment")
         )
 
-    def on_click_remove(self, *args: Any) -> None:
+    def on_click_remove(self, button: Gtk.Button) -> None:
         dial = DeleteConfirmationDialog(self)
         dial.present()
 

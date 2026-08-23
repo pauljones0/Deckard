@@ -280,7 +280,7 @@ class MainWindow(Adw.ApplicationWindow):
         if not callable(task):
             # Plugins call this untyped, so the runtime check stays even
             # though the annotation reads it as impossible.
-            return  # type: ignore[unreachable]
+            return
         if task in self.on_finished:
             return
         self.on_finished.append(task)
@@ -301,28 +301,28 @@ class MainWindow(Adw.ApplicationWindow):
     def on_copy(self, *args: object) -> bool:
         child = get_deepest_focused_widget_with_attr(self, "on_copy")
         if child is not None and hasattr(child, "on_copy"):
-            child.on_copy()
+            cast("Callable[[], object]", child.on_copy)()
 
         return False
 
     def on_cut(self, *args: object) -> bool:
         child = get_deepest_focused_widget_with_attr(self, "on_cut")
         if child is not None and hasattr(child, "on_cut"):
-            child.on_cut()
+            cast("Callable[[], object]", child.on_cut)()
 
         return False
 
     def on_paste(self, *args: object) -> bool:
         child = get_deepest_focused_widget_with_attr(self, "on_paste")
         if child is not None and hasattr(child, "on_paste"):
-            child.on_paste()
+            cast("Callable[[], object]", child.on_paste)()
 
         return False
 
     def on_remove(self, *args: object) -> bool:
         child = get_deepest_focused_widget_with_attr(self, "on_remove")
         if child is not None and hasattr(child, "on_remove"):
-            child.on_remove()
+            cast("Callable[[], object]", child.on_remove)()
 
         return False
 

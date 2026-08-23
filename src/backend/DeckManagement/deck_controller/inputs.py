@@ -438,7 +438,7 @@ class ControllerInput(Generic[StateT]):
         image of its own. The UI mirror reads it on map."""
         raise NotImplementedError
 
-    def load_from_input_dict(self, page_dict: "dict[str, Any]", update: bool = True) -> None:
+    def load_from_input_dict(self, input_dict: "dict[str, Any]", update: bool = True) -> None:
         pass
 
     def add_new_state(self, switch: bool = True) -> None:
@@ -582,7 +582,7 @@ class ControllerInput(Generic[StateT]):
         # This is abstract by convention. ControllerKeyState and
         # ControllerTouchScreenState define clear(), so a dial raises
         # AttributeError here. That defect is open.
-        active_state.clear()  # type: ignore[attr-defined]  # root cause: ControllerDialState has no clear()
+        active_state.clear()  # ty: ignore[unresolved-attribute]  # root cause: ControllerDialState has no clear()
         if update:
             self.update()
 
@@ -614,10 +614,15 @@ class ControllerInput(Generic[StateT]):
         raise NotImplementedError
 
 class ControllerKey(ControllerInput["ControllerKeyState"]):
+    # The narrowing the base declaration describes. It sits here, and not on
+    # the __init__ assignment, because an assignment annotation leaves a
+    # reader of the attribute on the base declaration, which owns no key index.
+    present_state: KeyPresentState
+
     def __init__(self, deck_controller: "DeckController", ident: Input.Key):
         super().__init__(deck_controller, ControllerKeyState, ident)
         self.index = ident.get_index(deck_controller)
-        self.present_state: KeyPresentState = KeyPresentState(self.index)
+        self.present_state = KeyPresentState(self.index)
         # Seed the cached press state from the device so event_callback can
         # compare against it. key_states() is indexed logically, with the
         # rotation applied there, so self.index selects this key's own state.
@@ -714,6 +719,7 @@ class ControllerKey(ControllerInput["ControllerKeyState"]):
                 self._update_from_tile_identity(identified, page, config_gen, force)
                 return
 
+        _t0 = _t1 = _t2 = 0.0  # definite binding; every read sits under the same media_prof guard as its write
         if media_prof:
             _t0 = time.perf_counter()
         image = self.get_current_image()
@@ -922,6 +928,7 @@ class ControllerKey(ControllerInput["ControllerKeyState"]):
 
         background_color = state.background_manager.get_composed_color()
 
+        _t0 = _t1 = _t2 = 0.0  # definite binding; every read sits under the same media_prof guard as its write
         if media_prof:
             _t0 = time.perf_counter()
 
@@ -1552,20 +1559,20 @@ class ControllerDial(ControllerInput["ControllerDialState"]):
                     actions=turn_actions
                 )
 
-    def load_from_input_dict(self, page_dict: "dict[str, Any]", update: bool = True) -> None:
-        n_states = len(page_dict.get("states", {}))
+    def load_from_input_dict(self, input_dict: "dict[str, Any]", update: bool = True) -> None:
+        n_states = len(input_dict.get("states", {}))
         self.create_n_states(max(1, n_states))
 
         old_state_index = self.state
 
         self.state = 0
 
-        for state_key in page_dict.get("states", {}):
+        for state_key in input_dict.get("states", {}):
             state = self.states.get(int(state_key))
             if state is None:
                 continue
 
-            state_dict = page_dict["states"][str(state.state)]
+            state_dict = input_dict["states"][str(state.state)]
 
             layout = ImageLayout()
             state.layout_manager.set_action_layout(layout, update=False)
@@ -1826,7 +1833,7 @@ class ControllerTouchScreenState(ControllerInputState):
                 # has no video_cache, because a bad GIF already fell back at
                 # construction, and a None after close is transient and
                 # self-heals on the rebuild above.
-                if hasattr(video, "video_cache") and (video.video_cache is None or video.video_cache.n_frames <= 0):
+                if isinstance(video, InputVideo) and (video.video_cache is None or video.video_cache.n_frames <= 0):
                     log.error(f"Could not decode touchscreen background video {path}")
                     video.close()
                     self.background_video = None

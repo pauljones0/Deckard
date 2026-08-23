@@ -63,7 +63,8 @@ descend into one and every call inside it would go unseen, a file that does not
 parse, and an allowlist entry that names a file which does not exist or which
 sits outside the governed set.
 
-The trees are src/ and GtkHelper/, which match mypy and the module-size ratchet.
+The trees are src/ and GtkHelper/, which match the module-size ratchet and
+are a subset of the type checker's include set.
 globals.py and main.py are governed by name as well, the way the gl-slot freeze
 names main.py, because the allowlist sanctions a raw read in each, and an
 allowlist entry that the walk never visits sanctions nothing.

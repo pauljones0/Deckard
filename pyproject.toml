@@ -20,7 +20,7 @@ select = [
 ]
 
 [tool.pyright]
-# Editor/LSP navigation config only — the type gate is mypy (lint:types).
+# Editor/LSP navigation config only. The type gate is ty (lint:types).
 # Every checkout root carries this section, so a server or CLI rooted in a git
 # worktree resolves that branch's own files. The server reads it once, at
 # start; a change here needs a fresh server, not a config touch.
@@ -28,201 +28,60 @@ venvPath = "."
 venv = ".venv"               # resolves loguru, rpyc, gi (PyGObject-stubs), ... for hover and go-to-definition.
                              # Worktrees carry no venv: run scripts/worktree-env.sh there once, which
                              # symlinks the primary checkout's (gitignored, and excluded below via **/.*).
-pythonVersion = "3.13"       # deployment floor, same as ruff target-version and mypy python_version
+pythonVersion = "3.13"       # deployment floor, same as ruff target-version and ty python-version
 exclude = [
   "aur-deckard-git",         # holds a full copy of the tree; indexing it duplicates every symbol
   "**/__pycache__",          # from here down: pyright's defaults, restated because exclude replaces them
-  "**/.*",                   # covers .venv, .typecheck-ci-venv, .claude/worktrees
+  "**/.*",                   # covers .venv, .claude/worktrees
 ]
 executionEnvironments = [
   { root = "tests", extraPaths = [".", "tests"] },  # scenarios do `import fixtures` (harness sys.path) plus repo-root `src...` imports
 ]
 
-[tool.mypy]
-python_version = "3.13"
-files = ["src", "GtkHelper"]
-mypy_path = "."
-explicit_package_bases = true   # src/ has no __init__.py files; imports are `src.backend...` from repo root
-ignore_missing_imports = true   # dasbus, evdev, pulsectl, StreamDeck, ... ship no stubs
+[tool.ty.environment]
+python-version = "3.13"      # deployment floor: flatpak GNOME 50 runtime / AUR python313
+python = ".venv"             # ty resolves third-party imports from a real environment, not from stubs alone
 
-# The whole --strict family is on: strict = true pins it, and the two
-# members not restated below (disallow_untyped_calls, warn_redundant_casts)
-# are on through strict alone. An addition to --strict in a future mypy
-# surfaces here as an error and not as a silent gap.
-strict = true
-warn_unused_configs = true      # not part of strict: an override section that matches no module prints a note (the run still passes)
-
-# Tightened ratchets. Each was flipped once its whole tree was clean.
-extra_checks = true             # stricter TypedDict/overload/other core checks
-strict_equality = true          # a non-overlapping == is a comparison bug or a lie
-disallow_subclassing_any = true # subclassing an unstubbed base hides its whole surface
-no_implicit_reexport = true     # a name is public only where it is defined or explicitly re-exported
-implicit_optional = false       # a parameter that may be None says `| None` in its annotation
-disallow_any_generics = true    # a bare generic decays to Any; the type arguments are written out
-check_untyped_defs = true       # the body of an unannotated def is checked like any other
-warn_return_any = true          # an Any returned from a typed function launders itself into the caller's declared type
-warn_unreachable = true         # dead code is deleted, and a guard a wrong annotation kills gets the annotation fixed
-disallow_untyped_decorators = true  # an untyped decorator erases the wrapped function's signature
-warn_unused_ignores = true      # a stale `# type: ignore` self-reports instead of rotting
-disallow_untyped_defs = true    # an unannotated signature is a Callable[..., Any] at every call site
-disallow_incomplete_defs = true # a def with some parameters annotated and not others; zero errors at enablement
-disallow_any_explicit = true    # an explicit Any is visible dynamism; the override block at the end of the file carries the exemptions
-
-# disallow_any_explicit does not ratchet to zero the way the flags above
-# did: about half the exempted sites are deliberate boundary types (JSON
-# payloads, plugin callbacks, gi values, *args forwarding), where a concrete
-# annotation would claim precision the value does not have.
-
-# check_untyped_defs and disallow_untyped_defs cover everything mypy checks,
-# with no per-module exemption, so no ratchet guard remains for them.
-
-# Modules that still carry an explicit Any annotation. The list only shrinks
-# (scripts/check_any_explicit_ratchet.py): give a module's Any sites real
-# types, then delete its entry here and in the guard's BASELINE in the same
-# commit. Modules whose Any is a deliberate boundary type stay until the
-# boundary spelling itself changes.
-[[tool.mypy.overrides]]
-module = [
-    "autostart",
-    "globals",
-    "GtkHelper.ComboRow",
-    "GtkHelper.ConfirmationDialog",
-    "GtkHelper.DynamicFlowBox",
-    "GtkHelper.GenerativeUI.ComboRow",
-    "GtkHelper.GenerativeUI.EntryRow",
-    "GtkHelper.GenerativeUI.ExpanderRow",
-    "GtkHelper.GenerativeUI.FileDialogRow",
-    "GtkHelper.GenerativeUI.GenerativeUI",
-    "GtkHelper.GenerativeUI.PasswordEntryRow",
-    "GtkHelper.GenerativeUI.ScaleRow",
-    "GtkHelper.GenerativeUI.SpinRow",
-    "GtkHelper.GenerativeUI.SwitchRow",
-    "GtkHelper.GenerativeUI.ToggleRow",
-    "GtkHelper.GtkHelper",
-    "GtkHelper.ItemListComboRow",
-    "GtkHelper.NetworkRows",
-    "GtkHelper.ScaleRow",
-    "GtkHelper.SearchComboRow",
-    "locales.LegacyLocaleManager",
-    "src.api",
-    "src.app",
-    "src.backend.AssetManagerBackend",
-    "src.backend.atomic_json",
-    "src.backend.cli_forward",
-    "src.backend.DeckManagement.deck_controller.controller",
-    "src.backend.DeckManagement.deck_controller.inputs",
-    "src.backend.DeckManagement.deck_controller.label_engine",
-    "src.backend.DeckManagement.deck_controller.media_writer",
-    "src.backend.DeckManagement.DeckManager",
-    "src.backend.DeckManagement.font_resolver",
-    "src.backend.DeckManagement.HelperMethods",
-    "src.backend.DeckManagement.InputIdentifier",
-    "src.backend.DeckManagement.Media.MediaConfig",
-    "src.backend.DeckManagement.Subclasses.ActionPermissionManager",
-    "src.backend.DeckManagement.Subclasses.encoded_image_cache",
-    "src.backend.DeckManagement.Subclasses.FakeDeck",
-    "src.backend.DeckManagement.Subclasses.KeyImage",
-    "src.backend.DeckManagement.Subclasses.KeyLabel",
-    "src.backend.DeckManagement.Subclasses.KeyVideo",
-    "src.backend.DeckManagement.Subclasses.RemoteDeckManager",
-    "src.backend.DeckManagement.Subclasses.RemoteDeck",
-    "src.backend.DeckManagement.Subclasses.RemoteDecksLocalServerHandler",
-    "src.backend.DeckManagement.Subclasses.ScreenSaver",
-    "src.backend.DeckManagement.Subclasses.SingleKeyAsset",
-    "src.backend.DeckManagement.Subclasses.video_cache_sweeper",
-    "src.backend.LockScreenManager.LockScreenDetector",
-    "src.backend.Logger",
-    "src.backend.log_hooks",
-    "src.backend.main_loop",
-    "src.backend.Migration.Migrator",
-    "src.backend.PackManagement.pack_family",
-    "src.backend.PageManagement.page_document",
-    "src.backend.PageManagement.page_flush",
-    "src.backend.PageManagement.PageManagerBackend",
-    "src.backend.PageManagement.Page",
-    "src.backend.PermissionManagement.FlatpakPermissionManager",
-    "src.backend.PluginManager.ActionBase",
-    "src.backend.PluginManager.ActionCore",
-    "src.backend.PluginManager.ActionHolder",
-    "src.backend.PluginManager.backend_guard.deckard_rpyc_guard",
-    "src.backend.PluginManager.EventAssigner",
-    "src.backend.PluginManager.event_dispatch",
-    "src.backend.PluginManager.EventHolder",
-    "src.backend.PluginManager.InputBases",
-    "src.backend.PluginManager.PluginBase",
-    "src.backend.PluginManager.PluginManager",
-    "src.backend.PluginManager.PluginSettings.Asset",
-    "src.backend.PluginManager.PluginSettings.Manager",
-    "src.backend.PluginManager.PluginSettings.Observer",
-    "src.backend.PluginManager.PluginSettings.PluginAssetManager",
-    "src.backend.PresenceMonitor.PresenceMonitor",
-    "src.backend.services",
-    "src.backend.SettingsManager",
-    "src.backend.settings_store",
-    "src.backend.settings_views",
-    "src.backend.startup_queue",
-    "src.backend.Store.StoreBackend",
-    "src.backend.Store.StoreCache",
-    "src.backend.trayicon",
-    "src.backend.WindowGrabber.Integrations.Sway",
-    "src.Signals.SignalManager",
-    "src.Signals.weak_callbacks",
-    "src.tray",
-    "src.windows.AssetManager.AssetManager",
-    "src.windows.AssetManager.ChooserPage",
-    "src.windows.AssetManager.CustomAssets.AssetPreview",
-    "src.windows.AssetManager.CustomAssets.Chooser",
-    "src.windows.AssetManager.CustomAssets.FlowBox",
-    "src.windows.AssetManager.DynamicFlowBox",
-    "src.windows.AssetManager.GenericAssetChooser",
-    "src.windows.AssetManager.IconPacks.Stack",
-    "src.windows.AssetManager.InfoPage",
-    "src.windows.mainWindow.DeckPlus.DialBox",
-    "src.windows.mainWindow.DeckPlus.ScreenBar",
-    "src.windows.mainWindow.deckSwitcher",
-    "src.windows.mainWindow.elements.DeckConfig",
-    "src.windows.mainWindow.elements.DeckSettings.BackgroundGroup",
-    "src.windows.mainWindow.elements.DeckSettingsButton",
-    "src.windows.mainWindow.elements.DeckSettings.DeckSettingsPage",
-    "src.windows.mainWindow.elements.DeckSettings.FakeDeckGroup",
-    "src.windows.mainWindow.elements.DeckStackChild",
-    "src.windows.mainWindow.elements.DeckStack",
-    "src.windows.mainWindow.elements.HeaderHamburgerMenuButton",
-    "src.windows.mainWindow.elements.KeepRunningDialog",
-    "src.windows.mainWindow.elements.KeyGrid",
-    "src.windows.mainWindow.elements.leftArea",
-    "src.windows.mainWindow.elements.NoPagesError",
-    "src.windows.mainWindow.elements.PageSelector",
-    "src.windows.mainWindow.elements.PageSettingsPage",
-    "src.windows.mainWindow.elements.Sidebar.elements.ActionChooser",
-    "src.windows.mainWindow.elements.Sidebar.elements.ActionConfigurator",
-    "src.windows.mainWindow.elements.Sidebar.elements.ActionManager",
-    "src.windows.mainWindow.elements.Sidebar.elements.BackgroundEditor",
-    "src.windows.mainWindow.elements.Sidebar.elements.IconSelector",
-    "src.windows.mainWindow.elements.Sidebar.elements.ImageEditor",
-    "src.windows.mainWindow.elements.Sidebar.elements.LabelEditor",
-    "src.windows.mainWindow.elements.Sidebar.elements.StateSwitcher",
-    "src.windows.mainWindow.elements.Sidebar.Sidebar",
-    "src.windows.mainWindow.mainWindow",
-    "src.windows.MultiDeckSelector.MultiDeckSelector",
-    "src.windows.MultiDeckSelector.MultiDeckSelectorRow",
-    "src.windows.Onboarding.PluginRecommendations",
-    "src.windows.PageManager.elements.PageEditor",
-    "src.windows.PageManager.elements.PageSelector",
-    "src.windows.PageManager.Importer.Importer",
-    "src.windows.PageManager.Importer.StreamController.StreamController",
-    "src.windows.PageManager.Importer.StreamDeckUI.StreamDeckUI",
-    "src.windows.PageManager.PageManager",
-    "src.windows.Settings.PluginSettingsPage",
-    "src.windows.Settings.PluginSettingsWindow.PluginAssetPreview",
-    "src.windows.Settings.PluginSettingsWindow.PluginSettingsWindow",
-    "src.windows.Settings.Settings",
-    "src.windows.Shortcuts.Shortcuts",
-    "src.windows.Store.Badges",
-    "src.windows.Store.InfoPage",
-    "src.windows.Store.StorePage",
-    "src.windows.Store.StorePageSection",
-    "src.windows.Store.Store",
-    "src.windows.ui_adapter",
+[tool.ty.src]
+# The checked set, written out rather than globbed. A glob of the root modules
+# reaches tests/ and scripts/ as well, which hold ~1600 diagnostics of their
+# own and are not governed here. Root modules are named one by one so adding
+# one to the gate is a deliberate edit; main.py in particular is only reachable
+# this way, because nothing imports it.
+include = [
+    "src",
+    "GtkHelper",
+    "locales",
+    "appinfo.py",
+    "autostart.py",
+    "cli_args.py",
+    "globals.py",
+    "main.py",
+    "rebrand_migration.py",
 ]
-disallow_any_explicit = false
+
+[tool.ty.rules]
+# Rules ty ships off by default and this tree holds at zero. Each reported no
+# hits when it was turned on, so each is a line held rather than a debt taken.
+missing-type-argument = "error"             # a bare generic decays; the type arguments are written out
+possibly-missing-attribute = "error"        # an attribute only some branches assign
+possibly-missing-import = "error"           # an import only some branches make
+possibly-unresolved-reference = "error"     # a name read on a path that may not have bound it
+unsound-yield = "error"                     # a yielded value the declared yield type does not cover
+division-by-zero = "error"
+blanket-ignore-comment = "error"            # a suppression names the rule it suppresses
+unsupported-dynamic-base = "error"          # a base class ty cannot compute hides the whole surface
+dynamic-function-decorator-return = "error" # a decorator that erases the wrapped signature
+
+# Left off deliberately, each its own piece of work rather than a suppression:
+#   missing-override-decorator   250 sites
+#   unsound-return-statement      37 sites
+
+[[tool.ty.overrides]]
+# Both modules are deprecated whole. Their own annotations and their Gio.ListStore
+# and GObject signal registrations must name the deprecated item class, so the
+# deprecation machinery reports itself. The rule stays live everywhere else.
+include = ["GtkHelper/ItemListComboRow.py", "GtkHelper/SearchComboRow.py"]
+
+[tool.ty.overrides.rules]
+deprecated = "ignore"

@@ -104,9 +104,8 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 GLOBALS_MODULE = "globals.py"
 THIS_SCRIPT = "scripts/check_gl_slots.py"
 
-# What the assignment pin walks. It is wider than the mypy roots, because
-# main.py does most of the assigning, and because a test scenario that invents
-# a slot still invents a slot.
+# What the assignment pin walks. It is wider than the type-check roots,
+# because a test scenario that invents a slot still invents a slot.
 #
 # Three groups stay ungoverned. The remaining root-level modules, appinfo.py,
 # rebrand_migration.py and globals.py, import before globals exists, or are
@@ -156,7 +155,6 @@ FROZEN_SLOTS: dict[str, str] = {
     "store_backend": "plugin store backend",
     "store": "store window, only while it is open",
     "notify": "desktop notification facade",
-    "pyro_daemon": "dead slot: never set, never read",
     "signal_manager": "app-wide signal bus",
     "window_grabber": "active-window watcher",
     "wayland": "Wayland session bridge; write-only, kept for parity",
@@ -193,7 +191,7 @@ IMPORTED: frozenset[str] = frozenset({
     "json", "os", "sys", "threading", "appinfo", "deque", "log", "argparser",
     "rebrand_migration", "Callable", "TYPE_CHECKING", "Any",
     # TYPE_CHECKING only
-    "Pyro5", "App", "LocaleManager", "AssetManagerBackend", "AssetManager",
+    "App", "LocaleManager", "AssetManagerBackend", "AssetManager",
     "MediaManager", "PageManagerBackend", "SettingsManager", "DeckManager",
     "PluginManager", "IconPackManager", "WallpaperPackManager",
     "SDPlusBarWallpaperPackManager", "StoreBackend", "Notify", "SignalManager",

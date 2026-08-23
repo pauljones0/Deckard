@@ -52,6 +52,7 @@ if TYPE_CHECKING:
 def _encode_key_native(key: "ControllerKey", image: Image.Image, img_hash: int) -> bytes:
     """The device-ready JPEG for a composited key image, from the encode
     memo when the same composite was encoded before."""
+    _t0 = 0.0  # definite binding; the only read sits under the same media_prof guard as the write
     if media_prof:
         _t0 = time.perf_counter()
     memo_key = (img_hash, key.deck_controller.deck.get_rotation())
@@ -73,6 +74,7 @@ def _encode_tile_native(key: "ControllerKey", tile: Image.Image, video_md5: str,
     """The device-ready JPEG for one background-video tile, from the native
     tile cache when this frame was encoded for this key before. The cache
     key carries every input those bytes depend on."""
+    _t0 = 0.0  # definite binding; the only read sits under the same media_prof guard as the write
     if media_prof:
         _t0 = time.perf_counter()
     cache_key = (video_md5, frame_index, key.present_state.key_index,

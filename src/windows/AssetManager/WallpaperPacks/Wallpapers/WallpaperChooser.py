@@ -48,8 +48,8 @@ class WallpaperChooserPage(GenericAssetChooserPage["WallpaperPack", "Wallpaper",
         return pack.get_wallpapers()
 
     def bind_preview(self, preview: "GenericAssetPreview[Wallpaper]",
-                     wallpaper: "Wallpaper") -> None:
-        preview.set_asset(wallpaper)
+                     asset: "Wallpaper") -> None:
+        preview.set_asset(asset)
 
     def get_child_asset(self, child: "GenericAssetPreview[Wallpaper]") -> "Wallpaper":
         return child.asset

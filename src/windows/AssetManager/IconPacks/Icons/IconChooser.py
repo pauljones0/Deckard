@@ -47,8 +47,8 @@ class IconChooserPage(GenericAssetChooserPage["IconPack", "Icon",
     def get_assets(self, pack: "IconPack") -> "list[Icon]":
         return pack.get_icons()
 
-    def bind_preview(self, preview: "GenericAssetPreview[Icon]", icon: "Icon") -> None:
-        preview.set_asset(icon)
+    def bind_preview(self, preview: "GenericAssetPreview[Icon]", asset: "Icon") -> None:
+        preview.set_asset(asset)
 
     def get_child_asset(self, child: "GenericAssetPreview[Icon]") -> "Icon":
         return child.asset

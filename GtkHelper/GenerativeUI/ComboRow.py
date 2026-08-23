@@ -82,19 +82,19 @@ class ComboRow(GenerativeUI[BaseComboRowItem | str | None]):
         item = combo_row.get_selected_item()
         self._handle_value_changed(item)
 
-    def _handle_value_changed(self, item: BaseComboRowItem | str | None, update_settings: bool = True, trigger_callback: bool = True) -> None:
+    def _handle_value_changed(self, new_value: BaseComboRowItem | str | None, update_settings: bool = True, trigger_callback: bool = True) -> None:
         """Handles updating the stored value and triggering the change callback."""
         old_value = self.get_value(self._default_value)
 
         if update_settings:
-            self.set_value(item)
+            self.set_value(new_value)
 
         if trigger_callback and self.on_change:
             old_value = self.get_item(old_value)
 
             # The raw widget reference, which can be None. The base class
             # _handle_value_changed says why this must not force a build.
-            self.on_change(self._widget, item, old_value)
+            self.on_change(self._widget, new_value, old_value)
 
     def reset_value(self) -> None:
         """Reset the selection to its default.
@@ -123,16 +123,16 @@ class ComboRow(GenerativeUI[BaseComboRowItem | str | None]):
         """Sets the selected item in the UI."""
         self.widget.set_selected_item(value)
 
-    def set_value(self, item: BaseComboRowItem | str | None) -> None:
+    def set_value(self, value: BaseComboRowItem | str | None) -> None:
         """Sets the selected item in the UI."""
 
-        value: str | None
-        if isinstance(item, BaseComboRowItem):
-            value = item.get_value()
+        resolved: str | None
+        if isinstance(value, BaseComboRowItem):
+            resolved = value.get_value()
         else:
-            value = item
+            resolved = value
 
-        super().set_value(value)
+        super().set_value(resolved)
 
     # Widget Wrappers
 

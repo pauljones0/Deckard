@@ -216,6 +216,9 @@ def ceiling_bytes() -> int:
         # DeckController.__init__ loses the deck.
         usable = math.isfinite(mb)
     except ValueError:
+        # Bind mb so the name exists on every path. The usable test below
+        # returns before any read of it here.
+        mb = 0.0
         usable = False
     if not usable:
         # Warn once per distinct value, because every pass reads this.

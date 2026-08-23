@@ -50,9 +50,9 @@ def tr(key: str, fallback: str | None = None) -> str:
     not typed to take a None.
 
     key is typed str and this guards it in no way. get resolves a None key to
-    None, and that None comes back out through the "-> str". mypy rejects it
-    at every annotated call site, so it can arrive from an unchecked one
-    alone. The Store badge rows record that shape in a comment and return
+    None, and that None comes back out through the "-> str". The checker
+    rejects it at every annotated call site, so it can arrive from an
+    unchecked one alone. The Store badge rows record that shape in a comment and return
     early rather than depend on it.
 
     Raises RuntimeError before main.create_global_objects() builds the locale
@@ -63,7 +63,7 @@ def tr(key: str, fallback: str | None = None) -> str:
     # gl.lm carries a concrete annotation, because the slot is late-init, so
     # this widening keeps the pre-boot branch alive. Code reaches that branch,
     # and a None check against a non-optional type narrows to an uninhabited
-    # type, whose body mypy skips.
+    # type, whose body the checker skips.
     lm: LocaleManager | None = gl.lm
     if lm is None:
         raise RuntimeError(

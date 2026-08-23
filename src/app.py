@@ -81,7 +81,7 @@ def unix_signal_add(priority: int, signum: int, callback: Callable[[], bool]) ->
     if add is None:
         try:
             gi.require_version("GLibUnix", "2.0")
-            from gi.repository import GLibUnix  # type: ignore[attr-defined]  # gi stub: PyGObject-stubs ships no GLibUnix-2.0; the host GLib decides whether it exists, which this try/except probes
+            from gi.repository import GLibUnix  # ty: ignore[unresolved-import]  # gi stub: PyGObject-stubs ships no GLibUnix-2.0; the host GLib decides whether it exists, which this try/except probes
             add = GLibUnix.signal_add
         except (ImportError, ValueError, AttributeError):
             return False
@@ -652,7 +652,7 @@ class App(Adw.Application):
             GLib.idle_add(self.unmark_busy)
             GLib.idle_add(self.main_win.set_cursor_from_name, "default")
 
-    def send_notification(self,  # type: ignore[override]  # shadows Gio.Application.send_notification with the (icon, title, body) form of this app; the parent_send binding below reaches the base signature
+    def send_notification(self,  # ty: ignore[invalid-method-override]  # shadows Gio.Application.send_notification with the (icon, title, body) form of this app; the parent_send binding below reaches the base signature
                           icon_name: str,
                           title: str,
                           body: str,

@@ -10,12 +10,12 @@ import tempfile
 from loguru import logger as log
 import threading
 
+from rpyc.core.protocol import Connection
 from rpyc.utils.authenticators import AuthenticationError
 
 from src.backend.PluginManager.ActionHolder import ActionHolder
 from src.backend.PluginManager.PluginBase import PluginBase
 from src.backend.PluginManager.backend_guard import deckard_rpyc_guard
-from streamcontroller_plugin_tools import BackendBase
 
 import globals as gl
 from src.backend import startup_queue
@@ -276,8 +276,8 @@ def backend_guard_env() -> dict[str, str]:
 class PluginManager:
     action_index: dict[str, ActionHolder] = {}
     def __init__(self) -> None:
-        self.initialized_plugin_classes = list[PluginBase]()
-        self.backends:list[BackendBase] = []
+        self.initialized_plugin_classes = list[type[PluginBase]]()
+        self.backends: list[Connection] = []
         # The subprocess.Popen handles of the launched backends. The teardown
         # terminates each one.
         self.backend_processes: list[subprocess.Popen[bytes]] = []

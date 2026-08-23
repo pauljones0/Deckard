@@ -42,6 +42,9 @@ def native_tile_cache_max_bytes() -> int:
         # initialize deck" and skips the whole device.
         usable = math.isfinite(mb)
     except ValueError:
+        # Bind mb so the name exists on every path. The usable test below
+        # returns before any read of it here.
+        mb = 0.0
         usable = False
     if not usable:
         log.warning(

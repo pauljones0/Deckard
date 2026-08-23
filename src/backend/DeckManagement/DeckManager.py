@@ -407,13 +407,15 @@ class DeckManager:
             daemon=True,
         ).start()
 
-    def get_controller_for_deck(self, deck: StreamDeck) -> DeckController | None:
+    def get_controller_for_deck(self, deck: "StreamDeck.StreamDeck | FakeDeck") -> DeckController | None:
         for controller in self.deck_controller:
-            if controller.deck is deck:
+            # Compare against the raw handle the wrapper holds. controller.deck
+            # is always a BetterDeck, so it never equals an enumerated device.
+            if controller.deck.deck is deck:
                 return controller
         return None
 
-    def add_newly_connected_deck(self, deck:StreamDeck, is_fake: bool = False) -> None:
+    def add_newly_connected_deck(self, deck: "StreamDeck.StreamDeck | FakeDeck", is_fake: bool = False) -> None:
         # Retry the init instead of constructing a DeckController directly. A
         # deck that arrives mid-boot-storm through hotplug or the boot rescan
         # hits the same flaky open and serial read the startup path retries.

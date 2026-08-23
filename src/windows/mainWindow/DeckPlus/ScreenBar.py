@@ -105,7 +105,7 @@ class ScreenBar(Gtk.Frame):
         self.shortcut_controller = Gtk.ShortcutController()
         self.add_controller(self.shortcut_controller)
 
-        remove_shortcut_action = Gtk.CallbackAction.new(self.on_remove)  # type: ignore[arg-type]  # gi stub: GtkShortcutFunc is typed Callable[..., bool]; PyGObject coerces a None return to False, which is this handler's existing behaviour
+        remove_shortcut_action = Gtk.CallbackAction.new(self.on_remove)  # ty: ignore[invalid-argument-type]  # gi stub: GtkShortcutFunc is typed Callable[..., bool]; PyGObject coerces a None return to False, which is this handler's existing behaviour
 
         self.remove_shortcut = Gtk.Shortcut.new(Gtk.ShortcutTrigger.parse_string("Delete"), remove_shortcut_action)
         self.shortcut_controller.add_shortcut(self.remove_shortcut)

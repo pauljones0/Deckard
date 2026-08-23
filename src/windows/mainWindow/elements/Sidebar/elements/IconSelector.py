@@ -45,14 +45,14 @@ class IconSelector(Gtk.Box):
     def __init__(self, sidebar: "Sidebar", **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.sidebar = sidebar
-        self.active_identifier: InputIdentifier = None  # type: ignore[assignment]  # late-init: load_for_identifier
-        self.active_state: int = None  # type: ignore[assignment]  # late-init: load_for_identifier
+        self.active_identifier: InputIdentifier = None  # ty: ignore[invalid-assignment]  # late-init: load_for_identifier
+        self.active_state: int = None  # ty: ignore[invalid-assignment]  # late-init: load_for_identifier
 
         # next() on a count is atomic. A read-modify-write on latest_task_id
         # gives two frames the same id, because the producers are threads, and
         # a stale frame then passes the check in set_pixbuf_and_del.
         self.task_ids = itertools.count()
-        self.latest_task_id: int = None  # type: ignore[assignment]  # late-init: the first render task
+        self.latest_task_id: int = None  # ty: ignore[invalid-assignment]  # late-init: the first render task
         self.build()
 
     def build(self) -> None:

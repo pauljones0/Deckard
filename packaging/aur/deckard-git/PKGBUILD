@@ -113,7 +113,6 @@ package() {
          "$pkgdir/opt/deckard/.gitlab-ci.yml" \
          "$pkgdir/opt/deckard/.devcontainer" \
          "$pkgdir/opt/deckard/.ruff_cache" \
-         "$pkgdir/opt/deckard/.mypy_cache" \
          "$pkgdir/opt/deckard/packaging" \
          "$pkgdir/opt/deckard/tests" \
          "$pkgdir/opt/deckard/docs"

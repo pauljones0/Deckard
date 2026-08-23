@@ -55,15 +55,17 @@ class ToggleRow(GenerativeUI[int]):
         if trigger_callback and self.on_change:
             # A toggle object needs the widget, so this branch runs only
             # after the widget exists. reset_value and _value_changed both
-            # guarantee a built widget before this point.
-            assert self._widget is not None
-            new_toggle = self._widget.get_toggle_at(new_value)
-            old_toggle = self._widget.get_toggle_at(old_value)
+            # guarantee a built widget before this point. build() makes a
+            # Toggle, while the base declares the plain Gtk.Widget.
+            assert isinstance(self._widget, Toggle)
+            toggle_row = self._widget
+            new_toggle = toggle_row.get_toggle_at(new_value)
+            old_toggle = toggle_row.get_toggle_at(old_value)
 
             # This row deviates from the base contract: on_change receives
             # the Toggle objects, not the stored index values.
             on_change = cast("Callable[[Any, Any, Any], None]", self.on_change)
-            on_change(self._widget, new_toggle, old_toggle)
+            on_change(toggle_row, new_toggle, old_toggle)
 
     def connect_signals(self) -> None:
         self.widget.toggle_group.connect("notify::active", self._value_changed)

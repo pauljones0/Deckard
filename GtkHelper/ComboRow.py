@@ -27,7 +27,7 @@ class BaseComboRowItem(GObject.GObject):
             return self.get_value() == other.get_value()
         return self.get_value() == str(other)
 
-    @GObject.Property(type=GObject.TYPE_STRING)  # type: ignore[arg-type]  # gi stub: Property(type=) accepts a GType, stubs only declare type[Any] | None
+    @GObject.Property(type=GObject.TYPE_STRING)  # ty: ignore[invalid-argument-type]  # gi stub: Property(type=) accepts a GType, stubs only declare type[Any] | None
     def filter_value(self) -> str:
         return self.__str__()
 
@@ -77,7 +77,7 @@ class ComboRow(Adw.ComboRow):
                  subtitle: str | None = None,
                  enable_search: bool = True,
                  default_selection: BaseComboRowItem | str | None = None):
-        super().__init__(title=title, subtitle=subtitle)  # type: ignore[arg-type]  # gi stub: Adw string props accept None (PyGObject maps it to NULL, i.e. empty string)
+        super().__init__(title=title, subtitle=subtitle)  # ty: ignore[invalid-argument-type]  # gi stub: Adw string props accept None (PyGObject maps it to NULL, i.e. empty string)
 
         self.model = Gio.ListStore(item_type=GObject.GObject)
 

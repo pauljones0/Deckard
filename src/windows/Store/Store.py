@@ -35,7 +35,7 @@ from src.windows.Store.StorePage import StorePage
 
 class Store(Gtk.ApplicationWindow):
     def __init__(self, main_window: "MainWindow", *args: Any, **kwargs: Any) -> None:
-        super().__init__(  # type: ignore[misc]  # gi stub: the stub models GObject properties as positional-or-keyword params, so *args reads as a second binding for them; at runtime GObject.__init__ takes properties by keyword only
+        super().__init__(  # GObject.__init__ takes properties by keyword only, so the properties are named and *args only forwards what a caller added
             title="Store",
             default_width=1050,
             default_height=750,

@@ -14,10 +14,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 """
 # Import python modules
 import time
+from collections.abc import Callable
 from loguru import logger as log
 
 # Import typing
-from typing import Any, TYPE_CHECKING
+from typing import Any, TYPE_CHECKING, cast
 
 import globals as gl
 
@@ -152,7 +153,7 @@ class ScreenSaver:
             # and two of the six requesters firing at once.
             if self.showing:
                 if payload is not None and hasattr(payload, "close"):
-                    payload.close()
+                    cast("Callable[[], None]", payload.close)()
                 return
 
             # Bump the generation atomically, the same pattern as load_page.
@@ -223,7 +224,7 @@ class ScreenSaver:
                     # the same lock hold just above, so this branch is not
                     # expected. Close the payload here rather than leak a cv2
                     # capture handle.
-                    payload.close()
+                    cast("Callable[[], None]", payload.close)()
 
             # Release keys
             for key in self.deck_controller.inputs[Input.Key]:

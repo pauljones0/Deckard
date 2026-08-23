@@ -11,9 +11,9 @@ floor the flatpak and the AUR package both target.
 Python 3.14 defers annotation evaluation (PEP 649); 3.13 evaluates a parameter
 and return annotation at def time. The local .venv is 3.14 and every shipped
 build is 3.13. An annotation that names something the runtime does not have
-therefore imports fine for a developer and raises for a user. mypy never
-imports, ruff never imports, and compileall compiles without executing, so
-nothing in the gate sees it.
+therefore imports fine for a developer and raises for a user. The type
+checker never imports, ruff never imports, and compileall compiles without
+executing, so nothing else in the gate sees it.
 
 Two failures are reported:
 
@@ -34,7 +34,7 @@ import importlib
 import sys
 from pathlib import Path
 
-SKIP_DIRS = {".git", ".venv", ".typecheck-ci-venv", "__pycache__", "aur-deckard-git", ".claude"}
+SKIP_DIRS = {".git", ".venv", "__pycache__", "aur-deckard-git", ".claude"}
 
 
 def module_level_runtime_bindings(tree: ast.Module) -> set[str]:

@@ -425,7 +425,7 @@ class LabelManager:
         if not isinstance(label.text, str):
             # Plugins set label text untyped, so the runtime repair stays
             # even though the annotation reads it as impossible.
-            label.text = str(label.text)  # type: ignore[unreachable]
+            label.text = str(label.text)
 
         return label
 

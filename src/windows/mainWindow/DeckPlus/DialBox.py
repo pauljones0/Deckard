@@ -156,7 +156,7 @@ class Dial(Gtk.Frame):
         copy_shortcut_action = Gtk.CallbackAction.new(self.on_copy)
         cut_shortcut_action = Gtk.CallbackAction.new(self.on_cut)
         paste_shortcut_action = Gtk.CallbackAction.new(self.on_paste)
-        remove_shortcut_action = Gtk.CallbackAction.new(self.on_remove)  # type: ignore[arg-type]  # gi stub: GtkShortcutFunc is typed Callable[..., bool]; PyGObject coerces a None return to False, which is this handler's existing behaviour
+        remove_shortcut_action = Gtk.CallbackAction.new(self.on_remove)  # ty: ignore[invalid-argument-type]  # gi stub: GtkShortcutFunc is typed Callable[..., bool]; PyGObject coerces a None return to False, which is this handler's existing behaviour
         update_shortcut_action = Gtk.CallbackAction.new(self.on_update)
 
         self.turn_left_shortcut = Gtk.Shortcut.new(Gtk.ShortcutTrigger.parse_string("Left"), turn_left_shortcut_action)

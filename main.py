@@ -221,6 +221,14 @@ def update_assets():
         log.info("Skipping store asset update")
         return
 
+    # create_global_objects() builds the store backend before this runs, so the
+    # slot is populated in the normal boot order. Nothing enforces that order,
+    # and this function is @log.catch, so a reordering would swallow an
+    # AttributeError and skip the update with no reason recorded.
+    if gl.store_backend is None:
+        log.warning("Skipping store asset update: the store backend is not built yet")
+        return
+
     log.info("Updating store assets")
     start = time.time()
     result = gl.store_backend.update_everything()

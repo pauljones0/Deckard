@@ -76,6 +76,8 @@ from collections.abc import Sequence
 from typing import cast, TYPE_CHECKING, Any, overload
 if TYPE_CHECKING:
     from src.backend.DeckManagement.DeckManager import DeckManager
+    from src.backend.DeckManagement.Subclasses.FakeDeck import FakeDeck
+    from src.backend.DeckManagement.Subclasses.RemoteDeck import RemoteDeck
     from src.backend.DeckManagement.deck_controller.gif_pipeline import GifBackground
     from src.backend.DeckManagement.deck_controller.inputs import ControllerInput
 
@@ -105,7 +107,7 @@ class DeckController:
     # class so the harness can tighten it.
     TEARDOWN_JOIN_TIMEOUT_S = 10.0
 
-    def __init__(self, deck_manager: "DeckManager", deck: StreamDeck.StreamDeck):
+    def __init__(self, deck_manager: "DeckManager", deck: "StreamDeck.StreamDeck | FakeDeck | RemoteDeck"):
         self.deck_manager: "DeckManager" = deck_manager
 
         # Per-instance memo for stable deck properties. An lru_cache on an
@@ -116,10 +118,11 @@ class DeckController:
         self._native_key_format_sig: "NativeKeyFormatSig | None" = None
 
         # Store the raw handle as self.deck so get_alive() returns True inside
-        # get_deck_settings. The raw handle answers is_open() the same way the
-        # BetterDeck wrapper does, and the wrapper replaces it a few lines
-        # below.
-        self.deck: BetterDeck = deck
+        # get_deck_settings. Until the wrapper replaces it a few lines below,
+        # the only wrapper methods anything reaches are is_open() and
+        # get_serial_number(), and every handle this constructor accepts
+        # answers both the way the wrapper does. That is what the cast rests on.
+        self.deck: BetterDeck = cast(BetterDeck, deck)
         # Order the transport mutex FIFO before open() starts the reader
         # thread. The order of these two lines matters; see
         # _install_fair_transport_lock in deck_controller/media_writer.py.
@@ -130,7 +133,9 @@ class DeckController:
         deck.open(True)
 
         rotation = gl.settings_manager.deck_view(self.get_deck_settings()).get("rotation")
-        self.deck = BetterDeck(deck, rotation)
+        # BetterDeck forwards against the real device surface, so the cast is
+        # what carries a fake or a remote handle across that boundary.
+        self.deck = BetterDeck(cast("StreamDeck.StreamDeck", deck), rotation)
 
         try:
             # Clear the deck through the direct body, not the queue-routed

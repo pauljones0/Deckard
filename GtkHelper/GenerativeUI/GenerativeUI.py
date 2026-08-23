@@ -218,8 +218,8 @@ class GenerativeUI[T](ABC):
 
             return run_on_main(_run)
 
-        # functools.wraps types its result as _Wrapped, which mypy will not
-        # unify with the Concatenate return annotation; the cast restores it.
+        # functools.wraps types its result as _Wrapped, which does not unify
+        # with the Concatenate return annotation; the cast restores it.
         return cast(Callable[Concatenate[Any, _Params], _Return], wrapper)
 
     @abstractmethod

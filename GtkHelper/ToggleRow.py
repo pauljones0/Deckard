@@ -58,7 +58,7 @@ class ToggleRow(Adw.ActionRow):
 
     def add_toggle(self, label: str | None = None, tooltip: str | None = None, icon_name: str | None = None, name: str | None = None, enabled: bool = True) -> None:
         self.toggle_group.add(
-            Adw.Toggle(label=label, tooltip=tooltip, icon_name=icon_name, name=name, enabled=enabled)  # type: ignore[arg-type]  # gi stub: Adw string props accept None (PyGObject maps it to NULL)
+            Adw.Toggle(label=label, tooltip=tooltip, icon_name=icon_name, name=name, enabled=enabled)  # ty: ignore[invalid-argument-type]  # gi stub: Adw string props accept None (PyGObject maps it to NULL)
         )
 
     def add_toggles(self, toggles: list[Adw.Toggle]) -> None:

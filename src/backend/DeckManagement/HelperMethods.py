@@ -23,6 +23,7 @@ import sys
 import math
 import re
 import threading
+from types import FunctionType
 from typing import Concatenate, ParamSpec, TYPE_CHECKING, Any, TypeVar, cast
 from urllib.parse import urlparse
 from loguru import logger as log
@@ -284,17 +285,22 @@ def instance_cache(func: Callable[Concatenate[_Self, _Params], _Return]) -> Call
     is the positional args, which must be hashable. The check-then-set has no
     lock, so this is not thread-safe.
     """
-    attr = f"_instance_cache_{func.__name__}"
+    # Only a plain method carries this decorator, so it always has a __name__.
+    func_name = cast(FunctionType, func).__name__
+    attr = f"_instance_cache_{func_name}"
 
     @wraps(func)
     # self is positional-only: the declared return type takes its first
     # parameter positionally, and a named self would not assign to it.
     def wrapper(self: _Self, /, *args: _Params.args, **kwargs: _Params.kwargs) -> _Return:
-        if kwargs:
+        # A len test, not a truthiness test: a truthiness test drops the
+        # ParamSpec kwargs identity, and the forwarded call below then fails
+        # to type-check.
+        if len(kwargs) > 0:
             # The cache key is the positional args only. A keyword call would
             # miss or alias a key, so it stays unsupported, as the
             # positional-only key always made it.
-            raise TypeError(f"{func.__name__} is instance-cached; pass arguments positionally")
+            raise TypeError(f"{func_name} is instance-cached; pass arguments positionally")
         # The dict lives in the instance __dict__; the annotation states what
         # this decorator stores in it.
         cache: dict[tuple[object, ...], _Return] | None = self.__dict__.get(attr)
