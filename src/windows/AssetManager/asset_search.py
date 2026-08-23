@@ -35,8 +35,10 @@ Separators do not: the name and the query both collapse `_`, `-`, `.`, `/`,
 media-next, media_next and media.next alike. A word that a pack writes with a
 separator inside it is found as one word as well, because a token that misses
 is tried again against the name with its separators taken out: "wifi" finds
-wi-fi that way. Such a match crosses a word boundary of the name, which is why
-it is the last thing tried.
+wi-fi that way. The retry is the last rung tried, and it scores the joined
+form, so a match that crosses a word boundary stands on whatever rung that
+form earns: "home" reads ho-me as the whole name, rung 100, and go-home as a
+word of it, rung 80.
 
 What the ladder does not do is spelling. It matches the words that are typed,
 so "batery" finds nothing where an edit ratio still offered battery.
