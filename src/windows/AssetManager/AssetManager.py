@@ -31,6 +31,7 @@ if TYPE_CHECKING:
 import globals as gl
 
 # Import own modules
+from src.windows.AssetManager.GenericAssetChooser import PACK_CHOOSER_CHILD_NAME
 from src.windows.AssetManager.InfoPage import InfoPage
 from src.windows.AssetManager.CustomAssets.Chooser import CustomAssetChooser
 from src.windows.AssetManager.IconPacks.Stack import IconPackChooserStack
@@ -105,9 +106,9 @@ class AssetManager(Gtk.ApplicationWindow):
         """
         chooser = self.asset_chooser
 
-        chooser.icon_pack_chooser.set_visible_child_name("pack-chooser")
-        chooser.wallpaper_pack_chooser.set_visible_child_name("pack-chooser")
-        chooser.sd_plus_bar_wallpaper_pack_chooser.set_visible_child_name("pack-chooser")
+        for pack_stack in (chooser.icon_pack_chooser, chooser.wallpaper_pack_chooser,
+                           chooser.sd_plus_bar_wallpaper_pack_chooser):
+            pack_stack.set_visible_child_name(PACK_CHOOSER_CHILD_NAME)
         self.back_button.set_visible(False)
 
         pages = (
@@ -181,17 +182,17 @@ class AssetManager(Gtk.ApplicationWindow):
             if self.asset_chooser.get_visible_child_name() == "icon-packs":
                 if self.asset_chooser.icon_pack_chooser.get_visible_child_name() == "icon-chooser":
                     # Switch from icon chooser to pack page
-                    self.asset_chooser.icon_pack_chooser.set_visible_child_name("pack-chooser")
+                    self.asset_chooser.icon_pack_chooser.set_visible_child_name(PACK_CHOOSER_CHILD_NAME)
 
             elif self.asset_chooser.get_visible_child_name() == "wallpaper-packs":
                 if self.asset_chooser.wallpaper_pack_chooser.get_visible_child_name() == "wallpaper-chooser":
                     # Switch from pack chooser to icon chooser
-                    self.asset_chooser.wallpaper_pack_chooser.set_visible_child_name("pack-chooser")
+                    self.asset_chooser.wallpaper_pack_chooser.set_visible_child_name(PACK_CHOOSER_CHILD_NAME)
 
             elif self.asset_chooser.get_visible_child_name() == "sd-plus-bar-wallpaper-packs":
                 if self.asset_chooser.sd_plus_bar_wallpaper_pack_chooser.get_visible_child_name() == "wallpaper-chooser":
                     # Switch from pack chooser to icon chooser
-                    self.asset_chooser.sd_plus_bar_wallpaper_pack_chooser.set_visible_child_name("pack-chooser")
+                    self.asset_chooser.sd_plus_bar_wallpaper_pack_chooser.set_visible_child_name(PACK_CHOOSER_CHILD_NAME)
 
         self.back_button.set_visible(False)
 

@@ -57,6 +57,7 @@ class FakePage:
     on_search_changed = ChooserPage.on_search_changed
     run_search = ChooserPage.run_search
     invalidate_search = ChooserPage.invalidate_search
+    search_is_current = ChooserPage.search_is_current
     _on_map = ChooserPage._on_map
     _search_generation = ChooserPage._search_generation
     _search_showing = ChooserPage._search_showing
@@ -217,6 +218,32 @@ def test_invalidate_stops_passes_and_frees_the_cache() -> None:
           "catches up only when the query moved")
 
 
+def test_search_is_current_answers_both_halves() -> None:
+    """The staleness test a pass carries off the main thread.
+
+    A search that gathers on a worker asks this before it renders. It must
+    answer False for both ways a pass goes stale: a later pass moved the
+    generation on, and the page stopped showing. A test on the generation
+    alone would render into a page nobody sees, because hiding a page keeps
+    the generation it invalidated with.
+    """
+    page = FakePage()
+    generation = page._search_generation
+    assert page.search_is_current(generation), "a fresh pass reads as stale"
+    assert not page.search_is_current(generation - 1), (
+        "an overtaken pass reads as current")
+
+    page.invalidate_search()
+    assert not page.search_is_current(page._search_generation), (
+        "a page that stopped showing calls its own generation current; a "
+        "gather would then render into a hidden page")
+
+    page._on_map()
+    assert page.search_is_current(page._search_generation), (
+        "a page that shows again refuses every pass")
+    print("PASS: the staleness test answers the generation and the page alike")
+
+
 def test_hiding_the_window_invalidates_for_real() -> None:
     """The hook must be on a signal that fires while a pass is pending.
 
@@ -375,6 +402,7 @@ def main() -> int:
     test_the_entry_owns_the_wait()
     test_generation_guard_drops_an_overtaken_pass()
     test_invalidate_stops_passes_and_frees_the_cache()
+    test_search_is_current_answers_both_halves()
     test_hiding_the_window_invalidates_for_real()
     test_hooks_are_wired()
     test_no_page_overrides_the_handler()

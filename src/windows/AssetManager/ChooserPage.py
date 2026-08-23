@@ -170,6 +170,29 @@ class ChooserPage(Gtk.Stack):
         self.apply_search(query)
         return False  # one-shot idle
 
+    def search_is_current(self, generation: int) -> bool:
+        """Whether a pass queued with generation is still the one to render.
+
+        A pass that gathers off the main thread asks this before it renders,
+        and the main-loop callback that renders asks it again, because the
+        query can move on in between. A later pass, a page turn and a hidden
+        window all answer False. It is the one staleness test a page outside
+        this one may use, so a search that spans two pages guards on the page
+        whose entry holds the query.
+        """
+        return generation == self._search_generation and self._search_showing
+
+    def focus_search_entry(self) -> bool:
+        """Take the typing to this page's entry. A one-shot idle callback.
+
+        The cursor goes to the end of the text, because grabbing the focus of
+        an entry selects everything it holds and the next keystroke would then
+        replace the query rather than extend it.
+        """
+        self.search_entry.grab_focus()
+        self.search_entry.set_position(-1)
+        return False  # one-shot idle
+
     def invalidate_search(self, *args: Any) -> None:
         """Stop searching until this page shows again.
 
