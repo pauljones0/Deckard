@@ -142,7 +142,7 @@ def test_install_script_runs_without_shell() -> None:
 
     def capture_execute(argv, timeout_s, env=None):
         captured.append(argv)
-        return 0, False
+        return 0, False, ""
 
     install_script._execute = capture_execute
     try:

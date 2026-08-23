@@ -22,15 +22,21 @@ bundle as a release asset.
 
 ### Security
 
-- Installing a plugin now asks before it runs the plugin's install script,
-  and runs that script confined. A plugin can ship a script that runs on
-  this computer to set itself up; one such script silently changed a
-  system setting outside the app. The app now asks before running a new
-  plugin's install script, runs it without access to the desktop message
-  bus so it cannot reconfigure the system, and, where the sandbox tool is
-  present, blocks it from writing anywhere but its own folder. A hung
-  script is stopped instead of holding the install open. A setting under
-  Store, install scripts (ask, always or never), controls the prompt.
+- Installing a plugin from the store now asks before it runs the plugin's
+  install steps, and runs them confined. A plugin can ship a setup step
+  that runs on this computer at install time; one such step silently
+  changed a system setting outside the app. The store now asks before
+  running a plugin's install steps, and, where the bwrap sandbox tool is
+  present, runs each step on a read-only system with access only to the
+  plugin's own folder and no connection to the desktop session. Where
+  bwrap is not available the step still runs, with the desktop session
+  hidden from it as far as the environment allows; the prompt is the main
+  protection there. A hung step is stopped instead of holding the install
+  open, and declining an update keeps the working plugin in place. A new
+  setting under Store, "Plugin install scripts" (ask, always or never),
+  controls the prompt; the prompt appears for store installs, while an
+  automatic update of a plugin you already installed runs its steps
+  without asking unless you declined them before.
 - Plugin backends now listen on the local machine only, and accept
   connections from the desktop session that started them. A plugin backend
   used to open a network port that any machine on the same network could

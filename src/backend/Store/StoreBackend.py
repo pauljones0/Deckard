@@ -1585,6 +1585,18 @@ class StoreBackend:
 
         local_path = os.path.join(gl.PLUGIN_DIR, plugin_id)
 
+        # Decide the install steps before the download swaps the tree, so a
+        # decline never destroys a working install. Declining an update
+        # keeps the registered version rather than replace it with one
+        # whose dependencies never got installed; a fresh install proceeds
+        # and skips the steps.
+        plugin_manager = gl.plugin_manager
+        is_update = plugin_manager is not None and plugin_manager.get_plugin_by_id(plugin_id) is not None
+        run_scripts = install_script.decide_install_scripts(
+            local_path if is_update else None, plugin_id, ask_install_script)
+        if is_update and not run_scripts:
+            return Ok(None)
+
         response = self.download_repo(repo_url=url, directory=local_path, commit_sha=plugin_data.commit_sha, branch_name=plugin_data.branch, expected_id=plugin_id)
 
         # Stop before an install script runs, or a plugin reload lands, on a
@@ -1597,20 +1609,16 @@ class StoreBackend:
         # below imports the new code. A deregister after a successful download
         # leaves a failed update with the old version on disk and registered,
         # while a deregister first would need a recovery reload.
-        plugin_manager = gl.plugin_manager
-        if plugin_manager is not None and plugin_manager.get_plugin_by_id(plugin_id) is not None:
+        if is_update:
             try:
                 self.uninstall_plugin(plugin_id, remove_from_pages=False, remove_files=False)
             except Exception as e:
                 log.error(f"Deregistering the old version of {plugin_id} failed: {e}")
 
-        # The install script and the requirements step run only through the
-        # gate, which owns the consent policy, the confinement, the timeout,
-        # the process-group kill, and the loopback-guard re-injection into
-        # any venv the script created. ask_install_script is the store
-        # window's consent prompt; None on the auto-update, onboarding and
-        # headless paths, where the gate runs without asking.
-        outcome = install_script.run_install_steps(local_path, plugin_id, consent=ask_install_script)
+        # The install steps run only through the gate, which owns the
+        # confinement, the timeout, the process-group kill, and the
+        # loopback-guard re-injection. run_scripts was decided pre-download.
+        outcome = install_script.run_install_steps(local_path, plugin_id, run=run_scripts)
         if outcome not in (install_script.Outcome.RAN, install_script.Outcome.NO_STEPS):
             log.warning(f"Install steps of {plugin_id}: {outcome.value}")
 

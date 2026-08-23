@@ -99,8 +99,12 @@ class MissingRow(Adw.PreferencesRow):
             return
         # Install the plugin. An Err is a failure, and any other result is
         # the one success. The read of the result keeps a failed install from
-        # reaching the installed UI reset.
-        result = backend.install_plugin(plugin)
+        # reaching the installed UI reset. The consent prompt gates the
+        # install script, the same as a store-window install; this runs on a
+        # worker thread, so the prompt marshals to the main loop.
+        from src.windows.Store.install_consent import make_consent
+        result = backend.install_plugin(
+            plugin, ask_install_script=make_consent(gl.app.main_win if gl.app is not None else None))
         if isinstance(result, Err):
             self.show_install_error()
             return

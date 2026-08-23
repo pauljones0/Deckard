@@ -2,12 +2,24 @@
 
 A downloaded plugin tree can carry two executable install steps: an
 "__install__.py" script, and a requirements.txt that installs into this
-app's own interpreter. Both are arbitrary code the moment they run, so
-every caller funnels through run_install_steps, and the future venv
-rebuild path must too. The gate owns the timeout, kills the whole
-process group of a hung step, and re-injects the loopback guard into
-every venv a script created, so a rebuilt or fresh venv never launches
-unguarded.
+app's own interpreter. Both are arbitrary code the moment they run.
+
+The gate has two halves. decide_install_scripts answers whether the steps
+may run, from the policy and, under "ask", a consent prompt; a caller
+resolves it before it destroys a working install, so a decline never
+leaves a half-updated plugin behind. run_install_steps then runs or skips
+the steps, owns the timeout that kills the whole process group of a hung
+step, confines each step, and re-injects the loopback guard into every
+venv a script created, so a rebuilt or fresh venv never launches
+unguarded. The future venv rebuild path calls run_install_steps too.
+
+Confinement has two tiers. Under bwrap, where it operates, a step runs on
+a read-only filesystem with only the writable paths it needs, no session
+socket, and its own pid namespace: that is the real boundary. Without
+bwrap the gate can only poison the session-bus variables in the child
+environment, which a determined script recovers from the parent's /proc
+and which cannot contain a script that daemonizes; there the consent
+prompt is the boundary, not the environment.
 """
 
 import enum
@@ -23,23 +35,27 @@ from loguru import logger as log
 
 import globals as gl
 
-# Written into a plugin dir when its install steps were skipped, so a
-# later launch and the user can tell an unbuilt plugin from a broken one.
-# A reinstall's staged swap replaces the whole tree, so it clears itself.
+# Written into a plugin dir when its install steps were skipped, so the
+# auto-update path can tell a deliberately unbuilt plugin from one that
+# never got the chance, and not re-run a script the user declined. A
+# reinstall's staged swap replaces the whole tree, so it clears itself.
 SKIP_MARKER = "install-scripts-skipped"
-
 
 # A stuck install script parked an install thread forever before the
 # gate existed. Venv creation over a slow network is the honest upper
 # bound, so the default stays generous.
 DEFAULT_TIMEOUT_S = 600
+# Grace between the polite stop and the hard kill of a timed-out step.
+_TERM_GRACE_S = 5
 
-# An invalid bus address, not an absent one: gio and flatpak-spawn fall
-# back to $XDG_RUNTIME_DIR/bus when the variable is missing, and an
-# invalid address makes the connection fail instead. This is the tier
-# that stops a script from reconfiguring the host through
-# "flatpak-spawn --host" on every install type.
+# Environment keys that would let a confined step reach the desktop
+# session. The bus address is set invalid rather than removed, because an
+# absent one falls back to $XDG_RUNTIME_DIR/bus; the display keys are
+# dropped so a script cannot open the X or Wayland socket that the
+# read-only root still exposes. This is best-effort without bwrap: a
+# child reads the real values from the parent's /proc there.
 _POISONED_BUS = "disabled:"
+_STRIPPED_ENV_KEYS = ("DISPLAY", "WAYLAND_DISPLAY", "XAUTHORITY", "DBUS_SYSTEM_BUS_ADDRESS")
 
 
 class Outcome(enum.Enum):
@@ -50,66 +66,86 @@ class Outcome(enum.Enum):
     SKIPPED = "skipped"
 
 
-def run_install_steps(plugin_dir: str, display_name: str,
-                      timeout_s: float = DEFAULT_TIMEOUT_S,
-                      use_bwrap: "bool | None" = None,
-                      consent: "Callable[[str], bool] | None" = None) -> Outcome:
-    """Run a freshly installed plugin's install script and requirements
-    step, each when present. Returns the worst outcome; a later step
-    still runs after an earlier one failed, matching what the two
-    previously independent calls did.
+def decide_install_scripts(existing_dir: "str | None", display_name: str,
+                          consent: "Callable[[str], bool] | None") -> bool:
+    """Whether a plugin's install steps may run, decided before the caller
+    downloads or swaps anything.
 
-    The install-scripts policy decides whether the steps run at all.
-    "never" skips them. "always" runs them. "ask" runs them after the
-    consent callable returns True, and skips them when it returns False;
-    with no consent callable (auto-update of a plugin the user already
-    installed, onboarding, headless) "ask" runs them, because there is no
-    one at the keyboard to ask and a prompt storm at launch trains the
-    user to click through. A skip writes a marker and returns SKIPPED.
-
-    The script runs confined: a poisoned session-bus address always, and
-    under bwrap where it operates (probed once per process), which makes
-    the filesystem read-only outside the plugin dir and the pip cache and
-    hides every session socket. The requirements step gets the poisoned
-    environment only: its purpose is a write into this app's own
-    interpreter, which no read-only root can allow. use_bwrap None means
-    the probe decides; scenarios pass an explicit value."""
-    hook = os.path.join(plugin_dir, "__install__.py")
-    requirements = os.path.join(plugin_dir, "requirements.txt")
-    if not os.path.isfile(hook) and not os.path.isfile(requirements):
-        return Outcome.NO_STEPS
-
+    "never" refuses. "always" allows. "ask" asks the consent callable when
+    one is given, which is the store window's prompt. With no callable, the
+    auto-update, onboarding and headless paths, "ask" allows, so a plugin
+    the user already installed keeps building itself, unless a prior run
+    was declined: a SKIP_MARKER under an existing install means the user
+    said no, and an unattended re-run must respect that rather than run the
+    script behind their back."""
     policy = _policy()
     if policy == "never":
-        return _skip(plugin_dir, display_name, "policy is never")
-    if policy == "ask" and consent is not None and not consent(display_name):
-        return _skip(plugin_dir, display_name, "declined")
+        return False
+    if policy == "always":
+        return True
+    if consent is not None:
+        return consent(display_name)
+    if existing_dir is not None and os.path.isfile(os.path.join(existing_dir, SKIP_MARKER)):
+        log.info(f"Not re-running the previously declined install steps of {display_name}")
+        return False
+    return True
 
+
+def run_install_steps(plugin_dir: str, display_name: str, run: bool,
+                      timeout_s: float = DEFAULT_TIMEOUT_S,
+                      use_bwrap: "bool | None" = None) -> Outcome:
+    """Run or skip a plugin's install script and requirements step, each
+    when present. run is the decision decide_install_scripts returned.
+    Returns the worst outcome; a later step still runs after an earlier one
+    failed, matching the two previously independent calls.
+
+    The script step is confined (see the module docstring). The
+    requirements step installs into this app's own interpreter, so its
+    write target, the interpreter prefix, is bound writable rather than
+    left read-only; every other confinement still applies."""
+    hook = os.path.join(plugin_dir, "__install__.py")
+    requirements = os.path.join(plugin_dir, "requirements.txt")
+    has_hook = os.path.isfile(hook)
+    has_requirements = os.path.isfile(requirements)
+    if not has_hook and not has_requirements:
+        return Outcome.NO_STEPS
+    if not run:
+        return _skip(plugin_dir, display_name)
+
+    confine = use_bwrap is True or (use_bwrap is None and _bwrap_works())
     steps: list[list[str]] = []
-    if os.path.isfile(hook):
+    if has_hook:
         # The interpreter that runs this process, so a venv the script
         # creates keeps its dependencies. A list and no shell: an f-string
         # command breaks on a space in the data path, and lets a crafted
         # path component inject shell syntax.
         cmd = [sys.executable, hook]
-        if use_bwrap is True or (use_bwrap is None and _bwrap_works()):
-            cmd = _bwrap_prefix(plugin_dir) + cmd
+        if confine:
+            cmd = _bwrap_prefix(plugin_dir, []) + cmd
         steps.append(cmd)
-    if os.path.isfile(requirements):
-        steps.append([sys.executable, "-m", "pip", "install", "-r", requirements])
-    if not steps:
-        return Outcome.NO_STEPS
+    if has_requirements:
+        cmd = [sys.executable, "-m", "pip", "install", "-r", requirements]
+        if confine:
+            # pip writes into this interpreter's prefix, so that one tree
+            # is writable; the rest of the sandbox is not.
+            cmd = _bwrap_prefix(plugin_dir, [sys.prefix]) + cmd
+        steps.append(cmd)
 
     env = dict(os.environ)
     env["DBUS_SESSION_BUS_ADDRESS"] = _POISONED_BUS
+    for key in _STRIPPED_ENV_KEYS:
+        env.pop(key, None)
+
     worst = Outcome.RAN
     for cmd in steps:
-        rc, timed_out = _execute(cmd, timeout_s, env)
+        rc, timed_out, stderr = _execute(cmd, timeout_s, env)
+        label = "__install__.py" if cmd[-1] == hook else "requirements.txt"
         if timed_out:
-            log.error(f"Install step of {display_name} killed after {timeout_s:.0f}s: {cmd[-1]}")
+            log.error(f"Install step {label} of {display_name} killed after {timeout_s:.0f}s")
             worst = Outcome.TIMEOUT
         elif rc != 0:
-            log.error(f"Install step of {display_name} exited {rc}: {cmd[-1]}")
+            tail = stderr.strip().splitlines()[-8:]
+            log.error(f"Install step {label} of {display_name} exited {rc}: {' / '.join(tail)}")
             if worst is Outcome.RAN:
                 worst = Outcome.FAILED
 
@@ -117,20 +153,33 @@ def run_install_steps(plugin_dir: str, display_name: str,
     return worst
 
 
-def _execute(cmd: list[str], timeout_s: float, env: "dict[str, str] | None" = None) -> tuple[int, bool]:
+def _execute(cmd: list[str], timeout_s: float, env: "dict[str, str] | None" = None) -> "tuple[int, bool, str]":
     """Run one install step in its own session. Returns (returncode,
-    timed_out). On timeout the whole process group dies, because pip and
-    venv creation fork children that a lone child kill leaves running."""
-    process = subprocess.Popen(cmd, start_new_session=True, env=env)
+    timed_out, stderr). On timeout the whole process group is asked to
+    stop and then killed, because pip and venv creation fork children a
+    lone-child kill leaves running. start_new_session makes the child the
+    group leader, so process.pid is the pgid to signal; without it the
+    signal would reach this app's own group."""
+    process = subprocess.Popen(cmd, start_new_session=True, env=env,
+                               stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
     try:
-        return process.wait(timeout=timeout_s), False
+        _, stderr = process.communicate(timeout=timeout_s)
+        return process.returncode, False, stderr.decode(errors="replace")
     except subprocess.TimeoutExpired:
+        _kill_group(process.pid, signal.SIGTERM)
         try:
-            os.killpg(process.pid, signal.SIGKILL)
-        except (ProcessLookupError, PermissionError):
-            pass
-        process.wait()
-        return process.returncode, True
+            _, stderr = process.communicate(timeout=_TERM_GRACE_S)
+        except subprocess.TimeoutExpired:
+            _kill_group(process.pid, signal.SIGKILL)
+            _, stderr = process.communicate()
+        return process.returncode, True, (stderr or b"").decode(errors="replace")
+
+
+def _kill_group(pid: int, sig: int) -> None:
+    try:
+        os.killpg(pid, sig)
+    except (ProcessLookupError, PermissionError):
+        pass
 
 
 def _policy() -> str:
@@ -144,11 +193,11 @@ def _policy() -> str:
         return "ask"
 
 
-def _skip(plugin_dir: str, display_name: str, reason: str) -> Outcome:
-    log.info(f"Skipping the install steps of {display_name}: {reason}")
+def _skip(plugin_dir: str, display_name: str) -> Outcome:
+    log.info(f"Skipping the install steps of {display_name}")
     try:
         with open(os.path.join(plugin_dir, SKIP_MARKER), "w") as f:
-            f.write(f"{reason}\n")
+            f.write("the install scripts were not run\n")
     except OSError as e:
         log.warning(f"Could not write the skip marker for {display_name}: {e}")
     return Outcome.SKIPPED
@@ -171,7 +220,7 @@ def _bwrap_works() -> bool:
             log.info("bwrap not found; install scripts run with the poisoned environment only")
             _bwrap_usable = False
             return False
-        probe = _bwrap_prefix(os.getcwd()) + ["/bin/true"]
+        probe = _bwrap_prefix(os.getcwd(), []) + ["/bin/true"]
         try:
             result = subprocess.run(probe, capture_output=True, timeout=15)
         except (OSError, subprocess.SubprocessError) as e:
@@ -187,12 +236,13 @@ def _bwrap_works() -> bool:
         return True
 
 
-def _bwrap_prefix(plugin_dir: str) -> list[str]:
-    """The confinement for one install script: the filesystem read-only,
-    the plugin dir and the pip cache writable, a private /tmp, and a
-    tmpfs over the runtime dir so no session socket exists, the bus
-    included. The network stays shared, because the script's legitimate
-    job is a venv install over pip."""
+def _bwrap_prefix(plugin_dir: str, writable_extra: list[str]) -> list[str]:
+    """The confinement for one install step: the filesystem read-only, a
+    private /tmp, a tmpfs over the runtime dir so no session socket exists,
+    and its own pid namespace so a timeout tears down every descendant. The
+    plugin dir, the pip cache and each writable_extra path are bound
+    writable. The network stays shared, because the step's legitimate job
+    is a package install over pip."""
     prefix = [
         "bwrap", "--die-with-parent", "--unshare-pid",
         "--ro-bind", "/", "/",
@@ -204,12 +254,14 @@ def _bwrap_prefix(plugin_dir: str) -> list[str]:
     if runtime_dir:
         prefix += ["--tmpfs", runtime_dir]
     cache = os.path.join(os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache"), "pip")
-    try:
-        os.makedirs(cache, exist_ok=True)
-        prefix += ["--bind", cache, cache]
-    except OSError:
-        # pip warns about an unwritable cache and continues without it.
-        pass
+    for path in [cache, *writable_extra]:
+        try:
+            os.makedirs(path, exist_ok=True)
+        except OSError:
+            # A path that cannot be created is left read-only; pip warns
+            # about an unwritable cache and continues.
+            continue
+        prefix += ["--bind", path, path]
     return prefix + ["--"]
 
 

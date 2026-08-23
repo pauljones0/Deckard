@@ -6,6 +6,7 @@ shown on the GTK main loop, and the worker blocks on an event until the
 user answers, so the gate gets a plain bool back off the main thread.
 """
 import threading
+from collections.abc import Callable
 
 from gi.repository import Adw, GLib, Gtk
 
@@ -18,11 +19,16 @@ from loguru import logger as log
 _ANSWER_TIMEOUT_S = 300
 
 
-def make_consent(parent: "Gtk.Window | None") -> "object":
-    """A consent callable for install_script.run_install_steps, bound to a
-    parent window. It presents a modal dialog on the main loop and returns
-    the user's choice, defaulting to decline if no answer arrives."""
+def make_consent(parent: "Gtk.Window | None") -> Callable[[str], bool]:
+    """A consent callable for install_script.decide_install_scripts, bound
+    to a parent window. It presents a modal dialog on the main loop and
+    returns the user's choice, defaulting to decline if no answer arrives."""
     def ask(display_name: str) -> bool:
+        # The caller (a store download worker) blocks on the dialog. On the
+        # main thread that block would freeze the loop the dialog needs, so
+        # the invariant is enforced rather than deadlocked.
+        assert threading.current_thread() is not threading.main_thread(), (
+            "the install-script consent prompt must run off the main thread")
         answered = threading.Event()
         box = {"run": False}
 
@@ -30,12 +36,13 @@ def make_consent(parent: "Gtk.Window | None") -> "object":
             dialog = Adw.MessageDialog(
                 transient_for=parent,
                 modal=True,
-                title="Run install script?",
-                heading="Run install script?",
-                body=(f"{display_name} ships an install script that runs on this "
-                      "computer to set the plugin up. Only run it if you trust "
-                      "the plugin. Skipping it installs the plugin without "
-                      "running the script, which some plugins need to work."),
+                title="Run install steps?",
+                heading=f"Run {display_name}'s install steps?",
+                body=(f"{display_name} may run a setup step on this computer to "
+                      "finish installing, such as building a helper environment. "
+                      "Run it only if you trust the plugin. Skip installs the "
+                      "plugin without the step, which some plugins need to work. "
+                      "Either way the plugin's own code still runs once it loads."),
             )
             dialog.add_response("skip", "Skip")
             dialog.add_response("run", "Run")

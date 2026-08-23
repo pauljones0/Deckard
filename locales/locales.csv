@@ -79,6 +79,11 @@ settings-number-of-fake-decks-hint;Für Testzwecke (App muss mölicherweise neug
 settings-store-settings-title;Store;Store;Magasin;Tienda;Loja
 settings-store-settings-header;Store;Store;Magasin;Tienda;Loja
 settings-store-settings-auto-update;Automatische Aktualisierung der Assets;Auto-update assets;Mise à jour automatique des ressources;Actualización automática de activos;Atualizar ativos automaticamente
+settings-store-install-scripts-title;Plugin-Installationsskripte;Plugin install scripts;Scripts d'installation des plugins;Scripts de instalación de plugins;Scripts de instalação de plugins
+settings-store-install-scripts-subtitle;Ausführen, wenn ein Plugin bei der Installation ein Einrichtungsskript mitbringt;Run when a plugin ships a setup step at install time;Exécuter quand un plugin fournit une étape d'installation;Ejecutar cuando un plugin incluye un paso de instalación;Executar quando um plugin traz uma etapa de instalação
+settings-store-install-scripts-ask;Fragen;Ask;Demander;Preguntar;Perguntar
+settings-store-install-scripts-always;Immer ausführen;Always run;Toujours exécuter;Ejecutar siempre;Sempre executar
+settings-store-install-scripts-never;Nie ausführen;Never run;Ne jamais exécuter;Nunca ejecutar;Nunca executar
 settings-store-settings-custom-stores;Benutzerdefinierte Stores;Use Custom Stores;Utiliser des magasins personnalisés;Utilizar tiendas personalizadas;Usar Lojas Personalizadas
 settings-store-settings-custom-plugins;Benutzerdefinierte Plugins;Use Custom Plugins;Utiliser des plugins personnalisés;Utilizar plugins personalizados;Usar Plugins Personalizados
 settings-store-custom-stores-header;Benutzerdefinierte Stores;Custom Stores;Magasins personnalisés;Tiendas personalizadas;Lojas Personalizadas
