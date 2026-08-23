@@ -55,11 +55,6 @@ from src.backend.Store.catalog_entry import COMMIT_SHA_RE, resolve_pinned_revisi
 from src.backend.Store.store_result import Err, ErrReason, Ok, StoreFetchError, StoreResult
 
 
-# Distinguishes an app version versions.json does not map from one it
-# maps to null, so the two failure logs stay truthful.
-_UNMAPPED = object()
-
-
 class _ResolvedVersion(NamedTuple):
     """What version resolution decides before a fetch of an entry. It names
     whether a compatible release exists, which commit to fetch, and, for a
@@ -130,6 +125,14 @@ class StoreBackend:
     STORE_CACHE_PATH = "Store/cache"
     # STORE_CACHE_PATH = os.path.join(gl.DATA_PATH, STORE_CACHE_PATH)
     STORE_BRANCH = "1.5.0"
+
+    # The official catalog is read at this exact commit of the store
+    # repository, never at a branch tip or through versions.json. A
+    # hash-shape entry auto-updates to whatever the catalog pins, so the
+    # catalog itself must not move without review. Bump only after
+    # scripts/vet_store_pin.py has diffed the candidate against this value
+    # and its minimum-app-version gate passed; put the diff in the MR.
+    STORE_PIN = "aac7c77cc74f92c46bcd816fe07963d3cff641c3"
 
     # Names the repository that a tree came from. Every install writes it
     # next to VERSION. The catalog names repositories, and an install
@@ -224,8 +227,6 @@ class StoreBackend:
         # pool cannot starve itself.
         self._prepare_pool = ThreadPoolExecutor(max_workers=self.MAX_CONCURRENT_REQUESTS, thread_name_prefix="store-prepare")
 
-        self.official_store_branch_cache: str | None = None
-
         # Seed the fallback list of official authors.
         self.official_authors = ["Core447", "StreamController"]
 
@@ -269,10 +270,10 @@ class StoreBackend:
                 custom_branch = store.get("branch")
                 if not isinstance(custom_branch, str) or not custom_branch:
                     # A third-party store follows the "main" convention. The
-                    # official store instead falls back to STORE_BRANCH,
-                    # currently "1.5.0", a version-pinned tag of this app's
-                    # own store repository, which a custom repository does
-                    # not share. The two values differ for that reason.
+                    # official store instead reads STORE_PIN, a vetted
+                    # commit of this app's own store repository, which a
+                    # custom repository does not share. The two defaults
+                    # differ for that reason.
                     custom_branch = "main"
                 stores.append((url, custom_branch))
 
@@ -298,46 +299,13 @@ class StoreBackend:
         return plugins
     
     def get_official_store_branch(self) -> str:
-        """Always returns a str branch name. Every failure falls back to
-        STORE_BRANCH, whether the fetch failed with a cache too stale, or
-        versions.json is truncated or corrupt. An error object here would
-        reach the (url, branch) tuples of get_stores, and build_url would
-        interpolate it into urls and cache keys. The fallback never enters
-        official_store_branch_cache, so a later successful fetch corrects it.
-        """
-        if self.official_store_branch_cache is not None:
-            return self.official_store_branch_cache
-        try:
-            versions_file = self.get_remote_file(self.STORE_REPO_URL, "versions.json", branch_name="versions", force_refetch=True)
-        except StoreFetchError:
-            log.warning(f"Could not fetch versions.json; falling back to store branch {self.STORE_BRANCH}")
-            return self.STORE_BRANCH
-        try:
-            versions = json.loads(versions_file)
-        except (json.decoder.JSONDecodeError, TypeError) as e:
-            # The stale-cache fallback can serve a truncated versions.json.
-            # A raise here would freeze the store tab's spinner and leave the
-            # page marked as loaded.
-            log.error(f"Corrupt versions.json; falling back to store branch {self.STORE_BRANCH}: {e}")
-            return self.STORE_BRANCH
-        if not isinstance(versions, dict):
-            log.error(f"versions.json is not an object; falling back to store branch {self.STORE_BRANCH}")
-            return self.STORE_BRANCH
-        v = versions.get(gl.app_version, _UNMAPPED)
-        if v is _UNMAPPED:
-            # No default to "main" here: an unmapped app version would then
-            # silently follow whatever catalog content the tip carries. The
-            # pinned fallback is the deliberate choice, and unlike the
-            # failure arms above it is a stable answer, not a transient
-            # one, so it enters the cache and costs no refetch per load.
-            log.error(f"versions.json does not map app version {gl.app_version}; falling back to store branch {self.STORE_BRANCH}")
-            self.official_store_branch_cache = self.STORE_BRANCH
-            return self.STORE_BRANCH
-        if not isinstance(v, str) or not v:
-            log.error(f"versions.json maps {gl.app_version} to {v!r}; falling back to store branch {self.STORE_BRANCH}")
-            return self.STORE_BRANCH
-        self.official_store_branch_cache = v
-        return v
+        """The ref every official-store fetch reads: STORE_PIN, a vetted
+        commit of the store repository. The catalog never moves because
+        upstream edited a branch or versions.json; it moves when the pin
+        is bumped, after the review scripts/vet_store_pin.py supports.
+        The name says branch because get_stores consumes (url, ref) pairs
+        that a branch name also fits."""
+        return self.STORE_PIN
 
     def request_from_url(self, url: str) -> "requests.Response":
         # Callers run on worker threads, the prepare pool and the UI install
@@ -512,7 +480,10 @@ class StoreBackend:
         return cast("str | None", commits[0].get("sha"))
     
     def get_official_authors(self) -> list[str]:
-        authors_json = self.get_remote_file(self.STORE_REPO_URL, "OfficialAuthors.json", self.STORE_BRANCH, force_refetch=True)
+        # Read at the same pin as the catalog, so the authors view and the
+        # entries it verifies are one snapshot. A pinned commit is
+        # immutable, so the cache may serve it and no refetch is forced.
+        authors_json = self.get_remote_file(self.STORE_REPO_URL, "OfficialAuthors.json", self.STORE_PIN)
         # The catalog file is a list of GitHub usernames; the cast trusts that shape.
         return cast(list[str], json.loads(authors_json))
 

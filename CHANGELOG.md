@@ -7,6 +7,15 @@ bundle as a release asset.
 
 ## [Unreleased]
 
+### Changed
+
+- The plugin store follows a reviewed snapshot of the official catalog,
+  pinned by this fork and moved deliberately after a diff review. The
+  catalog had been frozen since 2026-08 on an old snapshot because it
+  tracked upstream's per-app-version mapping; the four new plugins and the
+  twenty-one plugin updates published since then are available again, and
+  the store no longer depends on that mapping file at run time.
+
 ### Security
 
 - Plugin backends now listen on the local machine only, and accept
