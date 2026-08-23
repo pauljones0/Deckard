@@ -44,14 +44,11 @@ VIDEO_NAMES = ["clip", "movie"]
 
 ALPHABETICAL = ["brightness", "clip", "movie", "volume_down", "volume_up"]
 
-# rapidfuzz scores for the queries below, recomputed here as documentation.
-# The chooser drops anything under 40. The checks assert orderings, not raw
-# values, so a scoring bump surfaces as a ranking change and not as a float
-# mismatch.
-#   volume: volume_up 80.0, volume_down 70.6, movie 36.4, clip 20.0,
-#           brightness 12.5
-#   clip:   clip 100.0, volume_up 30.8, movie 22.2, brightness 14.3,
-#           volume_down 13.3
+# The ladder scores for the queries below, as documentation. The checks assert
+# orderings, not raw values, so a scoring change surfaces as a ranking change.
+#   volume: volume_up 90 and volume_down 90, both prefixes, and volume_up
+#           first because it is the shorter name; nothing else matches.
+#   clip:   clip 100; nothing else matches.
 
 
 def build_corpus() -> list[dict]:

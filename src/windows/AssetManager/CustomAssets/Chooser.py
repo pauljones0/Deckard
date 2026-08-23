@@ -194,7 +194,7 @@ class CustomAssetChooser(ChooserPage):
         run_on_main(self.video_button.set_active, settings.get("video-toggle"))
         run_on_main(self.image_button.set_active, settings.get("image-toggle"))
 
-    def on_search_changed(self, entry: Gtk.SearchEntry) -> None:
+    def apply_search(self, query: str) -> None:
         if self.asset_chooser is not None:
             self.asset_chooser.refresh()
 
