@@ -107,6 +107,10 @@ class SizeRow(Adw.PreferencesRow):
         super().__init__(**kwargs)
         self.sidebar = sidebar
         self.active_identifier: InputIdentifier = None  # ty: ignore[invalid-assignment]  # late-init: load_for_identifier
+        # The value-changed handler id, or None while it is disconnected. A
+        # tracked id keeps connect and disconnect idempotent: a second connect
+        # cannot double-wire, and a disconnect while already off cannot raise.
+        self._value_handler: int | None = None
         self.build()
 
         self.connect_signals()
@@ -126,24 +130,28 @@ class SizeRow(Adw.PreferencesRow):
 
     def load_for_identifier(self, identifier: InputIdentifier, state: int) -> None:
         self.disconnect_signals()
-        self.active_identifier = identifier
-        self.active_state = state
+        try:
+            self.active_identifier = identifier
+            self.active_state = state
 
-        if gl.app is None:
-            return
-        controller = services.require_main_window().get_active_controller()
-        if controller is None:
-            return
+            if gl.app is None:
+                return
+            controller = services.require_main_window().get_active_controller()
+            if controller is None:
+                return
 
-        controller_input = controller.get_input(identifier)
-        if controller_input is None:
-            return
-        use_page_properties = controller_input.get_active_state().layout_manager.get_use_page_layout_properties()
-        self.size_spinner.revert_button.set_visible(use_page_properties.get("size", False))
+            controller_input = controller.get_input(identifier)
+            if controller_input is None:
+                return
+            use_page_properties = controller_input.get_active_state().layout_manager.get_use_page_layout_properties()
+            self.size_spinner.revert_button.set_visible(use_page_properties.get("size", False))
 
-        self.update_values()
-
-        self.connect_signals()
+            self.update_values()
+        finally:
+            # Every lookup above may return early. The reconnect must still run,
+            # or the spinner stays silently unable to save for the life of the
+            # window.
+            self.connect_signals()
 
     def update_values(self, composed_label: ImageLayout | None = None) -> None:
         self.disconnect_signals()
@@ -188,14 +196,13 @@ class SizeRow(Adw.PreferencesRow):
         self.update_values()
 
     def connect_signals(self) -> None:
-        self.size_spinner.button.connect("value-changed", self.on_size_changed)
+        if self._value_handler is None:
+            self._value_handler = self.size_spinner.button.connect("value-changed", self.on_size_changed)
 
     def disconnect_signals(self) -> None:
-        try:
-            self.size_spinner.button.disconnect_by_func(self.on_size_changed)
-        except TypeError:
-            # disconnect_by_func raises TypeError when nothing is connected.
-            pass
+        if self._value_handler is not None:
+            self.size_spinner.button.disconnect(self._value_handler)
+            self._value_handler = None
 
 
 class AlignmentRow(Adw.PreferencesRow):
@@ -205,6 +212,11 @@ class AlignmentRow(Adw.PreferencesRow):
         self.property_name = property_name
         self.active_identifier: InputIdentifier = None  # ty: ignore[invalid-assignment]  # late-init: load_for_identifier
         self.active_state: int = None  # ty: ignore[invalid-assignment]  # late-init: load_for_identifier
+        # The value-changed handler id, or None while it is disconnected. A
+        # tracked id keeps connect and disconnect idempotent: a disconnect while
+        # already off cannot raise TypeError, so one transient load failure can
+        # no longer wedge the whole sidebar.
+        self._value_handler: int | None = None
         self.build(label_text)
 
         self.connect_signals()
@@ -226,38 +238,42 @@ class AlignmentRow(Adw.PreferencesRow):
         self.active_identifier = identifier
         self.active_state = state
         self.disconnect_signals()
-
-        if gl.app is None:
-            return
-        controller = services.require_main_window().get_active_controller()
-        if controller is None:
-            return
-
-        controller_input = controller.get_input(identifier)
-        if controller_input is None:
-            return
-        use_page_properties = controller_input.get_active_state().layout_manager.get_use_page_layout_properties()
-        self.alignment_spinner.revert_button.set_visible(use_page_properties.get(self.property_name, False))
-
-        self.connect_signals()
-        self.update_values()
-
-    def update_values(self, composed_label: ImageLayout | None = None) -> None:
-        self.disconnect_signals()
-        if composed_label is None:
+        try:
             if gl.app is None:
                 return
             controller = services.require_main_window().get_active_controller()
             if controller is None:
                 return
-            controller_input = controller.get_input(self.active_identifier)
+
+            controller_input = controller.get_input(identifier)
             if controller_input is None:
                 return
-            composed_label = controller_input.get_active_state().layout_manager.get_composed_layout()
+            use_page_properties = controller_input.get_active_state().layout_manager.get_use_page_layout_properties()
+            self.alignment_spinner.revert_button.set_visible(use_page_properties.get(self.property_name, False))
 
-        self.alignment_spinner.button.set_value(getattr(composed_label, self.property_name))
+            self.update_values()
+        finally:
+            # A lookup that returns early must still leave the spinner wired, or
+            # every later edit is dropped silently.
+            self.connect_signals()
 
-        self.connect_signals()
+    def update_values(self, composed_label: ImageLayout | None = None) -> None:
+        self.disconnect_signals()
+        try:
+            if composed_label is None:
+                if gl.app is None:
+                    return
+                controller = services.require_main_window().get_active_controller()
+                if controller is None:
+                    return
+                controller_input = controller.get_input(self.active_identifier)
+                if controller_input is None:
+                    return
+                composed_label = controller_input.get_active_state().layout_manager.get_composed_layout()
+
+            self.alignment_spinner.button.set_value(getattr(composed_label, self.property_name))
+        finally:
+            self.connect_signals()
 
     def on_alignment_changed(self, widget: Gtk.SpinButton) -> None:
         active_page = services.require_main_window().get_active_page()
@@ -277,10 +293,13 @@ class AlignmentRow(Adw.PreferencesRow):
         self.update_values()
 
     def connect_signals(self) -> None:
-        self.alignment_spinner.button.connect("value-changed", self.on_alignment_changed)
+        if self._value_handler is None:
+            self._value_handler = self.alignment_spinner.button.connect("value-changed", self.on_alignment_changed)
 
     def disconnect_signals(self) -> None:
-        self.alignment_spinner.button.disconnect_by_func(self.on_alignment_changed)
+        if self._value_handler is not None:
+            self.alignment_spinner.button.disconnect(self._value_handler)
+            self._value_handler = None
 
 class ValignRow(AlignmentRow):
     def __init__(self, sidebar: "Sidebar", **kwargs: Any) -> None:
