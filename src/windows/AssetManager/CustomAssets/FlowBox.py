@@ -47,8 +47,17 @@ class CustomAssetChooserFlowBox(DynamicFlowBox[AssetPreview, dict[str, Any]]):
         self.selected_asset: str = None  # type: ignore[assignment]  # late-init: on_child_activated
 
         self.set_factory(self.preview_factory)
-        self.set_filter_func(self.filter_func)
-        self.set_sort_func(self.sort_func)
+        # These two hook methods carry names the base does not assign.
+        # DynamicFlowBox.__init__ writes self.filter_func and self.sort_func,
+        # so a hook method under either name is shadowed by the instance
+        # attribute before these lines read them, and the box installs None
+        # over its own hook: the search entry and the kind toggles then change
+        # nothing and the grid keeps backend order. The base keeps its slot
+        # names. Renaming them would end the hazard for every subclass at
+        # once, but it changes every consumer of the flow box, so a test
+        # refuses any subclass that supplies one of those names instead.
+        self.set_filter_func(self._filter_asset)
+        self.set_sort_func(self._sort_assets)
 
         self.flow_box.connect("child-activated", self.on_child_activated)
 
@@ -79,7 +88,7 @@ class CustomAssetChooserFlowBox(DynamicFlowBox[AssetPreview, dict[str, Any]]):
         if self.selected_asset == asset.get("internal-path"):
             self.flow_box.select_child(asset_preview)
 
-    def filter_func(self, asset: dict[str, Any]) -> bool:
+    def _filter_asset(self, asset: dict[str, Any]) -> bool:
         search_string = self.asset_chooser.search_entry.get_text()
         show_image = self.asset_chooser.image_button.get_active()
         show_video = self.asset_chooser.video_button.get_active()
@@ -100,7 +109,7 @@ class CustomAssetChooserFlowBox(DynamicFlowBox[AssetPreview, dict[str, Any]]):
 
         return True
 
-    def sort_func(self, a: dict[str, Any], b: dict[str, Any]) -> int:
+    def _sort_assets(self, a: dict[str, Any], b: dict[str, Any]) -> int:
         search_string = self.asset_chooser.search_entry.get_text()
 
         if search_string == "":
