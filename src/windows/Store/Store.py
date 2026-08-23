@@ -14,9 +14,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 # Import gtk modules
 import gi
 
-from src.windows.Store.SDPlusBarWallpapers.SDPlusBarWallpaperPage import SDPlusBarWallpaperPage
-
-
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Gtk
@@ -31,10 +28,10 @@ if TYPE_CHECKING:
 import globals as gl
 
 # Import own modules
+from src.backend.Store import asset_types
+from src.windows.Store.AssetPage import StoreAssetPage
 from src.windows.Store.Plugins.PluginPage import PluginPage
-from src.windows.Store.Icons.IconPage import IconPage
 from src.windows.Store.StorePage import StorePage
-from src.windows.Store.Wallpapers.WallpaperPage import WallpaperPage
 
 class Store(Gtk.ApplicationWindow):
     def __init__(self, main_window: "MainWindow", *args: Any, **kwargs: Any) -> None:
@@ -91,9 +88,9 @@ class Store(Gtk.ApplicationWindow):
         # performs and which costs the time. The other three wait for
         # on_switch(), when each first becomes the visible child.
         self.plugin_page = PluginPage(store=self)
-        self.icon_page = IconPage(store=self)
-        self.wallpaper_page = WallpaperPage(store=self)
-        self.sd_plus_bar_wallpaper_page = SDPlusBarWallpaperPage(store=self)
+        self.icon_page = StoreAssetPage(store=self, descriptor=asset_types.ICON)
+        self.wallpaper_page = StoreAssetPage(store=self, descriptor=asset_types.WALLPAPER)
+        self.sd_plus_bar_wallpaper_page = StoreAssetPage(store=self, descriptor=asset_types.SD_PLUS_BAR)
 
         self.main_stack.add_titled(self.plugin_page, "Plugins", gl.lm.get("store.plugins.section"))
         self.main_stack.add_titled(self.icon_page, "Icons", gl.lm.get("store.icons.section"))

@@ -348,7 +348,7 @@ def _make_stack_stub(ran):
     stub.on_loads_finished_tasks = []
     stub._loads_lock = threading.Lock()
     stub.pack_chooser = _StubChooser()
-    stub.icon_chooser = _StubChooser()
+    stub.leaf_chooser = _StubChooser()
 
     # get_is_build_finished is the real method and reads the two flags.
     stub.get_is_build_finished = lambda: stack_mod.IconPackChooserStack.get_is_build_finished(stub)
@@ -411,7 +411,7 @@ def test_iconpack_raced_deferred_task_runs() -> None:
         # runs. Without the lock this drains an empty queue and the raced
         # append lands afterwards, stranded forever.
         def finish():
-            stub.icon_chooser.build_finished = True
+            stub.leaf_chooser.build_finished = True
             stack_mod.IconPackChooserStack.on_load_finished(stub)
 
         t_finish = threading.Thread(target=finish, name="on_load_finished")
@@ -465,7 +465,7 @@ def test_iconpack_drain_runs_task_once() -> None:
         ]
 
         stub.pack_chooser.build_finished = True
-        stub.icon_chooser.build_finished = True
+        stub.leaf_chooser.build_finished = True
 
         d1 = threading.Thread(
             target=stack_mod.IconPackChooserStack.on_load_finished, args=(stub,),
@@ -506,7 +506,7 @@ def test_iconpack_post_finish_dispatches_directly() -> None:
     stub = _make_stack_stub(ran)
     try:
         stub.pack_chooser.build_finished = True
-        stub.icon_chooser.build_finished = True
+        stub.leaf_chooser.build_finished = True
         stub.show_for_path("direct")
         assert ran == ["direct"]
         assert stub.on_loads_finished_tasks == []

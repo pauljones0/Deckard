@@ -17,43 +17,16 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Gtk
 
 # Import own modules
+from src.windows.AssetManager.GenericAssetChooser import GenericPackChooserStack
 from src.windows.AssetManager.SDPlusBarWallpaperPacks.PackChooser import SDPlusBarWallpaperPackChooser
 from src.windows.AssetManager.SDPlusBarWallpaperPacks.SDPlusBarWallpaper.SDPlusBarWallpaperChooser import SDPlusBarWallpaperChooserPage
 
-# Import globals
-import globals as gl
 
-# Import typing
-from typing import Any, TYPE_CHECKING
-if TYPE_CHECKING:
-    from src.windows.AssetManager.AssetManager import AssetManager
-
-class SDPlusBarWallpaperPackChooserStack(Gtk.Stack):
-    def __init__(self, asset_manager: "AssetManager", *args: Any, **kwargs: Any) -> None:
-        super().__init__(*args, **kwargs)
-        self.asset_manager = asset_manager
-
-        self.build()
-
-    def build(self) -> None:
-        self.pack_chooser = SDPlusBarWallpaperPackChooser(self, self.asset_manager)
-        self.add_titled(self.pack_chooser, "pack-chooser", "Chooser")
-
-        self.wallpaper_chooser = SDPlusBarWallpaperChooserPage(self, self.asset_manager)
-        self.add_titled(self.wallpaper_chooser, "wallpaper-chooser", "SD+ Bar Wallpaper Chooser")
-
-    def show_for_path(self, path: str) -> None:
-        packs = gl.sd_plus_bar_wallpaper_pack_manager.get_wallpaper_packs()
-        for pack in packs.values():
-            wallpapers = pack.get_wallpapers()
-            for wallpaper in wallpapers:
-                if wallpaper.path == path:
-                    self.wallpaper_chooser.load_for_pack(pack)
-                    self.wallpaper_chooser.select_asset(path=path)
-                    self.set_visible_child(self.wallpaper_chooser)
-                    self.asset_manager.asset_chooser.set_visible_child_name("sd-plus-bar-wallpaper-packs")
-                    self.asset_manager.back_button.set_visible(True)
-                    return
+class SDPlusBarWallpaperPackChooserStack(GenericPackChooserStack[SDPlusBarWallpaperChooserPage]):
+    # This stack takes no show_for_path, for the reason WallpaperPacks.Stack
+    # gives: a pre-selection reaches the icon-pack stack only.
+    PACK_CHOOSER_CLASS = SDPlusBarWallpaperPackChooser
+    LEAF_CHOOSER_CLASS = SDPlusBarWallpaperChooserPage
+    LEAF_CHILD_TITLE = "SD+ Bar Wallpaper Chooser"

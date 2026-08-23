@@ -164,3 +164,10 @@ class SDPlusBarWallpaperData(StoreData, ImageData, LicenceData):
     @property
     def asset_version(self) -> str | None:
         return self.version
+
+
+# The four concrete classes as one type. The store window's shared preview
+# reads the thumbnail and licence fields, which the ImageData and LicenceData
+# mixins hold and StoreData does not, and the asset_name and asset_version
+# properties, which only a concrete class defines.
+type StoreAssetData = PluginData | IconData | WallpaperData | SDPlusBarWallpaperData

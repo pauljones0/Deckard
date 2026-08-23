@@ -10,15 +10,26 @@ import types
 
 from src.windows.AssetManager.GenericAssetChooser import (
     GenericAssetChooserPage,
+    GenericAssetFlowBox,
+    GenericAssetPreview,
+    GenericPackChooserStack,
+    GenericPackFlowBox,
+    GenericPackPreview,
     SEARCH_SCORE_THRESHOLD,
     asset_display_name,
     asset_matches_search,
     compare_assets,
 )
 from src.windows.AssetManager.IconPacks.Icons.IconChooser import IconChooserPage
+from src.windows.AssetManager.IconPacks.PackChooser import IconPackChooser
+from src.windows.AssetManager.IconPacks.Stack import IconPackChooserStack
+from src.windows.AssetManager.SDPlusBarWallpaperPacks.PackChooser import SDPlusBarWallpaperPackChooser
 from src.windows.AssetManager.SDPlusBarWallpaperPacks.SDPlusBarWallpaper.SDPlusBarWallpaperChooser import (
     SDPlusBarWallpaperChooserPage,
 )
+from src.windows.AssetManager.SDPlusBarWallpaperPacks.Stack import SDPlusBarWallpaperPackChooserStack
+from src.windows.AssetManager.WallpaperPacks.PackChooser import WallpaperPackChooser
+from src.windows.AssetManager.WallpaperPacks.Stack import WallpaperPackChooserStack
 from src.windows.AssetManager.WallpaperPacks.Wallpapers.WallpaperChooser import WallpaperChooserPage
 
 
@@ -27,6 +38,15 @@ CHOOSER_CLASSES = {
     "wallpapers": WallpaperChooserPage,
     "sd+bar wallpapers": SDPlusBarWallpaperChooserPage,
 }
+
+PACK_CHOOSER_CLASSES = {
+    "icons": IconPackChooser,
+    "wallpapers": WallpaperPackChooser,
+    "sd+bar wallpapers": SDPlusBarWallpaperPackChooser,
+}
+
+STACK_CLASSES = (IconPackChooserStack, WallpaperPackChooserStack,
+                 SDPlusBarWallpaperPackChooserStack)
 
 
 def asset(path: str):
@@ -93,6 +113,72 @@ def test_three_types_share_implementation() -> None:
     assert sorts == {GenericAssetChooserPage.sort_func}, (
         f"asset types no longer share one sort_func: {sorts}")
     print("PASS: the three chooser classes share one filter_func/sort_func")
+
+
+def test_three_types_share_their_widgets() -> None:
+    """One grid shell and one card serve all three asset types.
+
+    Each type held a copy of both, and the copies drifted: one card read a
+    different global for the window it reports to, and one dropped the
+    original-url field the other two passed on.
+    """
+    flow_boxes = {cls.FLOW_BOX_CLASS for cls in CHOOSER_CLASSES.values()}
+    previews = {cls.PREVIEW_CLASS for cls in CHOOSER_CLASSES.values()}
+    assert flow_boxes == {GenericAssetFlowBox}, (
+        f"asset types no longer share one asset grid: {flow_boxes}")
+    assert previews == {GenericAssetPreview}, (
+        f"asset types no longer share one asset card: {previews}")
+
+    pack_flow_boxes = {cls.PACK_FLOW_BOX_CLASS for cls in PACK_CHOOSER_CLASSES.values()}
+    pack_previews = {cls.PACK_PREVIEW_CLASS for cls in PACK_CHOOSER_CLASSES.values()}
+    assert pack_flow_boxes == {GenericPackFlowBox}, (
+        f"asset types no longer share one pack grid: {pack_flow_boxes}")
+    assert pack_previews == {GenericPackPreview}, (
+        f"asset types no longer share one pack card: {pack_previews}")
+    print("PASS: the three types share one pack grid, pack card, asset grid "
+          "and asset card")
+
+
+# What a pack stack may still define for itself. The icon stack defers a
+# pre-selection until both its pages have built, and it is the one stack that
+# AssetChooser.show_for_path routes to.
+ALLOWED_STACK_METHODS = {
+    "IconPackChooserStack": {"prepare", "show_for_path", "get_is_build_finished",
+                             "on_load_finished"},
+    "WallpaperPackChooserStack": set(),
+    "SDPlusBarWallpaperPackChooserStack": set(),
+}
+
+
+def test_no_pack_stack_regrows_the_shared_body() -> None:
+    """A stack subclass names its two page classes and its leaf title. The
+    construction of the pair belongs to the shared base."""
+    offences = []
+    for cls in STACK_CLASSES:
+        assert cls.__name__ in ALLOWED_STACK_METHODS, (
+            f"{cls.__name__} is a new pack stack. Add it to "
+            "ALLOWED_STACK_METHODS with the reason it needs a body."
+        )
+        allowed = ALLOWED_STACK_METHODS[cls.__name__]
+        # Methods only. The class attributes that name the two page classes
+        # are the point of a subclass, and a class object is callable too.
+        own = {name for name, value in vars(cls).items()
+               if isinstance(value, (types.FunctionType, staticmethod, classmethod))
+               and not name.startswith("__")}
+        regrown = sorted(own - allowed)
+        if regrown:
+            offences.append(f"{cls.__name__} defines {regrown}")
+        assert issubclass(cls, GenericPackChooserStack), (
+            f"{cls.__name__} no longer builds on the shared stack")
+    assert not offences, (
+        "per-family pack-stack copies came back: " + "; ".join(offences))
+
+    # The base must still carry what the subclasses are barred from holding.
+    for name in ("__init__", "build", "prepare"):
+        assert name in vars(GenericPackChooserStack), (
+            f"GenericPackChooserStack no longer defines {name}; this check "
+            "would pass over nothing")
+    print("PASS: the three pack stacks share one constructor and one build")
 
 
 def test_empty_query_sorts_alphabetically() -> None:
@@ -175,6 +261,8 @@ def main() -> int:
     test_display_name_strips_extension()
     test_three_types_key_on_path()
     test_three_types_share_implementation()
+    test_three_types_share_their_widgets()
+    test_no_pack_stack_regrows_the_shared_body()
     test_empty_query_sorts_alphabetically()
     test_query_filters_below_threshold()
     test_query_orders_by_descending_score()

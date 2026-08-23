@@ -19,9 +19,11 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 
 # Import own modules
-from src.windows.AssetManager.GenericAssetChooser import GenericAssetChooserPage
-from src.windows.AssetManager.IconPacks.Icons.IconFlowBox import IconFlowBox
-from src.windows.AssetManager.IconPacks.Icons.IconPreview import IconPreview
+from src.windows.AssetManager.GenericAssetChooser import (
+    GenericAssetChooserPage,
+    GenericAssetFlowBox,
+    GenericAssetPreview,
+)
 
 # Import python modules
 
@@ -33,21 +35,23 @@ if TYPE_CHECKING:
     from src.windows.AssetManager.IconPacks.Stack import IconPackChooserStack
 
 
-class IconChooserPage(GenericAssetChooserPage["IconPack", "Icon", IconPreview, "IconPackChooserStack"]):
+class IconChooserPage(GenericAssetChooserPage["IconPack", "Icon",
+                                              "GenericAssetPreview[Icon]",
+                                              "IconPackChooserStack"]):
     # The concrete stack, restated so the quoted name in the base subscript
     # has a checked in-file use.
     stack: "IconPackChooserStack"
-    FLOW_BOX_CLASS = IconFlowBox
-    PREVIEW_CLASS = IconPreview
+    FLOW_BOX_CLASS = GenericAssetFlowBox
+    PREVIEW_CLASS = GenericAssetPreview
 
     def get_assets(self, pack: "IconPack") -> "list[Icon]":
         return pack.get_icons()
 
-    def bind_preview(self, preview: IconPreview, icon: "Icon") -> None:
-        preview.set_icon(icon)
+    def bind_preview(self, preview: "GenericAssetPreview[Icon]", icon: "Icon") -> None:
+        preview.set_asset(icon)
 
-    def get_child_asset(self, child: IconPreview) -> "Icon":
-        return child.icon
+    def get_child_asset(self, child: "GenericAssetPreview[Icon]") -> "Icon":
+        return child.asset
 
     def on_build_finished(self) -> None:
         # The icon stack gates a deferred show_for_path task on the

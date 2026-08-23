@@ -19,9 +19,9 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Gtk
 
 # Import own modules
+from src.windows.AssetManager.GenericAssetChooser import GenericPackChooserStack
 from src.windows.AssetManager.IconPacks.PackChooser import IconPackChooser
 from src.windows.AssetManager.IconPacks.Icons.IconChooser import IconChooserPage
 
@@ -30,31 +30,27 @@ import globals as gl
 
 # Import typing
 from collections.abc import Callable
-from typing import Any, TYPE_CHECKING
-if TYPE_CHECKING:
-    from src.windows.AssetManager.AssetManager import AssetManager
+from typing import Any
 
-class IconPackChooserStack(Gtk.Stack):
-    def __init__(self, asset_manager: "AssetManager", *args: Any, **kwargs: Any) -> None:
-        super().__init__(*args, **kwargs)
-        self.asset_manager = asset_manager
 
+class IconPackChooserStack(GenericPackChooserStack[IconChooserPage]):
+    """The icon-pack stack, which is the one stack a pre-selection reaches.
+
+    AssetChooser.show_for_path routes every non-custom path here, so this
+    stack alone defers that request until both of its pages have built.
+    """
+
+    PACK_CHOOSER_CLASS = IconPackChooser
+    LEAF_CHOOSER_CLASS = IconChooserPage
+    LEAF_CHILD_TITLE = "Icon Chooser"
+
+    def prepare(self) -> None:
         self.on_loads_finished_tasks: list[Callable[[], Any]] = []
         # Serializes the two build_finished flags with the deferred-task
         # queue. See on_load_finished and show_for_path. The pack chooser and
         # the icon chooser each build on their own worker thread, and both
         # call on_load_finished, so two threads can enter this drain at once.
         self._loads_lock = threading.Lock()
-
-        self.build()
-
-    def build(self) -> None:
-        self.pack_chooser = IconPackChooser(self, self.asset_manager)
-        self.add_titled(self.pack_chooser, "pack-chooser", "Chooser")
-
-        self.icon_chooser = IconChooserPage(self, self.asset_manager)
-        self.add_titled(self.icon_chooser, "icon-chooser", "Icon Chooser")
-
 
     def show_for_path(self, path: str | None) -> None:
         if path is None:
@@ -78,16 +74,17 @@ class IconPackChooserStack(Gtk.Stack):
             icons = pack.get_icons()
             for icon in icons:
                 if icon.path == path:
-                    self.icon_chooser.load_for_pack(pack)
-                    self.icon_chooser.select_asset(path=path)
-                    self.set_visible_child(self.icon_chooser)
+                    self.leaf_chooser.load_for_pack(pack)
+                    self.leaf_chooser.select_asset(path=path)
+                    self.set_visible_child(self.leaf_chooser)
                     self.asset_manager.asset_chooser.set_visible_child_name("icon-packs")
                     self.asset_manager.back_button.set_visible(True)
                     return
-                
+
     def get_is_build_finished(self) -> bool:
-        return hasattr(self, "pack_chooser") and self.pack_chooser.build_finished and hasattr(self, "icon_chooser") and self.icon_chooser.build_finished
-                
+        return (hasattr(self, "pack_chooser") and self.pack_chooser.build_finished
+                and hasattr(self, "leaf_chooser") and self.leaf_chooser.build_finished)
+
     def on_load_finished(self) -> None:
         """Run from both build worker threads, the pack one and the icon one.
 

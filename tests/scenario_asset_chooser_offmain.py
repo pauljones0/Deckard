@@ -383,12 +383,12 @@ def check_static(label: str, module_path: str, class_name: str) -> tuple[int, in
 BAD_SOURCE = """
 class Chooser:
     def build(self):
-        self.flow = IconPackFlowBox(self)
+        self.flow = GenericPackFlowBox(self)
         self.load()
 
     def load(self):
         for pack in self.packs:
-            self.flow.flow_box.append(IconPackPreview(self, pack))
+            self.flow.flow_box.append(GenericPackPreview(self, pack))
 """
 
 GOOD_SOURCE = """
@@ -398,9 +398,9 @@ class Chooser:
         run_on_main(self._build_ui, packs)
 
     def _build_ui(self, packs):
-        self.flow = IconPackFlowBox(self)
+        self.flow = GenericPackFlowBox(self)
         for pack in packs:
-            self.flow.flow_box.append(IconPackPreview(self, pack))
+            self.flow.flow_box.append(GenericPackPreview(self, pack))
 """
 
 
@@ -624,11 +624,11 @@ def check_real_window() -> int:
         chooser = window.asset_chooser
         pages = [
             chooser.icon_pack_chooser.pack_chooser,
-            chooser.icon_pack_chooser.icon_chooser,
+            chooser.icon_pack_chooser.leaf_chooser,
             chooser.wallpaper_pack_chooser.pack_chooser,
-            chooser.wallpaper_pack_chooser.wallpaper_chooser,
+            chooser.wallpaper_pack_chooser.leaf_chooser,
             chooser.sd_plus_bar_wallpaper_pack_chooser.pack_chooser,
-            chooser.sd_plus_bar_wallpaper_pack_chooser.wallpaper_chooser,
+            chooser.sd_plus_bar_wallpaper_pack_chooser.leaf_chooser,
         ]
         pump_until(lambda: all(getattr(p, "build_finished", False) for p in pages),
                    20, "the six real chooser builds never finished")

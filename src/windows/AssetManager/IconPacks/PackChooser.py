@@ -22,9 +22,11 @@ gi.require_version("Adw", "1")
 # Import python modules
 
 # Import own modules
-from src.windows.AssetManager.GenericAssetChooser import GenericPackChooserPage
-from src.windows.AssetManager.IconPacks.FlowBox import IconPackFlowBox
-from src.windows.AssetManager.IconPacks.Preview import IconPackPreview
+from src.windows.AssetManager.GenericAssetChooser import (
+    GenericPackChooserPage,
+    GenericPackFlowBox,
+    GenericPackPreview,
+)
 
 # Import globals
 import globals as gl
@@ -41,8 +43,8 @@ class IconPackChooser(GenericPackChooserPage["IconPack", "IconPackChooserStack"]
     # The concrete stack, restated so the quoted name in the base subscript
     # has a checked in-file use.
     stack: "IconPackChooserStack"
-    PACK_FLOW_BOX_CLASS = IconPackFlowBox
-    PACK_PREVIEW_CLASS = IconPackPreview
+    PACK_FLOW_BOX_CLASS = GenericPackFlowBox
+    PACK_PREVIEW_CLASS = GenericPackPreview
     LEAF_CHILD_NAME = "icon-chooser"
 
     def get_packs(self) -> "dict[str, IconPack]":
@@ -53,7 +55,7 @@ class IconPackChooser(GenericPackChooserPage["IconPack", "IconPackChooserStack"]
         return gl.icon_pack_manager.get_icon_packs()
 
     def get_leaf_chooser(self) -> "IconChooserPage":
-        return self.stack.icon_chooser
+        return self.stack.leaf_chooser
 
     def on_build_finished(self) -> None:
         # The icon stack gates a deferred show_for_path task on the

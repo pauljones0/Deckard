@@ -18,9 +18,16 @@ pick a pack and a page to pick an asset from that pack. Without these bases
 the six classes hold the same body, and they differ only in the widget classes
 they build and the pack manager they read.
 
-This module holds two bases. GenericPackChooserPage is the pack grid, and it
-drills into the leaf page. GenericAssetChooserPage is the recycler grid of the
-assets of a pack, with the shared fuzzy search and sort.
+This module holds the pages, the widgets they build and the stack that holds
+the pair. GenericPackChooserPage is the pack grid, and it drills into the leaf
+page. GenericAssetChooserPage is the recycler grid of the assets of a pack,
+with the shared fuzzy search and sort. GenericPackFlowBox and
+GenericPackPreview are the grid shell and the card of the first;
+GenericAssetFlowBox and GenericAssetPreview are those of the second.
+GenericPackChooserStack holds one page of each and names the subsystem.
+
+A subsystem therefore adds no widget class of its own. It names the classes it
+builds with, the packs it reads, and the title of its leaf page.
 
 Both build the same way. The build worker thread gathers the data, which is
 the pack discovery and the disk I/O, and one run_on_main callback constructs
@@ -46,8 +53,10 @@ from loguru import logger as log
 
 # Import own modules
 from GtkHelper.GtkHelper import run_on_main
+from src.backend.PackManagement.pack_family import PackAsset
 from src.windows.AssetManager.ChooserPage import ChooserPage
-from src.windows.AssetManager.Preview import Preview
+from src.windows.AssetManager.DynamicFlowBox import DynamicFlowBox
+from src.windows.AssetManager.Preview import _PIXBUF_UNSET, Preview, _PixbufUnset
 
 # Import globals
 import globals as gl
@@ -60,13 +69,17 @@ if TYPE_CHECKING:
     from gi.repository import GdkPixbuf
 
     from src.windows.AssetManager.AssetManager import AssetManager
-    from src.windows.AssetManager.DynamicFlowBox import DynamicFlowBox
 
 
 class _PackLike(Protocol):
-    """What both chooser bases read off a pack of any subsystem."""
+    """What the chooser bases and the pack card read off a pack of any
+    subsystem."""
+
+    name: str
 
     def get_thumbnail_path(self) -> "Path | None": ...
+
+    def get_pack_attribution(self) -> dict[str, Any]: ...
 
 
 # One pack subsystem binds all four: its pack class, the stack that holds its
@@ -74,7 +87,12 @@ class _PackLike(Protocol):
 PackT = TypeVar("PackT", bound=_PackLike)
 StackT = TypeVar("StackT", bound=Gtk.Stack)
 PreviewT = TypeVar("PreviewT", bound=Gtk.FlowBoxChild)
-AssetT = TypeVar("AssetT")
+# The asset classes all descend from PackAsset, which is what carries the file
+# path and the attribution the shared card reads.
+AssetT = TypeVar("AssetT", bound=PackAsset)
+# The leaf page of one subsystem, which its stack holds and its pack grid
+# drills into.
+LeafT = TypeVar("LeafT", bound="GenericAssetChooserPage[Any, Any, Any, Any]")
 
 
 class _PackPreviewLike(Protocol[PackT]):
@@ -133,6 +151,110 @@ def compare_assets(item1: Any, item2: Any, search: str, attr: str = "path") -> i
     if score1 < score2:
         return 1
     return 0
+
+
+class GenericPackFlowBox(Gtk.Box):
+    """The grid shell of a pack chooser page.
+
+    It holds the Gtk.FlowBox that the page appends pack cards to and connects
+    its child-activated signal on.
+    """
+
+    def __init__(self, pack_chooser: object, *args: Any, **kwargs: Any) -> None:
+        # The chooser passes itself first and positionally. Nothing in this
+        # widget reads it back, so it is not stored.
+        super().__init__(*args, **kwargs)
+        self.set_orientation(Gtk.Orientation.HORIZONTAL)
+        self.set_hexpand(True)
+
+        self.build()
+
+    def build(self) -> None:
+        self.flow_box = Gtk.FlowBox(hexpand=True, orientation=Gtk.Orientation.HORIZONTAL,
+                                    selection_mode=Gtk.SelectionMode.NONE)
+        self.append(self.flow_box)
+
+
+class GenericPackPreview(Preview, Generic[PackT]):
+    """One pack card in a pack grid."""
+
+    def __init__(self, pack_chooser: "GenericPackChooserPage[PackT, Any]", pack: PackT,
+                 pixbuf: "GdkPixbuf.Pixbuf | None | _PixbufUnset" = _PIXBUF_UNSET) -> None:
+        # The build worker of the chooser decodes pixbuf. This constructor
+        # decodes the thumbnail itself, on its own thread, only when the
+        # caller supplies no pixbuf.
+        super().__init__(
+            image_path=pack.get_thumbnail_path() if pixbuf is _PIXBUF_UNSET else None,
+            text=pack.name,
+            pixbuf=pixbuf
+        )
+        self.pack = pack
+        self.pack_chooser = pack_chooser
+
+    def on_click_info(self, button: Gtk.Button) -> None:
+        attribution = self.pack.get_pack_attribution()
+        self.pack_chooser.asset_manager.show_info(
+            internal_path=None,
+            licence_name=attribution.get("license"),
+            license_url=attribution.get("license-url"),
+            author=attribution.get("copyright"),
+            license_comment=attribution.get("comment")
+        )
+
+
+class GenericAssetFlowBox(DynamicFlowBox[PreviewT, AssetT]):
+    """The recycling grid of an asset chooser page."""
+
+    def __init__(self, base_class: "type[PreviewT]", asset_chooser: object,
+                 *args: Any, **kwargs: Any) -> None:
+        # The chooser passes itself second and positionally. Nothing in this
+        # widget reads it back, so it is not stored.
+        super().__init__(base_class, *args, **kwargs)
+        self.set_hexpand(True)
+
+
+class GenericAssetPreview(Preview, Generic[AssetT]):
+    """One asset card in a recycling asset grid.
+
+    The grid pools these, so the constructor takes no asset. It builds an
+    empty card, and set_asset binds one to it and rebinds it on every recycle.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+
+        self.asset: AssetT = None  # type: ignore[assignment]  # late-init: set_asset
+
+    def on_click_info(self, button: Gtk.Button) -> None:
+        # The window that owns this preview nulls the slot as it closes, and a
+        # recycled child can outlive that, so answer a closed window with a log
+        # line rather than a traceback out of the click handler.
+        asset_manager = gl.asset_manager
+        if asset_manager is None:
+            log.error("The asset manager window is gone; cannot show asset info")
+            return
+        # One lookup for the four fields below. get_attribution resolves the
+        # asset's key against the pack's attribution entries on every call.
+        attribution = self.asset.get_attribution()
+        asset_manager.show_info(
+            internal_path=self.asset.path,
+            licence_name=attribution.get("license"),
+            license_url=attribution.get("license-url"),
+            author=attribution.get("copyright"),
+            license_comment=attribution.get("comment"),
+            original_url=attribution.get("original-url")
+        )
+
+    def set_asset(self, asset: AssetT) -> None:
+        self.asset = asset
+
+        # This runs inside the main-loop callback of
+        # DynamicFlowBox._apply_range, and the factory function of the chooser
+        # is the one caller, so set the text and the image here. A deferral
+        # through idle_add leaves the recycled child visible for a frame with
+        # the name and thumbnail of the earlier item.
+        self.set_text(os.path.splitext(os.path.basename(asset.path))[0])
+        self.set_image(asset.path)
 
 
 class _ChooserBuildPage(ChooserPage):
@@ -468,3 +590,51 @@ class GenericAssetChooserPage(_ChooserBuildPage, Generic[PackT, AssetT, PreviewT
     def on_build_finished(self) -> None:
         """Called after build(), off the main thread. Only the icon stack
         gates deferred work on it."""
+
+
+class GenericPackChooserStack(Gtk.Stack, Generic[LeafT]):
+    """The two pages of one pack subsystem, and the switch between them.
+
+    A subclass names the two page classes and the title of the leaf page. The
+    name of the leaf stack child comes from the pack page, which drills into
+    it by that name, so the two cannot drift apart.
+    """
+
+    PACK_CHOOSER_CLASS: "type[GenericPackChooserPage[Any, Any]]" = None  # type: ignore[assignment]  # late-init: subclass override, e.g. IconPacks.Stack
+    LEAF_CHOOSER_CLASS: "type[LeafT]" = None  # type: ignore[assignment]  # late-init: subclass override, e.g. IconPacks.Stack
+    LEAF_CHILD_TITLE: str = None  # type: ignore[assignment]  # late-init: subclass override, e.g. IconPacks.Stack
+
+    # build() reads this. A page starts a build worker in its constructor, and
+    # that worker calls back into state prepare() creates, so a build that ran
+    # first would race an attribute that does not exist yet. The failure it
+    # gives is silent: @log.catch on the page build swallows the raise, and a
+    # deferred pre-selection then never drains.
+    _prepared = False
+
+    def __init__(self, asset_manager: "AssetManager", *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.asset_manager = asset_manager
+
+        self.prepare()
+        self._prepared = True
+        self.build()
+
+    def prepare(self) -> None:
+        """State that the two pages may touch as soon as they exist.
+
+        It runs before build(), because each page starts a build worker in its
+        constructor and that worker calls back into the stack.
+        """
+
+    def build(self) -> None:
+        if not self._prepared:
+            raise RuntimeError(
+                f"{type(self).__name__}.build() ran before prepare(). Each page "
+                "starts a build worker in its constructor, and that worker "
+                "reaches state prepare() creates.")
+        self.pack_chooser = self.PACK_CHOOSER_CLASS(self, self.asset_manager)
+        self.add_titled(self.pack_chooser, "pack-chooser", "Chooser")
+
+        self.leaf_chooser = self.LEAF_CHOOSER_CLASS(self, self.asset_manager)
+        self.add_titled(self.leaf_chooser, self.PACK_CHOOSER_CLASS.LEAF_CHILD_NAME,
+                        self.LEAF_CHILD_TITLE)
