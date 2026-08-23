@@ -43,7 +43,7 @@ from StreamDeck.Devices.StreamDeck import DialEventType, TouchscreenEventType
 from loguru import logger as log
 
 from src.backend.DeckManagement.HelperMethods import is_image, is_svg, is_video, svg_to_pil
-from src.backend.DeckManagement.InputIdentifier import Input, InputEvent, InputIdentifier
+from src.backend.DeckManagement.InputIdentifier import Input, InputEvent, InputIdentifier, read_active_state
 from src.backend.DeckManagement.Media.MediaConfig import MediaConfig
 from src.backend.DeckManagement.Subclasses.ActionPermissionManager import ActionPermissionManager
 from src.backend.DeckManagement.Subclasses.KeyImage import InputImage
@@ -504,6 +504,8 @@ class ControllerInput(Generic[StateT]):
 
         d["states"] = new_states_dict
 
+        # The remap above moved the shown state down, so rewrite the number.
+        self.identifier.persist_active_state(page, self.state)
 
         page.save()
 
@@ -537,11 +539,17 @@ class ControllerInput(Generic[StateT]):
     def set_state(self, state: int, update_sidebar: bool = True, allow_reload: bool = False) -> None:
         if state == self.state and not allow_reload:
             return
-        
+
         if state not in self.states:
             log.error(f"Invalid state: {state}, must be one of {list(self.states.keys())}")
             return
         self.state = state
+
+        # Only a real state change reaches here, because a page load selects
+        # the state the page names without going through this. The page keeps
+        # the number, so the input opens on this state after a reload, a page
+        # switch and the next launch.
+        self.identifier.persist_active_state(self.deck_controller.active_page, state)
 
         self.get_active_state().update()
 
@@ -561,9 +569,11 @@ class ControllerInput(Generic[StateT]):
         n_states = len(config.get("states", {}))
         self.create_n_states(max(1, n_states))
 
-        old_state_index = self.state
-
-        self.state = 0
+        # Open on the state the page names: the state this input showed when
+        # the page was last used, and the first state for a page naming none.
+        # A load that repaints has none of the number's own work left to do,
+        # so the tail only shows it.
+        self.state = read_active_state(config, len(self.states))
 
         #TODO: Reset states
         for state_key in config.get("states", {}):
@@ -574,7 +584,7 @@ class ControllerInput(Generic[StateT]):
             state_dict = config["states"][str(state.state)]
 
             if update:
-                self.set_state(old_state_index)
+                self.reload_sidebar()
                 self.update()
 
     def clear(self, update: bool = True) -> None:
@@ -1099,9 +1109,8 @@ class ControllerKey(ControllerInput["ControllerKeyState"]):
                     if key_video is not None:
                         key_video.close()
 
-        old_state_index = self.state
-
-        self.state = 0
+        # Open on the state the page names. See ControllerInput.load_from_config.
+        self.state = read_active_state(input_dict, len(self.states))
 
         #TODO: Reset states
         for state_key in input_dict.get("states", {}):
@@ -1224,16 +1233,8 @@ class ControllerKey(ControllerInput["ControllerKeyState"]):
                 state.background_manager.set_page_color(state_dict.get("background", {}).get("color"), update=False)
 
         if update:
-            self.set_state(old_state_index)
-            self.update()
-
-    def set_state(self, state: int, update_sidebar: bool = True, allow_reload: bool = False) -> None:
-        old_state = self.state
-        if state == old_state and not allow_reload:
-            return
-        super().set_state(state, False, allow_reload)
-        if update_sidebar:
             self.reload_sidebar()
+            self.update()
 
     def set_ui_key_image(self, image: Image.Image | None) -> None:
         if image is None:
@@ -1563,9 +1564,8 @@ class ControllerDial(ControllerInput["ControllerDialState"]):
         n_states = len(input_dict.get("states", {}))
         self.create_n_states(max(1, n_states))
 
-        old_state_index = self.state
-
-        self.state = 0
+        # Open on the state the page names. See ControllerInput.load_from_config.
+        self.state = read_active_state(input_dict, len(self.states))
 
         for state_key in input_dict.get("states", {}):
             state = self.states.get(int(state_key))
@@ -1641,7 +1641,7 @@ class ControllerDial(ControllerInput["ControllerDialState"]):
             state.background_manager.set_page_color(state_dict.get("background", {}).get("color", [0, 0, 0, 0]), update=False)
 
         if update:
-            self.set_state(old_state_index)
+            self.reload_sidebar()
             self.update()
 
     def update(self) -> None:

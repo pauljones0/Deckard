@@ -22,6 +22,42 @@ StateDict = TypedDict("StateDict", {
 }, total=False)
 
 
+# Which of an input's states it shows, stored beside that input's "states" map.
+# The key is absent while the input shows state 0, which is the state an input
+# opens on when its page names none. A page that never leaves the first state
+# therefore keeps the bytes it always had, and a build that predates the key
+# reads a page that carries it unchanged.
+ACTIVE_STATE_KEY = "active-state"
+
+
+def stored_active_state(input_dict: "dict[str, Any]") -> int | None:
+    """Give the state number an input dict stores, or None when it stores none.
+
+    A page file is editable by hand, so anything that is not a state number
+    counts as no number at all.
+    """
+    value = input_dict.get(ACTIVE_STATE_KEY)
+    # A bool is an int, and True next to state 1 would read as that state.
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return None
+    return value
+
+
+def read_active_state(input_dict: "dict[str, Any]", n_states: int) -> int:
+    """Give the state an input dict selects, of the n_states the input has.
+
+    State 0 covers every page that names no state and every number the input
+    cannot show. A page can name a state that is gone: one edited by hand, or
+    an input a plugin rebuilt with fewer states than the page was written
+    with. Such a number selects nothing, so the input opens on its first
+    state instead of on none.
+    """
+    value = stored_active_state(input_dict)
+    if value is None or value >= n_states:
+        return 0
+    return value
+
+
 class InputIdentifier:
     # Every concrete input below (Input.Key, Dial, Touchscreen) defines its
     # own nested Events enum, so code holding the base type can reach it.
@@ -69,6 +105,39 @@ class InputIdentifier:
         so the returned dict is part of the page."""
         input_config = page.dict.setdefault(self.input_type, {}).setdefault(self.json_identifier, {})
         return cast(dict[str, Any], input_config.setdefault("states", {}).setdefault(str(state), {}))
+
+    def persist_active_state(self, page: "Page | None", state: int) -> None:
+        """Record in page which of its states this input shows.
+
+        The page carries the number, so a reload, a page switch and the next
+        launch all open the input on the state it was left on. The edit rides
+        the page's own write, so a burst of state changes costs one file
+        write and a page switch takes the last one with it.
+        """
+        if page is None:
+            # No page is loaded, at boot or during teardown, so nothing can
+            # carry the number.
+            return
+        config = self.get_dict(page.dict)
+        if config is None:
+            # The page holds no entry for this input, so it holds no second
+            # state either. An entry minted here would put this key on every
+            # page whose inputs are touched.
+            return
+        # State 0 is what an input opens on when the page names no state, so
+        # the first state is the absent key rather than a second spelling of
+        # it. A page the user never takes off state 0 keeps the bytes it has.
+        wanted = state if state > 0 else None
+        if stored_active_state(config) == wanted:
+            return
+        with page.edit() as data:
+            live = self.get_dict(data)
+            if live is None:
+                return
+            if wanted is None:
+                live.pop(ACTIVE_STATE_KEY, None)
+            else:
+                live[ACTIVE_STATE_KEY] = wanted
 
     # DeckController.get_input answers None when this identifier is not among
     # the controller's inputs, e.g. a wrong deck model or a stale identifier.
