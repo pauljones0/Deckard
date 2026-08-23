@@ -73,6 +73,19 @@ bundle as a release asset.
   login lock, a restart while locked, a launch from a remote shell) left the
   decks lit and interactive at their pages. Startup now reads the current
   lock state once and locks at once when the session reads locked.
+- Searching for an icon, a wallpaper or a custom asset now matches on the
+  words of the name. A search compared the whole name against the whole
+  query, so a long name lost for its length alone: "battery" answered with
+  acer and afterpay while it hid battery-charging-outline. The search now
+  keeps a name that holds every word typed, and lists the closest first, so
+  the words may be typed in any order and a dash, an underscore or a dot
+  reads the same as a space.
+- The search box on the icon pack, wallpaper pack and SD+ bar wallpaper pack
+  pages now filters the packs it shows. It accepted text and changed
+  nothing.
+- The asset searches now wait for the typing to stop before they filter the
+  grid. Each keystroke used to filter and sort the whole pack, which is
+  thousands of icons, and typing stuttered.
 - The plugin store reads both store catalog formats, the old per-version
   commit map and the new single-commit form, so a store that publishes the
   new format still lists, installs and updates its assets instead of showing
