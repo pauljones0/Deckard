@@ -564,6 +564,23 @@ def start_watchdog(seconds: float, label: str = "scenario") -> None:
     t.start()
 
 
+def has_usable_display() -> bool:
+    """True only when GTK can build a widget in this process.
+
+    Gtk.init_check() answers True on a headless host where
+    Gdk.Display.get_default() stays None. Adw.init() then aborts the
+    process (SIGSEGV) or the first widget raises RuntimeError. A scenario
+    that constructs widgets must skip when this returns False, so the suite
+    is safe with no display. gi is imported here, not at module load, so the
+    many non-GTK scenarios pay nothing for it.
+    """
+    import gi
+    gi.require_version("Gtk", "4.0")
+    gi.require_version("Gdk", "4.0")
+    from gi.repository import Gdk, Gtk
+    return bool(Gtk.init_check()) and Gdk.Display.get_default() is not None
+
+
 def teardown(controller) -> None:
     """Bounded shutdown that mirrors DeckManager.remove_controller.
 

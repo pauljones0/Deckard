@@ -582,8 +582,8 @@ def check_real_window() -> int:
     gi.require_version("Adw", "1")
     from gi.repository import Adw, Gtk
 
-    if not Gtk.init_check():
-        print("SKIP(real-window): no display; the stubbed checks above still ran")
+    if not fixtures.has_usable_display():
+        print("SKIP(real-window): no usable display; the stubbed checks above still ran")
         return 0
     Adw.init()
 
