@@ -56,8 +56,44 @@ user@host. Never as a bare word, so a common-word username leaves ordinary
 prose whole.
 
 A url credential. scheme://user:pass@host and scheme://user@host become
-scheme://***@host, and the host and the path stay, so a store-fetch url stays
-readable.
+scheme://***@host, and the scheme, the port and the path stay, so a store-fetch
+url stays readable.
+
+A host and an address. LAN topology is the leak a shared log carries most,
+because a plugin logs the url it talks to, such as a Home Assistant instance or
+an MQTT broker, and that names the machines on the user's network. Five rules
+cover it, and each one runs its candidate through the same allowlist.
+
+  * The host of a url, in any scheme, becomes <host>, or <ip> for an address
+    literal. mqtt://ha.local:1883/x reads mqtt://<host>:1883/x, so a connection
+    failure still names the service and the path.
+  * The host of a user@host form, when it carries a dot or is a bracketed
+    address. A single-label host such as build-host stays, because a bare word
+    after an "@" is as often prose as a machine. These host rules run before the
+    username rule, so user@ha.local scrubs whole, to <user>@<host>.
+  * An address literal anywhere in the line, IPv4 and IPv6, validated by the
+    ipaddress module and not by the pattern alone. A loopback and an unspecified
+    address stay, because 127.0.0.1 and 0.0.0.0 name no machine and a support
+    answer reads them. A four-part version such as 1.2.3.4 is a valid address
+    and does redact; a three-part version, a v-prefixed one and a decimal never
+    reach the check.
+  * A name in a private-network domain anywhere in the line, which is .local for
+    mDNS and the LAN suffixes beside it. Outside a url and a user@host form a
+    public name stays, because a dotted word in log prose is far more often a
+    file name, a module path or a version than a host. A "(" after the name
+    keeps a call such as threading.local() whole, and a path such as
+    ~/.local/share never matches, because a "/" before the dot leaves no label.
+  * This machine's own name, as a whole word. Unlike the username, which
+    redacts in path and user@ context only, this redacts bare, because an
+    internal machine name has no other spelling in a log. A name that is also
+    ordinary log vocabulary, such as "deckard" or "desktop", redacts nothing:
+    rewriting it would eat the app's own data paths and its prose, and such a
+    name identifies nobody.
+
+The allowlist keeps a host whole. It holds the github names the store fetches
+from, the sites the app links to, the licence url every module header carries,
+and the loopback names. Each is compiled into this app, so none of them is user
+infrastructure, and a store failure stays diagnosable.
 
 A secret assignment, and a dict, JSON or YAML field, for an unambiguous key
 vocabulary of token, access_token, api_key, password, secret and the like,
@@ -80,8 +116,10 @@ contract needs, and importable by log_hooks without weakening the import
 contract of log_hooks.
 """
 import getpass
+import ipaddress
 import os
 import re
+import socket
 import traceback
 from collections.abc import Callable
 from typing import TYPE_CHECKING
@@ -95,6 +133,62 @@ _Rule = tuple["re.Pattern[str]", "str | Callable[[re.Match[str]], str]"]
 _installed = False
 
 _USER_TOKEN = "<user>"
+_HOST_TOKEN = "<host>"
+_IP_TOKEN = "<ip>"
+
+# The public hosts that stay readable. The store fetches from the github names,
+# the app opens the link names, and every module header carries the licence url,
+# so each of these is compiled into this app and none of them is user
+# infrastructure. A subdomain of a listed name counts as listed, which covers
+# api.github.com and raw.githubusercontent.com.
+_PUBLIC_HOSTS = (
+    "github.com",
+    "githubusercontent.com",
+    "github.io",
+    "core447.com",
+    "ko-fi.com",
+    "discord.com",
+    "discord.gg",
+    "gnu.org",
+)
+
+# The loopback names. The address spellings need no list, because the ipaddress
+# module classifies them.
+_LOOPBACK_NAMES = frozenset({
+    "localhost",
+    "localhost.localdomain",
+    "ip6-localhost",
+    "ip6-loopback",
+})
+
+# The domain suffixes that only a private network uses. A bare name redacts on
+# these alone. Longest first, so a multi-label suffix reads before the label it
+# ends with.
+_INTERNAL_SUFFIXES = (
+    "home.arpa",
+    "localdomain",
+    "internal",
+    "intranet",
+    "private",
+    "local",
+    "corp",
+    "home",
+    "lan",
+    "box",
+)
+
+# A hostname that is also ordinary log vocabulary redacts nothing. A machine
+# named "deckard" would otherwise rewrite this app's own data paths, one named
+# "media" would rewrite a mount path, and neither name identifies anybody.
+_GENERIC_HOSTNAMES = frozenset({
+    "arch", "archlinux", "computer", "debian", "deck", "deckard", "desktop",
+    "fedora", "gentoo", "home", "hostname", "laptop", "linux", "local",
+    "localdomain", "localhost", "media", "nixos", "opensuse", "plugin", "pc",
+    "python", "root", "server", "store", "streamcontroller", "ubuntu", "user",
+})
+
+# A hostname must look like one before it becomes a pattern.
+_HOSTNAME_SHAPE = re.compile(r"[a-z0-9][a-z0-9.-]*")
 
 # The characters that follow a complete path in log text, which are a slash,
 # whitespace, a quote, and the punctuation that ends a path in prose or in a
@@ -145,6 +239,101 @@ def _username() -> str:
         return os.environ.get("USER") or os.environ.get("LOGNAME") or ""
 
 
+def _hostname_candidates() -> list[str]:
+    """Every spelling of this machine's own name, longest first. That is the
+    name the kernel reports and the name the environment carries, each in its
+    full and its short form, so a host called box.example.org redacts under
+    either spelling. A name that reads as ordinary log vocabulary, or one under
+    three characters, drops out, because a rule on it would eat prose."""
+    raw: list[str] = []
+    try:
+        raw.append(socket.gethostname())
+    except OSError:
+        pass
+    environment_name = os.environ.get("HOSTNAME")
+    if environment_name:
+        raw.append(environment_name)
+
+    names: list[str] = []
+    for candidate in raw:
+        cleaned = candidate.strip().rstrip(".").lower()
+        for variant in (cleaned, cleaned.split(".")[0]):
+            if len(variant) < 3 or variant in _GENERIC_HOSTNAMES:
+                continue
+            if not _HOSTNAME_SHAPE.fullmatch(variant):
+                continue
+            if variant not in names:
+                names.append(variant)
+    return sorted(names, key=len, reverse=True)
+
+
+def _host_token(host: str) -> str | None:
+    """The replacement for one host, or None when the host must stay whole.
+
+    An address literal becomes "<ip>" and a name becomes "<host>". A loopback
+    and an unspecified address stay, and so do the loopback names and the
+    allowlisted public hosts."""
+    name = host.strip("[]").rstrip(".").lower()
+    if not name:
+        return None
+    try:
+        address = ipaddress.ip_address(name)
+    except ValueError:
+        pass
+    else:
+        if address.is_loopback or address.is_unspecified:
+            return None
+        return _IP_TOKEN
+    if name in _LOOPBACK_NAMES or name.endswith(".localhost"):
+        return None
+    for public in _PUBLIC_HOSTS:
+        if name == public or name.endswith("." + public):
+            return None
+    return _HOST_TOKEN
+
+
+def _url_host_replacement(match: re.Match[str]) -> str:
+    """Keep the scheme and any already scrubbed userinfo, replace the host. A
+    bracketed IPv6 host keeps its brackets, so the url stays parseable and the
+    port after it stays readable."""
+    host = match.group(2)
+    token = _host_token(host)
+    if token is None:
+        return match.group(0)
+    if host.startswith("["):
+        token = f"[{token}]"
+    return match.group(1) + token
+
+
+def _at_host_replacement(match: re.Match[str]) -> str:
+    """Replace the host of a bare user@host form, and keep the "@"."""
+    token = _host_token(match.group(1))
+    return match.group(0) if token is None else "@" + token
+
+
+def _name_replacement(match: re.Match[str]) -> str:
+    """Replace a whole match that is a host name on its own."""
+    token = _host_token(match.group(0))
+    return match.group(0) if token is None else token
+
+
+def _ip_replacement(match: re.Match[str]) -> str:
+    """Replace a whole match that the ipaddress module confirms is an address.
+
+    The patterns give a candidate shape and this decides, so a clock time such
+    as 12:34:56 and a mac address such as aa:bb:cc:dd:ee:ff read as IPv6
+    candidates and come back whole. A name must never reach here: a refused
+    candidate is not a host, it is ordinary text."""
+    text = match.group(0)
+    try:
+        address = ipaddress.ip_address(text)
+    except ValueError:
+        return text
+    if address.is_loopback or address.is_unspecified:
+        return text
+    return _IP_TOKEN
+
+
 def _colon_replacement(match: re.Match[str]) -> str:
     """Rebuild 'name': 'value' as 'name': '***', and keep the quoting the
     original used, from a dict repr, JSON, YAML or none."""
@@ -155,7 +344,15 @@ def _colon_replacement(match: re.Match[str]) -> str:
     )
 
 
+# The fast-path probe of scrub(). _compile_rules() builds it, because it must
+# know the same hostnames the rules do: a recompile that left the probe behind
+# would let a bare hostname skip every rule. It matches nothing until then.
+_FAST_PROBE: "re.Pattern[str]" = re.compile(r"(?!)")
+
+
 def _compile_rules() -> "list[_Rule]":
+    """Compile the rule list, in the order scrub() applies it, and refresh the
+    fast-path probe alongside it."""
     rules: "list[_Rule]" = []
 
     # Url userinfo, which is scheme://user:pass@host and scheme://user@host.
@@ -280,8 +477,78 @@ def _compile_rules() -> "list[_Rule]":
             "~",
         ))
 
+    # A url host, in any scheme. The scheme, the port and the path stay, so a
+    # store fetch and a broker connection both stay diagnosable. This runs
+    # after the userinfo rules, so the optional group absorbs the "***@" they
+    # leave behind, and it also takes a raw "user@" that no userinfo rule
+    # reached. The host class carries no "<", so a second scrub finds no host
+    # in the "<host>" this leaves.
+    rules.append((
+        re.compile(
+            r"(?i)\b([a-z][a-z0-9+.-]*://(?:[^/\s@]{1,256}@)?)"
+            # One unbroken run of host characters, uncapped, so a run longer
+            # than any real host redacts whole and never in part.
+            r"(\[[0-9a-f:.]{2,45}\]|[a-z0-9._-]+)"
+        ),
+        _url_host_replacement,
+    ))
+
+    # user@host outside a url. The host must carry a dot or be a bracketed
+    # address, so a single-label host such as "build-host" stays: a bare word
+    # after an "@" is as often prose as a machine. The lookbehind demands a
+    # user part, which keeps a decorator line such as "@log.catch" whole. The
+    # trailing guards refuse a longer label and accept a sentence-final ".".
+    rules.append((
+        re.compile(
+            r"(?i)(?<=[\w.+-])@(\[[0-9a-f:.]{2,45}\]|[a-z0-9-]+(?:\.[a-z0-9-]+)+)"
+            r"(?![\w-])(?!\.\w)"
+        ),
+        _at_host_replacement,
+    ))
+
+    # A name in a private-network domain, anywhere in the line. The lookbehind
+    # keeps a path such as "~/.local/share" whole, because a "/" before the dot
+    # leaves no label, and the "(" in the trailing guard keeps a call such as
+    # "threading.local()" whole. This runs before the machine-name rule, so an
+    # own hostname under such a suffix redacts as one host and never as a token
+    # with a suffix left beside it.
+    rules.append((
+        re.compile(
+            r"(?i)(?<![\w./@-])"
+            r"(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+"
+            r"(?:" + "|".join(re.escape(suffix) for suffix in _INTERNAL_SUFFIXES) + r")"
+            r"(?![\w(-])(?!\.\w)"
+        ),
+        _name_replacement,
+    ))
+
+    # This machine's own name, as a whole word. A following "." is allowed, so
+    # a name under a public domain loses the machine and keeps the domain.
+    hostnames = _hostname_candidates()
+    for hostname in hostnames:
+        rules.append((
+            re.compile(r"(?i)(?<![\w.-])" + re.escape(hostname) + r"(?![\w-])"),
+            _HOST_TOKEN,
+        ))
+
+    # An address literal anywhere in the line. The pattern gives a candidate
+    # shape and the ipaddress module decides, so a clock time such as 12:34:56
+    # reads as an IPv6 candidate and comes back whole. The IPv4 guards refuse a
+    # fifth octet and accept a sentence-final "."; the mandatory leading hex
+    # group of the IPv6 pattern keeps a slice such as "x[::2]" whole.
+    rules.append((
+        re.compile(r"(?<![\w.-])(?:\d{1,3}\.){3}\d{1,3}(?![\w-])(?!\.\d)"),
+        _ip_replacement,
+    ))
+    rules.append((
+        re.compile(r"(?<![\w:.])[0-9A-Fa-f]{1,4}(?::[0-9A-Fa-f]{0,4}){2,7}(?![\w:])"),
+        _ip_replacement,
+    ))
+
     # The username, as a full path segment, which includes a dot-suffix form,
-    # or as the user part of user@host.
+    # or as the user part of user@host. The user@ lookahead accepts a "<" as
+    # well as a host character, because the host rules run first and a scrubbed
+    # host reads "<host>". Without it "user@ha.local" would keep its username.
     user = _username()
     if user:
         escaped = re.escape(user)
@@ -290,9 +557,18 @@ def _compile_rules() -> "list[_Rule]":
             _USER_TOKEN,
         ))
         rules.append((
-            re.compile(r"(?<![\w.-])" + escaped + r"(?=@[\w[])"),
+            re.compile(r"(?<![\w.-])" + escaped + r"(?=@[\w[<])"),
             _USER_TOKEN,
         ))
+
+    # The fast-path probe. A dot between two alphanumerics is the shape of every
+    # host and address the rules above look for, and a machine name needs no dot
+    # at all, so each one joins the probe by name.
+    global _FAST_PROBE
+    _FAST_PROBE = re.compile(
+        "|".join([r"[a-z0-9]\.[a-z0-9]", *(re.escape(name) for name in hostnames)]),
+        re.IGNORECASE,
+    )
 
     return rules
 
@@ -301,16 +577,18 @@ _RULES = _compile_rules()
 
 
 def scrub(text: str) -> str:
-    """Return text with home paths, usernames and credentials redacted. Pure,
-    thread-safe, and free of loguru."""
+    """Return text with home paths, usernames, hosts, addresses and credentials
+    redacted. Pure, thread-safe, and free of loguru."""
     if not text:
         return text
-    # A fast path. Every rule needs one of these characters, except the bare
-    # bearer form, which carries none of them, so the case-folded check for
-    # it runs after every cheap character probe misses.
+    # A fast path. Every rule needs one of these characters, except three that
+    # carry none of them: a bare bearer form, a bare address or host, and this
+    # machine's own name. The probe scan and the case-folded check for those
+    # run after every cheap character probe misses.
     if (
         "/" not in text and "@" not in text and "=" not in text
-        and ":" not in text and "bearer" not in text.lower()
+        and ":" not in text and not _FAST_PROBE.search(text)
+        and "bearer" not in text.lower()
     ):
         return text
     for pattern, replacement in _RULES:

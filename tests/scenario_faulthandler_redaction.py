@@ -12,9 +12,18 @@ import signal
 import stat
 
 from src.backend import log_hooks
+from src.backend import log_redaction
 
 HOME = os.path.expanduser("~")
 USER = getpass.getuser()
+HOST = "deckard-ci-box"  # this machine's name, injected, never the runner's
+
+# scrub() redacts this machine's own name alongside the home path. Pin the name
+# to an injected one, because the runner's could be any word and a rule on it
+# would rewrite the seeded dump below. The home and username rules stay real,
+# which is what the frame-path assertions need.
+log_redaction._hostname_candidates = lambda: [HOST]
+log_redaction._RULES = log_redaction._compile_rules()
 
 BOOT_MARKER = "===== boot "
 
@@ -77,12 +86,13 @@ def main() -> None:
     assert HOME not in content, "raw home path survived the boot scrub"
     assert "hunter2" not in content, "URL password survived the boot scrub"
     assert f"/run/media/{USER}/" not in content, "username path segment survived"
+    assert "git.example.com" not in content, "URL host survived the boot scrub"
 
     # The redacted forms are present and the dump is still debuggable.
     assert '  File "~/dev/StreamController/main.py", line 40 in <module>' in content
     assert "/run/media/<user>/stick/sideloaded/plugin.py" in content
-    assert "https://***@git.example.com/repo.git" in content, (
-        "URL host/path must survive; only the userinfo is redacted"
+    assert "https://***@<host>/repo.git" in content, (
+        "URL scheme and path must survive; the userinfo and the host are redacted"
     )
     assert "Fatal Python error: Segmentation fault" in content
     assert "(most recent call first):" in content

@@ -58,6 +58,14 @@ bundle as a release asset.
   for some schemes it left the whole value. The secret after the scheme word
   is now removed, and a token or api-key header name is recognised with an
   `X-` prefix as well.
+- A log you share no longer names the machines on your network. A plugin that
+  talks to a Home Assistant instance or an MQTT broker logs the address it
+  connects to, and a log you posted for help described your network to
+  everyone who read it. A host name and an ip address in a log now read as
+  `<host>` and `<ip>`, and so does the name of this computer. The scheme, the
+  port and the path of a url stay, loopback addresses stay, and the public
+  sites the app itself uses stay, such as GitHub, so a store or a connection
+  problem is still diagnosable from the log.
 
 ### Fixed
 
