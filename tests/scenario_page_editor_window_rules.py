@@ -5,6 +5,10 @@ A user who types a pattern and then clicks elsewhere left it in the widget
 alone, and the page kept the pattern it had. Every edit must also ask the
 window grabber to re-check the window in front, or the rule takes effect at
 the next window change only.
+
+Closing the window is the other end of that. The rows hold handlers that would
+fire while the widgets go away, so the editor commits what the entries hold
+and drops every handler before the window destroys it.
 """
 
 import fixtures  # noqa: F401  (must be first: isolates DATA_PATH)
@@ -68,22 +72,26 @@ def check_focus_leave_commits_typed_text(group, page_path, grabber) -> None:
     assert grabber.rechecks == before + 1
 
 
-def check_focus_leave_without_an_edit_writes_nothing(group, page_path, grabber) -> None:
-    """A focus leave arrives on every click elsewhere. One that carries no
-    edit must write nothing: a write re-gates the watcher and re-applies every
-    rule."""
-    before = grabber.rechecks
+def check_focus_leave_without_an_edit_rechecks_only(group, page_path, grabber) -> None:
+    """A leave that carries no edit writes nothing, and still re-checks.
+
+    A write per leave would re-gate the watcher and re-apply every rule. The
+    re-check stays, because the focus leaving the entry is often the window
+    the rule names coming to the front, and a user who committed with Enter
+    would otherwise see nothing happen at that moment.
+    """
+    rechecks_before = grabber.rechecks
     gate_passes_before = grabber.gate_passes
 
     group.title_focus.emit("leave")
     group.wm_class_focus.emit("leave")
 
-    assert grabber.rechecks == before, (
-        f"a focus leave that carries no edit must not re-check the window, "
-        f"got {grabber.rechecks - before} extra re-check(s)"
-    )
     assert grabber.gate_passes == gate_passes_before, (
         "a focus leave that carries no edit must not write the page"
+    )
+    assert grabber.rechecks == rechecks_before + 2, (
+        f"each focus leave must re-check the window in front, got "
+        f"{grabber.rechecks - rechecks_before} for two leaves"
     )
     assert _rule(page_path).get("title") == "Mozilla Firefox"
 
@@ -108,15 +116,64 @@ def check_toggles_recheck(group, page_path, grabber) -> None:
     )
 
 
-def check_editor_without_a_grabber(group) -> None:
-    """The window grabber is absent in a headless run, and an edit must still
-    reach the page rather than raise out of a GTK handler."""
+def check_editor_without_a_grabber(group, page_path) -> None:
+    """A headless run has no window grabber, and an edit must still reach the
+    page rather than raise out of a GTK handler."""
     grabber = gl.window_grabber
     gl.window_grabber = None
     try:
-        group.recheck_active_window()
+        group.title_entry.set_text("Firefox Nightly")
+        group.title_focus.emit("leave")
+
+        assert _rule(page_path).get("title") == "Firefox Nightly", (
+            f"the commit must not depend on a window grabber being there, "
+            f"got {_rule(page_path)}"
+        )
+        group.title_focus.emit("leave")
     finally:
         gl.window_grabber = grabber
+
+
+def check_window_close_commits_and_disconnects(window, editor, page_path, grabber) -> None:
+    """Closing the window is the last chance for text nobody applied, and the
+    last moment a row handler may run.
+
+    The handlers outlive the load that connected them, because a window that
+    closes loads no further page, so the close has to drop them itself. One
+    left connected fires while the widgets go away and queues a
+    matching-window refresh that lands on an idle after that.
+    """
+    group = editor.auto_change_group
+    group.title_entry.set_text("Thunderbird")
+    rechecks_before = grabber.rechecks
+
+    window.on_close()
+
+    assert _rule(page_path).get("title") == "Thunderbird", (
+        f"text the user typed was lost when the window closed, got "
+        f"{_rule(page_path)}"
+    )
+    assert grabber.rechecks == rechecks_before + 1, (
+        "the pattern committed on close must reach the window in front too"
+    )
+
+    # Every row handler is gone: a leave now writes nothing and re-checks
+    # nothing, whatever the entry holds.
+    rechecks_before = grabber.rechecks
+    gate_passes_before = grabber.gate_passes
+    group.title_entry.set_text("Deckard")
+    group.title_focus.emit("leave")
+    group.wm_class_focus.emit("leave")
+    group.enable_toggle.set_active(False)
+
+    assert grabber.rechecks == rechecks_before, (
+        "a row handler survived the window close and ran against widgets that "
+        "are going away"
+    )
+    assert grabber.gate_passes == gate_passes_before, (
+        "a row handler survived the window close and wrote the page"
+    )
+    assert _rule(page_path).get("title") == "Thunderbird"
 
 
 def main() -> None:
@@ -138,13 +195,14 @@ def main() -> None:
     grabber = StubWindowGrabber()
     gl.window_grabber = grabber
 
-    from src.windows.PageManager.elements.PageEditor import PageEditor
+    from src.windows.PageManager.PageManager import PageManager
 
-    class FakePageManagerWindow(Adw.ApplicationWindow):
-        """Stands in for the Page Manager window the editor lives in."""
+    class FakeMainWindow(Adw.ApplicationWindow):
+        """Stands in for the main window the Page Manager is transient for."""
 
     page_path = fixtures.seed_page("Browser")
-    editor = PageEditor(FakePageManagerWindow())
+    window = PageManager(FakeMainWindow())
+    editor = window.page_editor
     editor.load_for_page(page_path)
     group = editor.auto_change_group
 
@@ -153,9 +211,10 @@ def main() -> None:
     )
 
     check_focus_leave_commits_typed_text(group, page_path, grabber)
-    check_focus_leave_without_an_edit_writes_nothing(group, page_path, grabber)
+    check_focus_leave_without_an_edit_rechecks_only(group, page_path, grabber)
     check_toggles_recheck(group, page_path, grabber)
-    check_editor_without_a_grabber(group)
+    check_editor_without_a_grabber(group, page_path)
+    check_window_close_commits_and_disconnects(window, editor, page_path, grabber)
 
     print("PASS: scenario_page_editor_window_rules")
 
