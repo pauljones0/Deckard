@@ -48,7 +48,7 @@ from StreamDeck.Devices import StreamDeck
 from StreamDeck.ImageHelpers import PILHelper
 from loguru import logger as log
 
-from src.backend.DeckManagement.BetterDeck import BetterDeck
+from src.backend.DeckManagement.BetterDeck import BetterDeck, open_device_handle
 from src.backend.DeckManagement.InputIdentifier import Input, InputIdentifier
 from src.backend.DeckManagement.Subclasses import cache_budget
 from src.backend.DeckManagement.Subclasses.ScreenSaver import ScreenSaver
@@ -122,13 +122,13 @@ class DeckController:
         # _install_fair_transport_lock in deck_controller/media_writer.py.
         _install_fair_transport_lock(deck)
         # Resume-from-suspend handle reopen is the library's only mode, and it
-        # is always on. Call it on the raw handle, because the wrapper's
-        # open() takes no arguments.
-        deck.open(True)
+        # is always on. This lifts the release shadow an earlier failed
+        # attempt left on the handle, which a bare open() would not.
+        open_device_handle(deck)
 
-        # Wrap the open handle before the first statement that can raise, so
-        # every failure below gives the device back through one seam. The cast
-        # is what carries a fake or a remote handle across that boundary.
+        # Wrap the open handle before the settings read below, so a raise in
+        # the bring-up gives the device back here. A raise past the bring-up
+        # is released by the failed-init teardown or by the caller's retry.
         self.deck: BetterDeck = BetterDeck(cast("StreamDeck.StreamDeck", deck))
 
         try:

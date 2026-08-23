@@ -25,7 +25,7 @@ import os
 
 
 # Import own modules
-from src.backend.DeckManagement.BetterDeck import release_device_handle
+from src.backend.DeckManagement.BetterDeck import open_device_handle, release_device_handle
 from src.backend.DeckManagement.Subclasses.RemoteDeckManager import RemoteDeckManager
 from src.backend.DeckManagement.deck_controller.controller import DeckController
 from src.backend.DeckManagement.deck_controller.media_writer import ClearAndCloseMsg
@@ -270,8 +270,9 @@ class DeckManager:
             try:
                 if not deck.is_open():
                     # The library always opens with resume-from-suspend
-                    # enabled.
-                    deck.open(True)
+                    # enabled. This also lifts the release shadow of an
+                    # earlier attempt, which a bare open() would not.
+                    open_device_handle(deck)
                 return DeckController(self, deck)
             except StreamDeck.TransportError as e:
                 log.warning(f"Transport error initializing deck (attempt {attempt}/{attempts}): {e}")
