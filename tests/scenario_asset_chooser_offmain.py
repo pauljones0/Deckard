@@ -624,11 +624,11 @@ def check_real_window() -> int:
         chooser = window.asset_chooser
         pages = [
             chooser.icon_pack_chooser.pack_chooser,
-            chooser.icon_pack_chooser.icon_chooser,
+            chooser.icon_pack_chooser.leaf_chooser,
             chooser.wallpaper_pack_chooser.pack_chooser,
-            chooser.wallpaper_pack_chooser.wallpaper_chooser,
+            chooser.wallpaper_pack_chooser.leaf_chooser,
             chooser.sd_plus_bar_wallpaper_pack_chooser.pack_chooser,
-            chooser.sd_plus_bar_wallpaper_pack_chooser.wallpaper_chooser,
+            chooser.sd_plus_bar_wallpaper_pack_chooser.leaf_chooser,
         ]
         pump_until(lambda: all(getattr(p, "build_finished", False) for p in pages),
                    20, "the six real chooser builds never finished")

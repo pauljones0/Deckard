@@ -21,9 +21,11 @@ gi.require_version("Adw", "1")
 # Import python modules
 
 # Import own modules
-from src.windows.AssetManager.GenericAssetChooser import GenericPackChooserPage
-from src.windows.AssetManager.SDPlusBarWallpaperPacks.FlowBox import SDPlusBarWallpaperPackFlowBox
-from src.windows.AssetManager.SDPlusBarWallpaperPacks.Preview import SDPlusBarWallpaperPackPreview
+from src.windows.AssetManager.GenericAssetChooser import (
+    GenericPackChooserPage,
+    GenericPackFlowBox,
+    GenericPackPreview,
+)
 
 # Import globals
 import globals as gl
@@ -40,12 +42,12 @@ class SDPlusBarWallpaperPackChooser(GenericPackChooserPage["SDPlusBarWallpaperPa
     # The concrete stack, restated so the quoted name in the base subscript
     # has a checked in-file use.
     stack: "SDPlusBarWallpaperPackChooserStack"
-    PACK_FLOW_BOX_CLASS = SDPlusBarWallpaperPackFlowBox
-    PACK_PREVIEW_CLASS = SDPlusBarWallpaperPackPreview
+    PACK_FLOW_BOX_CLASS = GenericPackFlowBox
+    PACK_PREVIEW_CLASS = GenericPackPreview
     LEAF_CHILD_NAME = "wallpaper-chooser"
 
     def get_packs(self) -> "dict[str, SDPlusBarWallpaperPack]":
         return gl.sd_plus_bar_wallpaper_pack_manager.get_wallpaper_packs()
 
     def get_leaf_chooser(self) -> "SDPlusBarWallpaperChooserPage":
-        return self.stack.wallpaper_chooser
+        return self.stack.leaf_chooser

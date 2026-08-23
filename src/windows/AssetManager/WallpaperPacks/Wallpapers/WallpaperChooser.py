@@ -19,9 +19,11 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 
 # Import own modules
-from src.windows.AssetManager.GenericAssetChooser import GenericAssetChooserPage
-from src.windows.AssetManager.WallpaperPacks.Wallpapers.WallpaperFlowBox import WallpaperFlowBox
-from src.windows.AssetManager.WallpaperPacks.Wallpapers.WallpaperPreview import WallpaperPreview
+from src.windows.AssetManager.GenericAssetChooser import (
+    GenericAssetChooserPage,
+    GenericAssetFlowBox,
+    GenericAssetPreview,
+)
 
 # Import python modules
 
@@ -33,18 +35,21 @@ if TYPE_CHECKING:
     from src.backend.WallpaperPackManagement.WallpaperPack import WallpaperPack
 
 
-class WallpaperChooserPage(GenericAssetChooserPage["WallpaperPack", "Wallpaper", WallpaperPreview, "WallpaperPackChooserStack"]):
+class WallpaperChooserPage(GenericAssetChooserPage["WallpaperPack", "Wallpaper",
+                                                   "GenericAssetPreview[Wallpaper]",
+                                                   "WallpaperPackChooserStack"]):
     # The concrete stack, restated so the quoted name in the base subscript
     # has a checked in-file use.
     stack: "WallpaperPackChooserStack"
-    FLOW_BOX_CLASS = WallpaperFlowBox
-    PREVIEW_CLASS = WallpaperPreview
+    FLOW_BOX_CLASS = GenericAssetFlowBox
+    PREVIEW_CLASS = GenericAssetPreview
 
     def get_assets(self, pack: "WallpaperPack") -> "list[Wallpaper]":
         return pack.get_wallpapers()
 
-    def bind_preview(self, preview: WallpaperPreview, wallpaper: "Wallpaper") -> None:
-        preview.set_wallpaper(wallpaper)
+    def bind_preview(self, preview: "GenericAssetPreview[Wallpaper]",
+                     wallpaper: "Wallpaper") -> None:
+        preview.set_asset(wallpaper)
 
-    def get_child_asset(self, child: WallpaperPreview) -> "Wallpaper":
-        return child.wallpaper
+    def get_child_asset(self, child: "GenericAssetPreview[Wallpaper]") -> "Wallpaper":
+        return child.asset

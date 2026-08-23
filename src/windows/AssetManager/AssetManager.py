@@ -113,11 +113,11 @@ class AssetManager(Gtk.ApplicationWindow):
         pages = (
             chooser.custom_asset_chooser,
             chooser.icon_pack_chooser.pack_chooser,
-            chooser.icon_pack_chooser.icon_chooser,
+            chooser.icon_pack_chooser.leaf_chooser,
             chooser.wallpaper_pack_chooser.pack_chooser,
-            chooser.wallpaper_pack_chooser.wallpaper_chooser,
+            chooser.wallpaper_pack_chooser.leaf_chooser,
             chooser.sd_plus_bar_wallpaper_pack_chooser.pack_chooser,
-            chooser.sd_plus_bar_wallpaper_pack_chooser.wallpaper_chooser,
+            chooser.sd_plus_bar_wallpaper_pack_chooser.leaf_chooser,
         )
         for page in pages:
             # A page whose build failed shows an error instead of a grid,
