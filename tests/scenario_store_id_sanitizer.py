@@ -140,7 +140,7 @@ def test_install_script_runs_without_shell() -> None:
     captured = []
     real_execute = install_script._execute
 
-    def capture_execute(argv, timeout_s):
+    def capture_execute(argv, timeout_s, env=None):
         captured.append(argv)
         return 0, False
 
@@ -156,8 +156,11 @@ def test_install_script_runs_without_shell() -> None:
     assert len(captured) == 1, f"expected exactly the __install__.py invocation, got {captured}"
     argv = captured[0]
     assert isinstance(argv, list), f"install script must run as an argv list, got {argv!r}"
-    assert argv[0] == sys.executable
-    assert argv[1] == os.path.join(local_path, "__install__.py")
+    # A confinement prefix (bwrap) may precede the interpreter; the script
+    # itself must be the interpreter plus the literal hook path, unquoted
+    # and unwrapped, so no shell ever parses a path component.
+    idx = argv.index(sys.executable)
+    assert argv[idx + 1] == os.path.join(local_path, "__install__.py")
 
 
 EVIL_REFS = [

@@ -10,6 +10,7 @@ gate's _execute seam so nothing here ever really runs pip.
 import fixtures  # noqa: F401  (isolated --data tempdir; import first)
 import globals as gl  # noqa: F401  (import order; the gate reads settings later)
 
+import json
 import os
 import textwrap
 import time
@@ -87,6 +88,9 @@ def test_timeout_kills_the_process_group() -> None:
             os.kill(child_pid, 0)
         except ProcessLookupError:
             break
+        except PermissionError:
+            # The pid died and another user's process reused it.
+            break
         time.sleep(0.05)
     else:
         raise AssertionError("the hook's child survived the group kill")
@@ -102,14 +106,68 @@ def test_pip_step_routes_through_execute() -> None:
         f.write("example-package==1.0\n")
     seen: list = []
     real_execute = install_script._execute
-    install_script._execute = lambda cmd, timeout_s: (seen.append(cmd), (0, False))[1]
+    install_script._execute = lambda cmd, timeout_s, env=None: (seen.append((cmd, env)), (0, False))[1]
     try:
         assert run_install_steps(plugin_dir, "Reqs") is Outcome.RAN
     finally:
         install_script._execute = real_execute
-    assert len(seen) == 1 and seen[0][-1] == req and "pip" in seen[0], (
-        f"the pip step must route through _execute, got {seen!r}"
+    (cmd, env), = seen
+    assert cmd[-1] == req and "pip" in cmd, f"the pip step must route through _execute, got {cmd!r}"
+    assert env is not None and env.get("DBUS_SESSION_BUS_ADDRESS") == "disabled:", (
+        "the pip step must run with the poisoned bus address too"
     )
+
+
+def test_hook_env_is_poisoned() -> None:
+    """The script's session-bus address is invalid, not merely absent:
+    an absent variable falls back to the runtime-dir bus socket."""
+    plugin_dir = _plugin_dir("com_test_Env")
+    _write_hook(plugin_dir, """
+        import json, os
+        base = os.path.dirname(os.path.abspath(__file__))
+        with open(os.path.join(base, "env-seen"), "w") as f:
+            json.dump({"bus": os.environ.get("DBUS_SESSION_BUS_ADDRESS")}, f)
+    """)
+    assert run_install_steps(plugin_dir, "Env", use_bwrap=False) is Outcome.RAN
+    with open(os.path.join(plugin_dir, "env-seen")) as f:
+        seen = json.load(f)
+    assert seen["bus"] == "disabled:", f"bus address must be poisoned, got {seen!r}"
+
+
+def test_bwrap_confines_the_hook() -> None:
+    """Where bwrap operates: the script writes inside the plugin dir,
+    cannot write outside it, and sees no session bus socket."""
+    if not install_script._bwrap_works():
+        print("  (bwrap unavailable here; confinement arm not exercised)")
+        return
+    plugin_dir = _plugin_dir("com_test_Bwrap")
+    escape = os.path.join(os.path.expanduser("~"), "install-gate-escape-probe")
+    _write_hook(plugin_dir, f"""
+        import json, os
+        base = os.path.dirname(os.path.abspath(__file__))
+        report = {{}}
+        try:
+            open({escape!r}, "w").write("escaped")
+            report["escape"] = "wrote"
+        except OSError as e:
+            report["escape"] = f"denied: {{e.__class__.__name__}}"
+        runtime_dir = os.environ.get("XDG_RUNTIME_DIR")
+        report["bus_socket"] = bool(runtime_dir) and os.path.exists(os.path.join(runtime_dir, "bus"))
+        with open(os.path.join(base, "confinement-report"), "w") as f:
+            json.dump(report, f)
+    """)
+    try:
+        assert run_install_steps(plugin_dir, "Bwrap", use_bwrap=True) is Outcome.RAN
+        with open(os.path.join(plugin_dir, "confinement-report")) as f:
+            report = json.load(f)
+        assert report["escape"].startswith("denied"), (
+            f"a write outside the plugin dir must fail, got {report!r}"
+        )
+        assert report["bus_socket"] is False, "no session bus socket may be visible"
+        assert not os.path.exists(escape), "the escape file must not exist on the host"
+    finally:
+        if os.path.exists(escape):
+            os.remove(escape)
 
 
 def main() -> None:
@@ -119,6 +177,8 @@ def main() -> None:
     test_failing_hook_reports_failed()
     test_timeout_kills_the_process_group()
     test_pip_step_routes_through_execute()
+    test_hook_env_is_poisoned()
+    test_bwrap_confines_the_hook()
     print("scenario_install_script_gate: OK")
 
 
