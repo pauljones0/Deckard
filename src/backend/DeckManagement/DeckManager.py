@@ -25,6 +25,7 @@ import os
 
 
 # Import own modules
+from src.backend.DeckManagement.BetterDeck import release_device_handle
 from src.backend.DeckManagement.Subclasses.RemoteDeckManager import RemoteDeckManager
 from src.backend.DeckManagement.deck_controller.controller import DeckController
 from src.backend.DeckManagement.deck_controller.media_writer import ClearAndCloseMsg
@@ -65,9 +66,9 @@ def close_all_controllers(controllers: "Iterable[Any]", join_timeout: float = 2.
         media_player = getattr(controller, "media_player", None)
         if media_player is None:
             # No writer thread, e.g. a controller that failed mid-construction.
-            # Close the deck directly and log a failure.
+            # Release the handle directly and log a failure.
             try:
-                controller.deck.close()
+                controller._release_handle()
             except Exception as e:
                 log.error(f"Failed to close deck cleanly: {e}")
             continue
@@ -275,7 +276,9 @@ class DeckManager:
             except StreamDeck.TransportError as e:
                 log.warning(f"Transport error initializing deck (attempt {attempt}/{attempts}): {e}")
                 try:
-                    deck.close()
+                    # The raw handle, because the wrapper lives on the
+                    # controller that failed to build.
+                    release_device_handle(deck)
                 except Exception:
                     pass
                 if attempt < attempts:

@@ -269,6 +269,17 @@ class StubDeckController:
     def is_visual(self) -> bool:
         return self.deck.is_visual()
 
+    def _release_handle(self) -> None:
+        """Unit-tier stand-in for DeckController._release_handle.
+
+        The stub holds the raw FaultyFakeDeck, where the real controller holds
+        a BetterDeck around it, so it releases through the free function the
+        wrapper's method delegates to. ClearAndClose calls this by name.
+        """
+        from src.backend.DeckManagement.BetterDeck import release_device_handle
+
+        release_device_handle(self.deck)
+
     def _write_blank_frames(self) -> None:
         """Unit-tier stand-in for DeckController._write_blank_frames.
 
