@@ -21,7 +21,9 @@ they build and the pack manager they read.
 This module holds the pages, the widgets they build and the stack that holds
 the pair. GenericPackChooserPage is the pack grid, and it drills into the leaf
 page. GenericAssetChooserPage is the recycler grid of the assets of a pack,
-with the shared fuzzy search and sort. GenericPackFlowBox and
+with the shared search and sort. Both pages search: the pack grid filters its
+cards on the pack name, the leaf page filters and ranks the assets of one
+pack. Both score through asset_search. GenericPackFlowBox and
 GenericPackPreview are the grid shell and the card of the first;
 GenericAssetFlowBox and GenericAssetPreview are those of the second.
 GenericPackChooserStack holds one page of each and names the subsystem.
@@ -36,7 +38,7 @@ on the worker is the off-main GTK crash class.
 tests/scenario_asset_chooser_offmain.py catches it.
 
 The search helpers at the top use no GTK and no self, so a headless test pins
-them.
+them, and the ladder they score with is headless on its own.
 """
 import gi
 
@@ -48,12 +50,12 @@ from gi.repository import GLib, Gtk
 import os
 import threading
 
-from rapidfuzz import fuzz
 from loguru import logger as log
 
 # Import own modules
 from GtkHelper.GtkHelper import run_on_main
 from src.backend.PackManagement.pack_family import PackAsset
+from src.windows.AssetManager import asset_search
 from src.windows.AssetManager.ChooserPage import ChooserPage
 from src.windows.AssetManager.DynamicFlowBox import DynamicFlowBox
 from src.windows.AssetManager.Preview import _PIXBUF_UNSET, Preview, _PixbufUnset
@@ -101,9 +103,6 @@ class _PackPreviewLike(Protocol[PackT]):
     pack: PackT
 
 
-# A candidate must score at least this against the query to stay in the grid.
-SEARCH_SCORE_THRESHOLD = 50
-
 def asset_display_name(item: Any, attr: str = "path") -> str:
     """The string that the search matches on.
 
@@ -116,13 +115,10 @@ def asset_display_name(item: Any, attr: str = "path") -> str:
 def asset_matches_search(item: Any, search: str, attr: str = "path") -> bool:
     """Filter predicate for one asset.
 
-    An empty query keeps everything. Any other query needs a display name
-    that scores at least SEARCH_SCORE_THRESHOLD.
+    An empty query keeps everything. Any other query needs a display name that
+    holds every word of the query. See asset_search for the ladder.
     """
-    if search == "":
-        return True
-    score = fuzz.ratio(asset_display_name(item, attr).lower(), search.lower())
-    return bool(score >= SEARCH_SCORE_THRESHOLD)
+    return asset_search.matches(asset_display_name(item, attr), search)
 
 
 def compare_assets(item1: Any, item2: Any, search: str, attr: str = "path") -> int:
@@ -130,27 +126,20 @@ def compare_assets(item1: Any, item2: Any, search: str, attr: str = "path") -> i
 
     It returns -1 when item1 comes first, 1 when item1 comes last, and 0 on a
     tie. An empty query gives case-sensitive alphabetical order by display
-    name. Any other query gives a descending fuzzy score, and equal scores tie,
-    which keeps the input order, because sorted is stable.
+    name. Any other query gives the relevance order of asset_search, which
+    ranks the closest name first and ties only names that rank alike.
     """
     name1 = asset_display_name(item1, attr)
     name2 = asset_display_name(item2, attr)
 
-    if search == "":
+    if asset_search.is_empty_query(search):
         if name1 < name2:
             return -1
         if name1 > name2:
             return 1
         return 0
 
-    score1 = fuzz.ratio(name1.lower(), search.lower())
-    score2 = fuzz.ratio(name2.lower(), search.lower())
-
-    if score1 > score2:
-        return -1
-    if score1 < score2:
-        return 1
-    return 0
+    return asset_search.compare(name1, name2, search)
 
 
 class GenericPackFlowBox(Gtk.Box):
@@ -410,6 +399,11 @@ class GenericPackChooserPage(_ChooserBuildPage, Generic[PackT, StackT]):
         self.scrolled_box.prepend(self.pack_flow)
 
         self.pack_flow.flow_box.connect("child-activated", self.on_child_activated)
+        # The search entry of this page filters the pack cards. GTK re-runs
+        # this predicate on every card the grid holds, and on every card that
+        # a later batch appends, so the cards a build adds after a search
+        # arrive filtered.
+        self.pack_flow.flow_box.set_filter_func(self.filter_pack_child)
 
     def _append_packs(self, batch: "list[tuple[PackT, GdkPixbuf.Pixbuf | None]]") -> None:
         """Runs on the main loop only, over one batch of pack and pixbuf pairs."""
@@ -433,6 +427,28 @@ class GenericPackChooserPage(_ChooserBuildPage, Generic[PackT, StackT]):
         self.stack.set_visible_child_name(self.LEAF_CHILD_NAME)
         self.asset_manager.back_button.set_visible(True)
 
+    def filter_pack_child(self, child: Gtk.FlowBoxChild) -> bool:
+        """Whether one pack card survives the current query.
+
+        GTK calls this on the main thread, over the cards of one grid, which
+        is a few dozen names at most, so the scoring costs nothing here.
+        """
+        pack = getattr(child, "pack", None)
+        if pack is None:
+            # Not a pack card. Hiding a child this page does not know about
+            # would be the wrong answer to a widget it never built.
+            return True
+        return asset_search.matches(pack.name, self.search_entry.get_text())
+
+    def apply_search(self, query: str) -> None:
+        pack_flow = self.pack_flow
+        if pack_flow is None:
+            # The marshal of _build_ui never landed, so no grid holds cards.
+            return
+        # The predicate reads the entry itself. This only tells GTK that its
+        # answer changed.
+        pack_flow.flow_box.invalidate_filter()
+
     # Subclass hooks
 
     def get_packs(self) -> dict[str, PackT]:
@@ -451,7 +467,7 @@ class GenericPackChooserPage(_ChooserBuildPage, Generic[PackT, StackT]):
 class GenericAssetChooserPage(_ChooserBuildPage, Generic[PackT, AssetT, PreviewT, StackT]):
     """The asset grid of one pack.
 
-    It holds a recycling DynamicFlowBox and the shared fuzzy search and sort.
+    It holds a recycling DynamicFlowBox and the shared search and sort.
     """
 
     # DynamicFlowBox subclass. Its constructor takes a preview class and a
@@ -566,11 +582,13 @@ class GenericAssetChooserPage(_ChooserBuildPage, Generic[PackT, AssetT, PreviewT
         return compare_assets(item1, item2, self.search_entry.get_text(),
                               self.ASSET_PATH_ATTR)
 
-    def on_search_changed(self, entry: Gtk.SearchEntry) -> None:
+    def apply_search(self, query: str) -> None:
         if self.asset_flow is None:
             # Nothing rendered yet (build still queued on the main loop);
             # the first render already reads the current search text.
             return
+        # Back to the first page: the grid it shows now holds the matches of
+        # the query the user has replaced.
         self.asset_flow.show_range(0, self.asset_flow.N_ITEMS_PER_PAGE)
 
     # Subclass hooks

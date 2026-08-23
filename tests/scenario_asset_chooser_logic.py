@@ -1,25 +1,32 @@
 """Pins the search behaviour of the AssetManager asset choosers as pure logic.
 
 The three chooser pages share one filter_func and sort_func on
-GenericAssetChooserPage. No GTK widget, no display, no deck.
+GenericAssetChooserPage, and their pack grids share one card filter. No GTK
+widget, no display, no deck.
 """
 import fixtures  # noqa: F401  (import first: isolated --data tempdir)
 
+import ast
 import functools
+import inspect
+import textwrap
 import types
 
+from src.windows.AssetManager.ChooserPage import ChooserPage
+from src.windows.AssetManager.CustomAssets.Chooser import CustomAssetChooser
 from src.windows.AssetManager.GenericAssetChooser import (
     GenericAssetChooserPage,
     GenericAssetFlowBox,
     GenericAssetPreview,
+    GenericPackChooserPage,
     GenericPackChooserStack,
     GenericPackFlowBox,
     GenericPackPreview,
-    SEARCH_SCORE_THRESHOLD,
     asset_display_name,
     asset_matches_search,
     compare_assets,
 )
+from src.windows.AssetManager.asset_search import SCORE_CONTAINS, SEARCH_SCORE_THRESHOLD
 from src.windows.AssetManager.IconPacks.Icons.IconChooser import IconChooserPage
 from src.windows.AssetManager.IconPacks.PackChooser import IconPackChooser
 from src.windows.AssetManager.IconPacks.Stack import IconPackChooserStack
@@ -64,12 +71,11 @@ CORPUS = [
 ]
 NAMES = ["volume_up", "volume_down", "brightness", "Zebra", "apple"]
 
-# rapidfuzz scores for the queries below, recomputed here as documentation.
-# The checks assert orderings, not raw values, so a scoring bump surfaces as a
-# ranking change instead of a brittle float mismatch.
-#   volume: volume_up 80.0, volume_down 70.6, apple 36.4, Zebra 18.2,
-#           brightness 12.5
-#   bright: brightness 75.0, Zebra 36.4, everything else 0.0
+# The ladder scores for the queries below, as documentation. The checks assert
+# orderings and rungs, not the ranking key itself.
+#   volume: volume_up 90 and volume_down 90, both prefixes, and volume_up
+#           first because it is the shorter name; nothing else matches.
+#   bright: brightness 90, nothing else matches.
 
 
 def make_page(cls, search: str):
@@ -208,8 +214,14 @@ def test_query_filters_below_threshold() -> None:
         # No match at all gives an empty grid, not the empty-query result.
         page = make_page(cls, "zzzz")
         assert [i for i in CORPUS if page.filter_func(i)] == [], f"{label}: zzzz matched"
-    assert SEARCH_SCORE_THRESHOLD == 50, "the chooser threshold moved"
-    print("PASS: a query keeps only names scoring at least 50")
+
+        # A word of the name, not of the file path: the directory and the
+        # extension never enter the search.
+        page = make_page(cls, "icons")
+        assert [i for i in CORPUS if page.filter_func(i)] == [], (
+            f"{label}: the directory reached the search")
+    assert SEARCH_SCORE_THRESHOLD == SCORE_CONTAINS, "the chooser threshold moved"
+    print(f"PASS: a query keeps only names scoring at least {SEARCH_SCORE_THRESHOLD}")
 
 
 def test_query_orders_by_descending_score() -> None:
@@ -226,7 +238,7 @@ def test_query_orders_by_descending_score() -> None:
     # Directory and extension never enter the score.
     assert compare_assets(asset("/deep/dir/volume_up.png"),
                           asset("volume_up.svg"), "volume") == 0
-    print("PASS: a query orders assets by descending fuzzy score")
+    print("PASS: a query orders assets by descending relevance")
 
 
 def test_comparator_returns_int() -> None:
@@ -255,6 +267,100 @@ def test_helpers_and_methods_agree() -> None:
     print("PASS: the chooser methods are the shared helpers over the search entry")
 
 
+# The pack grid searches too. Its cards carry a pack, and the query filters on
+# the pack name.
+
+def pack_card(name: str):
+    """A pack card stand-in. The filter reads only .pack.name off one."""
+    return types.SimpleNamespace(pack=types.SimpleNamespace(name=name))
+
+
+PACKS = ["Material Icons", "Tabler Icons", "Font Awesome", "simple-icons"]
+
+
+def make_pack_page(cls, search: str):
+    """A pack chooser reduced to what its filter reads."""
+    page = cls.__new__(cls)
+    page.search_entry = types.SimpleNamespace(get_text=lambda: search)
+    return page
+
+
+def test_pack_grid_filters_on_the_pack_name() -> None:
+    for label, cls in PACK_CHOOSER_CLASSES.items():
+        page = make_pack_page(cls, "")
+        kept = [name for name in PACKS if page.filter_pack_child(pack_card(name))]
+        assert kept == PACKS, f"{label}: an empty query dropped packs: {kept}"
+
+        page = make_pack_page(cls, "icons")
+        kept = [name for name in PACKS if page.filter_pack_child(pack_card(name))]
+        assert kept == ["Material Icons", "Tabler Icons", "simple-icons"], (
+            f"{label}: 'icons' kept {kept}")
+
+        page = make_pack_page(cls, "awesome")
+        kept = [name for name in PACKS if page.filter_pack_child(pack_card(name))]
+        assert kept == ["Font Awesome"], f"{label}: 'awesome' kept {kept}"
+
+        page = make_pack_page(cls, "zzzz")
+        kept = [name for name in PACKS if page.filter_pack_child(pack_card(name))]
+        assert kept == [], f"{label}: 'zzzz' kept {kept}"
+
+        # A child that carries no pack is left alone: hiding a widget this
+        # page never built would be the wrong answer.
+        assert page.filter_pack_child(types.SimpleNamespace()) is True
+    print("PASS: the pack grids filter their cards on the pack name")
+
+
+def test_pack_grid_installs_its_filter() -> None:
+    """The grid must be handed the predicate, or the search box does nothing.
+
+    Reading the source, because the install line sits in the main-loop
+    callback that builds the widgets.
+    """
+    source = inspect.getsource(GenericPackChooserPage._build_ui)
+    tree = ast.parse(textwrap.dedent(source))
+    installed = [node for node in ast.walk(tree)
+                 if isinstance(node, ast.Call)
+                 and isinstance(node.func, ast.Attribute)
+                 and node.func.attr == "set_filter_func"]
+    assert len(installed) == 1, (
+        f"the pack grid takes {len(installed)} filter installs; without one "
+        f"the search entry of the pack page changes nothing")
+    handed = installed[0].args[0]
+    assert isinstance(handed, ast.Attribute) and handed.attr == "filter_pack_child", (
+        "the pack grid is handed something other than filter_pack_child, so "
+        "nothing here can say what the search does")
+    print("PASS: the pack grid installs the pack filter on its flow box")
+
+
+def test_every_search_box_reaches_a_page() -> None:
+    """No page may leave the base hook in place.
+
+    ChooserPage.apply_search does nothing, so a page that keeps it shows a
+    search entry that changes nothing. Three pack pages did.
+    """
+    pages = dict(PACK_CHOOSER_CLASSES)
+    pages.update({f"{label} assets": cls for label, cls in CHOOSER_CLASSES.items()})
+    pages["custom assets"] = CustomAssetChooser
+
+    inert = [label for label, cls in pages.items()
+             if cls.apply_search is ChooserPage.apply_search]
+    assert not inert, (
+        "these pages carry a search entry that changes nothing: "
+        + ", ".join(sorted(inert)))
+
+    # The base hook must stay a no-op, or the check above passes over nothing.
+    body = ast.parse(textwrap.dedent(
+        inspect.getsource(ChooserPage.apply_search))).body[0]
+    assert isinstance(body, ast.FunctionDef)
+    statements = [node for node in body.body
+                  if not (isinstance(node, ast.Expr)
+                          and isinstance(node.value, ast.Constant))]
+    assert statements == [], (
+        "ChooserPage.apply_search grew a body; it is the hook a page is meant "
+        "to override, and the check above compares against it")
+    print(f"PASS: all {len(pages)} chooser pages act on their search entry")
+
+
 def main() -> int:
     fixtures.start_watchdog(60, label="scenario_asset_chooser_logic")
 
@@ -268,6 +374,9 @@ def main() -> int:
     test_query_orders_by_descending_score()
     test_comparator_returns_int()
     test_helpers_and_methods_agree()
+    test_pack_grid_filters_on_the_pack_name()
+    test_pack_grid_installs_its_filter()
+    test_every_search_box_reaches_a_page()
 
     print("ALL PASS: scenario_asset_chooser_logic")
     return 0

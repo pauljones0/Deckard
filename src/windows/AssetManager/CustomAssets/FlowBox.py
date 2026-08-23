@@ -20,7 +20,6 @@ gi.require_version("Adw", "1")
 from gi.repository import Gtk
 
 # Import python modules
-from rapidfuzz import fuzz
 import threading
 from loguru import logger as log
 
@@ -29,6 +28,7 @@ import globals as gl
 
 # Import own modules
 from src.backend.DeckManagement.HelperMethods import is_video
+from src.windows.AssetManager import asset_search
 from src.windows.AssetManager.CustomAssets.AssetPreview import AssetPreview
 from src.windows.AssetManager.DynamicFlowBox import DynamicFlowBox
 
@@ -100,19 +100,14 @@ class CustomAssetChooserFlowBox(DynamicFlowBox[AssetPreview, dict[str, Any]]):
         if not asset_is_video and not show_image:
             return False
 
-        if search_string == "":
-            return True
-
-        fuzz_score = fuzz.ratio(search_string.lower(), asset["name"].lower())
-        if fuzz_score < 40:
-            return False
-
-        return True
+        # Custom assets carry a name of their own, so the search reads that
+        # and not the file name. The ladder is the one the pack choosers use.
+        return asset_search.matches(asset["name"], search_string)
 
     def _sort_assets(self, a: dict[str, Any], b: dict[str, Any]) -> int:
         search_string = self.asset_chooser.search_entry.get_text()
 
-        if search_string == "":
+        if asset_search.is_empty_query(search_string):
             # Sort alphabetically
             if a["name"] < b["name"]:
                 return -1
@@ -120,15 +115,7 @@ class CustomAssetChooserFlowBox(DynamicFlowBox[AssetPreview, dict[str, Any]]):
                 return 1
             return 0
 
-        a_fuzz = fuzz.ratio(search_string.lower(), a["name"].lower())
-        b_fuzz = fuzz.ratio(search_string.lower(), b["name"].lower())
-
-        if a_fuzz > b_fuzz:
-            return -1
-        elif a_fuzz < b_fuzz:
-            return 1
-
-        return 0
+        return asset_search.compare(a["name"], b["name"], search_string)
 
     def on_child_activated(self, flow_box: Gtk.FlowBox, child: Any) -> None:
         # Capture the selection and the callback before the thread starts.

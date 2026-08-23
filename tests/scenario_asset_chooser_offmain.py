@@ -64,6 +64,10 @@ def make_stubs(recorder: Recorder):
                 connect=lambda *a, **k: None,
                 append=lambda *a, **k: None,
                 select_child=lambda *a, **k: None,
+                # The pack grid installs the search filter of its page on the
+                # GTK flow box, and re-runs it when the query changes.
+                set_filter_func=lambda *a, **k: None,
+                invalidate_filter=lambda *a, **k: None,
             )
 
         def set_factory(self, *a, **k): pass

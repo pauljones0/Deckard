@@ -1,7 +1,11 @@
-"""Pins the fuzzy-search contract the seven search call sites rely on.
+"""Pins the fuzzy-search contract the rapidfuzz call sites rely on.
 
 rapidfuzz returns a float in [0, 100] where fuzzywuzzy returned a rounded int.
 The result shape, the thresholds and the int sort comparator are pinned.
+
+The store, the action chooser and the page selector score this way. The asset
+searches do not: they rank on the positional ladder of asset_search, which
+scenario_asset_search_ladder pins.
 """
 from functools import lru_cache
 
@@ -21,8 +25,10 @@ CORPUS = [
 VOLUME_FAMILY = {"volume_up", "volume_down", "volume_mute"}
 
 # Every threshold used at a call site, so a rapidfuzz bump that shifts the scale
-# is caught here rather than as a search that silently returns nothing.
-THRESHOLDS = (20, 40, 50)
+# is caught here rather than as a search that silently returns nothing. The
+# store and both action-chooser filters cut at 20; the page selector ranks
+# without a cut.
+THRESHOLDS = (20,)
 
 
 def test_ratio_returns_float_in_range() -> None:
@@ -45,8 +51,10 @@ def test_exact_match_and_unrelated_scores() -> None:
     # name must fall under the loosest, so the filters still discriminate.
     for name in VOLUME_FAMILY:
         score = fuzz.ratio("volume", name)
-        assert score > max(THRESHOLDS), f"{name} scored {score}, below the 50 chooser threshold"
-    assert fuzz.ratio("volume", "brightness_up") < 40, "brightness_up survives the FlowBox threshold"
+        assert score > max(THRESHOLDS), (
+            f"{name} scored {score}, below the {max(THRESHOLDS)} call-site threshold")
+    assert fuzz.ratio("volume", "brightness_up") < min(THRESHOLDS), (
+        "brightness_up survives every call-site threshold")
 
     print("PASS: exact matches score 100 and unrelated names stay under every call-site threshold")
 
@@ -98,8 +106,6 @@ def test_threshold_boundary_is_rounded() -> None:
         ("n", "next song", 20),
         ("p", "os plugin", 20),
         ("ad", "set default device", 20),
-        ("ab", "abcdefgh", 40),
-        ("abc", "abcdefghi", 50),
     ]
     for query, name, expected in exact:
         raw = fuzz.ratio(query, name)
