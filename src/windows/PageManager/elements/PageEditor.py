@@ -116,6 +116,12 @@ class PageEditor(Adw.NavigationPage):
         self.screensaver_group = ScreensaverGroup(page_editor=self)
         self.editor_main_box.append(self.screensaver_group)
 
+        # Every group in one list, so teardown reaches all of them.
+        self.groups: list[PageEditorGroup] = [
+            self.name_group, self.default_page_group, self.auto_change_group,
+            self.brightness_group, self.background_group, self.screensaver_group,
+        ]
+
         # No page page
         self.no_page_box = Gtk.Box(hexpand=True, vexpand=True)
         self.main_stack.add_titled(self.no_page_box, "no-page", "No Page")
@@ -160,8 +166,25 @@ class PageEditor(Adw.NavigationPage):
     def delete_active_page(self) -> None:
         if self.active_page_path is None:
             return
-        
+
         self.page_manager.remove_page_by_path(self.active_page_path)
+
+    def teardown(self) -> None:
+        """Releases the editor before its window destroys it.
+
+        A row handler that outlives the window fires while the widgets go
+        away, and what it starts, such as the matching-window refresh, lands
+        on an idle later still. Nothing disconnects the rows otherwise: the
+        groups drop their handlers when another page loads, and a window that
+        closes loads no further page.
+
+        Text the user typed and never applied is written first. The entries
+        are the last place it exists, and the handler that would commit it is
+        about to go.
+        """
+        self.auto_change_group.commit_pending_patterns()
+        for group in self.groups:
+            group.disconnect_events()
 
 class PageEditorGroup(Adw.PreferencesGroup):
     def __init__(self, page_editor: PageEditor, *args: Any, **kwargs: Any) -> None:
@@ -379,13 +402,46 @@ class AutoChangeGroup(PageEditorGroup):
 
     def on_title_focus_left(self, *args: object) -> None:
         if self.is_stored_pattern("title", self.title_entry.get_text()):
+            # Nothing to write, and the re-check runs anyway. The focus
+            # leaving is often the window the rule names coming to the front,
+            # and a user who committed the pattern with Enter would otherwise
+            # see nothing happen at the moment it can finally match.
+            self.recheck_active_window()
             return
         self.on_title_entry_applied()
 
     def on_wm_class_focus_left(self, *args: object) -> None:
         if self.is_stored_pattern("wm-class", self.wm_class_entry.get_text()):
+            self.recheck_active_window()
             return
         self.on_wm_class_entry_applied()
+
+    def commit_pending_patterns(self) -> None:
+        """Writes the entry text the page does not carry yet.
+
+        The editor's teardown calls this. A window that closes takes the
+        entries with it, and this is the last place the text exists. It writes
+        the page settings alone, and leaves the matching-window list, whose
+        refresh lands on an idle after the widgets are gone.
+        """
+        page_manager = gl.page_manager
+        path = self.page_editor.active_page_path
+        if page_manager is None or path is None:
+            return
+
+        title = self.title_entry.get_text()
+        wm_class = self.wm_class_entry.get_text()
+        committed = False
+
+        if not self.is_stored_pattern("title", title):
+            page_manager.overwrite_auto_change_settings(path=path, regex_title=title)
+            committed = True
+        if not self.is_stored_pattern("wm-class", wm_class):
+            page_manager.overwrite_auto_change_settings(path=path, wm_class=wm_class)
+            committed = True
+
+        if committed:
+            self.recheck_active_window()
 
     def is_stored_pattern(self, key: str, text: str) -> bool:
         """Whether the page already carries this pattern.
