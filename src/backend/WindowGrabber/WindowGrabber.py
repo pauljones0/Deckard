@@ -15,7 +15,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 import re
 import threading
-from typing import TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 
 from loguru import logger as log
 
@@ -64,6 +64,30 @@ def select_integration_class(environment_components: list[str], server: str | No
     if "kde" in environment_components:
         return KDE
     return None
+
+
+def rule_patterns(auto_change_settings: dict[str, Any]) -> tuple[str, str] | None:
+    """The wm-class and title patterns of one auto-change rule, or None when
+    the rule holds neither and can match nothing.
+
+    A pattern the rule does not carry matches every window, so the half the
+    user filled in decides on its own. The page editor writes only the fields
+    the user filled in, so a rule made by typing a title alone carries no
+    wm-class key, and reading that as a pattern matching nothing left the rule
+    dead.
+
+    A rule holding neither pattern matches nothing at all. That is what a rule
+    looks like while the user is still typing the first pattern, and while a
+    field is cleared to be retyped. Reading it as one that matches every
+    window hands the deck to the page being edited on the next window change,
+    and the page it took over then keeps the deck, because the deck stays on
+    a rule page that asks to stay.
+    """
+    wm_class = str(auto_change_settings.get("wm-class") or "")
+    title = str(auto_change_settings.get("title") or "")
+    if not wm_class and not title:
+        return None
+    return (wm_class or ".*", title or ".*")
 
 
 class WindowGrabber:
@@ -442,18 +466,15 @@ class WindowGrabber:
         found_page = False
         for page_path in page_manager.get_pages():
             info = page_manager.get_auto_change_settings(page_path)
-            # A pattern the page does not carry matches every window. The page
-            # editor writes only the fields the user filled in, so a rule made
-            # by typing a title alone holds no wm-class at all, and a rule read
-            # as "no pattern" would match nothing and never fire. An entry the
-            # user cleared writes an empty pattern, which re.search already
-            # treats as a wildcard, so absent and empty stay the same thing.
-            wm_regex = info.get("wm-class") or ".*"
-            title_regex = info.get("title") or ".*"
             enabled = info.get("enable", False)
             decks = info.get("decks", [])
             if not enabled:
                 continue
+
+            patterns = rule_patterns(info)
+            if patterns is None:
+                continue
+            wm_regex, title_regex = patterns
 
             if self.get_is_window_matching(window, wm_regex, title_regex):
                 if deck_controller.serial_number() not in decks:
