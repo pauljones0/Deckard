@@ -207,6 +207,11 @@ class DeckardAPI:
         """Tell Deckard the current foreground window.
 
         This lets a test or a development run work without kdotool.
+
+        The window grabber routes it on a worker. This method arrives on the
+        main context, and routing a window loads a page, which marshals onto
+        that same context and waits for it. Any process on the session bus can
+        call this, so an inline routing would hand any of them the main thread.
         """
         win = WindowInfo(name, wm_class)
         log.info(f"DBus API: NotifyForegroundWindow called – {win!r}")
@@ -214,7 +219,7 @@ class DeckardAPI:
             if gl.window_grabber is not None:
                 from src.backend.WindowGrabber.Window import Window
                 window = Window(wm_class=win.wm_class, title=win.name)
-                gl.window_grabber.on_active_window_changed(window)
+                gl.window_grabber.report_active_window(window)
         except Exception as e:
             log.error(f"DBus API: NotifyForegroundWindow error: {e}")
 
