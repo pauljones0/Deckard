@@ -1,6 +1,9 @@
 import os
 
-from src.backend.LockScreenManager.LockScreenDetector import LockScreenDetector
+from src.backend.LockScreenManager.LockScreenDetector import (
+    INITIAL_STATE_TIMEOUT_MS,
+    LockScreenDetector,
+)
 
 from typing import cast, TYPE_CHECKING
 if TYPE_CHECKING:
@@ -19,6 +22,9 @@ class LogindLockScreenDetector(LockScreenDetector):
 
     def __init__(self, lock_screen_manager: "LockScreenManager", bus: Gio.DBusConnection | None = None):
         super().__init__(lock_screen_manager)
+        # Stays None whenever resolution fails below. read_initial_lock_state
+        # reads LockedHint from it.
+        self.session_path: str | None = None
         self.setup_dbus(bus)
 
     def setup_dbus(self, bus: Gio.DBusConnection | None = None) -> None:
@@ -30,7 +36,7 @@ class LogindLockScreenDetector(LockScreenDetector):
             # falsy but valid double must not pull in the real system bus.
             self.bus = bus if bus is not None else Gio.bus_get_sync(Gio.BusType.SYSTEM, None)
 
-            session_path = self.resolve_session_path()
+            self.session_path = self.resolve_session_path()
 
             # setup() runs on the manager's daemon thread, which has no
             # thread-default main context, so GDBus dispatches the callback on
@@ -39,7 +45,7 @@ class LogindLockScreenDetector(LockScreenDetector):
                 "org.freedesktop.login1",
                 "org.freedesktop.login1.Session",
                 None,
-                session_path,
+                self.session_path,
                 None,
                 Gio.DBusSignalFlags.NONE,
                 self.on_dbus_signal
@@ -83,3 +89,37 @@ class LogindLockScreenDetector(LockScreenDetector):
             self.lock_screen_manager.lock(True)
         elif signal_name == "Unlock":
             self.lock_screen_manager.lock(False)
+
+    def read_initial_lock_state(self) -> None:
+        """Seed the lock from the session's current LockedHint, once, at startup.
+
+        logind sets LockedHint while the session is locked, and sends no Lock
+        signal for a lock that predates the subscription. A process that
+        starts into an already-locked session reads the hint here and drives
+        the same lock() the signal path drives, rather than wait for a Lock
+        that never arrives while the session stays locked.
+        """
+        bus = self.bus
+        session_path = self.session_path
+        if bus is None or session_path is None:
+            return
+
+        try:
+            reply = bus.call_sync(
+                "org.freedesktop.login1",
+                session_path,
+                "org.freedesktop.DBus.Properties",
+                "Get",
+                GLib.Variant("(ss)", ("org.freedesktop.login1.Session", "LockedHint")),
+                None,
+                Gio.DBusCallFlags.NONE,
+                INITIAL_STATE_TIMEOUT_MS,
+                None,
+            )
+        except GLib.Error as e:
+            # logind is unreachable or hides the property. Stay signal-driven.
+            log.info(f"Lock: logind LockedHint unavailable, initial state unread ({e})")
+            return
+
+        if bool(reply.unpack()[0]):
+            self.lock_screen_manager.lock(True)
