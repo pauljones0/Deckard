@@ -10,10 +10,10 @@ bundle as a release asset.
 ### Added
 
 - A key or dial with several states now opens on the state it was last
-  left on. The page keeps that state, so a page reload, a page switch and
-  the next start of the app all show the state you left instead of the
-  first one. A page whose inputs never leave their first state is written
-  exactly as before, and still opens in an older version.
+  left on. The page keeps that state, so a page switch and the next start
+  of the app show the state you left instead of the first one. A page
+  whose inputs never leave their first state is written exactly as
+  before, and still opens in an older version.
 
 ### Changed
 
