@@ -97,6 +97,12 @@ bundle as a release asset.
 
 ### Fixed
 
+- Quitting now hands the deck back reliably, so the next start finds it free.
+  The app closed the device while the library still watched it for button
+  presses, and that watcher could take the handle straight back, leaving the
+  deck held by an app that had already gone. The reader is now stopped before
+  every close, including the closes that follow a deck that fails to start
+  up, and a deck released this way is not re-opened behind the app's back.
 - Editing the size, position, label or background of a key, dial or
   touchscreen now keeps saving after the sidebar loads an input the deck does
   not carry. A row disconnected its value handler, looked the input up, and a
