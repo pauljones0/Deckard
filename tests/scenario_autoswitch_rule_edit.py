@@ -27,6 +27,11 @@ from src.backend.WindowGrabber.Window import Window
 from src.backend.WindowGrabber.WindowGrabber import WindowGrabber
 
 TIMEOUT_S = 5.0
+# How long a leg holds a page load open while it watches what another routing
+# manages meanwhile, and how long that watch runs. The two are far apart, so a
+# routing freed by the hold giving up cannot be read as one that never waited.
+HELD_LOAD_TIMEOUT_S = 30.0
+OBSERVE_S = 2.0
 
 FIREFOX = Window(wm_class="firefox", title="Mozilla Firefox")
 TERMINAL = Window(wm_class="kitty", title="terminal")
@@ -90,6 +95,7 @@ class StubDeckController:
         self.page_auto_loaded = False
         self.last_manual_loaded_page_path: str | None = None
         self.loaded_pages: list[str] = []
+        self._load_lock = threading.RLock()
         # A real load takes long enough for a second routing to start inside
         # it. Legs that race two routings set this.
         self.load_delay = 0.0
@@ -98,15 +104,17 @@ class StubDeckController:
         return self._serial
 
     def load_page(self, page, allow_reload: bool = True) -> None:
-        # The real controller compares identity under allow_reload=False, and
-        # returns without loading. A stub that always records would count a
-        # load the deck never performs.
-        if not allow_reload and self.active_page is page:
-            return
-        if self.load_delay:
-            time.sleep(self.load_delay)
-        self.loaded_pages.append(page.json_path)
-        self.active_page = page
+        # The real controller holds one lock across the whole switch, and
+        # under allow_reload=False it compares identity there and returns
+        # without loading. A stub that skipped either would count a load the
+        # deck never performs, or let two loads of one page overlap.
+        with self._load_lock:
+            if not allow_reload and self.active_page is page:
+                return
+            if self.load_delay:
+                time.sleep(self.load_delay)
+            self.loaded_pages.append(page.json_path)
+            self.active_page = page
 
 
 def _install_stub_selector() -> None:
@@ -638,6 +646,220 @@ def check_recheck_and_watcher_load_once() -> None:
         )
 
 
+def check_a_reported_window_never_routes_on_the_caller() -> None:
+    """A window reported over D-Bus arrives on the GTK main thread, and the
+    routing it starts must not run there.
+
+    A page load marshals onto that thread and waits for it, so a routing that
+    ran there would wait for itself. It waits for the marshal to time out,
+    which is half a minute of frozen window, and the load it abandons leaves
+    the page half built. Any process on the session bus can call the method,
+    so this is not a rare shape.
+
+    The load in flight below stands for that marshal: it holds the deck and
+    waits for the main thread to come back, exactly as a real one does.
+    """
+    _clear_pages()
+    manual_path = _write_page("Manual")
+    rule_path = _write_page("Browser")
+    gl.page_manager.overwrite_auto_change_settings(
+        path=rule_path, enable=True, wm_class="firefox", regex_title=".*",
+        stay_on_page=True, decks=["SERIAL"],
+    )
+
+    grabber = _fresh_grabber()
+
+    order: list[str] = []
+    load_started = threading.Event()
+    main_thread_returned = threading.Event()
+
+    class MarshallingController(StubDeckController):
+        def load_page(self, page, allow_reload: bool = True) -> None:
+            load_started.set()
+            assert main_thread_returned.wait(TIMEOUT_S), (
+                "the load waited for the main thread, and the main thread was "
+                "waiting inside a routing of its own: the notify method must "
+                "not route on the thread a load marshals onto"
+            )
+            order.append("load")
+            super().load_page(page, allow_reload=allow_reload)
+
+    controller = MarshallingController("SERIAL", active_page=StubPage(manual_path))
+
+    dispatch_threads: list[threading.Thread] = []
+    dispatch = grabber.on_active_window_changed
+
+    def record(window: Window) -> None:
+        try:
+            dispatch(window)
+        finally:
+            dispatch_threads.append(threading.current_thread())
+
+    grabber.on_active_window_changed = record
+
+    api_instance = api.DeckardAPI()
+    original_instance = api._api_instance
+    api._api_instance = api_instance
+
+    with _registered(controller, [manual_path, rule_path]):
+        try:
+            grabber.recheck_active_window()
+            assert load_started.wait(TIMEOUT_S), (
+                "the background routing never reached the page load"
+            )
+
+            # The main thread, inside the D-Bus method, while that load waits.
+            api_instance.NotifyForegroundWindow(FIREFOX.title, FIREFOX.wm_class)
+            order.append("notify")
+            main_thread_returned.set()
+
+            assert fixtures.wait_until(lambda: len(dispatch_threads) >= 2, TIMEOUT_S), (
+                f"the reported window was never routed, got "
+                f"{len(dispatch_threads)} routings"
+            )
+            _settle_recheck(grabber)
+        finally:
+            main_thread_returned.set()
+            api._api_instance = original_instance
+
+    assert order == ["notify", "load"], (
+        f"the notify method returned only after the page load finished, so it "
+        f"waited on the routing already in flight, got {order}"
+    )
+    assert threading.main_thread() not in dispatch_threads, (
+        "a routing ran on the main thread, which is the thread a page load "
+        "marshals onto"
+    )
+    assert controller.loaded_pages == [rule_path], (
+        f"the deck must load the page once for two routings carrying the same "
+        f"window, got {controller.loaded_pages}"
+    )
+
+
+def check_a_load_in_flight_does_not_block_another_deck() -> None:
+    """A page load on one deck must not hold up the routing of another.
+
+    The decision is what two routings must not interleave, and it touches two
+    fields. A lock held from the decision all the way through the load stops
+    every other routing for as long as the load runs, and a load runs as long
+    as the GTK main thread takes to answer it.
+    """
+    _clear_pages()
+    manual_path = _write_page("Manual")
+    rule_path = _write_page("Browser")
+    gl.page_manager.overwrite_auto_change_settings(
+        path=rule_path, enable=True, wm_class="firefox", regex_title=".*",
+        stay_on_page=True, decks=["QUICK", "SLOW"],
+    )
+
+    grabber = _fresh_grabber()
+
+    load_started = threading.Event()
+    release_load = threading.Event()
+
+    class BlockingController(StubDeckController):
+        def load_page(self, page, allow_reload: bool = True) -> None:
+            load_started.set()
+            # Far longer than the window the other routing is watched over, so
+            # a routing held up by this load cannot come free at the moment
+            # the watch gives up and read as one that was never held.
+            assert release_load.wait(HELD_LOAD_TIMEOUT_S), (
+                "the held load was never released"
+            )
+            super().load_page(page, allow_reload=allow_reload)
+
+    # The deck that needs no load comes first, so a routing reaches it before
+    # it meets the one that blocks.
+    quick = StubDeckController("QUICK", active_page=StubPage(rule_path))
+    slow = BlockingController("SLOW", active_page=StubPage(manual_path))
+
+    def route() -> None:
+        grabber.on_active_window_changed(FIREFOX)
+
+    with _registered(quick, [manual_path, rule_path]):
+        with _registered(slow, [manual_path, rule_path]):
+            first = threading.Thread(target=route, name="StubRoutingHeld")
+            second = threading.Thread(target=route, name="StubRoutingFree")
+            try:
+                first.start()
+                assert load_started.wait(TIMEOUT_S), (
+                    "the first routing never reached the held load"
+                )
+
+                # The first routing is inside the load now. Clear what it left
+                # on the quick deck, so only the second routing can set it.
+                quick.page_auto_loaded = False
+                second.start()
+
+                assert fixtures.wait_until(
+                    lambda: quick.page_auto_loaded is True, OBSERVE_S
+                ), (
+                    "a routing waited for a page load on another deck: the "
+                    "decision holds the routing lock, and a load must not"
+                )
+            finally:
+                release_load.set()
+                first.join(TIMEOUT_S)
+                second.join(TIMEOUT_S)
+
+            assert not first.is_alive() and not second.is_alive()
+            assert slow.loaded_pages == [rule_path], (
+                f"the held deck must end on the page its rule names, once, "
+                f"got {slow.loaded_pages}"
+            )
+
+
+def check_restore_runs_once_under_a_race() -> None:
+    """Two routings that find no matching rule at the same moment must undo
+    the automatic switch once.
+
+    The flag saying the page arrived automatically is the flag the undo
+    clears, and the path back to the user's page is read beside it, so the two
+    routings cannot read and write them in turn.
+    """
+    _clear_pages()
+    manual_path = _write_page("Manual")
+    rule_path = _write_page("Browser")
+    gl.page_manager.overwrite_auto_change_settings(
+        path=rule_path, enable=True, wm_class="firefox", regex_title=".*",
+        stay_on_page=False, decks=["SERIAL"],
+    )
+
+    grabber = _fresh_grabber()
+    controller = StubDeckController("SERIAL", active_page=StubPage(rule_path))
+    controller.page_auto_loaded = True
+    controller.last_manual_loaded_page_path = manual_path
+    controller.load_delay = 0.05
+
+    start = threading.Barrier(3)
+
+    def route() -> None:
+        start.wait(TIMEOUT_S)
+        grabber.on_active_window_changed(TERMINAL)
+
+    with _registered(controller, [manual_path, rule_path]):
+        routings = [
+            threading.Thread(target=route, name=f"StubRouting{index}")
+            for index in range(2)
+        ]
+        for routing in routings:
+            routing.start()
+        start.wait(TIMEOUT_S)
+        for routing in routings:
+            routing.join(TIMEOUT_S)
+            assert not routing.is_alive(), "a routing never finished"
+
+        assert controller.loaded_pages == [manual_path], (
+            f"the deck must go back to the page the user chose once, got "
+            f"{controller.loaded_pages}"
+        )
+        assert controller.page_auto_loaded is False
+        assert controller.last_manual_loaded_page_path == manual_path, (
+            f"the path back to the user's page was overwritten during the "
+            f"undo, got {controller.last_manual_loaded_page_path}"
+        )
+
+
 # The D-Bus property the routing publishes.
 
 def check_foreground_window_publishes_only_on_change() -> None:
@@ -686,6 +908,9 @@ def main() -> None:
     check_recheck_is_inert_with_no_rule()
     check_recheck_coalesces()
     check_recheck_and_watcher_load_once()
+    check_a_reported_window_never_routes_on_the_caller()
+    check_a_load_in_flight_does_not_block_another_deck()
+    check_restore_runs_once_under_a_race()
     check_foreground_window_publishes_only_on_change()
 
     print("PASS: scenario_autoswitch_rule_edit")
