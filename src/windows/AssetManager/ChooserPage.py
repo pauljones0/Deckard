@@ -23,12 +23,14 @@ from typing import Any
 
 import globals as gl
 
-# How long the search waits for the typing to stop. A grid of a whole icon
-# pack is thousands of names, and every one of them is scored and sorted per
-# pass, so a pass per keystroke turns typing into a stutter. This wait is
-# under the gap between two keystrokes of a fast typist, so the grid still
-# follows the query as it is typed.
-SEARCH_DEBOUNCE_MS = 150
+from src.windows.AssetManager import asset_search
+
+# How long the entry waits for the typing to stop before it says the search
+# changed. Gtk.SearchEntry owns this wait; its default is 150 ms. A pass here
+# scores and sorts a whole icon pack, which is thousands of names, so the wait
+# is longer than the default. It applies to typing only: GTK reports a cleared
+# entry at once, so emptying the box brings the whole grid back with no wait.
+SEARCH_DELAY_MS = 300
 
 
 class ChooserPage(Gtk.Stack):
@@ -36,16 +38,19 @@ class ChooserPage(Gtk.Stack):
     # from this constructor, so both of these must exist before __init__ of
     # any subclass reaches its own attributes.
     _search_generation = 0
-    _search_timeout_id = 0
+    _search_showing = True
 
     def __init__(self) -> None:
         super().__init__(margin_start=15, margin_end=15, margin_top=15, margin_bottom=15)
-        # A deferred search outlives the page without this: a timeout holds
-        # the bound method, which holds the page and its widgets, and it fires
-        # into a page that is going away. The window is normally hidden and
-        # reused, so this matters at quit, where the pass would land in the
-        # middle of the teardown.
-        self.connect("destroy", self.cancel_deferred_search)
+        # The entry holds an emission back for its delay, so one can arrive
+        # after this page stopped showing, and a pass then renders into a page
+        # on its way out. A window that hides unmaps its pages, which covers
+        # the hide, the close and the destroy paths alike. The destroy signal
+        # does not: a widget that is not a window emits it from dispose, and
+        # anything that still holds the page, such as a queued pass, keeps
+        # dispose from running at all.
+        self.connect("map", self._on_map)
+        self.connect("unmap", self.invalidate_search)
         self._build()
 
         self.init_dnd()
@@ -58,6 +63,7 @@ class ChooserPage(Gtk.Stack):
         self.main_box.append(self.nav_box)
 
         self.search_entry = Gtk.SearchEntry(placeholder_text="Search", hexpand=True)
+        self.search_entry.set_search_delay(SEARCH_DELAY_MS)
         self.search_entry.connect("search-changed", self.on_search_changed)
         self.nav_box.append(self.search_entry)
 
@@ -132,41 +138,53 @@ class ChooserPage(Gtk.Stack):
         pass
 
     def on_search_changed(self, entry: Gtk.SearchEntry) -> None:
-        """Defer the search until the typing stops.
+        """Queue a pass over the query the entry now holds.
 
-        A page overrides apply_search, never this method: the debounce and the
-        generation guard belong to every page that carries a search entry, and
-        an override here loses both.
+        The entry owns the wait for the typing to stop, so this runs once per
+        pause and not once per keystroke. A page overrides apply_search, never
+        this method: the staleness guard belongs to every page that carries a
+        search entry, and an override here loses it.
         """
+        if not self._search_showing:
+            # The entry held this emission for its delay, and the page stopped
+            # showing in between. It renders again when it is shown.
+            return
         self._search_generation += 1
-        generation = self._search_generation
+        # One turn of the loop, not a wait of its own. A cleared entry reports
+        # at once and a delayed emission can land in the same turn, and the
+        # guard below then leaves one pass of the two.
+        GLib.idle_add(self.run_search, self._search_generation)
 
-        if self._search_timeout_id:
-            GLib.source_remove(self._search_timeout_id)
-        self._search_timeout_id = GLib.timeout_add(
-            SEARCH_DEBOUNCE_MS, self._run_deferred_search, generation)
-
-    def cancel_deferred_search(self, *args: Any) -> None:
-        """Drop a search that has not run yet.
-
-        The generation still moves, so a pass that already left the queue
-        finds itself stale and renders nothing either.
-        """
-        self._search_generation += 1
-        if self._search_timeout_id:
-            GLib.source_remove(self._search_timeout_id)
-            self._search_timeout_id = 0
-
-    def _run_deferred_search(self, generation: int) -> bool:
-        """Runs on the main loop, one debounce interval after the last change."""
-        self._search_timeout_id = 0
+    def run_search(self, generation: int) -> bool:
+        """Render the query unless a later pass has overtaken this one."""
         if generation != self._search_generation:
-            # A later keystroke landed while this callback sat in the idle
-            # queue. Its own timeout renders the text that the user typed
-            # last, and this pass would render a query that is already gone.
+            # A newer pass, or invalidate_search, moved the generation on. The
+            # newer pass renders the text the user has now.
             return False
         self.apply_search(self.search_entry.get_text())
-        return False  # one-shot timeout
+        return False  # one-shot idle
+
+    def invalidate_search(self, *args: Any) -> None:
+        """Stop searching until this page shows again.
+
+        Every pass in flight goes stale, and so does an emission the entry
+        still holds. The scoring cache goes too: it memoizes the names of a
+        whole pack, which a hidden window has no use for.
+        """
+        self._search_showing = False
+        self._search_generation += 1
+        asset_search.release_cache()
+
+    def _on_map(self, *args: Any) -> None:
+        """Search again with what the entry holds now.
+
+        The entry can be typed into or cleared while this page is hidden, and
+        such a pass is dropped, so the grid would otherwise show the query of
+        the last time the page was up.
+        """
+        self._search_showing = True
+        self._search_generation += 1
+        self.run_search(self._search_generation)
 
     def apply_search(self, query: str) -> None:
         """Subclass hook: show what query asks for.
