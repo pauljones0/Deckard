@@ -12,11 +12,42 @@ import threading
 from loguru import logger
 
 from src.backend import log_hooks
+from src.backend import log_redaction
 from src.backend.log_redaction import redact_record, scrub
 
-HOME = os.path.expanduser("~")
-USER = getpass.getuser()
 UT = "<user>"  # the token scrub() substitutes for the username
+
+# The real account, captured before any override. The end-to-end block below
+# drives the process's own traceback, whose frame paths live under this home,
+# so scrub() must know it to redact them.
+REAL_HOME = os.path.expanduser("~")
+REAL_USER = getpass.getuser()
+
+# Injected identity for the unit checks. scrub() compiles its home and username
+# rules from the environment, so the unit assertions pin a known home and user
+# rather than read the runner's account. That keeps them deterministic under any
+# runner, a freshly created CI user or root included, whose home (root's is
+# /root, whose dirname is "/") and short username would otherwise skew the
+# constructed paths and the expected strings.
+INJ_HOME = "/home/deckard_ci_user"
+INJ_USER = "deckard_ci_user"
+HOME = INJ_HOME  # the unit checks assert on the injected identity
+USER = INJ_USER
+
+
+def _compile_rules_for(home: str, user: str) -> None:
+    """Recompile scrub()'s module rules against a chosen identity.
+
+    scrub() builds its home and username patterns from the environment at
+    import. The unit checks want a fixed identity so their expected strings do
+    not depend on the runner's account, and the end-to-end block wants the real
+    account so it redacts the process's own traceback frame paths. This swaps
+    the compiled rules between the two.
+    """
+    os.environ["HOME"] = home
+    os.environ["USER"] = user
+    os.environ["LOGNAME"] = user
+    log_redaction._RULES = log_redaction._compile_rules()
 
 
 def check_scrub_unit() -> None:
@@ -27,14 +58,17 @@ def check_scrub_unit() -> None:
     # Boundary guards. A longer username sharing the prefix must not be
     # clipped, and dot-suffix siblings must not collapse into the tilde form.
     assert scrub(HOME + "ette/f") == HOME + "ette/f", "prefix-sharing sibling user must survive"
-    if os.path.basename(HOME) == USER:
-        parent = os.path.dirname(HOME)
-        assert scrub(HOME + ".old/f") == f"{parent}/{UT}.old/f", (
-            "sibling dir of home must keep its suffix, hide the username"
-        )
-        assert scrub(f"logs in {HOME}.") == f"logs in {parent}/{UT}.", (
-            "sentence-final home path must still hide the username"
-        )
+    # The injected home is a normal two-segment path, so basename is the user and
+    # dirname is a real parent, never "/". A sibling dir of home keeps its suffix
+    # and hides the username.
+    assert os.path.basename(HOME) == USER
+    parent = os.path.dirname(HOME)
+    assert scrub(HOME + ".old/f") == f"{parent}/{UT}.old/f", (
+        "sibling dir of home must keep its suffix, hide the username"
+    )
+    assert scrub(f"logs in {HOME}.") == f"logs in {parent}/{UT}.", (
+        "sentence-final home path must still hide the username"
+    )
 
     # The username matches in path segments and in user@host, never bare.
     assert scrub(f"/run/media/{USER}/stick") == f"/run/media/{UT}/stick"
@@ -66,6 +100,59 @@ def check_scrub_unit() -> None:
     assert scrub("headers token: abc.def") == "headers token: ***"
     assert scrub("{'key': 3, 'gen': 7}") == "{'key': 3, 'gen': 7}", (
         "deck 'key' dict field must survive the colon rule"
+    )
+
+    # The colon form may carry an HTTP scheme word in an unquoted value, from a
+    # header dump that pairs a scheme word with a credential. A non-Authorization
+    # key must keep the scheme word and drop the credential after it, never star
+    # the scheme word alone and leave the secret behind it.
+    assert scrub("token: Token abc123") == "token: Token ***", (
+        "a scheme word in a colon value must keep the scheme and drop the secret"
+    )
+    assert "abc123" not in scrub("token: Token abc123"), (
+        "the credential after the scheme word must be gone"
+    )
+    assert scrub("api_key: Basic dXNlcjpwYXNz") == "api_key: Basic ***", (
+        "a basic|digest|token scheme word must not make the whole value leak"
+    )
+    assert "dXNlcjpwYXNz" not in scrub("api_key: Basic dXNlcjpwYXNz")
+
+    # A secret colon value that BEGINS with a scheme keyword followed by a
+    # non-space delimiter is one whole credential, not a scheme word with a
+    # credential after it. The mandatory-scheme form above keeps the scheme word
+    # only when whitespace follows it, so these must redact whole and never leak.
+    assert scrub("token: token-abc123") == "token: ***", (
+        "a value that starts with a scheme word plus a delimiter is a whole "
+        "secret and must redact, not leak"
+    )
+    assert "token-abc123" not in scrub("token: token-abc123"), (
+        "the whole secret must be gone, not just masked around the scheme word"
+    )
+    assert scrub("token: bearer.reset.jwt") == "token: ***", (
+        "a dot after the scheme word does not make it a bare scheme word"
+    )
+    assert scrub("api_key: basic/creds99") == "api_key: ***", (
+        "a slash after the scheme word does not make it a bare scheme word"
+    )
+    assert scrub("access_token: token-9-xyz") == "access_token: ***"
+
+    # With no scheme word the value still redacts whole.
+    assert scrub("token: plainsecret9") == "token: ***"
+    assert scrub("api_key: plainsecret9") == "api_key: ***"
+    # An X- header prefix on the token and api-key families redacts too, with
+    # and without a scheme word.
+    assert scrub("x-api-key: sk-plainsecret9") == "x-api-key: ***"
+    assert "sk-123abc" not in scrub("x-api-key: Bearer sk-123abc"), (
+        "an X- prefixed key must redact a scheme-word value too"
+    )
+    assert scrub("X-Auth-Token: Token deadbeef99") == "X-Auth-Token: Token ***"
+    # authorization keeps its scheme word through the header rule, colon form
+    # included, and its credential is gone.
+    assert scrub("authorization: Token abc123") == "authorization: Token ***"
+    assert "abc123" not in scrub("authorization: Token abc123")
+    # The deck 'key' field must still survive next to a scheme-shaped value.
+    assert scrub("{'key': 'basic'}") == "{'key': 'basic'}", (
+        "deck 'key' field must survive even when its value looks like a scheme"
     )
 
     # Authorization headers. A Basic b64 value decodes straight to user and
@@ -127,6 +214,20 @@ def check_scrub_idempotent() -> None:
         "{'access_token': 'eyJabc.def'}",
         '{"api_key": "sk-12345"}',
         "headers token: abc.def",
+        # Colon values carrying a scheme word, every scheme, X- prefix and not.
+        "token: Token abc123",
+        "api_key: Basic dXNlcjpwYXNz",
+        "x-api-key: Bearer sk-123abc",
+        "X-Auth-Token: Token deadbeef99",
+        "authorization: Token abc123",
+        "token: plainsecret9",
+        "x-api-key: sk-plainsecret9",
+        # Colon values that BEGIN with a scheme word plus a delimiter. These are
+        # whole secrets, so they redact to a single mask, and a re-scrub of that
+        # mask must not grow it.
+        "token: token-abc123",
+        "token: bearer.reset.jwt",
+        "api_key: basic/creds99",
         # Must-not-touch vocabulary. Idempotent trivially, but a rule that
         # starts eating these would show up here too.
         "painting key=3 gen=7",
@@ -152,6 +253,10 @@ def check_scrub_idempotent() -> None:
 
 def main() -> None:
     fixtures.start_watchdog(60, label="scenario_log_redaction")
+
+    # The unit checks pin a known home and user, so recompile scrub()'s rules
+    # against the injected identity before running them.
+    _compile_rules_for(INJ_HOME, INJ_USER)
     check_scrub_unit()
     check_scrub_idempotent()
 
@@ -159,6 +264,12 @@ def main() -> None:
     # install_exception_hooks(), and redaction must ride along. This does not
     # call install_log_redaction(), so reverting the piggyback inside
     # install_exception_hooks() turns this red.
+    #
+    # The traceback below is the process's own, so its frame paths live under
+    # the real account home. Recompile scrub()'s rules against that account so
+    # the folded traceback redacts, then assert on the real identity here.
+    _compile_rules_for(REAL_HOME, REAL_USER)
+
     log_hooks.install_exception_hooks()
     assert logger._core.patcher is redact_record, (
         "install_exception_hooks() must install the redaction patcher -- "
@@ -179,18 +290,18 @@ def main() -> None:
     logger.add(lambda m: records.append(str(m)), level="TRACE")
 
     # Plain messages through the normal path.
-    logger.info(f"config at {HOME}/.config/streamcontroller/settings.json")
-    logger.info(f"fetching https://{USER}:hunter2@git.example.com/repo.git?access_token=abc123&x=1")
-    logger.info(f"mounted /run/media/{USER}/stick")
+    logger.info(f"config at {REAL_HOME}/.config/streamcontroller/settings.json")
+    logger.info(f"fetching https://{REAL_USER}:hunter2@git.example.com/repo.git?access_token=abc123&x=1")
+    logger.info(f"mounted /run/media/{REAL_USER}/stick")
     logger.info("HA settings: {'host': 'ha.local', 'access_token': 'eyJlongtoken'}")
 
     # An uncaught thread exception through the real hook. The message, the
     # frame paths and a diagnose-visible local all carry PII.
     def boom() -> None:
-        key_path = f"{HOME}/.ssh/id_rsa"  # a local that diagnose=True would leak
+        key_path = f"{REAL_HOME}/.ssh/id_rsa"  # a local that diagnose=True would leak
         raise ValueError(
             f"cannot open {key_path} "
-            f"(remote=https://{USER}:sekrit@host.example/x?token=tok123)"
+            f"(remote=https://{REAL_USER}:sekrit@host.example/x?token=tok123)"
         )
 
     t = threading.Thread(target=boom, name="redaction-worker")
@@ -205,17 +316,17 @@ def main() -> None:
     for output, label in ((content, "logs.log"), (joined, "capture sink")):
         # The raw values must be gone, traceback frame paths included, which is
         # why the exception is folded into the message.
-        assert HOME not in output, f"{label}: raw home path leaked"
+        assert REAL_HOME not in output, f"{label}: raw home path leaked"
         assert "hunter2" not in output, f"{label}: URL password leaked"
         assert "sekrit" not in output, f"{label}: URL password (exception message) leaked"
         assert "access_token=abc123" not in output, f"{label}: token param leaked"
         assert "token=tok123" not in output, f"{label}: token param (exception message) leaked"
         assert "eyJlongtoken" not in output, f"{label}: dict-repr access_token leaked"
-        assert f"/run/media/{USER}/" not in output, f"{label}: username path segment leaked"
-        assert f"{USER}:hunter2" not in output and f"{USER}:sekrit" not in output, (
+        assert f"/run/media/{REAL_USER}/" not in output, f"{label}: username path segment leaked"
+        assert f"{REAL_USER}:hunter2" not in output and f"{REAL_USER}:sekrit" not in output, (
             f"{label}: URL userinfo leaked"
         )
-        assert f"//{USER}@" not in output and f" {USER}@" not in output, (
+        assert f"//{REAL_USER}@" not in output and f" {REAL_USER}@" not in output, (
             f"{label}: bare user@host leaked"
         )
 

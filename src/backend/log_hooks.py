@@ -75,6 +75,15 @@ _prev_sys_hook: _ExceptHook = None  # ty: ignore[invalid-assignment]  # late-ini
 # process. Otherwise a fatal-signal dump writes into a recycled fd.
 _fault_file: TextIO | None = None
 
+# The size cap for logs/faulthandler.log. redirect_faulthandler() opens the
+# file append, and the only other write it ever gets is the in-place boot
+# scrub, which rewrites the same bytes and never shrinks the file. So the boot
+# markers and the native crash dumps of every past session accumulate for the
+# life of the install. _bound_fault_log() trims the file at boot to hold the
+# most recent content under this cap, the size-cap analog of the loguru file
+# sinks' rotation. Module-level, so a scenario can shrink it.
+_FAULT_LOG_MAX_BYTES = 1_000_000
+
 
 # Per-site rate limiting.
 #
@@ -500,6 +509,71 @@ def install_exception_hooks() -> None:
     _installed = True
 
 
+def _bound_fault_log(path: str) -> None:
+    """Cap logs/faulthandler.log at boot, keeping the most recent content.
+
+    redirect_faulthandler() opens the file append, and the only other write it
+    ever gets is the in-place boot scrub, which rewrites the same bytes and
+    never shrinks the file. So the boot markers and the crash dumps of every
+    session accumulate without a bound. This trims the file to the last
+    _FAULT_LOG_MAX_BYTES at boot, from a boot-marker boundary so a kept dump
+    stays whole, and it prepends a one-line notice that older entries went. The
+    trim leaves the result at or under the cap, so the next boot finds nothing
+    to do and this stays idempotent.
+
+    It preserves the inode, exactly like _scrub_fault_log, because faulthandler
+    registers the raw fd and a running instance may hold one on this file. A
+    tmp-and-replace would strand that fd on the unlinked old inode, so this
+    rewrites in place: seek to the start, write the kept tail, truncate.
+
+    The flock does not block, and this skips the trim on contention, for the
+    same reasons _scrub_fault_log gives. A dump another instance appends at the
+    C level during the writeback window lands past the read snapshot and the
+    truncate() drops it, which a replace would lose the same way while also
+    stranding the fd. Any failure logs and returns, because a bound problem
+    must not block startup."""
+    max_bytes = _FAULT_LOG_MAX_BYTES
+    try:
+        if not os.path.exists(path) or os.path.getsize(path) <= max_bytes:
+            return
+        with open(path, "r+b") as log_file:
+            try:
+                fcntl.flock(log_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                # Another boot bounds or scrubs this file right now. Never wait.
+                return
+            size = os.fstat(log_file.fileno()).st_size
+            if size <= max_bytes:
+                return
+            notice = (
+                b"===== trimmed "
+                + datetime.now().isoformat().encode("ascii", "replace")
+                + b": older faulthandler entries removed to bound file size =====\n"
+            )
+            # Read the tail with room for the notice, so the rewrite lands at or
+            # under the cap and the next boot is a no-op.
+            budget = max(0, max_bytes - len(notice))
+            log_file.seek(size - budget)
+            tail = log_file.read()
+            # Keep whole boot sections: start at the first boot marker in the
+            # window, else at the first line boundary, so a kept dump never
+            # starts mid-line.
+            marker = tail.find(b"\n===== boot ")
+            if marker != -1:
+                kept = tail[marker + 1:]
+            else:
+                newline = tail.find(b"\n")
+                kept = tail[newline + 1:] if newline != -1 else tail
+            log_file.seek(0)
+            log_file.write(notice + kept)
+            log_file.truncate()
+    except Exception as e:
+        try:
+            _LOG.warning(f"could not bound faulthandler.log ({e}); continuing boot")
+        except Exception:
+            pass
+
+
 def _scrub_fault_log(path: str) -> None:
     """Scrub the faulthandler dumps of earlier sessions, in place.
 
@@ -607,6 +681,11 @@ def redirect_faulthandler(directory: str) -> None:
     try:
         os.makedirs(directory, exist_ok=True)
         path = os.path.join(directory, "faulthandler.log")
+        # Bound the file first, so the boot markers and dumps of every past
+        # session cannot accumulate without limit across a long-lived install.
+        # This keeps the most recent content and keeps the inode, so it stays
+        # safe while another instance holds a registered fd on the file.
+        _bound_fault_log(path)
         # A dump from an earlier session skipped the redaction layer, because
         # faulthandler writes at the C level to an fd. Scrub those dumps
         # before this code opens the append fd, so this boot's marker lands

@@ -60,11 +60,14 @@ scheme://***@host, and the host and the path stay, so a store-fetch url stays
 readable.
 
 A secret assignment, and a dict, JSON or YAML field, for an unambiguous key
-vocabulary of token, access_token, api_key, password, secret and the like.
+vocabulary of token, access_token, api_key, password, secret and the like,
+which also covers an X- header prefix such as X-Api-Key or X-Auth-Token.
 token=v, token = v, token: v, 'token': 'v' and "token": "v" all lose the
-value. An ambiguous name, which is key=, sig= or auth=, redacts in url-query
-position alone, anchored to a ? or an &. "key" is deck vocabulary here, so
-key=3 and {'key': 3} stay whole.
+value. An unquoted colon value that carries an HTTP scheme word, such as
+token: Token <secret> or api_key: Basic <cred>, keeps the scheme word and
+loses the credential after it. An ambiguous name, which is key=, sig= or
+auth=, redacts in url-query position alone, anchored to a ? or an &. "key" is
+deck vocabulary here, so key=3 and {'key': 3} stay whole.
 
 An Authorization header. That covers Authorization: Basic <b64>, where Basic
 decodes straight to user:pass, Bearer <token> in any case, a quoted JSON
@@ -105,9 +108,13 @@ _AFTER_SEGMENT = r"[].\s/\"'`:;,()[{}<>|=&]"
 # stay out, because they are deck and debug vocabulary, and the url-query
 # rule covers them. The header rule owns authorization, so a scheme word such
 # as "Basic" survives rather than reads as part of a value.
+#
+# The token and api-key families take an optional "x-" or "x_" prefix,
+# because an HTTP header commonly carries one, such as X-Api-Key,
+# X-Auth-Token or X-Access-Token.
 _SECRET_KEYS = (
-    r"(?:access|refresh|id|auth)[_-]?token|token|"
-    r"api[_-]?key|apikey|client[_-]?secret|secret|"
+    r"(?:x[_-])?(?:(?:access|refresh|id|auth)[_-]?token|token|api[_-]?key|apikey)|"
+    r"client[_-]?secret|secret|"
     r"password|passwd|pwd|signature"
 )
 
@@ -218,14 +225,43 @@ def _compile_rules() -> "list[_Rule]":
 
     # secret: value, in a dict repr, a JSON dump or a YAML config dump, such
     # as {'access_token': 'eyJ...'}, {"api_key": "sk-..."} or token: abc, which
-    # the HomeAssistant settings and headers dump produces. The scheme-word
-    # lookahead in the value branch keeps an already scrubbed
-    # "token: Bearer ***" out of "token: *** ***".
+    # the HomeAssistant settings and headers dump produces.
+    #
+    # An unquoted value can carry an HTTP scheme word, such as
+    # "token: Token abc123" or "api_key: Basic dXNlcjpwYXNz", from a header
+    # dump that pairs a scheme word with a credential. That needs the same
+    # mandatory-scheme/schemeless split the Authorization header rules use.
+    # Two rules, and not one. With no split the schemeless rule stars the
+    # scheme word and leaves the secret behind it. With the scheme word merely
+    # added to its guard the schemeless rule fails outright and leaks the whole
+    # value. A quoted value needs no split, because its quoted branch redacts
+    # the scheme word and the secret together inside the quotes.
+    _COLON_KEY = r"(?<![\w-])['\"]?(?:" + _SECRET_KEYS + r")['\"]?[ \t]*:[ \t]*"
+    _COLON_VALUE = r"[^&\s,'\"()\[\]{}<>]+"
+
+    # With a scheme word the scheme stays and the credential after it goes.
+    # Group 1 spans the key, the colon and the scheme word, so "\1***" keeps
+    # them and drops the credential.
+    rules.append((
+        re.compile(r"(?i)(" + _COLON_KEY + _AUTH_SCHEME + r"[ \t]+)" + _COLON_VALUE),
+        r"\1***",
+    ))
+
+    # The schemeless colon form. The value-branch lookahead bails only when a
+    # scheme word is followed by whitespace, which is the mandatory-scheme form
+    # the rule above owns and the already scrubbed "token: Bearer ***" and
+    # "token: Token ***" forms it produces, so a second pass keeps them out of
+    # "token: *** ***". The guard tests the delimiter after the scheme word, not
+    # a bare word boundary. A secret value that merely starts with a scheme word
+    # and a non-space delimiter, such as "token: token-abc123", is one whole
+    # credential, not a scheme word with a credential after it, so it must still
+    # redact whole. A word-boundary guard here stopped redacting those and
+    # leaked them.
     rules.append((
         re.compile(
             r"(?i)(?<![\w-])(['\"]?)(" + _SECRET_KEYS + r")\1"
             r"([ \t]*:[ \t]*)"
-            r"(?:(['\"])[^'\"\r\n]*\4|(?!(?:basic|bearer|digest)\b)[^&\s,'\"()\[\]{}<>]+)"
+            r"(?:(['\"])[^'\"\r\n]*\4|(?!" + _AUTH_SCHEME + r"[ \t])" + _COLON_VALUE + r")"
         ),
         _colon_replacement,
     ))

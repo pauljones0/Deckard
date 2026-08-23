@@ -51,6 +51,13 @@ bundle as a release asset.
   file. The import now keeps every write inside the pages folder and skips a
   page or a deck whose name points outside it, while a normal import lands as
   before.
+- A log you share no longer leaks a credential that sits after a scheme word.
+  When a log line held a secret such as `token: Token <secret>` or
+  `api_key: Basic <credential>`, the redaction that hides secrets before you
+  share a log removed only the scheme word and left the secret in place, and
+  for some schemes it left the whole value. The secret after the scheme word
+  is now removed, and a token or api-key header name is recognised with an
+  `X-` prefix as well.
 
 ### Fixed
 
