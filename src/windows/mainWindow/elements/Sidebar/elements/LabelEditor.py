@@ -29,7 +29,6 @@ gi.require_version("Adw", "1")
 from gi.repository import Gtk, Adw
 
 # Import Python modules
-from loguru import logger as log
 
 # Import own modules
 from src.backend.DeckManagement.Subclasses.KeyLabel import KeyLabel
@@ -113,6 +112,10 @@ class LabelRow(Adw.PreferencesRow):
         self.state: int = 0
         self.label_index = label_index
         self.key_name = key_name
+        # The (widget, handler-id) pairs while wired, empty while disconnected.
+        # Tracked ids keep connect and disconnect idempotent: a disconnect while
+        # already off is a no-op, and a reconnect cannot stack a second handler.
+        self._handler_ids: list[tuple[Gtk.Widget, int]] = []
         self.build()
 
         self.lock = threading.Lock()
@@ -193,47 +196,23 @@ class LabelRow(Adw.PreferencesRow):
         self.alignment_buttons.revert_button.connect("clicked", self.on_reset_alignment)
 
     def connect_signals(self) -> None:
-        self.text_entry.entry.connect("changed", self.on_change_text)
-        self.color_chooser_button.button.connect("color-set", self.on_change_color)
-        self.font_chooser_button.button.connect("font-set", self.on_change_font)
-        self.outline_width.button.connect("value-changed", self.on_change_outline_width)
-        self.outline_color_chooser_button.button.connect("color-set", self.on_change_outline_color)
-        self.alignment_buttons.left_button.connect("toggled", self.on_change_alignment)
-        self.alignment_buttons.center_button.connect("toggled", self.on_change_alignment)
-        self.alignment_buttons.right_button.connect("toggled", self.on_change_alignment)
+        if self._handler_ids:
+            return
+        self._handler_ids = [
+            (self.text_entry.entry, self.text_entry.entry.connect("changed", self.on_change_text)),
+            (self.color_chooser_button.button, self.color_chooser_button.button.connect("color-set", self.on_change_color)),
+            (self.font_chooser_button.button, self.font_chooser_button.button.connect("font-set", self.on_change_font)),
+            (self.outline_width.button, self.outline_width.button.connect("value-changed", self.on_change_outline_width)),
+            (self.outline_color_chooser_button.button, self.outline_color_chooser_button.button.connect("color-set", self.on_change_outline_color)),
+            (self.alignment_buttons.left_button, self.alignment_buttons.left_button.connect("toggled", self.on_change_alignment)),
+            (self.alignment_buttons.center_button, self.alignment_buttons.center_button.connect("toggled", self.on_change_alignment)),
+            (self.alignment_buttons.right_button, self.alignment_buttons.right_button.connect("toggled", self.on_change_alignment)),
+        ]
 
     def disconnect_signals(self) -> None:
-        try:
-            self.text_entry.entry.disconnect_by_func(self.on_change_text)
-        except Exception as e:
-            log.error(f"Failed to disconnect signals. Error: {e}")
-
-        try:
-            self.color_chooser_button.button.disconnect_by_func(self.on_change_color)
-        except Exception as e:
-            log.error(f"Failed to disconnect signals. Error: {e}")
-
-        try:
-            self.font_chooser_button.button.disconnect_by_func(self.on_change_font)
-        except Exception as e:
-            log.error(f"Failed to disconnect signals. Error: {e}")
-
-        try:
-            self.outline_width.button.disconnect_by_func(self.on_change_outline_width)
-        except Exception as e:
-            log.error(f"Failed to disconnect signals. Error: {e}")
-
-        try:
-            self.outline_color_chooser_button.button.disconnect_by_func(self.on_change_outline_color)
-        except Exception as e:
-            log.error(f"Failed to disconnect signals. Error: {e}")
-
-        try:
-            self.alignment_buttons.left_button.disconnect_by_func(self.on_change_alignment)
-            self.alignment_buttons.center_button.disconnect_by_func(self.on_change_alignment)
-            self.alignment_buttons.right_button.disconnect_by_func(self.on_change_alignment)
-        except Exception as e:
-            log.error(f"Failed to disconnect signals. Error: {e}")
+        for widget, handler_id in self._handler_ids:
+            widget.disconnect(handler_id)
+        self._handler_ids = []
 
     def load_for_identifier(self, identifier: InputIdentifier, state: int) -> None:
         if not isinstance(identifier, InputIdentifier):
@@ -276,59 +255,62 @@ class LabelRow(Adw.PreferencesRow):
 
     def _update_values_locked(self, composed_label: KeyLabel | None = None) -> None:
         self.disconnect_signals()
-        if composed_label is None:
-            if gl.app is None:
-                return
-            controller = gl.app.main_win.get_active_controller()
-            if controller is None:
-                return
-            if self.active_identifier is None:
-                return
-            controller_input = controller.get_input(self.active_identifier)
-            if controller_input is None:
-                return
-            composed_label = controller_input.get_active_state().label_manager.get_composed_label(position=self.key_name)
+        try:
+            if composed_label is None:
+                if gl.app is None:
+                    return
+                controller = gl.app.main_win.get_active_controller()
+                if controller is None:
+                    return
+                if self.active_identifier is None:
+                    return
+                controller_input = controller.get_input(self.active_identifier)
+                if controller_input is None:
+                    return
+                composed_label = controller_input.get_active_state().label_manager.get_composed_label(position=self.key_name)
 
-        # Every KeyLabel property is optional, and an unset one means that
-        # nothing is configured here, which for the text is the empty entry.
-        text = composed_label.text or ""
+            # Every KeyLabel property is optional, and an unset one means that
+            # nothing is configured here, which for the text is the empty entry.
+            text = composed_label.text or ""
 
-        if self.text_entry.entry.get_text() != text:
-            pos = self.text_entry.entry.get_position()
-            
-            self.text_entry.entry.set_text(text)
+            if self.text_entry.entry.get_text() != text:
+                pos = self.text_entry.entry.get_position()
 
-            pos = min(pos, len(text))
-            self.text_entry.entry.set_position(pos)
+                self.text_entry.entry.set_text(text)
 
-        hide_details = text.strip() == ""
-        self.font_chooser_box.set_visible(not hide_details)
-        self.outline_box.set_visible(not hide_details)
-        self.alignment_box.set_visible(not hide_details)
+                pos = min(pos, len(text))
+                self.text_entry.entry.set_position(pos)
 
-        self.set_color(composed_label.color)
-        self.set_outline_width(composed_label.outline_width)
-        self.set_outline_color(composed_label.outline_color)
-        self.set_alignment(composed_label.alignment)
+            hide_details = text.strip() == ""
+            self.font_chooser_box.set_visible(not hide_details)
+            self.outline_box.set_visible(not hide_details)
+            self.alignment_box.set_visible(not hide_details)
 
-        # self.font_chooser_button.button.set_font_desc(Pango.FontDescription.from_string(f"{composed_label.font_name} {composed_label.style} {composed_label.font_size}px"))
-        # A font description needs all four; an incompletely composed label
-        # leaves the chooser showing whatever it had.
-        font_name = composed_label.font_name
-        font_size = composed_label.font_size
-        style = composed_label.style
-        font_weight = composed_label.font_weight
-        if (font_name is not None and font_size is not None
-                and style is not None and font_weight is not None):
-            desc = get_pango_font_description(
-                font_family=font_name,
-                font_size=font_size,
-                font_style=style,
-                font_weight=font_weight
-            )
-            self.font_chooser_button.button.set_font_desc(desc)
+            self.set_color(composed_label.color)
+            self.set_outline_width(composed_label.outline_width)
+            self.set_outline_color(composed_label.outline_color)
+            self.set_alignment(composed_label.alignment)
 
-        self.connect_signals()
+            # self.font_chooser_button.button.set_font_desc(Pango.FontDescription.from_string(f"{composed_label.font_name} {composed_label.style} {composed_label.font_size}px"))
+            # A font description needs all four; an incompletely composed label
+            # leaves the chooser showing whatever it had.
+            font_name = composed_label.font_name
+            font_size = composed_label.font_size
+            style = composed_label.style
+            font_weight = composed_label.font_weight
+            if (font_name is not None and font_size is not None
+                    and style is not None and font_weight is not None):
+                desc = get_pango_font_description(
+                    font_family=font_name,
+                    font_size=font_size,
+                    font_style=style,
+                    font_weight=font_weight
+                )
+                self.font_chooser_button.button.set_font_desc(desc)
+        finally:
+            # Every lookup above may return early. The reconnect must still run,
+            # or the row's widgets stay silently unable to save.
+            self.connect_signals()
 
     # None means the label sets no value for this property, so the widget
     # keeps its current value.

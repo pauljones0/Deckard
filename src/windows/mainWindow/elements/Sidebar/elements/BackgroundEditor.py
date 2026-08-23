@@ -187,6 +187,10 @@ class ColorRow(Adw.PreferencesRow):
         # Unset until load_for_identifier binds a row to an input.
         self.active_identifier: InputIdentifier | None = None
         self.active_state: int | None = None
+        # The colour handler id, or None while it is disconnected. A tracked id
+        # keeps connect and disconnect idempotent: a disconnect while already
+        # off cannot raise, and a reconnect cannot stack a second handler.
+        self._color_handler: int | None = None
         self.build()
 
     def build(self) -> None:
@@ -203,18 +207,19 @@ class ColorRow(Adw.PreferencesRow):
 
         self.button.button.set_dialog(self.color_dialog)
 
+        # The revert click stays wired for the life of the row. Only the colour
+        # handler toggles, so it alone is disconnected while values are set.
+        self.button.revert_button.connect("clicked", self.on_revert)
         self.connect_signals()
 
     def connect_signals(self) -> None:
-        self.button.button.connect("notify::rgba", self.on_change_color)
-        self.button.revert_button.connect("clicked", self.on_revert)
+        if self._color_handler is None:
+            self._color_handler = self.button.button.connect("notify::rgba", self.on_change_color)
 
     def disconnect_signals(self) -> None:
-        try:
-            self.button.button.disconnect_by_func(self.on_change_color)
-        except TypeError:
-            # disconnect_by_func raises TypeError when nothing is connected.
-            pass
+        if self._color_handler is not None:
+            self.button.button.disconnect(self._color_handler)
+            self._color_handler = None
 
     def set_color(self, color_values: list[int]) -> None:
         if len(color_values) == 3:
@@ -252,34 +257,36 @@ class ColorRow(Adw.PreferencesRow):
 
     def load_for_identifier(self, identifier: InputIdentifier, state: int) -> None:
         self.disconnect_signals()
+        try:
+            if gl.app is None:
+                return
+            self.active_identifier = identifier
+            self.active_state = state
 
-        if gl.app is None:
-            return
-        self.active_identifier = identifier
-        self.active_state = state
+            active_page = gl.app.main_win.get_active_page()
+            if active_page is None:
+                return
 
-        active_page = gl.app.main_win.get_active_page()
-        if active_page is None:
-            return
+            c_input = active_page.deck_controller.get_input(identifier)
+            if c_input is None:
+                log.error("Input not found")
+                return
 
-        c_input = active_page.deck_controller.get_input(identifier)
-        if c_input is None:
-            log.error("Input not found")
-            return
-        
-        c_state = c_input.states.get(state)
-        if c_state is None:
-            log.error("State not found")
-            return
+            c_state = c_input.states.get(state)
+            if c_state is None:
+                log.error("State not found")
+                return
 
-        color = active_page.get_background_color(identifier=identifier, state=self.active_state)
-        color = c_state.background_manager.get_composed_color()
+            color = active_page.get_background_color(identifier=identifier, state=self.active_state)
+            color = c_state.background_manager.get_composed_color()
 
-        self.set_color(color)
+            self.set_color(color)
 
-        self.button.revert_button.set_visible(c_state.background_manager.get_use_page_background())
-
-        self.connect_signals()
+            self.button.revert_button.set_visible(c_state.background_manager.get_use_page_background())
+        finally:
+            # A lookup that returns early must still leave the button wired, or
+            # every later colour change is dropped silently.
+            self.connect_signals()
 
 class ColorButton(Gtk.Box):
     def __init__(self, color_row: ColorRow, **kwargs: Any) -> None:
@@ -299,6 +306,9 @@ class VideoLoopRow(Adw.PreferencesRow):
         # Unset until load_for_identifier binds a row to an input.
         self.active_identifier: InputIdentifier | None = None
         self.active_state: int | None = None
+        # The toggle handler id, or None while it is disconnected. A tracked id
+        # keeps connect and disconnect idempotent across early-return loads.
+        self._toggle_handler: int | None = None
         self.build()
 
     def build(self) -> None:
@@ -315,13 +325,13 @@ class VideoLoopRow(Adw.PreferencesRow):
         self.connect_signals()
 
     def connect_signals(self) -> None:
-        self.switch.connect("notify::active", self.on_toggle)
+        if self._toggle_handler is None:
+            self._toggle_handler = self.switch.connect("notify::active", self.on_toggle)
 
     def disconnect_signals(self) -> None:
-        try:
-            self.switch.disconnect_by_func(self.on_toggle)
-        except TypeError:
-            pass
+        if self._toggle_handler is not None:
+            self.switch.disconnect(self._toggle_handler)
+            self._toggle_handler = None
 
     def on_toggle(self, *args: object) -> None:
         target = _page_and_input(self)
@@ -333,15 +343,18 @@ class VideoLoopRow(Adw.PreferencesRow):
 
     def load_for_identifier(self, identifier: InputIdentifier, state: int) -> None:
         self.disconnect_signals()
-        self.active_identifier = identifier
-        self.active_state = state
-        if gl.app is None:
-            return
-        active_page = gl.app.main_win.get_active_page()
-        if active_page is None:
-            return
-        self.switch.set_active(active_page.get_background_loop(identifier=identifier, state=state))
-        self.connect_signals()
+        try:
+            self.active_identifier = identifier
+            self.active_state = state
+            if gl.app is None:
+                return
+            active_page = gl.app.main_win.get_active_page()
+            if active_page is None:
+                return
+            self.switch.set_active(active_page.get_background_loop(identifier=identifier, state=state))
+        finally:
+            # A lookup that returns early must still leave the switch wired.
+            self.connect_signals()
 
 
 class VideoFpsRow(Adw.PreferencesRow):
@@ -352,6 +365,9 @@ class VideoFpsRow(Adw.PreferencesRow):
         # Unset until load_for_identifier binds a row to an input.
         self.active_identifier: InputIdentifier | None = None
         self.active_state: int | None = None
+        # The change handler id, or None while it is disconnected. A tracked id
+        # keeps connect and disconnect idempotent across early-return loads.
+        self._change_handler: int | None = None
         self.build()
 
     def build(self) -> None:
@@ -371,13 +387,13 @@ class VideoFpsRow(Adw.PreferencesRow):
         self.connect_signals()
 
     def connect_signals(self) -> None:
-        self.spinner.connect("value-changed", self.on_change)
+        if self._change_handler is None:
+            self._change_handler = self.spinner.connect("value-changed", self.on_change)
 
     def disconnect_signals(self) -> None:
-        try:
-            self.spinner.disconnect_by_func(self.on_change)
-        except TypeError:
-            pass
+        if self._change_handler is not None:
+            self.spinner.disconnect(self._change_handler)
+            self._change_handler = None
 
     def _uses_media_fps(self) -> bool:
         # A key or a dial caps its media video, and the touchscreen caps its
@@ -399,18 +415,21 @@ class VideoFpsRow(Adw.PreferencesRow):
 
     def load_for_identifier(self, identifier: InputIdentifier, state: int) -> None:
         self.disconnect_signals()
-        self.active_identifier = identifier
-        self.active_state = state
-        if gl.app is None:
-            return
-        active_page = gl.app.main_win.get_active_page()
-        if active_page is None:
-            return
-        if self._uses_media_fps():
-            self.spinner.set_value(active_page.get_media_fps(identifier=identifier, state=state))
-        else:
-            self.spinner.set_value(active_page.get_background_fps(identifier=identifier, state=state))
-        self.connect_signals()
+        try:
+            self.active_identifier = identifier
+            self.active_state = state
+            if gl.app is None:
+                return
+            active_page = gl.app.main_win.get_active_page()
+            if active_page is None:
+                return
+            if self._uses_media_fps():
+                self.spinner.set_value(active_page.get_media_fps(identifier=identifier, state=state))
+            else:
+                self.spinner.set_value(active_page.get_background_fps(identifier=identifier, state=state))
+        finally:
+            # A lookup that returns early must still leave the spinner wired.
+            self.connect_signals()
 
 
 class ImageRow(Adw.PreferencesRow):

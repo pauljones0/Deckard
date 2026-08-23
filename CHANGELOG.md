@@ -54,6 +54,12 @@ bundle as a release asset.
 
 ### Fixed
 
+- Editing the size, position, label or background of a key, dial or
+  touchscreen now keeps saving after the sidebar loads an input the deck does
+  not carry. A row disconnected its value handler, looked the input up, and a
+  lookup that returned early skipped the reconnect, so the row silently
+  dropped every later edit. One such case then aborted the rest of the sidebar
+  load, leaving the label, action and background editors blank until restart.
 - The plugin store reads both store catalog formats, the old per-version
   commit map and the new single-commit form, so a store that publishes the
   new format still lists, installs and updates its assets instead of showing
