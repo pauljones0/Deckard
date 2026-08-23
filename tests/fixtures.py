@@ -274,11 +274,16 @@ class StubDeckController:
 
         The stub holds the raw FaultyFakeDeck, where the real controller holds
         a BetterDeck around it, so it releases through the free function the
-        wrapper's method delegates to. ClearAndClose calls this by name.
+        wrapper's method delegates to. ClearAndClose calls this by name, on
+        the media thread, so it swallows what production swallows: a deck
+        whose close() raises must not kill the writer loop.
         """
         from src.backend.DeckManagement.BetterDeck import release_device_handle
 
-        release_device_handle(self.deck)
+        try:
+            release_device_handle(self.deck)
+        except Exception as e:
+            print(f"stub _release_handle: failed to release the deck handle: {e}")
 
     def _write_blank_frames(self) -> None:
         """Unit-tier stand-in for DeckController._write_blank_frames.
