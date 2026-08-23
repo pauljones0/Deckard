@@ -15,7 +15,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 import re
 import threading
-from typing import TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 
 from loguru import logger as log
 
@@ -28,6 +28,7 @@ from src.backend.WindowGrabber.Integration import Integration
 
 if TYPE_CHECKING:
     from src.backend.DeckManagement.deck_controller.controller import DeckController
+    from src.backend.PageManagement.Page import Page
 from src.backend.WindowGrabber.Integrations.Hyprland import Hyprland
 from src.backend.WindowGrabber.Integrations.Gnome import Gnome
 from src.backend.WindowGrabber.Integrations.Sway import Sway
@@ -66,6 +67,30 @@ def select_integration_class(environment_components: list[str], server: str | No
     return None
 
 
+def rule_patterns(auto_change_settings: dict[str, Any]) -> tuple[str, str] | None:
+    """The wm-class and title patterns of one auto-change rule, or None when
+    the rule holds neither and can match nothing.
+
+    A pattern the rule does not carry matches every window, so the half the
+    user filled in decides on its own. The page editor writes only the fields
+    the user filled in, so a rule made by typing a title alone carries no
+    wm-class key, and reading that as a pattern matching nothing left the rule
+    dead.
+
+    A rule holding neither pattern matches nothing at all. That is what a rule
+    looks like while the user is still typing the first pattern, and while a
+    field is cleared to be retyped. Reading it as one that matches every
+    window hands the deck to the page being edited on the next window change,
+    and the page it took over then keeps the deck, because the deck stays on
+    a rule page that asks to stay.
+    """
+    wm_class = str(auto_change_settings.get("wm-class") or "")
+    title = str(auto_change_settings.get("title") or "")
+    if not wm_class and not title:
+        return None
+    return (wm_class or ".*", title or ".*")
+
+
 class WindowGrabber:
     """Routes active-window changes onto the pages that ask for them.
 
@@ -89,6 +114,20 @@ class WindowGrabber:
     request that arrives mid-pass gets a further pass, which re-reads the
     rules, so the settled state always matches the last write.
     """
+
+    # Held for the per-deck decision of one routing, and never across a page
+    # load. Two routings that overlap read and write the same two fields on a
+    # deck, the one saying its page arrived automatically and the one holding
+    # the page to go back to, and a pair of interleaved decisions loses the way
+    # back to the page the user chose. A load marshals onto the GTK main
+    # thread, so a lock held across one is a lock the main thread can wait for
+    # while the load waits for the main thread.
+    #
+    # The lock sits on the class, so an instance holds it from the moment it
+    # exists, and the app builds one grabber, so it serializes exactly the
+    # decisions that can meet. A holder takes no other lock of this class, and
+    # a gate transition may take it, never the reverse.
+    _dispatch_lock = threading.RLock()
 
     def __init__(self) -> None:
         self.environment_components: list[str] = desktop_components()
@@ -121,6 +160,14 @@ class WindowGrabber:
         self._gate_pending = False
         self._gate_running = False
         self._reset_requested = False
+
+        # The re-check requests coalesce the same way, and for the same
+        # reason: each one queries the desktop and can load a page, and the
+        # page editor asks for one on every keystroke that lands.
+        self._recheck_idle = threading.Event()
+        self._recheck_idle.set()
+        self._recheck_pending = False
+        self._recheck_running = False
 
         self.refresh_watch_state()
 
@@ -365,6 +412,110 @@ class WindowGrabber:
             return False
         return bool(class_match and title_match)
 
+    def recheck_active_window(self) -> None:
+        """Queues one pass of the rules over the window in front right now.
+
+        Returns at once; the pass runs on the background pool. A rule edit
+        otherwise waits for the next window change, so a rule typed for the
+        window the user has in front reads as dead until something else takes
+        focus. The page editor asks for a re-check after every rule edit.
+
+        The pass stays off the GTK main thread twice over: the query for the
+        front window runs subprocesses on most desktops, and a match loads a
+        page. Requests coalesce, like the gate's: one queued while a pass runs
+        causes exactly one more pass, which re-reads the rules.
+        """
+        with self._lock:
+            self._recheck_pending = True
+            self._recheck_idle.clear()
+            if self._recheck_running:
+                return
+            self._recheck_running = True
+
+        try:
+            run_in_background(self._drain_recheck_requests)
+        except Exception:
+            # Nothing drains the request now, so take back the claim above. A
+            # flag left set makes every later re-check do nothing for the rest
+            # of the session. This branch runs once the background pool shuts
+            # down, which is part of quit, and the rule still applies at the
+            # next window change.
+            with self._lock:
+                self._recheck_running = False
+                self._recheck_pending = False
+                self._recheck_idle.set()
+            log.debug("Could not schedule an active window re-check")
+
+    def wait_for_recheck(self, timeout: float = 10.0) -> bool:
+        """Blocks until no re-check is queued or running. False on timeout.
+
+        This exists for a test that asserts on a settled decision, above all
+        that nothing queried the desktop. Production code never needs it.
+        """
+        return self._recheck_idle.wait(timeout)
+
+    def _drain_recheck_requests(self) -> None:
+        while True:
+            with self._lock:
+                if not self._recheck_pending:
+                    self._recheck_running = False
+                    self._recheck_idle.set()
+                    return
+                self._recheck_pending = False
+
+            try:
+                self._recheck_active_window()
+            except Exception:
+                # The drain loop must survive anything a pass throws. The
+                # running flag otherwise stays set and kills every later
+                # re-check.
+                log.opt(exception=True).error("An active window re-check failed")
+
+    def _recheck_active_window(self) -> None:
+        page_manager = gl.page_manager
+        if page_manager is None:
+            return
+
+        try:
+            wanted = page_manager.any_auto_change_rule_enabled()
+        except Exception:
+            log.opt(exception=True).warning("Could not determine whether any window auto-change rule is enabled")
+            return
+
+        if not wanted:
+            # The same gate the watcher takes. With no rule anywhere there is
+            # nothing to apply, and going on would build the integration,
+            # probe the desktop and publish a foreground window that the API
+            # reports only while a rule asks for it.
+            return
+
+        integration = self._ensure_integration()
+        if integration is None:
+            return
+
+        window = integration.get_active_window()
+        if window is None:
+            # This session has no way to name the front window, or nothing is
+            # in front. Neither leaves anything to match the rules against.
+            return
+
+        self.on_active_window_changed(window)
+
+    def report_active_window(self, window: Window) -> None:
+        """Routes a window reported from outside this process.
+
+        Returns at once; the routing runs on the background pool. The caller
+        is the D-Bus method that lets a test or a development run stand in for
+        the desktop, and D-Bus hands that call to the GTK main thread. A
+        routing loads a page, which marshals back onto that same thread, so a
+        routing that ran there would wait for itself.
+        """
+        try:
+            run_in_background(self.on_active_window_changed, window)
+        except Exception:
+            # The background pool is gone, which is part of quit.
+            log.debug("Could not route a reported active window")
+
     def on_active_window_changed(self, window: Window) -> None:
         # log.info(f"Active window changed to: {window}")
 
@@ -407,32 +558,66 @@ class WindowGrabber:
             # of reading active_page.json_path.
             return
 
-        found_page = False
+        matched_path: str | None = None
         for page_path in page_manager.get_pages():
             info = page_manager.get_auto_change_settings(page_path)
-            wm_regex = info.get("wm-class")
-            title_regex = info.get("title")
             enabled = info.get("enable", False)
             decks = info.get("decks", [])
             if not enabled:
                 continue
 
+            patterns = rule_patterns(info)
+            if patterns is None:
+                continue
+            wm_regex, title_regex = patterns
+
             if self.get_is_window_matching(window, wm_regex, title_regex):
                 if deck_controller.serial_number() not in decks:
                     continue
-
-                if deck_controller.active_page.json_path != page_path:
-                    log.debug(f"Auto changing page: {page_path} on deck {deck_controller.deck.get_serial_number()}")
-                    page = page_manager.get_page(page_path, deck_controller)
-                    if not deck_controller.page_auto_loaded:
-                        deck_controller.last_manual_loaded_page_path = deck_controller.active_page.json_path
-                    deck_controller.load_page(page)
-                deck_controller.page_auto_loaded = True
-                found_page = True
+                matched_path = page_path
                 break
 
-        if not found_page:
+        if matched_path is None:
             self._restore_manual_page(deck_controller)
+            return
+
+        if not self._claim_auto_page(deck_controller, matched_path):
+            return
+
+        log.debug(f"Auto changing page: {matched_path} on deck {deck_controller.deck.get_serial_number()}")
+        page = page_manager.get_page(matched_path, deck_controller)
+        if page is None:
+            # The page went away between the rule read and the load.
+            return
+        # The load runs outside the decision, and a second routing that decided
+        # on the same page reaches this too. allow_reload keeps the deck from
+        # building the page it already shows a second time: the page manager
+        # answers both routings with the one cached page object for this deck.
+        deck_controller.load_page(page, allow_reload=False)
+
+    def _claim_auto_page(self, deck_controller: "DeckController", page_path: str) -> bool:
+        """Records that this deck's page arrived automatically, and answers
+        whether a load is still needed.
+
+        This is the whole of the decision that two routings must not interleave.
+        A deck taken off its manual page has to remember which page that was,
+        and two routings reading that flag at once lose the way back.
+
+        It holds the routing lock and does no work of its own. The load stays
+        outside, because a page load marshals onto the GTK main thread and
+        waits there. A lock held across it is a lock the main thread can be
+        waiting for, and then neither side moves until the marshal times out.
+        """
+        with self._dispatch_lock:
+            active_page = deck_controller.active_page
+            if active_page is None:
+                return False
+
+            needs_load = active_page.json_path != page_path
+            if needs_load and not deck_controller.page_auto_loaded:
+                deck_controller.last_manual_loaded_page_path = active_page.json_path
+            deck_controller.page_auto_loaded = True
+            return needs_load
 
     def _restore_manual_page(self, deck_controller: "DeckController") -> None:
         """Returns one deck to its last manually loaded page.
@@ -450,21 +635,51 @@ class WindowGrabber:
             return
 
         # A deck mid-startup or mid-hotplug has no page to restore from, and
-        # a deck that was never auto-switched has nothing to undo.
-        if deck_controller.active_page is None:
+        # a deck that was never auto-switched has nothing to undo. Both are
+        # read again inside the claim; this pair only keeps the settings read
+        # below off the path for a deck that plainly has nothing to restore.
+        active_page = deck_controller.active_page
+        if active_page is None:
             return
         if not getattr(deck_controller, "page_auto_loaded", False):
             return
 
-        active_page_change_info = page_manager.get_auto_change_settings(deck_controller.active_page.json_path)
+        active_page_change_info = page_manager.get_auto_change_settings(active_page.json_path)
         if active_page_change_info.get("stay-on-page", True):
             return
-        deck_controller.page_auto_loaded = False
-        if deck_controller.last_manual_loaded_page_path is None:
+
+        manual_path = self._claim_manual_page(deck_controller, active_page)
+        if manual_path is None:
             return
-        page = page_manager.get_page(deck_controller.last_manual_loaded_page_path, deck_controller)
+
+        page = page_manager.get_page(manual_path, deck_controller)
         if page is None:
             # The user deleted the manually chosen page. Nothing remains to go
             # back to, and a load of None takes the deck's page away.
             return
         deck_controller.load_page(page, allow_reload=False)
+
+    def _claim_manual_page(self, deck_controller: "DeckController", active_page: "Page") -> str | None:
+        """Answers the page this deck goes back to, and marks the deck as no
+        longer automatically loaded. None when there is nothing to undo.
+
+        The same decision as an automatic switch, and it holds the routing lock
+        for the same reason: the flag it reads is the flag it writes, and two
+        routings that both read it before either writes both undo the switch.
+        The load stays outside the lock, because it marshals onto the GTK main
+        thread.
+        """
+        with self._dispatch_lock:
+            if not getattr(deck_controller, "page_auto_loaded", False):
+                return None
+            if deck_controller.active_page is not active_page:
+                # Another routing moved the deck after the settings above were
+                # read, so those settings describe a page the deck has left.
+                # That routing owns the decision now.
+                return None
+
+            manual_path = deck_controller.last_manual_loaded_page_path
+            if manual_path is None:
+                return None
+            deck_controller.page_auto_loaded = False
+            return manual_path

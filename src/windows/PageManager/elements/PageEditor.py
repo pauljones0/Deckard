@@ -116,6 +116,12 @@ class PageEditor(Adw.NavigationPage):
         self.screensaver_group = ScreensaverGroup(page_editor=self)
         self.editor_main_box.append(self.screensaver_group)
 
+        # Every group in one list, so teardown reaches all of them.
+        self.groups: list[PageEditorGroup] = [
+            self.name_group, self.default_page_group, self.auto_change_group,
+            self.brightness_group, self.background_group, self.screensaver_group,
+        ]
+
         # No page page
         self.no_page_box = Gtk.Box(hexpand=True, vexpand=True)
         self.main_stack.add_titled(self.no_page_box, "no-page", "No Page")
@@ -160,8 +166,25 @@ class PageEditor(Adw.NavigationPage):
     def delete_active_page(self) -> None:
         if self.active_page_path is None:
             return
-        
+
         self.page_manager.remove_page_by_path(self.active_page_path)
+
+    def teardown(self) -> None:
+        """Releases the editor before its window destroys it.
+
+        A row handler that outlives the window fires while the widgets go
+        away, and what it starts, such as the matching-window refresh, lands
+        on an idle later still. Nothing disconnects the rows otherwise: the
+        groups drop their handlers when another page loads, and a window that
+        closes loads no further page.
+
+        Text the user typed and never applied is written first. The entries
+        are the last place it exists, and the handler that would commit it is
+        about to go.
+        """
+        self.auto_change_group.commit_pending_patterns()
+        for group in self.groups:
+            group.disconnect_events()
 
 class PageEditorGroup(Adw.PreferencesGroup):
     def __init__(self, page_editor: PageEditor, *args: Any, **kwargs: Any) -> None:
@@ -304,6 +327,16 @@ class AutoChangeGroup(PageEditorGroup):
         self.wm_class_entry = Adw.EntryRow(title=gl.lm.get("page-manager.page-editor.change-group.wm-class-regex"), text="", show_apply_button=True)
         self.add(self.wm_class_entry)
 
+        # An entry row commits its text on Enter or on the apply button. Text
+        # the user typed and then left behind, by clicking elsewhere or by
+        # closing the window, would otherwise stay in the widget alone and the
+        # page would keep the pattern it had.
+        self.title_focus = Gtk.EventControllerFocus()
+        self.title_entry.add_controller(self.title_focus)
+
+        self.wm_class_focus = Gtk.EventControllerFocus()
+        self.wm_class_entry.add_controller(self.wm_class_focus)
+
         self.matching_window_expander = MatchingWindowExpander(auto_change_group=self)
         self.add(self.matching_window_expander)
 
@@ -312,12 +345,16 @@ class AutoChangeGroup(PageEditorGroup):
         self.stay_on_page_toggle.connect("notify::active", self.on_stay_on_page_changed)
         self.title_entry.connect("apply", self.on_title_entry_applied)
         self.wm_class_entry.connect("apply", self.on_wm_class_entry_applied)
+        self.title_focus.connect("leave", self.on_title_focus_left)
+        self.wm_class_focus.connect("leave", self.on_wm_class_focus_left)
 
     def disconnect_events(self) -> None:
         better_disconnect(self.enable_toggle, self.on_enable_changed)
         better_disconnect(self.stay_on_page_toggle, self.on_stay_on_page_changed)
         better_disconnect(self.title_entry, self.on_title_entry_applied)
         better_disconnect(self.wm_class_entry, self.on_wm_class_entry_applied)
+        better_disconnect(self.title_focus, self.on_title_focus_left)
+        better_disconnect(self.wm_class_focus, self.on_wm_class_focus_left)
 
     def load_config_settings(self, page_path: str) -> None:
         active_page_path = self.page_editor.active_page_path
@@ -336,12 +373,14 @@ class AutoChangeGroup(PageEditorGroup):
             path=self.page_editor.require_active_page_path(),
             enable=self.enable_toggle.get_active()
         )
+        self.recheck_active_window()
 
     def on_stay_on_page_changed(self, *args: object) -> None:
         services.require_page_manager().overwrite_auto_change_settings(
             path=self.page_editor.require_active_page_path(),
             stay_on_page=self.stay_on_page_toggle.get_active()
         )
+        self.recheck_active_window()
 
     def on_title_entry_applied(self, *args: object) -> None:
         self.matching_window_expander.update_matching_windows()
@@ -350,6 +389,7 @@ class AutoChangeGroup(PageEditorGroup):
             path=self.page_editor.require_active_page_path(),
             regex_title=self.title_entry.get_text()
         )
+        self.recheck_active_window()
 
     def on_wm_class_entry_applied(self, *args: object) -> None:
         self.matching_window_expander.update_matching_windows()
@@ -358,6 +398,80 @@ class AutoChangeGroup(PageEditorGroup):
             path=self.page_editor.require_active_page_path(),
             wm_class=self.wm_class_entry.get_text()
         )
+        self.recheck_active_window()
+
+    def on_title_focus_left(self, *args: object) -> None:
+        if self.is_stored_pattern("title", self.title_entry.get_text()):
+            # Nothing to write, and the re-check runs anyway. The focus
+            # leaving is often the window the rule names coming to the front,
+            # and a user who committed the pattern with Enter would otherwise
+            # see nothing happen at the moment it can finally match.
+            self.recheck_active_window()
+            return
+        self.on_title_entry_applied()
+
+    def on_wm_class_focus_left(self, *args: object) -> None:
+        if self.is_stored_pattern("wm-class", self.wm_class_entry.get_text()):
+            self.recheck_active_window()
+            return
+        self.on_wm_class_entry_applied()
+
+    def commit_pending_patterns(self) -> None:
+        """Writes the entry text the page does not carry yet.
+
+        The editor's teardown calls this. A window that closes takes the
+        entries with it, and this is the last place the text exists. It writes
+        the page settings alone, and leaves the matching-window list, whose
+        refresh lands on an idle after the widgets are gone.
+        """
+        page_manager = gl.page_manager
+        path = self.page_editor.active_page_path
+        if page_manager is None or path is None:
+            return
+
+        title = self.title_entry.get_text()
+        wm_class = self.wm_class_entry.get_text()
+        committed = False
+
+        if not self.is_stored_pattern("title", title):
+            page_manager.overwrite_auto_change_settings(path=path, regex_title=title)
+            committed = True
+        if not self.is_stored_pattern("wm-class", wm_class):
+            page_manager.overwrite_auto_change_settings(path=path, wm_class=wm_class)
+            committed = True
+
+        if committed:
+            self.recheck_active_window()
+
+    def is_stored_pattern(self, key: str, text: str) -> bool:
+        """Whether the page already carries this pattern.
+
+        A focus leave arrives on every click elsewhere in the window, and
+        almost none of those carry an edit. A write for each one would re-gate
+        the window watcher and re-apply every rule for nothing. An absent
+        pattern reads as the empty one, which is what the entry shows for it.
+
+        It answers True while no page is loaded, because there is nothing to
+        write the text to.
+        """
+        page_manager = gl.page_manager
+        path = self.page_editor.active_page_path
+        if page_manager is None or path is None:
+            return True
+        return (page_manager.get_auto_change_settings(path).get(key) or "") == text
+
+    def recheck_active_window(self) -> None:
+        """Applies the edited rules to the window that is in front now.
+
+        An edit otherwise takes effect at the next window change alone, so a
+        rule written for the window the user is looking at appears to do
+        nothing. The window grabber does the work on a background thread,
+        because it can load a page.
+        """
+        window_grabber = gl.window_grabber
+        if window_grabber is None:
+            return
+        window_grabber.recheck_active_window()
 
     def on_deck_changed(self, serial_number: str, state: bool) -> None:
         page_manager = gl.page_manager

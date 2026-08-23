@@ -207,6 +207,11 @@ class DeckardAPI:
         """Tell Deckard the current foreground window.
 
         This lets a test or a development run work without kdotool.
+
+        The window grabber routes it on a worker. This method arrives on the
+        main context, and routing a window loads a page, which marshals onto
+        that same context and waits for it. Any process on the session bus can
+        call this, so an inline routing would hand any of them the main thread.
         """
         win = WindowInfo(name, wm_class)
         log.info(f"DBus API: NotifyForegroundWindow called – {win!r}")
@@ -214,7 +219,7 @@ class DeckardAPI:
             if gl.window_grabber is not None:
                 from src.backend.WindowGrabber.Window import Window
                 window = Window(wm_class=win.wm_class, title=win.name)
-                gl.window_grabber.on_active_window_changed(window)
+                gl.window_grabber.report_active_window(window)
         except Exception as e:
             log.error(f"DBus API: NotifyForegroundWindow error: {e}")
 
@@ -281,7 +286,15 @@ class DeckardAPI:
 
     @ForegroundWindow.setter
     def ForegroundWindow(self, value: Tuple[Str, Str]) -> None:
-        self._foreground_window = WindowInfo(*value)
+        window = WindowInfo(*value)
+        if window == self._foreground_window:
+            # The same window arrives again whenever the rules are re-applied
+            # to the window already in front, which every page-editor edit
+            # asks for. A PropertiesChanged carrying the value the clients
+            # already hold wakes every subscriber for nothing.
+            return
+
+        self._foreground_window = window
         log.debug(f"DBus API: ForegroundWindow changed to {self._foreground_window!r}")
         _emit_properties_changed(
             DBUS_OBJECT_PATH, TOP_IFACE,

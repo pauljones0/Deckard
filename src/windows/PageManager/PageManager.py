@@ -49,6 +49,9 @@ class PageManager(Adw.ApplicationWindow):
 
     def on_close(self, *args: Any, **kwargs: Any) -> None:
         gl.page_manager_window = None
+        # Before the destroy, because the editor's rows hold handlers that
+        # would otherwise fire while the widgets go away.
+        self.page_editor.teardown()
         self.destroy()
 
 
