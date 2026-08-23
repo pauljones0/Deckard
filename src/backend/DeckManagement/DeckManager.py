@@ -72,6 +72,14 @@ def close_all_controllers(controllers: "Iterable[Any]", join_timeout: float = 2.
             except Exception as e:
                 log.error(f"Failed to close deck cleanly: {e}")
             continue
+        # Stop the reader from this thread, ahead of the message. The writer
+        # then releases the handle with nothing left to join, and the join
+        # this quit path is bounded by stays inside its budget. A failure
+        # here must not cost the deck its clear and close.
+        try:
+            controller.deck.stop_read_thread()
+        except Exception as e:
+            log.error(f"Failed to stop the reader thread for deck: {e}")
         try:
             media_player.submit_control(ClearAndCloseMsg())
             pending_joins.append(controller)

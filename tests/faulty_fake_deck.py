@@ -208,6 +208,18 @@ class FaultyFakeDeck(FakeDeck):
         with self._lifecycle_lock:
             self._open = False
 
+    def stop_read_thread(self, timeout=None) -> None:
+        """The wrapper-role stop, for the unit tier.
+
+        The unit-tier stub controller holds this deck where a real controller
+        holds a BetterDeck, so the teardown paths call this by the wrapper's
+        name. It runs the same body the wrapper delegates to, which is a
+        no-op for a deck that models no reader thread.
+        """
+        from src.backend.DeckManagement.BetterDeck import stop_device_read_thread
+
+        stop_device_read_thread(self, timeout)
+
     # Lifecycle queries. FakeDeck hard-wires both to True; report state instead.
     def is_open(self) -> bool:
         with self._lifecycle_lock:
