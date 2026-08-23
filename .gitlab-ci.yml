@@ -457,6 +457,16 @@ release:github:
 .release:
   image: node:22
   cache: []
+  # The release commit reaches the public mirror, so this pins the identity it
+  # carries. The release tooling writes a name and an address of its own into
+  # the repo config; git reads the identity environment ahead of the config, so
+  # these values win. Set the same four names as project CI variables to change
+  # what a release commit publishes.
+  variables:
+    GIT_AUTHOR_NAME: "Deckard release bot"
+    GIT_AUTHOR_EMAIL: "noreply@github.com"
+    GIT_COMMITTER_NAME: "Deckard release bot"
+    GIT_COMMITTER_EMAIL: "noreply@github.com"
   before_script:
     - git clone --depth 1 --branch "$CI_AUTOMATION_REF"
         "https://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_SERVER_HOST}/nb-labs/ci-automation.git" .ci-automation
