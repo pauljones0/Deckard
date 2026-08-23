@@ -252,14 +252,14 @@ class ControllerInputState:
 
     def _submit_action_callback(self, fn: "Callable[..., None]", *args: object) -> "Future[None] | None":
         """Route an action callback through the deck's bounded thread pool.
-        Returns the Future, or None when the pool is gone or shut down, which
-        is the deck tearing down, or when a live pool is out of threads."""
+        Returns the Future, or None when the pool cannot take the work."""
         executor = getattr(self.deck_controller, "action_executor", None)
         if executor is None:
             return None
         try:
             future: "Future[None] | None" = executor.submit(fn, *args)
-        except RuntimeError:
+        except RuntimeError as error:
+            log.warning(f"The action pool refused a callback for {self.controller_input.identifier}: {error!r}. A pool that is shutting down returns None instead, so this one is live and out of threads, and this input loses the update.")
             return None
         if future is None:
             return None

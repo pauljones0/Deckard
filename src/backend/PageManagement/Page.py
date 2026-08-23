@@ -566,14 +566,19 @@ class Page:
             return
         try:
             # A shut-down pool hands back None and the call is dropped, the
-            # same as a missing pool above. A RuntimeError still arrives when
-            # a live pool refuses the work, out of threads. Either way the
-            # action keeps its on_ready_finished gate shut, which is the
-            # teardown case; nothing here may cancel a queued ready callback,
-            # because a cancelled one never opens that gate again.
+            # same as the missing pool above. Nothing in the pool's own life
+            # cancels a queued ready callback: only close() does, and there
+            # the page dies with the deck. A cancelled callback never runs
+            # the finally that opens the action's tick and update gates.
             executor.submit(self._run_ready_callbacks, action)
-        except RuntimeError:
-            pass
+        except RuntimeError as error:
+            # Not a shutdown, which returns None. A live pool refuses when
+            # the process is out of threads, and then this action stays
+            # unready for the life of the page with no other signal.
+            log.warning(
+                f"The action pool refused the ready callback for "
+                f"{getattr(action, 'action_id', action)}: {error!r}. That "
+                f"action stays unready until the page loads again.")
 
     @log.catch
     def _run_ready_callbacks(self, action: ActionCore) -> None:

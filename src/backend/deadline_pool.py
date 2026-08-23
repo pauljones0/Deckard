@@ -130,10 +130,10 @@ class DeadlinePool:
         self._replace_on_wedge = replace_on_wedge
         self._wording = BatchWording() if wording is None else wording
         self._new_executor: ExecutorFactory = _new_thread_pool if executor_factory is None else executor_factory
-        # Guards the executor swap against shutdown() only. submit() takes no
-        # lock: it reads the attribute once, and a submit onto an executor
-        # that a replacement just abandoned still runs, because the abandoned
-        # executor keeps its workers and its queue.
+        # Held across every submit, every swap and the shutdown flag, so a
+        # submit and a replacement never interleave. It is not reentrant: a
+        # task, or a factory, that calls back into its own pool on the thread
+        # that holds it would deadlock.
         self._lock = threading.Lock()
         self._shutdown = False
         self._leaked_workers = 0
@@ -178,16 +178,21 @@ class DeadlinePool:
         and the task never reached the queue. A caller that treats it like a
         shutdown loses the work without a word.
         """
-        executor = self._executor
-        try:
-            return executor.submit(fn, *args, **kwargs)
-        except RuntimeError as error:
-            # Both cases arrive as RuntimeError and the text is what tells
-            # them apart. The flag alone does not cover an executor that the
-            # owner shut down through another reference.
-            if self._shutdown or "shutdown" in str(error):
-                return None
-            raise
+        # The lock covers the read of the executor and the call on it as one
+        # step. A replacement that landed between the two would leave this
+        # submit on the executor the swap then shuts down, and that
+        # RuntimeError reads exactly like a shut-down pool: a live pool would
+        # drop the work and say nothing. The swap takes the same lock.
+        with self._lock:
+            try:
+                return self._executor.submit(fn, *args, **kwargs)
+            except RuntimeError as error:
+                # Both cases arrive as RuntimeError and the text is what tells
+                # them apart. The flag alone does not cover an executor that
+                # the owner shut down through another reference.
+                if self._shutdown or "shutdown" in str(error):
+                    return None
+                raise
 
     def run_batch(
         self,
@@ -297,13 +302,21 @@ class DeadlinePool:
                 f"{deadline}s. They keep their place in the queue and run late.")
         if not stuck:
             return False
-        # One worker per started-and-overdue task, and it comes back only if
-        # the task does. See leaked_workers: an upper bound. Under the lock,
-        # because two batches on one pool otherwise lose an increment between
-        # the read and the write; everything else a batch tracks is its own.
-        with self._lock:
-            self._leaked_workers += len(stuck)
-        replaced = self._replace_executor()
+        replaced = self._wedge(len(stuck))
+        head = (
+            f"{words.subject} [{', '.join(stuck)}] did not finish within "
+            f"{deadline}s")
+        tail = f"Leaked threads in this pool so far: {self._leaked_workers}."
+        if self._shutdown:
+            # A wedge at teardown asks nothing of the reader: the owner is
+            # dropping this pool, a close with cancel_futures took the queue,
+            # and a fresh executor would be litter nobody shuts down. So it
+            # reports as news and not as a warning.
+            log.info(
+                f"{head}; the {words.pool_name} is shut down, so each stuck "
+                f"task holds its thread until it returns and the close took "
+                f"whatever was still queued. {tail}")
+            return False
         aftermath = (
             f"Replacing the {words.pool_name}, so the stuck task(s) leak their "
             f"executor's thread(s) once instead of wedging every later batch "
@@ -313,31 +326,40 @@ class DeadlinePool:
             f"queues behind them."
         )
         log.warning(
-            f"{words.subject} [{', '.join(stuck)}] did not finish within "
-            f"{deadline}s; continuing without them ({words.stuck_hint}). "
-            f"{aftermath} Leaked threads in this pool so far: "
-            f"{self._leaked_workers}.")
+            f"{head}; continuing without them ({words.stuck_hint}). "
+            f"{aftermath} {tail}")
         return replaced
 
-    def _replace_executor(self) -> bool:
-        """Swap in a fresh executor and abandon the worn one to its stuck
-        task(s). Returns False when the pool does not replace, or when it is
-        already shut down and a fresh executor would only be litter.
+    def _wedge(self, stuck_count: int) -> bool:
+        """Count the workers a wedge pinned and, on a replacing pool, swap in
+        a fresh executor. Returns True when it replaced.
+
+        One hold of the lock covers the count and the swap. The count needs
+        it because two batches on one pool otherwise lose an increment
+        between the read and the write, and the swap needs it because a
+        submit must not land on the executor this abandons. Everything else a
+        batch tracks is its own.
 
         Build first and publish second, so no submit finds the pool without
-        an executor. The old one is never waited on and never cancelled: a
-        stuck task may never return, and cancelling would take the queued
-        tasks with it. Nothing re-submits those, so they would stay unrun for
-        good. The abandoned executor keeps them, and its free workers drain
-        the queue before it exits.
+        an executor. The replacement takes the width and the name the
+        constructor took, so it is the same pool again. The old executor is
+        never waited on and never cancelled: a stuck task may never return,
+        and cancelling would take the queued tasks with it. Nothing
+        re-submits those, so they would stay unrun for good. The abandoned
+        executor keeps them, and its free workers drain the queue before it
+        exits.
+
+        A shut-down pool replaces nothing. Its owner is dropping it, and a
+        fresh executor there is litter that nobody ever shuts down.
         """
-        if not self._replace_on_wedge:
-            return False
+        old: Executor | None = None
         with self._lock:
-            if self._shutdown:
-                return False
-            old = self._executor
-            self._executor = self._new_executor(self._max_workers, self._thread_name_prefix)
-            self._replacements += 1
+            self._leaked_workers += stuck_count
+            if self._replace_on_wedge and not self._shutdown:
+                old = self._executor
+                self._executor = self._new_executor(self._max_workers, self._thread_name_prefix)
+                self._replacements += 1
+        if old is None:
+            return False
         old.shutdown(wait=False)
         return True

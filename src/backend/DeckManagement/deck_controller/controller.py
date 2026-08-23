@@ -275,9 +275,9 @@ class DeckController:
             # Bounded thread pool for the action callbacks, sized so every
             # input runs its on_tick concurrently. Lifecycle only: no
             # deadline, and no replacement. A cancelled ready callback never
-            # runs the finally that opens the tick and update gates, which
-            # leaves that action dead for the life of the page. The wedge
-            # policy for this pool is the per-input stuck-tick warning.
+            # runs the finally that opens the tick and update gates, so only
+            # close() cancels here, where the page dies with the deck. The
+            # wedge policy in flight is the per-input stuck-tick warning.
             total_inputs = sum(len(inputs) for inputs in self.inputs.values())
             # close() sets this to None, so every reader either
             # getattr-defaults or None-checks before it submits.
