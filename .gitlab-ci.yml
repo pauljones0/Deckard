@@ -49,9 +49,9 @@ variables:
 
 # ── test ─────────────────────────────────────────────────────────────────────
 # Syntax-level gate only: compileall byte-compiles every python file without
-# importing it (imports need GTK4/PyGObject, which no slim CI image has). The
-# scenario harness (tests/run_all.py) stays a local tool for now — running it
-# in CI is follow-up work, not part of this pipeline.
+# importing it (imports need GTK4/PyGObject, which this image does not carry).
+# The scenario harness (tests/run_all.py) does need that stack, so it runs in
+# test:scenarios below, which provisions GTK from the distro and starts by hand.
 #
 # The module-size ratchet rides along here because it has the same shape: pure
 # stdlib, no imports of the tree, so it needs nothing this image lacks. It caps
@@ -173,6 +173,97 @@ changelog-check:
         echo "nor carries the 'no-changelog' label. Advisory only — not blocking."
         exit 1
       fi
+
+# On-demand scenario suite. The harness runs a few hundred scenarios, each one
+# a subprocess that boots the real GTK4 stack, so this job never starts by
+# itself: it is manual on merge request and default-branch pipelines alike, and
+# allow_failure keeps a pipeline green while it sits unplayed. The runner host
+# also serves GitLab, so resource_group holds the project to one run at a time.
+#
+# The image mirrors provisioning that is known to work on a developer host,
+# rather than a build invented for CI. Trixie's python3 is 3.13, the deployment
+# floor, and its python3-gi is the PyGObject version requirements.txt pins. The
+# venv is therefore created with --system-site-packages, so pip sees PyGObject
+# satisfied and never rebuilds the bindings against headers this image does not
+# carry. A python:3.13 image does not work here: its /usr/local interpreter
+# cannot see the distro dist-packages, which is what the whole arrangement
+# rests on.
+#
+# Package notes. gir1.2-xdp-1.0 is the easy one to forget: autostart.py
+# requires the Xdp typelib at import time, so without it every scenario fails
+# identically. dbus-daemon is a hard requirement of the scenarios that raise a
+# private bus. gcc and libc6-dev are there for evdev alone, which ships no
+# wheel and builds from source. xauth is what xvfb-run uses to authorise its
+# display, and --no-install-recommends leaves it out otherwise. git is for the
+# scenarios that walk the tracked file list or build fixture repositories; the
+# runner clones with its own helper, so the image does not carry it.
+#
+# The gi import is checked before the suite starts, because one clear error
+# reads better than hundreds of identical tracebacks.
+#
+# The suite itself runs as a created non-root user. Two scenario families
+# encode assumptions a root process breaks: abort paths proven by chmod-denied
+# writes (root ignores permission bits), and redaction checks that expect a
+# real /home/<user> shape. Setup stays root (apt, venv, pip); the tree is
+# handed over just before the run.
+#
+# SCENARIO_K narrows the run to scenario filenames that contain one substring
+# (the harness takes a single -k). SCENARIO_JOBS sets the parallel width, and
+# SCENARIO_TIMEOUT the per-scenario limit, which is wider than the harness
+# default because the host is shared.
+test:scenarios:
+  stage: test
+  image: debian:trixie-slim
+  interruptible: true
+  needs: []
+  resource_group: scenario-suite   # the runner host also serves GitLab itself
+  variables:
+    SCENARIO_K: ""          # optional: run only scenarios matching one substring
+    SCENARIO_JOBS: "4"
+    SCENARIO_TIMEOUT: "300"
+    DEBIAN_FRONTEND: noninteractive
+    PIP_CACHE_DIR: "$CI_PROJECT_DIR/.pip-cache"
+  cache:
+    key:
+      files:
+        - requirements.txt
+    paths:
+      - .pip-cache
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      when: manual
+      allow_failure: true
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      when: manual
+      allow_failure: true
+  script:
+    - apt-get update -qq
+    - |
+      apt-get install -y -qq --no-install-recommends \
+        python3 python3-gi python3-venv python3-dev pkg-config gcc libc6-dev \
+        gir1.2-gtk-4.0 gir1.2-adw-1 gir1.2-xdp-1.0 libadwaita-1-0 \
+        dbus-daemon xvfb xauth git
+    - python3 -m venv --system-site-packages .venv
+    - .venv/bin/pip install --quiet --upgrade pip
+    - .venv/bin/pip install --quiet -r requirements.txt
+    - |
+      .venv/bin/python -c "import gi; gi.require_version('Gtk','4.0'); gi.require_version('Adw','1'); from gi.repository import Gtk, Adw; print('gi', gi.__version__, 'Gtk', Gtk.get_major_version())"
+    - |
+      set -e
+      if [ -n "$SCENARIO_K" ]; then set -- -k "$SCENARIO_K"; else set --; fi
+      useradd -m scenario
+      chown -R scenario:scenario "$CI_PROJECT_DIR"
+      runuser -u scenario -- env HOME=/home/scenario USER=scenario LOGNAME=scenario \
+        xvfb-run -a nice -n 10 .venv/bin/python tests/run_all.py "$@" \
+        --jobs "$SCENARIO_JOBS" --timeout "$SCENARIO_TIMEOUT" \
+        --junit scenarios-junit.xml
+  artifacts:
+    when: always
+    expire_in: 1 week
+    reports:
+      junit: scenarios-junit.xml
+    paths:
+      - scenarios-junit.xml
 
 # ── build ────────────────────────────────────────────────────────────────────
 # Stages a workspace so flatpak-builder never ingests CI cruft:
