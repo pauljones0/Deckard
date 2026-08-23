@@ -15,6 +15,10 @@ bundle as a release asset.
   tracked upstream's per-app-version mapping; the four new plugins and the
   twenty-one plugin updates published since then are available again, and
   the store no longer depends on that mapping file at run time.
+- Installing or updating a store asset now refuses a download whose manifest
+  requires a newer app version. Such an install would replace a working
+  plugin with one the app then refuses to load; the running plugin now stays
+  in place instead.
 
 ### Security
 

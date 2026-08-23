@@ -42,7 +42,15 @@ from src.backend import http_client
 from src.Signals import Signals
 
 import globals as gl
-from src.windows.Store.StoreData import IconData, PluginData, SDPlusBarWallpaperData, StoreData, StoreDataT, WallpaperData
+from src.windows.Store.StoreData import (
+    IconData,
+    PluginData,
+    SDPlusBarWallpaperData,
+    StoreData,
+    StoreDataT,
+    WallpaperData,
+    is_min_app_version_satisfied,
+)
 from src.backend.Store.asset_types import (
     ASSET_TYPES,
     AssetTypeDescriptor,
@@ -877,7 +885,7 @@ class StoreBackend:
     def read_local_manifest_id(asset_path: str) -> str | None:
         """The id an installed tree claims for itself. It equals the
         directory name for a canonical install, which install_* creates and
-        _staged_tree_id_matches enforces. It differs for a renamed directory
+        _staged_tree_acceptable enforces. It differs for a renamed directory
         and for a copy kept aside."""
         try:
             with open(os.path.join(asset_path, "manifest.json")) as f:
@@ -1268,22 +1276,45 @@ class StoreBackend:
             except OSError:
                 pass
 
-    def _staged_tree_id_matches(self, staging_tree: str, expected_id: str | None) -> bool:
-        """The one staged-manifest identity check. When the caller knows the
-        asset id it installs, and that id also names the install directory,
-        the downloaded tree's manifest must agree. A drift between catalog and
-        repository, or a hostile manifest, must never swap over the installed
-        pack."""
-        if expected_id is None:
-            return True
+    def _staged_tree_acceptable(self, staging_tree: str, expected_id: str | None) -> bool:
+        """The one staged-manifest gate, before a staged tree can swap over
+        an install. Two checks on the staged manifest:
+
+        Identity. When the caller knows the asset id it installs, and that
+        id also names the install directory, the downloaded tree's manifest
+        must agree. A drift between catalog and repository, or a hostile
+        manifest, must never swap over the installed pack. Only this check
+        needs expected_id; a caller without one accepts any identity, and
+        then an unreadable manifest too, as it always has.
+
+        Compatibility. A staged manifest that requires a newer app version
+        is refused whoever asked. The plugin loader would refuse to load
+        that tree, so the swap would replace a working install with a dead
+        one; a hash-shape catalog pin carries no version map, so this is
+        the one gate between a bad pin and a bricked install. The compare
+        is the loader's own, base versions with pre-release tags stripped,
+        so an install this gate passes is one the loader starts."""
         try:
             with open(os.path.join(staging_tree, "manifest.json")) as f:
-                staged_id = json.load(f).get("id")
+                manifest = json.load(f)
         except (OSError, ValueError) as e:
+            if expected_id is None:
+                return True
             log.error(f"Staged download has no readable manifest.json ({e}) -- refusing to install as {expected_id!r}")
             return False
-        if staged_id != expected_id:
-            log.error(f"Staged download identifies as {staged_id!r}, expected {expected_id!r} -- refusing to install")
+        if not isinstance(manifest, dict):
+            if expected_id is None:
+                return True
+            log.error(f"Staged manifest.json is not an object -- refusing to install as {expected_id!r}")
+            return False
+        if expected_id is not None:
+            staged_id = manifest.get("id")
+            if staged_id != expected_id:
+                log.error(f"Staged download identifies as {staged_id!r}, expected {expected_id!r} -- refusing to install")
+                return False
+        minimum = manifest.get("minimum-app-version")
+        if not is_min_app_version_satisfied(minimum):
+            log.error(f"Staged download requires app version {minimum!r}, this is {gl.app_version} -- refusing to install")
             return False
         return True
 
@@ -1401,8 +1432,8 @@ class StoreBackend:
             # without VERSION reads as local_sha None, which means not
             # installed, so a crash after the swap and before a late VERSION
             # write leaves an install that nothing retries.
-            if not self._staged_tree_id_matches(extracted_folder, expected_id):
-                return Err(ErrReason.INVALID_ASSET, f"staged {projectname} tree does not match expected id {expected_id!r}")
+            if not self._staged_tree_acceptable(extracted_folder, expected_id):
+                return Err(ErrReason.INVALID_ASSET, f"staged {projectname} tree failed the manifest checks")
             with open(os.path.join(extracted_folder, "VERSION"), "w") as f:
                 f.write(sha)
             # Stamp the staging tree, like VERSION above, so the swap
@@ -1508,8 +1539,8 @@ class StoreBackend:
 
             # Keep the order of download_repo. Validate the staged tree,
             # then stamp VERSION, then swap.
-            if not self._staged_tree_id_matches(staging, expected_id):
-                return Err(ErrReason.INVALID_ASSET, f"staged tree does not match expected id {expected_id!r}")
+            if not self._staged_tree_acceptable(staging, expected_id):
+                return Err(ErrReason.INVALID_ASSET, "staged tree failed the manifest checks")
 
             # Write the version stamp.
             version_stamp = commit_sha or branch_name

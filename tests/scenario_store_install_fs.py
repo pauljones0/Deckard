@@ -8,6 +8,7 @@ download_repo is the single choke point every install_* caller funnels through.
 # leaves no extracted temp folder, an unsafe member is refused before unpack,
 # and the destination changes only through a staged, validated swap.
 import io
+import json
 import os
 import zipfile
 
@@ -374,6 +375,64 @@ def test_manifest_id_mismatch_refused() -> None:
     print("PASS: a manifest-id mismatch is refused and the old install survives")
 
 
+def test_incompatible_manifest_refused() -> None:
+    """A staged manifest that requires a newer app version is refused before
+    the swap, with or without an expected id. The loader would refuse to
+    load that tree, so the swap would replace a working install with a dead
+    one. The gate uses the loader's compare, base versions with pre-release
+    tags stripped, so a requirement above ours only in its pre-release tag
+    still installs."""
+    from packaging import version
+
+    app_base = version.parse(gl.app_version).base_version
+    too_new = f"{version.parse(gl.app_version).major + 1}.0.0"
+
+    sb = _make_backend()
+    dest = os.path.join(gl.DATA_PATH, "plugins", "com_test_TooNew")
+    sentinel = _seed_install(dest)
+    manifest = json.dumps({"id": "com_test_TooNew", "minimum-app-version": too_new}).encode()
+    prev = _install_fake_get(_chunk(_good_zip_bytes(files={"manifest.json": manifest})))
+    try:
+        result = sb.download_repo(
+            repo_url=REPO_URL, directory=dest, commit_sha=SHA,
+            expected_id="com_test_TooNew")
+    finally:
+        _restore_get(prev)
+    assert isinstance(result, Err) and result.reason is ErrReason.INVALID_ASSET, (
+        f"a too-new manifest must be refused with INVALID_ASSET, got {result!r}"
+    )
+    assert os.path.isfile(sentinel), "old install lost over a refused (incompatible) download"
+
+    # The same refusal without an expected id, which a custom plugin is.
+    sb = _make_backend()
+    dest2 = os.path.join(gl.DATA_PATH, "plugins", "com_test_TooNewCustom")
+    prev = _install_fake_get(_chunk(_good_zip_bytes(files={"manifest.json": manifest})))
+    try:
+        result = sb.download_repo(repo_url=REPO_URL, directory=dest2, commit_sha=SHA)
+    finally:
+        _restore_get(prev)
+    assert isinstance(result, Err), f"the gate must not need an expected id, got {result!r}"
+    assert not os.path.isdir(dest2), "an incompatible custom download must not install"
+
+    # A requirement above ours only in its pre-release tag installs: the
+    # loader accepts it, so the gate must too.
+    sb = _make_backend()
+    dest3 = os.path.join(gl.DATA_PATH, "plugins", "com_test_SuffixOnly")
+    manifest3 = json.dumps({"id": "com_test_SuffixOnly",
+                            "minimum-app-version": f"{app_base}-beta.999"}).encode()
+    prev = _install_fake_get(_chunk(_good_zip_bytes(files={"manifest.json": manifest3})))
+    try:
+        result = sb.download_repo(
+            repo_url=REPO_URL, directory=dest3, commit_sha=SHA,
+            expected_id="com_test_SuffixOnly")
+    finally:
+        _restore_get(prev)
+    assert isinstance(result, Ok), (
+        f"a pre-release-only gap must install, like the loader loads it, got {result!r}"
+    )
+    print("PASS: a staged manifest needing a newer app is refused before the swap")
+
+
 def test_update_replaces_pack_and_stamps() -> None:
     """A successful update. The staged tree carries VERSION before the swap,
     because a tree without it reads as not installed and is never retried.
@@ -430,6 +489,7 @@ def main() -> None:
     test_download_fault_leaves_existing_install_intact()
     test_swap_failure_restores_existing_install()
     test_manifest_id_mismatch_refused()
+    test_incompatible_manifest_refused()
     test_update_replaces_pack_and_stamps()
     print("PASS: scenario_store_install_fs")
 
