@@ -410,8 +410,14 @@ class WindowGrabber:
         found_page = False
         for page_path in page_manager.get_pages():
             info = page_manager.get_auto_change_settings(page_path)
-            wm_regex = info.get("wm-class")
-            title_regex = info.get("title")
+            # A pattern the page does not carry matches every window. The page
+            # editor writes only the fields the user filled in, so a rule made
+            # by typing a title alone holds no wm-class at all, and a rule read
+            # as "no pattern" would match nothing and never fire. An entry the
+            # user cleared writes an empty pattern, which re.search already
+            # treats as a wildcard, so absent and empty stay the same thing.
+            wm_regex = info.get("wm-class") or ".*"
+            title_regex = info.get("title") or ".*"
             enabled = info.get("enable", False)
             decks = info.get("decks", [])
             if not enabled:
