@@ -59,6 +59,7 @@ from src.backend.Store.asset_types import (
     SD_PLUS_BAR,
     WALLPAPER,
 )
+from src.backend.Store import install_script
 from src.backend.Store.catalog_entry import COMMIT_SHA_RE, resolve_pinned_revision
 from src.backend.Store.store_result import Err, ErrReason, Ok, StoreFetchError, StoreResult
 
@@ -1602,16 +1603,12 @@ class StoreBackend:
             except Exception as e:
                 log.error(f"Deregistering the old version of {plugin_id} failed: {e}")
 
-        # Run the install script when one exists. Use the python binary that
-        # runs this process, so a venv keeps its dependencies. Pass a list and
-        # run no shell. An f-string command breaks on a space in the data
-        # path, and lets a crafted path component inject shell syntax.
-        if os.path.isfile(os.path.join(local_path, "__install__.py")):
-            subprocess.run([sys.executable, os.path.join(local_path, "__install__.py")], start_new_session=True)
-
-        # Install the dependencies from requirements.txt.
-        if os.path.isfile(os.path.join(local_path, "requirements.txt")):
-            subprocess.run([sys.executable, "-m", "pip", "install", "-r", os.path.join(local_path, "requirements.txt")], start_new_session=True)
+        # The install script and the requirements step run only through the
+        # gate, which owns the timeout, the process-group kill, and the
+        # loopback-guard re-injection into any venv the script created.
+        outcome = install_script.run_install_steps(local_path, plugin_id)
+        if outcome not in (install_script.Outcome.RAN, install_script.Outcome.NO_STEPS):
+            log.warning(f"Install steps of {plugin_id}: {outcome.value}")
 
         # Update the plugin manager.
         if plugin_manager is not None:

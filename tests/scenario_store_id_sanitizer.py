@@ -134,28 +134,30 @@ def test_install_script_runs_without_shell() -> None:
     gl.plugin_manager = StubPluginManager()
     gl.signal_manager = StubSignalManager()
 
-    import src.backend.Store.StoreBackend as backend_module
+    # Every install step goes through the gate's _execute seam, which is
+    # where the no-shell argv contract is observable.
+    from src.backend.Store import install_script
     captured = []
-    real_run = backend_module.subprocess.run
+    real_execute = install_script._execute
 
-    def capture_run(argv, **kwargs):
-        captured.append((argv, kwargs))
+    def capture_execute(argv, timeout_s):
+        captured.append(argv)
+        return 0, False
 
-    backend_module.subprocess.run = capture_run
+    install_script._execute = capture_execute
     try:
         result = sb.install_plugin(PluginData(
             github="https://github.com/test/test", plugin_id=plugin_id,
         ))
     finally:
-        backend_module.subprocess.run = real_run
+        install_script._execute = real_execute
 
     assert isinstance(result, Ok), f"clean install must succeed, got {result!r}"
     assert len(captured) == 1, f"expected exactly the __install__.py invocation, got {captured}"
-    argv, kwargs = captured[0]
+    argv = captured[0]
     assert isinstance(argv, list), f"install script must run as an argv list, got {argv!r}"
     assert argv[0] == sys.executable
     assert argv[1] == os.path.join(local_path, "__install__.py")
-    assert kwargs.get("shell") is not True, "install script must not run through a shell"
 
 
 EVIL_REFS = [
