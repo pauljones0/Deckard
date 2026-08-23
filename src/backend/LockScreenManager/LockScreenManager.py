@@ -81,6 +81,14 @@ class LockScreenManager:
         
         log.info(f"Locking screen: {active}")
 
+        # Commit the tracked state at the transition, before the deck loop can
+        # return early. The startup initial-state read locks while no deck
+        # manager exists yet; the guard below then returns without deck work.
+        # Setting self.locked here keeps it in step with gl.screen_locked, so
+        # the first real unlock is not read as a no-op and its deck loop runs
+        # on the decks that enumerated after the read.
+        self.locked = active
+
         deck_manager = gl.deck_manager
         if deck_manager is None:
             return
@@ -90,5 +98,3 @@ class LockScreenManager:
                 controller.screen_saver.show()
             else:
                 controller.screen_saver.hide()
-
-        self.locked = active

@@ -194,6 +194,95 @@ def manager_setup_calls_the_read():
     print("PASS: LockScreenManager.setup() reads the initial lock state")
 
 
+def real_startup_lock_then_unlock_engages_the_branch():
+    """A real startup lock must disengage on the first real unlock.
+
+    This drives the whole path through the real LockScreenManager.lock():
+    the locked-session read runs while gl.deck_manager is still None (the
+    startup order), and a later real Unlock signal drives lock(False). The
+    tracked lock state must stay in step with gl.screen_locked across the
+    deck-manager-None read, or the first unlock reads as a no-op and the decks
+    that enumerated in the meantime stay behind the screen saver.
+
+    Earlier checks in this scenario record lock() calls on a stub, so they
+    cannot see that the real lock() swallows the first unlock. This one uses
+    the real manager and asserts the deck branch runs.
+    """
+    import globals as gl
+    from src.backend.LockScreenManager.LockScreenManager import LockScreenManager
+    from src.backend.LockScreenManager.Detectors.Logind import LogindLockScreenDetector
+
+    os.environ["XDG_SESSION_ID"] = "7"
+
+    class FakeScreenSaver:
+        def __init__(self):
+            self.shown = False
+
+        def show(self):
+            self.shown = True
+
+        def hide(self):
+            self.shown = False
+
+    class FakeController:
+        def __init__(self):
+            # A deck that enumerated after the startup read comes up locked:
+            # interaction blocked and the screen saver shown.
+            self.allow_interaction = False
+            self.screen_saver = FakeScreenSaver()
+
+    class FakeDeckManager:
+        def __init__(self, controllers):
+            self.deck_controller = controllers
+
+    class FakeApp:
+        lock_on_lock_screen = True
+
+    class FakeSettingsManager:
+        def app(self):
+            return FakeApp()
+
+    # A real manager with a real locked-session detector, no setup thread.
+    manager = LockScreenManager.__new__(LockScreenManager)
+    manager.locked = False
+    manager.detector = None
+    detector = LogindLockScreenDetector(manager, bus=FakeBus(locked_hint=True))
+    manager.detector = detector
+
+    saved = (gl.deck_manager, gl.settings_manager, gl.presence_monitor,
+             gl.screen_locked)
+    try:
+        gl.presence_monitor = None
+        gl.settings_manager = FakeSettingsManager()
+
+        # Startup: the locked session is read while no deck manager exists.
+        gl.deck_manager = None
+        gl.screen_locked = False
+        detector.read_initial_lock_state()
+        assert gl.screen_locked is True, gl.screen_locked
+
+        # Decks enumerate after the read. They pick up the seeded
+        # gl.screen_locked at init and come up on the screen saver.
+        controllers = [FakeController(), FakeController()]
+        for c in controllers:
+            c.screen_saver.show()
+        gl.deck_manager = FakeDeckManager(controllers)
+
+        # The first real unlock arrives on the signal path.
+        detector.on_dbus_signal(None, None, None, None, "Unlock", None)
+        assert gl.screen_locked is False, gl.screen_locked
+        for c in controllers:
+            assert c.allow_interaction is True, (
+                "the first unlock must re-enable interaction on the decks")
+            assert c.screen_saver.shown is False, (
+                "the first unlock must hide the screen saver on the decks")
+    finally:
+        (gl.deck_manager, gl.settings_manager, gl.presence_monitor,
+         gl.screen_locked) = saved
+
+    print("PASS: a real startup lock disengages on the first real unlock")
+
+
 def main() -> None:
     fixtures.start_watchdog(30, label="scenario_lock_startup_state")
 
@@ -202,6 +291,7 @@ def main() -> None:
     screen_saver_reads_get_active()
     base_read_is_inert_without_a_source()
     manager_setup_calls_the_read()
+    real_startup_lock_then_unlock_engages_the_branch()
 
     print("PASS: scenario_lock_startup_state")
 
