@@ -281,7 +281,15 @@ class DeckardAPI:
 
     @ForegroundWindow.setter
     def ForegroundWindow(self, value: Tuple[Str, Str]) -> None:
-        self._foreground_window = WindowInfo(*value)
+        window = WindowInfo(*value)
+        if window == self._foreground_window:
+            # The same window arrives again whenever the rules are re-applied
+            # to the window already in front, which every page-editor edit
+            # asks for. A PropertiesChanged carrying the value the clients
+            # already hold wakes every subscriber for nothing.
+            return
+
+        self._foreground_window = window
         log.debug(f"DBus API: ForegroundWindow changed to {self._foreground_window!r}")
         _emit_properties_changed(
             DBUS_OBJECT_PATH, TOP_IFACE,
