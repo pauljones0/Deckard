@@ -47,6 +47,15 @@ class LockScreenManager:
         else:
             self.detector = LogindLockScreenDetector(self)
 
+        # The detectors above only wire up the signal. A session already
+        # locked when the app starts sends no lock signal, so read the
+        # current state once here and lock() at once when it reads locked.
+        # Decks enumerated after this read the seeded gl.screen_locked at init
+        # and come up on the screen saver; decks already enumerated get locked
+        # by the lock() call. The read runs here, on the setup daemon thread,
+        # so a slow bus never holds app startup.
+        self.detector.read_initial_lock_state()
+
     @log.catch
     def lock(self, active: bool) -> None:
         gl.screen_locked = active
@@ -72,6 +81,14 @@ class LockScreenManager:
         
         log.info(f"Locking screen: {active}")
 
+        # Commit the tracked state at the transition, before the deck loop can
+        # return early. The startup initial-state read locks while no deck
+        # manager exists yet; the guard below then returns without deck work.
+        # Setting self.locked here keeps it in step with gl.screen_locked, so
+        # the first real unlock is not read as a no-op and its deck loop runs
+        # on the decks that enumerated after the read.
+        self.locked = active
+
         deck_manager = gl.deck_manager
         if deck_manager is None:
             return
@@ -81,5 +98,3 @@ class LockScreenManager:
                 controller.screen_saver.show()
             else:
                 controller.screen_saver.hide()
-
-        self.locked = active
