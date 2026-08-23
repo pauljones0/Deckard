@@ -114,6 +114,15 @@ class WindowGrabber:
     rules, so the settled state always matches the last write.
     """
 
+    # Held across the whole per-deck routing of one window. Two routings that
+    # overlap both read the page a deck shows before either has loaded, so
+    # both decide the deck must change and the deck loads the same page twice.
+    # The watcher and a re-check are the pair that overlaps. The lock sits on
+    # the class, so an instance holds it from the moment it exists, and the
+    # app builds one grabber, so it serializes exactly the routings that can
+    # meet.
+    _dispatch_lock = threading.RLock()
+
     def __init__(self) -> None:
         self.environment_components: list[str] = desktop_components()
         self.server: str | None = session_type()
@@ -145,6 +154,14 @@ class WindowGrabber:
         self._gate_pending = False
         self._gate_running = False
         self._reset_requested = False
+
+        # The re-check requests coalesce the same way, and for the same
+        # reason: each one queries the desktop and can load a page, and the
+        # page editor asks for one on every keystroke that lands.
+        self._recheck_idle = threading.Event()
+        self._recheck_idle.set()
+        self._recheck_pending = False
+        self._recheck_running = False
 
         self.refresh_watch_state()
 
@@ -390,25 +407,82 @@ class WindowGrabber:
         return bool(class_match and title_match)
 
     def recheck_active_window(self) -> None:
-        """Applies the rules again to the window that is in front right now.
+        """Queues one pass of the rules over the window in front right now.
 
-        Returns at once; the work runs on the background pool. A rule edit
+        Returns at once; the pass runs on the background pool. A rule edit
         otherwise waits for the next window change, so a rule typed for the
         window the user has in front reads as dead until something else takes
         focus. The page editor asks for a re-check after every rule edit.
 
-        The work stays off the GTK main thread twice over: the query for the
+        The pass stays off the GTK main thread twice over: the query for the
         front window runs subprocesses on most desktops, and a match loads a
-        page.
+        page. Requests coalesce, like the gate's: one queued while a pass runs
+        causes exactly one more pass, which re-reads the rules.
         """
+        with self._lock:
+            self._recheck_pending = True
+            self._recheck_idle.clear()
+            if self._recheck_running:
+                return
+            self._recheck_running = True
+
         try:
-            run_in_background(self._recheck_active_window)
+            run_in_background(self._drain_recheck_requests)
         except Exception:
-            # The background pool is gone, which is part of quit. The edited
-            # rule still applies at the next window change.
-            log.opt(exception=True).warning("Could not schedule an active window re-check")
+            # Nothing drains the request now, so take back the claim above. A
+            # flag left set makes every later re-check do nothing for the rest
+            # of the session. This branch runs once the background pool shuts
+            # down, which is part of quit, and the rule still applies at the
+            # next window change.
+            with self._lock:
+                self._recheck_running = False
+                self._recheck_pending = False
+                self._recheck_idle.set()
+            log.debug("Could not schedule an active window re-check")
+
+    def wait_for_recheck(self, timeout: float = 10.0) -> bool:
+        """Blocks until no re-check is queued or running. False on timeout.
+
+        This exists for a test that asserts on a settled decision, above all
+        that nothing queried the desktop. Production code never needs it.
+        """
+        return self._recheck_idle.wait(timeout)
+
+    def _drain_recheck_requests(self) -> None:
+        while True:
+            with self._lock:
+                if not self._recheck_pending:
+                    self._recheck_running = False
+                    self._recheck_idle.set()
+                    return
+                self._recheck_pending = False
+
+            try:
+                self._recheck_active_window()
+            except Exception:
+                # The drain loop must survive anything a pass throws. The
+                # running flag otherwise stays set and kills every later
+                # re-check.
+                log.opt(exception=True).error("An active window re-check failed")
 
     def _recheck_active_window(self) -> None:
+        page_manager = gl.page_manager
+        if page_manager is None:
+            return
+
+        try:
+            wanted = page_manager.any_auto_change_rule_enabled()
+        except Exception:
+            log.opt(exception=True).warning("Could not determine whether any window auto-change rule is enabled")
+            return
+
+        if not wanted:
+            # The same gate the watcher takes. With no rule anywhere there is
+            # nothing to apply, and going on would build the integration,
+            # probe the desktop and publish a foreground window that the API
+            # reports only while a rule asks for it.
+            return
+
         integration = self._ensure_integration()
         if integration is None:
             return
@@ -430,24 +504,30 @@ class WindowGrabber:
         if gl.deck_manager is None:
             return
 
-        for deck_controller in gl.deck_manager.deck_controller:
-            # Skip a closed or disabled deck. A return here would abort auto
-            # page switching for every remaining deck as soon as one disabled
-            # deck's page regex matched.
-            if deck_controller is None or not deck_controller.deck.is_open():
-                continue
+        # One routing at a time. A re-check and the watcher can carry the same
+        # window at once, and each decides from the page a deck shows. Both
+        # read the page before either loads, so both load, and the deck takes
+        # a second full page load it does not need. The one that waits reads
+        # the page the first one left and finds nothing to do.
+        with self._dispatch_lock:
+            for deck_controller in gl.deck_manager.deck_controller:
+                # Skip a closed or disabled deck. A return here would abort auto
+                # page switching for every remaining deck as soon as one disabled
+                # deck's page regex matched.
+                if deck_controller is None or not deck_controller.deck.is_open():
+                    continue
 
-            try:
-                self._apply_auto_change(deck_controller, window)
-            except Exception:
-                # One deck can fail mid-switch, when a concurrent close()
-                # flips is_open() after the check above passed. That must not
-                # abort auto-switching for the remaining decks. The watcher
-                # threads wrap their loops in @log.catch, so an exception that
-                # escapes here kills auto-switching until the next app start.
-                log.opt(exception=True).warning(
-                    "Auto page switch failed for one deck; continuing with the others"
-                )
+                try:
+                    self._apply_auto_change(deck_controller, window)
+                except Exception:
+                    # One deck can fail mid-switch, when a concurrent close()
+                    # flips is_open() after the check above passed. That must not
+                    # abort auto-switching for the remaining decks. The watcher
+                    # threads wrap their loops in @log.catch, so an exception that
+                    # escapes here kills auto-switching until the next app start.
+                    log.opt(exception=True).warning(
+                        "Auto page switch failed for one deck; continuing with the others"
+                    )
 
     def _apply_auto_change(self, deck_controller: "DeckController", window: Window) -> None:
         """Applies the auto-change page rules to a single deck for the given
