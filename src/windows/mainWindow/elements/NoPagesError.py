@@ -83,7 +83,9 @@ class NoPagesError(Gtk.Box):
             return
         try:
             path = gl.page_manager.add_page(name)
-        except FileExistsError:
+        except (FileExistsError, ValueError):
+            # ValueError: a name that resolves outside the pages directory.
+            # Fail closed rather than let it escape this GTK callback.
             return
 
         # Notify plugin actions
