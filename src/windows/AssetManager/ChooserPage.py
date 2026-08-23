@@ -23,7 +23,21 @@ from typing import Any
 
 import globals as gl
 
+# How long the search waits for the typing to stop. A grid of a whole icon
+# pack is thousands of names, and every one of them is scored and sorted per
+# pass, so a pass per keystroke turns typing into a stutter. This wait is
+# under the gap between two keystrokes of a fast typist, so the grid still
+# follows the query as it is typed.
+SEARCH_DEBOUNCE_MS = 150
+
+
 class ChooserPage(Gtk.Stack):
+    # The search entry connects on_search_changed inside _build, which runs
+    # from this constructor, so both of these must exist before __init__ of
+    # any subclass reaches its own attributes.
+    _search_generation = 0
+    _search_timeout_id = 0
+
     def __init__(self) -> None:
         super().__init__(margin_start=15, margin_end=15, margin_top=15, margin_bottom=15)
         self._build()
@@ -112,4 +126,34 @@ class ChooserPage(Gtk.Stack):
         pass
 
     def on_search_changed(self, entry: Gtk.SearchEntry) -> None:
-        pass
+        """Defer the search until the typing stops.
+
+        A page overrides apply_search, never this method: the debounce and the
+        generation guard belong to every page that carries a search entry, and
+        an override here loses both.
+        """
+        self._search_generation += 1
+        generation = self._search_generation
+
+        if self._search_timeout_id:
+            GLib.source_remove(self._search_timeout_id)
+        self._search_timeout_id = GLib.timeout_add(
+            SEARCH_DEBOUNCE_MS, self._run_deferred_search, generation)
+
+    def _run_deferred_search(self, generation: int) -> bool:
+        """Runs on the main loop, one debounce interval after the last change."""
+        self._search_timeout_id = 0
+        if generation != self._search_generation:
+            # A later keystroke landed while this callback sat in the idle
+            # queue. Its own timeout renders the text that the user typed
+            # last, and this pass would render a query that is already gone.
+            return False
+        self.apply_search(self.search_entry.get_text())
+        return False  # one-shot timeout
+
+    def apply_search(self, query: str) -> None:
+        """Subclass hook: show what query asks for.
+
+        It runs on the main thread, once the typing stops. A page with no
+        grid to filter leaves it alone.
+        """
