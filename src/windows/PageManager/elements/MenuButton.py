@@ -202,7 +202,9 @@ class MenuButton(Gtk.MenuButton):
         page_name = name
         try:
             page_path = services.require_page_manager().add_page(page_name, import_dict)
-        except FileExistsError:
+        except (FileExistsError, ValueError):
+            # ValueError: a name that resolves outside the pages directory.
+            # Fail closed rather than let it escape this GTK callback.
             return
 
         self.pageEditor.page_manager.page_selector.add_row_by_path(page_path)

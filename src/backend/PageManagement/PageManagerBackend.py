@@ -34,7 +34,7 @@ from src.backend.PageManagement.page_flush import canonical_path
 from src.backend.PageManagement.page_document import PageDocument
 from src.backend.PageManagement.page_pins import PagePins
 from src.backend.DeckManagement.HelperMethods import natural_sort_by_filenames
-from src.backend.atomic_json import atomic_write_json
+from src.backend.atomic_json import atomic_write_json, require_containment
 from src.backend import settings_store
 
 import globals as gl
@@ -548,6 +548,10 @@ class PageManagerBackend:
         os.makedirs(self.PAGE_PATH, exist_ok=True)
 
         path = os.path.join(self.PAGE_PATH, f"{page_name}.json")
+        # A page name can arrive from an import file, the external API, or a
+        # typed dialog, so a crafted name could resolve outside the pages
+        # directory. Refuse one that escapes before any file is written.
+        require_containment(self.PAGE_PATH, path)
         if os.path.exists(path):
             raise FileExistsError(f"A page with the name '{page_name}' already exists.")
 

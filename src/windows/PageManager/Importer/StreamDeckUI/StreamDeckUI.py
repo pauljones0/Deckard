@@ -97,6 +97,15 @@ class StreamDeckUIImporter:
 
 
         for deck in self.export.get("state", {}):
+            # The deck serial is a key of the export file and becomes a
+            # filename component for both the deck settings file and every
+            # page file. A serial that carries a path separator or a parent
+            # reference would place those writes outside the settings tree, so
+            # skip a deck whose serial is not a single, plain path component.
+            if os.sep in deck or (os.altsep and os.altsep in deck) or deck in (os.curdir, os.pardir):
+                log.error(f"Skipped a deck whose serial points outside the settings directory: {deck!r}")
+                continue
+
             # Deck preferences merge into the deck settings that exist. A
             # whole-file replacement erases every unrelated section, such as
             # the rotation and the key layout. The write goes through the

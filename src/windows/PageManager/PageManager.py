@@ -69,7 +69,10 @@ class PageManager(Adw.ApplicationWindow):
             return
         try:
             page_path = page_manager.add_page(page_name)
-        except FileExistsError:
+        except (FileExistsError, ValueError):
+            # ValueError: a name that resolves outside the pages directory,
+            # refused by the containment guard. Fail closed rather than let
+            # it escape this GTK callback.
             return
 
         self.page_selector.add_row_by_path(page_path)
