@@ -319,7 +319,13 @@ class StoreBackend:
         if not isinstance(versions, dict):
             log.error(f"versions.json is not an object; falling back to store branch {self.STORE_BRANCH}")
             return self.STORE_BRANCH
-        v = versions.get(gl.app_version, "main")
+        v = versions.get(gl.app_version)
+        if v is None:
+            # No default to "main" here: an unmapped app version would then
+            # silently follow whatever catalog format and content the tip
+            # carries. The pinned fallback is the deliberate choice.
+            log.error(f"versions.json does not map app version {gl.app_version}; falling back to store branch {self.STORE_BRANCH}")
+            return self.STORE_BRANCH
         if not isinstance(v, str) or not v:
             log.error(f"versions.json maps {gl.app_version} to {v!r}; falling back to store branch {self.STORE_BRANCH}")
             return self.STORE_BRANCH
@@ -639,7 +645,7 @@ class StoreBackend:
         """
         compatible = True
         commit: str | None = None
-        if not desc.is_plugin or "commits" in entry:
+        if not desc.is_plugin or "commits" in entry or "hash" in entry:
             pinned = resolve_pinned_revision(entry)
             if pinned is None:
                 log.error(f"Skipping store entry {url!r}: it pins no version")
