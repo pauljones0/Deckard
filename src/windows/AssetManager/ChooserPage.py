@@ -39,6 +39,10 @@ class ChooserPage(Gtk.Stack):
     # any subclass reaches its own attributes.
     _search_generation = 0
     _search_showing = True
+    # The query of the last pass that rendered. A page compares it against the
+    # entry when it is shown again, so a grid that fell behind while it was
+    # hidden catches up and one that did not keeps the page it was on.
+    _searched_text = ""
 
     def __init__(self) -> None:
         super().__init__(margin_start=15, margin_end=15, margin_top=15, margin_bottom=15)
@@ -161,7 +165,9 @@ class ChooserPage(Gtk.Stack):
             # A newer pass, or invalidate_search, moved the generation on. The
             # newer pass renders the text the user has now.
             return False
-        self.apply_search(self.search_entry.get_text())
+        query = self.search_entry.get_text()
+        self._searched_text = query
+        self.apply_search(query)
         return False  # one-shot idle
 
     def invalidate_search(self, *args: Any) -> None:
@@ -176,13 +182,17 @@ class ChooserPage(Gtk.Stack):
         asset_search.release_cache()
 
     def _on_map(self, *args: Any) -> None:
-        """Search again with what the entry holds now.
+        """Catch the grid up with the entry, if it fell behind while hidden.
 
         The entry can be typed into or cleared while this page is hidden, and
         such a pass is dropped, so the grid would otherwise show the query of
-        the last time the page was up.
+        the last time the page was up. A query that has not moved renders
+        nothing: a pass restarts the grid at its first page, and switching
+        between the tabs of this window maps a page each time.
         """
         self._search_showing = True
+        if self.search_entry.get_text() == self._searched_text:
+            return
         self._search_generation += 1
         self.run_search(self._search_generation)
 

@@ -60,6 +60,7 @@ class FakePage:
     _on_map = ChooserPage._on_map
     _search_generation = ChooserPage._search_generation
     _search_showing = ChooserPage._search_showing
+    _searched_text = ChooserPage._searched_text
 
     def __init__(self) -> None:
         self.text = ""
@@ -203,8 +204,17 @@ def test_invalidate_stops_passes_and_frees_the_cache() -> None:
     pump()
     assert page.applied == ["batt"], (
         f"the page did not search again when it was shown: {page.applied}")
+
+    # Showing it again with the same query renders nothing: a pass restarts
+    # the grid at its first page, and switching tabs maps a page each time.
+    page.invalidate_search()
+    page._on_map()
+    pump()
+    assert page.applied == ["batt"], (
+        f"showing an unchanged page searched again and would have thrown away "
+        f"the page the user was on: {page.applied}")
     print("PASS: an invalidated page stops searching, frees the memo and "
-          "resumes when shown")
+          "catches up only when the query moved")
 
 
 def test_hiding_the_window_invalidates_for_real() -> None:
