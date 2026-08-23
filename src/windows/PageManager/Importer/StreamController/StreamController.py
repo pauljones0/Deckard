@@ -4,7 +4,7 @@ import json
 from src.backend import services
 from src.backend.DeckManagement.HelperMethods import recursive_hasattr
 from src.backend.PageManagement import page_flush
-from src.backend.atomic_json import atomic_write_json
+from src.backend.atomic_json import atomic_write_json, require_containment
 
 from loguru import logger as log
 
@@ -39,11 +39,21 @@ class StreamControllerImporter:
         with open(self.json_export_path) as f:
             self.export = json.load(f)
 
+        pages_dir = os.path.join(gl.DATA_PATH, "pages")
         for page_name in self.export:
             page = self.export[page_name]
-            page_path = os.path.join(gl.DATA_PATH, "pages", f"{page_name}.json")
+            page_path = os.path.join(pages_dir, f"{page_name}.json")
             if ".json.json" in page_path:
                 page_path = page_path.replace(".json.json", ".json")
+
+            # The page name is a key of the export file, so a crafted name
+            # could resolve to a target outside the pages directory. Keep the
+            # import inside it and skip a page whose name escapes.
+            try:
+                require_containment(pages_dir, page_path)
+            except ValueError:
+                log.error(f"Skipped a page whose name points outside the pages directory: {page_name!r}")
+                continue
 
             # An import replaces a whole page, so a write that still waits
             # for that path holds a version that the user discarded, and it

@@ -45,6 +45,12 @@ bundle as a release asset.
   user. The app now starts each backend on a loopback-only port, checks that
   a connecting program is the same user on the same machine, and refuses and
   shuts down a backend that is still reachable from the network.
+- Importing pages now stays inside the pages directory. An imported file
+  names its pages, and a page name that pointed at a location outside the
+  pages folder used to send the write there and could overwrite an unrelated
+  file. The import now keeps every write inside the pages folder and skips a
+  page or a deck whose name points outside it, while a normal import lands as
+  before.
 
 ### Fixed
 

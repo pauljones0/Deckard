@@ -198,6 +198,24 @@ def prune_corrupt_sidecars(primary_path: str, keep: int = CORRUPT_SIDECAR_KEEP,
     return removed
 
 
+def require_containment(base_dir: str, path: str) -> str:
+    """Resolve path and confirm it stays inside base_dir; return the real path.
+
+    A caller that builds a target filename from untrusted content, such as a
+    page importer that takes a name out of an export file, passes the target
+    here before it writes. A crafted name like "../../secret" would otherwise
+    resolve to a file outside base_dir and overwrite it. Both sides resolve
+    with realpath, the same resolution atomic_write_json applies, so a symlink
+    component cannot slip a write past the check. Raises ValueError when the
+    resolved target is neither base_dir itself nor a path below it.
+    """
+    real_base = os.path.realpath(base_dir)
+    real_path = os.path.realpath(path)
+    if real_path != real_base and not real_path.startswith(real_base + os.sep):
+        raise ValueError(f"{path!r} resolves outside {base_dir!r}")
+    return real_path
+
+
 def atomic_write_json(file_path: str, data: Any, indent: int | None = 4) -> None:
     """Write data as JSON to file_path atomically and durably.
 
