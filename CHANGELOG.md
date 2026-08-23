@@ -33,6 +33,14 @@ bundle as a release asset.
   plugin with one the app then refuses to load; the running plugin now stays
   in place instead.
 
+### Fixed
+
+- A failure while starting one input's periodic update no longer stops every
+  animated action on that deck. The update loop ended on the first such
+  failure and stayed stopped until the app restarted. It now reports the
+  failure, names the input it came from, holds its log to one report every
+  few seconds, and carries on with the rest of the deck.
+
 ### Security
 
 - Installing a plugin from the store now asks before it runs the plugin's
