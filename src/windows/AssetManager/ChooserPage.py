@@ -40,6 +40,12 @@ class ChooserPage(Gtk.Stack):
 
     def __init__(self) -> None:
         super().__init__(margin_start=15, margin_end=15, margin_top=15, margin_bottom=15)
+        # A deferred search outlives the page without this: a timeout holds
+        # the bound method, which holds the page and its widgets, and it fires
+        # into a page that is going away. The window is normally hidden and
+        # reused, so this matters at quit, where the pass would land in the
+        # middle of the teardown.
+        self.connect("destroy", self.cancel_deferred_search)
         self._build()
 
         self.init_dnd()
@@ -139,6 +145,17 @@ class ChooserPage(Gtk.Stack):
             GLib.source_remove(self._search_timeout_id)
         self._search_timeout_id = GLib.timeout_add(
             SEARCH_DEBOUNCE_MS, self._run_deferred_search, generation)
+
+    def cancel_deferred_search(self, *args: Any) -> None:
+        """Drop a search that has not run yet.
+
+        The generation still moves, so a pass that already left the queue
+        finds itself stale and renders nothing either.
+        """
+        self._search_generation += 1
+        if self._search_timeout_id:
+            GLib.source_remove(self._search_timeout_id)
+            self._search_timeout_id = 0
 
     def _run_deferred_search(self, generation: int) -> bool:
         """Runs on the main loop, one debounce interval after the last change."""

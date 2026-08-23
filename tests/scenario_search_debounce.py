@@ -47,6 +47,7 @@ class FakePage:
 
     on_search_changed = ChooserPage.on_search_changed
     _run_deferred_search = ChooserPage._run_deferred_search
+    cancel_deferred_search = ChooserPage.cancel_deferred_search
     _search_generation = ChooserPage._search_generation
     _search_timeout_id = ChooserPage._search_timeout_id
 
@@ -162,6 +163,63 @@ def test_generation_guard_drops_a_stale_pass() -> None:
     print("PASS: a pass that a later keystroke overtook renders nothing")
 
 
+def test_teardown_drops_a_pending_search() -> None:
+    """A page that goes away takes its pending search with it.
+
+    A timeout holds the bound method, and through it the page and its
+    widgets, so a pass queued at quit would fire into a page that is being
+    torn down.
+    """
+    page = FakePage()
+    page.type("bat")
+    assert page._search_timeout_id != 0
+
+    page.cancel_deferred_search()
+    assert page._search_timeout_id == 0, "the cancelled search kept its source id"
+
+    # Give the loop the time the pass would have taken. Nothing may run.
+    deadline = time.time() + (SEARCH_DEBOUNCE_MS / 1000) * 5
+    context = GLib.MainContext.default()
+    while time.time() < deadline:
+        while context.iteration(False):
+            pass
+        time.sleep(0.005)
+    assert page.applied == [], f"the cancelled search still ran: {page.applied}"
+
+    # A second cancel, with nothing pending, must not raise: a page can be
+    # destroyed without a search in flight, and GLib refuses a source id twice.
+    page.cancel_deferred_search()
+
+    # The page still works if it lives on, which a hidden and reused window
+    # does.
+    page.type("battery")
+    drain(page)
+    assert page.applied == ["battery"], page.applied
+    print("PASS: teardown drops a pending search and leaves the page usable")
+
+
+def test_teardown_is_wired_to_the_page() -> None:
+    """The base must connect the cancel itself, or no page has it."""
+    source = textwrap.dedent(inspect.getsource(ChooserPage.__init__))
+    tree = ast.parse(source)
+    connects = [node for node in ast.walk(tree)
+                if isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "connect"]
+    wired = [node for node in connects
+             if node.args and isinstance(node.args[0], ast.Constant)
+             and node.args[0].value == "destroy"]
+    assert len(wired) == 1, (
+        "the page does not connect its teardown, so a pending search outlives "
+        "it")
+    handler = wired[0].args[1]
+    assert isinstance(handler, ast.Attribute) \
+        and handler.attr == "cancel_deferred_search", (
+        "the teardown is connected to something other than "
+        "cancel_deferred_search")
+    print("PASS: the page cancels its pending search when it is destroyed")
+
+
 def test_debounce_interval() -> None:
     assert SEARCH_DEBOUNCE_MS == 150, "the search debounce interval moved"
     source = textwrap.dedent(inspect.getsource(ChooserPage.on_search_changed))
@@ -256,6 +314,8 @@ def main() -> int:
     test_nothing_runs_before_the_loop()
     test_a_burst_searches_once()
     test_generation_guard_drops_a_stale_pass()
+    test_teardown_drops_a_pending_search()
+    test_teardown_is_wired_to_the_page()
     test_debounce_interval()
     test_no_page_overrides_the_handler()
 
