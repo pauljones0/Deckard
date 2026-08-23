@@ -439,12 +439,11 @@ def test_no_compatible_version_filtered() -> None:
     sb = _make_backend()
     _reset_dirs(sb)
     _stub_fetch_layer(sb)
-    # Force version resolution to yield nothing. Both are instance stubs, so
-    # this also confirms the getattr dispatch reaches them.
-    sb.get_newest_compatible_version = lambda versions: None
-    sb.get_newest_version = lambda versions: None
 
+    # An empty version map is the real no-resolution shape: the entry pins
+    # nothing, so resolve_pinned_revision returns None.
     entry = _catalog_entry()
+    entry["commits"] = {}
     assert sb.prepare_icon(entry, include_image=True, verified=False) is None, (
         "no resolvable version must drop the entry (prepare returns None)"
     )

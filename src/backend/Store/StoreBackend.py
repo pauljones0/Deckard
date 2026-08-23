@@ -18,7 +18,7 @@ import sys
 import zipfile
 import requests
 import json
-from collections.abc import Callable, Collection
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Literal, NamedTuple, TypeGuard, cast, overload
 from PIL import Image
@@ -28,7 +28,6 @@ import subprocess
 import time
 import os
 import shutil
-from packaging import version
 import threading
 
 from gi.repository import GLib
@@ -52,6 +51,7 @@ from src.backend.Store.asset_types import (
     SD_PLUS_BAR,
     WALLPAPER,
 )
+from src.backend.Store.catalog_entry import resolve_pinned_revision
 from src.backend.Store.store_result import Err, ErrReason, Ok, StoreFetchError, StoreResult
 
 
@@ -630,23 +630,21 @@ class StoreBackend:
     def _resolve_asset_version(self, entry: dict[str, Any], desc: AssetTypeDescriptor, url: str) -> "_ResolvedVersion | None":
         """Decide the commit an entry should be fetched at.
 
-        A non-plugin entry always pins a version map. A plugin entry can
+        A non-plugin entry always pins a revision. A plugin entry can
         omit one, which a branch-pinned custom plugin does, and a plugin entry
         alone resolves a branch tip. Returns a _ResolvedVersion, or None when
-        no version resolves and the catalog drops the entry. An unreachable
+        no revision resolves and the catalog drops the entry. An unreachable
         branch tip raises out of get_last_commit, and the fan-out's collect
         loop drops that entry.
         """
         compatible = True
         commit: str | None = None
         if not desc.is_plugin or "commits" in entry:
-            newest = self.get_newest_compatible_version(entry["commits"])
-            if newest is None:
-                compatible = False
-                newest = self.get_newest_version(list(entry["commits"].keys()))
-                if newest is None:
-                    return None
-            commit = entry["commits"][newest]
+            pinned = resolve_pinned_revision(entry)
+            if pinned is None:
+                log.error(f"Skipping store entry {url!r}: it pins no version")
+                return None
+            commit, compatible = pinned.sha, pinned.compatible
 
         branch: str | None = None
         if desc.is_plugin:
@@ -1070,11 +1068,10 @@ class StoreBackend:
         # identification costs no tip lookup.
         revision = entry.get("branch")
         if revision is None:
-            commits = entry.get("commits")
-            if not isinstance(commits, dict) or not commits:
+            pinned = resolve_pinned_revision(entry)
+            if pinned is None:
                 return
-            newest = self.get_newest_compatible_version(commits) or self.get_newest_version(list(commits.keys()))
-            revision = commits[newest]
+            revision = pinned.sha
         manifest = self.get_manifest(url, revision)  # raises into the per-entry catch
         if not manifest:
             return
@@ -1132,18 +1129,15 @@ class StoreBackend:
             # commit_sha.
             target = self.get_last_commit(url, branch)
         else:
-            commits = entry.get("commits")
-            if not isinstance(commits, dict) or not commits:
+            pinned = resolve_pinned_revision(entry)
+            if pinned is None:
                 log.error(f"Skipping store entry {url!r}: it pins no version")
                 return None
-            newest = self.get_newest_compatible_version(commits)
-            if newest is None:
-                # No version matches this app major. Pin the newest one, the
-                # way prepare_* does, and let the caller refuse to install
-                # it.
-                compatible = False
-                newest = self.get_newest_version(list(commits.keys()))
-            target = commits[newest]
+            # On no version match for this app major, the resolution pins
+            # the newest one, the way prepare_* does, and the caller
+            # refuses to install it.
+            target = pinned.sha
+            compatible = pinned.compatible
 
         asset = self.match_installed_asset(ref, installed)
         if asset is None:
@@ -1227,34 +1221,6 @@ class StoreBackend:
         if ref is None:
             log.error(f"Skipping store entry {url!r}: not a store repository url")
         return ref
-
-    def get_newest_compatible_version(self, available_versions: Collection[str]) -> str | None:
-        if gl.exact_app_version_check:
-            if gl.app_version in available_versions:
-                return gl.app_version
-            else:
-                return None
-            
-        current_major = version.parse(gl.app_version).major
-
-        compatible_versions = [v for v in available_versions if version.parse(v).major == current_major]
-        parsed_compatible_versions = [version.parse(v) for v in compatible_versions]
-
-        if compatible_versions:
-            max_index = parsed_compatible_versions.index(max(parsed_compatible_versions))
-            return compatible_versions[max_index]
-        else:
-            return None
-        
-    def get_newest_version(self, available_versions: list[str]) -> str | None:
-        # None for an empty list, which the callers guard for; max() on an
-        # empty sequence would raise instead.
-        if not available_versions:
-            return None
-        parsed_versions = [version.parse(v) for v in available_versions]
-
-        max_index = parsed_versions.index(max(parsed_versions))
-        return available_versions[max_index]
 
     ## Install
     def subp_call(self, args: list[str]) -> int:
