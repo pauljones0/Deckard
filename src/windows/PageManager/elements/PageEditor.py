@@ -304,6 +304,16 @@ class AutoChangeGroup(PageEditorGroup):
         self.wm_class_entry = Adw.EntryRow(title=gl.lm.get("page-manager.page-editor.change-group.wm-class-regex"), text="", show_apply_button=True)
         self.add(self.wm_class_entry)
 
+        # An entry row commits its text on Enter or on the apply button. Text
+        # the user typed and then left behind, by clicking elsewhere or by
+        # closing the window, would otherwise stay in the widget alone and the
+        # page would keep the pattern it had.
+        self.title_focus = Gtk.EventControllerFocus()
+        self.title_entry.add_controller(self.title_focus)
+
+        self.wm_class_focus = Gtk.EventControllerFocus()
+        self.wm_class_entry.add_controller(self.wm_class_focus)
+
         self.matching_window_expander = MatchingWindowExpander(auto_change_group=self)
         self.add(self.matching_window_expander)
 
@@ -312,12 +322,16 @@ class AutoChangeGroup(PageEditorGroup):
         self.stay_on_page_toggle.connect("notify::active", self.on_stay_on_page_changed)
         self.title_entry.connect("apply", self.on_title_entry_applied)
         self.wm_class_entry.connect("apply", self.on_wm_class_entry_applied)
+        self.title_focus.connect("leave", self.on_title_focus_left)
+        self.wm_class_focus.connect("leave", self.on_wm_class_focus_left)
 
     def disconnect_events(self) -> None:
         better_disconnect(self.enable_toggle, self.on_enable_changed)
         better_disconnect(self.stay_on_page_toggle, self.on_stay_on_page_changed)
         better_disconnect(self.title_entry, self.on_title_entry_applied)
         better_disconnect(self.wm_class_entry, self.on_wm_class_entry_applied)
+        better_disconnect(self.title_focus, self.on_title_focus_left)
+        better_disconnect(self.wm_class_focus, self.on_wm_class_focus_left)
 
     def load_config_settings(self, page_path: str) -> None:
         active_page_path = self.page_editor.active_page_path
@@ -362,6 +376,33 @@ class AutoChangeGroup(PageEditorGroup):
             wm_class=self.wm_class_entry.get_text()
         )
         self.recheck_active_window()
+
+    def on_title_focus_left(self, *args: object) -> None:
+        if self.is_stored_pattern("title", self.title_entry.get_text()):
+            return
+        self.on_title_entry_applied()
+
+    def on_wm_class_focus_left(self, *args: object) -> None:
+        if self.is_stored_pattern("wm-class", self.wm_class_entry.get_text()):
+            return
+        self.on_wm_class_entry_applied()
+
+    def is_stored_pattern(self, key: str, text: str) -> bool:
+        """Whether the page already carries this pattern.
+
+        A focus leave arrives on every click elsewhere in the window, and
+        almost none of those carry an edit. A write for each one would re-gate
+        the window watcher and re-apply every rule for nothing. An absent
+        pattern reads as the empty one, which is what the entry shows for it.
+
+        It answers True while no page is loaded, because there is nothing to
+        write the text to.
+        """
+        page_manager = gl.page_manager
+        path = self.page_editor.active_page_path
+        if page_manager is None or path is None:
+            return True
+        return (page_manager.get_auto_change_settings(path).get(key) or "") == text
 
     def recheck_active_window(self) -> None:
         """Applies the edited rules to the window that is in front now.
