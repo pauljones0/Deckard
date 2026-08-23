@@ -630,7 +630,11 @@ class App(Adw.Application):
             self.set_working(False)
             return
 
-        result = store_backend.install_plugin(plugin)
+        # This runs on the install_plugin worker thread, so the install
+        # script consent prompt marshals to the main loop, the same as a
+        # store-window install.
+        from src.windows.Store.install_consent import make_consent
+        result = store_backend.install_plugin(plugin, ask_install_script=make_consent(self.main_win))
         # install_plugin returns a StoreResult. Err is a failure, and the other
         # value is the single Ok. Narrow the type, do not test truth.
         if isinstance(result, Err):

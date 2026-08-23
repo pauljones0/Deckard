@@ -221,6 +221,7 @@ APP_DEFAULTS: dict[str, dict[str, Any]] = {
     },
     "store": {
         "auto-update": True,
+        "install-scripts": "ask",
         "responsibility-notes-agreed": False,
         "enable-custom-stores": False,
         "enable-custom-plugins": False,

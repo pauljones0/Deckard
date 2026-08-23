@@ -25,6 +25,7 @@ class RecordingPluginManager:
     def init_plugins(self): self.calls.append("init_plugins")
     def generate_action_index(self): self.calls.append("generate_action_index")
     def get_plugins(self): return {}
+    def get_plugin_by_id(self, plugin_id, include_disabled=True): return None
 
 
 def _make_backend() -> StoreBackend:

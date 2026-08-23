@@ -59,6 +59,7 @@ from src.backend.Store.asset_types import (
     SD_PLUS_BAR,
     WALLPAPER,
 )
+from src.backend.Store import install_script
 from src.backend.Store.catalog_entry import COMMIT_SHA_RE, resolve_pinned_revision
 from src.backend.Store.store_result import Err, ErrReason, Ok, StoreFetchError, StoreResult
 
@@ -1566,7 +1567,8 @@ class StoreBackend:
 
         return Ok(None)
 
-    def install_plugin(self, plugin_data:PluginData, auto_update: bool = False) -> StoreResult[None]:
+    def install_plugin(self, plugin_data:PluginData, auto_update: bool = False,
+                       ask_install_script: "Callable[[str], bool] | None" = None) -> StoreResult[None]:
         url = plugin_data.github
         plugin_id = plugin_data.plugin_id
 
@@ -1583,6 +1585,18 @@ class StoreBackend:
 
         local_path = os.path.join(gl.PLUGIN_DIR, plugin_id)
 
+        # Decide the install steps before the download swaps the tree, so a
+        # decline never destroys a working install. Declining an update
+        # keeps the registered version rather than replace it with one
+        # whose dependencies never got installed; a fresh install proceeds
+        # and skips the steps.
+        plugin_manager = gl.plugin_manager
+        is_update = plugin_manager is not None and plugin_manager.get_plugin_by_id(plugin_id) is not None
+        run_scripts = install_script.decide_install_scripts(
+            local_path if is_update else None, plugin_id, ask_install_script)
+        if is_update and not run_scripts:
+            return Ok(None)
+
         response = self.download_repo(repo_url=url, directory=local_path, commit_sha=plugin_data.commit_sha, branch_name=plugin_data.branch, expected_id=plugin_id)
 
         # Stop before an install script runs, or a plugin reload lands, on a
@@ -1595,23 +1609,18 @@ class StoreBackend:
         # below imports the new code. A deregister after a successful download
         # leaves a failed update with the old version on disk and registered,
         # while a deregister first would need a recovery reload.
-        plugin_manager = gl.plugin_manager
-        if plugin_manager is not None and plugin_manager.get_plugin_by_id(plugin_id) is not None:
+        if is_update:
             try:
                 self.uninstall_plugin(plugin_id, remove_from_pages=False, remove_files=False)
             except Exception as e:
                 log.error(f"Deregistering the old version of {plugin_id} failed: {e}")
 
-        # Run the install script when one exists. Use the python binary that
-        # runs this process, so a venv keeps its dependencies. Pass a list and
-        # run no shell. An f-string command breaks on a space in the data
-        # path, and lets a crafted path component inject shell syntax.
-        if os.path.isfile(os.path.join(local_path, "__install__.py")):
-            subprocess.run([sys.executable, os.path.join(local_path, "__install__.py")], start_new_session=True)
-
-        # Install the dependencies from requirements.txt.
-        if os.path.isfile(os.path.join(local_path, "requirements.txt")):
-            subprocess.run([sys.executable, "-m", "pip", "install", "-r", os.path.join(local_path, "requirements.txt")], start_new_session=True)
+        # The install steps run only through the gate, which owns the
+        # confinement, the timeout, the process-group kill, and the
+        # loopback-guard re-injection. run_scripts was decided pre-download.
+        outcome = install_script.run_install_steps(local_path, plugin_id, run=run_scripts)
+        if outcome not in (install_script.Outcome.RAN, install_script.Outcome.NO_STEPS):
+            log.warning(f"Install steps of {plugin_id}: {outcome.value}")
 
         # Update the plugin manager.
         if plugin_manager is not None:

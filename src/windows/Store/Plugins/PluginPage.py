@@ -55,6 +55,13 @@ class PluginPreview(StoreAssetPreview):
     # incompatible plugin in the incompatible section.
     shows_incompatible_border = False
 
+    def _install_kwargs(self) -> "dict[str, object]":
+        # Only a plugin carries an install script, so only a plugin install
+        # prompts. The dialog is transient for the store window and answered
+        # on the main loop; install() itself runs on a download worker.
+        from src.windows.Store.install_consent import make_consent
+        return {"ask_install_script": make_consent(self.store)}
+
     @staticmethod
     def get_install_state_for(asset_data: StoreAssetData) -> int:
         """0 is not installed, 1 is installed, and 2 is update available.

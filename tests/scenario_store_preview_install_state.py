@@ -81,6 +81,9 @@ def _make_fake(descriptor, data, install_result):
         install_state=0,
         set_install_state=set_install_state,
         notify_install_failure=lambda: state.__setitem__("notified", state["notified"] + 1),
+        # The base install passes no extra install kwargs; a plugin card
+        # overrides this to add the install-script consent prompt.
+        _install_kwargs=lambda: {},
     )
     return fake, state
 
