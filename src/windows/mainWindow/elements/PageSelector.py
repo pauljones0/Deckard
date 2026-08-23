@@ -17,18 +17,19 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Gtk, Pango
+from gi.repository import GLib, GObject, Gtk, Pango
 
 # Import Python modules
-from collections.abc import Iterable
+from functools import lru_cache
 import os
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from src.windows.mainWindow.mainWindow import MainWindow
 
 
 from loguru import logger as log
+from rapidfuzz import fuzz
 
 # Import globas
 from src.backend import services
@@ -39,10 +40,37 @@ import globals as gl
 from src.windows.PageManager.PageManager import PageManager
 from src.Signals import Signals
 
+# A page whose name scores at or below this against the query is dropped from
+# the list. The page-manager selector uses the same bar, so a query keeps the
+# same pages in both places.
+MATCH_THRESHOLD = 50.0
+
+# Rows the list shows before it scrolls. The popover sizes itself to its
+# content, so an unbounded list would grow taller than the window.
+MAX_LIST_HEIGHT = 300
+
+
+def page_display_name(page_path: str) -> str:
+    """The page name a user reads, which is the file name without .json."""
+    return os.path.splitext(os.path.basename(page_path))[0]
+
+
+@lru_cache(maxsize=1000)
+def match_ratio(name: str, search: str) -> float:
+    """How well a page name matches a query, from 0 to 100.
+
+    A module-level function so the cache keys on the two strings alone and
+    never pins a widget.
+    """
+    return float(fuzz.ratio(name.lower(), search.lower()))
+
+
 class PageSelector(Gtk.Box):
     def __init__(self, main_window: "MainWindow", page_manager: Any, **kwargs: Any) -> None:
         self.main_window = main_window
         self.page_manager = page_manager
+        self.page_rows: list[PageRow] = []
+        self.selected_page_path: str | None = None
         super().__init__(orientation=Gtk.Orientation.HORIZONTAL, **kwargs)
         self.build()
 
@@ -55,22 +83,41 @@ class PageSelector(Gtk.Box):
         self.sidebar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, css_classes=["linked"])
         self.append(self.sidebar)
 
-        # Dropdown
-        self.pages_model = Gtk.ListStore.new([str, str])
-        self.drop_down = Gtk.ComboBox.new_with_model(self.pages_model)
-        self.drop_down.set_css_classes(["header-page-dropdown"])
-        self.drop_down.set_hexpand(False)
+        # The button shows the page the active deck holds and opens the list.
+        self.page_label = Gtk.Label(label="", xalign=0, hexpand=True,
+                                    ellipsize=Pango.EllipsizeMode.END, max_width_chars=20)
+        button_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        button_box.append(self.page_label)
+        button_box.append(Gtk.Image(icon_name="pan-down-symbolic"))
 
-        self.renderer_text = Gtk.CellRendererText(ellipsize=Pango.EllipsizeMode.END, ellipsize_set=True)
-        self.drop_down.pack_start(self.renderer_text, True)
-        # Use first column for text
-        self.drop_down.add_attribute(self.renderer_text, "text", 0)
+        self.page_button = Gtk.MenuButton(css_classes=["header-page-dropdown"], hexpand=False,
+                                          tooltip_text=gl.lm.get("header-page-selector-drop-down-hint"))
+        self.page_button.set_child(button_box)
+        self.sidebar.append(self.page_button)
 
-        # self.drop_down.set_model(self.pages_model)
-        self.drop_down.set_tooltip_text(gl.lm.get("header-page-selector-drop-down-hint"))
-        self.drop_down.connect("changed", self.on_change_page)
+        self.popover = Gtk.Popover()
+        self.popover.connect("notify::visible", self.on_popover_visible)
+        self.page_button.set_popover(self.popover)
+
+        popover_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        self.popover.set_child(popover_box)
+
+        self.search_entry = Gtk.SearchEntry(placeholder_text=gl.lm.get("header-page-selector-search-hint"), hexpand=True)
+        self.search_entry.connect("search-changed", self.on_search_changed)
+        popover_box.append(self.search_entry)
+
+        self.scrolled_window = Gtk.ScrolledWindow(propagate_natural_height=True,
+                                                  max_content_height=MAX_LIST_HEIGHT,
+                                                  hscrollbar_policy=Gtk.PolicyType.NEVER)
+        popover_box.append(self.scrolled_window)
+
+        self.list_box = Gtk.ListBox(css_classes=["navigation-sidebar"], selection_mode=Gtk.SelectionMode.SINGLE)
+        self.list_box.set_filter_func(self.filter_func)
+        self.list_box.set_sort_func(self.sort_func)
+        self.list_box.connect("row-activated", self.on_row_activated)
+        self.scrolled_window.set_child(self.list_box)
+
         self.update()
-        self.sidebar.append(self.drop_down)
 
         # Settings button
         self.open_settings_button = Gtk.Button(icon_name="folder-documents-symbolic", tooltip_text=gl.lm.get("header-page-selector-page-settings-hint"))
@@ -86,38 +133,36 @@ class PageSelector(Gtk.Box):
         gl.signal_manager.connect_signal(signal=Signals.PageRename, callback=self.update)
         gl.signal_manager.connect_signal(signal=Signals.PageAdd, callback=self.update)
         gl.signal_manager.connect_signal(signal=Signals.PageDelete, callback=self.update)
-    
+
     def update(self, *args: Any, **kwargs: Any) -> None:
-        self.disconnect_change_signal()
-        pages = self.page_manager.get_pages()
-        # self.clear_model()
-        self.pages_model.clear()
-        for page in pages:
-            display_name = os.path.splitext(os.path.basename(page))[0]
-            self.pages_model.append([display_name, page])  # Append a tuple
-            
+        """Rebuild the list from the backend, then mark the active page."""
+        self.page_rows.clear()
+        self.list_box.remove_all()
+        for order, page_path in enumerate(self.page_manager.get_pages()):
+            row = PageRow(page_path=page_path, order=order)
+            self.page_rows.append(row)
+            self.list_box.append(row)
+
         self.update_selected()
 
-        # self.connect("notify::selected", self.on_change_page)
-        self.connect_change_signal()
-
-    def clear_model(self) -> None:
-        self.pages_model.clear()
-
     def set_selected(self, page_path: str) -> None:
-        # A Gtk.ListStore iterates its rows at runtime; the stub omits it.
-        for i, row in enumerate(cast("Iterable[Any]", self.pages_model)):
-            if row[1] == page_path:
-                self.drop_down.set_active(i)
+        self.selected_page_path = page_path
+        self.page_label.set_label(page_display_name(page_path))
+        for row in self.page_rows:
+            if row.page_path == page_path:
+                self.list_box.select_row(row)
                 return
-            
+        # The active page carries a path the backend no longer lists, such as
+        # a page a plugin holds. Name it on the button, and mark no row.
+        self.list_box.select_row(None)
+
     def update_selected(self, *args: Any, **kwargs: Any) -> None:
         child = self.main_window.leftArea.deck_stack.get_visible_child()
         if child is None:
-            self.drop_down.set_sensitive(False)
+            self.page_button.set_sensitive(False)
             return
         else:
-            self.drop_down.set_sensitive(True)
+            self.page_button.set_sensitive(True)
         active_controller = child.deck_controller
         page = active_controller.active_page
         if page is None:
@@ -125,19 +170,75 @@ class PageSelector(Gtk.Box):
         page_path = page.json_path
         self.set_selected(page_path)
 
-    def on_change_page(self, drop_down: Gtk.ComboBox, *args: Any) -> None:
+    def filter_func(self, row: "PageRow") -> bool:
+        search = self.search_entry.get_text()
+        if search == "":
+            return True
+        return match_ratio(page_display_name(row.page_path), search) > MATCH_THRESHOLD
+
+    def sort_func(self, row1: "PageRow", row2: "PageRow") -> int:
+        """-1 when row1 comes first, 1 when row2 does, 0 when they tie."""
+        search = self.search_entry.get_text()
+        if search != "":
+            score1 = match_ratio(page_display_name(row1.page_path), search)
+            score2 = match_ratio(page_display_name(row2.page_path), search)
+            if score1 > score2:
+                return -1
+            if score1 < score2:
+                return 1
+
+        # get_pages() returns the paths in natural name order, so the position
+        # each row took in that list is the alphabetical order already. It also
+        # breaks a score tie, which keeps equally scored names in name order.
+        if row1.order < row2.order:
+            return -1
+        if row1.order > row2.order:
+            return 1
+        return 0
+
+    def on_search_changed(self, search_entry: Gtk.SearchEntry) -> None:
+        self.list_box.invalidate_filter()
+        self.list_box.invalidate_sort()
+
+    def on_popover_visible(self, popover: Gtk.Popover, param: GObject.ParamSpec) -> None:
+        if not popover.get_visible():
+            return
+        # Every open starts on the whole list, and typing narrows it from
+        # there. A query left over from the last open would hide pages the
+        # user never filtered out.
+        self.search_entry.set_text("")
+        self.list_box.invalidate_filter()
+        self.list_box.invalidate_sort()
+        self.search_entry.grab_focus()
+
+    def on_row_activated(self, list_box: Gtk.ListBox, row: "PageRow") -> None:
+        self.popover.popdown()
+        self.rearm_focus()
+        self.change_page(row.page_path)
+
+    def rearm_focus(self) -> None:
+        """Give the header button the keyboard focus back after a pick.
+
+        The popover holds the focus while it is open and hands back nothing
+        when it closes, so the header ends up with no focused widget at all.
+        The grab waits for the next main-loop turn because the popdown has not
+        finished yet at this point.
+        """
+        GLib.idle_add(self.grab_page_button_focus)
+
+    def grab_page_button_focus(self) -> bool:
+        self.page_button.grab_focus()
+        # grab_focus() answers True when it worked, and an idle callback that
+        # returns True runs again forever. Say so explicitly instead.
+        return GLib.SOURCE_REMOVE
+
+    def change_page(self, page_path: str) -> None:
         active_child = self.main_window.leftArea.deck_stack.get_visible_child()
         if active_child is None:
             return
-        
+
         active_controller = active_child.deck_controller
 
-        active = drop_down.get_active()
-        if active < 0:
-            # No row is selected. get_active() returns -1, which indexes the
-            # model from the end and loads the last page.
-            return
-        page_path = self.pages_model[active][1]
         if active_controller.active_page is not None and active_controller.active_page.json_path == page_path:
             # The selector matches a switch that the deck triggered, so the
             # page already loads or is loaded. Do not start a second load.
@@ -156,12 +257,10 @@ class PageSelector(Gtk.Box):
     def on_click_open_page_settings(self, button: Gtk.Button) -> None:
         self.on_click_open_page_manager(button)
 
-        active = self.drop_down.get_active()
-        if active < 0:
+        page_path = self.selected_page_path
+        if page_path is None:
             # Nothing is selected, so open the manager and activate no page.
-            # A -1 index would activate the last page.
             return
-        page_path = self.pages_model[active][1]
         page_manager_window = gl.page_manager_window
         if page_manager_window is None:
             # The call above binds the global or raises out of this method,
@@ -170,12 +269,15 @@ class PageSelector(Gtk.Box):
             return
         page_manager_window.page_selector.activate_page(page_path)
 
-    def disconnect_change_signal(self) -> None:
-        try:
-            self.drop_down.disconnect_by_func(self.on_change_page)
-        except TypeError:
-            # disconnect_by_func raises TypeError when nothing is connected.
-            pass
 
-    def connect_change_signal(self) -> None:
-        self.drop_down.connect("changed", self.on_change_page)
+class PageRow(Gtk.ListBoxRow):
+    """One page in the list. `order` is its place in the backend's own order."""
+
+    def __init__(self, page_path: str, order: int) -> None:
+        super().__init__()
+        self.page_path = page_path
+        self.order = order
+
+        self.label = Gtk.Label(label=page_display_name(page_path), xalign=0, hexpand=True,
+                               ellipsize=Pango.EllipsizeMode.END, max_width_chars=30)
+        self.set_child(self.label)

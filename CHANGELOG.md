@@ -9,6 +9,9 @@ bundle as a release asset.
 
 ### Changed
 
+- The page selector in the header opens a searchable list. Type a few
+  letters to narrow it to the closest page names instead of scrolling the
+  whole list, which is what a deck with many pages used to need.
 - The plugin store follows a reviewed snapshot of the official catalog,
   pinned by this fork and moved deliberately after a diff review. The
   catalog had been frozen since 2026-08 on an old snapshot because it
