@@ -4,13 +4,14 @@ The header held a plain combo box over a list store, so a deck with many
 pages could only be changed by scrolling the whole list. The selector is a
 search entry over a filtered list now.
 
-Five legs. Three need no display: every locale key the module asks for must
-exist in the CSV, or the widget renders the raw key; the filter and the sort
-must narrow and rank the rows the list shows; and the focus re-arm must stop
-its idle source after one run. Two need one: the rendered list must follow
-the search text, and a pick must load the page through the wiring that was
-already there, with the Signals refresh keeping the list current after a
-page is added, renamed or deleted.
+Two legs need no display: every locale key the module asks for must exist in
+the CSV, or the widget renders the raw key; and the match ladder must narrow
+and rank the rows the list shows. The rest need one: the rendered list
+following the search text, the keyboard reaching and opening a row, the
+empty state saying something, a pick loading the page through the wiring
+that was already there, the Signals refresh keeping the list current, the
+selection never outliving the page it names, and the list opening on the
+page the deck holds.
 """
 import fixtures  # noqa: F401  (import first: isolated --data tempdir)
 
@@ -25,7 +26,9 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Adw, Gdk, GLib, Gtk
+gi.require_version("Gdk", "4.0")
+gi.require_version("Graphene", "1.0")
+from gi.repository import Adw, Gdk, GLib, Graphene, Gtk
 
 import globals as gl
 
@@ -38,25 +41,51 @@ LOCALES_CSV = os.path.join(REPO_ROOT, "locales", "locales.csv")
 MODULE_PATH = os.path.join(REPO_ROOT, "src", "windows", "mainWindow",
                            "elements", "PageSelector.py")
 
-# The page names the corpus holds, and the order the backend hands them over
-# in, which is natural order by file name.
-PAGE_NAMES = ["brightness", "gaming", "volume_down", "volume_up", "work"]
-ALPHABETICAL = list(PAGE_NAMES)
+# The page names the corpus holds. Three of them are the names a reviewer
+# measured the whole-string ratio failing on: a user typing "vol", "hom" or
+# "work" scored 42.9, 22.2 and exactly 50.0 against them, all at or under the
+# bar, so the pages being typed towards vanished from the list.
+PAGE_NAMES = ["Home Assistant Dashboard", "brightness", "gaming",
+              "volume_down", "volume_mute", "volume_up", "work profile"]
 
-# rapidfuzz scores against the page names, recomputed here as documentation.
-# The selector drops anything at or under 50. The checks assert which names
-# survive and in what order, not raw values, so a scoring bump surfaces as a
-# ranking change and not as a float mismatch.
-#   volume: volume_up 80.0, volume_down 70.6, work 20.0, gaming 16.7,
-#           brightness 12.5
-#   gam:    gaming 66.7, brightness 16.7, volume_down 0.0, volume_up 0.0,
-#           work 0.0
+# The backend hands the paths over in natural order by file name.
+ALPHABETICAL = ["brightness", "gaming", "Home Assistant Dashboard",
+                "volume_down", "volume_mute", "volume_up", "work profile"]
+
+# What each query must leave in the list, closest first. Measured against
+# this corpus, so a scoring change surfaces as a ranking change and not as a
+# float mismatch. The three prefix queries are the reviewer's cases.
 QUERIES = [
+    # An empty query keeps every page, in name order.
     ("", ALPHABETICAL),
-    ("volume", ["volume_up", "volume_down"]),
+    # A prefix of a name. Whole-string ratio scored 42.9, 42.9 and 50.0 here
+    # and emptied the list; the prefix tier keeps all three, and the ratio
+    # still ranks volume_up first inside that tier.
+    ("vol", ["volume_up", "volume_down", "volume_mute"]),
+    ("hom", ["Home Assistant Dashboard"]),
+    ("work", ["work profile"]),
     ("gam", ["gaming"]),
+    ("volume", ["volume_up", "volume_down", "volume_mute"]),
+    # A run inside a name, not at its start.
+    ("dash", ["Home Assistant Dashboard"]),
+    ("profile", ["work profile"]),
+    ("assistant", ["Home Assistant Dashboard"]),
+    # A whole name: the exact page first, then the near names on the fuzzy
+    # tier, so the ladder does not collapse to containment alone.
+    ("volume_up", ["volume_up", "volume_mute", "volume_down"]),
+    # Nothing matches, so the list empties and says so.
     ("zzzz", []),
 ]
+QUERY_RESULTS = dict(QUERIES)
+
+# A second, small corpus for the tier ordering alone. A name that holds what
+# was typed must beat one that only looks like it, whatever the two score.
+# Measured against "log": logbook starts with it and scores 60.0, catalog
+# viewer panel holds it further in and scores 26.1, and lob holds none of it
+# yet scores 66.7. Ranked by score alone, lob would come first.
+TIER_CORPUS = ["logbook", "catalog viewer panel", "lob"]
+TIER_QUERY = "log"
+TIER_EXPECTED = ["logbook", "catalog viewer panel", "lob"]
 
 
 # The fakes the selector reads
@@ -78,11 +107,14 @@ class FakeController:
 
 
 class FakeDeckStack:
+    """The deck stack, with a switch for the no-visible-deck state."""
+
     def __init__(self, controller):
         self.child = types.SimpleNamespace(deck_controller=controller)
+        self.visible = True
 
     def get_visible_child(self):
-        return self.child
+        return self.child if self.visible else None
 
 
 class FakePageManager:
@@ -138,19 +170,22 @@ class StubSelector:
     def visible_names(self):
         kept = [row for row in self.page_rows if self.filter_func(row)]
         kept.sort(key=cmp_to_key(self.sort_func))
-        return [os.path.splitext(os.path.basename(row.page_path))[0]
-                for row in kept]
+        return [name_of(row) for row in kept]
 
 
 # Helpers
 
 
+def name_of(row) -> str:
+    return os.path.splitext(os.path.basename(row.page_path))[0]
+
+
 def pump_until(condition, timeout: float, what: str) -> None:
     """Iterate the default main context until condition() holds.
 
-    The search entry emits search-changed off a timer and the Signals fan-out
-    lands on an idle source, so neither reaches the widget while this thread
-    holds it.
+    The search entry emits search-changed off a timer, the Signals fan-out
+    lands on an idle source and the popover scrolls from another, so none of
+    them reach the widget while this thread holds it.
     """
     context = GLib.MainContext.default()
     deadline = time.time() + timeout
@@ -161,6 +196,16 @@ def pump_until(condition, timeout: float, what: str) -> None:
             return
         time.sleep(0.005)
     raise AssertionError(f"timed out after {timeout}s: {what}")
+
+
+def pump(seconds: float = 0.2) -> None:
+    """Service the main context for a while, with nothing to wait for."""
+    context = GLib.MainContext.default()
+    deadline = time.time() + seconds
+    while time.time() < deadline:
+        while context.iteration(False):
+            pass
+        time.sleep(0.005)
 
 
 def has_display() -> bool:
@@ -174,33 +219,64 @@ def has_display() -> bool:
     return Gdk.Display.get_default() is not None
 
 
-def visible_rows(selector):
-    """The rows the list shows now, in the order it shows them.
-
-    A filtered row keeps its place in the box and loses its child visibility,
-    so the index walk covers every row and the flag says which are shown.
-    """
-    rows = []
-    index = 0
-    while True:
-        row = selector.list_box.get_row_at_index(index)
-        if row is None:
-            return rows
-        if row.get_child_visible():
-            rows.append(row)
-        index += 1
-
-
 def visible_names(selector):
-    return [os.path.splitext(os.path.basename(row.page_path))[0]
-            for row in visible_rows(selector)]
+    return [name_of(row) for row in selector.visible_rows()]
 
 
 def row_named(selector, name: str):
     for row in selector.page_rows:
-        if os.path.splitext(os.path.basename(row.page_path))[0] == name:
+        if name_of(row) == name:
             return row
     raise AssertionError(f"no row for page {name!r}: {visible_names(selector)}")
+
+
+def focus_is_inside(widget) -> bool:
+    """Whether the keyboard focus sits on widget or on something it holds.
+
+    A Gtk.SearchEntry never holds the focus itself: it delegates to an inner
+    Gtk.Text, so has_focus() on the entry answers False even when the user is
+    typing into it.
+    """
+    root = widget.get_root()
+    if root is None:
+        return False
+    focused = root.get_focus()
+    while focused is not None:
+        if focused is widget:
+            return True
+        focused = focused.get_parent()
+    return False
+
+
+def press(selector, keyval: int) -> bool:
+    """Send one key press to the search entry's controller."""
+    return selector.search_key_controller.emit(
+        "key-pressed", keyval, 0, Gdk.ModifierType(0))
+
+
+def open_list(selector) -> None:
+    selector.page_button.popup()
+    pump_until(lambda: selector.popover.get_visible(), 10,
+               "the page list never opened")
+    pump(0.2)
+
+
+def close_list(selector) -> None:
+    selector.page_button.popdown()
+    pump_until(lambda: not selector.popover.get_visible(), 10,
+               "the page list never closed")
+
+
+def set_query(selector, search: str) -> None:
+    """Type into the search entry and wait for the list to settle."""
+    selector.search_entry.set_text(search)
+    expected = QUERY_RESULTS.get(search)
+    if expected is None:
+        pump(0.3)
+        return
+    pump_until(lambda: visible_names(selector) == expected, 10,
+               f"the list never settled on {expected} for the query "
+               f"{search!r}, it shows {visible_names(selector)}")
 
 
 # 1. Every locale key the module asks for must exist in the CSV.
@@ -232,71 +308,40 @@ def check_locale_keys() -> None:
                 f"{key!r} has no {locale} value, so that locale falls back "
                 f"to English or to the raw key")
 
-    assert "header-page-selector-search-hint" in keys, (
-        "the search entry must carry a translated placeholder")
+    for required in ("header-page-selector-search-hint",
+                     "header-page-selector-empty-hint"):
+        assert required in keys, f"the module must ask for {required!r}"
     print(f"PASS: all {len(keys)} locale keys the page selector asks for have "
           f"a row in every one of the {len(locales)} locales")
 
 
-# 2. The filter narrows and the sort ranks.
+# 2. The ladder narrows and ranks.
 
-def check_filter_and_sort(selector, label: str) -> None:
+def check_match_ladder(selector, label: str) -> None:
     for search, expected in QUERIES:
         selector.query(search)
         got = selector.visible_names()
-        if search == "":
-            assert got == expected, (
-                f"{label}: an empty query must keep every page and list it "
-                f"as {expected}, got {got}")
-        else:
-            assert got == expected, (
-                f"{label}: the query {search!r} must leave {expected}, "
-                f"closest first, got {got}")
-    print(f"PASS: {label} narrows the list to the query and ranks the closest "
-          f"page first")
+        assert got == expected, (
+            f"{label}: the query {search!r} must leave {expected}, closest "
+            f"first, got {got}")
+    print(f"PASS: {label} keeps every page whose name holds the query and "
+          f"ranks the closest first, over {len(QUERIES)} queries")
 
 
-# 3. The focus re-arm must run once.
+def check_holding_beats_resembling(page_manager_factory) -> None:
+    """A name that holds the query outranks one that only resembles it.
 
-def check_focus_rearm_stops() -> None:
-    """grab_focus() answers True, and a truthy idle callback runs forever.
-
-    The re-arm must therefore return SOURCE_REMOVE of its own, or the header
-    pins a core for as long as the app runs.
+    Otherwise the page a user is typing the name of sits below a page that
+    happens to score well, and the top match, which Enter opens, is wrong.
     """
-    from src.windows.mainWindow.elements.PageSelector import PageSelector
-
-    grabs = []
-
-    class Stub:
-        page_button = types.SimpleNamespace(
-            grab_focus=lambda: (grabs.append(1), True)[1])
-
-    result = PageSelector.grab_page_button_focus(Stub())
-    assert grabs == [1], "the re-arm must actually grab the focus"
-    assert not result, (
-        f"the focus re-arm returned {result!r}; an idle callback that answers "
-        f"anything truthy is kept and runs again on every main-loop turn")
-    print("PASS: the focus re-arm grabs the focus once and removes its source")
-
-
-# 4. The rendered list follows the search text.
-
-class RecordingGLib:
-    """Stands in for the module's GLib, recording what it defers.
-
-    The module reads GLib off its own globals, so swapping the attribute
-    catches the idle_add the re-arm makes without touching the real one.
-    """
-
-    SOURCE_REMOVE = GLib.SOURCE_REMOVE
-
-    def __init__(self):
-        self.idle_calls = []
-
-    def idle_add(self, func, *args, **kwargs):
-        self.idle_calls.append(func)
-        return GLib.idle_add(func, *args, **kwargs)
+    stub = StubSelector(page_manager_factory(TIER_CORPUS))
+    stub.query(TIER_QUERY)
+    got = stub.visible_names()
+    assert got == TIER_EXPECTED, (
+        f"the query {TIER_QUERY!r} must rank the names that hold it above "
+        f"the one that only scores well: {TIER_EXPECTED}, got {got}")
+    print("PASS: a name holding the query outranks a closer-scoring name "
+          "that does not hold it")
 
 
 class RealSelector:
@@ -306,62 +351,243 @@ class RealSelector:
         self.selector = selector
 
     def query(self, search: str) -> None:
-        self.selector.search_entry.set_text(search)
-        pump_until(lambda: self.selector.search_entry.get_text() == search, 10,
-                   f"the search entry never took the text {search!r}")
-        # search-changed lands off a timer, so wait for the list to settle on
-        # a state that matches the text rather than reading it straight away.
-        expected = dict(QUERIES).get(search)
-        if expected is not None:
-            pump_until(lambda: visible_names(self.selector) == expected, 10,
-                       f"the list never settled on {expected} for the query "
-                       f"{search!r}")
+        set_query(self.selector, search)
 
     def visible_names(self):
         return visible_names(self.selector)
 
 
+# 3. The keyboard must reach a row and open it.
+
+def check_search_entry_takes_focus(selector) -> None:
+    """Opening the list must put the cursor in the search box.
+
+    Without it the user opens the list and types into nothing, which is the
+    whole feature failing quietly.
+    """
+    open_list(selector)
+    pump_until(lambda: focus_is_inside(selector.search_entry), 10,
+               "the search entry never took the keyboard focus when the list "
+               "opened")
+    print("PASS: opening the list puts the keyboard focus in the search entry")
+
+
+def check_tab_reaches_a_row(selector) -> None:
+    """Focus leaving the entry must land on a row, not on the scroller.
+
+    A focusable Gtk.ScrolledWindow takes that focus and holds it, so the
+    rows below are unreachable from the keyboard.
+    """
+    assert not selector.scrolled_window.get_focusable(), (
+        "the scrolled window is focusable, so it swallows the focus that "
+        "leaves the search entry and no row can be reached")
+
+    set_query(selector, "")
+    selector.search_entry.grab_focus()
+    pump(0.2)
+    moved = selector.popover.child_focus(Gtk.DirectionType.TAB_FORWARD)
+    pump(0.2)
+    assert moved, "focus did not move out of the search entry at all"
+    first = selector.visible_rows()[0]
+    assert focus_is_inside(first), (
+        f"focus left the search entry but did not land on the first row "
+        f"{name_of(first)!r}")
+    print("PASS: focus leaving the search entry lands on the first row")
+
+
+def check_focus_returns_to_the_entry(selector) -> None:
+    """Reopening the list must put the cursor back in the search box.
+
+    The focus sits on a row after the leg above. A popover hands the focus
+    back to whatever held it when it closed, so without an explicit grab on
+    open the user reopens the list, types, and nothing happens.
+    """
+    first = selector.visible_rows()[0]
+    first.grab_focus()
+    pump_until(lambda: focus_is_inside(first), 10,
+               "the row never took the keyboard focus")
+
+    close_list(selector)
+    open_list(selector)
+    pump_until(lambda: focus_is_inside(selector.search_entry), 10,
+               "reopening the list left the focus where it was, not in the "
+               "search entry, so what the user types goes nowhere")
+    print("PASS: reopening the list puts the focus back in the search entry")
+
+
+def check_arrows_move_the_selection(selector) -> None:
+    """Up and Down must walk the list while the entry keeps the focus.
+
+    The entry's inner text widget consumes both keys, so directional focus
+    never leaves it; the key controller moves the selection instead.
+    """
+    set_query(selector, "")
+    rows = selector.visible_rows()
+    assert len(rows) >= 3, f"this check needs at least three rows, got {len(rows)}"
+
+    # The controller has to be on the entry, or the keys never reach it and
+    # driving it here would prove nothing.
+    installed = selector.search_entry.observe_controllers()
+    controllers = [installed.get_item(index) for index in range(installed.get_n_items())]
+    assert selector.search_key_controller in controllers, (
+        "the key controller is not installed on the search entry, so no key "
+        "press ever reaches it")
+
+    selector.search_entry.grab_focus()
+    pump_until(lambda: focus_is_inside(selector.search_entry), 10,
+               "the search entry never took the focus back")
+
+    selector.list_box.select_row(None)
+    assert press(selector, Gdk.KEY_Down) is True, "Down must be handled"
+    assert selector.list_box.get_selected_row() is rows[0], (
+        f"Down with nothing selected must enter the list at the top, it "
+        f"selected {selector.list_box.get_selected_row()}")
+
+    press(selector, Gdk.KEY_Down)
+    assert selector.list_box.get_selected_row() is rows[1], (
+        "a second Down must step to the next row")
+
+    press(selector, Gdk.KEY_Up)
+    assert selector.list_box.get_selected_row() is rows[0], (
+        "Up must step back to the row above")
+
+    press(selector, Gdk.KEY_Up)
+    assert selector.list_box.get_selected_row() is rows[0], (
+        "Up at the top must stay on the top row, not wrap or unselect")
+
+    selector.list_box.select_row(None)
+    press(selector, Gdk.KEY_Up)
+    assert selector.list_box.get_selected_row() is rows[-1], (
+        "Up with nothing selected must enter the list at the bottom")
+
+    assert focus_is_inside(selector.search_entry), (
+        "the arrow keys must leave the typing focus in the search entry")
+
+    # The entry keeps every other key, or the user cannot type.
+    assert press(selector, Gdk.KEY_a) is False, (
+        "the controller must pass an ordinary key through to the entry")
+
+    # An arrow over an empty list must not raise, and must not reach for a
+    # row that is not there.
+    set_query(selector, "zzzz")
+    selector.list_box.select_row(None)
+    assert press(selector, Gdk.KEY_Down) is True
+    assert selector.list_box.get_selected_row() is None, (
+        "Down over an empty list must select nothing")
+    set_query(selector, "")
+    print("PASS: Up and Down walk the selection, clamp at both ends and leave "
+          "ordinary keys to the entry")
+
+
+def check_enter_opens_the_top_match(selector, controller, page_manager) -> None:
+    """Enter after typing must open the best match with no further keys."""
+    open_list(selector)
+    set_query(selector, "vol")
+    selector.list_box.select_row(None)
+
+    before = len(controller.loaded)
+    selector.search_entry.emit("activate")
+    pump(0.2)
+
+    assert len(controller.loaded) == before + 1, (
+        f"Enter must open the top match, the controller loaded "
+        f"{len(controller.loaded) - before} pages")
+    assert controller.loaded[-1].json_path == page_manager.path_of("volume_up"), (
+        f"Enter opened {controller.loaded[-1].json_path!r}, not the top match")
+
+    # With a row picked out by the arrows, Enter must take that row instead.
+    open_list(selector)
+    set_query(selector, "vol")
+    press(selector, Gdk.KEY_Down)
+    press(selector, Gdk.KEY_Down)
+    picked = selector.list_box.get_selected_row()
+    selector.search_entry.emit("activate")
+    pump(0.2)
+    assert controller.loaded[-1].json_path == picked.page_path, (
+        f"Enter must open the row the arrows picked, {name_of(picked)!r}, it "
+        f"opened {controller.loaded[-1].json_path!r}")
+
+    # Enter over an empty list must do nothing at all.
+    open_list(selector)
+    set_query(selector, "zzzz")
+    before = len(controller.loaded)
+    selector.search_entry.emit("activate")
+    pump(0.2)
+    assert len(controller.loaded) == before, (
+        "Enter with nothing in the list must load no page")
+    close_list(selector)
+    print("PASS: Enter opens the top match, or the row the arrows picked, and "
+          "does nothing over an empty list")
+
+
+# 4. The empty state must say something.
+
+def check_empty_state(selector, page_manager) -> None:
+    """A blank popover tells the user nothing about why it is blank."""
+    open_list(selector)
+    set_query(selector, "zzzz")
+    pump_until(selector.list_placeholder.get_mapped, 10,
+               "a query that matches nothing left the list blank with no "
+               "message")
+    assert selector.list_placeholder.get_label() != "header-page-selector-empty-hint", (
+        "the empty-list message shows the raw locale key")
+
+    set_query(selector, "")
+    pump_until(lambda: not selector.list_placeholder.get_mapped(), 10,
+               "the message stayed up after the query was cleared")
+
+    # A install with no pages at all reaches the same message.
+    saved = list(page_manager.names)
+    page_manager.names.clear()
+    selector.update()
+    pump_until(selector.list_placeholder.get_mapped, 10,
+               "an install with no pages left the list blank with no message")
+    assert selector.visible_rows() == [], "no page must be listed"
+
+    page_manager.names[:] = saved
+    selector.update()
+    pump_until(lambda: visible_names(selector) == ALPHABETICAL, 10,
+               "the pages never came back")
+    close_list(selector)
+    print("PASS: a query that matches nothing and an install with no pages "
+          "both show the empty-list message")
+
+
+# 5. A pick reaches the deck.
+
 def check_selection_loads_page(selector, controller, page_manager) -> None:
     """A pick must reach the deck through the wiring that was there before."""
-    import src.windows.mainWindow.elements.PageSelector as module
-
-    selector.search_entry.set_text("")
-    pump_until(lambda: visible_names(selector) == ALPHABETICAL, 10,
-               "the list never returned to the whole corpus")
+    open_list(selector)
+    set_query(selector, "")
 
     row = row_named(selector, "gaming")
-    recorder = RecordingGLib()
-    saved_glib = module.GLib
-    module.GLib = recorder
-    try:
-        selector.list_box.emit("row-activated", row)
-    finally:
-        module.GLib = saved_glib
+    before = len(controller.loaded)
+    selector.list_box.emit("row-activated", row)
+    pump(0.2)
 
-    assert len(controller.loaded) == 1, (
-        f"activating a row must load exactly one page, the controller got "
-        f"{controller.loaded!r}")
-    assert controller.loaded[0].json_path == page_manager.path_of("gaming"), (
-        f"the wrong page was loaded: {controller.loaded[0].json_path!r}")
-    assert recorder.idle_calls == [selector.grab_page_button_focus], (
-        f"a pick must re-arm the header focus through idle_add, the module "
-        f"deferred {recorder.idle_calls!r}")
+    assert len(controller.loaded) == before + 1, (
+        f"activating a row must load exactly one page, the controller loaded "
+        f"{len(controller.loaded) - before}")
+    assert controller.loaded[-1].json_path == page_manager.path_of("gaming"), (
+        f"the wrong page was loaded: {controller.loaded[-1].json_path!r}")
 
     # The deck already holds this page now, so a second pick of the same row
     # must not start a second load of it.
     selector.list_box.emit("row-activated", row)
-    assert len(controller.loaded) == 1, (
+    pump(0.2)
+    assert len(controller.loaded) == before + 1, (
         f"picking the page the deck already holds must not load it again, "
-        f"the controller got {controller.loaded!r}")
-    print("PASS: a pick loads the page through the deck controller, re-arms "
-          "the header focus and refuses a repeat of the active page")
+        f"the controller loaded {len(controller.loaded) - before}")
+    print("PASS: a pick loads the page through the deck controller and "
+          "refuses a repeat of the active page")
 
+
+# 6. The list follows the backend, and the header follows the deck.
 
 def check_signal_refresh(selector, controller, page_manager) -> None:
     """Add, rename and delete must all reach the list through Signals."""
     from src.Signals import Signals
 
-    # Add
     page_manager.names.append("alpha")
     gl.signal_manager.trigger_signal(Signals.PageAdd)
     pump_until(lambda: "alpha" in visible_names(selector), 10,
@@ -370,7 +596,6 @@ def check_signal_refresh(selector, controller, page_manager) -> None:
         f"the added page must land in name order, got "
         f"{visible_names(selector)}")
 
-    # Rename
     page_manager.names[page_manager.names.index("alpha")] = "omega"
     gl.signal_manager.trigger_signal(Signals.PageRename)
     pump_until(lambda: "omega" in visible_names(selector), 10,
@@ -378,7 +603,6 @@ def check_signal_refresh(selector, controller, page_manager) -> None:
     assert "alpha" not in visible_names(selector), (
         f"the old name must go with the rename, got {visible_names(selector)}")
 
-    # Delete
     page_manager.names.remove("omega")
     gl.signal_manager.trigger_signal(Signals.PageDelete)
     pump_until(lambda: "omega" not in visible_names(selector), 10,
@@ -387,48 +611,220 @@ def check_signal_refresh(selector, controller, page_manager) -> None:
         f"the list must be back to the whole corpus, got "
         f"{visible_names(selector)}")
 
-    # A page change on the deck must mark the button and the row.
-    target = page_manager.path_of("work")
+    target = page_manager.path_of("work profile")
     controller.active_page = FakePage(target)
     gl.signal_manager.trigger_signal(Signals.ChangePage)
     pump_until(lambda: selector.selected_page_path == target, 10,
                f"the deck's page change never reached the selector, it holds "
                f"{selector.selected_page_path!r}")
-    assert selector.page_label.get_label() == "work", (
+    assert selector.page_label.get_label() == "work profile", (
         f"the header must name the page the deck holds, it shows "
         f"{selector.page_label.get_label()!r}")
-    assert selector.list_box.get_selected_row() is row_named(selector, "work"), (
+    assert selector.list_box.get_selected_row() is row_named(selector, "work profile"), (
         "the list must mark the page the deck holds")
     print("PASS: the list follows a page add, rename and delete, and the "
           "header follows the deck's own page change")
 
 
-def check_reopen_clears_query(selector) -> None:
-    """A query left over from the last open would hide pages silently."""
-    selector.search_entry.set_text("gam")
-    pump_until(lambda: visible_names(selector) == ["gaming"], 10,
-               f"the query never narrowed the list: {visible_names(selector)}")
+def check_selection_never_outlives_its_page(selector, controller,
+                                            page_manager) -> None:
+    """Deleting the page the deck holds must blank the header.
 
-    selector.page_button.popup()
-    pump_until(lambda: selector.popover.get_visible(), 10,
-               "the page list never opened")
+    The header would otherwise keep naming a file that is gone, and the
+    page-settings button would hand that dead path to the page manager.
+    """
+    from src.Signals import Signals
+
+    target = page_manager.path_of("gaming")
+    controller.active_page = FakePage(target)
+    gl.signal_manager.trigger_signal(Signals.ChangePage)
+    pump_until(lambda: selector.selected_page_path == target, 10,
+               "the header never took the page the deck holds")
+
+    page_manager.names.remove("gaming")
+    gl.signal_manager.trigger_signal(Signals.PageDelete)
+    pump_until(lambda: "gaming" not in visible_names(selector), 10,
+               "the deleted page stayed in the list")
+
+    assert selector.selected_page_path is None, (
+        f"the selector still holds the deleted page "
+        f"{selector.selected_page_path!r}")
+    assert selector.page_label.get_label() == "", (
+        f"the header still names the deleted page: "
+        f"{selector.page_label.get_label()!r}")
+    assert selector.list_box.get_selected_row() is None, (
+        "the list still marks a row for the deleted page")
+
+    # The same, with the rows left standing. A deck that switches to a page
+    # the list does not carry must clear the mark, and here nothing rebuilds
+    # the list to clear it as a side effect.
+    page_manager.names.append("gaming")
+    gl.signal_manager.trigger_signal(Signals.PageAdd)
+    pump_until(lambda: visible_names(selector) == ALPHABETICAL, 10,
+               "the corpus never came back")
+    controller.active_page = FakePage(page_manager.path_of("gaming"))
+    gl.signal_manager.trigger_signal(Signals.ChangePage)
+    pump_until(lambda: selector.list_box.get_selected_row() is not None, 10,
+               "the list never marked the page the deck holds")
+
+    rows_before = len(selector.page_rows)
+    controller.active_page = FakePage("/nowhere/a-page-this-list-has-not.json")
+    gl.signal_manager.trigger_signal(Signals.ChangePage)
+    pump_until(lambda: selector.selected_page_path is None, 10,
+               f"a page the list does not carry left the header naming "
+               f"{selector.selected_page_path!r}")
+    assert len(selector.page_rows) == rows_before, (
+        "this check needs the rows left standing, or a rebuild clears the "
+        "mark on its own and proves nothing")
+    assert selector.list_box.get_selected_row() is None, (
+        "the list still marks the page it carried before, though the deck "
+        "moved to one it does not carry")
+    assert selector.page_label.get_label() == "", (
+        f"the header still names a page the list does not carry: "
+        f"{selector.page_label.get_label()!r}")
+
+    page_manager.names.remove("gaming")
+    gl.signal_manager.trigger_signal(Signals.PageDelete)
+    pump_until(lambda: "gaming" not in visible_names(selector), 10,
+               "the corpus never went back to the deleted state")
+
+    # The page-settings button must not carry the dead path onward, and a
+    # path the backend stopped listing must be refused even if it is held.
+    activated = []
+    saved_window = gl.page_manager_window
+    gl.page_manager_window = types.SimpleNamespace(
+        present=lambda: None,
+        page_selector=types.SimpleNamespace(
+            activate_page=lambda path: activated.append(path)))
+    try:
+        selector.on_click_open_page_settings(selector.open_settings_button)
+        assert activated == [], (
+            f"the settings button opened the manager on {activated!r}, which "
+            f"names no page the backend lists")
+
+        selector.selected_page_path = target
+        selector.on_click_open_page_settings(selector.open_settings_button)
+        assert activated == [], (
+            f"a selection the backend no longer lists must be refused, the "
+            f"settings button passed on {activated!r}")
+
+        selector.selected_page_path = page_manager.path_of("brightness")
+        selector.on_click_open_page_settings(selector.open_settings_button)
+        assert activated == [page_manager.path_of("brightness")], (
+            f"a listed page must still reach the manager, it got {activated!r}")
+    finally:
+        gl.page_manager_window = saved_window
+
+    page_manager.names.append("gaming")
+    controller.active_page = None
+    gl.signal_manager.trigger_signal(Signals.PageAdd)
+    pump_until(lambda: visible_names(selector) == ALPHABETICAL, 10,
+               "the corpus never came back")
+    print("PASS: deleting the page the deck holds blanks the header, and the "
+          "settings button refuses a page the backend no longer lists")
+
+
+def check_no_deck_disables_the_button(selector, deck_stack) -> None:
+    """With no deck on screen there is no page to switch, so the button goes."""
+    deck_stack.visible = False
+    selector.update_selected()
+    assert not selector.page_button.get_sensitive(), (
+        "with no visible deck the page button must be insensitive")
+
+    deck_stack.visible = True
+    selector.update_selected()
+    assert selector.page_button.get_sensitive(), (
+        "the page button must come back when a deck is on screen again")
+    print("PASS: the page button follows whether a deck is on screen")
+
+
+# 7. The list must open on the page the deck holds.
+
+def check_opens_on_the_selected_page(selector, controller, page_manager) -> None:
+    """A long list opens scrolled to the page the deck holds.
+
+    The combo box this replaced opened on its active row. A list that always
+    opens at the top puts the current page off screen once there are more
+    pages than fit.
+    """
+    from src.Signals import Signals
+
+    page_manager.names[:] = [f"page_{index:02d}" for index in range(40)]
+    gl.signal_manager.trigger_signal(Signals.PageAdd)
+    pump_until(lambda: len(selector.page_rows) == 40, 10,
+               "the long corpus never reached the list")
+
+    target = page_manager.path_of("page_37")
+    controller.active_page = FakePage(target)
+    gl.signal_manager.trigger_signal(Signals.ChangePage)
+    pump_until(lambda: selector.selected_page_path == target, 10,
+               "the header never took the page the deck holds")
+
+    close_list(selector)
+    open_list(selector)
+
+    adjustment = selector.scrolled_window.get_vadjustment()
+    pump_until(lambda: adjustment.get_upper() > adjustment.get_page_size(), 10,
+               "the list never grew past its view, so nothing can scroll")
+    pump_until(lambda: adjustment.get_value() > 0, 10,
+               f"the list opened at the top with the page the deck holds far "
+               f"below it (value {adjustment.get_value()}, upper "
+               f"{adjustment.get_upper()})")
+
+    row = row_named(selector, "page_37")
+    found, point = row.compute_point(selector.list_box, Graphene.Point().init(0, 0))
+    assert found, "the row has no place in the list, so nothing can be checked"
+    row_top = point.y
+    view_top = adjustment.get_value()
+    view_bottom = view_top + adjustment.get_page_size()
+    assert view_top <= row_top <= view_bottom, (
+        f"the page the deck holds sits at {row_top} and the view covers "
+        f"{view_top} to {view_bottom}, so it opened off screen")
+    close_list(selector)
+    print("PASS: a long list opens scrolled to the page the deck holds")
+
+
+def check_reopen_clears_the_query(selector) -> None:
+    """A query left over from the last open would hide pages silently.
+
+    The user closes the list on a narrowed view, opens it again and sees a
+    few pages with no sign that a filter is on.
+    """
+    open_list(selector)
+    set_query(selector, "gam")
+    close_list(selector)
+    open_list(selector)
+
     assert selector.search_entry.get_text() == "", (
-        "opening the list must clear the last query")
+        f"opening the list must clear the last query, it still holds "
+        f"{selector.search_entry.get_text()!r}")
     pump_until(lambda: visible_names(selector) == ALPHABETICAL, 10,
                f"opening the list must show every page, it shows "
                f"{visible_names(selector)}")
-
-    selector.page_button.popdown()
-    pump_until(lambda: not selector.popover.get_visible(), 10,
-               "the page list never closed")
     print("PASS: opening the list clears the last query and shows every page")
 
 
+def check_no_backend_yet(main_window):
+    """The header is built before the page backend exists on a cold start.
+
+    Returned so the caller keeps it alive: the Signals registry holds its
+    observers weakly.
+    """
+    from src.windows.mainWindow.elements.PageSelector import PageSelector
+
+    selector = PageSelector(main_window, None)
+    assert selector.page_rows == [], (
+        "a selector built before the page backend exists must list nothing")
+    assert selector.selected_page_path is None, (
+        "a selector with no backend must hold no page")
+    print("PASS: the header builds with no page backend and lists nothing")
+    return selector
+
+
 def main() -> int:
-    fixtures.start_watchdog(180, label="scenario_page_selector_search")
+    fixtures.start_watchdog(300, label="scenario_page_selector_search")
 
     check_locale_keys()
-    check_focus_rearm_stops()
 
     page_dir = os.path.join(gl.DATA_PATH, "page-selector-search")
     os.makedirs(page_dir, exist_ok=True)
@@ -442,11 +838,13 @@ def main() -> int:
     gl.signal_manager = SignalManager()
     gl.page_manager = page_manager
 
-    check_filter_and_sort(StubSelector(page_manager), "the hooks over stubs")
+    check_match_ladder(StubSelector(page_manager), "the ladder over stubs")
+    check_holding_beats_resembling(
+        lambda names: FakePageManager(page_dir, names))
 
     if not has_display():
-        print("SKIP(real-widget): no display; the hooks ran against stubs and "
-              "the wiring legs need a rendered list")
+        print("SKIP(real-widget): no display; the ladder ran against stubs "
+              "and the rest need a rendered list")
         print("ALL PASS: scenario_page_selector_search")
         return 0
 
@@ -455,8 +853,9 @@ def main() -> int:
     from src.windows.mainWindow.elements.PageSelector import PageSelector
 
     controller = FakeController()
+    deck_stack = FakeDeckStack(controller)
     main_window = types.SimpleNamespace(
-        leftArea=types.SimpleNamespace(deck_stack=FakeDeckStack(controller)))
+        leftArea=types.SimpleNamespace(deck_stack=deck_stack))
     selector = PageSelector(main_window, page_manager)
 
     # A real window, because the list opens as a popover and a popover only
@@ -473,10 +872,21 @@ def main() -> int:
     assert placeholder != "header-page-selector-search-hint", (
         "the search entry shows the raw locale key as its placeholder")
 
-    check_filter_and_sort(RealSelector(selector), "the rendered list")
-    check_reopen_clears_query(selector)
+    check_search_entry_takes_focus(selector)
+    check_match_ladder(RealSelector(selector), "the rendered list")
+    check_tab_reaches_a_row(selector)
+    check_focus_returns_to_the_entry(selector)
+    check_reopen_clears_the_query(selector)
+    check_arrows_move_the_selection(selector)
+    check_empty_state(selector, page_manager)
+    check_enter_opens_the_top_match(selector, controller, page_manager)
     check_selection_loads_page(selector, controller, page_manager)
     check_signal_refresh(selector, controller, page_manager)
+    check_selection_never_outlives_its_page(selector, controller, page_manager)
+    check_no_deck_disables_the_button(selector, deck_stack)
+    check_opens_on_the_selected_page(selector, controller, page_manager)
+    cold_start_selector = check_no_backend_yet(main_window)
+    assert cold_start_selector is not None
 
     window.destroy()
     print("ALL PASS: scenario_page_selector_search")

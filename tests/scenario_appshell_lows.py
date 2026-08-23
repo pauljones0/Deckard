@@ -26,15 +26,6 @@ class Recorder:
         return self.result
 
 
-class ExplodingPages:
-    """Sentinel for a page list. Any indexing fails the test."""
-    def __getitem__(self, item):
-        raise AssertionError(
-            f"the page list must not be indexed when nothing is selected "
-            f"(got index {item!r})"
-        )
-
-
 def check_on_activate_defers_show_donate() -> None:
     import src.app as app_mod
 
@@ -126,10 +117,7 @@ def check_page_selector_no_selection_guard() -> None:
         )
 
     deck_stack = Obj(get_visible_child=lambda: None)
-    stub = Obj(
-        main_window=Obj(leftArea=Obj(deck_stack=deck_stack)),
-        page_rows=ExplodingPages(),
-    )
+    stub = Obj(main_window=Obj(leftArea=Obj(deck_stack=deck_stack)))
     saved_require = services.require_page_manager
     services.require_page_manager = exploding_page_manager
     try:
@@ -138,7 +126,8 @@ def check_page_selector_no_selection_guard() -> None:
         services.require_page_manager = saved_require
 
     # The page-settings button with nothing selected: the manager opens and
-    # no page is activated in it.
+    # no page is activated in it. lists_page() answers True for anything, so
+    # only the empty selection can stop the path here.
     activate = Recorder()
     open_manager = Recorder()
     saved_window = gl.page_manager_window
@@ -146,7 +135,7 @@ def check_page_selector_no_selection_guard() -> None:
     try:
         stub2 = Obj(
             selected_page_path=None,
-            page_rows=ExplodingPages(),
+            lists_page=lambda path: True,
             on_click_open_page_manager=open_manager,
         )
         PageSelector.on_click_open_page_settings(stub2, button=None)

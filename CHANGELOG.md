@@ -9,9 +9,11 @@ bundle as a release asset.
 
 ### Changed
 
-- The page selector in the header opens a searchable list. Type a few
-  letters to narrow it to the closest page names instead of scrolling the
-  whole list, which is what a deck with many pages used to need.
+- The page selector in the header opens a searchable list. Type any part of
+  a page name to narrow it, walk the matches with the arrow keys and press
+  Enter to open the best one. The list opens on the page the deck holds, and
+  says so when nothing matches. A deck with many pages needed a scroll
+  through the whole list before.
 - The plugin store follows a reviewed snapshot of the official catalog,
   pinned by this fork and moved deliberately after a diff review. The
   catalog had been frozen since 2026-08 on an old snapshot because it
