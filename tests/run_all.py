@@ -10,6 +10,7 @@ Usage:
                                       [--junit PATH] [--jobs N]
 """
 import argparse
+import re
 import subprocess
 import sys
 import time
@@ -71,6 +72,19 @@ def _classify(name: str, ok: bool) -> tuple[str, bool]:
     return "FAIL", True
 
 
+# Captured scenario output can carry ANSI colour and other control bytes. XML
+# 1.0 forbids the C0 control characters bar tab, newline and carriage return,
+# so minidom's parse of the serialized tree raises on them and the whole
+# report is lost. Strip ANSI escape sequences, then any remaining forbidden
+# control character.
+_ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
+_FORBIDDEN_CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+
+
+def _xml_safe(text: str) -> str:
+    return _FORBIDDEN_CONTROL.sub("", _ANSI_ESCAPE.sub("", text or ""))
+
+
 def write_junit(path: Path, results: list) -> None:
     """Write a JUnit XML report with one testsuite and one testcase each.
 
@@ -89,6 +103,7 @@ def write_junit(path: Path, results: list) -> None:
         "time": f"{total_time:.3f}",
     })
     for name, status, elapsed, output in results:
+        output = _xml_safe(output)
         case = ET.SubElement(suite, "testcase", {
             "classname": "scenarios",
             "name": name,
