@@ -286,6 +286,13 @@ class DeckManager:
                     time.sleep(retry_delay)
             except Exception as e:
                 log.error(f"Failed to initialize deck, maybe it's already connected to another instance? Error: {e}")
+                # The constructor guards its bring-up and its tail, and a
+                # raise between the two arrives here with the handle still
+                # open and its reader running.
+                try:
+                    release_device_handle(deck)
+                except Exception:
+                    log.opt(exception=True).warning("Failed to release the deck handle after a failed init")
                 return None
         log.error("Giving up on deck after repeated transport errors; skipping it. Replugging the deck usually fixes this.")
         return None
