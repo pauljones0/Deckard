@@ -90,11 +90,14 @@ bundle as a release asset.
   still brings the grid back at once.
 - A page that switches itself in when a window comes to the front now works
   from one pattern. A rule set up by filling in the window title alone, or the
-  window class alone, never fired, because the field left empty was read as
-  one that matches nothing; it now matches every window. A rule also applies
-  the moment it is written, against the window in front, instead of waiting
-  for the next window change, and the title and class fields now keep what was
-  typed in them when the focus moves on.
+  window class alone, never fired: the field that was never filled in was
+  absent from the rule, and an absent field was read as one that matches
+  nothing. Such a field now matches every window, while a rule that carries
+  neither field stays inert instead of matching everything, so a rule being
+  typed cannot take a deck over. Editing a rule also applies it to the window
+  in front there and then, instead of waiting for the next window change, and
+  the title and class fields keep what was typed in them when the focus moves
+  on or the window closes.
 - The plugin store reads both store catalog formats, the old per-version
   commit map and the new single-commit form, so a store that publishes the
   new format still lists, installs and updates its assets instead of showing
