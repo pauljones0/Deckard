@@ -294,6 +294,12 @@ def main() -> None:
     logger.info(f"fetching https://{REAL_USER}:hunter2@git.example.com/repo.git?access_token=abc123&x=1")
     logger.info(f"mounted /run/media/{REAL_USER}/stick")
     logger.info("HA settings: {'host': 'ha.local', 'access_token': 'eyJlongtoken'}")
+    # A traceback-frame line under home, logged directly, so the home->~ frame
+    # redaction is exercised wherever the checkout lives. The process's own
+    # traceback frames only carry ~ when the checkout is under $HOME; CI checks
+    # out under /builds, so this controlled line, not the boom() frames, is
+    # what proves a home-rooted frame path redacts to ~/.
+    logger.info(f'  File "{REAL_HOME}/plugins/demo/main.py", line 7 in fetch')
 
     # An uncaught thread exception through the real hook. The message, the
     # frame paths and a diagnose-visible local all carry PII.
@@ -340,8 +346,8 @@ def main() -> None:
 
         # Debuggability floor. The traceback is still a traceback.
         assert "Traceback (most recent call last):" in output, f"{label}: traceback text missing"
-        assert 'File "~/' in output, (
-            f"{label}: frame paths must stay identifiable as ~-relative, not vanish"
+        assert 'File "~/plugins/demo/main.py"' in output, (
+            f"{label}: a home-rooted frame path must redact to ~/ and stay readable"
         )
         assert "scenario_log_redaction.py" in output, f"{label}: frame file name must survive"
         assert "raise ValueError(" in output, f"{label}: source line must survive"

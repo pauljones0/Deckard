@@ -112,9 +112,14 @@ def main() -> None:
     )
     assert "scenario_faulthandler_redaction.py" in session_dump
     # The known limitation. A current-session dump stays raw until next boot.
-    assert HOME in session_dump, (
-        "expected the live dump to be raw (C-level write); if this starts "
-        "failing, the residual-risk comments in log_hooks are stale"
+    # Prove it is raw by the real frame path appearing unredacted, which holds
+    # wherever the checkout lives (a $HOME check assumes a checkout under home;
+    # CI checks out under /builds). The seeded home paths above already prove
+    # the scrub redacts home to ~.
+    assert os.path.dirname(os.path.abspath(__file__)) in session_dump, (
+        "expected the live dump to be raw (C-level write): the real frame path "
+        "must appear unredacted. If this starts failing, the residual-risk "
+        "comments in log_hooks are stale"
     )
 
     # Boot 2. The next restart scrubs the raw dump left by this session.
