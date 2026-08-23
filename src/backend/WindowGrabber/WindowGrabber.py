@@ -365,6 +365,38 @@ class WindowGrabber:
             return False
         return bool(class_match and title_match)
 
+    def recheck_active_window(self) -> None:
+        """Applies the rules again to the window that is in front right now.
+
+        Returns at once; the work runs on the background pool. A rule edit
+        otherwise waits for the next window change, so a rule typed for the
+        window the user has in front reads as dead until something else takes
+        focus. The page editor asks for a re-check after every rule edit.
+
+        The work stays off the GTK main thread twice over: the query for the
+        front window runs subprocesses on most desktops, and a match loads a
+        page.
+        """
+        try:
+            run_in_background(self._recheck_active_window)
+        except Exception:
+            # The background pool is gone, which is part of quit. The edited
+            # rule still applies at the next window change.
+            log.opt(exception=True).warning("Could not schedule an active window re-check")
+
+    def _recheck_active_window(self) -> None:
+        integration = self._ensure_integration()
+        if integration is None:
+            return
+
+        window = integration.get_active_window()
+        if window is None:
+            # This session has no way to name the front window, or nothing is
+            # in front. Neither leaves anything to match the rules against.
+            return
+
+        self.on_active_window_changed(window)
+
     def on_active_window_changed(self, window: Window) -> None:
         # log.info(f"Active window changed to: {window}")
 

@@ -336,12 +336,14 @@ class AutoChangeGroup(PageEditorGroup):
             path=self.page_editor.require_active_page_path(),
             enable=self.enable_toggle.get_active()
         )
+        self.recheck_active_window()
 
     def on_stay_on_page_changed(self, *args: object) -> None:
         services.require_page_manager().overwrite_auto_change_settings(
             path=self.page_editor.require_active_page_path(),
             stay_on_page=self.stay_on_page_toggle.get_active()
         )
+        self.recheck_active_window()
 
     def on_title_entry_applied(self, *args: object) -> None:
         self.matching_window_expander.update_matching_windows()
@@ -350,6 +352,7 @@ class AutoChangeGroup(PageEditorGroup):
             path=self.page_editor.require_active_page_path(),
             regex_title=self.title_entry.get_text()
         )
+        self.recheck_active_window()
 
     def on_wm_class_entry_applied(self, *args: object) -> None:
         self.matching_window_expander.update_matching_windows()
@@ -358,6 +361,20 @@ class AutoChangeGroup(PageEditorGroup):
             path=self.page_editor.require_active_page_path(),
             wm_class=self.wm_class_entry.get_text()
         )
+        self.recheck_active_window()
+
+    def recheck_active_window(self) -> None:
+        """Applies the edited rules to the window that is in front now.
+
+        An edit otherwise takes effect at the next window change alone, so a
+        rule written for the window the user is looking at appears to do
+        nothing. The window grabber does the work on a background thread,
+        because it can load a page.
+        """
+        window_grabber = gl.window_grabber
+        if window_grabber is None:
+            return
+        window_grabber.recheck_active_window()
 
     def on_deck_changed(self, serial_number: str, state: bool) -> None:
         page_manager = gl.page_manager
