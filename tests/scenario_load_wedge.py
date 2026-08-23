@@ -1,5 +1,5 @@
 """
-load_all_inputs tells a wedged load task from one that never left the queue.
+The loader pool tells a wedged load task from one that never left the queue.
 
 The batch deadline makes both look the same: neither future has a result when
 it expires. They are not the same failure. A task that started and did not
@@ -10,10 +10,14 @@ whole queue, would leave that input unloaded for the life of the page, because
 nobody re-submits it.
 
 So the deadline sweep asks the executor which futures are running: it names
-only the started-and-overdue tasks, replaces the pool for those, and lets the
-queue drain onto the abandoned pool instead of cancelling it. The drain also
-has to respect a page switch, and the refused-submit path has to say so when
-an input never reaches the pool at all.
+only the started-and-overdue tasks, replaces the executor for those, and lets
+the queue drain onto the abandoned executor instead of cancelling it. The
+drain also has to respect a page switch, and the refused-submit path has to
+say so when an input never reaches the pool at all.
+
+The mechanism sits in DeadlinePool and the wiring in load_all_inputs. This
+scenario drives the pair through the controller, which is the shape a page
+load has.
 """
 import fixtures  # noqa: F401  (import first: sets up the isolated data dir)
 
@@ -25,6 +29,7 @@ from concurrent.futures import ThreadPoolExecutor
 from loguru import logger as log
 
 from fixtures import make_headless_controller, start_watchdog, teardown, wait_until
+from src.backend.deadline_pool import DeadlinePool
 
 # Short enough to keep the scenario quick, long enough that the whole batch
 # reaches the pool before it expires.
@@ -34,7 +39,25 @@ DEADLINE = 0.4
 HANG_CAP = 30.0
 # The wedge warning carries the running leak count. A leak nobody can see is
 # a leak nobody fixes.
-LEAK_REPORT = "Leaked loader threads on this deck so far: {count}."
+LEAK_REPORT = "Leaked threads in this pool so far: {count}."
+# The deck wires its own words into the pool's report. A generic report would
+# send a user looking at the pool instead of at the plugin that hangs.
+STUCK_HINT = "a plugin callback is likely blocked"
+
+
+def wedged_loader_pool(boot_pool, prefix: str) -> DeadlinePool:
+    """A one-worker stand-in for the deck's loader pool, worded like it.
+
+    One worker is what makes exactly one task start and the rest stay queued.
+    The wording comes from the pool the controller built, so the report lines
+    this scenario reads are the ones a user gets.
+    """
+    return DeadlinePool(
+        max_workers=1,
+        thread_name_prefix=prefix,
+        replace_on_wedge=True,
+        wording=boot_pool.wording,
+    )
 
 
 class LogCapture:
@@ -144,25 +167,29 @@ def case_wedge_names_only_the_started_task() -> None:
         loader.armed.set()
 
         controller.LOAD_INPUTS_TIMEOUT = DEADLINE
-        # One worker, so exactly one task starts and the rest stay queued.
-        wedged_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="wedge_load")
         boot_pool = controller.load_executor
+        wedged_pool = wedged_loader_pool(boot_pool, "wedge_load")
         controller.load_executor = wedged_pool
         if boot_pool is not None:
             boot_pool.shutdown(wait=False)
 
-        assert controller.leaked_loader_threads == 0, (
-            f"nothing has wedged yet, but the counter reads {controller.leaked_loader_threads}")
+        assert wedged_pool.leaked_workers == 0, (
+            f"nothing has wedged yet, but the counter reads {wedged_pool.leaked_workers}")
 
         with LogCapture() as capture:
             began = time.monotonic()
             controller.load_all_inputs(controller.active_page)
             stall = time.monotonic() - began
 
-        # The media-player thread waits out the deadline and no more. The hang
-        # itself runs far past it.
-        assert DEADLINE <= stall < HANG_CAP / 2, (
-            f"load_all_inputs stalled {stall:.2f}s; expected about the {DEADLINE}s deadline")
+        # The media-player thread waits out the deadline and no more. The
+        # deadline covers the batch and not the task: a wait spent per task
+        # would multiply the stall by the number of overdue inputs, and this
+        # is the sole writer's thread, so the ceiling has to be a small
+        # multiple of one deadline and never a fraction of the hang.
+        assert DEADLINE <= stall < 3 * DEADLINE, (
+            f"load_all_inputs stalled {stall:.2f}s while loading {len(order)} inputs; "
+            f"one batch-absolute {DEADLINE}s deadline is the whole budget, and a "
+            f"per-task wait would scale it with the deck")
 
         stuck_region = capture.listed("did not finish within")
         assert stuck_region, f"the wedge went unlogged. Log was:\n{capture.text()}"
@@ -177,13 +204,25 @@ def case_wedge_names_only_the_started_task() -> None:
             f"every queued task should be reported late, expected {len(queued)}, "
             f"listed [{late_region}]")
 
-        assert controller.leaked_loader_threads == 1, (
-            f"the hung task pins one worker of the abandoned pool, but the "
-            f"counter reads {controller.leaked_loader_threads}")
+        assert wedged_pool.leaked_workers == 1, (
+            f"the hung task pins one worker of the abandoned executor, but the "
+            f"counter reads {wedged_pool.leaked_workers}")
         assert LEAK_REPORT.format(count=1) in capture.text(), (
             f"the wedge warning must report the leak count. Log was:\n{capture.text()}")
-        assert controller.load_executor is not wedged_pool, (
-            "the wedged pool must be replaced, or every later page load queues behind the hang")
+        assert STUCK_HINT in capture.text(), (
+            f"the warning must carry the deck's own hint at the cause, so a user "
+            f"reads it about their plugin and not about a pool. Log was:\n{capture.text()}")
+        assert wedged_pool.replacements == 1, (
+            f"the wedged executor must be replaced, and the pool reports "
+            f"{wedged_pool.replacements} replacements")
+        # What the replacement is for: the next page load must not queue
+        # behind the hang, which still holds the abandoned executor's worker.
+        probe_ran = threading.Event()
+        probe = wedged_pool.submit(probe_ran.set)
+        assert probe is not None, "the pool must still take work after the replacement"
+        assert probe_ran.wait(5.0), (
+            "work submitted after the wedge queued behind the hung input instead "
+            "of running on the fresh executor")
 
         assert loader.finished == [], (
             f"the sole worker is hung, so nothing can have finished, got {loader.finished}")
@@ -220,23 +259,38 @@ def case_healthy_batch_keeps_its_pool() -> None:
             controller.load_all_inputs(controller.active_page)
 
         assert controller.load_executor is pool, "a healthy batch must keep its pool"
-        assert controller.leaked_loader_threads == 0, (
-            f"nothing wedged, but the counter reads {controller.leaked_loader_threads}")
+        assert pool.replacements == 0, (
+            f"a healthy batch must keep the pool's executor, but the pool reports "
+            f"{pool.replacements} replacements")
+        assert pool.leaked_workers == 0, (
+            f"nothing wedged, but the counter reads {pool.leaked_workers}")
         assert set(loader.finished) == {str(i.identifier) for i in order}, (
             f"expected every input loaded, got {len(loader.finished)} of {len(order)}")
         assert not capture.listed("did not finish within"), (
             f"a healthy batch must log no wedge. Log was:\n{capture.text()}")
+        # An empty bucket must not reach the log at all. A report line naming
+        # nobody is noise on every page switch, and it trains a reader to
+        # skip the line that names somebody.
+        assert not capture.listed("had not started within"), (
+            f"a healthy batch has no late input, so it must log no late line. "
+            f"Log was:\n{capture.text()}")
+        assert not capture.listed("never reached the"), (
+            f"a healthy batch has no refused input, so it must log no refusal. "
+            f"Log was:\n{capture.text()}")
 
         print("PASS: healthy batch keeps its pool and leaks nothing")
     finally:
         teardown(controller)
 
 
-class RefusingPool:
-    """Wraps a pool and refuses one input's submit with a given RuntimeError.
+class RefusingExecutor:
+    """Wraps an executor and refuses one input's submit with a given
+    RuntimeError.
 
     Thread exhaustion and a shut-down pool both raise RuntimeError out of
-    submit, and they mean opposite things to the caller.
+    submit, and they mean opposite things to the caller. The refusal sits in
+    the executor, which is where the real one comes from, so the pool's own
+    split runs.
     """
 
     def __init__(self, inner, refuse_on: str, error: RuntimeError) -> None:
@@ -245,12 +299,27 @@ class RefusingPool:
         self._error = error
 
     def submit(self, fn, *args, **kwargs):
-        if str(args[0].identifier) == self._refuse_on:
+        # The task is a partial, and the input it loads is its first bound
+        # argument.
+        if str(fn.args[0].identifier) == self._refuse_on:
             raise self._error
         return self._inner.submit(fn, *args, **kwargs)
 
     def shutdown(self, *args, **kwargs) -> None:
         self._inner.shutdown(*args, **kwargs)
+
+
+def refusing_loader_pool(boot_pool, width: int, refuse_on: str, error: RuntimeError) -> DeadlinePool:
+    """A loader pool worded like the deck's, whose executor refuses one
+    input."""
+    return DeadlinePool(
+        max_workers=width,
+        thread_name_prefix="refuse_load",
+        replace_on_wedge=True,
+        wording=boot_pool.wording,
+        executor_factory=lambda workers, prefix: RefusingExecutor(
+            ThreadPoolExecutor(max_workers=workers, thread_name_prefix=prefix), refuse_on, error),
+    )
 
 
 def case_a_refused_submit_is_reported_but_a_closing_pool_is_not() -> None:
@@ -266,9 +335,14 @@ def case_a_refused_submit_is_reported_but_a_closing_pool_is_not() -> None:
         loader.install(controller)
         controller.LOAD_INPUTS_TIMEOUT = DEADLINE
         real_pool = controller.load_executor
+        width = max(8, len(order))
 
         exhaustion = RuntimeError("can't start new thread")
-        controller.load_executor = RefusingPool(real_pool, str(refused.identifier), exhaustion)
+        exhausted_pool = refusing_loader_pool(real_pool, width, str(refused.identifier), exhaustion)
+        closing_pool = refusing_loader_pool(
+            real_pool, width, str(refused.identifier),
+            RuntimeError("cannot schedule new futures after shutdown"))
+        controller.load_executor = exhausted_pool
         with LogCapture() as capture:
             controller.load_all_inputs(controller.active_page)
 
@@ -278,15 +352,14 @@ def case_a_refused_submit_is_reported_but_a_closing_pool_is_not() -> None:
         assert dropped.count("Input(") == 1, f"only one input was refused, listed [{dropped}]"
         assert not capture.listed("did not finish within"), "a refused submit is not a wedge"
         assert not capture.listed("had not started within"), "a refused submit is not a late task"
-        assert controller.leaked_loader_threads == 0, "a refused submit strands no thread"
+        assert exhausted_pool.leaked_workers == 0, "a refused submit strands no thread"
         assert set(loader.finished) == {str(i.identifier) for i in order[1:]}, (
             f"every other input must still load, got {len(loader.finished)} of {len(order) - 1}")
 
         # The same exception type, raised because the deck is closing, is the
         # expected path and must stay quiet.
         loader.finished.clear()
-        closing = RuntimeError("cannot schedule new futures after shutdown")
-        controller.load_executor = RefusingPool(real_pool, str(refused.identifier), closing)
+        controller.load_executor = closing_pool
         with LogCapture() as capture:
             controller.load_all_inputs(controller.active_page)
 
@@ -297,6 +370,8 @@ def case_a_refused_submit_is_reported_but_a_closing_pool_is_not() -> None:
         print("PASS: a refused submit is reported, a closing pool is not")
     finally:
         controller.load_executor = real_pool
+        exhausted_pool.shutdown()
+        closing_pool.shutdown()
         teardown(controller)
 
 
@@ -331,8 +406,8 @@ def case_page_switch_during_the_drain_loads_nothing() -> None:
         controller._load_input_if_current = counting_guard
 
         controller.LOAD_INPUTS_TIMEOUT = DEADLINE
-        wedged_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="gen_load")
         boot_pool = controller.load_executor
+        wedged_pool = wedged_loader_pool(boot_pool, "gen_load")
         controller.load_executor = wedged_pool
         if boot_pool is not None:
             boot_pool.shutdown(wait=False)
@@ -342,7 +417,7 @@ def case_page_switch_during_the_drain_loads_nothing() -> None:
         generation = controller._page_load_generation
         controller.load_all_inputs(controller.active_page, gen=generation)
 
-        assert controller.load_executor is not wedged_pool, "the wedge must have replaced the pool"
+        assert wedged_pool.replacements == 1, "the wedge must have replaced the executor"
         assert loader.started == [str(hung.identifier)], (
             f"only the hung task can have started so far, got {loader.started}")
 
@@ -365,12 +440,63 @@ def case_page_switch_during_the_drain_loads_nothing() -> None:
         teardown(controller)
 
 
+def case_the_action_pool_takes_the_lifecycle_only() -> None:
+    """The deck's other pool is wired without the deadline and without the
+    replacement, and a wedged action callback must leave it exactly as it is.
+
+    A ready callback that a pool operation cancelled never runs the finally
+    that opens its action's tick and update gates, so that action is dead for
+    the life of the page. The wedge policy here is the per-input stuck-tick
+    warning instead, and it needs the pool to keep every callback it took.
+    """
+    controller = make_headless_controller(serial="action-pool-1")
+    hang = threading.Event()
+    try:
+        pool = controller.action_executor
+        assert pool is not None, "fixture sanity: the deck built no action pool"
+        started, ran = threading.Event(), []
+
+        def wedge() -> None:
+            started.set()
+            hang.wait(HANG_CAP)
+
+        assert pool.submit(wedge) is not None, "the action pool must take the callback"
+        assert started.wait(5.0), "the wedging callback never started"
+        assert pool.submit(lambda: ran.append("queued")) is not None, (
+            "the action pool must take a second callback")
+
+        # Long enough that a deadline of the loader pool's order would have
+        # expired several times over, and a page load runs a whole batch on
+        # the other pool meanwhile.
+        controller.LOAD_INPUTS_TIMEOUT = DEADLINE
+        controller.load_all_inputs(controller.active_page)
+        time.sleep(DEADLINE * 2)
+
+        assert controller.action_executor is pool, (
+            "nothing may swap the deck's action pool out from under a callback")
+        assert pool.replacements == 0, (
+            f"the action pool must never replace its executor, but it reports "
+            f"{pool.replacements} replacements; every replacement abandons the "
+            f"callbacks queued on the old one")
+        assert pool.leaked_workers == 0, (
+            f"the action pool runs no deadline batch, so it counts no wedge, got "
+            f"{pool.leaked_workers}")
+        assert ran == ["queued"], (
+            f"the callback queued behind the wedge must still run, got {ran}")
+
+        print("PASS: the action pool takes the lifecycle only")
+    finally:
+        hang.set()
+        teardown(controller)
+
+
 def main() -> None:
     start_watchdog(120, label="scenario_load_wedge")
     case_wedge_names_only_the_started_task()
     case_healthy_batch_keeps_its_pool()
     case_a_refused_submit_is_reported_but_a_closing_pool_is_not()
     case_page_switch_during_the_drain_loads_nothing()
+    case_the_action_pool_takes_the_lifecycle_only()
     print("PASS: scenario_load_wedge")
 
 

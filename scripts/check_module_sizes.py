@@ -85,7 +85,7 @@ SHIM_CAP = 100
 # Files that were already over DEFAULT_CAP when this check landed, pinned at the
 # size they had then. They may shrink only. See the tightening rule above.
 GRANDFATHER: dict[str, int] = {
-    "src/backend/DeckManagement/deck_controller/controller.py": 1667,
+    "src/backend/DeckManagement/deck_controller/controller.py": 1604,
     "src/backend/DeckManagement/deck_controller/inputs.py": 2111,
     "src/backend/Store/StoreBackend.py": 1948,
 }

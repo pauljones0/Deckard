@@ -279,6 +279,55 @@ def raising_gate_still_submits(controller, probe, identifier) -> None:
           f"submits for {identifier}")
 
 
+def shut_down_pool_leaves_the_tick_quiet(controller, probe, identifier) -> None:
+    """A pool that is shut down but still attached must drop the tick, quietly.
+
+    That pair is a real state of this deck, not a contrivance. The failed-init
+    teardown shuts both pools down and never nulls them, and close() shuts
+    down before it nulls, so every tick in between meets a live attribute over
+    a dead pool. The pool answers such a submit with None instead of raising,
+    and the tick has to read that: an exception on the tick thread ends this
+    deck's ticking for the life of the process, and the input it died on keeps
+    its re-entrancy flag set, which silences that input as well.
+
+    This leg runs last. It leaves the deck without a usable action pool.
+    """
+    controller_input = controller.get_input(identifier)
+    assert controller_input is not None, f"fixture sanity: no input {identifier}"
+    state = controller_input.get_active_state()
+    assert any(isinstance(a, ActionCore) for a in state.get_own_actions()), (
+        f"fixture sanity: {identifier} carries no real action, so the gate would "
+        f"return before it ever submits and this leg would prove nothing")
+
+    pool = controller.action_executor
+    assert pool is not None, "fixture sanity: the deck built no action pool"
+    pool.shutdown()  # shut down, and deliberately not nulled
+    assert pool.is_shutdown, "fixture sanity: the pool did not take the shutdown"
+
+    state._tick_running = False
+    try:
+        state.own_actions_tick_threaded()
+    except Exception as error:
+        raise AssertionError(
+            f"a tick submit onto a shut-down pool raised {error!r} -- on the tick "
+            f"thread that ends this deck's ticking for good, and {identifier} "
+            f"strands its re-entrancy flag set") from error
+    assert state._tick_running is False, (
+        f"the tick took no worker, because the pool is shut down, but left the "
+        f"re-entrancy flag set on {identifier} -- that input never ticks again")
+
+    # The tick thread walks every input through the same path once a second.
+    probe.reset()
+    observed = observe_windows(controller, probe)
+    assert controller.tick_thread.is_alive(), (
+        f"the tick thread died on a shut-down pool after {observed} iterations")
+    stranded = running_flags(controller)
+    assert not stranded, (
+        f"the re-entrancy flag is set on {stranded} after {observed} iterations "
+        f"against a shut-down pool")
+    print(f"PASS: a shut-down pool drops the tick quietly across {observed} iterations")
+
+
 def main() -> None:
     latch_cls = fixtures.make_latch_action_class()
     icon_path = fixtures.make_test_png(
@@ -305,6 +354,8 @@ def main() -> None:
         placeholder_only_submits_nothing(controller, probe, placeholder)
         added_action_resumes_submits(controller, probe, with_action)
         raising_gate_still_submits(controller, probe, raising)
+        # Last: it leaves the deck without a usable action pool.
+        shut_down_pool_leaves_the_tick_quiet(controller, probe, with_action)
     finally:
         probe.remove()
         teardown(controller)
