@@ -170,8 +170,56 @@ def test_bwrap_confines_the_hook() -> None:
             os.remove(escape)
 
 
+def _set_policy(value: str) -> None:
+    gl.settings_manager.get_app_settings().setdefault("store", {})["install-scripts"] = value
+
+
+def test_policy_never_skips_and_marks() -> None:
+    _set_policy("never")
+    try:
+        plugin_dir = _plugin_dir("com_test_PolicyNever")
+        _write_hook(plugin_dir, """
+            import os
+            base = os.path.dirname(os.path.abspath(__file__))
+            open(os.path.join(base, "hook-ran"), "w").write("yes")
+        """)
+        assert run_install_steps(plugin_dir, "PolicyNever") is Outcome.SKIPPED
+        assert not os.path.isfile(os.path.join(plugin_dir, "hook-ran")), "never must not run the hook"
+        assert os.path.isfile(os.path.join(plugin_dir, install_script.SKIP_MARKER)), "a skip must leave a marker"
+    finally:
+        _set_policy("ask")
+
+
+def test_ask_declined_skips_ask_allowed_runs() -> None:
+    """Under the ask policy the consent callable decides; with no callable
+    (auto-update, headless) the steps run without a prompt."""
+    _set_policy("ask")
+    body = """
+        import os
+        base = os.path.dirname(os.path.abspath(__file__))
+        open(os.path.join(base, "hook-ran"), "w").write("yes")
+    """
+    declined = _plugin_dir("com_test_Declined")
+    _write_hook(declined, body)
+    assert run_install_steps(declined, "Declined", consent=lambda name: False) is Outcome.SKIPPED
+    assert not os.path.isfile(os.path.join(declined, "hook-ran"))
+
+    allowed = _plugin_dir("com_test_Allowed")
+    _write_hook(allowed, body)
+    seen: list = []
+    assert run_install_steps(allowed, "Allowed", consent=lambda name: seen.append(name) or True) is Outcome.RAN
+    assert seen == ["Allowed"], "the consent callable must receive the display name"
+    assert os.path.isfile(os.path.join(allowed, "hook-ran"))
+
+    no_callable = _plugin_dir("com_test_NoCallable")
+    _write_hook(no_callable, body)
+    assert run_install_steps(no_callable, "NoCallable") is Outcome.RAN, "ask without a callable must run"
+    assert os.path.isfile(os.path.join(no_callable, "hook-ran"))
+
+
 def main() -> None:
     fixtures.start_watchdog(60, label="scenario_install_script_gate")
+    fixtures.install_stub_globals()
     test_no_steps()
     test_hook_runs_and_guard_lands_in_new_venv()
     test_failing_hook_reports_failed()
@@ -179,6 +227,8 @@ def main() -> None:
     test_pip_step_routes_through_execute()
     test_hook_env_is_poisoned()
     test_bwrap_confines_the_hook()
+    test_policy_never_skips_and_marks()
+    test_ask_declined_skips_ask_allowed_runs()
     print("scenario_install_script_gate: OK")
 
 

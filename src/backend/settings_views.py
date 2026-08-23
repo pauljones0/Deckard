@@ -396,6 +396,19 @@ class AppSettings(SchemaView):
         self.set("store", "auto-update", value)
 
     @property
+    def install_scripts(self) -> str:
+        # "ask", "always" or "never". A downloaded plugin can carry an
+        # __install__.py that runs arbitrary code at install time; this
+        # decides whether a fresh install asks first. Garbage reads as
+        # "ask", the safe default.
+        value = self.get("store", "install-scripts")
+        return value if value in ("ask", "always", "never") else "ask"
+
+    @install_scripts.setter
+    def install_scripts(self, value: str) -> None:
+        self.set("store", "install-scripts", value)
+
+    @property
     def responsibility_notes_agreed(self) -> bool:
         return cast(bool, self.get("store", "responsibility-notes-agreed"))
 

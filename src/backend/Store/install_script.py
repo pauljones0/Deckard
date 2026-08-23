@@ -17,8 +17,16 @@ import signal
 import subprocess
 import sys
 import threading
+from collections.abc import Callable
 
 from loguru import logger as log
+
+import globals as gl
+
+# Written into a plugin dir when its install steps were skipped, so a
+# later launch and the user can tell an unbuilt plugin from a broken one.
+# A reinstall's staged swap replaces the whole tree, so it clears itself.
+SKIP_MARKER = "install-scripts-skipped"
 
 
 # A stuck install script parked an install thread forever before the
@@ -39,15 +47,25 @@ class Outcome(enum.Enum):
     RAN = "ran"
     FAILED = "failed"
     TIMEOUT = "timeout"
+    SKIPPED = "skipped"
 
 
 def run_install_steps(plugin_dir: str, display_name: str,
                       timeout_s: float = DEFAULT_TIMEOUT_S,
-                      use_bwrap: "bool | None" = None) -> Outcome:
+                      use_bwrap: "bool | None" = None,
+                      consent: "Callable[[str], bool] | None" = None) -> Outcome:
     """Run a freshly installed plugin's install script and requirements
     step, each when present. Returns the worst outcome; a later step
     still runs after an earlier one failed, matching what the two
     previously independent calls did.
+
+    The install-scripts policy decides whether the steps run at all.
+    "never" skips them. "always" runs them. "ask" runs them after the
+    consent callable returns True, and skips them when it returns False;
+    with no consent callable (auto-update of a plugin the user already
+    installed, onboarding, headless) "ask" runs them, because there is no
+    one at the keyboard to ask and a prompt storm at launch trains the
+    user to click through. A skip writes a marker and returns SKIPPED.
 
     The script runs confined: a poisoned session-bus address always, and
     under bwrap where it operates (probed once per process), which makes
@@ -58,6 +76,15 @@ def run_install_steps(plugin_dir: str, display_name: str,
     the probe decides; scenarios pass an explicit value."""
     hook = os.path.join(plugin_dir, "__install__.py")
     requirements = os.path.join(plugin_dir, "requirements.txt")
+    if not os.path.isfile(hook) and not os.path.isfile(requirements):
+        return Outcome.NO_STEPS
+
+    policy = _policy()
+    if policy == "never":
+        return _skip(plugin_dir, display_name, "policy is never")
+    if policy == "ask" and consent is not None and not consent(display_name):
+        return _skip(plugin_dir, display_name, "declined")
+
     steps: list[list[str]] = []
     if os.path.isfile(hook):
         # The interpreter that runs this process, so a venv the script
@@ -104,6 +131,27 @@ def _execute(cmd: list[str], timeout_s: float, env: "dict[str, str] | None" = No
             pass
         process.wait()
         return process.returncode, True
+
+
+def _policy() -> str:
+    manager = getattr(gl, "settings_manager", None)
+    if manager is None:
+        return "ask"
+    try:
+        return manager.app().install_scripts
+    except Exception as e:
+        log.warning(f"Could not read the install-scripts policy ({e}); defaulting to ask")
+        return "ask"
+
+
+def _skip(plugin_dir: str, display_name: str, reason: str) -> Outcome:
+    log.info(f"Skipping the install steps of {display_name}: {reason}")
+    try:
+        with open(os.path.join(plugin_dir, SKIP_MARKER), "w") as f:
+            f.write(f"{reason}\n")
+    except OSError as e:
+        log.warning(f"Could not write the skip marker for {display_name}: {e}")
+    return Outcome.SKIPPED
 
 
 _bwrap_usable: "bool | None" = None

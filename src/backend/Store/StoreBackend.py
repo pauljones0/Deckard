@@ -1567,7 +1567,8 @@ class StoreBackend:
 
         return Ok(None)
 
-    def install_plugin(self, plugin_data:PluginData, auto_update: bool = False) -> StoreResult[None]:
+    def install_plugin(self, plugin_data:PluginData, auto_update: bool = False,
+                       ask_install_script: "Callable[[str], bool] | None" = None) -> StoreResult[None]:
         url = plugin_data.github
         plugin_id = plugin_data.plugin_id
 
@@ -1604,9 +1605,12 @@ class StoreBackend:
                 log.error(f"Deregistering the old version of {plugin_id} failed: {e}")
 
         # The install script and the requirements step run only through the
-        # gate, which owns the timeout, the process-group kill, and the
-        # loopback-guard re-injection into any venv the script created.
-        outcome = install_script.run_install_steps(local_path, plugin_id)
+        # gate, which owns the consent policy, the confinement, the timeout,
+        # the process-group kill, and the loopback-guard re-injection into
+        # any venv the script created. ask_install_script is the store
+        # window's consent prompt; None on the auto-update, onboarding and
+        # headless paths, where the gate runs without asking.
+        outcome = install_script.run_install_steps(local_path, plugin_id, consent=ask_install_script)
         if outcome not in (install_script.Outcome.RAN, install_script.Outcome.NO_STEPS):
             log.warning(f"Install steps of {plugin_id}: {outcome.value}")
 

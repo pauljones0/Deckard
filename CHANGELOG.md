@@ -22,6 +22,15 @@ bundle as a release asset.
 
 ### Security
 
+- Installing a plugin now asks before it runs the plugin's install script,
+  and runs that script confined. A plugin can ship a script that runs on
+  this computer to set itself up; one such script silently changed a
+  system setting outside the app. The app now asks before running a new
+  plugin's install script, runs it without access to the desktop message
+  bus so it cannot reconfigure the system, and, where the sandbox tool is
+  present, blocks it from writing anywhere but its own folder. A hung
+  script is stopped instead of holding the install open. A setting under
+  Store, install scripts (ask, always or never), controls the prompt.
 - Plugin backends now listen on the local machine only, and accept
   connections from the desktop session that started them. A plugin backend
   used to open a network port that any machine on the same network could

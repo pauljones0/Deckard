@@ -187,7 +187,7 @@ class StoreAssetPreview(StorePreview):
             log.error(f"Store backend unavailable; cannot install {asset_id}")
             self.notify_install_failure()
             return False
-        result = getattr(backend, self.descriptor.install_attr)(self.asset_data)
+        result = getattr(backend, self.descriptor.install_attr)(self.asset_data, **self._install_kwargs())
         if isinstance(result, Err):
             log.error(f"Failed to install {noun} {asset_id}: {result!r}")
             self.notify_install_failure()
@@ -195,6 +195,12 @@ class StoreAssetPreview(StorePreview):
             return False
         GLib.idle_add(self.set_install_state, 1)
         return True
+
+    def _install_kwargs(self) -> "dict[str, object]":
+        """Extra keyword arguments for the descriptor's install method.
+        Empty for a data-only pack; a plugin subclass adds the install
+        script consent prompt."""
+        return {}
 
     def notify_install_failure(self) -> None:
         noun = self.descriptor.display_name
