@@ -78,14 +78,16 @@ bundle as a release asset.
   query, so a long name lost for its length alone: "battery" answered with
   acer and afterpay while it hid battery-charging-outline. The search now
   keeps a name that holds every word typed, and lists the closest first, so
-  the words may be typed in any order and a dash, an underscore or a dot
-  reads the same as a space.
+  the words may be typed in any order, a dash, an underscore or a dot reads
+  the same as a space, and "wifi" finds a pack that writes it wi-fi. It
+  matches the words as they are typed, so a misspelt word such as "batery"
+  now finds nothing, where the old scoring still offered battery.
 - The search box on the icon pack, wallpaper pack and SD+ bar wallpaper pack
   pages now filters the packs it shows. It accepted text and changed
   nothing.
-- The asset searches now wait for the typing to stop before they filter the
-  grid. Each keystroke used to filter and sort the whole pack, which is
-  thousands of icons, and typing stuttered.
+- An asset search now waits a little longer for the typing to pause before it
+  filters the grid, because a pass sorts a whole icon pack. Emptying the box
+  still brings the grid back at once.
 - The plugin store reads both store catalog formats, the old per-version
   commit map and the new single-commit form, so a store that publishes the
   new format still lists, installs and updates its assets instead of showing
