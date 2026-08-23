@@ -194,10 +194,18 @@ changelog-check:
 # identically. dbus-daemon is a hard requirement of the scenarios that raise a
 # private bus. gcc and libc6-dev are there for evdev alone, which ships no
 # wheel and builds from source. xauth is what xvfb-run uses to authorise its
-# display, and --no-install-recommends leaves it out otherwise.
+# display, and --no-install-recommends leaves it out otherwise. git is for the
+# scenarios that walk the tracked file list or build fixture repositories; the
+# runner clones with its own helper, so the image does not carry it.
 #
 # The gi import is checked before the suite starts, because one clear error
 # reads better than hundreds of identical tracebacks.
+#
+# The suite itself runs as a created non-root user. Two scenario families
+# encode assumptions a root process breaks: abort paths proven by chmod-denied
+# writes (root ignores permission bits), and redaction checks that expect a
+# real /home/<user> shape. Setup stays root (apt, venv, pip); the tree is
+# handed over just before the run.
 #
 # SCENARIO_K narrows the run to scenario filenames that contain one substring
 # (the harness takes a single -k). SCENARIO_JOBS sets the parallel width, and
@@ -234,7 +242,7 @@ test:scenarios:
       apt-get install -y -qq --no-install-recommends \
         python3 python3-gi python3-venv python3-dev pkg-config gcc libc6-dev \
         gir1.2-gtk-4.0 gir1.2-adw-1 gir1.2-xdp-1.0 libadwaita-1-0 \
-        dbus-daemon xvfb xauth
+        dbus-daemon xvfb xauth git
     - python3 -m venv --system-site-packages .venv
     - .venv/bin/pip install --quiet --upgrade pip
     - .venv/bin/pip install --quiet -r requirements.txt
@@ -243,7 +251,10 @@ test:scenarios:
     - |
       set -e
       if [ -n "$SCENARIO_K" ]; then set -- -k "$SCENARIO_K"; else set --; fi
-      xvfb-run -a nice -n 10 .venv/bin/python tests/run_all.py "$@" \
+      useradd -m scenario
+      chown -R scenario:scenario "$CI_PROJECT_DIR"
+      runuser -u scenario -- env HOME=/home/scenario USER=scenario LOGNAME=scenario \
+        xvfb-run -a nice -n 10 .venv/bin/python tests/run_all.py "$@" \
         --jobs "$SCENARIO_JOBS" --timeout "$SCENARIO_TIMEOUT" \
         --junit scenarios-junit.xml
   artifacts:
