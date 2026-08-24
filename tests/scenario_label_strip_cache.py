@@ -653,6 +653,17 @@ def check_partial_interception_refused() -> None:
         bg = (20, 40, 60, 255)
         real_recorder = dc._BitmapRecorder
         captured = []
+        # The record count below is the whole point of this check, and the
+        # controller's live media thread renders this same key through the
+        # shared _record_label_blits and _BitmapRecorder. A concurrent render
+        # of its own adds a record, and can also leave the shared cache in a
+        # state that makes this thread's next render re-record. In the running
+        # app one thread owns every render, so halt the media thread and let
+        # this thread be that sole renderer while it counts.
+        controller.media_player.stop(timeout=5.0)
+        assert not controller.media_player.running, (
+            "premise: the media thread must stop, so this thread is the sole "
+            "renderer while the record count is taken")
 
         class SwallowAll(real_recorder):
             """Total interception loss. Nothing recorded, nothing drawn."""
