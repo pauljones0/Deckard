@@ -58,6 +58,8 @@ class FakePage:
     run_search = ChooserPage.run_search
     invalidate_search = ChooserPage.invalidate_search
     search_is_current = ChooserPage.search_is_current
+    search_rendered = ChooserPage.search_rendered
+    on_shown = ChooserPage.on_shown
     _on_map = ChooserPage._on_map
     _search_generation = ChooserPage._search_generation
     _search_showing = ChooserPage._search_showing
@@ -69,7 +71,11 @@ class FakePage:
         self.search_entry = types.SimpleNamespace(get_text=lambda: self.text)
 
     def apply_search(self, query: str) -> None:
+        # A page that renders here says so. One that starts work which renders
+        # later says so when that work lands, and this stand-in models the
+        # first kind.
         self.applied.append(query)
+        self.search_rendered(query)
 
     def type(self, text: str) -> None:
         """What the entry does once its own delay has run out."""
@@ -86,6 +92,7 @@ class RecordingPage(ChooserPage):
 
     def apply_search(self, query: str) -> None:
         self.applied.append(query)
+        self.search_rendered(query)
 
 
 def pump(seconds: float = 0.2) -> None:
@@ -216,6 +223,83 @@ def test_invalidate_stops_passes_and_frees_the_cache() -> None:
         f"the page the user was on: {page.applied}")
     print("PASS: an invalidated page stops searching, frees the memo and "
           "catches up only when the query moved")
+
+
+def test_a_pass_that_only_starts_work_re_arms_the_catch_up() -> None:
+    """A page whose pass renders later must not read as current yet.
+
+    The pages that search across the packs only start a gather in
+    apply_search. Recorded as rendered at that point, a gather that is dropped
+    or that fails leaves the page believing it shows the query: showing it
+    again finds nothing to catch up with, the grid keeps the results of the
+    query before, and only another keystroke recovers it.
+    """
+    class DeferringPage(FakePage):
+        def apply_search(self, query: str) -> None:
+            # Starts work. Nothing is on screen yet, so nothing is recorded.
+            self.applied.append(query)
+
+    page = DeferringPage()
+    page.type("battery")
+    pump()
+    assert page.applied == ["battery"]
+
+    # The work was dropped, so showing the page again must search again.
+    page.invalidate_search()
+    page._on_map()
+    pump()
+    assert page.applied == ["battery", "battery"], (
+        f"a page whose pass never rendered was not caught up when it was "
+        f"shown again: {page.applied}")
+
+    # Once a pass does render, the catch-up settles.
+    page.search_rendered("battery")
+    page.invalidate_search()
+    page._on_map()
+    pump()
+    assert page.applied == ["battery", "battery"], (
+        f"a page that rendered its query searched again for nothing: "
+        f"{page.applied}")
+    print("PASS: only a pass that rendered settles the catch-up")
+
+
+def test_the_page_settles_its_entry_before_the_catch_up() -> None:
+    """on_shown runs inside the map handler, before the catch-up test.
+
+    A page that empties its entry as it shows must do so first. Settled after,
+    the catch-up pass searches for a query the page throws away in the same
+    handler, which for a search across the packs is a whole gather started and
+    invalidated at once.
+    """
+    class SettlingPage(FakePage):
+        def on_shown(self) -> None:
+            self.text = ""
+
+    page = SettlingPage()
+    page.text = "battery"
+    page._searched_text = ""
+    page._on_map()
+    pump()
+    assert page.applied == [], (
+        f"the catch-up ran for a query the page was throwing away: "
+        f"{page.applied}")
+
+    # The hook is the base's, and it runs before the test that compares the
+    # entry against what the page shows.
+    source = textwrap.dedent(inspect.getsource(ChooserPage._on_map))
+    body = ast.parse(source).body[0]
+    assert isinstance(body, ast.FunctionDef)
+    order = []
+    for node in ast.walk(body):
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "on_shown"):
+            order.append(("on_shown", node.lineno))
+        if isinstance(node, ast.Attribute) and node.attr == "_searched_text":
+            order.append(("_searched_text", node.lineno))
+    assert order and order[0][0] == "on_shown", (
+        f"the map handler reads _searched_text before it settles the entry: "
+        f"{order}")
+    print("PASS: a page settles its entry before the catch-up test")
 
 
 def test_search_is_current_answers_both_halves() -> None:
@@ -402,6 +486,8 @@ def main() -> int:
     test_the_entry_owns_the_wait()
     test_generation_guard_drops_an_overtaken_pass()
     test_invalidate_stops_passes_and_frees_the_cache()
+    test_a_pass_that_only_starts_work_re_arms_the_catch_up()
+    test_the_page_settles_its_entry_before_the_catch_up()
     test_search_is_current_answers_both_halves()
     test_hiding_the_window_invalidates_for_real()
     test_hooks_are_wired()

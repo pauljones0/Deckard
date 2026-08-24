@@ -197,6 +197,9 @@ class CustomAssetChooser(ChooserPage):
     def apply_search(self, query: str) -> None:
         if self.asset_chooser is not None:
             self.asset_chooser.refresh()
+            # The refresh is the render, so this page is current with the
+            # entry and needs no catch-up the next time it shows.
+            self.search_rendered(query)
 
     def on_browse_files_clicked(self, button: Gtk.Button) -> None:
         ChooseFileDialog(self) #TODO: Change to Xdp Portal call
