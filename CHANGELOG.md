@@ -39,6 +39,12 @@ bundle as a release asset.
   requires a newer app version. Such an install would replace a working
   plugin with one the app then refuses to load; the running plugin now stays
   in place instead.
+- The check that a deck is still plugged in now looks only at Stream Deck
+  hardware. It used to scan every USB input device on the machine and open
+  each one to read its name, several times a minute, which cost processor
+  time and woke keyboards, mice, headsets and game controllers for nothing.
+  The check now takes about a tenth of the time and touches no device but
+  the deck.
 
 ### Fixed
 
