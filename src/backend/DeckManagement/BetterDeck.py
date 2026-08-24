@@ -471,6 +471,41 @@ class BetterDeck():
         with self._lock:
             self.deck.set_poll_frequency(hz)
 
+    def _remap_key_event_index(self, physical_index: int) -> "int | None":
+        """Maps a physical key-callback index to its logical grid index, or
+        None when the event must not dispatch a grid key.
+
+        The library fires the key callback for every physical index a device
+        reports. On the Stream Deck Neo that includes its two touch buttons,
+        which the driver reports at indexes past the key grid (key_count plus
+        touch_key_count). Those buttons have no grid position, and there is no
+        touch-button input path to route them to, so a press of one is
+        dropped here: get_logical_index would fold an out-of-grid index back
+        into the rotation arithmetic and fire a real grid key's action, hand
+        the controller a negative index, or, at rotation 0, pass it straight
+        through as an out-of-grid index.
+
+        Grid indexes (0 to rows*cols-1) pass through get_logical_index
+        unchanged in mapping at every rotation. Both key-callback remappers
+        route through here, so the guard is applied in one place.
+        """
+        rows, cols = self.deck.key_layout()
+        if not 0 <= physical_index < rows * cols:
+            # A touch or extra button past the grid, or a stray index. Drop it
+            # rather than remap it. This is a per-press event on hardware that
+            # has such buttons, so it logs at debug.
+            log.debug(f"Dropping key event {physical_index}: past the "
+                      f"{rows}x{cols} key grid (no grid position)")
+            return None
+        logical_key = self.get_logical_index(physical_index)
+        if logical_key is None:
+            # An in-grid index that still maps to None means a rotation
+            # outside the four the mapper handles. Report it rather than
+            # forward None into the consumer's index math.
+            log.warning(f"Dropping key event {physical_index}: rotation "
+                        f"{self.rotation!r} maps no keys")
+        return logical_key
+
     def set_key_callback(self, callback: "Callable[[StreamDeck.StreamDeck, int, bool], None]") -> None:
         """
         Sets the callback function called each time a button on the StreamDeck
@@ -489,14 +524,8 @@ class BetterDeck():
                                 state changes.
         """
         def remapper_callback(deck: "StreamDeck.StreamDeck", key: int, state: bool) -> None:
-            logical_key = self.get_logical_index(key)
+            logical_key = self._remap_key_event_index(key)
             if logical_key is None:
-                # Only a rotation outside the four the mapper handles
-                # answers None. Report it rather than forward None into the
-                # consumer's index math. An index past the key grid, such as
-                # the Neo's touch buttons, still maps to an in-grid number
-                # here, as it always did.
-                log.warning(f"Dropping key event {key}: rotation {self.rotation!r} maps no keys")
                 return
             callback(deck, logical_key, state)
 
@@ -519,10 +548,8 @@ class BetterDeck():
         :param asyncio.loop loop: Asyncio loop to dispatch the callback into
         """
         async def remapper_callback(deck: "StreamDeck.StreamDeck", key: int, state: bool) -> None:
-            logical_key = self.get_logical_index(key)
+            logical_key = self._remap_key_event_index(key)
             if logical_key is None:
-                # See the sync remapper above.
-                log.warning(f"Dropping key event {key}: rotation {self.rotation!r} maps no keys")
                 return
             await async_callback(deck, logical_key, state)
 

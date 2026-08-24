@@ -48,6 +48,12 @@ bundle as a release asset.
 
 ### Fixed
 
+- A Stream Deck Neo's two touch buttons no longer fire a random key. Their
+  presses were run through the key-grid rotation map like grid keys, so a
+  touch reached a real key's action or a broken position that varied with the
+  deck's rotation. Those presses are now ignored, since the touch buttons have
+  no action of their own to run.
+
 - An import from Stream Deck UI that fails now shows the error and closes the
   dialog instead of freezing. A failure part way through, such as an unreadable
   source file, was logged and swallowed, so the progress bar sat at the start
