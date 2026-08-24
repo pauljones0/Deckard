@@ -150,10 +150,15 @@ def device_is_on_bus(deck: "Any") -> bool:
     to be serialized against; holding that lock would only park a status
     question behind an image write in the queue every deck write shares.
 
+    The filtered call still runs under the process-wide hidapi mutex, and it
+    still opens this deck itself; what it spares is every other device on the
+    bus and this deck's write queue.
+
     A transport that does not carry both the loader and the enumeration entry
-    gets the library's own answer: a fake deck, a remote deck, or a library
-    that renamed either one. The library is neither vendored nor patched, so
-    drift degrades to the unfiltered walk and never raises.
+    gets the library's own answer: a fake deck or a remote deck in practice,
+    since a renamed attribute would break the library's own probe too. A call
+    the loader refuses degrades the same way, so drift never raises: under
+    flatpak this answer is the only disconnect detection there is.
     """
     device = getattr(deck, "device", None)
     hidapi = getattr(device, "hidapi", None)
@@ -169,7 +174,10 @@ def device_is_on_bus(deck: "Any") -> bool:
 
     # Positional, because the library spells these parameters vendor_id and
     # product_id on the loader and vid and pid on the transport above it.
-    entries = hidapi.enumerate(vendor_id, product_id)
+    try:
+        entries = hidapi.enumerate(vendor_id, product_id)
+    except Exception:
+        return cast(bool, deck.connected())
     return any(entry.get("path") == path for entry in entries)
 
 
