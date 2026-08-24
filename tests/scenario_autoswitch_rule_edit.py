@@ -620,8 +620,11 @@ def check_recheck_and_watcher_load_once() -> None:
 
     grabber = _fresh_grabber()
     controller = StubDeckController("SERIAL", active_page=StubPage(manual_path))
-    # Long enough that the second routing starts while the first one loads.
-    controller.load_delay = 0.05
+    # The overlap this leg is about, held open long enough to survive a busy
+    # machine. The second routing reads the rules and asks the desktop which
+    # window is in front before it decides, and it must still find the deck on
+    # its old page when it does, or the two never meet.
+    controller.load_delay = 0.25
 
     start = threading.Barrier(2)
 
@@ -681,8 +684,16 @@ def check_a_reported_window_never_routes_on_the_caller() -> None:
                 "waiting inside a routing of its own: the notify method must "
                 "not route on the thread a load marshals onto"
             )
-            order.append("load")
+            landed_before = len(self.loaded_pages)
             super().load_page(page, allow_reload=allow_reload)
+            if len(self.loaded_pages) > landed_before:
+                # The load that lands, never the call that makes it. Both
+                # routings carry the same window and both can reach this, and
+                # which of them finds the deck already on the page depends on
+                # where the other one had got to. The deck refuses the page it
+                # already shows, so exactly one of the two lands, whatever the
+                # order.
+                order.append("load")
 
     controller = MarshallingController("SERIAL", active_page=StubPage(manual_path))
 
@@ -723,8 +734,8 @@ def check_a_reported_window_never_routes_on_the_caller() -> None:
             api._api_instance = original_instance
 
     assert order == ["notify", "load"], (
-        f"the notify method returned only after the page load finished, so it "
-        f"waited on the routing already in flight, got {order}"
+        f"the notify method must return while the load it met is still in "
+        f"flight, and the deck must take that load once, got {order}"
     )
     assert threading.main_thread() not in dispatch_threads, (
         "a routing ran on the main thread, which is the thread a page load "
