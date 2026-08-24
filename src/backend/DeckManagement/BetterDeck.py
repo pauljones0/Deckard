@@ -170,6 +170,9 @@ class BetterDeck():
         Opens the device for input/output. This must be called prior to setting
         or retrieving any device state.
 
+        A handle a release gave back ignores this call, because the release
+        shadows open() on it. Use open_handle() for a deliberate reopen.
+
         .. seealso:: See :func:`~StreamDeck.close` for the corresponding close method.
         """
         with self._lock:
@@ -201,6 +204,22 @@ class BetterDeck():
         _install_release_shadow(self.deck)
         stop_device_read_thread(self.deck, timeout)
         self.close()
+
+    def open_handle(self, resume_from_suspend: bool = True) -> None:
+        """Takes the device back: lifts any release shadow, then opens.
+
+        This is the deliberate reopen for a caller that holds the wrapper, the
+        counterpart of release_handle(). open() cannot serve, because a
+        released handle answers it with nothing.
+
+        The library starts a fresh reader thread inside the open, and joins
+        the previous one first with no timeout of its own. So the previous
+        reader must have exited, which release_handle() settles for a reader
+        that reads its flags, and the release shadow settles for one inside
+        the resume loop.
+        """
+        with self._lock:
+            open_device_handle(self.deck, resume_from_suspend)
 
     def is_open(self) -> bool:
         """
