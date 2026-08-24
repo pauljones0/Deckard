@@ -44,15 +44,14 @@ class ActionHolderGroup:
         return ActionInputSupport.SUPPORTED
             
     
-    def get_action_holders_with_min_action_input_support(self, action_input_support: ActionInputSupport) -> set[ActionHolder]:
+    def get_action_holders_with_min_action_input_support(self, identifier: InputIdentifier, action_input_support: ActionInputSupport) -> set[ActionHolder]:
+        # Compatibility is per input, so the caller passes the identifier to
+        # weigh against. get_input_compatibility keys action_support by the
+        # identifier's type; a holder's action_id string would never match a
+        # key and would read UNSUPPORTED for every holder.
         action_holders: set[ActionHolder] = set()
         for action_holder in self._action_holders:
-            # This passes the holder's action_id, a str, where an
-            # InputIdentifier belongs, so get_input_compatibility() always
-            # answers UNSUPPORTED. That is a defect. The correct fix needs an InputIdentifier
-            # that this method never receives, which changes a plugin-visible
-            # signature. No caller in this tree reaches the method.
-            if action_holder.get_input_compatibility(action_holder.action_id) >= action_input_support:  # ty: ignore[invalid-argument-type]  # root cause: get_input_compatibility passed action_id, not an InputIdentifier
+            if action_holder.get_input_compatibility(identifier) >= action_input_support:
                 action_holders.add(action_holder)
 
         return action_holders
