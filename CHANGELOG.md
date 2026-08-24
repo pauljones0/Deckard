@@ -42,6 +42,16 @@ bundle as a release asset.
 
 ### Fixed
 
+- A deck that stops answering key presses while it stays plugged in now comes
+  back on its own. A read error inside the Stream Deck library could end the
+  thread that reports every press, turn and touch, which left the deck
+  showing its page and ignoring every input until the app restarted. The app
+  now watches that thread, takes the device handle back and opens it again
+  when it dies, and repaints the deck. A device that keeps losing its reader
+  is left alone after five attempts in a row: the app stops driving it, its
+  screens keep the last picture they were given, and one line in the log says
+  to replug it.
+
 - A failure while starting one input's periodic update no longer stops every
   animated action on that deck. The update loop ended on the first such
   failure and stayed stopped until the app restarted. It now reports the

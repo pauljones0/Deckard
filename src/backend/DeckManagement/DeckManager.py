@@ -26,6 +26,7 @@ import os
 
 # Import own modules
 from src.backend.DeckManagement.BetterDeck import open_device_handle, release_device_handle
+from src.backend.DeckManagement.reader_supervisor import DeckReaderWatchdog
 from src.backend.DeckManagement.Subclasses.RemoteDeckManager import RemoteDeckManager
 from src.backend.DeckManagement.deck_controller.controller import DeckController
 from src.backend.DeckManagement.deck_controller.media_writer import ClearAndCloseMsg
@@ -126,6 +127,13 @@ class DeckManager:
         self.usb_monitor.start_monitoring(on_connect=self.on_connect, on_disconnect=self.on_disconnect)
 
         self.flatpak_disconnect_thread = FlatpakDeckDisconnectThread(self)
+
+        # The third liveness check, and the only one that watches the input
+        # reader instead of USB presence. A deck whose reader thread dies
+        # under a live device passes both checks above and takes no input at
+        # all, so this one revives it. See reader_supervisor.
+        self.reader_watchdog = DeckReaderWatchdog(self)
+        self.reader_watchdog.start()
 
         portal = Xdp.Portal.new()
         self.flatpak = portal.running_under_flatpak() # on_disconnect does not work under Flatpak. A separate thread polls instead. #TODO: Find a better solution
@@ -464,6 +472,11 @@ class DeckManager:
         close_all_controllers(self.deck_controller)
 
     def stop_usb_monitoring(self) -> None:
+        # The reader watchdog stops with the USB monitor. Both watch for a
+        # deck to need something, and neither has anything to do once this is
+        # called. Without it a manager that a test or a second session builds
+        # leaves a thread sweeping controllers it no longer owns.
+        self.reader_watchdog.stop()
         self.usb_monitor.stop_monitoring(timeout=2)
 
     def get_connected_serials(self) -> list[str]:
