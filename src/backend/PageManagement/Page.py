@@ -468,8 +468,16 @@ class Page:
         # get_states keys by the state's string spelling; the loop name must
         # not rebind the state parameter above.
         for state_key in ident.get_states(self):
+            try:
+                state_int = int(state_key)
+            except (TypeError, ValueError):
+                # A corrupt page json can carry a state key that is not an
+                # integer. Skip it, so the scan reaches the real state instead
+                # of raising out of the ready handshake and stranding the
+                # action at on_ready_finished False for the life of the page.
+                continue
             for i, action_dict in enumerate(ident.get_actions(self, state_key)):
-                if self.get_action(ident, int(state_key), i) is action_object:
+                if self.get_action(ident, state_int, i) is action_object:
                     # The list holds the page JSON, so the element is a dict.
                     return cast("_Dict[str, Any]", action_dict)
 
@@ -589,10 +597,12 @@ class Page:
                 f"on_ready failed for action {getattr(action, 'action_id', action)}"
             )
         finally:
-            # A raising on_ready must still open the tick and update gates, or
-            # the action stays dead for the life of the page.
+            # A raising on_ready must still open the tick and update gates and
+            # run the redraw, or the action stays dead for the life of the
+            # page. on_update sits inside the finally so a BaseException from
+            # on_ready, which the except above does not catch, cannot skip it.
             action.on_ready_finished = True
-        action.on_update()
+            action.on_update()
 
     def clear_action_objects(self) -> None:
         for input_type in self.action_objects:
@@ -736,6 +746,13 @@ class Page:
         inputs: list["ControllerInput[Any]"] = []
 
         for controller in (gl.deck_manager.deck_controller if gl.deck_manager is not None else []):
+            # Only controllers that currently show this page. Without the
+            # filter a label or media setter called on this page writes into a
+            # deck showing another page (cross-page bleed). This is the same
+            # active-page scope update_input applies to the repaint.
+            active_page = controller.active_page
+            if active_page is None or active_page.json_path != self.json_path:
+                continue
             for c_input in controller.get_inputs(identifier):
                 if c_input.identifier == identifier:
                     inputs.append(c_input)
