@@ -221,6 +221,20 @@ def check_strip_matches_direct_draw() -> None:
         w, h = lm._measure_text("center", label)
         assert lm.get_has_scroll_labels()
 
+        # The media thread advances frames["center"]["position"] on its own
+        # tick, and this check pins that offset and compares the strip
+        # composite against a direct draw computed from the pinned value. A
+        # concurrent scroll advance between the pin and add_labels_to_image's
+        # read of the offset draws a different frame than the reference, and
+        # the byte deviation then blows past the bound. Under load the window
+        # between the pin and the read widens and it fails. In the running app
+        # one thread owns every render, so stop the media thread and let this
+        # thread pin and render each offset alone.
+        controller.media_player.stop(timeout=5.0)
+        assert not controller.media_player.running, (
+            "premise: the media thread must stop, so this thread alone owns "
+            "the scroll offset while it pins and renders each frame")
+
         size = key.get_image_size()
         worst_frac = 0.0
         for position in (0, 5, 60, int(w) - size[0] + 15):
@@ -323,6 +337,20 @@ def check_pathological_label_strip_capped() -> None:
         lm = key.get_active_state().label_manager
         size = key.get_image_size()
         cap = LabelManager._MAX_STRIP_WIDTH
+
+        # Both wide labels below are scroll-flagged, so the media thread
+        # advances frames["center"]["position"] on its own tick. This check
+        # pins that offset and, for the pathological label, compares the
+        # capped direct-draw fallback against a direct draw computed from the
+        # pinned value. A concurrent advance between the pin and the render's
+        # read of the offset draws a different frame than the reference and the
+        # deviation blows past the bound; under load the window widens. In the
+        # running app one thread owns every render, so stop the media thread
+        # and let this thread pin and render each offset alone.
+        controller.media_player.stop(timeout=5.0)
+        assert not controller.media_player.running, (
+            "premise: the media thread must stop, so this thread alone owns "
+            "the scroll offset while it pins and renders each frame")
 
         # A normal wide label still uses and retains a strip.
         _set_center_label(key, WIDE_TEXT)
