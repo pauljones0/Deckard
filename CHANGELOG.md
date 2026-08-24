@@ -71,6 +71,17 @@ bundle as a release asset.
   no lock, so a change that landed mid-draw could tear the read and log an
   error instead of painting.
 
+- An action on a page whose saved file holds a damaged state key no longer
+  stays dark and unresponsive. A state key that is not a number stopped the
+  page's ready step half way, so the action never finished loading and ignored
+  every later update for the life of the page. The app now steps past the bad
+  key and finishes the load.
+
+- A label or image set by a plugin on one page no longer appears on another
+  page. A setter reached every deck that held the same key and state, even a
+  deck showing a different page; it now writes only to the decks that currently
+  show the page it was called on.
+
 ### Security
 
 - Installing a plugin from the store now asks before it runs the plugin's
