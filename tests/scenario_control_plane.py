@@ -613,6 +613,12 @@ def check_state_barrier_clears_before_background(plane, controller_b) -> None:
     bg_block_s. The barrier must clear far sooner, off the input rebuild alone.
     """
     load_named_page(controller_b, "Alpha")
+    # Drain Alpha's own input rebuild before measuring. load_named_page returns
+    # once the page is active, but its rebuild is still queued on the media
+    # thread; if it finishes after the change_state below clears the shared
+    # load-done event, it sets that event and releases the barrier before Wide's
+    # rebuild runs, so the state read lands on the pre-rebuild single state.
+    settle(controller_b)
 
     bg_block_s = 5.0
     real_load_background = controller_b.load_background
