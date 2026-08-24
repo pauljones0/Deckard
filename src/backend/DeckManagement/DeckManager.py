@@ -472,6 +472,11 @@ class DeckManager:
         close_all_controllers(self.deck_controller)
 
     def stop_usb_monitoring(self) -> None:
+        # The reader watchdog stops with the USB monitor. Both watch for a
+        # deck to need something, and neither has anything to do once this is
+        # called. Without it a manager that a test or a second session builds
+        # leaves a thread sweeping controllers it no longer owns.
+        self.reader_watchdog.stop()
         self.usb_monitor.stop_monitoring(timeout=2)
 
     def get_connected_serials(self) -> list[str]:

@@ -477,6 +477,14 @@ class MediaPlayerThread(threading.Thread):
 
         self.show_fps_warnings = gl.settings_manager.app().enable_fps_warnings
 
+        # Set by this deck's reader supervisor while the device handle is
+        # down, and cleared when a reopen takes it back. Every device write
+        # would raise meanwhile, and each failure arms a full repaint, so an
+        # unsuspended writer composites the whole deck and logs a row of
+        # errors every two seconds for as long as the deck stays registered.
+        # Renders still run while it is set, so the window previews stay live.
+        self.device_writes_suspended: bool = False
+
         # Loop-guard state. This thread is the sole writer for paints,
         # brightness, Clear and ClearAndClose, so its death freezes the deck
         # until a replug. The guard in run() keeps it alive, and these two
@@ -779,19 +787,22 @@ class MediaPlayerThread(threading.Thread):
         Clear's submission time."""
         return next(self._submit_seq)
 
-    def submit_control(self, msg: "SetBrightnessMsg | ClearMsg | ClearAndCloseMsg | ReleaseStashedInputsMsg | ReopenDeckMsg") -> None:
-        """Append and wake, without blocking. Safe from any thread, because a
-        deque append is GIL-atomic and needs no lock.
+    def submit_control(self, msg: "SetBrightnessMsg | ClearMsg | ClearAndCloseMsg | ReleaseStashedInputsMsg | ReopenDeckMsg") -> bool:
+        """Append and wake, without blocking, and report whether the message
+        was queued. Safe from any thread, because a deque append is GIL-atomic
+        and needs no lock.
 
         It rejects a message once the writer stops or closes. The loop is gone
         by then, so nothing would ever drain a message appended after that
         point. If a late plugin or API callback kept calling set_brightness()
         on a torn-down deck, control_q would grow unbounded for the rest of
-        the process's life."""
+        the process's life. A caller that tracks its message, as the reader
+        supervisor does with an in-flight marker, needs the rejection back."""
         if self._stop:
-            return
+            return False
         self.control_q.append(msg)
         self._wake_event.set()
+        return True
 
     def drain_control_queue(self) -> bool:
         """Execute every pending control message, FIFO. Returns False after
@@ -811,11 +822,11 @@ class MediaPlayerThread(threading.Thread):
             elif isinstance(msg, ReleaseStashedInputsMsg):
                 self._exec_release_stashed_inputs(msg)
             elif isinstance(msg, ReopenDeckMsg):
-                # This blocks the loop for as long as the attempt takes. The
-                # supervisor bounds that by its own deadline, and _stop cuts
-                # the retry short, so a quit never waits it out. Nothing
-                # paints meanwhile, and the deck it would paint to is the one
-                # with no working handle.
+                # This blocks the loop for as long as the attempt takes, at
+                # most the supervisor's reopen deadline. _stop shortens that
+                # to the open in flight plus one retry gap, not to nothing.
+                # Meanwhile this deck paints nothing, and it has no working
+                # handle to paint to.
                 msg.supervisor.run_attempt(stopping=lambda: self._stop)
         return True
 
@@ -824,6 +835,8 @@ class MediaPlayerThread(threading.Thread):
         # DeckController.set_brightness(), which re-submits and loops forever.
         # The error policy is attempt and swallow, reported to the unified
         # per-controller handler as the task classes do.
+        if self.device_writes_suspended:
+            return
         try:
             self.deck_controller.deck.set_brightness(int(msg.value))
             self.deck_controller._on_write_result(True)
@@ -1111,6 +1124,16 @@ class MediaPlayerThread(threading.Thread):
         for task in task_batch:
             if task.page is active_page:
                 task.run()
+
+        # Every device write below would raise on a deck whose handle the
+        # reader supervisor could not take back, and each failure arms another
+        # full repaint, so the loop would composite the deck and log a row of
+        # errors every two seconds for the rest of the session. Drop the
+        # frames instead, silently. The renders that produced them already
+        # reached the window previews, and a reopen resets every present state
+        # before it repaints, so nothing stays stale after a recovery.
+        if self.device_writes_suspended:
+            return
 
         # Bulk-batch write pacing, off by default. A video-frame repaint
         # lands as a burst of back-to-back writes, and the transport
