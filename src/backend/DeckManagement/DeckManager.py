@@ -26,6 +26,7 @@ import os
 
 # Import own modules
 from src.backend.DeckManagement.BetterDeck import open_device_handle, release_device_handle
+from src.backend.DeckManagement import usb_reset
 from src.backend.DeckManagement.reader_supervisor import DeckReaderWatchdog
 from src.backend.DeckManagement.Subclasses.RemoteDeckManager import RemoteDeckManager
 from src.backend.DeckManagement.deck_controller.controller import DeckController
@@ -95,6 +96,58 @@ def close_all_controllers(controllers: "Iterable[Any]", join_timeout: float = 2.
         controller.media_player.stop(timeout=join_timeout)
 
 
+def init_deck_controller_round(deck_manager: Any, deck: Any, attempts: int,
+                               retry_delay: float) -> "tuple[DeckController | None, bool]":
+    """Run one round of open-and-construct attempts for a deck.
+
+    It returns the controller, or None with whether every attempt failed with
+    a transport error. That flag separates the two ways a round ends with no
+    controller. A transport error means the device is there and will not talk,
+    which the caller has one more answer for. Any other failure is a deck
+    another process holds, or a construction that raised, and neither is a
+    device state a reset changes.
+
+    A function and not a method, because the test harness StubDeckManager
+    stands in for the manager the same way close_all_controllers takes its
+    controllers.
+    """
+    # Opening a deck and reading its serial right after open is sometimes
+    # flaky (TransportError -1). Retry, and never let one bad deck crash
+    # startup. The startup path (load_hardware_deck) and the hotplug and
+    # boot-rescan path (add_newly_connected_deck) share this, because a deck
+    # the rescan picks up mid-boot flakes as often as one enumerated at
+    # startup.
+    for attempt in range(1, attempts + 1):
+        try:
+            if not deck.is_open():
+                # The library always opens with resume-from-suspend enabled.
+                # This also lifts the release shadow of an earlier attempt,
+                # which a bare open() would not.
+                open_device_handle(deck)
+            return DeckController(deck_manager, deck), False
+        except StreamDeck.TransportError as e:
+            log.warning(f"Transport error initializing deck (attempt {attempt}/{attempts}): {e}")
+            try:
+                # The raw handle, because the wrapper lives on the controller
+                # that failed to build.
+                release_device_handle(deck)
+            except Exception:
+                pass
+            if attempt < attempts:
+                time.sleep(retry_delay)
+        except Exception as e:
+            log.error(f"Failed to initialize deck, maybe it's already connected to another instance? Error: {e}")
+            # The constructor guards its bring-up and its tail, and a raise
+            # between the two arrives here with the handle still open and its
+            # reader running.
+            try:
+                release_device_handle(deck)
+            except Exception:
+                log.opt(exception=True).warning("Failed to release the deck handle after a failed init")
+            return None, False
+    return None, True
+
+
 class DeckManager:
     # Backoff schedule for the startup re-enumeration, about 60 s in total.
     # An instance can override it, so the harness can shrink it.
@@ -133,6 +186,9 @@ class DeckManager:
         # under a live device passes both checks above and takes no input at
         # all, so this one revives it. See reader_supervisor.
         self.reader_watchdog = DeckReaderWatchdog(self)
+        # A deck the supervisor gives up on takes one targeted USB reset and
+        # one more round of attempts. See usb_reset.
+        usb_reset.install_give_up_escalation(self.reader_watchdog)
         self.reader_watchdog.start()
 
         portal = Xdp.Portal.new()
@@ -276,42 +332,25 @@ class DeckManager:
             publish_controller(deck_controller)
 
     def _init_deck_controller_with_retry(self, deck: Any, attempts: int = 3, retry_delay: float = 0.5) -> DeckController | None:
-        # Opening a deck and reading its serial right after open is sometimes
-        # flaky (TransportError -1). Retry, and never let one bad deck crash
-        # startup. The startup path (load_hardware_deck) and the hotplug and
-        # boot-rescan path (add_newly_connected_deck) share this, because a
-        # deck the rescan picks up mid-boot flakes as often as one enumerated
-        # at startup.
-        for attempt in range(1, attempts + 1):
-            try:
-                if not deck.is_open():
-                    # The library always opens with resume-from-suspend
-                    # enabled. This also lifts the release shadow of an
-                    # earlier attempt, which a bare open() would not.
-                    open_device_handle(deck)
-                return DeckController(self, deck)
-            except StreamDeck.TransportError as e:
-                log.warning(f"Transport error initializing deck (attempt {attempt}/{attempts}): {e}")
-                try:
-                    # The raw handle, because the wrapper lives on the
-                    # controller that failed to build.
-                    release_device_handle(deck)
-                except Exception:
-                    pass
-                if attempt < attempts:
-                    time.sleep(retry_delay)
-            except Exception as e:
-                log.error(f"Failed to initialize deck, maybe it's already connected to another instance? Error: {e}")
-                # The constructor guards its bring-up and its tail, and a
-                # raise between the two arrives here with the handle still
-                # open and its reader running.
-                try:
-                    release_device_handle(deck)
-                except Exception:
-                    log.opt(exception=True).warning("Failed to release the deck handle after a failed init")
-                return None
-        log.error("Giving up on deck after repeated transport errors; skipping it. Replugging the deck usually fixes this.")
-        return None
+        controller, transport_exhausted = init_deck_controller_round(self, deck, attempts, retry_delay)
+        if controller is not None or not transport_exhausted:
+            return controller
+        # Every attempt failed with a transport error, which is the deck that
+        # sits on the bus and will not open. One targeted reset of that device,
+        # then one more round. Only on this arm, and at most once per device:
+        # a deck that failed for any other reason is not one a reset revives,
+        # and this is a recovery step, never a boot step of its own.
+        if usb_reset.reset_wedged_deck(deck) is None:
+            log.error("Giving up on deck after repeated transport errors; skipping it. Replugging the deck usually fixes this.")
+            return None
+        # The device re-enumerates, and its node is gone for part of that. The
+        # wait lives here and not inside the reset, because the give-up
+        # escalation shares that reset and must not hold up a watchdog sweep.
+        time.sleep(usb_reset.RESET_SETTLE_S)
+        controller, _ = init_deck_controller_round(self, deck, attempts, retry_delay)
+        if controller is None:
+            log.error("Giving up on deck: it still does not open after a USB reset. Replugging the deck usually fixes this.")
+        return controller
 
     def load_fake_decks(self) -> None:
         old_n_fake_decks = len(self.fake_deck_controller)
@@ -477,6 +516,11 @@ class DeckManager:
         # called. Without it a manager that a test or a second session builds
         # leaves a thread sweeping controllers it no longer owns.
         self.reader_watchdog.stop()
+        # The escalation hook is a module-level slot holding a closure over
+        # this watchdog, and through it this manager and every controller it
+        # registered. A stopped watchdog latches no give-up, so the hook has
+        # nothing left to serve and clearing it is what lets all of that go.
+        usb_reset.clear_give_up_escalation(self.reader_watchdog)
         self.usb_monitor.stop_monitoring(timeout=2)
 
     def get_connected_serials(self) -> list[str]:

@@ -52,6 +52,17 @@ bundle as a release asset.
   screens keep the last picture they were given, and one line in the log says
   to replug it.
 
+- A deck that answers nothing at all now takes one USB reset before the app
+  leaves it alone. A deck can keep its place on the bus and refuse every
+  connection, and until then only a replug brought it back: it stayed dead
+  across restart after restart. The app now resets that one device the way
+  the kernel does for a replug and tries once more, both for a deck that
+  will not start up and for a deck whose input stopped and whose handle
+  will not open again. It resets one device once, it never resets a device
+  it cannot tell apart from a second deck of the same model, and where the
+  app runs without access to the USB devices it says so in the log and asks
+  for a replug as before.
+
 - A failure while starting one input's periodic update no longer stops every
   animated action on that deck. The update loop ended on the first such
   failure and stayed stopped until the app restarted. It now reports the
