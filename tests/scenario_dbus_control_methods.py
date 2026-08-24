@@ -8,6 +8,7 @@ import fixtures  # noqa: F401  (must be first: isolates DATA_PATH before globals
 import json  # noqa: E402
 import os  # noqa: E402
 import threading  # noqa: E402
+import time  # noqa: E402
 
 from gi.repository import GLib  # noqa: E402
 
@@ -28,6 +29,30 @@ SERIAL = "dbus-ctl-1"
 OTHER_SERIAL = "dbus-ctl-2"
 STATE_KEY = "0x0"
 STATE_COUNT = 4
+
+# A generous bound for the target page's inputs to load on the media thread.
+STATE_SETTLE_SECONDS = 20.0
+
+
+def settle_state_change(call, timeout: float = STATE_SETTLE_SECONDS) -> str:
+    """Call a ChangeState until it answers success (empty), bounded by timeout.
+
+    ChangeState loads the addressed page onto the deck and then reads that
+    input's own state list to bound the state number. The input load runs on
+    the media thread and lands after the switch returns, so a cross-page state
+    change reads the state count a beat later. A media thread that a loaded
+    machine has not scheduled yet therefore answers once with the count the
+    page carried before it loaded, which reads here as "only 1 state" and never
+    at rest. Poll the whole call so the load lands, without softening what the
+    final answer must be. The last non-empty answer is returned when the bound
+    is reached, so a real rejection still surfaces its own sentence.
+    """
+    deadline = time.monotonic() + timeout
+    reply = call()
+    while reply != "" and time.monotonic() < deadline:
+        time.sleep(0.05)
+        reply = call()
+    return reply
 
 
 def seed_multistate_page(page_name: str, key_ident: str, n_states: int) -> str:
@@ -133,8 +158,10 @@ def leg_errors_name_what_exists(client, controller) -> None:
 
 
 def leg_change_state(client, controller) -> None:
-    assert client.change_state(SERIAL, "States", STATE_KEY.replace("x", ","), 2) == "", (
-        "a state change that worked must answer with nothing")
+    reply = settle_state_change(
+        lambda: client.change_state(SERIAL, "States", STATE_KEY.replace("x", ","), 2))
+    assert reply == "", (
+        f"a state change that worked must answer with nothing: {reply!r}")
     assert active_name(controller) == "States", (
         "ChangeState loads the page whose input it is addressing")
 
@@ -237,7 +264,11 @@ def leg_cli_transport_reaches_service(controller) -> None:
         # was loaded before the reply was sent, so this is settled.
         answers["after_page"] = active_name(controller)
         answers["bad_page"] = transport.change_page(SERIAL, "no-such-page")
-        answers["state"] = transport.change_state(SERIAL, "States", "0,0", 1)
+        # The switch to States loads its inputs on the media thread, so the
+        # state count settles a beat after the page does. See
+        # settle_state_change.
+        answers["state"] = settle_state_change(
+            lambda: transport.change_state(SERIAL, "States", "0,0", 1))
 
     answers = drive_on_worker(drive, "cli-transport")
 
