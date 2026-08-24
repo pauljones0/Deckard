@@ -106,8 +106,8 @@ class ToggleRow(GenerativeUI[int]):
         return cast("Adw.Toggle | None", self.widget.get_toggle_by_name(name))
 
     def get_toggle_at(self, index: int) -> "Adw.Toggle | None":
-        return cast("Adw.Toggle | None", self.widget.get_toggle(index))
-      
+        return cast("Adw.Toggle | None", self.widget.get_toggle_at(index))
+
     @GenerativeUI.signal_manager
     def add_toggle(self, label: str | None = None, tooltip: str | None = None, icon_name: str | None = None, name: str | None = None, enabled: bool = True) -> None:
         self.widget.add_toggle(label, tooltip, icon_name, name, enabled)
@@ -118,35 +118,35 @@ class ToggleRow(GenerativeUI[int]):
 
     @GenerativeUI.signal_manager
     def add_custom_toggle(self, toggle: Adw.Toggle) -> None:
-        self.widget.add(toggle)
+        self.widget.add_custom_toggle(toggle)
 
     @GenerativeUI.signal_manager
     def set_active_toggle(self, index: int) -> None:
-        self.widget.set_active(index)
+        self.widget.set_active_toggle(index)
 
     @GenerativeUI.signal_manager
     def set_active_by_name(self, name: str) -> None:
-        self.widget.set_active_name(name)
+        self.widget.set_active_by_name(name)
 
     @GenerativeUI.signal_manager
     def populate(self, toggles: list[Adw.Toggle], active_index: int) -> None:
-        self.widget.remove_all()
-        self.widget.add_toggles(toggles)
-        self.widget.set_active(active_index)
+        self.widget.populate(toggles, active_index)
 
     @GenerativeUI.signal_manager
     def remove_toggle(self, toggle: Adw.Toggle) -> None:
-        self.widget.remove(toggle)
+        self.widget.remove_toggle(toggle)
 
     @GenerativeUI.signal_manager
     def remove_at(self, index: int) -> None:
-        toggle = self.widget.get_toggle_at(index)
-        self.widget.remove(toggle)
+        # The widget guards an out-of-range index, where get_toggle_at
+        # answers None and the toggle group rejects a None remove.
+        self.widget.remove_at(index)
 
     @GenerativeUI.signal_manager
     def remove_with_name(self, name: str) -> None:
-        toggle = self.widget.get_toggle_by_name(name)
-        self.widget.remove(toggle)
+        # The widget guards an unknown name the same way remove_at guards
+        # an out-of-range index.
+        self.widget.remove_with_name(name)
 
     @GenerativeUI.signal_manager
     def remove_all(self) -> None:

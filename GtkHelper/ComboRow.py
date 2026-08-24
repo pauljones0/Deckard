@@ -172,7 +172,9 @@ class ComboRow(Adw.ComboRow):
     def get_selected_item(self) -> BaseComboRowItem | None:
         selected_index = self.get_selected()
 
-        if selected_index == -1:
+        # GTK4 reports "nothing selected" as Gtk.INVALID_LIST_POSITION
+        # (an unsigned sentinel), never -1, so an == -1 test never fires.
+        if selected_index == Gtk.INVALID_LIST_POSITION:
             return None
 
         return self.get_item_at(selected_index)

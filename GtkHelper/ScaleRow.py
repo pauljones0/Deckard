@@ -23,7 +23,7 @@ class ScaleRow(Adw.ActionRow):
             step (float, optional): The step increment for the scale (default is 0.1).
             digits (int, optional): The number of decimal places to display for the scale value (default is 2).
             draw_value (bool, optional): Whether to display the current value of the scale on the scale itself (default is False).
-            round_digits (bool, optional): Whether to round the value to the nearest step increment (default is True).
+            round_digits (int, optional): Decimal places to round the slider value to; -1 disables rounding (default is 1).
 
         Description:
             This constructor creates a row containing a horizontal scale widget with optional labels for the minimum
@@ -42,7 +42,7 @@ class ScaleRow(Adw.ActionRow):
                  step: float = 0.1,
                  digits: int = 2,
                  draw_value: bool = False,
-                 round_digits: bool = True,
+                 round_digits: int = 1,
                  text_entry_max_length: int = 6
                  ):
         super().__init__(title=title, subtitle=subtitle)  # ty: ignore[invalid-argument-type]  # gi stub: Adw string props accept None (PyGObject maps it to NULL, i.e. empty string)
@@ -162,7 +162,9 @@ class ScaleRow(Adw.ActionRow):
         return self.scale.get_round_digits()
 
     @round_digits.setter
-    def round_digits(self, round_digits: bool) -> None:
+    def round_digits(self, round_digits: int) -> None:
+        # Gtk.Scale.set_round_digits takes a decimal-place count; -1 disables
+        # rounding. The getter returns the same int, so the property round-trips.
         self.scale.set_round_digits(round_digits)
 
     # Scale Row
