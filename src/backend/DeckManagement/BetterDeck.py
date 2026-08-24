@@ -170,13 +170,14 @@ class BetterDeck():
         Opens the device for input/output. This must be called prior to setting
         or retrieving any device state.
 
-        A handle a release gave back ignores this call, because the release
-        shadows open() on it. Use open_handle() for a deliberate reopen.
+        It delegates to open_handle(), which lifts a release shadow and
+        refuses an open that would wait on a reader still running. A plain
+        open() of the wrapped handle does neither, and a released handle
+        ignores it outright.
 
         .. seealso:: See :func:`~StreamDeck.close` for the corresponding close method.
         """
-        with self._lock:
-            self.deck.open()
+        self.open_handle()
 
     def close(self) -> None:
         """
@@ -205,21 +206,38 @@ class BetterDeck():
         stop_device_read_thread(self.deck, timeout)
         self.close()
 
-    def open_handle(self, resume_from_suspend: bool = True) -> None:
+    def open_handle(self, resume_from_suspend: bool = True,
+                    guard: "Callable[[], bool] | None" = None) -> bool:
         """Takes the device back: lifts any release shadow, then opens.
+        Returns whether it opened.
 
         This is the deliberate reopen for a caller that holds the wrapper, the
-        counterpart of release_handle(). open() cannot serve, because a
-        released handle answers it with nothing.
+        counterpart of release_handle(). Two conditions are settled under the
+        device lock, immediately before the open, so neither can change
+        between the decision and the open itself.
 
-        The library starts a fresh reader thread inside the open, and joins
-        the previous one first with no timeout of its own. So the previous
-        reader must have exited, which release_handle() settles for a reader
-        that reads its flags, and the release shadow settles for one inside
-        the resume loop.
+        guard() is the caller's own reason to reopen, asked one last time. A
+        teardown that starts while a reopen is queued must win: a reopen that
+        ran after it would lift the shadow the teardown installed and hand the
+        next process a busy device.
+
+        A reader thread that is still alive refuses the open. The library's
+        open() joins the previous reader with no timeout of its own, while
+        release_handle() joins with a bound, so a reader that outlived that
+        bound would wedge this call for as long as it runs. It is a caller
+        error, and it says so rather than waiting.
         """
         with self._lock:
+            if guard is not None and not guard():
+                return False
+            read_thread = getattr(self.deck, "read_thread", None)
+            if read_thread is not None and read_thread.is_alive():
+                log.warning(f"Refusing to reopen the {type(self.deck).__name__} handle: "
+                            f"its reader thread is still running, and the library's open "
+                            f"would wait for that thread with no bound")
+                return False
             open_device_handle(self.deck, resume_from_suspend)
+            return True
 
     def is_open(self) -> bool:
         """
