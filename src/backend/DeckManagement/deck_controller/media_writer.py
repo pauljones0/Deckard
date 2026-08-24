@@ -17,9 +17,9 @@ executes. That thread is the sole writer to its device. Every key image,
 touchscreen image, brightness change and blank reaches the hardware from
 inside its loop, so this module decides the ordering between them. A paint
 carries the page and generation it was rendered for, and the write boundary
-judges it stale. A control message, for brightness, clear, clear-and-close
-or a stashed-input release, has no page affinity, drains first on every
-wake, and always executes, FIFO.
+judges it stale. A control message, for brightness, clear, clear-and-close,
+a stashed-input release or a reader reopen, has no page affinity, drains
+first on every wake, and always executes, FIFO.
 
 This module also holds the native JPEG encoders that every paint funnels
 through, and the FIFO transport lock that stops a write burst from starving
@@ -55,6 +55,7 @@ _Params = ParamSpec("_Params")
 if TYPE_CHECKING:
     from src.backend.DeckManagement.deck_controller.controller import DeckController
     from src.backend.DeckManagement.BetterDeck import BetterDeck
+    from src.backend.DeckManagement.reader_supervisor import DeckReaderSupervisor
     from src.backend.DeckManagement.deck_controller.inputs import (
         ControllerDial,
         ControllerKey,
@@ -265,6 +266,17 @@ class ReleaseStashedInputsMsg:
     stashed_inputs: "dict[type[InputIdentifier], list[ControllerKey | ControllerDial | ControllerTouchScreen]]"
 
 
+@dataclass
+class ReopenDeckMsg:
+    """Control message that gives the device handle back and takes it again,
+    after the library's input reader thread died under a live device.
+
+    It runs here because this thread is the sole device writer, and a close
+    waits on the device lock a write in flight holds. The supervisor carries
+    the attempt state and performs the attempt; see reader_supervisor."""
+    supervisor: "DeckReaderSupervisor"
+
+
 def _env_float(name: str, default: float) -> float:
     """Read a float tuning knob from the environment, and fall back to
     default on a malformed value. A typo in an env var must degrade to the
@@ -432,7 +444,7 @@ class MediaPlayerThread(threading.Thread):
         # extra lock. The loop drains it fully and first on every wake, ahead
         # of any animation tick or task work, so a brightness or clear op
         # never waits behind them.
-        self.control_q: "collections.deque[SetBrightnessMsg | ClearMsg | ClearAndCloseMsg | ReleaseStashedInputsMsg]" = collections.deque()
+        self.control_q: "collections.deque[SetBrightnessMsg | ClearMsg | ClearAndCloseMsg | ReleaseStashedInputsMsg | ReopenDeckMsg]" = collections.deque()
         # Deck-wide ordering state, both fields. A target's own present state
         # holds what that target shows; these two order every target's frames
         # against each other, because a Clear judges the whole deck against
@@ -767,7 +779,7 @@ class MediaPlayerThread(threading.Thread):
         Clear's submission time."""
         return next(self._submit_seq)
 
-    def submit_control(self, msg: "SetBrightnessMsg | ClearMsg | ClearAndCloseMsg | ReleaseStashedInputsMsg") -> None:
+    def submit_control(self, msg: "SetBrightnessMsg | ClearMsg | ClearAndCloseMsg | ReleaseStashedInputsMsg | ReopenDeckMsg") -> None:
         """Append and wake, without blocking. Safe from any thread, because a
         deque append is GIL-atomic and needs no lock.
 
@@ -798,6 +810,13 @@ class MediaPlayerThread(threading.Thread):
                 return False
             elif isinstance(msg, ReleaseStashedInputsMsg):
                 self._exec_release_stashed_inputs(msg)
+            elif isinstance(msg, ReopenDeckMsg):
+                # This blocks the loop for as long as the attempt takes. The
+                # supervisor bounds that by its own deadline, and _stop cuts
+                # the retry short, so a quit never waits it out. Nothing
+                # paints meanwhile, and the deck it would paint to is the one
+                # with no working handle.
+                msg.supervisor.run_attempt(stopping=lambda: self._stop)
         return True
 
     def _exec_set_brightness(self, msg: "SetBrightnessMsg") -> None:
