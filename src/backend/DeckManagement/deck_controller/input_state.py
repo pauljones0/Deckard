@@ -1,3 +1,4 @@
+# The state CLASS family (ControllerInputState and subclasses) lives in input_state_classes.py; this file holds the persistence rules, the docstring below being their spec.
 """
 Which state an input opens on, and what its page keeps of it.
 

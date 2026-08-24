@@ -82,6 +82,17 @@ bundle as a release asset.
   no lock, so a change that landed mid-draw could tear the read and log an
   error instead of painting.
 
+- A default page that cannot be built no longer blanks the deck. When the
+  page a deck opens on resolved by name but failed to build, the deck was
+  cleared to nothing; it now keeps the page it already shows.
+
+- A state change sent right after a page switch, from the command line or over
+  D-Bus, now applies reliably. The request used to race the page's input load
+  and be rejected as out of range, or the app briefly froze while a page with
+  a video background finished loading. The request now waits only for the new
+  page's inputs to rebuild, so it is neither rejected nor blocked on the
+  background.
+
 - An action on a page whose saved file holds a damaged state key no longer
   stays dark and unresponsive. A state key that is not a number stopped the
   page's ready step half way, so the action never finished loading and ignored

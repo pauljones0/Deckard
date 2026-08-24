@@ -1,3 +1,4 @@
+# The state persistence rules (which state an input opens on, and what its page keeps) live in input_state.py, its module docstring being the spec; this file holds the state CLASS family.
 """
 Author: Core447
 Year: 2026
