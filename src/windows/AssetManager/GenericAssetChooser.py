@@ -361,16 +361,25 @@ class GenericPackChooserPage(_ChooserBuildPage, Generic[PackT, StackT]):
     # A marshal that timed out never binds it. See _handle_build_failure.
     pack_flow = None
 
+    # The one gather runs at a time, and a request that arrives while one runs
+    # replaces the one waiting. See search_across_packs.
+    #
+    # All three are class level, like the state above, because ChooserPage
+    # connects the search entry from its own constructor: an emission can
+    # reach apply_search, and so this state, before a subclass has run a line
+    # of its own. The two fields below are read and rebound, so the first
+    # write makes them per instance. The lock is shared by every pack grid on
+    # purpose. It guards two assignments and never spans I/O, so the sharing
+    # costs nothing, and one lock per instance would have to be built
+    # somewhere, which is the window this avoids.
+    _search_lock = threading.Lock()
+    _search_pending: "tuple[str, ChooserPage, int] | None" = None
+    _search_running = False
+
     def __init__(self, stack: StackT, asset_manager: "AssetManager") -> None:
         super().__init__()
         self.asset_manager = asset_manager
         self.stack = stack
-
-        # One gather runs at a time; a request that arrives while one runs
-        # replaces the one waiting. See search_across_packs.
-        self._search_lock = threading.Lock()
-        self._search_pending: "tuple[str, ChooserPage, int] | None" = None
-        self._search_running = False
 
         self.build_finished = False
 
@@ -518,6 +527,10 @@ class GenericPackChooserPage(_ChooserBuildPage, Generic[PackT, StackT]):
                 # The worker takes this up when its gather ends.
                 return
             self._search_running = True
+        self._start_search_worker()
+
+    def _start_search_worker(self) -> None:
+        """Run the gather worker. The caller has claimed the flag for it."""
         threading.Thread(target=self._run_pack_search, daemon=True,
                          name=f"{type(self).__name__}.search").start()
 
@@ -527,33 +540,66 @@ class GenericPackChooserPage(_ChooserBuildPage, Generic[PackT, StackT]):
         It serves the newest request each time round, so a query that arrived
         while it gathered is answered without a second worker.
         """
-        while True:
-            with self._search_lock:
-                request = self._search_pending
-                self._search_pending = None
-                if request is None:
-                    self._search_running = False
-                    return
-            query, requester, generation = request
-            try:
-                assets = self.collect_matching_assets(query, requester, generation)
-            except Exception as error:
-                # Narrow on purpose. A gather that raises must leave the page
-                # exactly as it found it, with nothing recorded as rendered,
-                # so showing the page again or the next keystroke tries once
-                # more. A swallow around the whole worker would instead leave
-                # a page that believes it is current and never retries.
-                log.opt(exception=error).error(
-                    f"{type(self).__name__}: the search across packs failed for "
-                    f"{query!r}; the page keeps what it shows and searches "
-                    f"again on the next keystroke or when it is shown")
-                continue
-            if not requester.search_is_current(generation):
-                # The query moved on, or the page went away, while this pass
-                # read the packs. Queue nothing: the newer pass renders.
-                continue
-            GLib.idle_add(self._show_matching_assets, query, requester,
-                          generation, assets)
+        try:
+            while True:
+                with self._search_lock:
+                    request = self._search_pending
+                    self._search_pending = None
+                    if request is None:
+                        # The flag falls with the same hold of the lock that
+                        # finds nothing waiting, so a request cannot arrive
+                        # between the two and be left with no worker.
+                        self._search_running = False
+                        return
+                query, requester, generation = request
+                try:
+                    assets = self.collect_matching_assets(query, requester, generation)
+                except Exception as error:
+                    # Narrow on purpose. A gather that raises must leave the
+                    # page exactly as it found it, with nothing recorded as
+                    # rendered, so showing the page again or the next
+                    # keystroke tries once more. A swallow around the whole
+                    # worker would instead leave a page that believes it is
+                    # current and never retries.
+                    log.opt(exception=error).error(
+                        f"{type(self).__name__}: the search across packs failed for "
+                        f"{query!r}; the page keeps what it shows and searches "
+                        f"again on the next keystroke or when it is shown")
+                    continue
+                if not requester.search_is_current(generation):
+                    # The query moved on, or the page went away, while this
+                    # pass read the packs. Queue nothing: the newer pass
+                    # renders.
+                    continue
+                GLib.idle_add(self._show_matching_assets, query, requester,
+                              generation, assets)
+        finally:
+            self._release_search_worker()
+
+    def _release_search_worker(self) -> None:
+        """Let a later request start a worker, whatever ended this one.
+
+        The clean exit above clears the flag itself. This covers the other way
+        out: anything raising outside the narrow catch, which is the marshal
+        of the render and the logger inside that catch. Left set, the flag
+        would make every later request post to a worker that is gone, and the
+        search would be dead for the life of the window.
+
+        It returns rather than raising, so the exception that brought it here
+        still reaches the thread and its traceback.
+        """
+        with self._search_lock:
+            if not self._search_running:
+                # The clean exit cleared it, and another worker may already
+                # hold the flag.
+                return
+            # A request that arrived while this worker was dying found the
+            # flag set, so nothing else starts a worker for it. Hand the flag
+            # straight to the restart, or drop it, in this one hold.
+            stranded = self._search_pending is not None
+            self._search_running = stranded
+        if stranded:
+            self._start_search_worker()
 
     def collect_matching_assets(self, query: str, requester: ChooserPage,
                                 generation: int) -> "list[Any]":

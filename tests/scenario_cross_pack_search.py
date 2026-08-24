@@ -222,10 +222,9 @@ def make_pack_page(entry_text: str = "", stack: "FakeStack | None" = None,
     page.stack = stack if stack is not None else FakeStack()
     page.stack.leaf_chooser = leaf
     page.asset_manager = asset_manager if asset_manager is not None else FakeAssetManager()
-    # What the constructor sets up for the one-worker handoff.
-    page._search_lock = threading.Lock()
-    page._search_pending = None
-    page._search_running = False
+    # Nothing is set up for the one-worker handoff here on purpose: that state
+    # carries class-level defaults, because the base connects the search entry
+    # before a subclass has run a line of its own.
     return page
 
 
@@ -880,6 +879,98 @@ def test_one_worker_serves_the_newest_query() -> None:
     print("PASS: one gather runs at a time and the newest query wins")
 
 
+def test_the_worker_flag_survives_a_raise_outside_the_catch() -> None:
+    """The flag that says a gather runs must fall whatever ends the worker.
+
+    The narrow catch covers the gather. A raise from anywhere else in the
+    worker, which is the marshal of the render and the logger inside that
+    catch, would otherwise leave the flag set for the life of the window:
+    every later request posts itself and returns, and the search never runs
+    again.
+    """
+    install_packs(ALL_PACKS)
+    pack_page, leaf, stack, asset_manager = make_pair("volume")
+
+    def raising_past_the_catch(query, requester, generation):
+        # Not an Exception, so the arm that catches a failed gather does not
+        # see it. It stands in for a raise from the marshal below that arm.
+        raise KeyboardInterrupt("deliberate: a raise the worker does not catch")
+
+    pack_page.collect_matching_assets = raising_past_the_catch
+    print("NOTE: the next 'Exception in thread' report is DELIBERATE -- this "
+          "leg raises past the worker's catch and checks it recovers.")
+    pack_page.search_across_packs("volume", pack_page, pack_page._search_generation)
+    pump_until(lambda: not pack_page._search_running, 10,
+               "the worker died with the flag still set, so no later search "
+               "can ever start one")
+
+    # And a later query really does gather.
+    del pack_page.collect_matching_assets
+    gathered = record_gathers(pack_page)
+    pack_page.search_entry.set_text("bright")
+    pack_page.apply_search("bright")
+    pump_until(lambda: leaf.asset_flow.items is not None, 10,
+               "the search never ran again after the worker died")
+    assert gathered == ["bright"], gathered
+    print("PASS: a raise past the worker's catch leaves the search able to run")
+
+
+def test_a_request_that_arrives_as_the_worker_dies_is_taken_up() -> None:
+    """The dying worker hands the flag on rather than dropping the request.
+
+    A request that arrives while a worker is on its way out finds the flag
+    set, so it posts itself and starts nothing. Something has to pick it up.
+    """
+    install_packs(ALL_PACKS)
+    pack_page, leaf, stack, asset_manager = make_pair("volume")
+    gathered = record_gathers(pack_page)
+
+    # The state a worker leaves behind when it dies with a request waiting.
+    pack_page._search_running = True
+    pack_page._search_pending = ("volume", pack_page, pack_page._search_generation)
+    pack_page._release_search_worker()
+
+    pump_until(lambda: leaf.asset_flow.items is not None, 10,
+               "the request that arrived as the worker died was dropped")
+    assert gathered == ["volume"], gathered
+    assert pack_page._search_running is False
+    assert pack_page._search_pending is None
+
+    # With nothing waiting, it only drops the flag.
+    pack_page._search_running = True
+    pack_page._release_search_worker()
+    assert pack_page._search_running is False
+    print("PASS: a request left by a dying worker is taken up")
+
+
+def test_the_search_state_carries_class_defaults() -> None:
+    """The base connects the search entry from its own constructor.
+
+    An emission can therefore reach apply_search, and so this state, before a
+    subclass has run a line of its own. Every field it touches needs a default
+    on the class, as the flow boxes and the pending requests already have.
+    """
+    for name in ("_search_lock", "_search_pending", "_search_running",
+                 "pack_flow"):
+        assert name in vars(GenericPackChooserPage), (
+            f"GenericPackChooserPage declares no class-level {name}; a search "
+            f"emission during the build then raises AttributeError")
+    for name in ("_pending_pack", "_pending_results", "_pack_search_source",
+                 "_pack_search_query", "empty_label", "asset_flow"):
+        assert name in vars(GenericAssetChooserPage), (
+            f"GenericAssetChooserPage declares no class-level {name}")
+
+    # A page that never ran its constructor still searches, which is what the
+    # defaults are for.
+    install_packs(ALL_PACKS)
+    bare = IconPackChooser.__new__(IconPackChooser)
+    assert bare._search_running is False
+    assert bare._search_pending is None
+    assert bare._search_lock is GenericPackChooserPage._search_lock
+    print("PASS: the search state a build-time emission touches has class "
+          "defaults")
+
+
 def test_a_search_that_lands_before_the_grid_is_held() -> None:
     """The leaf page builds its grid inside a main-loop callback.
 
@@ -970,7 +1061,9 @@ def test_the_gather_stays_off_the_main_thread() -> None:
 
 
 def main() -> int:
-    fixtures.start_watchdog(180, label="scenario_cross_pack_search")
+    # Under run_all.py's 90 s per-scenario default, so it fires first and
+    # names this scenario instead of leaving a bare subprocess timeout.
+    fixtures.start_watchdog(60, label="scenario_cross_pack_search")
 
     test_aggregation_merges_and_ranks()
     test_a_query_that_matches_nothing()
@@ -989,6 +1082,9 @@ def main() -> int:
     test_a_hidden_page_renders_nothing()
     test_the_render_asks_the_page_it_writes_into()
     test_one_worker_serves_the_newest_query()
+    test_the_worker_flag_survives_a_raise_outside_the_catch()
+    test_a_request_that_arrives_as_the_worker_dies_is_taken_up()
+    test_the_search_state_carries_class_defaults()
     test_a_search_that_lands_before_the_grid_is_held()
     test_every_family_shares_the_search()
     test_the_gather_stays_off_the_main_thread()
