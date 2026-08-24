@@ -257,6 +257,8 @@ def handle_listing_commands():
         try:
             # Minimal initialization to scan for devices
             from StreamDeck.DeviceManager import DeviceManager
+
+            from src.backend.DeckManagement.BetterDeck import release_device_handle
             devices = DeviceManager().enumerate()
             
             if not devices:
@@ -303,7 +305,9 @@ def handle_listing_commands():
                         print(f"  Connected: {'Yes' if device.connected() else 'No'}")
                         
                         if device_opened:
-                            device.close()
+                            # open() started a reader thread, and a bare
+                            # close() leaves it free to take the handle back.
+                            release_device_handle(device)
                             
                     except PermissionError:
                         print("  Status: Permission denied")

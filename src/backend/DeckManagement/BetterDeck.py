@@ -2,7 +2,7 @@ import os
 import threading
 import traceback
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, TypedDict, TypeVar, cast
+from typing import TYPE_CHECKING, Any, TypedDict, TypeVar, cast
 
 if TYPE_CHECKING:
     import asyncio
@@ -22,6 +22,110 @@ class ImageFormat(TypedDict):
 from loguru import logger as log
 from StreamDeck.Devices import StreamDeck
 from StreamDeck.Devices.StreamDeck import DialEventType, TouchscreenEventType
+
+
+# How long a release waits for the library reader to leave its loop. A
+# scenario raises it; the release order it asserts does not change with it.
+READ_THREAD_JOIN_TIMEOUT_S = 1.0
+
+
+class _ReleasedOpen:
+    """Instance-level stand-in for open() on a released handle.
+
+    The library's reader re-opens a device from inside the except arm of its
+    read loop, where it reads neither run_read_thread nor
+    reconnect_after_suspend (StreamDeck.py:209-262). A reader already in that
+    arm therefore takes the handle back after close() returned, and its open()
+    re-arms both flags and starts a second reader. A released handle that
+    answers open() with nothing cannot be taken back.
+    """
+
+    def __init__(self, device_name: str) -> None:
+        self.device_name = device_name
+
+    def __call__(self, *args: object, **kwargs: object) -> None:
+        log.debug(f"Ignoring a reopen of the released {self.device_name} handle")
+
+
+def _install_release_shadow(device: "Any") -> None:
+    """Shadows open() on this device instance, so nothing re-opens it.
+
+    An attribute on the library's own object, as _install_fair_transport_lock
+    does with the transport mutex. open_device_handle lifts it, so a handle
+    released by a failed attempt can still be taken up again.
+    """
+    if isinstance(getattr(device, "open", None), _ReleasedOpen):
+        return
+    try:
+        device.open = _ReleasedOpen(type(device).__name__)
+    except (AttributeError, TypeError):
+        # A handle that refuses the attribute keeps its own open(), and the
+        # two flags are then the only defense against the resume loop.
+        log.warning(f"Could not shadow open() on {type(device).__name__}; "
+                    f"its reader can still re-open the released handle")
+
+
+def open_device_handle(device: "Any", resume_from_suspend: bool = True) -> None:
+    """Opens a device handle, and lifts any release shadow first.
+
+    Every deliberate open runs through here. The deck-open retry re-uses the
+    handle of an attempt that released it, and only this makes that handle
+    take an open() again.
+    """
+    if isinstance(getattr(device, "open", None), _ReleasedOpen):
+        del device.open
+    device.open(resume_from_suspend)
+
+
+def stop_device_read_thread(device: "StreamDeck.StreamDeck", timeout: "float | None" = None) -> None:
+    """Stops the library reader thread on a raw device handle.
+
+    This takes the raw handle, not the BetterDeck around it. BetterDeck has no
+    __getattr__ passthrough, so a write of run_read_thread on the wrapper sets
+    a dead attribute, while the reader polls the wrapped object's own flag
+    (StreamDeck.py:_read_with_resume_from_suspend).
+
+    Both flags go down, which stops a reader that is still reading and keeps
+    one that hits a transport error next out of the resume loop. It does not
+    reach a reader already inside that loop, which reads neither flag: only
+    the release shadow stops that one. A later open(True) re-arms both, so a
+    reopened handle keeps its reader and its resume behaviour.
+    """
+    # FakeDeck and RemoteDeck have no read thread and no run_read_thread
+    # attribute, so this guard returns early for them.
+    if not hasattr(device, "run_read_thread"):
+        return
+    # Disarm the resume loop first, so a transport error raised between these
+    # two writes cannot carry the reader into it.
+    if hasattr(device, "reconnect_after_suspend"):
+        device.reconnect_after_suspend = False
+    device.run_read_thread = False
+    read_thread = getattr(device, "read_thread", None)
+    if read_thread is not None and read_thread is not threading.current_thread():
+        try:
+            read_thread.join(READ_THREAD_JOIN_TIMEOUT_S if timeout is None else timeout)
+        except RuntimeError:
+            pass
+
+
+def release_device_handle(device: "StreamDeck.StreamDeck", timeout: "float | None" = None) -> None:
+    """Stops the reader thread on a raw device handle, shadows its open(),
+    then closes it.
+
+    For a caller that holds the raw handle: the deck-open retry, a constructor
+    that failed before it wrapped the handle, and the device listing. A caller
+    that holds the wrapper uses BetterDeck.release_handle, which closes under
+    the device lock.
+
+    This closes the device with no check of its own that a media writer
+    stopped first. A caller that has a writer makes that check itself, as
+    DeckController._teardown_failed_init does, because a writer wedged
+    mid-frame holds the device lock.
+    """
+    _install_release_shadow(device)
+    stop_device_read_thread(device, timeout)
+    device.close()
+
 
 class BetterDeck():
     def __init__(self, deck: StreamDeck.StreamDeck, rotation: int = 0):
@@ -80,28 +184,23 @@ class BetterDeck():
         with self._lock:
             self.deck.close()
 
-    def stop_read_thread(self, timeout: float = 1.0) -> None:
-        """Stops the library reader thread on the wrapped device.
+    def stop_read_thread(self, timeout: "float | None" = None) -> None:
+        """Stops the library reader thread on the wrapped device, and leaves
+        the handle open. See stop_device_read_thread."""
+        stop_device_read_thread(self.deck, timeout)
 
-        BetterDeck has no __getattr__ passthrough, so a write of
-        run_read_thread on a BetterDeck instance sets a dead attribute on the
-        wrapper. The library reader polls the wrapped StreamDeck object's own
-        run_read_thread flag (StreamDeck.py:_read_with_resume_from_suspend).
-        Without this stop, the reader's resume-from-suspend loop re-opens the
-        device for up to 10 s after close() returns (StreamDeck.py:209-262).
+    def release_handle(self, timeout: "float | None" = None) -> None:
+        """Stops the reader thread and shadows open(), then closes the device.
+
+        This is how a live handle is given back, and after it nothing re-opens
+        the device: a bare close() leaves the reader running, and the reader's
+        resume loop takes back what the close released. The close takes the
+        device lock, so it cannot land inside another thread's multi-chunk
+        write.
         """
-        device = self.deck
-        # FakeDeck and RemoteDeck have no read thread and no run_read_thread
-        # attribute, so this guard returns early for them.
-        if not hasattr(device, "run_read_thread"):
-            return
-        device.run_read_thread = False
-        read_thread = getattr(device, "read_thread", None)
-        if read_thread is not None and read_thread is not threading.current_thread():
-            try:
-                read_thread.join(timeout)
-            except RuntimeError:
-                pass
+        _install_release_shadow(self.deck)
+        stop_device_read_thread(self.deck, timeout)
+        self.close()
 
     def is_open(self) -> bool:
         """
@@ -559,6 +658,10 @@ class BetterDeck():
 
     def set_rotation(self, value: int) -> None:
         if not value in [0, 90, 180, 270]:
+            # Reachable from persisted deck settings, where a hand edit or a
+            # half-written file can leave anything. An unhandled value makes
+            # every key write raise, so a deck comes up unrotated instead.
+            log.warning(f"Deck rotation {value!r} is not 0, 90, 180 or 270; using 0")
             value = 0
         self.rotation = value
 

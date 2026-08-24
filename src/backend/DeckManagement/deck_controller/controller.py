@@ -48,7 +48,7 @@ from StreamDeck.Devices import StreamDeck
 from StreamDeck.ImageHelpers import PILHelper
 from loguru import logger as log
 
-from src.backend.DeckManagement.BetterDeck import BetterDeck
+from src.backend.DeckManagement.BetterDeck import BetterDeck, open_device_handle
 from src.backend.DeckManagement.InputIdentifier import Input, InputIdentifier
 from src.backend.DeckManagement.Subclasses import cache_budget
 from src.backend.DeckManagement.Subclasses.ScreenSaver import ScreenSaver
@@ -117,42 +117,34 @@ class DeckController:
         self._touchscreen_image_size: tuple[int, int] | None = None
         self._native_key_format_sig: "NativeKeyFormatSig | None" = None
 
-        # Store the raw handle as self.deck so get_alive() returns True inside
-        # get_deck_settings. Until the wrapper replaces it a few lines below,
-        # the only wrapper methods anything reaches are is_open() and
-        # get_serial_number(), and every handle this constructor accepts
-        # answers both the way the wrapper does. That is what the cast rests on.
-        self.deck: BetterDeck = cast(BetterDeck, deck)
         # Order the transport mutex FIFO before open() starts the reader
         # thread. The order of these two lines matters; see
         # _install_fair_transport_lock in deck_controller/media_writer.py.
         _install_fair_transport_lock(deck)
         # Resume-from-suspend handle reopen is the library's only mode, and it
-        # is always on. Call it on the raw handle, because the wrapper's
-        # open() takes no arguments.
-        deck.open(True)
+        # is always on. This lifts the release shadow an earlier failed
+        # attempt left on the handle, which a bare open() would not.
+        open_device_handle(deck)
 
-        rotation = gl.settings_manager.deck_view(self.get_deck_settings()).get("rotation")
-        # BetterDeck forwards against the real device surface, so the cast is
-        # what carries a fake or a remote handle across that boundary.
-        self.deck = BetterDeck(cast("StreamDeck.StreamDeck", deck), rotation)
+        # Wrap the open handle before the settings read below, so a raise in
+        # the bring-up gives the device back here. A raise past the bring-up
+        # is released by the failed-init teardown or by the caller's retry.
+        self.deck: BetterDeck = BetterDeck(cast("StreamDeck.StreamDeck", deck))
 
         try:
+            self.deck.set_rotation(gl.settings_manager.deck_view(self.get_deck_settings()).get("rotation"))
             # Clear the deck through the direct body, not the queue-routed
             # clear(). media_player does not exist yet, and this is a liveness
             # probe, so its exception must abort construction here instead of
             # getting lost in an async queue.
             self._clear_direct()
         except Exception as e:
-            log.error(f"Failed to clear deck, maybe it's already connected to another instance? Skipping... Error: {e}")
+            log.error(f"Failed to bring up deck, maybe it's already connected to another instance? Skipping... Error: {e}")
             # Release the handle and raise, so the caller does not register a
             # half-built controller.
-            try:
-                self.deck.close()
-            except Exception:
-                pass
+            self._release_handle()
             raise
-        
+
         self.hold_time: float = gl.settings_manager.app().hold_time
         
         self.screen_saver = ScreenSaver(deck_controller=self)
@@ -373,11 +365,23 @@ class DeckController:
             if pool is not None:
                 pool.shutdown(wait=False, cancel_futures=True)
         if not self.media_player.running:  # otherwise the handle stays open
-            try:
-                self.deck.stop_read_thread()  # its resume loop reopens what close() releases
-                self.deck.close()
-            except Exception:
-                log.opt(exception=True).warning("Failed to release the deck handle after a failed init")
+            self._release_handle()
+
+    def _release_handle(self) -> None:
+        """Give the device back: stop the reader thread, then close. Raises
+        nothing, because every caller is a teardown path.
+
+        Every close of this controller's handle runs through here. A bare
+        close() leaves the library's reader running, and its resume loop
+        re-opens the handle that close released, which on the quit path hands
+        the next process a busy device."""
+        deck = getattr(self, "deck", None)
+        if deck is None:
+            return
+        try:
+            deck.release_handle()
+        except Exception:
+            log.opt(exception=True).warning("Failed to release the deck handle")
 
     def init_inputs(self) -> None:
         # Build then swap. The media writer reads self.inputs concurrently,
@@ -1557,14 +1561,10 @@ class DeckController:
                 media_player.tasks.clear()
                 media_player.touchscreen_task = None
                 media_player.control_q.clear()
-        # Fallback close. The writer normally closed the device from step 5's
-        # ClearAndCloseMsg. This matters only when that writer wedged and
+        # Fallback release. The writer normally released the device from step
+        # 5's ClearAndCloseMsg. This matters only when that writer wedged and
         # never processed it.
-        if getattr(self, "deck", None) is not None:
-            try:
-                self.deck.close()
-            except Exception:
-                pass
+        self._release_handle()
 
         # Step 8 deregisters, and it also writes. It flushes every page still
         # cached for this deck before it drops the entries that hold them.

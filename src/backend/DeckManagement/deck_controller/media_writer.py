@@ -918,10 +918,9 @@ class MediaPlayerThread(threading.Thread):
             self.deck_controller._write_blank_frames()
         except Exception as e:
             log.error(f"Failed to write blank frames during ClearAndClose: {e}")
-        try:
-            self.deck_controller.deck.close()
-        except Exception as e:
-            log.error(f"Failed to close deck during ClearAndClose: {e}")
+        # A release, never a bare close: the reader thread must stop first, or
+        # its resume loop re-opens the handle this just gave back.
+        self.deck_controller._release_handle()
 
     def _needs_key_ticks(self) -> bool:
         # True when an input has animated content that advances on the media

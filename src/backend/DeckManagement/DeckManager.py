@@ -25,6 +25,7 @@ import os
 
 
 # Import own modules
+from src.backend.DeckManagement.BetterDeck import open_device_handle, release_device_handle
 from src.backend.DeckManagement.Subclasses.RemoteDeckManager import RemoteDeckManager
 from src.backend.DeckManagement.deck_controller.controller import DeckController
 from src.backend.DeckManagement.deck_controller.media_writer import ClearAndCloseMsg
@@ -65,12 +66,20 @@ def close_all_controllers(controllers: "Iterable[Any]", join_timeout: float = 2.
         media_player = getattr(controller, "media_player", None)
         if media_player is None:
             # No writer thread, e.g. a controller that failed mid-construction.
-            # Close the deck directly and log a failure.
+            # Release the handle directly and log a failure.
             try:
-                controller.deck.close()
+                controller._release_handle()
             except Exception as e:
                 log.error(f"Failed to close deck cleanly: {e}")
             continue
+        # Stop the reader from this thread, ahead of the message. The writer
+        # then releases the handle with nothing left to join, and the join
+        # this quit path is bounded by stays inside its budget. A failure
+        # here must not cost the deck its clear and close.
+        try:
+            controller.deck.stop_read_thread()
+        except Exception as e:
+            log.error(f"Failed to stop the reader thread for deck: {e}")
         try:
             media_player.submit_control(ClearAndCloseMsg())
             pending_joins.append(controller)
@@ -269,19 +278,29 @@ class DeckManager:
             try:
                 if not deck.is_open():
                     # The library always opens with resume-from-suspend
-                    # enabled.
-                    deck.open(True)
+                    # enabled. This also lifts the release shadow of an
+                    # earlier attempt, which a bare open() would not.
+                    open_device_handle(deck)
                 return DeckController(self, deck)
             except StreamDeck.TransportError as e:
                 log.warning(f"Transport error initializing deck (attempt {attempt}/{attempts}): {e}")
                 try:
-                    deck.close()
+                    # The raw handle, because the wrapper lives on the
+                    # controller that failed to build.
+                    release_device_handle(deck)
                 except Exception:
                     pass
                 if attempt < attempts:
                     time.sleep(retry_delay)
             except Exception as e:
                 log.error(f"Failed to initialize deck, maybe it's already connected to another instance? Error: {e}")
+                # The constructor guards its bring-up and its tail, and a
+                # raise between the two arrives here with the handle still
+                # open and its reader running.
+                try:
+                    release_device_handle(deck)
+                except Exception:
+                    log.opt(exception=True).warning("Failed to release the deck handle after a failed init")
                 return None
         log.error("Giving up on deck after repeated transport errors; skipping it. Replugging the deck usually fixes this.")
         return None
