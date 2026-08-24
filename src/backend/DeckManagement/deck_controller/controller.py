@@ -1216,10 +1216,10 @@ class DeckController:
                 if not self.screen_saver.showing:
                     for t in self.inputs:
                         for i in self.inputs[t]:
-                            # Guard each input, and not the walk around them.
-                            # A guard on the walk alone drops every input
-                            # after the failing one, so one action that raises
-                            # on every tick silences its whole deck anyway.
+                            # Guard each input, not the walk: a walk guard
+                            # drops every input after the failing one. The
+                            # guarded input itself can still go silent when
+                            # its dispatch dies after its running flag arms.
                             try:
                                 i.get_active_state().own_actions_tick_threaded()
                             except Exception:

@@ -23,8 +23,9 @@ from loguru import logger
 
 from src.backend.DeckManagement.InputIdentifier import Input
 
-# Well inside run_all.py's per-scenario timeout, so a stuck leg reports itself.
-WATCHDOG_SECONDS = 90
+# Under run_all.py's 90 s per-scenario default, so a stuck leg reports itself
+# before the harness kills the process with no leg diagnostic.
+WATCHDOG_SECONDS = 60
 # The thread DeckController gives tick_actions. Failures are injected on that
 # thread only, because every other caller of the same method says nothing
 # about this loop.
