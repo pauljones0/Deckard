@@ -22,6 +22,7 @@ silent drop.
 from __future__ import annotations
 
 import os
+import threading
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -109,6 +110,42 @@ def _no_such_page(page_ref: str, page_manager: PageManagerBackend) -> ControlRes
                          f"Available pages: {', '.join(available)}")
 
 
+# The longest change_state_on waits for a page's input rebuild before it reads
+# a live state count. It sits above the media thread's own input-load deadline
+# (DeckController.LOAD_INPUTS_TIMEOUT) so a genuinely slow load is not cut
+# short, while a stalled or superseded load still returns the caller in bounded
+# time rather than never.
+_INPUT_LOAD_WAIT_S = 12.0
+
+
+def _wait_for_input_load(controller: DeckController) -> None:
+    """Block until the input rebuild a page load queued has finished, or the
+    bound elapses.
+
+    change_page_on hands load_all_inputs to the media thread and returns before
+    it runs, so a state check straight after a page switch races that rebuild
+    and reads an input's pre-rebuild single state. load_page clears
+    _input_load_done as it queues the rebuild, and load_all_inputs sets it when
+    the rebuild finishes, so this waits on exactly that rebuild.
+
+    It does not wait on the trailing paint task the load also queues. That task
+    blocks the media thread for the whole background-video decode, and a barrier
+    behind it would freeze this caller (the GTK main thread, for a D-Bus change)
+    for the length of the decode. The rebuild is all a state check needs: it is
+    where the page's own states become real.
+
+    The event starts set, so a barrier with no rebuild pending, a same-page
+    change that queues no load, returns at once. The wait holds no lock and
+    never runs on the media thread, so it cannot invert the single-writer order
+    or wait on itself. The bound covers a rebuild superseded or stalled before
+    it could finish.
+    """
+    media_player = controller.media_player
+    if not media_player.is_alive() or threading.current_thread() is media_player:
+        return
+    controller._input_load_done.wait(_INPUT_LOAD_WAIT_S)
+
+
 class ControlPlane:
     """The rules. This holds no state, and every call reads the gl slots it
     needs. A controller list or a page store rebound underneath it, which the
@@ -181,6 +218,14 @@ class ControlPlane:
         page_result = self.change_page_on(controller, page_ref)
         if not page_result.ok:
             return page_result
+
+        # change_page_on queued the input rebuild on the media thread and
+        # returned before it ran, so the live inputs can still carry their
+        # pre-rebuild single state. Let that rebuild finish before this reads a
+        # state count or sets a state below, or a valid request is rejected as
+        # "only has 1 state" and a set_state that beat the rebuild is reset by
+        # it.
+        _wait_for_input_load(controller)
 
         try:
             x, y = map(int, coords.split(","))

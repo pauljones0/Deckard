@@ -222,6 +222,35 @@ def check_unbuildable_page_leaves_deck_alone(plane, controller) -> None:
     print("PASS: a page that cannot be built is a failure, and the deck keeps its page")
 
 
+def check_default_page_build_failure_leaves_deck(controller) -> None:
+    """The boot path is the other surface that hands get_page's answer to
+    load_page.
+
+    load_default_page resolves a default page by name and loads it. get_page
+    answers None for a page that cannot be built, and load_page(None) clears
+    the deck, so a default page that fails to build would blank a deck that
+    already shows a page. The deck must keep its page instead.
+    """
+    load_named_page(controller, "Alpha")
+    active_before = controller.active_page
+    page_manager = gl.page_manager
+    real_get_page = page_manager.get_page
+
+    def failing_get_page(path, deck_controller, *args, **kwargs):
+        return None
+
+    page_manager.get_page = failing_get_page
+    try:
+        controller.load_default_page()
+        assert controller.active_page is active_before, (
+            f"a default page that could not be built cleared the deck: "
+            f"{active_name(controller)}")
+    finally:
+        del page_manager.get_page
+
+    print("PASS: a default page that cannot be built leaves the deck's page in place")
+
+
 # 3. The same-page no-op, through the DBus method
 
 def check_same_page_noop_over_dbus(controller) -> None:
@@ -310,8 +339,12 @@ def check_device_truth_bounds(plane, controller_b) -> None:
     assert result.ok, result
     c_input = controller_b.get_input(Input.Key(WIDE_KEY))
     assert c_input is not None, f"the 10x10 deck must have an input at {WIDE_KEY}"
-    assert fixtures.wait_until(lambda: len(c_input.states) == WIDE_STATES, timeout=10.0), (
-        f"the page's {WIDE_STATES} states never reached the input: {len(c_input.states)}")
+
+    # No wait for the input rebuild here on purpose. change_state_on waits for
+    # the load it triggers, so a state request straight after a page switch
+    # both validates and applies against the page's own states, and never
+    # against an input the media thread has not finished rebuilding. The
+    # requests below run with no settling step and must still see 20 states.
 
     # In bounds for this device, and beyond the invented CLI caps of x,y <= 10
     # and state <= 20, which rejected requests before they reached a deck.
@@ -493,8 +526,10 @@ def check_state_delegate_matches_service(plane, controller) -> None:
     c_input = controller.get_input(Input.Key(WIDE_KEY))
 
     def outcome(drive) -> tuple:
+        # No settling step here either: the state drive below goes through the
+        # service, which waits for its own page load before it reads or sets a
+        # state.
         assert plane.change_page_on(controller, "Wide").ok
-        assert fixtures.wait_until(lambda: len(c_input.states) == WIDE_STATES, timeout=10.0)
         c_input.set_state(0)
         original_load_page = controller.load_page
         loads: list = []
@@ -563,6 +598,48 @@ def check_other_decks_are_untouched(plane, controller_a, controller_b) -> None:
     print("PASS: a request reaches only the deck it names")
 
 
+def check_state_barrier_clears_before_background(plane, controller_b) -> None:
+    """The state barrier waits for the input rebuild, not the background decode.
+
+    A page switch queues the input rebuild first, then a paint task that blocks
+    the media thread for the whole background decode. change_state_on must
+    return once the rebuild is done, well before that decode ends. Its caller
+    is the DBus dispatch on the GTK main thread, so a change_state that also
+    switches pages would freeze the app for the decode's length otherwise.
+
+    Start on a different page so the change_state below is a real switch that
+    queues a fresh rebuild and a fresh background decode. A slow load_background
+    makes the background future, and so the paint task waiting on it, block for
+    bg_block_s. The barrier must clear far sooner, off the input rebuild alone.
+    """
+    load_named_page(controller_b, "Alpha")
+
+    bg_block_s = 5.0
+    real_load_background = controller_b.load_background
+
+    def slow_load_background(*args, **kwargs):
+        time.sleep(bg_block_s)
+        return real_load_background(*args, **kwargs)
+
+    controller_b.load_background = slow_load_background
+    try:
+        start = time.monotonic()
+        result = plane.change_state_on(controller_b, "Wide", "9,9", 5)
+        elapsed = time.monotonic() - start
+    finally:
+        del controller_b.load_background
+        # Let the blocked paint task drain, so the next check starts quiet.
+        settle(controller_b)
+
+    assert result.ok, result
+    assert elapsed < bg_block_s - 2.0, (
+        f"change_state_on returned in {elapsed:.2f}s, near the {bg_block_s}s "
+        f"background block -- the barrier waited on the background decode, not "
+        f"just the input rebuild")
+
+    print("PASS: a state change that switches pages does not wait on the background decode")
+
+
 def main() -> None:
     fixtures.start_watchdog(WATCHDOG_SECONDS, label="scenario_control_plane")
 
@@ -580,6 +657,7 @@ def main() -> None:
         check_unknown_serial(plane)
         check_unknown_page(plane, controller_a)
         check_unbuildable_page_leaves_deck_alone(plane, controller_a)
+        check_default_page_build_failure_leaves_deck(controller_a)
         check_same_page_noop_over_dbus(controller_a)
         check_load_only_if_different(plane, controller_a)
         check_device_truth_bounds(plane, controller_b)
@@ -588,6 +666,7 @@ def main() -> None:
         check_unexpected_exception_propagates(plane, controller_a)
         check_dbus_delegate_matches_service(plane, controller_a)
         check_state_delegate_matches_service(plane, controller_b)
+        check_state_barrier_clears_before_background(plane, controller_b)
     finally:
         fixtures.teardown(controller_b)
         fixtures.teardown(controller_a)

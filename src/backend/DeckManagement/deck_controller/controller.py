@@ -205,6 +205,8 @@ class DeckController:
         # overwrite a newer page's background.
         self._background_load_lock = threading.Lock()
         self._bg_future: "Future[None] | None" = None
+        self._input_load_done = threading.Event()
+        self._input_load_done.set()
 
         # Native encoded key image caches. Build them before the inputs and
         # the background, because the paint path dereferences both directly
@@ -754,18 +756,18 @@ class DeckController:
         else:
             default_page_path = api_page_path
 
-        if default_page_path is not None:
-            if not os.path.isfile(default_page_path):
-                default_page_path = None
-            
+        if default_page_path is not None and not os.path.isfile(default_page_path):
+            default_page_path = None
         if default_page_path is None:
-            # Use the first page
             pages = page_manager.get_pages()
             if not pages:
                 return
-            default_page_path = page_manager.get_pages()[0]
+            default_page_path = pages[0]
 
         page = page_manager.get_page(default_page_path, self)
+        if page is None:
+            # None is a name that resolved but did not build; do not clear.
+            return
         self.load_page(page)
 
         # Handle a state change request. This peeks now and resolves at the
@@ -899,6 +901,7 @@ class DeckController:
         ]
         executor.run_batch(tasks, deadline=self.LOAD_INPUTS_TIMEOUT)
         log.info(f"Loading all inputs took {time.time() - start} seconds")
+        self._input_load_done.set()
 
     def _load_input_if_current(self, controller_input: "ControllerInput[Any]", page: Page, update: bool = True, gen: "int | None" = None) -> None:
         # A slower in-flight page load must not paint the previous page's
@@ -951,9 +954,8 @@ class DeckController:
                 self.background.image.close()
                 self.background.image = None
 
-    # page is optional because None means clear the deck, which is the branch
-    # a few lines down. The page store also answers None for a page it could
-    # not build, and every caller hands that answer straight here.
+    # page None means clear the deck (the branch below). The store also answers
+    # None for a build failure, which the switch and boot callers now intercept.
     @log.catch
     def load_page(self, page: Page | None, load_brightness: bool = True, load_screensaver: bool = True, load_background: bool = True, load_inputs: bool = True, allow_reload: bool = True) -> None:
         if not self.get_alive(): return
@@ -1047,7 +1049,6 @@ class DeckController:
                 manager.pins.release_fetch(self)
 
             if page is None:
-                # Clear deck
                 self.clear()
                 return
 
@@ -1065,9 +1066,8 @@ class DeckController:
 
             bg_future = None
             if load_background:
-                # Decode the background off the media thread so it overlaps
-                # the input loading. The update task below waits for it before
-                # the keys composite.
+                # Decode the background off the media thread so it overlaps the
+                # input load. The update task below waits for it before compositing.
                 from src.backend.main_loop import run_in_background
                 if self._bg_future is not None:
                     self._bg_future.cancel()
@@ -1078,6 +1078,7 @@ class DeckController:
             if load_screensaver:
                 self.load_screensaver(page)
             if load_inputs:
+                self._input_load_done.clear()
                 self.media_player.add_task(self.load_all_inputs, page, update=False, gen=gen)
             else:
                 # No content reloads, but the generation bumped. Advance each
@@ -1087,7 +1088,6 @@ class DeckController:
                     for controller_input in self.inputs[input_type]:
                         controller_input.config_gen = gen
 
-            # Load the page onto the deck, after the background decode.
             self.media_player.add_task(self._update_all_inputs_awaiting_background, bg_future, gen)
 
         # This must stay outside _load_page_lock. initialize_actions can block
