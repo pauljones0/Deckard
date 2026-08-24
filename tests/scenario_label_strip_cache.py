@@ -841,7 +841,7 @@ def check_mutation_round_gaps() -> None:
 
 
 def main() -> None:
-    fixtures.start_watchdog(420, label="scenario_label_strip_cache")
+    fixtures.start_watchdog(75, label="scenario_label_strip_cache")
     check_pixel_parity()
     check_alpha_ink_exact_cached()
     check_pathological_label_not_cached()

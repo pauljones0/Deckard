@@ -6,6 +6,7 @@ legitimate backend child needs no cooperation to pass.
 """
 import os
 import threading
+import time
 import types
 
 import fixtures  # noqa: F401  (import first: sets up the isolated data dir)
@@ -27,6 +28,23 @@ class EchoService(rpyc.Service):
         return "frontend-alive"
 
 
+def _connect(port: int, tries: int = 100, delay: float = 0.05) -> "rpyc.Connection":
+    """Connect to the just-started server, retrying the spin-up window.
+
+    The accept loop runs in a daemon thread, so a connect issued right after
+    the thread starts can beat it and get a socket-level refusal, which is
+    load-sensitive in a busy container. Retry briefly until the server serves;
+    the bound (tries * delay) stays well under the scenario watchdog."""
+    last: Exception | None = None
+    for _ in range(tries):
+        try:
+            return rpyc.connect("localhost", port, config={"allow_public_attrs": True})
+        except (ConnectionError, OSError, EOFError) as e:
+            last = e
+            time.sleep(delay)
+    raise AssertionError(f"server never accepted a connection within {tries * delay:.1f}s: {last!r}")
+
+
 def main() -> None:
     fixtures.start_watchdog(30, label="scenario_backend_authenticator")
 
@@ -35,8 +53,10 @@ def main() -> None:
                             authenticator=frontend_authenticator)
     threading.Thread(target=server.start, name="test_frontend", daemon=True).start()
 
-    # The same uid passes: this mirrors the unmodified backend child.
-    connection = rpyc.connect("localhost", server.port, config={"allow_public_attrs": True})
+    # The same uid passes: this mirrors the unmodified backend child. Retry
+    # the connect over the server's spin-up window (the accept loop is a
+    # daemon thread that a busy container can schedule late).
+    connection = _connect(server.port)
     assert connection.root.marker() == "frontend-alive"
     connection.close()
     print("PASS: a same-uid loopback client connects through the authenticator")
@@ -60,7 +80,7 @@ def main() -> None:
     print("PASS: a foreign-uid peer is refused before the protocol starts")
 
     # The refusal leaves the server serving: the next legitimate connect works.
-    connection = rpyc.connect("localhost", server.port, config={"allow_public_attrs": True})
+    connection = _connect(server.port)
     assert connection.root.marker() == "frontend-alive"
     connection.close()
     server.close()

@@ -394,7 +394,7 @@ def check_pathological_label_strip_capped() -> None:
 
 
 def main() -> None:
-    fixtures.start_watchdog(120, label="scenario_scroll_label_cpu")
+    fixtures.start_watchdog(60, label="scenario_scroll_label_cpu")
     check_rolling_disabled_idles()
     check_multiline_no_phantom_scroll()
     check_scroll_render_budget()
