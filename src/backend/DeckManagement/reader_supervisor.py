@@ -191,11 +191,6 @@ class DeckReaderSupervisor:
         with self._lock:
             return self._in_flight
 
-    def handle_is_down(self) -> bool:
-        """Whether this deck's handle is closed and no reopen has taken it
-        back. The writer drops device writes while it is."""
-        return self._handle_down
-
     def request_reopen(self) -> bool:
         """Submit one reopen attempt to the media thread, and report whether
         it was submitted. Watchdog thread only.
