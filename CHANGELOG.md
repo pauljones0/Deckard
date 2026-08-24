@@ -42,6 +42,12 @@ bundle as a release asset.
 
 ### Fixed
 
+- A key that holds more than one action is recognised as a multi-action key
+  again. The check counted the key's saved states instead of its actions, so a
+  key with several states but one action each read as multi-action, and a key
+  with two actions in a single state read as one. It now counts the actions on
+  the key's own state.
+
 - A deck that stops answering key presses while it stays plugged in now comes
   back on its own. A read error inside the Stream Deck library could end the
   thread that reports every press, turn and touch, which left the deck

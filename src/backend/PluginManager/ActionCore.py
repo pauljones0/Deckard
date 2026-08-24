@@ -524,7 +524,11 @@ class ActionCore(rpyc.Service):
         self.raise_error_if_not_ready()
 
         if not self.get_is_present(): return False
-        actions = self.page.action_objects.get(self.input_ident.input_type, {}).get(self.input_ident.json_identifier, {})
+        # action_objects nests input -> identifier -> state -> index -> action,
+        # so a read that stops at the identifier hands back the state map and
+        # counts states, not actions. Ask the page for this input's actions at
+        # the action's own state instead.
+        actions = self.page.get_all_actions_for_input(self.input_ident, self.state)
         return len(actions) > 1
 
     def get_asset_path(self, asset_name: str, subdirs: list[str] | None = None, asset_folder: str = "assets") -> str:
