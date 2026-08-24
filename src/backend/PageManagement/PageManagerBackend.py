@@ -437,6 +437,11 @@ class PageManagerBackend:
         self.refresh_window_watch_state()
 
     def remove_page(self, page_path: str) -> None:
+        # A page path can arrive from the external API, which builds it from an
+        # untrusted name, so a crafted name could resolve outside the pages
+        # directory and delete an arbitrary user file. Refuse one that escapes
+        # before any teardown or deletion runs.
+        require_containment(self.PAGE_PATH, page_path)
         # Iterate over all deck controllers to handle any that are using the page to be removed
         for controller in (gl.deck_manager.deck_controller if gl.deck_manager is not None else []):
             # A page change asked for while the screensaver owns the deck goes
