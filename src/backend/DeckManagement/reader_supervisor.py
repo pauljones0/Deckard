@@ -108,8 +108,10 @@ GIVE_UP_LOG_GAP_S = 60.0
 # set_give_up_escalation(). The give-up latch calls it with the controller,
 # on the thread that latched and outside every lock. A recovery step beyond
 # a reopen, such as a targeted reset of the USB device, layers on here
-# instead of racing the latch. It must return promptly, because the watchdog
-# sweep waits for it; anything it raises is logged and dropped.
+# instead of racing the latch. A step that may have changed the device hands
+# the deck back through allow_one_more_round(). It must return promptly,
+# because the watchdog sweep waits for it; anything it raises is logged and
+# dropped.
 _give_up_escalation: "Callable[[DeckController], None] | None" = None
 
 
@@ -260,6 +262,24 @@ class DeckReaderSupervisor:
             self.holds += 1
         log.info(f"Deck {self._serial()}: the reopened input reader held; "
                  f"the attempt count is clear.")
+
+    def allow_one_more_round(self) -> None:
+        """Lift the give-up latch and clear the attempt count, so the policy
+        allows one more run of attempts. Watchdog thread only.
+
+        The give-up escalation calls it after a step that may have changed the
+        device, such as a targeted USB reset. It is the only way back from a
+        give-up short of a replug, and it starts no attempt of its own: the
+        next sweep decides whether the deck still needs one, and the same cap
+        bounds the round it starts. The handle stays down and device writes
+        stay suspended until an attempt opens the handle again.
+        """
+        with self._lock:
+            self.given_up = False
+            self.consecutive_attempts = 0
+            self._hold_deadline = None
+        log.warning(f"Deck {self._serial()}: the deck was given up and then reset, so it "
+                    f"takes one more round of reopen attempts.")
 
     def note_still_down(self) -> None:
         """Say, at most once per GIVE_UP_LOG_GAP_S, that a given-up deck is
