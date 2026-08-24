@@ -45,6 +45,7 @@ from threading import Thread
 
 from PIL import Image
 from StreamDeck.Devices import StreamDeck
+from StreamDeck.Devices.StreamDeckPlus import StreamDeckPlus
 from StreamDeck.ImageHelpers import PILHelper
 from loguru import logger as log
 
@@ -151,12 +152,11 @@ class DeckController:
         self.allow_interaction = True
         self.has_animated_keys = False
 
-        # Every deck tiles its background at this spacing. An SD+ probe that
-        # once widened it to (52, 36) never matched: self.deck is always the
-        # BetterDeck wrapper here, never the raw device class it tested for.
-        # A working probe must test the wrapped handle, and the change is
-        # visible on real SD+ hardware, so it needs a hardware pass first.
-        self.key_spacing = (36, 36)
+        # Every deck tiles its background at this spacing. The SD+ gap was
+        # calibrated on the device with a striped background; the probe tests
+        # the wrapped handle, since self.deck is the BetterDeck wrapper here.
+        raw_deck = getattr(self.deck, "deck", None)
+        self.key_spacing = (20, 20) if isinstance(raw_deck, StreamDeckPlus) else (36, 36)
 
         # Per-deck saturation boost, a PIL ImageEnhance.Color factor over the
         # UI range 1.0 to 1.5. It is read once at boot and refreshed by

@@ -48,6 +48,12 @@ bundle as a release asset.
 
 ### Fixed
 
+- A background image on a Stream Deck + now lines up across the gaps between
+  keys. The background was cut into key tiles at a spacing that did not match
+  the device, so a line in the image jogged sideways at every key edge. The
+  spacing was measured on the device and the tiles now follow it; other decks
+  are unchanged.
+
 - A Stream Deck Neo's two touch buttons no longer fire a random key. Their
   presses were run through the key-grid rotation map like grid keys, so a
   touch reached a real key's action or a broken position that varied with the
