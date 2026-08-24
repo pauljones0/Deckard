@@ -38,7 +38,7 @@ class ScaleRow(GenerativeUI[float]):
                  step: float = 0.1,
                  digits: int = 2,
                  draw_value: bool = True,
-                 round_digits: bool = True,
+                 round_digits: int = 1,
                  add_text_entry: bool = False,
                  text_entry_max_length: int = 6,
                  on_change: Callable[..., Any] | None = None,
@@ -60,7 +60,7 @@ class ScaleRow(GenerativeUI[float]):
             step (float, optional): The step size for the scale. Defaults to 0.1.
             digits (int, optional): The number of digits to display for the scale value. Defaults to 2.
             draw_value (bool, optional): Whether to display the current value next to the scale. Defaults to True.
-            round_digits (bool, optional): Whether to round the value to the specified number of digits. Defaults to True.
+            round_digits (int, optional): Decimal places to round the slider value to; -1 disables rounding. Defaults to 1.
             add_text_entry (bool, optional): Whether to add a text entry field for manual input of the scale value. Defaults to False.
             text_entry_max_length (int, optional): The maximum length of the text entry if enabled. Defaults to 6.
             on_change (callable, optional): A callback function to call when the scale value changes.
