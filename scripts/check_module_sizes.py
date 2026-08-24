@@ -94,7 +94,7 @@ GRANDFATHER: dict[str, int] = {
     # ordering rules between paints, so a message the writer must execute, and
     # a gate on the writes it performs, have no other home.
     "src/backend/DeckManagement/deck_controller/media_writer.py": 1212,
-    "src/backend/DeckManagement/deck_controller/inputs.py": 2118,
+    "src/backend/DeckManagement/deck_controller/inputs.py": 1457,
     "src/backend/Store/StoreBackend.py": 1948,
 }
 

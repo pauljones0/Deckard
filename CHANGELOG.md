@@ -58,6 +58,19 @@ bundle as a release asset.
   failure, names the input it came from, holds its log to one report every
   few seconds, and carries on with the rest of the deck.
 
+- A dial that shows a plugin's own image or animation keeps it after the page
+  reloads. Rebuilding the dial's states after a settings change wiped that
+  image and never put it back, so the dial went blank until the page changed.
+
+- A plugin can now set an image or animation on the SD+ touch strip behind the
+  dials, and clearing a dial's image works. Both did nothing or raised an error
+  before.
+
+- A deck background that changes while the deck is drawing no longer drops the
+  frame. The background tiles were read and written from several threads with
+  no lock, so a change that landed mid-draw could tear the read and log an
+  error instead of painting.
+
 ### Security
 
 - Installing a plugin from the store now asks before it runs the plugin's
