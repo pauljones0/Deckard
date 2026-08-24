@@ -9,6 +9,10 @@ retires the reservation.
 # retired by that deck's next fetch or load.
 import fixtures  # noqa: F401  (import first: sets up the isolated data dir)
 
+import threading
+
+from loguru import logger
+
 import globals as gl
 from fixtures import FaultyFakeDeck, seed_page, start_watchdog
 from src.backend.PageManagement import page_pins
@@ -322,12 +326,43 @@ def leg_screensaver_handoff_survives_pressure(controller) -> int:
     return 0
 
 
+# The thread the tick loop runs on.
+TICK_THREAD = "tick_actions"
+# Substrings of the two records the loop's guard writes: one for a failure it
+# charges to an input, one for a failure that belongs to the walk itself.
+GUARD_MARKER = "action tick failed for"
+WALK_MARKER = "the input walk"
+# The guard's rate-limit window, shrunk for this leg so both records land
+# inside it. The interval is a class attribute for exactly this.
+GUARD_INTERVAL_S = 0.2
+
+
+class RaisingInputs(dict):
+    """The deck's input table, raising when the tick loop iterates it.
+
+    A raise here belongs to no input, so the loop's per-input guard cannot
+    catch it and its finally is the only thing that gives the page back. Every
+    other reader, on every other thread, gets the real table's answer.
+    """
+
+    def __iter__(self):
+        if threading.current_thread().name == TICK_THREAD:
+            raise RuntimeError("the input walk blew up")
+        return super().__iter__()
+
+
 # Leg 7. The tick loop brackets by hand rather than with a context manager,
 # because the liveness probe other scenarios hang off it counts both calls.
-# Its release lives in a finally, so a tick body that raises still releases.
-# A throwaway deck runs this, because the raise ends that deck's ticking.
+# Its release lives in a finally, so a walk that raises still releases. The
+# loop's guard holds a failure it can charge to one input, and the bracket
+# then runs its ordinary path; a failure in the walk itself unwinds to the
+# finally. Both shapes run here, and every bracket either opens has to
+# balance. A throwaway deck runs this, because the injections stand over
+# several walks.
 def leg_tick_bracket_releases_on_error() -> int:
     pins = gl.page_manager.pins
+    records: list[str] = []
+    sink_id = logger.add(lambda message: records.append(str(message)), level="TRACE")
     controller = fixtures.make_headless_controller(serial="pin-tick",
                                                    page_name="PinTickHome")
     try:
@@ -338,37 +373,109 @@ def leg_tick_bracket_releases_on_error() -> int:
             print("FAIL(7-setup): the deck's page never settled unpinned")
             return 1
 
+        # Count both halves of the bracket, on the tick thread alone. That
+        # counts walks, where counting the raise would also count the media
+        # thread's reads of the same states.
+        marks = {"open": 0, "close": 0}
+        real_mark = controller.mark_page_ready_to_clear
+
+        def counting_mark(*args, **kwargs):
+            if threading.current_thread().name == TICK_THREAD:
+                ready = args[0] if args else kwargs.get("ready_to_clear")
+                marks["close" if ready else "open"] += 1
+            return real_mark(*args, **kwargs)
+
         def boom():
             raise RuntimeError("a tick body blew up")
 
-        # Restore as soon as the tick thread is gone. The media thread reads
-        # the same states, and its log.catch would swallow this on every frame
-        # for as long as the injection stands.
+        controller.mark_page_ready_to_clear = counting_mark
+        # Ten walks a second instead of one, so several bracketed walks pass
+        # under each injection and the leg stays short. The loop re-reads this
+        # every walk and floors its wait at 0.1s.
+        controller.TICK_DELAY = 0.05
+        controller.TICK_ERROR_LOG_INTERVAL_S = GUARD_INTERVAL_S
+
+        # Failure one, charged to an input. Restore as soon as the proof
+        # lands: the media thread reads the same states, and its log.catch
+        # would swallow this on every frame for as long as it stands.
         patched = [i for input_list in controller.inputs.values()
                    for i in input_list]
         originals = [i.get_active_state for i in patched]
         for controller_input in patched:
             controller_input.get_active_state = boom
         try:
-            died = fixtures.wait_until(
-                lambda: not controller.tick_thread.is_alive(),
-                timeout=controller.TICK_DELAY * 4 + 5)
+            # Wait on the open half. It runs ahead of the guarded body on
+            # every walk, so a release that goes missing shows up as an
+            # unbalanced count below and never as a wait that timed out.
+            charged = fixtures.wait_until(lambda: marks["open"] >= 3, timeout=20)
+            charged_record = fixtures.wait_until(
+                lambda: any(GUARD_MARKER in record for record in records),
+                timeout=20)
+            alive_after_input = controller.tick_thread.is_alive()
         finally:
             for controller_input, original in zip(patched, originals):
                 controller_input.get_active_state = original
 
-        if not died:
-            print("FAIL(7-setup): the tick body never raised")
+        # Failure two, in the walk itself. No per-input guard covers this one,
+        # so the release in the loop's finally is the only thing that hands
+        # the page back.
+        real_inputs = controller.inputs
+        opens_before = marks["open"]
+        records.clear()
+        controller.inputs = RaisingInputs(real_inputs)
+        try:
+            unwound = fixtures.wait_until(
+                lambda: marks["open"] >= opens_before + 3, timeout=20)
+            walk_record = fixtures.wait_until(
+                lambda: any(WALK_MARKER in record for record in records),
+                timeout=20)
+            alive_after_walk = controller.tick_thread.is_alive()
+        finally:
+            controller.inputs = real_inputs
+
+        # Stop the loop before the pin is counted, so the count cannot land
+        # between the two halves of a bracket that is still open.
+        controller.keep_actions_ticking = False
+        controller._tick_stop_event.set()
+        controller.tick_thread.join(timeout=5)
+        del controller.mark_page_ready_to_clear
+
+        if not alive_after_input or not alive_after_walk:
+            print(f"FAIL(7): a raise killed the tick thread (alive after the "
+                  f"input failure: {alive_after_input}, after the walk "
+                  f"failure: {alive_after_walk}) -- every animated action on "
+                  f"this deck stops for the life of the process")
+            return 1
+        if not charged or not unwound:
+            print(f"FAIL(7-setup): the loop opened {marks['open']} brackets "
+                  f"across the two injections -- too few to tell a balanced "
+                  f"bracket from a loop that stopped")
+            return 1
+        if controller.tick_thread.is_alive():
+            print("FAIL(7-setup): the tick loop did not stop on request, so "
+                  "the count below could read an open bracket")
+            return 1
+        if not charged_record or not walk_record:
+            print(f"FAIL(7): a raise went unreported (charged to an input: "
+                  f"{charged_record}, charged to the walk: {walk_record}) -- "
+                  f"the loop walks on and the fault stays hidden")
+            return 1
+        if marks["open"] != marks["close"]:
+            print(f"FAIL(7): the tick bracket opened {marks['open']} times and "
+                  f"released {marks['close']} -- a walk that raises skips the "
+                  f"release")
             return 1
         if pins.count(page) != 0:
-            print(f"FAIL(7): a tick body that raised left the page it marked "
+            print(f"FAIL(7): a tick that raised left the page it marked "
                   f"pinned ({pins.count(page)} holder(s)) -- unevictable for "
                   f"the life of the process")
             return 1
     finally:
         fixtures.teardown(controller)
-    print("PASS(7): a tick body that raises still releases the page its "
-          "bracket marked")
+        logger.remove(sink_id)
+    print(f"PASS(7): {marks['close']} walks under a raising input and a "
+          f"raising walk stayed contained, and every bracket released the "
+          f"page it marked")
     return 0
 
 

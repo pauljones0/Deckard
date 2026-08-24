@@ -1160,6 +1160,32 @@ class DeckController:
         if not self.get_alive(): return
         self.load_page(self.active_page)
 
+    # Longest quiet period between two tick-failure tracebacks, and the state
+    # that enforces it. A failure that repeats on every walk would otherwise
+    # write a traceback a second for the life of the process. The window
+    # matches the media writer's guard, and sits on the class so the harness
+    # can shrink it. _note_tick_error writes the two counters per instance.
+    TICK_ERROR_LOG_INTERVAL_S = 5.0
+    _last_tick_error_log: float = 0.0
+    _suppressed_tick_errors: int = 0
+
+    def _note_tick_error(self, what: str) -> None:
+        """Report a caught tick failure, at most one traceback per window.
+        Suppressed repeats ride as a count on the next record, so the limit
+        makes a flood quiet and never invisible."""
+        now = time.time()
+        if now - self._last_tick_error_log < self.TICK_ERROR_LOG_INTERVAL_S:
+            self._suppressed_tick_errors += 1
+            return
+        suffix = (f" ({self._suppressed_tick_errors} earlier repeats were suppressed)"
+                  if self._suppressed_tick_errors else "")
+        # Arm the window before the log call, so a sink that raises cannot
+        # leave it unarmed and turn the next failure into a storm.
+        self._last_tick_error_log = now
+        self._suppressed_tick_errors = 0
+        log.opt(exception=True).error(
+            f"action tick failed for {what} -- survived, continuing{suffix}")
+
     def tick_actions(self) -> None:
         # Event-based wait, as MediaPlayerThread._wake_event does. close()
         # sets _tick_stop_event beside keep_actions_ticking=False, so its
@@ -1190,7 +1216,20 @@ class DeckController:
                 if not self.screen_saver.showing:
                     for t in self.inputs:
                         for i in self.inputs[t]:
-                            i.get_active_state().own_actions_tick_threaded()
+                            # Guard each input, not the walk: a walk guard
+                            # drops every input after the failing one. The
+                            # guarded input itself can still go silent when
+                            # its dispatch dies after its running flag arms.
+                            try:
+                                i.get_active_state().own_actions_tick_threaded()
+                            except Exception:
+                                self._note_tick_error(str(i.identifier))
+            except Exception:
+                # The walk's own steps, outside any one input: the screensaver
+                # read, and the guard above when the identifier it names
+                # cannot be rendered. A raise here costs one walk, and the
+                # thread keeps ticking.
+                self._note_tick_error("the input walk")
             finally:
                 # Reset the same page the False call marked. This runs in
                 # finally, because a raising body pins the page forever.
