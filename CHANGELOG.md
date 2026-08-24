@@ -7,6 +7,14 @@ bundle as a release asset.
 
 ## [Unreleased]
 
+### Added
+
+- A key or dial with several states now opens on the state it was last
+  left on. The page keeps that state, so a page switch and the next start
+  of the app show the state you left instead of the first one. A page
+  whose inputs never leave their first state is written exactly as
+  before, and still opens in an older version.
+
 ### Changed
 
 - The page selector in the header opens a searchable list. Type any part of

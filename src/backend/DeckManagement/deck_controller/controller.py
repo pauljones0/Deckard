@@ -921,7 +921,7 @@ class DeckController:
 
     def load_input(self, controller_input: "ControllerInput[Any]", page: Page, update: bool = True) -> None:
         config = controller_input.identifier.get_config(page)
-        controller_input.load_from_input_dict(config, update)
+        controller_input.load_from_input_dict(config, update, page=page)
 
     def close_image_ressources(self) -> None:
         """Release every input's media, the key and dial images and videos,

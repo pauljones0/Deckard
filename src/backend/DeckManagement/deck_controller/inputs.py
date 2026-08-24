@@ -52,6 +52,7 @@ from src.backend.DeckManagement.Subclasses.KeyLayout import ImageLayout
 from src.backend.DeckManagement.Subclasses.KeyVideo import InputVideo
 from src.backend.DeckManagement.Subclasses.media_pipeline_profiler import media_prof
 from src.backend.DeckManagement.deck_controller.gif_pipeline import GifBackground, GifBudgetExceeded, KeyGIF
+from src.backend.DeckManagement.deck_controller.input_state import PersistedState
 from src.backend.DeckManagement.deck_controller.label_engine import BackgroundManager, LabelManager, LayoutManager
 from src.backend.DeckManagement.deck_controller.native_encode import (
     _encode_key_native,
@@ -368,6 +369,7 @@ class ControllerInput(Generic[StateT]):
         self.hold_start_timer: "timer_wheel.TimerHandle | None" = None
         self.ControllerStateClass = state_class
         self.identifier: InputIdentifier = identifier
+        self.persisted_state = PersistedState(identifier)
         self.media_ticks: int = 0
         # Generation of the content this input holds. A paint tags it at
         # render start, and the write boundary drops that paint once a newer
@@ -430,7 +432,7 @@ class ControllerInput(Generic[StateT]):
 
     def load_from_page(self, page: Page) -> None:
         config = self.identifier.get_config(page)
-        self.load_from_input_dict(config)
+        self.load_from_input_dict(config, page=page)
 
     def get_current_image(self) -> "Image.Image":
         """The input's current composition. The key and touchscreen inputs
@@ -438,7 +440,7 @@ class ControllerInput(Generic[StateT]):
         image of its own. The UI mirror reads it on map."""
         raise NotImplementedError
 
-    def load_from_input_dict(self, input_dict: "dict[str, Any]", update: bool = True) -> None:
+    def load_from_input_dict(self, input_dict: "dict[str, Any]", update: bool = True, page: "Page | None" = None) -> None:
         pass
 
     def add_new_state(self, switch: bool = True) -> None:
@@ -504,7 +506,6 @@ class ControllerInput(Generic[StateT]):
 
         d["states"] = new_states_dict
 
-
         page.save()
 
         self.update_state_switcher()
@@ -517,6 +518,12 @@ class ControllerInput(Generic[StateT]):
                 if s <= state:
                     self.set_state(s, allow_reload=True)
                     break
+
+        # One write, and after the two moves above: the remap moves the shown
+        # state down, and a removed state that was the shown one moves it
+        # again. set_state already wrote in that second case, so this records
+        # the remap alone.
+        self.persisted_state.write(self, self.state)
 
         gl.signal_manager.trigger_signal(Signals.RemoveState, state, state_map)
 
@@ -537,11 +544,15 @@ class ControllerInput(Generic[StateT]):
     def set_state(self, state: int, update_sidebar: bool = True, allow_reload: bool = False) -> None:
         if state == self.state and not allow_reload:
             return
-        
+
         if state not in self.states:
             log.error(f"Invalid state: {state}, must be one of {list(self.states.keys())}")
             return
         self.state = state
+
+        # Only a real state change reaches here: a load selects its own state
+        # without going through this.
+        self.persisted_state.write(self, state)
 
         self.get_active_state().update()
 
@@ -1050,7 +1061,7 @@ class ControllerKey(ControllerInput["ControllerKeyState"]):
 
         return background
     
-    def load_from_input_dict(self, input_dict: "dict[str, Any]", update: bool = True, load_labels: bool = True, load_media: bool = True, load_background_color: bool = True) -> None:
+    def load_from_input_dict(self, input_dict: "dict[str, Any]", update: bool = True, page: "Page | None" = None, load_labels: bool = True, load_media: bool = True, load_background_color: bool = True) -> None:
         """
         Disabling load_media can also disable custom user assets.
         """
@@ -1099,9 +1110,7 @@ class ControllerKey(ControllerInput["ControllerKeyState"]):
                     if key_video is not None:
                         key_video.close()
 
-        old_state_index = self.state
-
-        self.state = 0
+        self.state = self.persisted_state.on_load(self, input_dict, page)
 
         #TODO: Reset states
         for state_key in input_dict.get("states", {}):
@@ -1224,16 +1233,8 @@ class ControllerKey(ControllerInput["ControllerKeyState"]):
                 state.background_manager.set_page_color(state_dict.get("background", {}).get("color"), update=False)
 
         if update:
-            self.set_state(old_state_index)
+            self.persisted_state.sync_sidebar(self)
             self.update()
-
-    def set_state(self, state: int, update_sidebar: bool = True, allow_reload: bool = False) -> None:
-        old_state = self.state
-        if state == old_state and not allow_reload:
-            return
-        super().set_state(state, False, allow_reload)
-        if update_sidebar:
-            self.reload_sidebar()
 
     def set_ui_key_image(self, image: Image.Image | None) -> None:
         if image is None:
@@ -1559,13 +1560,11 @@ class ControllerDial(ControllerInput["ControllerDialState"]):
                     actions=turn_actions
                 )
 
-    def load_from_input_dict(self, input_dict: "dict[str, Any]", update: bool = True) -> None:
+    def load_from_input_dict(self, input_dict: "dict[str, Any]", update: bool = True, page: "Page | None" = None) -> None:
         n_states = len(input_dict.get("states", {}))
         self.create_n_states(max(1, n_states))
 
-        old_state_index = self.state
-
-        self.state = 0
+        self.state = self.persisted_state.on_load(self, input_dict, page)
 
         for state_key in input_dict.get("states", {}):
             state = self.states.get(int(state_key))
@@ -1641,7 +1640,7 @@ class ControllerDial(ControllerInput["ControllerDialState"]):
             state.background_manager.set_page_color(state_dict.get("background", {}).get("color", [0, 0, 0, 0]), update=False)
 
         if update:
-            self.set_state(old_state_index)
+            self.persisted_state.sync_sidebar(self)
             self.update()
 
     def update(self) -> None:
