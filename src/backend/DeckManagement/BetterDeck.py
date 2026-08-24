@@ -127,6 +127,52 @@ def release_device_handle(device: "StreamDeck.StreamDeck", timeout: "float | Non
     device.close()
 
 
+def device_is_on_bus(deck: "Any") -> bool:
+    """Whether this deck's device is still enumerable on the HID bus.
+
+    The library answers this with an unfiltered hid_enumerate. On Linux it
+    binds the libusb backend, where that call opens every USB device on the
+    system to read its manufacturer, product and serial string descriptors,
+    and it runs under the process-wide hidapi mutex that every deck read and
+    write also waits on. The liveness poll asks the question every two
+    seconds per deck.
+
+    Passing the deck's own vendor and product id to the same call makes
+    hidapi skip every device that does not match, so only this model of deck
+    is opened. The filter comes from the device the poll is about and is not
+    a fixed vendor, so a deck of any supported make narrows to its own kind.
+    The path is what identifies the device, the same key the library
+    compares, and it stays valid for as long as the device stays on its port.
+
+    This takes no per-device transport lock, which the library's own answer
+    does take. Nothing here reads or writes the handle, and the device
+    identity it does read is fixed at enumeration, so the probe has nothing
+    to be serialized against; holding that lock would only park a status
+    question behind an image write in the queue every deck write shares.
+
+    A transport that does not carry both the loader and the enumeration entry
+    gets the library's own answer: a fake deck, a remote deck, or a library
+    that renamed either one. The library is neither vendored nor patched, so
+    drift degrades to the unfiltered walk and never raises.
+    """
+    device = getattr(deck, "device", None)
+    hidapi = getattr(device, "hidapi", None)
+    info = getattr(device, "device_info", None)
+    if hidapi is None or not isinstance(info, dict):
+        return cast(bool, deck.connected())
+
+    path = info.get("path")
+    vendor_id = info.get("vendor_id")
+    product_id = info.get("product_id")
+    if path is None or vendor_id is None or product_id is None:
+        return cast(bool, deck.connected())
+
+    # Positional, because the library spells these parameters vendor_id and
+    # product_id on the loader and vid and pid on the transport above it.
+    entries = hidapi.enumerate(vendor_id, product_id)
+    return any(entry.get("path") == path for entry in entries)
+
+
 class BetterDeck():
     def __init__(self, deck: StreamDeck.StreamDeck, rotation: int = 0):
         self.deck: StreamDeck.StreamDeck = deck
@@ -259,9 +305,9 @@ class BetterDeck():
         :rtype: bool
         :return: `True` if the deck is still connected, `False` otherwise.
         """
-        # This takes no BetterDeck lock, see is_open(). The transport mutex
-        # covers close() races.
-        return cast(bool, self.deck.connected())
+        # This takes no BetterDeck lock, see is_open(). The enumeration it
+        # runs reads no handle, so a close() during it changes no answer.
+        return device_is_on_bus(self.deck)
 
     def vendor_id(self) -> int:
         """

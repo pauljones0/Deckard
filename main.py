@@ -258,7 +258,7 @@ def handle_listing_commands():
             # Minimal initialization to scan for devices
             from StreamDeck.DeviceManager import DeviceManager
 
-            from src.backend.DeckManagement.BetterDeck import release_device_handle
+            from src.backend.DeckManagement.BetterDeck import device_is_on_bus, release_device_handle
             devices = DeviceManager().enumerate()
             
             if not devices:
@@ -302,7 +302,7 @@ def handle_listing_commands():
                             print(f"  Dials: {device.dial_count()}")
                         if hasattr(device, 'is_touch') and device.is_touch():
                             print("  Touchscreen: Yes")
-                        print(f"  Connected: {'Yes' if device.connected() else 'No'}")
+                        print(f"  Connected: {'Yes' if device_is_on_bus(device) else 'No'}")
                         
                         if device_opened:
                             # open() started a reader thread, and a bare
