@@ -365,6 +365,9 @@ def check_static(label: str, module_path: str, class_name: str) -> tuple[int, in
     defined = {n.name for n in node.body
                if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
     entries = tuple(name for name in WORKER_ENTRIES if name in defined)
+    # The search worker only. It is what the count below reports, so every
+    # return of this function must report the same number.
+    searchers = [name for name in entries if name != "build"]
     violations = find_offmain_constructions(node, entries)
 
     # The six classes share two bases, so the check above covers the same two
@@ -380,7 +383,7 @@ def check_static(label: str, module_path: str, class_name: str) -> tuple[int, in
     if violations:
         for v in violations:
             print(f"FAIL({label}): {v} [{source_file}]")
-        return 1, len(own_hooks), len(entries)
+        return 1, len(own_hooks), len(searchers)
 
     # The check means something only while build() really is a thread body,
     # directly or through the one-hop _run_build wrapper that clears the
@@ -389,14 +392,13 @@ def check_static(label: str, module_path: str, class_name: str) -> tuple[int, in
     if not re.search(r"threading\.Thread\(target=self\.(build|_run_build)\b", owner_src):
         print(f"FAIL({label}): build() is no longer started on a worker thread "
               f"in {source_file} -- re-point this tripwire at the new loader")
-        return 1, len(own_hooks), len(entries)
+        return 1, len(own_hooks), len(searchers)
 
-    searchers = [name for name in entries if name != "build"]
     if searchers and not re.search(
             r"threading\.Thread\(target=self\._run_pack_search\b", owner_src):
         print(f"FAIL({label}): the search across packs is no longer started on "
               f"a worker thread in {source_file} -- re-point this tripwire")
-        return 1, len(own_hooks), len(entries)
+        return 1, len(own_hooks), len(searchers)
 
     print(f"PASS: {label} reaches no off-main widget construction from "
           f"{', '.join(f'{name}()' for name in entries)} or its "
