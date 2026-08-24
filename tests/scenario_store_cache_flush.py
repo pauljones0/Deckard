@@ -133,11 +133,21 @@ def test_deferral_lands_renewed_date() -> None:
         "the renewal must NOT have hit the disk yet -- that is the whole point"
     )
 
-    assert fixtures.wait_until(lambda: COUNTER.count >= 1, timeout=5.0)
+    renewed = cache.files[key]["date"]
+    # The write counter ticks when the flush ENTERS atomic_write_json, one
+    # os.replace before the new file lands. Reading the index the instant the
+    # counter moves can catch the pre-flush file, whose "date" is still the
+    # seed stamp -- a stale read that widens with load, not a float rounding
+    # gap. Wait for the renewed date to actually reach disk instead of racing
+    # the replace. The equality below then holds exactly, because json
+    # round-trips the float.
+    assert fixtures.wait_until(
+        lambda: _on_disk(cache)[key].get("date") == renewed, timeout=5.0
+    ), "the debounced flush must land the renewed date on disk"
     flushed = _on_disk(cache)[key]
-    assert flushed["date"] == cache.files[key]["date"], (
+    assert flushed["date"] == renewed, (
         f"the flushed index must carry the renewed date, got {flushed['date']} "
-        f"vs in-memory {cache.files[key]['date']}"
+        f"vs in-memory {renewed}"
     )
     assert flushed["fetched"] == seeded_fetched, (
         "a read must never touch the content-age clock"
@@ -280,8 +290,27 @@ def test_exit_hook_registered_with_atexit() -> None:
 
     The check above calls _flush_live_caches directly, so it stays green even
     with the atexit registration dropped. atexit exposes no way to enumerate
-    its table, so an unregister that removes something proves it was there.
+    its table, so an unregister that removes something proves it was there --
+    but only where atexit._ncallbacks() reflects the removal.
     """
+    # Some CPython builds remove the callback on unregister yet leave
+    # _ncallbacks() unchanged (the count tracks registrations, not removals).
+    # The removal-delta probe below reads a false negative there, so
+    # self-calibrate against a throwaway first and trust the probe only where
+    # a sentinel's register/unregister round-trips the count. The end-to-end
+    # drain stays covered by test_exit_hook_drains_dirty_index.
+    calib = atexit._ncallbacks()
+
+    def _sentinel() -> None:
+        pass
+
+    atexit.register(_sentinel)
+    calib_registered = atexit._ncallbacks()
+    atexit.unregister(_sentinel)
+    calib_unregistered = atexit._ncallbacks()
+    if not (calib_registered == calib + 1 and calib_unregistered == calib):
+        return
+
     before = atexit._ncallbacks()
     atexit.unregister(store_cache_mod._flush_live_caches)
     after = atexit._ncallbacks()

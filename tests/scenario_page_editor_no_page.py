@@ -19,10 +19,10 @@ def main() -> None:
     import gi
     gi.require_version("Gtk", "4.0")
     gi.require_version("Adw", "1")
-    from gi.repository import Gtk, Adw
+    from gi.repository import Adw
 
-    if not Gtk.init_check():
-        print("SKIP: no display available; scenario needs GTK")
+    if not fixtures.has_usable_display():
+        print("SKIP: no usable display; scenario needs GTK")
         return
     Adw.init()
 
