@@ -47,9 +47,10 @@ bundle as a release asset.
   thread that reports every press, turn and touch, which left the deck
   showing its page and ignoring every input until the app restarted. The app
   now watches that thread, takes the device handle back and opens it again
-  when it dies, and repaints the deck. A device that fails to come back after
-  several quick attempts is left alone, with one line in the log saying to
-  replug it.
+  when it dies, and repaints the deck. A device that keeps losing its reader
+  is left alone after five attempts in a row: the app stops driving it, its
+  screens keep the last picture they were given, and one line in the log says
+  to replug it.
 
 - A failure while starting one input's periodic update no longer stops every
   animated action on that deck. The update loop ended on the first such
