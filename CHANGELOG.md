@@ -48,6 +48,12 @@ bundle as a release asset.
 
 ### Fixed
 
+- An import from Stream Deck UI that fails now shows the error and closes the
+  dialog instead of freezing. A failure part way through, such as an unreadable
+  source file, was logged and swallowed, so the progress bar sat at the start
+  and the dialog never closed. The failure now reaches the dialog as a message
+  and the dialog closes.
+
 - A key that holds more than one action is recognised as a multi-action key
   again. The check counted the key's saved states instead of its actions, so a
   key with several states but one action each read as multi-action, and a key

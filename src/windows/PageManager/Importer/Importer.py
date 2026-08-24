@@ -82,7 +82,17 @@ class Importer(Adw.ApplicationWindow):
             return
 
         ui_importer = StreamDeckUIImporter(path)
-        ui_importer.perform_import()
+        try:
+            ui_importer.perform_import()
+        except Exception:
+            # The @log.catch decorator swallows the exception and returns, so
+            # without this branch a failed import leaves the progress bar
+            # frozen at 0% and the dialog open forever. Log the failure and
+            # then route it to show_error, which marshals the text and the
+            # close onto the main thread.
+            log.exception("StreamDeck UI import failed")
+            self.show_error("Import failed")
+            return
 
         GLib.idle_add(self.progess_bar.set_text, "Imported!")
         GLib.idle_add(self.progess_bar.set_fraction, 1)
@@ -105,7 +115,17 @@ class Importer(Adw.ApplicationWindow):
             return
 
         ui_importer = StreamControllerImporter(path)
-        ui_importer.perform_import()
+        try:
+            ui_importer.perform_import()
+        except Exception:
+            # The @log.catch decorator swallows the exception and returns, so
+            # without this branch a failed import leaves the progress bar
+            # frozen at 0% and the dialog open forever. Log the failure and
+            # then route it to show_error, which marshals the text and the
+            # close onto the main thread.
+            log.exception("StreamController import failed")
+            self.show_error("Import failed")
+            return
 
         GLib.idle_add(self.progess_bar.set_text, "Imported!")
         GLib.idle_add(self.progess_bar.set_fraction, 1)
