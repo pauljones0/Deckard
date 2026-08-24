@@ -52,6 +52,14 @@ serial. A device that reports no serial is still matched, but only while it is
 the sole device of its kind on the bus: resetting a second, healthy deck
 because it is the same model is worse than resetting nothing at all.
 
+That match names a node, and a node is not a device. A wedged deck can leave
+the bus between the sysfs walk and the open, and the kernel gives its bus and
+device number to whatever arrives next, so the node then points at a stranger.
+The open is therefore followed by a second identity check, on the descriptor it
+returned: the device descriptor at the head of the node carries the vendor and
+product id of the device that descriptor refers to, and the ioctl goes to the
+same descriptor. A device that answers with any other identity is left alone.
+
 A sandbox that carries no /dev/bus/usb sees none of this. The probe says so
 once, and the recovery degrades to what it was before: a log line that asks the
 user to replug.
@@ -84,6 +92,14 @@ USB_DEV_NODES = "/dev/bus/usb"
 # DeckManager holds the same vendor as the lower-case hex string udev uses.
 ELGATO_VENDOR_ID = 0x0FD9
 
+# The USB device descriptor, which a usbfs node carries at offset zero. Its
+# length and the position of the two ids are fixed by the USB specification
+# (linux/usb/ch9.h, struct usb_device_descriptor): both ids are little-endian
+# 16-bit fields, the vendor at 8 and the product at 10.
+DEVICE_DESCRIPTOR_LEN = 18
+DESCRIPTOR_VENDOR_OFFSET = 8
+DESCRIPTOR_PRODUCT_OFFSET = 10
+
 # How long the deck-open retry waits after a reset before it opens the device
 # again. The device re-enumerates inside that window and its node is absent for
 # part of it. The give-up escalation waits for nothing of its own: it hands the
@@ -91,19 +107,25 @@ ELGATO_VENDOR_ID = 0x0FD9
 # for ten seconds.
 RESET_SETTLE_S = 2.0
 
-# Controllers whose give-up already spent this deck's one reset. The set holds
-# weak references, so a controller that goes away takes its entry with it, and
-# a replug, which builds a new controller, starts with a fresh one.
+# Controllers whose give-up spent this deck's one reset, which means a reset
+# that was issued: an escalation that reached no device leaves nothing here.
+# The set holds weak references, so a controller that goes away takes its entry
+# with it, and a replug, which builds a new controller, starts with a fresh
+# one. Watchdog thread only, which is the thread every give-up latches on.
 _escalated: "weakref.WeakSet[DeckController]" = weakref.WeakSet()
 
-# Device identities the deck-open retry already reset in this process. That
-# retry runs again for the same device on every hotplug event and on every
-# round of the boot rescan, and one reset per round is a reset loop. The lock
-# covers the test and the claim together, because the boot enumeration and the
-# USB hotplug monitor reach this from two threads, and it is never held across
-# the reset itself.
+# Device identities that took a reset from the deck-open retry in this process.
+# That retry runs again for the same device on every hotplug event and on every
+# round of the boot rescan, and one reset per round is a reset loop. Only a
+# reset that was issued leaves an entry here: an attempt that reached no device
+# spent nothing, and a device the app could not reach keeps its one reset for
+# the round that can.
 _reset_identities: set[str] = set()
 _reset_identities_lock = threading.Lock()
+
+# The watchdog the installed hook serves, weakly, so a teardown clears its own
+# hook and never one a later manager installed.
+_escalation_watchdog: "weakref.ReferenceType[DeckReaderWatchdog] | None" = None
 
 
 class _Candidate(NamedTuple):
@@ -220,14 +242,39 @@ def find_device_node(vendor_id: int, product_id: int, serial: "str | None",
     return None
 
 
+def _descriptor_identity(fd: int) -> "tuple[int, int] | None":
+    """The vendor and product id the open node itself reports, or None when it
+    carries no readable device descriptor.
+
+    This is the identity of the device the descriptor refers to, not of the
+    path it was opened by, which is what makes it worth reading: the node named
+    by the sysfs match can belong to another device by the time it is opened.
+    The serial is not re-checked here. It is a string descriptor, which costs a
+    control transfer to the device, and a wedged deck is exactly the device
+    that refuses one.
+    """
+    try:
+        descriptor = os.read(fd, DEVICE_DESCRIPTOR_LEN)
+    except OSError:
+        return None
+    if len(descriptor) < DEVICE_DESCRIPTOR_LEN:
+        return None
+    return (
+        int.from_bytes(
+            descriptor[DESCRIPTOR_VENDOR_OFFSET:DESCRIPTOR_VENDOR_OFFSET + 2], "little"),
+        int.from_bytes(
+            descriptor[DESCRIPTOR_PRODUCT_OFFSET:DESCRIPTOR_PRODUCT_OFFSET + 2], "little"),
+    )
+
+
 def reset_usb_device(vendor_id: "int | None", product_id: "int | None",
                      serial: "str | None", label: str) -> "str | None":
     """Reset the device this identity names, and return the node that took the
     reset, or None when nothing was reset.
 
-    The caller releases the deck handle before it asks: the reset takes the
-    device through a fresh enumeration, and a write in flight would lose its
-    transport under it.
+    The caller has stopped every write to the device before it asks: the reset
+    takes the device through a fresh enumeration, and a transfer in flight
+    loses its transport under it.
     """
     if vendor_id != ELGATO_VENDOR_ID or product_id is None:
         # A fake deck, a remote deck, or a device this app does not drive.
@@ -247,12 +294,27 @@ def reset_usb_device(vendor_id: "int | None", product_id: "int | None",
         f"takes a reset. The device drops off the bus and comes back within a few "
         f"seconds, which is what a replug does by hand.")
     try:
-        fd = os.open(node, os.O_WRONLY)
+        # Read and write: the ioctl needs the write side, and the identity
+        # check below needs the read side.
+        fd = os.open(node, os.O_RDWR)
     except OSError as e:
         log.error(f"Deck {label}: cannot open the USB node {node} to reset it: {e}. "
                   f"Replug the deck.")
         return None
     try:
+        # The device behind the node, asked through the descriptor the ioctl
+        # goes to. A device that left the bus after the sysfs walk hands its
+        # bus and device number to the next device that arrives, and that
+        # device is a stranger this app has no business resetting.
+        found = _descriptor_identity(fd)
+        if found != (vendor_id, product_id):
+            reported = ("no readable device descriptor" if found is None
+                        else f"{found[0]:04x}:{found[1]:04x}")
+            log.error(
+                f"Deck {label}: the USB node {node} reports {reported}, not "
+                f"{vendor_id:04x}:{product_id:04x}, so it is another device now. No "
+                f"reset is issued. Replug the deck.")
+            return None
         _issue_reset_ioctl(fd)
     except OSError as e:
         log.error(f"Deck {label}: the USB reset of {node} failed: {e}. Replug the deck.")
@@ -326,16 +388,26 @@ def reset_wedged_deck(deck: object, serial: "str | None" = None) -> "str | None"
         return None
     key = f"{vendor_id:04x}:{product_id:04x}:{resolved or 'no-serial'}"
     with _reset_identities_lock:
-        claimed = key in _reset_identities
-        # Latched before the reset and not after, so a reset that raises cannot
-        # leave the door open for another one.
+        if key in _reset_identities:
+            log.warning(
+                f"Deck {label}: this device already took its one USB reset in this "
+                f"session and still does not open, so it is skipped. Replug the deck.")
+            return None
+        # Claimed ahead of the reset, so two threads cannot both reset this
+        # device: the boot enumeration and the USB hotplug monitor reach here
+        # on threads of their own. The lock covers the test and the claim, and
+        # never the reset itself.
         _reset_identities.add(key)
-    if claimed:
-        log.warning(
-            f"Deck {label}: this device already took its one USB reset in this session "
-            f"and still does not open, so it is skipped. Replug the deck.")
-        return None
-    return reset_usb_device(vendor_id, product_id, resolved, label)
+    node = reset_usb_device(vendor_id, product_id, resolved, label)
+    if node is None:
+        # No reset was issued, so this device has not spent anything. A claim
+        # that outlived a refusal would make the line above say a reset
+        # happened when none did, and would spend the one reset of a device
+        # that a sandbox, or a bus that changed under the match, kept the app
+        # from reaching.
+        with _reset_identities_lock:
+            _reset_identities.discard(key)
+    return node
 
 
 def _escalate(controller: "DeckController", watchdog: "DeckReaderWatchdog") -> None:
@@ -344,27 +416,29 @@ def _escalate(controller: "DeckController", watchdog: "DeckReaderWatchdog") -> N
 
     The supervisor calls this on the watchdog thread, outside every lock, at
     the moment it latches the give-up. That deck's device writes are suspended
-    and its reader is gone by then, so the reset cannot land inside a write,
-    and the media thread is left alone.
+    and its reader is gone by then, so no new write is offered to the device
+    and the media thread is left alone. A batch that passed the suspension gate
+    before it went up can still be mid-write: that write raises a transport
+    error, which is what any write to a deck in this state does, and the writer
+    already swallows it.
 
-    The ioctl blocks while the device re-enumerates, and the sweep that
-    latched waits for it. That costs the other decks one late sweep, which is
-    two seconds of detection at most, and it buys the caller a device state it
-    can act on: a reset handed to a thread of its own would report back after
-    the latch it is supposed to lift.
+    The ioctl runs on this thread, so the sweep that latched waits for it, and
+    the kernel puts no bound on how long a port reset and a re-enumeration
+    take. What that delays is detection: every other deck's next check is late
+    by the time the ioctl takes, plus the sweep interval. Nothing else waits on
+    this thread. A reset handed to a thread of its own would report back after
+    the latch it is meant to lift, which is why it runs here.
 
-    Once per controller. A deck that still does not answer after the reset and
-    the round behind it is not a deck a second reset reaches, and a replug
-    builds a new controller, which carries its own reset.
+    Once per controller, counting only a reset that was issued. A deck that
+    still does not answer after the reset and the round behind it is not a deck
+    a second reset reaches, and a replug builds a new controller, which carries
+    its own reset.
     """
     label = _label(controller)
     if controller in _escalated:
         log.warning(f"Deck {label}: the give-up already spent this deck's one USB reset, "
                     f"so it stays down. Replug it.")
         return
-    # Latched before the reset, so a reset that raises cannot leave the door
-    # open for another one on the next give-up.
-    _escalated.add(controller)
     raw_device = getattr(getattr(controller, "deck", None), "deck", None)
     if raw_device is None:
         return
@@ -373,7 +447,11 @@ def _escalate(controller: "DeckController", watchdog: "DeckReaderWatchdog") -> N
     vendor_id, product_id, serial = _identity(
         raw_device, getattr(controller, "_serial_number", None))
     if reset_usb_device(vendor_id, product_id, serial, label) is None:
+        # Nothing was reset, so nothing is latched and nothing is re-armed. The
+        # deck stays given up, which is the state that keeps this from being
+        # called again: only the extra round below can latch a second give-up.
         return
+    _escalated.add(controller)
     # supervisor_for() belongs to the watchdog thread, which is the thread the
     # give-up latch calls this on.
     watchdog.supervisor_for(controller).allow_one_more_round()
@@ -385,9 +463,39 @@ def _label(controller: "DeckController") -> str:
 
 def install_give_up_escalation(watchdog: "DeckReaderWatchdog") -> None:
     """Wire the reader supervisor's give-up latch to the USB reset. One call,
-    where the watchdog is built."""
+    where the watchdog is built.
+
+    The hook holds the watchdog weakly. It lives in a module-level slot for the
+    life of the process, and a strong reference there would pin the watchdog,
+    the manager behind it and every controller the manager registered, for as
+    long as nothing overwrote the slot. A watchdog that is gone latches
+    nothing, so a hook that finds one has nothing to do.
+    """
+    global _escalation_watchdog
+
+    watchdog_ref = weakref.ref(watchdog)
 
     def escalate(controller: "DeckController") -> None:
-        _escalate(controller, watchdog)
+        live_watchdog = watchdog_ref()
+        if live_watchdog is None:
+            return
+        _escalate(controller, live_watchdog)
 
+    _escalation_watchdog = watchdog_ref
     set_give_up_escalation(escalate)
+
+
+def clear_give_up_escalation(watchdog: "DeckReaderWatchdog") -> None:
+    """Take the hook back out, where this watchdog stops.
+
+    It clears the hook this watchdog installed and no other. A second manager,
+    which a test or a second session builds, installs its own hook, and the
+    first manager's teardown must not take that one down with it.
+    """
+    global _escalation_watchdog
+
+    installed = _escalation_watchdog() if _escalation_watchdog is not None else None
+    if installed is not watchdog:
+        return
+    _escalation_watchdog = None
+    set_give_up_escalation(None)

@@ -516,6 +516,11 @@ class DeckManager:
         # called. Without it a manager that a test or a second session builds
         # leaves a thread sweeping controllers it no longer owns.
         self.reader_watchdog.stop()
+        # The escalation hook is a module-level slot holding a closure over
+        # this watchdog, and through it this manager and every controller it
+        # registered. A stopped watchdog latches no give-up, so the hook has
+        # nothing left to serve and clearing it is what lets all of that go.
+        usb_reset.clear_give_up_escalation(self.reader_watchdog)
         self.usb_monitor.stop_monitoring(timeout=2)
 
     def get_connected_serials(self) -> list[str]:
