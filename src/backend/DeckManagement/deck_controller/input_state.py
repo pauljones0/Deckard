@@ -24,17 +24,30 @@ state.
 
 A number the input cannot show opens the first state. A number out of range
 that is still a state number stays in the page, because the states it names
-can come back: a plugin rebuilds an input with fewer states and then with all
-of them, and the choice must survive that. A stored value that is no state
-number at all, such as text, a bool or a negative number, goes out of the page
-at the load that rejects it, because nothing can ever make it mean a state.
+can come back, from a plugin that rebuilds the input with all of them. The
+next cold load then opens that state again. A warm reload does not: it keeps
+the state the input is on, so the number comes back at the next page switch or
+start of the app and never under the user's hands. A stored value that is no
+state number at all, such as text, a bool or a negative number, goes out of
+the page at the load that rejects it, because nothing can ever make it mean a
+state.
 
-A write reaches only the page the input last loaded from. A state change that
-lands while the deck is switching pages would otherwise put this input's
-number under the arriving page, which never had one.
+A write reaches only the page the input last loaded from, and a load records
+the page it read, never the page the deck happens to show. The two differ
+while a page switch is under way: a load that finishes late carries the
+leaving page's states, and a state change that lands in that window would
+otherwise put this input's number under the arriving page, which never had
+one.
+
+The page is held by identity and weakly. A rename re-points a page's file in
+place, so a name recorded at load time names the wrong file afterwards, while
+the page itself stays the page this input holds. The weak hold lets the page
+cache evict a page this input no longer shows, and an evicted page comes back
+as another object, which is a cold load.
 """
 from __future__ import annotations
 
+import weakref
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -89,26 +102,32 @@ class PersistedState:
         self.identifier = identifier
         # The page whose states the input holds. It decides whether the next
         # load is warm, and which page a write may reach.
-        self.loaded_from: str | None = None
+        self._loaded_from: "weakref.ref[Page] | None" = None
         # Whether the last load moved the input off the state it was on. Only
         # a move is worth a sidebar refresh.
         self.moved: bool = False
 
     def on_load(self, controller_input: "ControllerInput[Any]",
-                input_dict: "dict[str, Any]") -> int:
-        """The state to open on, once a load has built the states."""
-        page = controller_input.deck_controller.active_page
-        path = None if page is None else page.json_path
+                input_dict: "dict[str, Any]", page: "Page | None") -> int:
+        """The state to open on, once a load has built the states.
+
+        page is the page the states came from, which the caller holds. The
+        page the deck shows is not the same thing while a switch is under way.
+        """
         live = controller_input.state
-        if path is not None and path == self.loaded_from and live < len(controller_input.states):
+        if page is not None and page is self.page() and live < len(controller_input.states):
             # Warm: this deck already shows the page, so its own state stands.
             state = live
         else:
             state = read_active_state(input_dict, len(controller_input.states))
             self._drop_unusable(page, input_dict)
-        self.loaded_from = path
+        self._loaded_from = None if page is None else weakref.ref(page)
         self.moved = state != live
         return state
+
+    def page(self) -> "Page | None":
+        """The page the input last loaded from, while it still stands."""
+        return None if self._loaded_from is None else self._loaded_from()
 
     def sync_sidebar(self, controller_input: "ControllerInput[Any]") -> None:
         """Let the sidebar follow the load, but only after a move.
@@ -127,7 +146,7 @@ class PersistedState:
         one file write and a page switch takes the last of them with it.
         """
         page = controller_input.deck_controller.active_page
-        if page is None or page.json_path != self.loaded_from:
+        if page is None or page is not self.page():
             # The deck is between pages, or has moved on to another one. The
             # number belongs to the page whose states this input holds.
             return

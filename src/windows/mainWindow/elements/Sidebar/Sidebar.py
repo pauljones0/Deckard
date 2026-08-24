@@ -219,11 +219,11 @@ class Sidebar(Adw.NavigationPage):
         state = self.active_state
         # The refresh follows the current state of the input. The remembered
         # active_state can belong to an input of an earlier page, because a
-        # page change keeps the sidebar selection. A replay of it repaints the
-        # device from a UI-refresh path, since KeyEditor.load_for_identifier
-        # calls c_input.set_state, and it logs an error for every state that
-        # the new input lacks. A user-driven state selection still passes its
-        # state through load_for_*.
+        # page change keeps the sidebar selection, and it can name a state the
+        # input on this page does not have. The editors show the state they
+        # are handed, so a replay of that one shows rows of a state nobody is
+        # on. A user-driven state selection still passes its state through
+        # load_for_*.
         controller = self.main_window.get_active_controller()
         if controller is not None and identifier is not None:
             c_input = controller.get_input(identifier)

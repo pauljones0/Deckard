@@ -432,7 +432,7 @@ class ControllerInput(Generic[StateT]):
 
     def load_from_page(self, page: Page) -> None:
         config = self.identifier.get_config(page)
-        self.load_from_input_dict(config)
+        self.load_from_input_dict(config, page=page)
 
     def get_current_image(self) -> "Image.Image":
         """The input's current composition. The key and touchscreen inputs
@@ -440,7 +440,7 @@ class ControllerInput(Generic[StateT]):
         image of its own. The UI mirror reads it on map."""
         raise NotImplementedError
 
-    def load_from_input_dict(self, input_dict: "dict[str, Any]", update: bool = True) -> None:
+    def load_from_input_dict(self, input_dict: "dict[str, Any]", update: bool = True, page: "Page | None" = None) -> None:
         pass
 
     def add_new_state(self, switch: bool = True) -> None:
@@ -1061,7 +1061,7 @@ class ControllerKey(ControllerInput["ControllerKeyState"]):
 
         return background
     
-    def load_from_input_dict(self, input_dict: "dict[str, Any]", update: bool = True, load_labels: bool = True, load_media: bool = True, load_background_color: bool = True) -> None:
+    def load_from_input_dict(self, input_dict: "dict[str, Any]", update: bool = True, page: "Page | None" = None, load_labels: bool = True, load_media: bool = True, load_background_color: bool = True) -> None:
         """
         Disabling load_media can also disable custom user assets.
         """
@@ -1110,7 +1110,7 @@ class ControllerKey(ControllerInput["ControllerKeyState"]):
                     if key_video is not None:
                         key_video.close()
 
-        self.state = self.persisted_state.on_load(self, input_dict)
+        self.state = self.persisted_state.on_load(self, input_dict, page)
 
         #TODO: Reset states
         for state_key in input_dict.get("states", {}):
@@ -1560,11 +1560,11 @@ class ControllerDial(ControllerInput["ControllerDialState"]):
                     actions=turn_actions
                 )
 
-    def load_from_input_dict(self, input_dict: "dict[str, Any]", update: bool = True) -> None:
+    def load_from_input_dict(self, input_dict: "dict[str, Any]", update: bool = True, page: "Page | None" = None) -> None:
         n_states = len(input_dict.get("states", {}))
         self.create_n_states(max(1, n_states))
 
-        self.state = self.persisted_state.on_load(self, input_dict)
+        self.state = self.persisted_state.on_load(self, input_dict, page)
 
         for state_key in input_dict.get("states", {}):
             state = self.states.get(int(state_key))

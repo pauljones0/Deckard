@@ -388,8 +388,75 @@ def check_a_write_reaches_only_the_page_the_input_loaded(controller) -> int:
               f"state it was left on: {key_of(read_file(from_path))}")
         return 1
 
+    # Put the input back on the state its page names, so the change below is
+    # one, and a write that never happens cannot read as one that did.
+    c_input.set_state(1)
+
+    # The other half of the same window: a load of the leaving page that
+    # finishes after the deck has taken the new one. It carries the leaving
+    # page's states, so it must record that page and not the arriving one.
+    controller.active_page = page_to
+    try:
+        controller.load_input(c_input, page_from)
+    finally:
+        controller.active_page = page_from
+    c_input.set_state(2)
+    page_flush.get().flush_all()
+    if stored_number(read_file(to_path)) is not None:
+        print(f"FAIL: a late load of the leaving page tagged the arriving one, "
+              f"and the next state change wrote there: {key_of(read_file(to_path))}")
+        return 1
+    if stored_number(read_file(from_path)) != 2:
+        print(f"FAIL: the state change after a late load did not reach the page "
+              f"the load read: {key_of(read_file(from_path))}")
+        return 1
+
     print("PASS: a state change during a page switch reaches neither page's file "
           "wrongly")
+    return 0
+
+
+def check_a_rename_keeps_the_page_the_input_holds(controller) -> int:
+    """A page rename re-points the file of the page a deck shows.
+
+    Nothing reloads the inputs for it, so an input must still know the page it
+    holds: its next state change belongs in that page, and its next reload is
+    a reload of the page it is already on.
+    """
+    fresh_flush()
+    old_path = seed_states_page("StateRenameFrom", 3)
+    new_path = os.path.join(gl.page_manager.PAGE_PATH, "StateRenameTo.json")
+    page, c_input = show_page(controller, old_path, 3)
+    c_input.set_state(1)
+    page_flush.get().flush_all()
+
+    gl.page_manager.move_page(old_path, new_path)
+    if page.json_path != new_path:
+        print(f"FAIL: the rename left the page on {page.json_path} -- this leg "
+              "would prove nothing")
+        return 1
+
+    c_input.set_state(2)
+    if stored_number(page.dict) != 2:
+        print(f"FAIL: a state change after a rename never reached the page: "
+              f"{key_of(page.dict)}")
+        return 1
+    page_flush.get().flush_all()
+    if stored_number(read_file(new_path)) != 2:
+        print(f"FAIL: a state change after a rename never reached the renamed "
+              f"file: {key_of(read_file(new_path))}")
+        return 1
+
+    # The reload an edit triggers, now under the new name. The deck is on this
+    # page already, so it keeps the state it is on.
+    controller.load_input(c_input, page)
+    if c_input.state != 2:
+        print(f"FAIL: a reload after a rename read the page cold and moved the "
+              f"input to state {c_input.state}")
+        return 1
+
+    print("PASS: a rename keeps the page an input holds, for its writes and its "
+          "reloads")
     return 0
 
 
@@ -514,6 +581,7 @@ def main() -> int:
             check_a_page_that_names_no_state_opens_the_first,
             check_a_number_the_input_cannot_show_opens_the_first,
             check_a_write_reaches_only_the_page_the_input_loaded,
+            check_a_rename_keeps_the_page_the_input_holds,
             check_the_sidebar_shows_the_state_without_selecting_it,
         ):
             failures += check(controller)
