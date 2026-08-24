@@ -38,12 +38,14 @@ The two latches are independent, so a deck reset at startup can still be reset
 once at run time, when its reader dies hours later.
 
 Nothing here writes to the deck, and nothing here runs on the media thread,
-which is the sole device writer. The give-up escalation runs on the watchdog
-thread, at a point where the supervisor has already released the handle and
-suspended every device write for that deck. The deck-open retry runs before a
-media thread for that deck exists, and its transport arm released the handle
-before it gave up. A reset issued while a write was in flight would pull the
-transport out from under it.
+which is the sole device writer. A reset issued while a write was in flight
+would pull the transport out from under it, so each caller has stopped every
+write to that device first. The give-up escalation runs on the watchdog
+thread, where the supervisor has suspended every device write for the deck and
+its reader is gone; a handle that is still open there is closed by the next
+attempt before it opens one. The deck-open retry runs before a media thread
+for that deck exists, and its transport arm released the handle before it gave
+up.
 
 The device is matched through sysfs, by vendor and product id first and then by
 serial. A device that reports no serial is still matched, but only while it is
@@ -56,6 +58,7 @@ user to replug.
 """
 import fcntl
 import os
+import threading
 import weakref
 from typing import TYPE_CHECKING, NamedTuple
 
@@ -95,8 +98,12 @@ _escalated: "weakref.WeakSet[DeckController]" = weakref.WeakSet()
 
 # Device identities the deck-open retry already reset in this process. That
 # retry runs again for the same device on every hotplug event and on every
-# round of the boot rescan, and one reset per round is a reset loop.
+# round of the boot rescan, and one reset per round is a reset loop. The lock
+# covers the test and the claim together, because the boot enumeration and the
+# USB hotplug monitor reach this from two threads, and it is never held across
+# the reset itself.
 _reset_identities: set[str] = set()
+_reset_identities_lock = threading.Lock()
 
 
 class _Candidate(NamedTuple):
@@ -318,14 +325,16 @@ def reset_wedged_deck(deck: object, serial: "str | None" = None) -> "str | None"
         log.debug(f"Deck {label}: not an Elgato USB device, so no reset is issued")
         return None
     key = f"{vendor_id:04x}:{product_id:04x}:{resolved or 'no-serial'}"
-    if key in _reset_identities:
+    with _reset_identities_lock:
+        claimed = key in _reset_identities
+        # Latched before the reset and not after, so a reset that raises cannot
+        # leave the door open for another one.
+        _reset_identities.add(key)
+    if claimed:
         log.warning(
             f"Deck {label}: this device already took its one USB reset in this session "
             f"and still does not open, so it is skipped. Replug the deck.")
         return None
-    # Latched before the reset and not after, so a reset that raises cannot
-    # leave the door open for another one.
-    _reset_identities.add(key)
     return reset_usb_device(vendor_id, product_id, resolved, label)
 
 
@@ -334,9 +343,15 @@ def _escalate(controller: "DeckController", watchdog: "DeckReaderWatchdog") -> N
     supervised round of reopen attempts.
 
     The supervisor calls this on the watchdog thread, outside every lock, at
-    the moment it latches the give-up. That deck's handle is released and its
-    device writes are suspended by then, so the reset cannot land inside a
-    write, and the media thread is left alone.
+    the moment it latches the give-up. That deck's device writes are suspended
+    and its reader is gone by then, so the reset cannot land inside a write,
+    and the media thread is left alone.
+
+    The ioctl blocks while the device re-enumerates, and the sweep that
+    latched waits for it. That costs the other decks one late sweep, which is
+    two seconds of detection at most, and it buys the caller a device state it
+    can act on: a reset handed to a thread of its own would report back after
+    the latch it is supposed to lift.
 
     Once per controller. A deck that still does not answer after the reset and
     the round behind it is not a deck a second reset reaches, and a replug
