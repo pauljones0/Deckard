@@ -8,6 +8,7 @@ import fixtures  # noqa: F401  (import first: sets up the isolated data dir)
 import concurrent.futures
 import hashlib
 import threading
+import time
 
 from PIL import Image
 
@@ -16,6 +17,24 @@ from fixtures import make_headless_controller, raw_deck, start_watchdog, wait_un
 
 from src.backend.DeckManagement.DeckController import encode_native_key
 from src.backend.DeckManagement.InputIdentifier import Input
+
+
+def _drain_to_quiescence(media_player, timeout: float = 5.0) -> None:
+    """Drain the media-player task slots until they stay empty, bounded.
+
+    A lone drain is a mid-burst snapshot: the writer can enqueue a fresh batch
+    right after it. Drain in a loop and return only once the task, image and
+    touchscreen slots are all empty at once, so the caller reads a settled
+    queue and not a partial burst."""
+    deadline = time.monotonic() + timeout
+    while True:
+        media_player.perform_media_player_tasks()
+        if not (media_player.tasks or media_player.image_tasks
+                or media_player.touchscreen_task):
+            return
+        if time.monotonic() >= deadline:
+            return
+        time.sleep(0.01)
 
 
 def _expected_native_hash(controller, key) -> str:
@@ -38,11 +57,19 @@ def _expected_native_hash(controller, key) -> str:
 def check_opaque_initial_paint() -> int:
     controller = make_headless_controller(serial="trio-11")
     try:
-        # Deterministic tier. Stop the live writer and drive the drain by hand,
-        # or the live loop races the assertions. Drain the leftover tasks of the
-        # load before arming the check.
+        # Deterministic tier. Stop AND join the live writer, then drive the
+        # drain by hand, or the live loop races the assertions. Join, not just
+        # stop: a write failure on the fake deck arms a pending full repaint,
+        # and the writer runs it through update_all_inputs() while
+        # background.video is still None. That takes the all-keys branch and
+        # enqueues every key, the non-opaque ones with the same transparent
+        # frame. Under load that burst can land after a lone drain and reach the
+        # device on the next drain, which then fails the "no non-opaque device
+        # write" check below. A joined writer can enqueue no more, and the drain
+        # to quiescence settles the queue before the check arms.
         controller.media_player.stop(timeout=3.0)
-        controller.media_player.perform_media_player_tasks()
+        controller.media_player.join(timeout=3.0)
+        _drain_to_quiescence(controller.media_player)
 
         # Opaque page-color on key 0. The others stay transparent.
         opaque_key = controller.inputs[Input.Key][0]
@@ -63,7 +90,9 @@ def check_opaque_initial_paint() -> int:
             # receive for the opaque key.
             expected_hash = _expected_native_hash(controller, opaque_key)
             controller.update_all_inputs()
-            controller.media_player.perform_media_player_tasks()
+            # Read the settled journal, not a mid-burst snapshot. The writer is
+            # joined, so this pass empties the queue and it stays empty.
+            _drain_to_quiescence(controller.media_player)
 
             writes = deck.ops_by_name("set_key_image")
         finally:
