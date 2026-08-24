@@ -166,8 +166,43 @@ class ChooserPage(Gtk.Stack):
             # newer pass renders the text the user has now.
             return False
         query = self.search_entry.get_text()
-        self._searched_text = query
         self.apply_search(query)
+        return False  # one-shot idle
+
+    def search_rendered(self, query: str) -> None:
+        """Record that this page now shows what query asks for.
+
+        A page calls this when a pass has put the query on screen, and never
+        when it has only started the work. _on_map compares the entry against
+        what this records, so a pass that gathers off the main thread and is
+        dropped before it renders must leave it alone. Recorded too early, a
+        dropped pass leaves the page believing it is current: the grid keeps
+        the results of the query before, and only another keystroke recovers
+        it, because showing the page again finds nothing to catch up with.
+        """
+        self._searched_text = query
+
+    def search_is_current(self, generation: int) -> bool:
+        """Whether a pass queued with generation is still the one to render.
+
+        A pass that gathers off the main thread asks this before it renders,
+        and the main-loop callback that renders asks it again, because the
+        query can move on in between. A later pass, a page turn and a hidden
+        window all answer False. It is the one staleness test a page outside
+        this one may use, so a search that spans two pages guards on the page
+        whose entry holds the query.
+        """
+        return generation == self._search_generation and self._search_showing
+
+    def focus_search_entry(self) -> bool:
+        """Take the typing to this page's entry. A one-shot idle callback.
+
+        The cursor goes to the end of the text, because grabbing the focus of
+        an entry selects everything it holds and the next keystroke would then
+        replace the query rather than extend it.
+        """
+        self.search_entry.grab_focus()
+        self.search_entry.set_position(-1)
         return False  # one-shot idle
 
     def invalidate_search(self, *args: Any) -> None:
@@ -191,14 +226,29 @@ class ChooserPage(Gtk.Stack):
         between the tabs of this window maps a page each time.
         """
         self._search_showing = True
+        # Before the catch-up test, so a page that settles its entry as it
+        # shows is compared against the entry it ends up with. Settled after,
+        # the pass below would search for a query this page is about to throw
+        # away.
+        self.on_shown()
         if self.search_entry.get_text() == self._searched_text:
             return
         self._search_generation += 1
         self.run_search(self._search_generation)
 
+    def on_shown(self) -> None:
+        """Subclass hook: settle the entry as this page shows.
+
+        It runs on the main thread, inside the map handler and before the
+        catch-up pass. A page that keeps whatever the entry holds leaves it
+        alone.
+        """
+
     def apply_search(self, query: str) -> None:
         """Subclass hook: show what query asks for.
 
         It runs on the main thread, once the typing stops. A page with no
-        grid to filter leaves it alone.
+        grid to filter leaves it alone. A page that renders here says so with
+        search_rendered; one that starts work which renders later says so
+        when that work lands.
         """

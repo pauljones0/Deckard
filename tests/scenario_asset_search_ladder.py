@@ -155,16 +155,22 @@ def test_a_word_written_with_a_separator() -> None:
     """A pack can write one word with a separator inside it.
 
     The name is tried again with its separators taken out when a token misses,
-    so wi-fi answers "wifi". Such a match crosses a word boundary of the name,
-    so it is the last thing tried and never outranks a name that holds the
-    word as written.
+    so wi-fi answers "wifi". The retry is the last rung tried, and it scores
+    the joined form, so such a match stands on whatever rung that form earns.
     """
     for name in ("wi-fi", "wi_fi", "wi.fi"):
         assert score(name, "wifi") == SCORE_EXACT, f"{name} did not answer wifi"
     assert score("e-mail", "email") == SCORE_EXACT
     assert score("micro-sd-card", "microsd") == SCORE_PREFIX
 
-    # The name as written still wins.
+    # A match that crosses a word boundary is not held below one that does
+    # not: the joined form of ho-me is the whole query, and go-home holds it
+    # as a word. The module docstring says so, and this pins it.
+    assert score("ho-me", "home") == SCORE_EXACT
+    assert score("go-home", "home") == SCORE_WORD_PREFIX
+
+    # Two names on one rung are ordered by length, so the shorter of a name
+    # written with a separator and one written without it comes first.
     assert ordered(["wi-fi", "wifi"], "wifi") == ["wifi", "wi-fi"]
 
     # It buys a real match, and it costs matches that cross a word boundary:

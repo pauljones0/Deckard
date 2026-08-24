@@ -86,6 +86,14 @@ class Preview(Gtk.FlowBoxChild):
                                margin_start=20, margin_end=20)
         self.main_box.append(self.label)
 
+        # A second line under the name, hidden until a caller sets one. A grid
+        # that gathers its assets from several packs names the pack of each
+        # card here, because the name alone does not say where it came from.
+        self.subtitle = Gtk.Label(xalign=0.5, hexpand=False, ellipsize=Pango.EllipsizeMode.END, max_width_chars=20,
+                                  margin_start=20, margin_end=20, visible=False,
+                                  css_classes=["dim-label", "caption"])
+        self.main_box.append(self.subtitle)
+
         self.info_button = Gtk.Button(icon_name="help-about-symbolic", halign=Gtk.Align.START, valign=Gtk.Align.END, margin_start=5, margin_bottom=5)
         self.info_button.connect("clicked", self.on_click_info)
         self.overlay.add_overlay(self.info_button)
@@ -154,6 +162,15 @@ class Preview(Gtk.FlowBoxChild):
 
     def set_text(self, text:str) -> None:
         self.label.set_text(text)
+
+    def set_subtitle(self, text: str | None) -> None:
+        """Show a second line under the name, or None for no second line.
+
+        A recycled card carries the second line of the item it showed before,
+        so every rebind sets this, and None is what takes the line away.
+        """
+        self.subtitle.set_text(text or "")
+        self.subtitle.set_visible(text is not None and text != "")
 
     def on_click_info(self, button: Gtk.Button) -> None:
         pass

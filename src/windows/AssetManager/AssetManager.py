@@ -31,6 +31,10 @@ if TYPE_CHECKING:
 import globals as gl
 
 # Import own modules
+from src.windows.AssetManager.GenericAssetChooser import (
+    PACK_CHOOSER_CHILD_NAME,
+    GenericPackChooserStack,
+)
 from src.windows.AssetManager.InfoPage import InfoPage
 from src.windows.AssetManager.CustomAssets.Chooser import CustomAssetChooser
 from src.windows.AssetManager.IconPacks.Stack import IconPackChooserStack
@@ -105,9 +109,9 @@ class AssetManager(Gtk.ApplicationWindow):
         """
         chooser = self.asset_chooser
 
-        chooser.icon_pack_chooser.set_visible_child_name("pack-chooser")
-        chooser.wallpaper_pack_chooser.set_visible_child_name("pack-chooser")
-        chooser.sd_plus_bar_wallpaper_pack_chooser.set_visible_child_name("pack-chooser")
+        for pack_stack in (chooser.icon_pack_chooser, chooser.wallpaper_pack_chooser,
+                           chooser.sd_plus_bar_wallpaper_pack_chooser):
+            pack_stack.set_visible_child_name(PACK_CHOOSER_CHILD_NAME)
         self.back_button.set_visible(False)
 
         pages = (
@@ -178,20 +182,13 @@ class AssetManager(Gtk.ApplicationWindow):
             self.main_stack.set_visible_child(self.asset_chooser)
 
         elif self.main_stack.get_visible_child() == self.asset_chooser:
-            if self.asset_chooser.get_visible_child_name() == "icon-packs":
-                if self.asset_chooser.icon_pack_chooser.get_visible_child_name() == "icon-chooser":
-                    # Switch from icon chooser to pack page
-                    self.asset_chooser.icon_pack_chooser.set_visible_child_name("pack-chooser")
-
-            elif self.asset_chooser.get_visible_child_name() == "wallpaper-packs":
-                if self.asset_chooser.wallpaper_pack_chooser.get_visible_child_name() == "wallpaper-chooser":
-                    # Switch from pack chooser to icon chooser
-                    self.asset_chooser.wallpaper_pack_chooser.set_visible_child_name("pack-chooser")
-
-            elif self.asset_chooser.get_visible_child_name() == "sd-plus-bar-wallpaper-packs":
-                if self.asset_chooser.sd_plus_bar_wallpaper_pack_chooser.get_visible_child_name() == "wallpaper-chooser":
-                    # Switch from pack chooser to icon chooser
-                    self.asset_chooser.sd_plus_bar_wallpaper_pack_chooser.set_visible_child_name("pack-chooser")
+            # Switch from the asset grid of a pack family back to its pack
+            # grid. Each family names its own leaf child, so this asks the
+            # stack that is showing rather than repeating the three names.
+            pack_stack = self.asset_chooser.get_visible_child()
+            if (isinstance(pack_stack, GenericPackChooserStack)
+                    and pack_stack.get_visible_child_name() == pack_stack.leaf_child_name):
+                pack_stack.set_visible_child_name(PACK_CHOOSER_CHILD_NAME)
 
         self.back_button.set_visible(False)
 
@@ -235,14 +232,10 @@ class AssetChooser(Gtk.Stack):
 
 
     def on_switch(self, stack: Gtk.Stack, name: GObject.ParamSpec) -> None:
-        self.asset_manager.back_button.set_visible(False)
-
-        if self.get_visible_child() is self.icon_pack_chooser:
-            if self.icon_pack_chooser.get_visible_child_name() == "icon-chooser":
-                self.asset_manager.back_button.set_visible(True)
-        elif self.get_visible_child() is self.wallpaper_pack_chooser:
-            if self.wallpaper_pack_chooser.get_visible_child_name() == "wallpaper-chooser":
-                self.asset_manager.back_button.set_visible(True)
-        elif self.get_visible_child() is self.sd_plus_bar_wallpaper_pack_chooser:
-            if self.sd_plus_bar_wallpaper_pack_chooser.get_visible_child_name() == "wallpaper-chooser":
-                self.asset_manager.back_button.set_visible(True)
+        # The way back shows for a family that is drilled into its asset grid.
+        # A tab that is not a pack family, such as the custom assets, has no
+        # grid to come back from.
+        pack_stack = self.get_visible_child()
+        drilled_in = (isinstance(pack_stack, GenericPackChooserStack)
+                      and pack_stack.get_visible_child_name() == pack_stack.leaf_child_name)
+        self.asset_manager.back_button.set_visible(drilled_in)

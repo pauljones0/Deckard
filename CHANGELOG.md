@@ -14,6 +14,13 @@ bundle as a release asset.
   of the app show the state you left instead of the first one. A page
   whose inputs never leave their first state is written exactly as
   before, and still opens in an older version.
+- The icon chooser searches every pack at once. Typing in the pack grid now
+  shows the matching icons of all installed packs in one ranked list, each
+  card naming the pack it came from, instead of asking you to open a pack
+  first and search it alone. A query there searches icons across packs
+  instead of narrowing the pack list, so typing leaves the pack grid;
+  emptying the query brings it back. A search that matches nothing says so.
+  The wallpaper and SD+ bar wallpaper choosers search the same way.
 
 ### Changed
 

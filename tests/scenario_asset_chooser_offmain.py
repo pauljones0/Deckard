@@ -158,6 +158,9 @@ def make_page(cls):
     page.set_loading = lambda *a, **k: None
     page.build_finished = False
     page._pending_pack = None
+    page._pending_results = None
+    page._pack_search_source = None
+    page._pack_search_query = ""
     return page
 
 
@@ -341,16 +344,31 @@ WORKER_SIDE_HOOKS = ("get_packs", "get_pack_thumbnail_path",
 # six classes collapse onto shared bases.
 MIN_SUBCLASS_HOOKS_CHECKED = 5
 
+# Thread bodies beside build(). A pack page also gathers the assets of every
+# pack on a worker, for the search that reaches across them, and that body
+# owes the same discipline: it reads the disk and builds no widget.
+WORKER_ENTRIES = ("build", "_run_pack_search")
 
-def check_static(label: str, module_path: str, class_name: str) -> tuple[int, int]:
-    """Returns (rc, number of subclass-owned worker-side hooks checked)."""
+# The three pack pages carry the search worker. A drop means the static leg
+# stopped looking at it.
+MIN_SEARCH_WORKERS_CHECKED = 3
+
+
+def check_static(label: str, module_path: str, class_name: str) -> tuple[int, int, int]:
+    """Returns (rc, subclass-owned worker-side hooks, worker entries checked)."""
     import importlib
 
     module = importlib.import_module(module_path)
     cls = getattr(module, class_name)
 
     node, source_file = class_node_for(cls)
-    violations = find_offmain_constructions(node)
+    defined = {n.name for n in node.body
+               if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+    entries = tuple(name for name in WORKER_ENTRIES if name in defined)
+    # The search worker only. It is what the count below reports, so every
+    # return of this function must report the same number.
+    searchers = [name for name in entries if name != "build"]
+    violations = find_offmain_constructions(node, entries)
 
     # The six classes share two bases, so the check above covers the same two
     # ClassDefs six times. Each class owns only its own hook bodies.
@@ -365,7 +383,7 @@ def check_static(label: str, module_path: str, class_name: str) -> tuple[int, in
     if violations:
         for v in violations:
             print(f"FAIL({label}): {v} [{source_file}]")
-        return 1, len(own_hooks)
+        return 1, len(own_hooks), len(searchers)
 
     # The check means something only while build() really is a thread body,
     # directly or through the one-hop _run_build wrapper that clears the
@@ -374,11 +392,18 @@ def check_static(label: str, module_path: str, class_name: str) -> tuple[int, in
     if not re.search(r"threading\.Thread\(target=self\.(build|_run_build)\b", owner_src):
         print(f"FAIL({label}): build() is no longer started on a worker thread "
               f"in {source_file} -- re-point this tripwire at the new loader")
-        return 1, len(own_hooks)
+        return 1, len(own_hooks), len(searchers)
 
-    print(f"PASS: {label} reaches no off-main widget construction from build() "
-          f"or its {len(own_hooks)} own worker-side hook(s)")
-    return 0, len(own_hooks)
+    if searchers and not re.search(
+            r"threading\.Thread\(target=self\._run_pack_search\b", owner_src):
+        print(f"FAIL({label}): the search across packs is no longer started on "
+              f"a worker thread in {source_file} -- re-point this tripwire")
+        return 1, len(own_hooks), len(searchers)
+
+    print(f"PASS: {label} reaches no off-main widget construction from "
+          f"{', '.join(f'{name}()' for name in entries)} or its "
+          f"{len(own_hooks)} own worker-side hook(s)")
+    return 0, len(own_hooks), len(searchers)
 
 
 # The tripwire's own regression test. It must flag the broken shape, both the
@@ -464,8 +489,10 @@ def check_marshal_timeout(label: str, module_path: str, class_name: str) -> int:
     holds_pending = hasattr(cls, "load_for_pack")
     flow_attr = "pack_flow" if hasattr(cls, "PACK_FLOW_BOX_CLASS") else "asset_flow"
     if holds_pending:
-        # A drill-in requested while the build was still queued.
+        # A drill-in requested while the build was still queued, and a search
+        # across the packs that landed there too.
         page._pending_pack = FakePack()
+        page._pending_results = (object(), [], "battery")
 
     real_timeout = main_loop.RUN_ON_MAIN_TIMEOUT_S
     main_loop.RUN_ON_MAIN_TIMEOUT_S = 0.2
@@ -497,9 +524,10 @@ def check_marshal_timeout(label: str, module_path: str, class_name: str) -> int:
         print(f"FAIL({label} timeout): build_finished set despite the failure")
         undo()
         return 1
-    if holds_pending and page._pending_pack is not None:
-        print(f"FAIL({label} timeout): a pending pack is still held for a grid "
-              f"that was never built -- stranded")
+    if holds_pending and (page._pending_pack is not None
+                          or page._pending_results is not None):
+        print(f"FAIL({label} timeout): a pending pack or a pending search is "
+              f"still held for a grid that was never built -- stranded")
         undo()
         return 1
     flow_value = getattr(page, flow_attr, "<AttributeError>")
@@ -714,11 +742,21 @@ def main() -> int:
 
     rc = check_tripwire_self_test()
     hooks_checked = 0
+    searchers_checked = 0
     for label, module_path, class_name, minimum in CASES:
         rc |= check_runtime(label, module_path, class_name, minimum)
-        static_rc, hooks = check_static(label, module_path, class_name)
+        static_rc, hooks, searchers = check_static(label, module_path, class_name)
         rc |= static_rc
         hooks_checked += hooks
+        searchers_checked += searchers
+    if searchers_checked < MIN_SEARCH_WORKERS_CHECKED:
+        print(f"FAIL: the static leg only checked {searchers_checked} search "
+              f"workers, expected at least {MIN_SEARCH_WORKERS_CHECKED} -- the "
+              f"gather across packs is no longer covered")
+        rc |= 1
+    else:
+        print(f"PASS: the static leg checked {searchers_checked} search-worker "
+              f"bodies beside the build()s")
     # Three get_packs and two on_build_finished. A drop means subclass bodies
     # moved somewhere this static leg does not look at.
     if hooks_checked < MIN_SUBCLASS_HOOKS_CHECKED:
