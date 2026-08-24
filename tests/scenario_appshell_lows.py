@@ -26,15 +26,6 @@ class Recorder:
         return self.result
 
 
-class ExplodingModel:
-    """Sentinel for pages_model. Any indexing fails the test."""
-    def __getitem__(self, item):
-        raise AssertionError(
-            f"pages_model must not be indexed when get_active() == -1 "
-            f"(got index {item!r})"
-        )
-
-
 def check_on_activate_defers_show_donate() -> None:
     import src.app as app_mod
 
@@ -107,31 +98,58 @@ def check_deck_name_dedup() -> None:
     print("  PASS: deck-name dedup suffixes '(n)' instead of renaming the model")
 
 
-def check_page_selector_negative_index_guard() -> None:
+def check_page_selector_no_selection_guard() -> None:
+    """No selection must never fall back to a page.
+
+    The selector held a Gtk.ComboBox index, whose no-selection value -1
+    indexed the model from the end and so picked the last page. The selection
+    is a page path now, and None must stay a no-op on both paths.
+    """
+    from src.backend import services
     from src.windows.mainWindow.elements.PageSelector import PageSelector
 
-    load_page = Recorder()
-    controller = Obj(active_page=None, load_page=load_page)
-    deck_stack = Obj(get_visible_child=lambda: Obj(deck_controller=controller))
-    stub = Obj(
-        main_window=Obj(leftArea=Obj(deck_stack=deck_stack)),
-        pages_model=ExplodingModel(),
-    )
-    drop_down = Obj(get_active=lambda: -1)
+    # No deck is visible, so there is no controller to load a page into and
+    # the backend must not even be asked for the page.
+    def exploding_page_manager():
+        raise AssertionError(
+            "a page change with no visible deck must return before it asks "
+            "the backend for a page"
+        )
 
-    PageSelector.on_change_page(stub, drop_down)
-    assert load_page.calls == [], (
-        "get_active() == -1 must be a no-op, not a load of the last page"
-    )
+    deck_stack = Obj(get_visible_child=lambda: None)
+    stub = Obj(main_window=Obj(leftArea=Obj(deck_stack=deck_stack)))
+    saved_require = services.require_page_manager
+    services.require_page_manager = exploding_page_manager
+    try:
+        PageSelector.change_page(stub, "/pages/whatever.json")
+    finally:
+        services.require_page_manager = saved_require
 
-    # Same guard on the page-settings button path.
-    stub2 = Obj(
-        drop_down=Obj(get_active=lambda: -1),
-        pages_model=ExplodingModel(),
-        on_click_open_page_manager=Recorder(),
+    # The page-settings button with nothing selected: the manager opens and
+    # no page is activated in it. lists_page() answers True for anything, so
+    # only the empty selection can stop the path here.
+    activate = Recorder()
+    open_manager = Recorder()
+    saved_window = gl.page_manager_window
+    gl.page_manager_window = Obj(page_selector=Obj(activate_page=activate))
+    try:
+        stub2 = Obj(
+            selected_page_path=None,
+            lists_page=lambda path: True,
+            on_click_open_page_manager=open_manager,
+        )
+        PageSelector.on_click_open_page_settings(stub2, button=None)
+    finally:
+        gl.page_manager_window = saved_window
+
+    assert len(open_manager.calls) == 1, (
+        "the settings button must still open the page manager"
     )
-    PageSelector.on_click_open_page_settings(stub2, button=None)
-    print("  PASS: PageSelector guards get_active() == -1 on both paths")
+    assert activate.calls == [], (
+        "with no page selected the manager must open on no page, not on "
+        "whichever page the list happens to end with"
+    )
+    print("  PASS: PageSelector guards an empty selection on both paths")
 
 
 def check_deck_manager_usb_callback_guards() -> None:
@@ -379,7 +397,7 @@ def main() -> None:
     check_on_activate_defers_show_donate()
     check_hide_error_targets_stack_child()
     check_deck_name_dedup()
-    check_page_selector_negative_index_guard()
+    check_page_selector_no_selection_guard()
     check_deck_manager_usb_callback_guards()
     check_deck_group_active_page_guards()
     check_udev_probe_spawn_form()
