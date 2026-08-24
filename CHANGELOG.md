@@ -135,6 +135,11 @@ bundle as a release asset.
   file. The import now keeps every write inside the pages folder and skips a
   page or a deck whose name points outside it, while a normal import lands as
   before.
+- Deleting a page now stays inside the pages directory. The request that
+  removes a page named the file to delete, and a name that pointed outside the
+  pages folder could delete an unrelated file. The delete now keeps to the
+  pages folder and refuses a name that points outside it, while removing a real
+  page works as before.
 - A log you share no longer leaks a credential that sits after a scheme word.
   When a log line held a secret such as `token: Token <secret>` or
   `api_key: Basic <credential>`, the redaction that hides secrets before you
