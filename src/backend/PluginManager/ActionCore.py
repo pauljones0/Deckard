@@ -307,15 +307,16 @@ class ActionCore(rpyc.Service):
             controller_input.update()
 
     def _stamp_media_owner(self, input_state: "ControllerInputState") -> None:
-        # Record this action as the owner of the media it set, so
-        # ControllerKey.load_from_input_dict restores that media across the
-        # state wipe of create_n_states while this action object still drives
-        # the key. Key states alone carry the attribute, so a dial state takes
-        # no part in the restore.
+        # Record this action as the owner of the media it set, so the input's
+        # load_from_input_dict restores that media across the state wipe of
+        # create_n_states while this action object still drives the input. Key
+        # and dial states both carry the attribute and both restore; set_media
+        # reaches only those two identifier types.
         from src.backend.DeckManagement.deck_controller.inputs import (
+            ControllerDialState,
             ControllerKeyState,
         )
-        if isinstance(input_state, ControllerKeyState):
+        if isinstance(input_state, (ControllerKeyState, ControllerDialState)):
             input_state.media_owner_action = self
 
     def set_background_color(self, color: list[int] | None = None, update: bool = True) -> None:

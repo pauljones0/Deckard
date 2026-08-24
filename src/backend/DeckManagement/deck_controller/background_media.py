@@ -19,6 +19,7 @@ and a capture open take seconds; apply_prebuilt() swaps under the lock.
 """
 import gc
 import os
+import threading
 import time
 
 from PIL import Image, ImageEnhance, ImageOps
@@ -39,6 +40,16 @@ if TYPE_CHECKING:
 class Background:
     def __init__(self, deck_controller: "DeckController"):
         self.deck_controller = deck_controller
+
+        # Guards the shared render-state that the media tick writes from one
+        # thread while a GTK, load or screensaver thread swaps the background
+        # from another: tiles, _video_strip, _touchscreen_slice and the
+        # _identified_tiles pair. It is a leaf lock, held only across those
+        # field reads and writes and never while calling update_all_inputs or
+        # the deck, so it cannot invert against the media, BetterDeck or load
+        # locks. _identified_tiles keeps its one-atomic-pair publish and now
+        # publishes under this lock beside its siblings.
+        self._render_state_lock = threading.RLock()
 
         self.image: "BackgroundImage | None" = None
         # Either video provider: the cv2-backed one, or the PIL GIF one,
@@ -62,16 +73,20 @@ class Background:
         self._identified_tiles: "tuple[Sequence[Image.Image | None], tuple[str, int]] | None" = None
 
     def set_image(self, image: "BackgroundImage", update: bool = True) -> None:
-        self.image = image
-        if self.video is not None:
-            self.video.close()
-        self.video = None
-        self._touchscreen_slice = None
-        self._video_strip = None
-        # A content change orphans every cached native. Each key holds the
-        # previous background's composited pixels, hashes or frames. Clear
-        # them here, or they stay dead until LRU eviction reaches them.
-        self._identified_tiles = None
+        # Publish the swap under the lock, then close the old video and clear
+        # caches outside it, so the leaf lock never wraps a deck call.
+        with self._render_state_lock:
+            old_video = self.video
+            self.image = image
+            self.video = None
+            self._touchscreen_slice = None
+            self._video_strip = None
+            # A content change orphans every cached native. Each key holds the
+            # previous background's composited pixels, hashes or frames. Clear
+            # them here, or they stay dead until LRU eviction reaches them.
+            self._identified_tiles = None
+        if old_video is not None:
+            old_video.close()
         self.deck_controller.clear_encoded_key_caches()
         self.deck_controller.refresh_tile_cache_min_age(None)
         gc.collect()
@@ -81,16 +96,18 @@ class Background:
             self.deck_controller.update_all_inputs()
 
     def set_video(self, video: "BackgroundVideo | GifBackground | None", update: bool = True) -> None:
-        if self.video is not None:
-            self.video.close()
-        self.image = None
-        self.video = video
-        self._touchscreen_slice = None
-        self._video_strip = None
-        # As in set_image(), a content change orphans every cached native. The
-        # md5 in a native tile key makes a source swap collision-free. The
-        # clear stops the old video's frames from lingering.
-        self._identified_tiles = None
+        with self._render_state_lock:
+            old_video = self.video
+            self.image = None
+            self.video = video
+            self._touchscreen_slice = None
+            self._video_strip = None
+            # As in set_image(), a content change orphans every cached native.
+            # The md5 in a native tile key makes a source swap collision-free.
+            # The clear stops the old video's frames from lingering.
+            self._identified_tiles = None
+        if old_video is not None:
+            old_video.close()
         self.deck_controller.clear_encoded_key_caches()
         # Shield the frame entries for the new video's loop duration.
         self.deck_controller.refresh_tile_cache_min_age(video)
@@ -103,9 +120,10 @@ class Background:
     def set_extend_to_touchscreen(self, extend: bool, update: bool = True) -> None:
         if extend == self.extend_to_touchscreen:
             return
-        self.extend_to_touchscreen = extend
-        self._touchscreen_slice = None
-        self._video_strip = None
+        with self._render_state_lock:
+            self.extend_to_touchscreen = extend
+            self._touchscreen_slice = None
+            self._video_strip = None
 
         self.update_tiles()
         if update:
@@ -121,16 +139,17 @@ class Background:
     def get_touchscreen_image(self) -> Image.Image | None:
         """The strip-sized slice of the current background (image or video
         frame), or None if the background does not extend to the touchscreen."""
-        if self.video is not None:
-            # update_tiles() refreshes this once per video frame. None unless
-            # the video carries extend_touchscreen.
-            return self._video_strip
-        image = self.image
-        if image is None or not self._extend_effective():
-            return None
-        if self._touchscreen_slice is None:
-            self._touchscreen_slice = image.get_touchscreen_image()
-        return self._touchscreen_slice
+        with self._render_state_lock:
+            if self.video is not None:
+                # update_tiles() refreshes this once per video frame. None
+                # unless the video carries extend_touchscreen.
+                return self._video_strip
+            image = self.image
+            if image is None or not self._extend_effective():
+                return None
+            if self._touchscreen_slice is None:
+                self._touchscreen_slice = image.get_touchscreen_image()
+            return self._touchscreen_slice
 
     def prebuild_from_path(self, path: str | None, fps: int = 30, loop: bool = True,
                            allow_keep: bool = True) -> "tuple[str, BackgroundVideo | GifBackground | BackgroundImage | str | None]":
@@ -226,7 +245,8 @@ class Background:
             self.set_image(cast("BackgroundImage", payload), update=update)
         else:  # "blank"
             self.set_video(None, update=False)
-            self._touchscreen_slice = None
+            with self._render_state_lock:
+                self._touchscreen_slice = None
             self.update_tiles()
             if update:
                 self.deck_controller.update_all_inputs()
@@ -260,21 +280,41 @@ class Background:
         # Refcounting reclaims the old tiles. A close() here races a
         # concurrent composite that still holds one.
         try:
+            # Snapshot the source under the lock, so a concurrent set_image or
+            # set_video cannot null self.video between the branch test and the
+            # reads inside it. Everything below composes from the local
+            # snapshot.
+            with self._render_state_lock:
+                image = self.image
+                video = self.video
             identity = None
-            if self.image is not None:
-                self.tiles = self.image.get_tiles(extend_touchscreen=self._extend_effective())
-            elif self.video is not None:
+            # Compose the new frame outside the lock (get_tiles and
+            # get_next_tiles do the heavy work and touch other caches), then
+            # publish tiles, the strip slice and the identity pair together
+            # under the leaf lock. _video_strip is written only when this frame
+            # produced one, so an image or blank frame does not clobber the
+            # None a concurrent set_image just published.
+            new_video_strip = None
+            wrote_strip = False
+            if image is not None:
+                new_tiles: "Sequence[Image.Image | None]" = image.get_tiles(extend_touchscreen=self._extend_effective())
+            elif video is not None:
                 # An extended video frame carries the strip slice as one extra
                 # entry after the key tiles. See BackgroundVideoCache.
-                entries, identity = self.video.get_next_tiles()
+                entries, identity = video.get_next_tiles()
                 key_count = self.deck_controller.deck.key_count()
-                if self.video.extend_touchscreen and len(entries) > key_count:
-                    self._video_strip = entries[key_count]
+                if video.extend_touchscreen and len(entries) > key_count:
+                    new_video_strip = entries[key_count]
+                    wrote_strip = True
                     entries = entries[:key_count]
-                self.tiles = entries
+                new_tiles = entries
             else:
-                self.tiles = [self.deck_controller.generate_alpha_key() for _ in range(self.deck_controller.deck.key_count())]
-            self._identified_tiles = None if identity is None else (self.tiles, identity)
+                new_tiles = [self.deck_controller.generate_alpha_key() for _ in range(self.deck_controller.deck.key_count())]
+            with self._render_state_lock:
+                self.tiles = new_tiles
+                if wrote_strip:
+                    self._video_strip = new_video_strip
+                self._identified_tiles = None if identity is None else (new_tiles, identity)
         except Exception:
             # A tile error must not kill the media thread. Keep the old tiles
             # and rate-limit the log, because a broken video fails every

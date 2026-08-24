@@ -17,14 +17,14 @@ import fixtures  # noqa: F401  (isolated data dir + sys.path, house convention)
 from PIL import Image
 
 import globals as gl
-import src.backend.DeckManagement.deck_controller.inputs as inputs_mod
+import src.backend.DeckManagement.deck_controller.input_state_classes as state_mod
 from src.backend.DeckManagement.DeckController import ControllerTouchScreenState
 
 WATCHDOG_SECONDS = 30
 
 
 class _SpyInputVideo:
-    """Stands in for InputVideo at deck_controller.inputs module scope.
+    """Stands in for InputVideo at deck_controller.input_state_classes scope.
 
     Records the display saturation it would bake into its tile cache, read
     the way the real InputVideo.__init__ reads it, and tracks reuse through
@@ -88,8 +88,8 @@ def check_keepcheck_reacquires_on_sat_change() -> None:
     state = _make_touch_state(saturation_holder)
 
     _SpyInputVideo.instances.clear()
-    real_input_video = inputs_mod.InputVideo
-    inputs_mod.InputVideo = _SpyInputVideo
+    real_input_video = state_mod.InputVideo
+    state_mod.InputVideo = _SpyInputVideo
     try:
         # The first composite at factor 1.0 constructs the strip video, which
         # bakes saturation 1.0 into its cache.
@@ -116,7 +116,7 @@ def check_keepcheck_reacquires_on_sat_change() -> None:
             f"(audit §5a, e314a086 :4230)"
         )
     finally:
-        inputs_mod.InputVideo = real_input_video
+        state_mod.InputVideo = real_input_video
         _SpyInputVideo.instances.clear()
 
     print("PASS: touchscreen bg-video keep-check re-acquires on a saturation change")
