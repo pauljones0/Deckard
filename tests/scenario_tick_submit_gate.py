@@ -11,8 +11,9 @@ only ActionCore entries, and the gate ahead of the submit matches that.
 # table, so an emptiness test alone would still submit for those inputs.
 #
 # The gate reads the action table without a lock, and that read raises while
-# another thread edits the table. The tick thread has no handler for that, and
-# a raise there ends the deck's ticking, so the gate fails open.
+# another thread edits the table. The loop's guard would then cost this input
+# its tick and write a record for a page edit that is no fault, so the gate
+# fails open and never leans on the guard.
 import os
 import threading
 
@@ -286,9 +287,9 @@ def shut_down_pool_leaves_the_tick_quiet(controller, probe, identifier) -> None:
     teardown shuts both pools down and never nulls them, and close() shuts
     down before it nulls, so every tick in between meets a live attribute over
     a dead pool. The pool answers such a submit with None instead of raising,
-    and the tick has to read that: an exception on the tick thread ends this
-    deck's ticking for the life of the process, and the input it died on keeps
-    its re-entrancy flag set, which silences that input as well.
+    and the tick has to read that: the loop's guard costs the raising input its
+    tick and writes a record, and the input it raised on keeps its re-entrancy
+    flag set, which silences that input for good.
 
     This leg runs last. It leaves the deck without a usable action pool.
     """
@@ -309,9 +310,9 @@ def shut_down_pool_leaves_the_tick_quiet(controller, probe, identifier) -> None:
         state.own_actions_tick_threaded()
     except Exception as error:
         raise AssertionError(
-            f"a tick submit onto a shut-down pool raised {error!r} -- on the tick "
-            f"thread that ends this deck's ticking for good, and {identifier} "
-            f"strands its re-entrancy flag set") from error
+            f"a tick submit onto a shut-down pool raised {error!r} -- the loop's "
+            f"guard costs {identifier} its tick and strands its re-entrancy "
+            f"flag set, which silences that input for good") from error
     assert state._tick_running is False, (
         f"the tick took no worker, because the pool is shut down, but left the "
         f"re-entrancy flag set on {identifier} -- that input never ticks again")
