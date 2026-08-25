@@ -31,9 +31,12 @@ if TYPE_CHECKING:
 def apply(key: "ControllerKey", image: Image.Image) -> Image.Image:
     """The picture a held key shows, given the one it shows at rest.
 
-    It hands back image itself while the shrink is off. The caller closes the
-    images it did not paint and tells them apart by identity, so the same
-    object coming back out keeps that test right.
+    It hands back image itself while the shrink is off, rather than a copy of
+    it. That saves one tile-sized allocation per composite of a held key and
+    nothing more. The caller closes the images it did not paint and tells them
+    apart by identity, and a copy would leave it closing one of them twice,
+    which PIL accepts. The scenario pins the identity, so it stays a decision
+    rather than something that drifts.
     """
     if not gl.settings_manager.app().shrink_on_press:
         return image

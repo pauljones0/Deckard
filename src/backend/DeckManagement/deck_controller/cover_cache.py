@@ -63,10 +63,17 @@ A read before and a read after are still not enough on their own, because a
 gate can arrive and leave between them and neither sees it, while the picture
 in the middle carries what it drew. So the rule underneath all of this is that
 the read which decides the picture is the read which decides the store: the
-two branches of the composite that draw a gated look, the press shrink and the
-warning point, hand back NO_STORE beside the picture they made. Their gates are
-therefore not judged twice and guessed at, but recorded once by the code that
-acted on them.
+two branches of the composite that act on a gate, the press look and the
+warning point, hand back NO_STORE beside the picture they made. Their gates
+are therefore not judged twice and guessed at, but recorded once by the code
+that acted on them.
+
+The press look is a setting, and the refusal is not. A general setting turns
+the shrink off, and a press then composites the picture the key already shows,
+byte for byte. The gate stays unconditional through that: no kept composite
+may be stamped while a key is held, whether or not the press drew anything.
+Reading a picture to decide is exactly what this module refuses to do, and a
+press that draws nothing leaves no picture to read anyway.
 
 The reuse path is a hash lookup and a device offer, so a covered key costs the
 same as a passthrough key over a video background: no composite, no encode and
@@ -127,11 +134,19 @@ def _gates_clear(key: "ControllerKey", state: "ControllerKeyState") -> bool:
     picture of a static foreground.
 
     An overlay or a video paints over that foreground, a rolling label redraws
-    every tick, a press shrinks the composite onto a transparent margin the
-    background then shows through, and the warning point marks a key whose
-    action is about to be replaced. Each of the four is read on both sides of
-    a composite, before it and after it, so one definition serves both and
-    they cannot disagree.
+    every tick, a press draws the look of a held key, and the warning point
+    marks a key whose action is about to be replaced. Each of the four is read
+    on both sides of a composite, before it and after it, so one definition
+    serves both and they cannot disagree.
+
+    The press look is a setting: it shrinks the composite onto a transparent
+    margin the background shows through, unless the general settings turn that
+    off, and then a press composites the resting picture byte for byte. The
+    press gate is unconditional through both, and must stay so. A held key
+    must leave no kept composite behind whatever it drew, and with the shrink
+    off there is nothing in the picture to say a press was ever there. The
+    cost of the gate is a full composite per frame while a covered key is
+    held, which lasts as long as the finger does.
     """
     if state.key_video is not None or state._overlay is not None:
         return False

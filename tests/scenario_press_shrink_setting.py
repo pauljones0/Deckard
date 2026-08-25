@@ -27,6 +27,7 @@ from fixtures import start_watchdog, teardown
 
 from src.backend.DeckManagement.InputIdentifier import Input
 from src.backend.DeckManagement.Subclasses.KeyImage import InputImage
+from src.backend.DeckManagement.deck_controller import press_look
 
 
 OPAQUE = (40, 160, 90, 255)
@@ -170,7 +171,16 @@ def check_setting_stops_the_shrink(controller) -> None:
             "with the shrink off, a pressed key must draw the picture it shows at rest"
         pressed.close()
 
-        # Back on, with no page reload and no restart, on the same held key.
+        assert press_look.apply(key, at_rest) is at_rest, (
+            "with the shrink off the pressed look must be the resting image itself "
+            "and not a copy of it. A copy costs one tile-sized allocation per "
+            "composite of a held key, and the caller tells the images it must close "
+            "apart by identity"
+        )
+
+        # Back on, with no page reload and no restart. This composites the held
+        # key by hand. The app enqueues no paint for a key that is already
+        # down, so on a deck the new look shows from the next press.
         _set_shrink(True)
         pressed_again = _composite(key)
         assert pressed_again.tobytes() != at_rest.tobytes(), (
