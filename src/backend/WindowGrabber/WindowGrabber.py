@@ -652,39 +652,65 @@ class WindowGrabber:
         if active_page_change_info.get("stay-on-page", True):
             return
 
-        manual_path = self._claim_manual_page(deck_controller, active_page)
+        manual_path = self._manual_page_to_restore(deck_controller, active_page)
         if manual_path is None:
             return
 
         page = page_manager.get_page(manual_path, deck_controller)
         if page is None:
             # The user deleted the manually chosen page. Nothing remains to go
-            # back to, and a load of None takes the deck's page away.
+            # back to, and a load of None takes the deck's page away. The deck
+            # keeps the automatic flag and the remembered path, so a later
+            # window change tries the restore again, and an automatic switch
+            # from here does not mistake the page on the deck for a manual
+            # choice and overwrite the remembered path with it.
             log.error(f"Manual page restore skipped: {manual_path} did not load")
+            return
+
+        if not self._claim_manual_page(deck_controller, active_page):
             return
         deck_controller.load_page(page, allow_reload=False)
 
-    def _claim_manual_page(self, deck_controller: "DeckController", active_page: "Page") -> str | None:
-        """Answers the page this deck goes back to, and marks the deck as no
-        longer automatically loaded. None when there is nothing to undo.
+    def _manual_page_to_restore(self, deck_controller: "DeckController", active_page: "Page") -> str | None:
+        """Answers the page this deck goes back to. None when there is nothing
+        to undo.
+
+        This reads the routing state and writes none of it. The build that
+        follows can fail, and a deck marked as no longer automatic before that
+        build has no way back: no later window change retries the restore, and
+        the next automatic switch reads the page on the deck as a manual choice
+        and forgets the real one.
+        """
+        with self._dispatch_lock:
+            if not self._restore_still_owned(deck_controller, active_page):
+                return None
+            return deck_controller.last_manual_loaded_page_path
+
+    def _claim_manual_page(self, deck_controller: "DeckController", active_page: "Page") -> bool:
+        """Marks the deck as no longer automatically loaded, and answers
+        whether this routing still owns the restore.
 
         The same decision as an automatic switch, and it holds the routing lock
         for the same reason: the flag it reads is the flag it writes, and two
         routings that both read it before either writes both undo the switch.
-        The load stays outside the lock, because it marshals onto the GTK main
-        thread.
+        The conditions are read again here because the page build in between
+        runs outside the lock. The load stays outside the lock too, because it
+        marshals onto the GTK main thread.
         """
         with self._dispatch_lock:
-            if not getattr(deck_controller, "page_auto_loaded", False):
-                return None
-            if deck_controller.active_page is not active_page:
-                # Another routing moved the deck after the settings above were
-                # read, so those settings describe a page the deck has left.
-                # That routing owns the decision now.
-                return None
-
-            manual_path = deck_controller.last_manual_loaded_page_path
-            if manual_path is None:
-                return None
+            if not self._restore_still_owned(deck_controller, active_page):
+                return False
             deck_controller.page_auto_loaded = False
-            return manual_path
+            return True
+
+    def _restore_still_owned(self, deck_controller: "DeckController", active_page: "Page") -> bool:
+        """Answers whether a restore off active_page is this routing's to make.
+        Call under the routing lock."""
+        if not getattr(deck_controller, "page_auto_loaded", False):
+            return False
+        if deck_controller.active_page is not active_page:
+            # Another routing moved the deck after the settings above were
+            # read, so those settings describe a page the deck has left. That
+            # routing owns the decision now.
+            return False
+        return deck_controller.last_manual_loaded_page_path is not None
