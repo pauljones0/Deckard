@@ -38,8 +38,11 @@ the update path's job.
 
 A malformed list is no reason to refuse the plugin the user asked for. A
 "dependencies" value that is not a list, and any element that is not a
-non-empty string, is logged and dropped, and the plugin itself still
-installs. An id is matched exactly, after leading and trailing spaces are
+store id, is logged and dropped, and the plugin itself still installs. An
+element is held to the same id shape the installer applies to a manifest
+id, so an id with a newline, a control character, a path separator or no
+bound on its length never enters the plan or the consent dialog that names
+it. An id is matched exactly, after leading and trailing spaces are
 removed, and the match is case sensitive, because a store id is.
 
 Consent covers the set. The prompt names every item, root and
@@ -289,15 +292,27 @@ def declared_dependencies(item: CatalogItem,
         log.warning(f"Ignoring the dependencies of {item.asset_id}: {MANIFEST_KEY} holds "
                     f"a {type(raw).__name__} and not a list")
         return []
+    # Deferred, because this leaf module must stay importable before the
+    # store backend pulls in the whole store layer.
+    from src.backend.Store.StoreBackend import StoreBackend
+
     named: list[str] = []
     for value in raw:
-        if not isinstance(value, str) or not value.strip():
+        # Stripped first, so a padded id matches the index instead of
+        # missing it and reading as unknown. The match itself is exact and
+        # case sensitive, because a store id is.
+        candidate = value.strip() if isinstance(value, str) else value
+        # The id shape gate, the same one the installer applies to a manifest
+        # id. An id that fails it can never match a real catalog id, so
+        # nothing legitimate is lost, and an unsafe id is dropped as
+        # malformed here rather than carried on into the plan. Without this a
+        # crafted id, with an internal newline or of any length, would reach
+        # the set-consent dialog body through plan.unknown, above the
+        # buttons that approve installing code.
+        if not StoreBackend.is_safe_asset_id(candidate):
             log.warning(f"Ignoring a dependency of {item.asset_id}: {value!r} is not a store id")
             continue
-        # Stripped here and nowhere later, so a padded id matches the index
-        # instead of missing it and reading as unknown. The match itself is
-        # exact and case sensitive, because a store id is.
-        named.append(value.strip())
+        named.append(candidate)
     return named
 
 

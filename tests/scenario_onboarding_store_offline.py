@@ -186,6 +186,108 @@ def check_missing_row_spinner_recovers() -> None:
     print("PASS: MissingRow install surfaces failure when the store is unreachable")
 
 
+def check_missing_row_names_the_failed_dependency_class() -> None:
+    """MissingRow installs a plugin and whatever its manifest names. When a
+    pack it pulled in is what failed, the row label alone says nothing about
+    which item failed or that anything landed, so a detailed notification
+    fires and it names the class of the item that actually failed, not the
+    plugin the user clicked."""
+    import types as _types
+
+    from src.backend import timer_wheel
+    from src.backend.Store.store_result import Err, ErrReason, Ok
+    from src.windows.mainWindow.elements.Sidebar.elements.ActionMissing.MissingRow import MissingRow
+    from src.windows.Store.StoreData import IconData, PluginData
+    import src.windows.Store.install_consent as install_consent
+
+    pinned = "0" * 40
+    root = PluginData(github="https://github.com/t/Root", plugin_id="com_root_Plugin",
+                      plugin_name="Root", commit_sha=pinned)
+    pack = IconData(github="https://github.com/t/Icons", icon_id="com_root_Icons",
+                    icon_name="Icons", commit_sha=pinned)
+    installed: list = []
+
+    def install_plugin(plugin_data, auto_update=False, ask_install_script=None):
+        installed.append(plugin_data.plugin_id)
+        return Ok(None)
+
+    def install_icon(icon_data):
+        installed.append(icon_data.icon_id)
+        return Err(ErrReason.NO_CONNECTION, "offline")
+
+    backend = _types.SimpleNamespace(
+        get_plugin_for_id=lambda plugin_id: root,
+        install_plugin=install_plugin,
+        install_icon=install_icon,
+        get_manifest=lambda url, commit: (
+            {"dependencies": ["com_root_Icons"]} if url.endswith("/Root") else {}),
+        get_all_plugins=lambda include_images=True: Ok([root]),
+        get_all_icons=lambda include_images=True: Ok([pack]),
+        get_all_wallpapers=lambda include_images=True: Ok([]),
+        get_all_sd_plus_bar_wallpapers=lambda include_images=True: Ok([]),
+    )
+    gl.store_backend = backend
+    gl.app = None  # so the install parents its prompts on no window
+
+    # Answer the set prompt without a real dialog. MissingRow imports
+    # make_set_consent at call time, so patching the module attribute lands.
+    asked: list = []
+    original_set_consent = install_consent.make_set_consent
+    install_consent.make_set_consent = lambda parent: (
+        lambda root_name, plan: (asked.append(root_name), True)[1])
+
+    class _Notify:
+        def __init__(self):
+            self.errors = []
+
+        def error(self, text, title=None):
+            self.errors.append((text, title))
+
+        def info(self, text, title=None):
+            pass
+
+    recorder = _Notify()
+    gl.notify = recorder
+
+    real_schedule = timer_wheel.schedule
+    timer_wheel.schedule = lambda *a, **k: None
+
+    label = _LabelRecorder("Installing...")
+    spinner = _SpinnerRecorder()
+    fake = _types.SimpleNamespace(
+        action_id="com_root_Plugin::action0",
+        spinner=spinner,
+        label=label,
+        install_label="Install",
+        installing_label="Installing...",
+        install_failed_label="Install failed",
+        add_css_class=lambda name: None,
+        set_sensitive=lambda sensitive: None,
+        main_button=_types.SimpleNamespace(set_sensitive=lambda sensitive: None),
+    )
+    fake.show_install_error = _types.MethodType(MissingRow.show_install_error, fake)
+    fake.hide_install_error = _types.MethodType(MissingRow.hide_install_error, fake)
+
+    try:
+        MissingRow.install(fake)
+        pump_main_context()
+    finally:
+        timer_wheel.schedule = real_schedule
+        install_consent.make_set_consent = original_set_consent
+
+    assert asked, "the set prompt must have been reached"
+    assert installed == ["com_root_Icons"], (
+        f"the pack installs first and fails, so the root never runs, got {installed}")
+    assert len(recorder.errors) == 1, (
+        "a pack pulled in by the plugin that failed must be reported through "
+        f"the notification that can carry the detail, got {recorder.errors}")
+    _text, title = recorder.errors[0]
+    assert title == "Icon pack install failed", (
+        "the title must name the class of the item that actually failed, and "
+        f"not the plugin the user clicked, got {title!r}")
+    print("PASS: MissingRow names the failed dependency's class, not the plugin's")
+
+
 def check_install_failures_toast() -> None:
     from src.windows.Onboarding.OnboardingWindow import OnboardingScreen5
     from src.backend.notify import Notify
@@ -252,6 +354,7 @@ def main() -> None:
     check_recommendations_offline()
     check_get_plugin_for_id_offline()
     check_missing_row_spinner_recovers()
+    check_missing_row_names_the_failed_dependency_class()
     check_install_failures_toast()
     print("PASS: scenario_onboarding_store_offline")
 

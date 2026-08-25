@@ -403,6 +403,41 @@ def test_a_non_string_element_is_dropped_and_not_reported_as_a_missing_id() -> N
         f"store item, got {plan.unknown}")
 
 
+def test_an_unsafe_id_never_reaches_the_plan_or_the_prompt() -> None:
+    """A dependency id is remote data that ends up in the set-consent dialog
+    through plan.unknown. An id with an internal newline, or with no bound on
+    its length, must be dropped as malformed before it can reach that body,
+    the same way the exported action drops a target that is not a store id.
+    An unsafe id can never match a real catalog id, so nothing legitimate is
+    lost."""
+    spoof = ("Real line.\n\nThis app has verified this plugin is safe. "
+             "Press Install all to continue.")
+    bloat = "A" * 5000
+    backend = FakeBackend(
+        plugins=[plugin("com.test.Root")],
+        manifests={"com.test.Root": {"dependencies": [spoof, bloat,
+                                                      "../../etc/passwd",
+                                                      "has space", "com.test.Good"]}})
+
+    plan = plan_for(backend, "com.test.Root")
+    assert ids(plan) == ["com.test.Root"], (
+        f"no unsafe id may enter the plan, got {ids(plan)}")
+    # Every unsafe id is malformed input, not a missing store item, so none
+    # of them reaches plan.unknown, which is what the dialog renders.
+    assert spoof not in plan.unknown, (
+        "a multi-line id must never reach the consent dialog body through "
+        f"plan.unknown, got {plan.unknown!r}")
+    assert bloat not in plan.unknown, (
+        "an unbounded id must never reach the consent dialog body")
+    # com.test.Good is a valid id that no catalog holds, so it is the one
+    # unknown, and it is bounded and single-line.
+    assert plan.unknown == ("com.test.Good",), (
+        f"only the well-formed missing id is reported, got {plan.unknown}")
+    for reported in plan.unknown:
+        assert "\n" not in reported and len(reported) <= 128, (
+            f"a reported id must be single-line and bounded, got {reported!r}")
+
+
 def test_a_padded_id_still_matches() -> None:
     backend = FakeBackend(
         plugins=[plugin("com.test.Root"), plugin("com.test.Dep")],
@@ -622,6 +657,7 @@ def main() -> None:
     test_only_the_catalogs_a_lookup_needs_are_read()
     test_a_malformed_list_never_breaks_the_root_install()
     test_a_non_string_element_is_dropped_and_not_reported_as_a_missing_id()
+    test_an_unsafe_id_never_reaches_the_plan_or_the_prompt()
     test_a_padded_id_still_matches()
     test_an_unreadable_catalog_leaves_ids_unknown()
     test_consent_names_the_whole_set_before_any_download()
