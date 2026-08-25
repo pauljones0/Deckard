@@ -73,6 +73,17 @@ bundle as a release asset.
   emptying the query brings it back. A search that matches nothing says so.
   The wallpaper and SD+ bar wallpaper choosers search the same way.
 
+- A store plugin can name the other store items it needs, and installing it
+  installs them first. The plugin's manifest carries a "dependencies" list of
+  store ids, each naming another plugin, icon pack, wallpaper pack or SD+ bar
+  wallpaper pack. Before anything downloads, one prompt names the whole set in
+  the order it will install, and cancelling there installs none of it. Only an
+  id the vetted store catalog already lists resolves, so a dependency reaches
+  no repository the catalog does not hold. An item you already have is left
+  alone. If one item of a set fails, the rest do not start and the report says
+  which ones installed, and those stay installed. Removing a plugin later
+  leaves the items it named in place.
+
 ### Changed
 
 - The revert arrow beside the frame-rate spinner in the background editor now

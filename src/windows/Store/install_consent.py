@@ -1,15 +1,16 @@
 """The prompts a plugin install has to get past, and the one wait behind
 them.
 
-Two questions reach the user from an install worker thread. Whether a
+Three questions reach the user from an install worker thread. Whether a
 plugin's install script may run, which the install gate asks before it
-destroys a working install. And whether an install that arrived on the
-exported action may start at all, which is the only thing standing in
-front of a session-bus peer.
+destroys a working install. Whether a whole set of store items may be
+installed, which dependency resolution asks before the first download.
+And whether an install that arrived on the exported action may start at
+all, which is the only thing standing in front of a session-bus peer.
 
-Both are built and shown on the GTK main loop while the worker blocks on
-an event, so each answer comes back to the worker as a plain bool off the
-main thread.
+Every one of them is built and shown on the GTK main loop while the
+worker blocks on an event, so each answer comes back to the worker as a
+plain bool off the main thread.
 """
 import threading
 from collections.abc import Callable
@@ -87,6 +88,28 @@ def make_consent(parent: "Gtk.Window | None") -> Callable[[str], bool]:
                   "Either way the plugin's own code still runs once it loads."),
             agree_label="Run",
             refuse_label="Skip",
+            record=record,
+        ))
+
+    return ask
+
+
+def make_set_consent(parent: "Gtk.Window | None") -> Callable[[str, list[str]], bool]:
+    """A consent callable for an install that carries dependencies. It names
+    every item before anything downloads, and a refusal refuses the whole
+    set."""
+    def ask(root_name: str, names: list[str]) -> bool:
+        listed = "\n".join(f"• {name}" for name in names)
+        return _ask(f"dependency prompt for {root_name}", lambda record: _dialog(
+            parent,
+            title="Install these store items?",
+            heading=f"{root_name} needs other store items",
+            body=(f"Installing {root_name} also installs the items it names, in "
+                  f"this order:\n\n{listed}\n\nThey come from the same vetted "
+                  "store catalog. Removing this plugin later leaves them "
+                  "installed."),
+            agree_label="Install all",
+            refuse_label="Cancel",
             record=record,
         ))
 

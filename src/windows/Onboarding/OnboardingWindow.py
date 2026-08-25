@@ -24,7 +24,7 @@ from GtkHelper.GtkHelper import LoadingScreen, run_on_main
 from autostart import is_flatpak
 from src.backend.DeckManagement.HelperMethods import open_web
 from src.backend import services
-from src.backend.Store.store_result import Err
+from src.backend.Store import dependencies
 from src.windows.Onboarding.PluginRecommendations import PluginRecommendations
 
 gi.require_version("Gtk", "4.0")
@@ -357,9 +357,13 @@ class OnboardingScreen5(Gtk.Box):
                 log.error(f"Onboarding: could not resolve {plugin_data.plugin_name} for install")
                 failed.append(plugin_data.plugin_name or plugin_data.plugin_id or "unknown plugin")
                 continue
-            result = backend.install_plugin(plugin)
-            if isinstance(result, Err):
-                log.error(f"Onboarding: failed to install {plugin_data.plugin_name}: {result!r}")
+            # No prompt here: the first run installs what the user ticked and
+            # has no surface to answer one on, so a plugin's dependencies
+            # install with it unasked. They come from the same vetted catalog.
+            report = dependencies.install_with_dependencies(
+                backend, dependencies.plugin_item(plugin))
+            if not report.ok:
+                log.error(f"Onboarding: failed to install {plugin_data.plugin_name}: {report!r}")
                 failed.append(plugin_data.plugin_name or plugin_data.plugin_id or "unknown plugin")
                 GLib.idle_add(self.onboarding_window.loading_box.progress_bar.set_text,
                               f"Failed to install {plugin_data.plugin_name}")

@@ -1,0 +1,447 @@
+"""Pins how a plugin's declared store dependencies resolve and install.
+
+The resolution legs run against catalogs and manifests this file makes up,
+so nothing here reaches the network. The install-flow legs stub the
+install methods, so the set-consent rules, the decline and the mid-set
+failure report are pinned without a download.
+"""
+import fixtures  # noqa: F401  (must be first: isolates DATA_PATH before globals)
+
+import globals as gl  # noqa: F401,E402
+
+from src.backend.Store import dependencies  # noqa: E402
+from src.backend.Store.asset_types import ICON, PLUGIN  # noqa: E402
+from src.backend.Store.store_result import Err, ErrReason, Ok  # noqa: E402
+from src.windows.Store.StoreData import IconData, PluginData  # noqa: E402
+
+WATCHDOG_SECONDS = 60
+
+
+def plugin(asset_id: str, installed: bool = False) -> PluginData:
+    return PluginData(github=f"https://github.com/test/{asset_id}",
+                      plugin_id=asset_id,
+                      plugin_name=asset_id.rsplit(".", 1)[-1],
+                      commit_sha="0" * 40,
+                      local_sha=("0" * 40) if installed else None)
+
+
+def icon(asset_id: str, installed: bool = False) -> IconData:
+    return IconData(github=f"https://github.com/test/{asset_id}",
+                    icon_id=asset_id,
+                    icon_name=asset_id.rsplit(".", 1)[-1],
+                    commit_sha="0" * 40,
+                    local_sha=("0" * 40) if installed else None)
+
+
+class FakeBackend:
+    """The store surface the resolver and the plan runner use.
+
+    manifests maps an asset id to what its manifest.json holds. A key whose
+    value is an exception is raised when that manifest is read, which is
+    what a failed fetch does.
+    """
+
+    def __init__(self, plugins=(), icons=(), manifests=None,
+                 plugin_catalog_error=None):
+        self._plugins = list(plugins)
+        self._icons = list(icons)
+        self.manifests = dict(manifests or {})
+        self._plugin_catalog_error = plugin_catalog_error
+        self.catalog_reads: list[str] = []
+        self.manifest_reads: list[str] = []
+        self.installs: list[str] = []
+        self.install_kwargs: list[dict] = []
+        self.fail_on: "str | None" = None
+
+    # Catalog reads, by the names the descriptors carry.
+
+    def get_all_plugins(self, include_images: bool = True):
+        self.catalog_reads.append("plugin")
+        if self._plugin_catalog_error is not None:
+            return self._plugin_catalog_error
+        return Ok(list(self._plugins))
+
+    def get_all_icons(self, include_images: bool = True):
+        self.catalog_reads.append("icon pack")
+        return Ok(list(self._icons))
+
+    def get_all_wallpapers(self, include_images: bool = True):
+        self.catalog_reads.append("wallpaper")
+        return Ok([])
+
+    def get_all_sd_plus_bar_wallpapers(self, include_images: bool = True):
+        self.catalog_reads.append("SD+ bar wallpaper")
+        return Ok([])
+
+    def get_manifest(self, url: str, commit):
+        asset_id = url.rsplit("/", 1)[-1]
+        self.manifest_reads.append(asset_id)
+        entry = self.manifests.get(asset_id)
+        if isinstance(entry, Exception):
+            raise entry
+        return entry
+
+    # Installs.
+
+    def install_plugin(self, plugin_data, auto_update: bool = False,
+                       ask_install_script=None):
+        return self._install(plugin_data.plugin_id,
+                             {"ask_install_script": ask_install_script})
+
+    def install_icon(self, icon_data):
+        return self._install(icon_data.icon_id, {})
+
+    def _install(self, asset_id, kwargs):
+        self.installs.append(asset_id)
+        self.install_kwargs.append(kwargs)
+        if asset_id == self.fail_on:
+            return Err(ErrReason.NO_CONNECTION, "offline")
+        return Ok(None)
+
+
+def plan_for(backend: FakeBackend, root_id: str, max_depth: int = dependencies.MAX_DEPTH):
+    root = dependencies.CatalogItem(
+        PLUGIN, next(p for p in backend._plugins if p.plugin_id == root_id))
+    return dependencies.resolve(root, dependencies.CatalogIndex(backend),
+                                dependencies.manifest_reader(backend), max_depth)
+
+
+def ids(plan) -> list[str]:
+    return [item.asset_id for item in plan.order]
+
+
+# Resolution
+
+def test_a_cycle_resolves_once() -> None:
+    backend = FakeBackend(
+        plugins=[plugin("com.test.A"), plugin("com.test.B")],
+        manifests={"com.test.A": {"dependencies": ["com.test.B"]},
+                   "com.test.B": {"dependencies": ["com.test.A"]}})
+
+    plan = plan_for(backend, "com.test.A")
+    assert ids(plan) == ["com.test.B", "com.test.A"], (
+        "a cycle must resolve to each item once, dependency first, "
+        f"got {ids(plan)}")
+
+
+def test_a_shared_dependency_installs_once_and_first() -> None:
+    backend = FakeBackend(
+        plugins=[plugin("com.test.Root"), plugin("com.test.Left"),
+                 plugin("com.test.Right"), plugin("com.test.Shared")],
+        manifests={
+            "com.test.Root": {"dependencies": ["com.test.Left", "com.test.Right"]},
+            "com.test.Left": {"dependencies": ["com.test.Shared"]},
+            "com.test.Right": {"dependencies": ["com.test.Shared"]},
+            "com.test.Shared": {},
+        })
+
+    plan = plan_for(backend, "com.test.Root")
+    assert ids(plan) == ["com.test.Shared", "com.test.Left", "com.test.Right",
+                         "com.test.Root"], (
+        "a shared dependency must appear once, before both of the items that "
+        f"name it, got {ids(plan)}")
+
+
+def test_depth_is_bounded() -> None:
+    chain = [plugin(f"com.test.D{i}") for i in range(12)]
+    manifests = {f"com.test.D{i}": {"dependencies": [f"com.test.D{i + 1}"]}
+                 for i in range(11)}
+    manifests["com.test.D11"] = {}
+    backend = FakeBackend(plugins=chain, manifests=manifests)
+
+    plan = plan_for(backend, "com.test.D0", max_depth=3)
+    assert plan.truncated, "a chain past the depth bound must report truncated"
+    assert ids(plan) == ["com.test.D3", "com.test.D2", "com.test.D1", "com.test.D0"], (
+        f"the walk must stop at the depth bound, got {ids(plan)}")
+
+    short = FakeBackend(plugins=chain[:3],
+                        manifests={"com.test.D0": {"dependencies": ["com.test.D1"]},
+                                   "com.test.D1": {"dependencies": ["com.test.D2"]},
+                                   "com.test.D2": {}})
+    inside = plan_for(short, "com.test.D0", max_depth=3)
+    assert not inside.truncated, (
+        "a chain that ends inside the bound must not report truncated")
+    assert ids(inside) == ["com.test.D2", "com.test.D1", "com.test.D0"], (
+        f"it must resolve whole, got {ids(inside)}")
+
+
+def test_an_unknown_id_is_reported_and_never_fetched() -> None:
+    backend = FakeBackend(
+        plugins=[plugin("com.test.Root")],
+        icons=[icon("com.test.Icons")],
+        manifests={"com.test.Root": {"dependencies": ["com.test.Nowhere"]}})
+
+    plan = plan_for(backend, "com.test.Root")
+    assert ids(plan) == ["com.test.Root"], (
+        f"an unresolvable dependency must not enter the plan, got {ids(plan)}")
+    assert plan.unknown == ("com.test.Nowhere",), (
+        f"the unresolvable id must be reported, got {plan.unknown}")
+    assert "com.test.Nowhere" not in backend.manifest_reads, (
+        "an id no vetted catalog holds must never be fetched, got "
+        f"{backend.manifest_reads}")
+
+
+def test_an_installed_dependency_is_skipped_with_its_own_chain() -> None:
+    backend = FakeBackend(
+        plugins=[plugin("com.test.Root"), plugin("com.test.Have", installed=True),
+                 plugin("com.test.Under")],
+        manifests={"com.test.Root": {"dependencies": ["com.test.Have"]},
+                   "com.test.Have": {"dependencies": ["com.test.Under"]}})
+
+    plan = plan_for(backend, "com.test.Root")
+    assert ids(plan) == ["com.test.Root"], (
+        f"an installed dependency must not be reinstalled, got {ids(plan)}")
+    assert "com.test.Have" not in backend.manifest_reads, (
+        "an installed dependency ends its branch, so its own manifest is not "
+        f"read either, got {backend.manifest_reads}")
+
+
+def test_an_installed_root_still_installs() -> None:
+    backend = FakeBackend(plugins=[plugin("com.test.Root", installed=True)],
+                          manifests={"com.test.Root": {}})
+
+    plan = plan_for(backend, "com.test.Root")
+    assert ids(plan) == ["com.test.Root"], (
+        f"a reinstall of an installed root must still run, got {ids(plan)}")
+
+
+def test_a_pack_dependency_resolves_through_its_own_catalog() -> None:
+    backend = FakeBackend(
+        plugins=[plugin("com.test.Root")],
+        icons=[icon("com.test.Icons")],
+        manifests={"com.test.Root": {"dependencies": ["com.test.Icons"]},
+                   "com.test.Icons": {}})
+
+    plan = plan_for(backend, "com.test.Root")
+    assert ids(plan) == ["com.test.Icons", "com.test.Root"], (
+        f"a dependency on an icon pack must resolve, got {ids(plan)}")
+    assert plan.order[0].descriptor is ICON, (
+        "the pack must carry its own descriptor, so the install goes through "
+        f"install_icon, got {plan.order[0].descriptor.display_name}")
+
+
+def test_only_the_catalogs_a_lookup_needs_are_read() -> None:
+    backend = FakeBackend(plugins=[plugin("com.test.Root"), plugin("com.test.Dep")],
+                          manifests={"com.test.Root": {"dependencies": ["com.test.Dep"]},
+                                     "com.test.Dep": {}})
+
+    plan_for(backend, "com.test.Root")
+    assert backend.catalog_reads == ["plugin"], (
+        "an id the plugin catalog answers must not cost the pack catalogs, "
+        f"got {backend.catalog_reads}")
+
+    quiet = FakeBackend(plugins=[plugin("com.test.Alone")],
+                        manifests={"com.test.Alone": {}})
+    plan_for(quiet, "com.test.Alone")
+    assert quiet.catalog_reads == [], (
+        "a plugin that names no dependency must read no catalog at all, "
+        f"got {quiet.catalog_reads}")
+
+
+def test_a_malformed_list_never_breaks_the_root_install() -> None:
+    shapes = [
+        {"dependencies": "com.test.Dep"},
+        {"dependencies": 5},
+        {"dependencies": {"com.test.Dep": "1.0"}},
+        {"dependencies": [None, 7, "", "   ", ["com.test.Dep"]]},
+        {},
+        None,
+        ["not", "an", "object"],
+        RuntimeError("the manifest fetch failed"),
+    ]
+    for shape in shapes:
+        backend = FakeBackend(plugins=[plugin("com.test.Root"), plugin("com.test.Dep")],
+                              manifests={"com.test.Root": shape})
+        plan = plan_for(backend, "com.test.Root")
+        assert ids(plan) == ["com.test.Root"], (
+            f"a manifest holding {shape!r} must still install the plugin "
+            f"itself and nothing else, got {ids(plan)}")
+
+    # One good string beside the junk still resolves.
+    backend = FakeBackend(
+        plugins=[plugin("com.test.Root"), plugin("com.test.Dep")],
+        manifests={"com.test.Root": {"dependencies": [None, "com.test.Dep", 3]},
+                   "com.test.Dep": {}})
+    plan = plan_for(backend, "com.test.Root")
+    assert ids(plan) == ["com.test.Dep", "com.test.Root"], (
+        f"a usable id beside malformed ones must still resolve, got {ids(plan)}")
+
+
+def test_an_unreadable_catalog_leaves_ids_unknown() -> None:
+    backend = FakeBackend(
+        plugins=[plugin("com.test.Root")],
+        manifests={"com.test.Root": {"dependencies": ["com.test.Dep"]}},
+        plugin_catalog_error=Err(ErrReason.NO_CONNECTION, "offline"))
+    root = dependencies.CatalogItem(PLUGIN, plugin("com.test.Root"))
+    plan = dependencies.resolve(root, dependencies.CatalogIndex(backend),
+                                dependencies.manifest_reader(backend))
+    assert ids(plan) == ["com.test.Root"], (
+        f"an unreadable catalog must not invent a dependency, got {ids(plan)}")
+    assert plan.unknown == ("com.test.Dep",), (
+        f"the id must be reported unresolved, got {plan.unknown}")
+
+
+# Install flow
+
+class SetConsent:
+    def __init__(self, agree: bool):
+        self.agree = agree
+        self.asked: list[tuple[str, list[str]]] = []
+        self.installs_when_asked: "int | None" = None
+        self.backend: "FakeBackend | None" = None
+
+    def __call__(self, root_name: str, names: list[str]) -> bool:
+        self.asked.append((root_name, list(names)))
+        if self.backend is not None:
+            self.installs_when_asked = len(self.backend.installs)
+        return self.agree
+
+
+def flow_backend() -> FakeBackend:
+    return FakeBackend(
+        plugins=[plugin("com.test.Root"), plugin("com.test.Dep")],
+        icons=[icon("com.test.Icons")],
+        manifests={"com.test.Root": {"dependencies": ["com.test.Dep", "com.test.Icons"]},
+                   "com.test.Dep": {},
+                   "com.test.Icons": {}})
+
+
+def root_item(backend: FakeBackend):
+    return dependencies.plugin_item(
+        next(p for p in backend._plugins if p.plugin_id == "com.test.Root"))
+
+
+def test_consent_names_the_whole_set_before_any_download() -> None:
+    backend = flow_backend()
+    consent = SetConsent(agree=True)
+    consent.backend = backend
+
+    report = dependencies.install_with_dependencies(
+        backend, root_item(backend), confirm_set=consent)
+
+    assert len(consent.asked) == 1, (
+        f"the set must be confirmed exactly once, got {consent.asked}")
+    root_name, names = consent.asked[0]
+    assert root_name == "Root", f"the prompt must name the root, got {root_name!r}"
+    assert names == ["Dep", "Icons", "Root"], (
+        "the prompt must name every item of the set, in install order, "
+        f"got {names}")
+    assert consent.installs_when_asked == 0, (
+        "the prompt must be answered before anything downloads, but "
+        f"{consent.installs_when_asked} installs had already run")
+    assert backend.installs == ["com.test.Dep", "com.test.Icons", "com.test.Root"], (
+        f"the set must install dependencies first, got {backend.installs}")
+    assert report.ok and report.installed == (
+        "com.test.Dep", "com.test.Icons", "com.test.Root"), (
+        f"the report must list every item that landed, got {report!r}")
+
+
+def test_a_decline_declines_the_whole_set() -> None:
+    backend = flow_backend()
+    consent = SetConsent(agree=False)
+
+    report = dependencies.install_with_dependencies(
+        backend, root_item(backend), confirm_set=consent)
+
+    assert backend.installs == [], (
+        f"a declined set must install nothing at all, got {backend.installs}")
+    assert report.declined and not report.ok, (
+        f"the report must say the set was declined, got {report!r}")
+    assert report.installed == (), (
+        f"a declined set landed nothing, got {report.installed}")
+
+
+def test_a_plugin_with_no_dependencies_is_not_asked_twice() -> None:
+    backend = FakeBackend(plugins=[plugin("com.test.Root")],
+                          manifests={"com.test.Root": {}})
+    consent = SetConsent(agree=True)
+
+    report = dependencies.install_with_dependencies(
+        backend, root_item(backend), confirm_set=consent)
+
+    assert consent.asked == [], (
+        "a plugin that needs nothing keeps the prompts it always had, "
+        f"got {consent.asked}")
+    assert backend.installs == ["com.test.Root"] and report.ok, (
+        f"it must still install, got {backend.installs} / {report!r}")
+
+
+def test_a_mid_set_failure_stops_and_reports_what_landed() -> None:
+    backend = flow_backend()
+    backend.fail_on = "com.test.Icons"
+    consent = SetConsent(agree=True)
+
+    report = dependencies.install_with_dependencies(
+        backend, root_item(backend), confirm_set=consent)
+
+    assert backend.installs == ["com.test.Dep", "com.test.Icons"], (
+        "the items after a failure must never start, got "
+        f"{backend.installs}")
+    assert not report.ok, f"a mid-set failure is not a success, got {report!r}"
+    assert report.failed == "com.test.Icons", (
+        f"the report must name the item that failed, got {report.failed!r}")
+    assert report.installed == ("com.test.Dep",), (
+        "the report must name what landed and stays installed, got "
+        f"{report.installed}")
+    assert isinstance(report.error, Err), (
+        f"the report must carry the failure reason, got {report.error!r}")
+
+    message = dependencies.failure_message(report, "Root")
+    assert "com.test.Icons" in message and "com.test.Dep" in message, (
+        f"the message must name the failure and what stays, got {message!r}")
+
+
+def test_only_a_plugin_install_takes_the_script_prompt() -> None:
+    backend = flow_backend()
+
+    def prompt(display_name: str) -> bool:
+        return True
+
+    dependencies.install_with_dependencies(
+        backend, root_item(backend), confirm_set=SetConsent(agree=True),
+        ask_install_script=prompt)
+
+    by_id = dict(zip(backend.installs, backend.install_kwargs))
+    assert by_id["com.test.Dep"]["ask_install_script"] is prompt, (
+        "a plugin install must carry the install-script prompt")
+    assert by_id["com.test.Root"]["ask_install_script"] is prompt, (
+        "the root plugin install must carry the install-script prompt")
+    assert by_id["com.test.Icons"] == {}, (
+        "an icon pack runs no install script, so its install takes no prompt, "
+        f"got {by_id['com.test.Icons']}")
+
+
+def test_an_unattended_path_installs_the_set() -> None:
+    backend = flow_backend()
+
+    report = dependencies.install_with_dependencies(backend, root_item(backend))
+
+    assert backend.installs == ["com.test.Dep", "com.test.Icons", "com.test.Root"], (
+        "a path with no prompt surface still installs the set, got "
+        f"{backend.installs}")
+    assert report.ok, f"it must succeed, got {report!r}"
+
+
+def main() -> None:
+    fixtures.start_watchdog(WATCHDOG_SECONDS, "scenario_store_dependencies")
+    test_a_cycle_resolves_once()
+    test_a_shared_dependency_installs_once_and_first()
+    test_depth_is_bounded()
+    test_an_unknown_id_is_reported_and_never_fetched()
+    test_an_installed_dependency_is_skipped_with_its_own_chain()
+    test_an_installed_root_still_installs()
+    test_a_pack_dependency_resolves_through_its_own_catalog()
+    test_only_the_catalogs_a_lookup_needs_are_read()
+    test_a_malformed_list_never_breaks_the_root_install()
+    test_an_unreadable_catalog_leaves_ids_unknown()
+    test_consent_names_the_whole_set_before_any_download()
+    test_a_decline_declines_the_whole_set()
+    test_a_plugin_with_no_dependencies_is_not_asked_twice()
+    test_a_mid_set_failure_stops_and_reports_what_landed()
+    test_only_a_plugin_install_takes_the_script_prompt()
+    test_an_unattended_path_installs_the_set()
+    print("PASS: scenario_store_dependencies")
+
+
+if __name__ == "__main__":
+    main()

@@ -27,7 +27,7 @@ from src.backend import services
 
 import globals as gl
 from src.backend import timer_wheel
-from src.backend.Store.store_result import Err
+from src.backend.Store import dependencies
 from loguru import logger as log
 
 class MissingRow(Adw.PreferencesRow):
@@ -97,15 +97,18 @@ class MissingRow(Adw.PreferencesRow):
         if plugin is None:
             self.show_install_error()
             return
-        # Install the plugin. An Err is a failure, and any other result is
-        # the one success. The read of the result keeps a failed install from
-        # reaching the installed UI reset. The consent prompt gates the
-        # install script, the same as a store-window install; this runs on a
-        # worker thread, so the prompt marshals to the main loop.
-        from src.windows.Store.install_consent import make_consent
-        result = backend.install_plugin(
-            plugin, ask_install_script=make_consent(gl.app.main_win if gl.app is not None else None))
-        if isinstance(result, Err):
+        # Install the plugin and whatever its manifest names beside it. The
+        # read of the report keeps a failed install from reaching the
+        # installed UI reset. Both prompts gate the install the same way a
+        # store-window install is gated; this runs on a worker thread, so
+        # each one marshals to the main loop.
+        from src.windows.Store.install_consent import make_consent, make_set_consent
+        window = gl.app.main_win if gl.app is not None else None
+        report = dependencies.install_with_dependencies(
+            backend, dependencies.plugin_item(plugin),
+            confirm_set=make_set_consent(window),
+            ask_install_script=make_consent(window))
+        if not report.ok:
             self.show_install_error()
             return
         
