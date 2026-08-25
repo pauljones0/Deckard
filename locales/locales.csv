@@ -140,6 +140,12 @@ deck.background-group.title;Hintergrund;Background;Fonds d'écran;Fondo;Fundo
 deck.background-group.description;Betreffen das ganze Deck, sofern nicht überschrieben;Applies to the whole deck unless overwritten;S'applique à tout le Deck sauf indication contraire;Se aplica a toda la cubierta a menos que se sobrescriba;Aplica-se a todo o deck a menos que seja substituído
 deck.background-group.enable;Hintergrund aktivieren;Enable Background;Activer l'arrière-plan;Habilitar fondo;Habilitar Fundo
 deck.background-group.extend-background-to-touchscreen;Hintergrund über Tasten und Touchscreen erstrecken;Extend the background across the buttons and touchscreen;Étendre l'arrière-plan sur les boutons et l'écran tactile;Extender el fondo por los botones y la pantalla táctil;Estender o fundo pelos botões e pela tela sensível ao toque
+deck.background-group.slideshow-add;Bild hinzufügen;Add Image;Ajouter une image;Añadir imagen;Adicionar imagem
+deck.background-group.slideshow-clear;Diashow leeren;Clear Slideshow;Effacer le diaporama;Borrar presentación;Limpar apresentação
+deck.background-group.slideshow-count;{count} Bilder in der Diashow;{count} images in slideshow;{count} images dans le diaporama;{count} imágenes en la presentación;{count} imagens na apresentação
+deck.background-group.slideshow-empty;Einzelbild (keine Diashow);Single image (no slideshow);Image unique (pas de diaporama);Imagen única (sin presentación);Imagem única (sem apresentação)
+deck.background-group.slideshow-interval;Diashow-Intervall (s);Slideshow interval (s);Intervalle du diaporama (s);Intervalo de presentación (s);Intervalo da apresentação (s)
+deck.background-group.slideshow-shuffle;Zufällige Reihenfolge;Shuffle order;Ordre aléatoire;Orden aleatorio;Ordem aleatória
 background.processing;Verarbeiten...;Processing...;Traitement en cours…;Procesando…;Processando...
 asset-chooser.custom.browse-files;Durchsuchen;Browse Files;Parcourir les fichiers;Examinar archivos;Procurar Arquivos
 asset-chooser.custom.browse-files.dialog.title;Dateien auswählen;Select Files;Sélectionner des fichiers;Seleccionar archivos;Selecionar Arquivos

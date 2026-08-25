@@ -28,6 +28,7 @@ from loguru import logger as log
 from src.backend.DeckManagement.HelperMethods import is_video
 from src.backend.DeckManagement.Subclasses.background_video_cache import BackgroundVideoCache
 from src.backend.DeckManagement.deck_controller.gif_pipeline import GifBackground, GifBudgetExceeded
+from src.backend.DeckManagement.deck_controller.slideshow import IN_ORDER, Slideshow
 
 from typing import TYPE_CHECKING, cast
 if TYPE_CHECKING:
@@ -56,6 +57,14 @@ class Background:
         # which carries the same playback surface without subclassing it.
         self.video: "BackgroundVideo | GifBackground | None" = None
 
+        # The still-image rotation, or None when the background is a single
+        # image, a video, or blank. It owns the index and the interval clock;
+        # slideshow_tick() reads it each media pass and swaps self.image when
+        # an image comes due. It and self.video are mutually exclusive: a
+        # slideshow is a list of stills, so set_video() and every single-image
+        # or blank swap clear it, and set_slideshow() nulls self.video.
+        self.slideshow: Slideshow | None = None
+
         # Extend the background onto the SD+ touchscreen strip. An image slice
         # is memoized; the strip re-composites on every dial label change.
         # update_tiles() refreshes _video_strip once per video frame.
@@ -72,13 +81,21 @@ class Background:
         # Published only with a real identity; see update_tiles.
         self._identified_tiles: "tuple[Sequence[Image.Image | None], tuple[str, int]] | None" = None
 
-    def set_image(self, image: "BackgroundImage", update: bool = True) -> None:
+    def set_image(self, image: "BackgroundImage", update: bool = True,
+                  _keep_slideshow: bool = False) -> None:
         # Publish the swap under the lock, then close the old video and clear
         # caches outside it, so the leaf lock never wraps a deck call.
+        #
+        # _keep_slideshow is the one internal caller's flag: the slideshow's
+        # own frame advance swaps the image and must not tear down the
+        # rotation it belongs to. Every other caller ends any slideshow,
+        # because an external single-image set replaces the whole background.
         with self._render_state_lock:
             old_video = self.video
             self.image = image
             self.video = None
+            if not _keep_slideshow:
+                self.slideshow = None
             self._touchscreen_slice = None
             self._video_strip = None
             # A content change orphans every cached native. Each key holds the
@@ -100,6 +117,9 @@ class Background:
             old_video = self.video
             self.image = None
             self.video = video
+            # A video and a slideshow are mutually exclusive. Setting a video
+            # ends any rotation, so slideshow_tick() stops advancing.
+            self.slideshow = None
             self._touchscreen_slice = None
             self._video_strip = None
             # As in set_image(), a content change orphans every cached native.
@@ -116,6 +136,79 @@ class Background:
         self.update_tiles()
         if update:
             self.deck_controller.update_all_inputs()
+
+    def set_slideshow(self, paths: "Sequence[str]", interval: float, order: str = IN_ORDER,
+                      update: bool = True, now: "float | None" = None) -> None:
+        """Install a still-image rotation over paths.
+
+        This loads the first frame at once and arms the interval clock, so the
+        first swap lands one interval later. slideshow_tick() drives the rest.
+        A list with fewer than two loadable images installs the one image (or
+        clears the background) and no rotation, which keeps a one-element list
+        behaving like a single-image background.
+
+        now is the monotonic reading the interval clock starts from; the media
+        tick and a test both pass it. order is in-order or shuffle.
+        """
+        show = Slideshow(paths, interval, order=order)
+        first = show.current_path()
+        # Build the first frame lock-free, then swap it in under the render
+        # lock while keeping the rotation. A path that is not a loadable image
+        # (a stale entry, or a video the caller did not filter) is skipped, so
+        # the rotation starts on the first frame that renders.
+        installed = self._install_slideshow_frame(first, update=update, keep=True) if first else False
+        if not installed and len(show) <= 1:
+            # One entry that would not load, or an empty list, leaves nothing
+            # to rotate. Clear to a blank background rather than hold whatever
+            # showed before.
+            self.set_image_to_blank(update=update)
+            return
+        show.seed(time.monotonic() if now is None else now)
+        with self._render_state_lock:
+            self.slideshow = show
+
+    def set_image_to_blank(self, update: bool = True) -> None:
+        """Clear the background to nothing. This ends any video or slideshow
+        and paints alpha keys on the next tile refresh."""
+        self.set_video(None, update=False)
+        with self._render_state_lock:
+            self._touchscreen_slice = None
+        self.update_tiles()
+        if update:
+            self.deck_controller.update_all_inputs()
+
+    def slideshow_tick(self, now: "float | None" = None) -> bool:
+        """Advance the rotation when its interval has elapsed. Returns True
+        when this pass swapped the image.
+
+        The media-player tick calls this each pass with a monotonic reading.
+        It no-ops when no slideshow is set, so a video or single-image
+        background costs one attribute read and one branch per tick.
+        """
+        show = self.slideshow
+        if show is None:
+            return False
+        now = time.monotonic() if now is None else now
+        next_path = show.maybe_advance(now)
+        if next_path is None:
+            return False
+        return self._install_slideshow_frame(next_path, update=True, keep=True)
+
+    def _install_slideshow_frame(self, path: "str | None", update: bool, keep: bool) -> bool:
+        """Load path as a still and swap it in as the background image. Returns
+        True on success. A path that does not resolve to an image is discarded
+        and the previous frame stays, so one bad entry does not blank the deck.
+        keep leaves the rotation in place through the swap."""
+        if not path:
+            return False
+        kind, payload = self.prebuild_from_path(path, allow_keep=False)
+        if kind == "image":
+            self.set_image(cast("BackgroundImage", payload), update=update, _keep_slideshow=keep)
+            return True
+        # A video or non-file entry has no place in a still rotation. Release
+        # whatever the prebuild built and leave the current frame showing.
+        self._discard_prebuilt(kind, payload)
+        return False
 
     def set_extend_to_touchscreen(self, extend: bool, update: bool = True) -> None:
         if extend == self.extend_to_touchscreen:
@@ -244,12 +337,7 @@ class Background:
         elif kind == "image":
             self.set_image(cast("BackgroundImage", payload), update=update)
         else:  # "blank"
-            self.set_video(None, update=False)
-            with self._render_state_lock:
-                self._touchscreen_slice = None
-            self.update_tiles()
-            if update:
-                self.deck_controller.update_all_inputs()
+            self.set_image_to_blank(update=update)
 
     def set_from_path(self, path: str | None, fps: int = 30, loop: bool = True, update: bool = True, allow_keep: bool = True) -> None:
         """Prebuild and apply in one call, for a caller that does not need

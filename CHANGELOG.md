@@ -9,6 +9,14 @@ bundle as a release asset.
 
 ### Added
 
+- Turn a deck background into a slideshow of your own pictures. The background
+  section of the deck settings carries an "Add Image" button that builds up an
+  ordered list of images, an interval in seconds, and a shuffle switch. The
+  deck shows each image in turn and moves to the next one when the interval
+  passes, in order or shuffled. A background of a single image keeps working
+  as before, and a slideshow and a background video never both play: the
+  slideshow wins. The rotation stops the moment the page changes or the deck
+  goes away, so nothing keeps switching a background that is no longer shown.
 - Make an icon pack out of your own pictures. The icon packs page of the asset
   manager carries an "Import Pack" button. Point it at a zip archive or at a
   folder, give the pack a name, and add a description and a banner if you want

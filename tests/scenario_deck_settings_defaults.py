@@ -33,6 +33,9 @@ EXPECTED_DEFAULTS = {
     ("background", "loop"): True,        # same rationale as the screensaver loop
     ("background", "fps"): 30,
     ("background", "extend-to-touchscreen"): False,
+    ("background", "media-paths"): [],   # empty means the single media-path is in effect
+    ("background", "slideshow-interval"): 10,
+    ("background", "slideshow-order"): "in-order",
     ("display", "saturation"): 1.0,
     ("rotation", None): 0,
     ("name", None): "",                 # "" means no chosen name, so the model name shows
@@ -481,6 +484,13 @@ class _Widget:
         self.value = value
         self._emit()
 
+    def get_label(self):
+        return self.value
+
+    def set_label(self, value):
+        # A label carries no handler, so setting it emits nothing.
+        self.value = value
+
     def set_visible(self, value):
         self.visible = value
 
@@ -688,6 +698,9 @@ class BackgroundRow(_Row):
         self.fps_spinner = _Widget(0)
         self.extend_touchscreen_switch = _Widget(False)
         self.extend_touchscreen_box = _Widget()
+        self.interval_spinner = _Widget(0)
+        self.shuffle_switch = _Widget(False)
+        self.slideshow_count_label = _Widget("")
 
     def load_defaults(self):
         self._real.load_defaults(self)
@@ -764,6 +777,9 @@ def check_fresh_page_shows_table() -> None:
         ("background", "fps"): rows["background"].fps_spinner.get_value(),
         ("background", "extend-to-touchscreen"):
             rows["background"].extend_touchscreen_switch.get_active(),
+        ("background", "slideshow-interval"): rows["background"].interval_spinner.get_value(),
+        ("background", "slideshow-order"):
+            "shuffle" if rows["background"].shuffle_switch.get_active() else "in-order",
     }
     for key, value in shown.items():
         assert value == EXPECTED_DEFAULTS[key], (
