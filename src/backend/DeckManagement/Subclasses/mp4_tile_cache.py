@@ -408,8 +408,8 @@ class Mp4FrameCache(Generic[PayloadT]):
             # The registry says ready but the file will not open, e.g. an
             # external cleanup of the cache dir deleted or corrupted it behind
             # the registry's back. Bound the retry. After MAX_ADOPT_FAILURES
-            # attempts, invalidate the entry so the next acquire() rebuilds,
-            # and detach this reader onto its own source decode.
+            # attempts, invalidate the entry so a rebuild can happen, and
+            # detach this reader onto its own source decode.
             self._adopt_failures += 1
             give_up = self._adopt_failures >= self.MAX_ADOPT_FAILURES
         if not give_up:
@@ -419,19 +419,37 @@ class Mp4FrameCache(Generic[PayloadT]):
             f"opened; invalidating its registry entry and continuing uncached "
             f"from {self.source_path}"
         )
+        # Claim the detach before doing it. The reference below is given back
+        # exactly once, so the claim reads the key and drops both registry
+        # attributes under the same lock, and a release() of this reader that
+        # lands in between then finds nothing to detach instead of detaching a
+        # second time. self.lock is released again before any registry lock, so
+        # this adds no order between the two.
+        with self.lock:
+            key = getattr(self, "_registry_key", None)
+            self._registry_key = None
+            self._registry_entry = None
+        if key is None:
+            return
         with _registry_lock:
             entry.ready = False
-            # The builder this handle names may still be decoding. Keep a live
-            # one reachable, so the quit-time join still covers it, rather than
-            # dropping it here and leaving a thread nothing can wait for. A
-            # finished one is not kept: the list is never pruned during a run,
-            # so a dead entry would sit there and cost the quit sweep a join
-            # for nothing.
-            if entry.builder_thread is not None:
-                if entry.builder_thread.is_alive():
-                    _lingering_builders.append(entry.builder_thread)
+            # Exactly one builder per key, always. The handle names the builder
+            # that produced the unusable file. A live one must stay the entry's
+            # builder: clearing the handle while it decodes lets the next
+            # acquire() start a second builder for the same key, and both then
+            # decode the same source at once. The trade is that a live builder
+            # which later exits without promoting leaves the entry with ready
+            # False and a spent handle, so consumers that stay attached play
+            # uncached until the last of them detaches and the entry goes. A
+            # finished builder cannot duplicate anything, so its handle drops
+            # here and a rebuild can start.
+            if entry.builder_thread is not None and not entry.builder_thread.is_alive():
                 entry.builder_thread = None
-        self._registry_entry = None
+        # This reader stops using the shared file, so it gives its reference
+        # back here rather than at release(). At zero that signals the builder
+        # and joins it, bounded and outside the registry lock, which is what
+        # stops a builder whose output nothing can read.
+        _detach_entry(key, entry)
 
     def _get_cached_frame(self, n: int) -> "PayloadT | None":
         n = max(0, min(n, self.n_frames - 1))

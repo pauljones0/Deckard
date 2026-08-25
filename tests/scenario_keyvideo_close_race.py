@@ -186,6 +186,23 @@ def live_tile_cache_builders() -> list[threading.Thread]:
     return [t for t in threading.enumerate() if t.name == "tile-cache-builder" and t.is_alive()]
 
 
+def wait_for_builders_at_most(limit: int, timeout: float = 3.0) -> list[threading.Thread]:
+    """Poll until at most limit builders are alive, or the timeout runs out.
+
+    The inline join a detach runs is bounded, so a builder that misses its
+    0.5 s under load ends a moment later on its own. A count taken the instant
+    the detach returns therefore measures machine load as much as the
+    discipline under test. This waits for the settled count instead, and it
+    returns as soon as the count is right, so the passing run costs nothing.
+    """
+    deadline = time.monotonic() + timeout
+    alive = live_tile_cache_builders()
+    while len(alive) > limit and time.monotonic() < deadline:
+        time.sleep(0.02)
+        alive = live_tile_cache_builders()
+    return alive
+
+
 def assert_no_tile_cache_builders(context: str) -> None:
     """No detached tile-cache builder may outlive the release that signalled it.
 
@@ -305,6 +322,90 @@ def check_acquire_returns_refcount_on_reader_failure() -> None:
     print("PASS: a failed reader construction returns its reference and stops the builder")
 
 
+def check_adoption_give_up_keeps_one_builder() -> None:
+    """Giving up on an unusable shared cache must not double the builder.
+
+    The registry can claim a cache file is ready while the file is gone, e.g.
+    an external cleanup of the cache dir. A reader then fails to adopt it,
+    gives up after MAX_ADOPT_FAILURES and detaches. The builder that produced
+    the unusable file is still decoding at that point. If the give-up drops the
+    builder handle, the next acquire() of the same key starts a second builder,
+    and two threads decode the same source at once for as long as the first one
+    takes.
+
+    A second consumer stays attached across the give-up on purpose. It holds
+    the entry above zero, so the give-up cannot end the builder by dropping the
+    entry, and the handle rule is the only thing between the re-acquire and a
+    duplicate.
+    """
+    _enable_video_cache()
+    from src.backend.DeckManagement.Subclasses import mp4_tile_cache
+
+    video_path = os.path.join(gl.DATA_PATH, "adopt_give_up_source.mp4")
+    _make_test_video(video_path, n_frames=900, size=(320, 240))
+    out_size = (76, 76)
+
+    reader = mp4_tile_cache.acquire(video_path, out_size)
+    holder = mp4_tile_cache.acquire(video_path, out_size)
+    key = mp4_tile_cache._registry_key(video_path, out_size, 1.0)
+    entry = mp4_tile_cache._registry.get(key)
+    assert entry is not None, "acquire must register an entry"
+    first_builder = entry.builder_thread
+    assert first_builder is not None, (
+        "no builder started -- this check cannot prove anything about a second one"
+    )
+    time.sleep(0.2)
+    assert first_builder.is_alive(), (
+        "the builder finished before the give-up -- the source is too short "
+        "for this check"
+    )
+
+    # What the failure mode looks like from the reader: the entry says ready,
+    # the file is not there. Nothing wrote it, so no removal is needed.
+    assert not os.path.isfile(entry.path), "the cache file must not exist yet"
+    entry.ready = True
+
+    for _ in range(mp4_tile_cache.Mp4FrameCache.MAX_ADOPT_FAILURES):
+        reader.get_frame(0)
+    assert reader._registry_entry is None, (
+        "the reader did not give up on the unusable shared cache"
+    )
+    assert not entry.ready, "the give-up must invalidate the entry"
+    assert mp4_tile_cache._registry.get(key) is entry, (
+        "the still-attached consumer must keep the entry registered"
+    )
+
+    # The re-acquire is what a page switch back onto this key does.
+    second = mp4_tile_cache.acquire(video_path, out_size)
+    try:
+        # The count is taken while the first builder is provably still
+        # decoding, so it does not depend on any join winning a race. Load
+        # makes that window longer and never shorter, and no amount of load
+        # invents a second builder.
+        alive = live_tile_cache_builders()
+        assert first_builder.is_alive(), (
+            "the first builder ended before the re-acquire -- the source is "
+            "too short for this check"
+        )
+        assert len(alive) <= 1, (
+            f"{len(alive)} tile-cache builders decoding the same source after "
+            f"an adoption give-up plus a fresh acquire -- the give-up left the "
+            f"old builder running while a replacement started"
+        )
+    finally:
+        mp4_tile_cache.release(second)
+        mp4_tile_cache.release(holder)
+        mp4_tile_cache.release(reader)
+
+    wait_for_builders_at_most(0)
+    assert_no_tile_cache_builders("an adoption give-up and the releases after it")
+    assert mp4_tile_cache._registry.get(key) is None, (
+        "the entry outlived every consumer -- the give-up did not return the "
+        "reference it detached"
+    )
+    print("PASS: an adoption give-up leaves at most one builder per key")
+
+
 def main() -> None:
     fixtures.start_watchdog(60, "scenario_keyvideo_close_race")
     check_close_race_hammer()
@@ -312,6 +413,7 @@ def main() -> None:
     assert_no_tile_cache_builders("the real-registry InputVideo close")
     check_release_joins_builder()
     check_acquire_returns_refcount_on_reader_failure()
+    check_adoption_give_up_keeps_one_builder()
     print("PASS: scenario_keyvideo_close_race")
 
 
