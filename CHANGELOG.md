@@ -102,6 +102,14 @@ bundle as a release asset.
 
 ### Fixed
 
+- A page or asset whose name carries a character that looks like a digit but
+  is not one, such as a superscript two, no longer breaks sorting. Sorting
+  pages or assets with such a name raised an error and mis-sorted the list;
+  those names now sort as text.
+
+- The deck settings option that extends the background onto the touch strip
+  shows its sentence in the app language instead of the raw label key.
+
 - The tray icon shows the app icon instead of a placeholder square. The app
   pointed the desktop at the icon dir that ships with it, every time and
   whatever the app was installed from, and a desktop takes such a path over
