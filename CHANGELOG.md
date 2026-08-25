@@ -11,6 +11,14 @@ bundle as a release asset.
 
 - Drag an action in the sidebar to reorder it. Hold an action row, drag it over
   another row, and a line marks the edge it lands on. The release moves it
+  there and the page keeps the new order. The deck you are editing loads the
+  page again, so its key runs the actions in the new order. Another deck
+  showing the same page keeps the old order until it loads that page again.
+  Each action takes its own settings, its comment and its event assignments
+  with it, and the media, background and label permissions stay with the action
+  that holds them, including on a key whose actions did not all load. The up
+  and down buttons on each row make the same move, so a reorder needs no
+  pointer.
   there, the key runs its actions in the new order straight away, and the page
   keeps the order. Each action takes its own settings, its comment and its
   event assignments with it, and the media, background and label permissions

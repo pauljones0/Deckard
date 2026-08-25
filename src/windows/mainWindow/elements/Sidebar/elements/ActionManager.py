@@ -212,8 +212,17 @@ class ActionExpanderRow(BetterExpander):
             row.remove_css_class(DROP_ABOVE_CLASS)
             row.remove_css_class(DROP_BELOW_CLASS)
 
-    def apply_drop(self, source_index: int, dest_index: int) -> bool:
-        """Run a planned drop from the idle the drop handler queues."""
+    def apply_drop(self, source_index: int, dest_index: int,
+                   identifier: "InputIdentifier | None", state: "int | None") -> bool:
+        """Run a planned drop from the idle the drop handler queues.
+
+        The sidebar can load another input or another state between the drop and
+        this idle. The planned rows then name a list that nobody dropped
+        anything on, so the drop goes no further.
+        """
+        if identifier != self.active_identifier or state != self.active_state:
+            return GLib.SOURCE_REMOVE
+
         rows = self.action_rows()
         if 0 <= source_index < len(rows):
             self.move_row(rows[source_index], dest_index)
@@ -621,6 +630,14 @@ class ActionRow(Adw.ActionRow):
 
         The up and down buttons stay, because a drag needs a pointer and they
         do not.
+
+        Only a row that stands for a loaded action takes a drag or a drop. The
+        row for an action whose plugin is missing or outdated holds a place in
+        the list and accepts neither. That costs almost nothing, because a drop
+        on the upper half of a row names the same place as a drop on the lower
+        half of the row above it. The one place a drag cannot name is the end of
+        a list that ends in such a row. The up and down buttons reach it, one
+        step at a time.
         """
         dnd_source = Gtk.DragSource()
         dnd_source.set_actions(Gdk.DragAction.MOVE)
@@ -684,8 +701,10 @@ class ActionRow(Adw.ActionRow):
 
         # Move on an idle, not here. This handler runs inside the drop, and the
         # move rebuilds every row of the list, which takes the widget the
-        # handler belongs to out of the tree mid-drop.
-        GLib.idle_add(self.expander.apply_drop, source_index, dest_index)
+        # handler belongs to out of the tree mid-drop. The input and the state
+        # travel with the plan, because the sidebar can load another one first.
+        GLib.idle_add(self.expander.apply_drop, source_index, dest_index,
+                      self.expander.active_identifier, self.expander.active_state)
         return True
 
     def on_click(self, button: Gtk.Button) -> None:
