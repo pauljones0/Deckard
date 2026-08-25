@@ -322,6 +322,62 @@ def check_batched_delivery() -> int:
     return 0
 
 
+def check_real_pixbuf_roundtrip() -> int:
+    """The real serialize and deserialize preserve a pixbuf byte for byte.
+
+    The scenario above drives the loader with a fake decoder, so the real
+    GdkPixbuf round trip never runs there. This leg runs it on a real pixbuf,
+    with no display: GdkPixbuf.Pixbuf.new needs none.
+
+    250px RGB pads its rowstride from 750 to 752, so the pixel buffer carries
+    two bytes of padding per row that width times channels does not account for.
+    A serializer that assumes rowstride equals width times channels corrupts
+    exactly this case, so the leg asserts the whole buffer and every dimension
+    survive the round trip unchanged.
+    """
+    import gi
+
+    gi.require_version("GdkPixbuf", "2.0")
+    from gi.repository import GdkPixbuf
+
+    from src.windows.AssetManager.thumbnail_loader import _deserialize, _serialize
+
+    for has_alpha in (False, True):
+        source = GdkPixbuf.Pixbuf.new(GdkPixbuf.Colorspace.RGB, has_alpha, 8,
+                                      250, 180)
+        # A fixed fill makes the pixel bytes deterministic. The high byte is the
+        # alpha, unused without an alpha channel.
+        source.fill(0x336699FF if has_alpha else 0x336699AA)
+
+        if has_alpha is False and source.get_rowstride() == \
+                source.get_width() * source.get_n_channels():
+            print(f"NOTE(roundtrip): rowstride {source.get_rowstride()} is not "
+                  f"padded on this build; the leg still checks the round trip "
+                  f"but not the padding case")
+
+        restored = _deserialize(_serialize(source))
+
+        if restored.get_pixels() != source.get_pixels():
+            print(f"FAIL(roundtrip has_alpha={has_alpha}): the pixel bytes "
+                  f"changed across serialize and deserialize -- a rowstride the "
+                  f"serializer got wrong corrupts the padded rows")
+            return 1
+        for name, want, got in (
+            ("width", source.get_width(), restored.get_width()),
+            ("height", source.get_height(), restored.get_height()),
+            ("has_alpha", source.get_has_alpha(), restored.get_has_alpha()),
+            ("n_channels", source.get_n_channels(), restored.get_n_channels()),
+            ("rowstride", source.get_rowstride(), restored.get_rowstride()),
+        ):
+            if want != got:
+                print(f"FAIL(roundtrip has_alpha={has_alpha}): {name} is {got}, "
+                      f"expected {want}")
+                return 1
+    print("PASS: the real serialize and deserialize preserve a pixbuf byte for "
+          "byte, padded rowstride and all")
+    return 0
+
+
 def check_real_wiring() -> int:
     """build_loader() wires the shared DeadlinePool and the shared ByteLRUCache,
     so the real path reuses those primitives."""
@@ -354,6 +410,7 @@ def main() -> int:
     rc |= check_page_flip_cancels_pending()
     rc |= check_page_flip_drops_stale_result()
     rc |= check_batched_delivery()
+    rc |= check_real_pixbuf_roundtrip()
     rc |= check_real_wiring()
     if rc == 0:
         print("ALL PASS: scenario_thumbnail_loader")

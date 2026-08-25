@@ -16,9 +16,10 @@ ThumbnailLoader keeps four promises:
 - Weak targets. The card is held weakly. A card that is gone by the time its
   decode lands takes no pixbuf and raises nothing, which is what keeps a decode
   that finishes after the window closed from painting into a dead widget.
-- One cache. Decoded bytes go into the shared ByteLRUCache, so a card the user
-  scrolls back to is served without a second decode. The cache is the one both
-  device caches already share, enrolled in the process-wide memory budget.
+- One cache. Decoded bytes go into a shared ByteLRUCache, so a card the user
+  scrolls back to is served without a second decode. It is the same ByteLRUCache
+  type the two device caches use, a separate instance of it, enrolled in the
+  same process-wide memory budget.
 - Batched delivery. Finished decodes are applied to their cards in one main-loop
   pass, not one idle per card, so a wave of workers landing at once costs the
   main loop one callback and not fifty.
@@ -111,7 +112,9 @@ class ThumbnailLoader:
         A cache hit queues the bytes for the next flush. A miss goes on the LIFO
         stack and a worker is asked to take the newest entry.
 
-        Called on the main loop, from the grid's rebind pass.
+        The caller must be on the main loop: the key-is-None branch applies to
+        the card without marshalling. Every caller is the grid's rebind pass,
+        which the main loop runs.
         """
         if key is None:
             # No path. Clear the card now, on the caller's thread, which is the
