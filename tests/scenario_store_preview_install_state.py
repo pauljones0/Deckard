@@ -19,10 +19,13 @@ import gi
 gi.require_version("Adw", "1")
 from gi.repository import GLib  # noqa: E402
 
+import globals as gl  # noqa: E402
+
 from src.backend.Store import asset_types  # noqa: E402
 from src.backend.Store.store_result import Ok, Err, ErrReason  # noqa: E402
 from src.windows.Store.StoreData import (  # noqa: E402
     IconData,
+    PluginData,
     WallpaperData,
     SDPlusBarWallpaperData,
 )
@@ -178,6 +181,217 @@ def check_icon_preview_success_flips_installed() -> None:
     print("PASS: icon preview flips to installed on a successful install")
 
 
+# The dependency branches of the shared install. A backend without
+# get_manifest sends every resolution down the "manifest unreadable" arm, so
+# the checks above only ever drive the zero-dependency path. These build a
+# backend that answers a manifest, so the real set is resolved.
+
+PINNED_SHA = "0" * 40
+
+
+def _dependency_backend(install_results: dict):
+    """A backend that names one dependency for the root, and answers each
+    install from install_results by asset id."""
+    root = PluginData(github="https://github.com/t/Root", plugin_id="com.test.Root",
+                      plugin_name="Root", commit_sha=PINNED_SHA)
+    dep = PluginData(github="https://github.com/t/Dep", plugin_id="com.test.Dep",
+                     plugin_name="Dep", commit_sha=PINNED_SHA)
+    installed: list[str] = []
+
+    def install_plugin(plugin_data, auto_update=False, ask_install_script=None):
+        installed.append(plugin_data.plugin_id)
+        return install_results[plugin_data.plugin_id]
+
+    def get_manifest(url, commit):
+        if url.endswith("/Root"):
+            return {"dependencies": ["com.test.Dep"]}
+        return {}
+
+    backend = types.SimpleNamespace(
+        install_plugin=install_plugin,
+        get_manifest=get_manifest,
+        get_all_plugins=lambda include_images=True: Ok([root, dep]),
+        get_all_icons=lambda include_images=True: Ok([]),
+        get_all_wallpapers=lambda include_images=True: Ok([]),
+        get_all_sd_plus_bar_wallpapers=lambda include_images=True: Ok([]),
+    )
+    return backend, root, installed
+
+
+def _fake_over(backend, descriptor, data):
+    state = {"install_state": 0, "set_calls": [], "notified": 0}
+
+    def set_install_state(s):
+        state["set_calls"].append(s)
+        state["install_state"] = s
+
+    fake = types.SimpleNamespace(
+        store=types.SimpleNamespace(backend=backend),
+        descriptor=descriptor,
+        asset_data=data,
+        install_state=0,
+        set_install_state=set_install_state,
+        notify_install_failure=lambda: state.__setitem__("notified", state["notified"] + 1),
+        _install_kwargs=lambda: {},
+    )
+    return fake, state
+
+
+class _SetConsentPatch:
+    """Answer the set prompt without building a dialog. The duck-typed self
+    carries no real window, so the real prompt cannot be presented."""
+
+    def __init__(self, agree: bool):
+        self.agree = agree
+        self.asked: list = []
+
+    def __enter__(self):
+        import src.windows.Store.install_consent as consent
+        self._module = consent
+        self._original = consent.make_set_consent
+        consent.make_set_consent = lambda parent: self._ask
+        return self
+
+    def _ask(self, root_name, plan):
+        self.asked.append((root_name, plan.names()))
+        return self.agree
+
+    def __exit__(self, *exc):
+        self._module.make_set_consent = self._original
+        return False
+
+
+class _NotifyRecorder:
+    def __init__(self):
+        self.errors: list[tuple[str, str | None]] = []
+
+    def error(self, text, title=None):
+        self.errors.append((text, title))
+
+    def info(self, text, title=None):
+        pass
+
+
+def check_declined_set_notifies_nothing() -> None:
+    """Cancelling the set prompt downloads nothing, so it is not a failure
+    and must not raise a failure notification or move the button."""
+    from src.windows.Store.AssetPage import StoreAssetPreview
+
+    backend, root, installed = _dependency_backend(
+        {"com.test.Root": Ok(None), "com.test.Dep": Ok(None)})
+    fake, state = _fake_over(backend, asset_types.PLUGIN, root)
+
+    recorder = _NotifyRecorder()
+    original_notify = getattr(gl, "notify", None)
+    gl.notify = recorder
+    try:
+        with _SetConsentPatch(agree=False) as consent:
+            result = StoreAssetPreview.install(fake)
+            pump_main_context()
+    finally:
+        gl.notify = original_notify
+
+    assert consent.asked, "the set prompt must have been reached"
+    assert result is False, f"a declined install must report False, got {result!r}"
+    assert installed == [], f"a declined set must install nothing, got {installed}"
+    assert state["notified"] == 0, (
+        "cancelling is not a failure, so no failure notification may fire, "
+        f"got {state['notified']}")
+    assert recorder.errors == [], (
+        f"and no error notification either, got {recorder.errors}")
+    assert state["set_calls"] == [], (
+        f"the button must not move at all, got {state['set_calls']}")
+    print("PASS: a declined dependency set installs nothing and reports nothing")
+
+
+def check_mid_set_failure_names_what_landed() -> None:
+    """When a dependency installed and the root then failed, the plain
+    failure notification would not say the dependency is now installed."""
+    from src.windows.Store.AssetPage import StoreAssetPreview
+
+    backend, root, installed = _dependency_backend(
+        {"com.test.Dep": Ok(None),
+         "com.test.Root": Err(ErrReason.NO_CONNECTION, "offline")})
+    fake, state = _fake_over(backend, asset_types.PLUGIN, root)
+
+    recorder = _NotifyRecorder()
+    original_notify = getattr(gl, "notify", None)
+    gl.notify = recorder
+    try:
+        with _SetConsentPatch(agree=True):
+            result = StoreAssetPreview.install(fake)
+            pump_main_context()
+    finally:
+        gl.notify = original_notify
+
+    assert result is False, f"a failed set must report False, got {result!r}"
+    assert installed == ["com.test.Dep", "com.test.Root"], (
+        f"the dependency installs before the root, got {installed}")
+    assert 1 not in state["set_calls"], (
+        f"a failed set must not flip the button to installed, got {state['set_calls']}")
+    assert len(recorder.errors) == 1, (
+        "a part-installed set must report through the notification that can "
+        f"carry the detail, got {recorder.errors}")
+    text, _title = recorder.errors[0]
+    assert "Dep" in text, (
+        f"the report must name the item that stays installed, got {text!r}")
+    assert state["notified"] == 0, (
+        "the plain failure notification says nothing about what landed, so it "
+        f"must not be the one used, got {state['notified']}")
+    print("PASS: a part-installed set names what stays installed")
+
+
+def check_a_failed_pack_under_a_plugin_is_titled_as_a_pack() -> None:
+    """A plugin can need an icon pack. If that pack is what failed, calling
+    it a plugin install failure names the wrong thing."""
+    from src.windows.Store.AssetPage import StoreAssetPreview
+
+    root = PluginData(github="https://github.com/t/Root", plugin_id="com.test.Root",
+                      plugin_name="Root", commit_sha=PINNED_SHA)
+    pack = IconData(github="https://github.com/t/Icons", icon_id="com.test.Icons",
+                    icon_name="Icons", commit_sha=PINNED_SHA)
+    installed: list[str] = []
+
+    def install_plugin(plugin_data, auto_update=False, ask_install_script=None):
+        installed.append(plugin_data.plugin_id)
+        return Ok(None)
+
+    def install_icon(icon_data):
+        installed.append(icon_data.icon_id)
+        return Err(ErrReason.NO_CONNECTION, "offline")
+
+    backend = types.SimpleNamespace(
+        install_plugin=install_plugin,
+        install_icon=install_icon,
+        get_manifest=lambda url, commit: (
+            {"dependencies": ["com.test.Icons"]} if url.endswith("/Root") else {}),
+        get_all_plugins=lambda include_images=True: Ok([root]),
+        get_all_icons=lambda include_images=True: Ok([pack]),
+        get_all_wallpapers=lambda include_images=True: Ok([]),
+        get_all_sd_plus_bar_wallpapers=lambda include_images=True: Ok([]),
+    )
+    fake, state = _fake_over(backend, asset_types.PLUGIN, root)
+
+    recorder = _NotifyRecorder()
+    original_notify = getattr(gl, "notify", None)
+    gl.notify = recorder
+    try:
+        with _SetConsentPatch(agree=True):
+            StoreAssetPreview.install(fake)
+            pump_main_context()
+    finally:
+        gl.notify = original_notify
+
+    assert installed == ["com.test.Icons"], (
+        f"the pack installs first and fails, so the root never runs, got {installed}")
+    assert len(recorder.errors) == 1, f"one report must fire, got {recorder.errors}"
+    _text, title = recorder.errors[0]
+    assert title == "Icon pack install failed", (
+        "the title must name the class of the item that actually failed, and "
+        f"not the class of the root, got {title!r}")
+    print("PASS: a pack that failed under a plugin root is titled as a pack")
+
+
 def main() -> None:
     fixtures.start_watchdog(WATCHDOG_SECONDS, label="scenario_store_preview_install_state")
     check_icon_preview_404()
@@ -185,6 +399,9 @@ def main() -> None:
     check_sd_plus_preview_400()
     check_install_rows_bind_against_the_real_backend()
     check_icon_preview_success_flips_installed()
+    check_declined_set_notifies_nothing()
+    check_mid_set_failure_names_what_landed()
+    check_a_failed_pack_under_a_plugin_is_titled_as_a_pack()
     print("scenario_store_preview_install_state: PASS")
 
 

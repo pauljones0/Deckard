@@ -33,6 +33,9 @@ from src.backend.Store import asset_types
 from src.windows.Store.AssetPage import StoreAssetPage, StoreAssetPreview
 from src.windows.Store.StoreData import StoreAssetData
 
+# Typing
+from typing import Any
+
 
 class PluginPage(StoreAssetPage):
     descriptor = asset_types.PLUGIN
@@ -55,7 +58,7 @@ class PluginPreview(StoreAssetPreview):
     # incompatible plugin in the incompatible section.
     shows_incompatible_border = False
 
-    def _install_kwargs(self) -> "dict[str, object]":
+    def _install_kwargs(self) -> "dict[str, Any]":
         # Only a plugin carries an install script, so only a plugin install
         # prompts. The dialog is transient for the store window and answered
         # on the main loop; install() itself runs on a download worker.

@@ -39,6 +39,7 @@ import sys
 from loguru import logger as log
 
 # Import own modules
+from src.backend.Store import dependencies
 from src.backend.Store.asset_types import AssetTypeDescriptor
 from src.backend.Store.store_result import Err, StoreResult
 from src.windows.Store.Preview import StorePreview
@@ -46,7 +47,7 @@ from src.windows.Store.StoreData import StoreAssetData
 from src.windows.Store.StorePage import StorePage
 
 # Typing
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 if TYPE_CHECKING:
     from src.windows.Store.Store import Store
 
@@ -179,6 +180,11 @@ class StoreAssetPreview(StorePreview):
         A failed install returns an Err, and the button keeps its previous
         state instead of moving to installed. A 400, a 404 or an offline
         download must not read as installed.
+
+        A manifest may name other store items, and then one prompt names the
+        whole set before anything downloads. A refusal downloads nothing and
+        leaves the button as it was. A failure part-way through leaves what
+        already installed in place and says which items those are.
         """
         backend = self.store.backend
         noun = self.descriptor.display_name
@@ -187,19 +193,39 @@ class StoreAssetPreview(StorePreview):
             log.error(f"Store backend unavailable; cannot install {asset_id}")
             self.notify_install_failure()
             return False
-        result = getattr(backend, self.descriptor.install_attr)(self.asset_data, **self._install_kwargs())
-        if isinstance(result, Err):
-            log.error(f"Failed to install {noun} {asset_id}: {result!r}")
-            self.notify_install_failure()
+        from src.windows.Store.install_consent import make_set_consent
+        report = dependencies.install_with_dependencies(
+            backend, dependencies.CatalogItem(self.descriptor, self.asset_data),
+            confirm_set=make_set_consent(self.store), **self._install_kwargs())
+        if report.declined:
+            # Nothing downloaded, so the button keeps the state it had.
+            return False
+        if not report.ok:
+            log.error(f"Failed to install {noun} {asset_id}: {report.error!r}")
+            # The plain notification names this card's own asset, so it is
+            # right only when this asset is what failed and nothing else was
+            # touched. Anything else needs the detail: something else failed,
+            # or something landed and stays installed. The title then takes
+            # the class of the item that actually failed, so a pack pulled in
+            # by a plugin is not reported as a plugin.
+            failed_is_this_card = (report.failed is not None
+                                   and report.failed.data is self.asset_data)
+            if report.installed or not failed_is_this_card:
+                name = self.asset_data.asset_name or asset_id or noun
+                failed_noun = dependencies.failure_noun(report, noun)
+                gl.notify.error(dependencies.failure_message(report, name),
+                                title=f"{failed_noun[:1].upper()}{failed_noun[1:]} install failed")
+            else:
+                self.notify_install_failure()
             # Leave the button in its previous state so the user can retry.
             return False
         GLib.idle_add(self.set_install_state, 1)
         return True
 
-    def _install_kwargs(self) -> "dict[str, object]":
-        """Extra keyword arguments for the descriptor's install method.
-        Empty for a data-only pack; a plugin subclass adds the install
-        script consent prompt."""
+    def _install_kwargs(self) -> "dict[str, Any]":
+        """Extra keyword arguments for the install of one item. Empty for a
+        data-only pack; a plugin subclass adds the install script consent
+        prompt, which only a plugin install takes."""
         return {}
 
     def notify_install_failure(self) -> None:
