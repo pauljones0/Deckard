@@ -867,6 +867,11 @@ class ControllerKeyState(ControllerInputState):
         self.key_image = key_image
         self.key_video = None
         self.media_owner_action = None
+        # The kept composite belongs to the media that just went away. A paint
+        # would drop it, but a key that keeps no media stops reaching the paint
+        # path that does: over a background video a bare key is served straight
+        # from the frame identity instead.
+        self.cover_cache.invalidate()
 
         if update:
             self.update()
@@ -880,6 +885,7 @@ class ControllerKeyState(ControllerInputState):
             self.key_image.close()
         self.key_image = None
         self.media_owner_action = None
+        self.cover_cache.invalidate()
 
     def clear(self) -> None:
         if self.key_video is not None:

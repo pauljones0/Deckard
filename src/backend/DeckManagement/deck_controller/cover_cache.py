@@ -51,13 +51,22 @@ nothing later retires it: the reuse path re-keys nothing, so a stamp that
 already matches keeps matching for as long as the page holds.
 
 So the inputs are read before the composite starts, and precheck() is that
-read. A composite is kept only when the gates were clear before it began, the
-foreground entry it built covers the tile, and the stamp is unmoved when it
-ends. A gate that clears mid-composite, and an edit that lands mid-composite,
-both make one composite uncacheable rather than one entry wrong. The stored
-stamp is the one read before, which the equality test proves equal to the one
-after. LabelManager.get_composed_labels() keeps the same discipline for the
-same reason: it reads the epoch before it composes, and publishes the pair.
+read. A composite is kept only when that read permitted it, the foreground
+entry it built covers the tile, and the stamp is unmoved when it ends. An edit
+that lands mid-composite makes one composite uncacheable rather than one entry
+wrong. The stored stamp is the one read before, which the equality test proves
+equal to the one after. LabelManager.get_composed_labels() keeps the same
+discipline for the same reason: it reads the epoch before it composes, and
+publishes the pair.
+
+A read before and a read after are still not enough on their own, because a
+gate can arrive and leave between them and neither sees it, while the picture
+in the middle carries what it drew. So the rule underneath all of this is that
+the read which decides the picture is the read which decides the store: the
+two branches of the composite that draw a gated look, the press shrink and the
+warning point, hand back NO_STORE beside the picture they made. Their gates are
+therefore not judged twice and guessed at, but recorded once by the code that
+acted on them.
 
 The reuse path is a hash lookup and a device offer, so a covered key costs the
 same as a passthrough key over a video background: no composite, no encode and
@@ -77,10 +86,13 @@ if TYPE_CHECKING:
     from src.backend.PageManagement.Page import Page
 
 
-#: What precheck() answers for a composite that can never be kept, so the
-#: caller pays one attribute read and no stamp. The False alone refuses the
-#: store; the empty stamp is never compared.
-_NO_STORE: "tuple[bool, tuple[object, ...]]" = (False, ())
+#: A pre-read that refuses the store outright. precheck() answers it for a
+#: composite that can never be kept, so the caller pays one attribute read and
+#: no stamp, and the composite itself assigns it over its own pre-read the
+#: moment it draws something a kept picture must not carry. The False alone
+#: refuses, and the empty stamp refuses again, because no stamp a real
+#: pre-read produces can equal it.
+NO_STORE: "tuple[bool, tuple[object, ...]]" = (False, ())
 
 
 class _Covered:
@@ -150,7 +162,7 @@ def _stamp(state: "ControllerKeyState") -> "tuple[object, ...]":
 def precheck(key: "ControllerKey", state: "ControllerKeyState") -> "tuple[bool, tuple[object, ...]]":
     """What a composite about to run must be judged against when it ends.
 
-    It answers _NO_STORE without reading anything else for the two shapes this
+    It answers NO_STORE without reading anything else for the two shapes this
     module can never help, so neither pays for it per composite: a key with no
     static media, which is every bare key and every key playing a video, and a
     key whose foreground was already resized and found not to cover.
@@ -164,7 +176,7 @@ def precheck(key: "ControllerKey", state: "ControllerKeyState") -> "tuple[bool, 
     """
     image = state.key_image
     if image is None or state.layout_manager.foreground_proved_bare(image):
-        return _NO_STORE
+        return NO_STORE
     return (_gates_clear(key, state), _stamp(state))
 
 
@@ -208,10 +220,14 @@ class CoveredComposite:
         self._entry: "_Covered | None" = None
 
     def invalidate(self) -> None:
-        """Drop the kept composite. The state's own teardown and its reset for
-        a fresh page load both call it, and the memory claim above rests on
-        those two calls. Nothing else has to: a reuse that no longer holds
-        drops the entry itself.
+        """Drop the kept composite.
+
+        Four callers release an image, and the memory claim above rests on
+        them: the state's teardown, its reset for a fresh page load, its media
+        setters, and present() when it finds a key with no static media. A
+        reuse that no longer holds drops the entry too, but a key that stops
+        qualifying may also stop reaching reuse(), which is why the setters
+        and present() do not leave it to that.
 
         The image is released by reference count and never closed here. A
         thread that took this entry out of reuse() may still be encoding it,
@@ -239,13 +255,18 @@ class CoveredComposite:
         """Keep image as this state's composite when nothing moved across the
         composite that produced it, and return image either way.
 
-        pre is what precheck() read before that composite started. Three
-        things must hold together: the gates were clear when it began, so the
-        picture carries no press, overlay or warning point; the foreground it
-        built covers the tile and the gates are still clear now; and the stamp
-        is where it was, so no label, layout or colour edit landed in between.
-        Any one of them failing costs one uncacheable composite, which is the
-        cheap half of the trade.
+        pre is what precheck() read before that composite started, unless the
+        composite replaced it with NO_STORE because it drew a gated look. That
+        replacement is what makes the gate claim hold: a press or a warning
+        point that arrives and leaves inside one composite window is invisible
+        to a read taken before it and to a read taken after it, and only the
+        branch that drew the shrink or the dot ever saw it.
+
+        Three things must hold together: pre still permits a store, so nothing
+        the picture carries forbids it; the foreground it built covers the tile
+        and the gates are clear now; and the stamp is where it was, so no
+        label, layout or colour edit landed in between. Any one of them failing
+        costs one uncacheable composite, which is the cheap half of the trade.
 
         The stored stamp is the one read before the composite, which the
         equality test has just proved equal to the one after it.
@@ -277,6 +298,13 @@ def present(key: "ControllerKey", page: "Page | None", config_gen: "int | None",
     two paints re-encodes what the key really shows.
     """
     state = key.get_active_state()
+    if state.key_image is None:
+        # A key with no static media can hold no picture of its own. This is
+        # also where a key that lost its media releases the one it kept: the
+        # test costs one attribute read on every bare key's paint, and it is
+        # the reason this call is not guarded at its site.
+        state.cover_cache.invalidate()
+        return False
     entry = state.cover_cache.reuse(key, state)
     if entry is None:
         return False

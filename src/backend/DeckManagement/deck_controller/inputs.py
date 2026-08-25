@@ -475,7 +475,7 @@ class ControllerKey(ControllerInput["ControllerKeyState"]):
                 self._update_from_tile_identity(identified, page, config_gen, force)
                 return
 
-        if self.get_active_state().key_image is not None and cover_cache.present(self, page, config_gen, force):
+        if cover_cache.present(self, page, config_gen, force):
             return
         _t0 = _t1 = _t2 = 0.0  # definite binding; every read sits under the same media_prof guard as its write
         if media_prof:
@@ -674,6 +674,7 @@ class ControllerKey(ControllerInput["ControllerKeyState"]):
     def get_current_image(self) -> Image.Image:
         state = self.get_active_state()
         cover_pre = cover_cache.precheck(self, state)
+
         # A bare key's composite is the shared background tile, so return a
         # copy of it directly. That saves work per frame over an animated
         # background.
@@ -719,7 +720,6 @@ class ControllerKey(ControllerInput["ControllerKeyState"]):
             return background
 
         key_image: Image.Image | None = None
-        # rotation = self.deck_controller.get_deck_settings().get("rotation", {}).get("value", 0)
         if state.key_image is not None:
             image = state.key_image.get_raw_image()
             key_image = state.layout_manager.add_image_to_background(
@@ -746,11 +746,12 @@ class ControllerKey(ControllerInput["ControllerKeyState"]):
         if media_prof:
             media_prof.add("c_labels", time.perf_counter() - _t2)
 
+        # A gate that draws into the picture decides the store as well.
         if self.is_pressed():
-            labeled_image = self.shrink_image(labeled_image)
+            labeled_image, cover_pre = self.shrink_image(labeled_image), cover_cache.NO_STORE
 
         if self.has_unavailable_action() and not self.deck_controller.screen_saver.showing:
-            labeled_image = self.add_warning_point(labeled_image)
+            labeled_image, cover_pre = self.add_warning_point(labeled_image), cover_cache.NO_STORE
 
         # A key with no visible label gets its own composite back, because
         # add_labels_to_image skips the copy, and with no media key_image is
@@ -892,7 +893,6 @@ class ControllerKey(ControllerInput["ControllerKeyState"]):
                         outline_color=state_dict["labels"][label].get("outline_color"),
                         alignment=state_dict["labels"][label].get("alignment")
                     )
-                    # self.add_label(key_label, position=label, update=False)
                     state.label_manager.set_page_label(label, key_label, update=False)
 
             ## Load media
