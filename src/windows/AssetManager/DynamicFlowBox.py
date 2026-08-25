@@ -32,6 +32,8 @@ WidgetT = TypeVar("WidgetT", bound=Gtk.FlowBoxChild)
 
 from loguru import logger as log
 
+from src.windows.AssetManager.thumbnail_loader import build_loader
+
 # The three hooks that a chooser installs on a flow box. All three are
 # optional. A box without them shows its items unfiltered and unsorted, and
 # show_range refuses to run without a factory.
@@ -64,6 +66,11 @@ class DynamicFlowBox(Gtk.Box, Generic[WidgetT, T]):
         self.sort_func: SortFunc[T] | None = None
         self.filter_func: FilterFunc[T] | None = None
         self.factory_func: "FactoryFunc[WidgetT, T] | None" = None
+
+        # Decodes this grid's thumbnails off the main loop. Its epoch and its
+        # pending stack are the grid's own, so a page flip here cancels only
+        # this grid's stale decodes; the cache and the worker pool are shared.
+        self.thumbnail_loader = build_loader()
 
         self.build()
 
@@ -102,6 +109,11 @@ class DynamicFlowBox(Gtk.Box, Generic[WidgetT, T]):
     def generate_placeholders(self) -> None:
         for i in range(self.N_ITEMS_PER_PAGE):
             placeholder = self.base_class()
+            # A pooled preview hands its thumbnail decode to this grid's loader.
+            # The attribute lives on Preview; setattr keeps this base generic
+            # over any child class, and a child that never reads it just ignores
+            # the value.
+            setattr(placeholder, "_thumbnail_loader", self.thumbnail_loader)
             self.flow_box.append(placeholder)
 
 
@@ -153,6 +165,11 @@ class DynamicFlowBox(Gtk.Box, Generic[WidgetT, T]):
             return False
         items = self.get_items_to_show()
         page_items = items[start:end]
+
+        # A new page. Cancel the decodes the last page asked for and had not
+        # finished, so a straggler from it neither runs nor paints over this
+        # page, and this page's own requests below take priority on the pool.
+        self.thumbnail_loader.begin_generation()
 
         # Clear the selection of the earlier page or filter before the rebind
         # of the pool. The factory selects the matching child again.
