@@ -106,7 +106,15 @@ class Background:
             old_video.close()
         self.deck_controller.clear_encoded_key_caches()
         self.deck_controller.refresh_tile_cache_min_age(None)
-        gc.collect()
+        if not _keep_slideshow:
+            # A slideshow advance runs this on the media thread once per
+            # interval, and a full collection there is a needless hitch on the
+            # sole writer. The orphaned previous frame is a plain object with no
+            # reference cycle, so refcounting frees it and its PIL image at the
+            # reassignment above without a collection. An external single-image
+            # set keeps the collect: it runs off the writer, on a page-load
+            # worker.
+            gc.collect()
 
         self.update_tiles()
         if update:
@@ -151,11 +159,25 @@ class Background:
         tick and a test both pass it. order is in-order or shuffle.
         """
         show = Slideshow(paths, interval, order=order)
+        # Bind the rotation to the page it loads for. This load runs on a page
+        # switch's worker, so a media tick can still hold the old page's
+        # rotation for a moment; slideshow_tick() reads this to refuse to
+        # advance a rotation whose page is no longer active, the way the
+        # background video guards its own repaint on video.page.
+        show.page = self.deck_controller.active_page
+        # Drop the current rotation before installing the first frame below.
+        # The install runs off the lock, and a media tick during it would
+        # otherwise advance the old rotation and overwrite the frame installed
+        # here (the new show publishes only at the end). With no rotation set,
+        # a racing tick no-ops instead.
+        with self._render_state_lock:
+            self.slideshow = None
         first = show.current_path()
-        # Build the first frame lock-free, then swap it in under the render
-        # lock while keeping the rotation. A path that is not a loadable image
-        # (a stale entry, or a video the caller did not filter) is skipped, so
-        # the rotation starts on the first frame that renders.
+        # Build the first frame lock-free, then swap it in. keep=True leaves the
+        # (now cleared) rotation slot untouched, so nothing re-arms the old one.
+        # A path that is not a loadable image (a stale entry, or a video the
+        # caller did not filter) is skipped, so the rotation starts on the first
+        # frame that renders.
         installed = self._install_slideshow_frame(first, update=update, keep=True) if first else False
         if not installed and len(show) <= 1:
             # One entry that would not load, or an empty list, leaves nothing
@@ -188,6 +210,13 @@ class Background:
         show = self.slideshow
         if show is None:
             return False
+        # Advance only while this rotation's page is the active one. A page
+        # switch bumps active_page synchronously but reloads the background on a
+        # worker, so between the two self.slideshow can still hold the old
+        # page's rotation. Without this guard a due tick in that window advances
+        # it and swaps the old rotation's next image onto the new page.
+        if show.page is not self.deck_controller.active_page:
+            return False
         now = time.monotonic() if now is None else now
         next_path = show.maybe_advance(now)
         if next_path is None:
@@ -201,7 +230,18 @@ class Background:
         keep leaves the rotation in place through the swap."""
         if not path:
             return False
-        kind, payload = self.prebuild_from_path(path, allow_keep=False)
+        try:
+            # prebuild_from_path opens and decodes the file. A file that exists
+            # but is corrupt raises here rather than returning a kind, so catch
+            # it and discard cleanly, which is what a missing entry already
+            # does. Without this a corrupt frame raises into the media loop's
+            # per-tick guard instead of being skipped.
+            kind, payload = self.prebuild_from_path(path, allow_keep=False)
+        except Exception:
+            log.opt(exception=True).warning(
+                f"Slideshow frame failed to decode, skipping it: {path}"
+            )
+            return False
         if kind == "image":
             self.set_image(cast("BackgroundImage", payload), update=update, _keep_slideshow=keep)
             return True

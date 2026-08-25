@@ -88,10 +88,17 @@ def check_shuffle_is_a_permutation_without_repeats() -> None:
         seen.append(show.index)
     check("one cycle visits every image once", sorted(seen) == [0, 1, 2, 3], f"saw {seen}")
 
-    last = show.index
-    show.advance(now=100.0)  # the wrap into a fresh permutation
-    check("a wrap does not repeat the last image", show.index != last,
-          f"repeated index {last}")
+    # The no-repeat guard, exercised deterministically. On a two-image list,
+    # seed 4 is a case where the naive reshuffle at the wrap would replay the
+    # image the last cycle ended on. The guard must reorder it away, so the
+    # image right after the wrap differs from the one right before.
+    two = Slideshow(["a.png", "b.png"], interval=5, order=SHUFFLE, rng=random.Random(4))
+    walk = [two.index]
+    for step in range(2):
+        two.advance(now=float(step + 1))
+        walk.append(two.index)
+    check("a two-image shuffle wrap does not repeat the last image (seed 4)",
+          walk[1] != walk[2], f"walk {walk}")
 
 
 # The render path, through a real headless controller
@@ -219,6 +226,68 @@ def check_video_and_slideshow_are_exclusive(controller, serial: str) -> None:
           controller.background.slideshow is not None and controller.background.video is None)
 
 
+def check_single_image_set_clears_the_rotation(controller, serial: str) -> None:
+    """Setting a single image over a running slideshow ends the rotation, so a
+    stale show cannot keep swapping its next image over the new single one."""
+    p1 = _png("f2a.png", (30, 30, 200))
+    p2 = _png("f2b.png", (200, 30, 30))
+    single = _png("f2single.png", (30, 200, 30))
+    controller.background.set_slideshow([p1, p2], interval=10, update=False)
+    check("the slideshow is armed before the single-image set",
+          controller.background.slideshow is not None)
+    controller.background.set_from_path(single, update=False, loop=False, fps=30)
+    check("a single-image set clears the slideshow", controller.background.slideshow is None)
+    check("the single image is on the render path",
+          controller.background.image is not None and controller.background.image.path == single)
+
+
+def check_moved_page_does_not_advance(controller, serial: str) -> None:
+    """A rotation advances only while its page is active. A page switch flips
+    active_page synchronously but reloads the background on a worker, so a tick
+    can race the switch with the old page's rotation still installed. The page
+    guard refuses that tick."""
+    p1 = _png("mv1.png", (10, 90, 10))
+    p2 = _png("mv2.png", (90, 10, 10))
+    _load_deck_background(controller, serial, {
+        "enable": True, "media-paths": [p1, p2], "slideshow-interval": 10,
+    })
+    show = controller.background.slideshow
+    check("the rotation records the page it loaded for",
+          show is not None and show.page is controller.active_page)
+    if show is None:
+        return
+
+    original_page = controller.active_page
+    before_index = show.index
+    before_path = controller.background.image.path
+    # The switch window: active_page has flipped to another page while the old
+    # rotation is still installed. seed(0.0) makes the interval elapsed, so only
+    # the page guard stops the advance.
+    controller.active_page = object()
+    try:
+        show.seed(0.0)
+        swapped = controller.background.slideshow_tick(now=1_000_000.0)
+        check("a tick with a moved active_page does not swap", swapped is False)
+        check("the index did not advance", controller.background.slideshow.index == before_index)
+        check("the render image did not change",
+              controller.background.image is not None and controller.background.image.path == before_path)
+    finally:
+        controller.active_page = original_page
+
+
+def check_corrupt_frame_is_discarded_cleanly(controller) -> None:
+    """A frame that exists but does not decode is discarded, returning False,
+    rather than raising into the media loop's per-tick guard."""
+    corrupt = os.path.join(gl.DATA_PATH, "assets", "corrupt.png")
+    with open(corrupt, "wb") as handle:
+        handle.write(b"this is not a decodable image\x00\x01\x02\x03")
+    try:
+        result = controller.background._install_slideshow_frame(corrupt, update=False, keep=True)
+        check("a corrupt frame is discarded, not raised", result is False)
+    except Exception as exc:  # noqa: BLE001  (any raise is the finding)
+        check("a corrupt frame is discarded, not raised", False, f"raised {type(exc).__name__}")
+
+
 def main() -> None:
     fixtures.start_watchdog(90, label="scenario_wallpaper_slideshow")
 
@@ -236,6 +305,9 @@ def main() -> None:
         check_page_switch_cancels_the_rotation(controller, serial)
         check_single_image_background_still_loads(controller, serial)
         check_video_and_slideshow_are_exclusive(controller, serial)
+        check_single_image_set_clears_the_rotation(controller, serial)
+        check_moved_page_does_not_advance(controller, serial)
+        check_corrupt_frame_is_discarded_cleanly(controller)
     finally:
         fixtures.teardown(controller)
 

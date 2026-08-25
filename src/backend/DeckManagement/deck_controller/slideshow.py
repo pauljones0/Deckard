@@ -55,6 +55,11 @@ class Slideshow:
         # Monotonic time of the last advance or the seed, or None before the
         # timebase is set. due() reads None as "not yet armed".
         self._last_advance: float | None = None
+        # The page this rotation was loaded for. An opaque handle the render
+        # layer sets and reads by identity; the model never looks inside it. It
+        # lets the media tick refuse to advance a rotation whose page is no
+        # longer active, the way the background video guards its own repaint.
+        self.page: object | None = None
 
     def _build_sequence(self) -> list[int]:
         indices = list(range(len(self.paths)))
