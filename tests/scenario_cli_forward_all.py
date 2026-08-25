@@ -327,6 +327,43 @@ def check_no_requests_touches_nothing() -> None:
     print("PASS: an invocation with no requests probes nothing and parks nothing")
 
 
+# 9. No session bus to open
+
+def check_unreachable_bus_is_reported() -> None:
+    """A bus that cannot be opened ends the command, and says so.
+
+    The transport's constructor raises when there is no session bus. That
+    error used to leave this module, reach main()'s @log.catch, print a
+    traceback and exit zero, which reads as applied while the request was
+    dropped. This process also cannot tell whether an instance runs, so it must
+    not park and boot either: that opens a deck on a guess, next to an instance
+    that may hold it.
+    """
+    clear_parking()
+    original = cli_forward.bus_transport
+
+    def refuse():
+        raise cli_forward.TransportError("Could not open the session bus, so "
+                                         "nothing was applied: no bus here")
+
+    cli_forward.bus_transport = refuse
+    try:
+        verdict = cli_forward.forward_cli_requests(parse(ARGV))
+    finally:
+        cli_forward.bus_transport = original
+
+    assert not verdict.handled, (
+        "nothing was applied, so this invocation is not handled")
+    assert verdict.failures == [
+        "Could not open the session bus, so nothing was applied: no bus here"
+    ], verdict.failures
+    assert not gl.api_page_requests and not gl.api_state_requests, (
+        f"a launch that cannot see the bus must not park and boot on a guess: "
+        f"{gl.api_page_requests} / {gl.api_state_requests}")
+
+    print("PASS: an unreachable session bus ends the command with a reason")
+
+
 def main() -> None:
     fixtures.start_watchdog(WATCHDOG_SECONDS, label="scenario_cli_forward_all")
     try:
@@ -339,6 +376,7 @@ def main() -> None:
         check_validation_is_syntax_only()
         check_large_decks_not_pre_rejected()
         check_no_requests_touches_nothing()
+        check_unreachable_bus_is_reported()
     finally:
         clear_parking()
 

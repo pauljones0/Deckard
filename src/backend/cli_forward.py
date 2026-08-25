@@ -14,6 +14,11 @@ that belong to another process. forward_parked_requests takes them there.
 
 Nothing can import main.py, because its module body re-execs the process, so
 this work lives here where a scenario drives it.
+
+This body imports the standard library and appinfo, and nothing else. The CLI
+fast path (src/backend/cli_fast_path.py) executes it before the application
+imports anything, which is before globals.py exists, so the startup queue and
+the toolkit are both imported where they are used rather than here.
 """
 from __future__ import annotations
 
@@ -21,7 +26,6 @@ from dataclasses import dataclass, field
 from typing import Any, TYPE_CHECKING
 
 import appinfo
-from src.backend import startup_queue
 
 if TYPE_CHECKING:
     from argparse import Namespace
@@ -87,6 +91,14 @@ SKEW_MESSAGE = (
     "again in a moment."
 )
 
+# The widest state number that can be asked for. src/api.py declares
+# ChangeState with an int32 state, so a wider number cannot go on the wire at
+# all: GLib.Variant raises OverflowError while it packs the call, past every
+# place that turns a bad request into a sentence and out of a module body that
+# no exception hook covers. This is the wire's own limit rather than a guess at
+# what hardware has, which is why it is checked and the coordinates are not.
+MAX_STATE_NUMBER = 2**31 - 1
+
 USAGE = """
 Usage examples:
   --change-state CL123456789 Main 0,0 1
@@ -105,9 +117,12 @@ class OlderInstance(Exception):
 
 
 class TransportError(Exception):
-    """The conversation with the running instance failed. It never replied,
-    the connection went away, or it refused the call. This carries the bus's
-    own text, so nothing outside this module needs to know a GLib.Error."""
+    """The conversation with the running instance failed, or never started.
+
+    It never replied, the connection went away, it refused the call, or there
+    was no session bus to open in the first place. This carries the bus's own
+    text, so nothing outside this module needs to know a GLib.Error, and its
+    text is what the person who typed the command reads."""
 
 
 @dataclass(frozen=True)
@@ -125,7 +140,83 @@ class Verdict:
     failures: list[str] = field(default_factory=list)
 
 
+@dataclass(frozen=True)
+class Plan:
+    """What one invocation asks a deck to do, read from argv alone.
+
+    This is the whole set of work a running instance can take off a command
+    line. Both callers read it from here: the fast path before the application
+    imports anything, and the boot path that parks. One reader would drift
+    from the other, and an invocation that forwards a request the parking half
+    does not know about loses it.
+
+    empty means the command asks for nothing and is an ordinary launch.
+    failures holds the sentences for the person who typed the command, and a
+    non-empty list voids the whole command; see _parse_state_requests.
+
+    A kind of request added here needs four more edits, and each one is a
+    silent loss on its own: a reader in plan_requests, a send in forward(), a
+    park in park(), and a term in empty below. Nothing derives them, because a
+    send and a park are per-kind work either way. The fast path
+    (src/backend/cli_fast_path.py) needs no edit, with one exception named in
+    its own docstring: a kind that cannot be parked.
+    """
+
+    page_requests: list[tuple[str, str]] = field(default_factory=list)
+    state_requests: list[tuple[str, str, str, int]] = field(default_factory=list)
+    failures: list[str] = field(default_factory=list)
+
+    @property
+    def empty(self) -> bool:
+        return not self.page_requests and not self.state_requests
+
+
 # Syntax
+
+def _unsendable(where: str, what: str, value: str) -> str | None:
+    """The sentence for an argument that cannot go on the bus, or None.
+
+    The bus carries UTF-8. Python decodes argv with surrogateescape, so a
+    command line holding a byte that is not valid UTF-8 arrives here as a
+    string with a lone surrogate in it. Nothing refuses that until GLib.Variant
+    packs the call and raises UnicodeEncodeError, which is past every place
+    that turns a bad request into a sentence.
+    """
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError:
+        return (f"Error: {what} in {where} is not text this command can send: "
+                f"{value!r}. The bus carries UTF-8 and these bytes are not.")
+    return None
+
+
+def _parse_page_requests(raw: list[Any]) -> tuple[list[tuple[str, str]],
+                                                  list[str]]:
+    """Read the --change-page groups into (serial, page).
+
+    These groups went unchecked until a page name that argv carried as
+    non-UTF-8 bytes reached the transport and raised out of it. Like the state
+    groups below, this judges shape alone: whether the serial and the page name
+    are real is the running instance's answer, not this module's.
+    """
+    parsed: list[tuple[str, str]] = []
+    failures: list[str] = []
+    for i, (serial_number, page_name) in enumerate(raw):
+        where = f"--change-page argument {i + 1}"
+        if not serial_number:
+            failures.append(f"Error: Invalid serial number in {where}: '{serial_number}'")
+            continue
+        if not page_name:
+            failures.append(f"Error: Invalid page name in {where}: '{page_name}'")
+            continue
+        unsendable = (_unsendable(where, "The serial number", serial_number)
+                      or _unsendable(where, "The page name", page_name))
+        if unsendable:
+            failures.append(unsendable)
+            continue
+        parsed.append((serial_number, page_name))
+    return parsed, failures
+
 
 def _parse_state_requests(raw: list[Any]) -> tuple[list[tuple[str, str, str, int]],
                                               list[str]]:
@@ -146,13 +237,23 @@ def _parse_state_requests(raw: list[Any]) -> tuple[list[tuple[str, str, str, int
     parsed: list[tuple[str, str, str, int]] = []
     failures: list[str] = []
     for i, (serial_number, page_name, coords, state_number) in enumerate(raw):
-        where = f"argument {i + 1}"
+        # Named by flag, because a command carrying both kinds otherwise
+        # numbers two groups "argument 1" and leaves the reader to guess.
+        where = f"--change-state argument {i + 1}"
         if not serial_number:
             failures.append(f"Error: Invalid serial number in {where}: '{serial_number}'")
             continue
         if not page_name:
             failures.append(f"Error: Invalid page name in {where}: '{page_name}'")
             continue
+        unsendable = (_unsendable(where, "The serial number", serial_number)
+                      or _unsendable(where, "The page name", page_name))
+        if unsendable:
+            failures.append(unsendable)
+            continue
+        # The coordinates take no such check of their own. A lone surrogate is
+        # no digit, so the int conversion below refuses one as a bad coordinate
+        # before it can reach the wire.
         if not coords or "," not in coords:
             failures.append(
                 f"Error: Invalid coordinate format in {where}: '{coords}'. "
@@ -179,20 +280,63 @@ def _parse_state_requests(raw: list[Any]) -> tuple[list[tuple[str, str, str, int
             failures.append(
                 f"Error: State number must be non-negative in {where}: '{state_number}'")
             continue
+        if state > MAX_STATE_NUMBER:
+            failures.append(
+                f"Error: State number is too large in {where}: '{state_number}'. "
+                f"The largest one the running instance can be asked for is "
+                f"{MAX_STATE_NUMBER}")
+            continue
         parsed.append((serial_number, page_name, coords, state))
     return parsed, failures
 
 
+def plan_requests(args: Namespace) -> Plan:
+    """Read this invocation's requests out of argv. It touches nothing else.
+
+    No bus, no data directory, no globals. That is what lets the fast path
+    call it before the application imports anything.
+
+    Every argument a request carries is checked here rather than at the
+    transport. The fast path runs in main.py's module body, which no exception
+    hook covers, so an argument that raises where it is packed for the wire
+    leaves a traceback on screen instead of a sentence. The two shapes that did
+    are a state number wider than the wire's integer and a string argv carried
+    as non-UTF-8 bytes.
+    """
+    raw_page_requests = args.change_page or []
+    raw_state_requests = args.change_state or []
+    if not raw_page_requests and not raw_state_requests:
+        return Plan()
+
+    # argparse hands each group over as a list. A tuple per request keeps one
+    # shape for both kinds and matches what the startup queue hands back when a
+    # lost launch claims its parking again.
+    page_requests, page_failures = _parse_page_requests(raw_page_requests)
+    state_requests, state_failures = _parse_state_requests(raw_state_requests)
+    failures = page_failures + state_failures
+    if failures:
+        # Nothing is parked or sent yet, and nothing gets parked or sent.
+        return Plan(failures=failures + [USAGE])
+
+    return Plan(page_requests=page_requests, state_requests=state_requests)
+
+
 # The two things an invocation can do with its requests
 
-def _park(page_requests: list[Any], state_requests: list[tuple[str, str, str, int]]) -> None:
+def park(plan: Plan) -> None:
     """Hand every request to the startup queue, for the decks this process
     enumerates next. The serial keys each request and the last write wins,
-    which is the parking contract rather than an effect of this loop."""
+    which is the parking contract rather than an effect of this loop.
+
+    The startup queue imports globals, and this module's body must not, so the
+    import sits here. Only a process that goes on to boot reaches this call.
+    """
+    from src.backend import startup_queue
+
     queue = startup_queue.get()
-    for serial_number, page_name in page_requests:
+    for serial_number, page_name in plan.page_requests:
         queue.park_page_request(serial_number, page_name)
-    for serial_number, page_name, coords, state in state_requests:
+    for serial_number, page_name, coords, state in plan.state_requests:
         queue.park_state_request(serial_number, {
             "page_name": page_name,
             "coords": coords,
@@ -200,8 +344,7 @@ def _park(page_requests: list[Any], state_requests: list[tuple[str, str, str, in
         })
 
 
-def _forward(transport: Transport, page_requests: list[Any],
-             state_requests: list[tuple[str, str, str, int]]) -> list[str]:
+def forward(plan: Plan, transport: Transport) -> list[str]:
     """Send every request to the running instance and collect what it said.
 
     This sends every request. A return after the first send moves deck A and
@@ -222,11 +365,11 @@ def _forward(transport: Transport, page_requests: list[Any],
     """
     failures: list[str] = []
     try:
-        for serial_number, page_name in page_requests:
+        for serial_number, page_name in plan.page_requests:
             message = transport.change_page(serial_number, page_name)
             if message:
                 failures.append(message)
-        for serial_number, page_name, coords, state in state_requests:
+        for serial_number, page_name, coords, state in plan.state_requests:
             message = transport.change_state(serial_number, page_name, coords, state)
             if message:
                 failures.append(message)
@@ -250,26 +393,34 @@ def forward_cli_requests(args: Namespace,
     It parks them for this process to pick up as it boots, or forwards them to
     the instance already running; see the module docstring. It never exits and
     never prints. The verdict says what happened, and main.py owns both.
+
+    This is the boot path's call. A process that reaches it has imported the
+    application, so the probe below is the one that decides, and it is the
+    probe that always decided. The fast path asks the same question earlier
+    and only to learn whether it can skip that import; a no there changes
+    nothing here.
     """
-    page_requests = args.change_page or []
-    raw_state_requests = args.change_state or []
-    if not page_requests and not raw_state_requests:
+    plan = plan_requests(args)
+    if plan.failures:
+        return Verdict(handled=False, failures=plan.failures)
+    if plan.empty:
         return Verdict()
 
-    state_requests, failures = _parse_state_requests(raw_state_requests)
-    if failures:
-        # Nothing is parked or sent yet, and nothing gets parked or sent.
-        return Verdict(handled=False, failures=failures + [USAGE])
-
     if transport is None:
-        transport = _BusTransport()
+        try:
+            transport = bus_transport()
+        except TransportError as e:
+            # No bus is no answer. This process cannot tell whether an instance
+            # runs, so a park and a boot would open a deck on a guess, next to
+            # an instance that may hold it. Report the failure, which is what
+            # ends the invocation with a non-zero code.
+            return Verdict(handled=False, failures=[str(e)])
 
     if not transport.is_running() or args.close_running:
-        _park(page_requests, state_requests)
+        park(plan)
         return Verdict(handled=False)
 
-    return Verdict(handled=True,
-                   failures=_forward(transport, page_requests, state_requests))
+    return Verdict(handled=True, failures=forward(plan, transport))
 
 
 def forward_parked_requests(transport: Transport | None = None) -> list[str]:
@@ -292,18 +443,46 @@ def forward_parked_requests(transport: Transport | None = None) -> list[str]:
     Returns the failures to print. An empty list means that the instance took
     everything.
     """
+    from src.backend import startup_queue
+
     page_requests, parked_states = startup_queue.get().claim_parked_requests()
     if not page_requests and not parked_states:
         return []
     if transport is None:
-        transport = _BusTransport()
-    return _forward(transport, page_requests, [
-        (serial, parked["page_name"], parked["coords"], parked["state"])
-        for serial, parked in parked_states
-    ])
+        transport = bus_transport()
+    return forward(Plan(
+        page_requests=page_requests,
+        state_requests=[
+            (serial, parked["page_name"], parked["coords"], parked["state"])
+            for serial, parked in parked_states
+        ],
+    ), transport)
 
 
 # The real transport
+
+def bus_transport() -> Transport:
+    """Build the transport below, for a caller outside this module.
+
+    A function rather than the class itself, so nothing outside reaches for a
+    private name, and so the toolkit import stays where it is, inside the
+    constructor. A scenario that drives the transport's own private call
+    surface still names the class, which is the one blessed exception.
+
+    A failed connection becomes a TransportError. The constructor's failure is
+    a GLib.Error out of bus_get_sync, which means there is no session bus to
+    reach an instance on, and both callers must answer that rather than let it
+    escape: it reached main.py's @log.catch before, which printed a traceback
+    and exited zero, and a dropped request that reports success is the worst of
+    the outcomes. The catch is broad because naming the toolkit's error type
+    here would put the toolkit in this module's body.
+    """
+    try:
+        return _BusTransport()
+    except Exception as e:
+        raise TransportError(
+            f"Could not open the session bus, so nothing was applied: {e}") from e
+
 
 class _BusTransport:
     """The running instance, over the session bus.
