@@ -248,7 +248,7 @@ class StoreBackend:
     def get_stores(self) -> list[tuple[str, str]]:
         settings = gl.settings_manager.app()
 
-        stores = []
+        stores: list[tuple[str, str]] = []
         stores.append((self.STORE_REPO_URL, self.get_official_store_branch()))
 
         if settings.enable_custom_stores:
@@ -279,7 +279,7 @@ class StoreBackend:
     def get_custom_plugins(self) -> list[tuple[str, str]]:
         settings = gl.settings_manager.app()
 
-        plugins = []
+        plugins: list[tuple[str, str]] = []
         if settings.enable_custom_plugins:
             for plugin in settings.custom_plugins:
                 url = plugin.get("url")
@@ -440,7 +440,7 @@ class StoreBackend:
         if data_type == DataType.TEXT:
             return answer.text
         elif data_type == DataType.CONTENT:
-            return answer.content
+            return cast(bytes, answer.content)
 
     def get_last_commit(self, repo_url: str, branch_name: str = "main") -> "str | None":
         """Resolves the tip sha of a branch via the GitHub API.

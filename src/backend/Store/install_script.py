@@ -41,6 +41,7 @@ import subprocess
 import sys
 import threading
 from collections.abc import Callable
+from typing import cast
 
 from loguru import logger as log
 
@@ -176,7 +177,7 @@ def _execute(cmd: list[str], timeout_s: float, env: "dict[str, str] | None" = No
                                stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
     try:
         _, stderr = process.communicate(timeout=timeout_s)
-        return process.returncode, False, stderr.decode(errors="replace")
+        return cast(int, process.returncode), False, stderr.decode(errors="replace")
     except subprocess.TimeoutExpired:
         _kill_group(process.pid, signal.SIGTERM)
         try:
@@ -184,7 +185,7 @@ def _execute(cmd: list[str], timeout_s: float, env: "dict[str, str] | None" = No
         except subprocess.TimeoutExpired:
             _kill_group(process.pid, signal.SIGKILL)
             _, stderr = process.communicate()
-        return process.returncode, True, (stderr or b"").decode(errors="replace")
+        return cast(int, process.returncode), True, (stderr or b"").decode(errors="replace")
 
 
 def _kill_group(pid: int, sig: int) -> None:
@@ -197,7 +198,7 @@ def _policy() -> str:
     if manager is None:
         return "ask"
     try:
-        return manager.app().install_scripts
+        return cast(str, manager.app().install_scripts)
     except Exception as e:
         log.warning(f"Could not read the install-scripts policy ({e}); defaulting to ask")
         return "ask"
@@ -253,7 +254,7 @@ def _bwrap_prefix(plugin_dir: str, writable_extra: list[str]) -> list[str]:
     plugin dir, the pip cache and each writable_extra path are bound
     writable. The network stays shared, because the step's legitimate job
     is a package install over pip."""
-    prefix = [
+    prefix: list[str] = [
         "bwrap", "--die-with-parent", "--unshare-pid",
         "--ro-bind", "/", "/",
         "--dev", "/dev", "--proc", "/proc",
