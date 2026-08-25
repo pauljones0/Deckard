@@ -202,12 +202,19 @@ class StoreAssetPreview(StorePreview):
             return False
         if not report.ok:
             log.error(f"Failed to install {noun} {asset_id}: {report.error!r}")
-            if report.installed:
-                # Part of the set landed. The plain failure notification says
-                # nothing about what is now installed.
+            # The plain notification names this card's own asset, so it is
+            # right only when this asset is what failed and nothing else was
+            # touched. Anything else needs the detail: something else failed,
+            # or something landed and stays installed. The title then takes
+            # the class of the item that actually failed, so a pack pulled in
+            # by a plugin is not reported as a plugin.
+            failed_is_this_card = (report.failed is not None
+                                   and report.failed.data is self.asset_data)
+            if report.installed or not failed_is_this_card:
                 name = self.asset_data.asset_name or asset_id or noun
+                failed_noun = dependencies.failure_noun(report, noun)
                 gl.notify.error(dependencies.failure_message(report, name),
-                                title=f"{noun[:1].upper()}{noun[1:]} install failed")
+                                title=f"{failed_noun[:1].upper()}{failed_noun[1:]} install failed")
             else:
                 self.notify_install_failure()
             # Leave the button in its previous state so the user can retry.

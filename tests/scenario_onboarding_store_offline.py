@@ -223,6 +223,10 @@ def check_install_failures_toast() -> None:
         loading_box=loading_box,
         recommendations=types.SimpleNamespace(get_selected_plugins=lambda: [plugin_data]),
         close=lambda: None,
+        # The real onboarding page is a dialog, and the install prompts hang
+        # on the window presenting it. Nothing presents this stand-in, which
+        # is the None a real unpresented dialog also answers.
+        get_root=lambda: None,
     )
     fake_self = types.SimpleNamespace(onboarding_window=onboarding_window)
 

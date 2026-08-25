@@ -347,6 +347,11 @@ class OnboardingScreen5(Gtk.Box):
 
         backend = gl.store_backend
         failed: list[str] = []
+        # The onboarding page is a dialog, which cannot itself parent one, so
+        # the prompts hang on the window presenting it. None is safe: a
+        # prompt with no parent stands on its own.
+        root = self.onboarding_window.get_root()
+        prompt_parent = root if isinstance(root, Gtk.Window) else None
         for i, plugin_data in enumerate(plugins):
             GLib.idle_add(self.onboarding_window.loading_box.progress_bar.set_text, f"Installing {plugin_data.plugin_name}")
             GLib.idle_add(self.onboarding_window.loading_box.progress_bar.set_fraction, i / len(plugins))
@@ -357,14 +362,23 @@ class OnboardingScreen5(Gtk.Box):
                 log.error(f"Onboarding: could not resolve {plugin_data.plugin_name} for install")
                 failed.append(plugin_data.plugin_name or plugin_data.plugin_id or "unknown plugin")
                 continue
-            # No prompt here: the first run installs what the user ticked and
-            # has no surface to answer one on, so a plugin's dependencies
-            # install with it unasked. They come from the same vetted catalog.
+            # The first run asks the same questions a store install asks.
+            # This window can parent a dialog, and a plugin picked from a
+            # recommendation list is still a plugin whose setup step runs
+            # code on this computer, so it is not a place to skip consent.
+            # The set prompt names whatever the plugin pulls in with it.
+            from src.windows.Store.install_consent import make_consent, make_set_consent
             report = dependencies.install_with_dependencies(
-                backend, dependencies.plugin_item(plugin))
+                backend, dependencies.plugin_item(plugin),
+                confirm_set=make_set_consent(prompt_parent),
+                ask_install_script=make_consent(prompt_parent))
             if not report.ok:
                 log.error(f"Onboarding: failed to install {plugin_data.plugin_name}: {report!r}")
-                failed.append(plugin_data.plugin_name or plugin_data.plugin_id or "unknown plugin")
+                # Name the item that actually failed, which can be something
+                # the plugin needed rather than the plugin itself.
+                failed.append(
+                    (report.failed.display_name if report.failed is not None else None)
+                    or plugin_data.plugin_name or plugin_data.plugin_id or "unknown plugin")
                 GLib.idle_add(self.onboarding_window.loading_box.progress_bar.set_text,
                               f"Failed to install {plugin_data.plugin_name}")
 

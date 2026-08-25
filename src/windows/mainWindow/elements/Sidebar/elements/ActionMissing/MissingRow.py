@@ -110,6 +110,18 @@ class MissingRow(Adw.PreferencesRow):
             ask_install_script=make_consent(window))
         if not report.ok:
             self.show_install_error()
+            # The row label only says that this plugin did not install. That
+            # is the whole story only when this plugin is what failed and
+            # nothing else was touched. Otherwise something else failed, or
+            # something landed and stays installed, and nothing else on
+            # screen would say so.
+            failed_is_the_plugin = (report.failed is not None
+                                    and report.failed.data is plugin)
+            if report.installed or not failed_is_the_plugin:
+                name = plugin.plugin_name or plugin.plugin_id or "the plugin"
+                noun = dependencies.failure_noun(report, "plugin")
+                gl.notify.error(dependencies.failure_message(report, name),
+                                title=f"{noun[:1].upper()}{noun[1:]} install failed")
             return
         
         # Reset ui

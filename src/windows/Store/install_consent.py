@@ -14,10 +14,14 @@ plain bool off the main thread.
 """
 import threading
 from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 from gi.repository import Adw, GLib, Gtk
 
 from loguru import logger as log
+
+if TYPE_CHECKING:
+    from src.backend.Store.dependencies import Plan
 
 
 # A dialog that never returns, because the window closed under it or the
@@ -60,9 +64,15 @@ def _dialog(parent: "Gtk.Window | None", title: str, heading: str, body: str,
             agree_label: str, refuse_label: str,
             record: "Callable[[bool], None]") -> None:
     """One two-answer dialog. Refusing is the default and the close answer,
-    so a dialog dismissed any other way installs nothing."""
-    dialog = Adw.MessageDialog(transient_for=parent, modal=True, title=title,
-                               heading=heading, body=body)
+    so a dialog dismissed any other way installs nothing.
+
+    With no parent window, which the tray-only autostart has until a window
+    is opened, the dialog stands on its own and is not modal. A modal
+    dialog with nothing to be modal to can come up behind everything, and
+    then the only answer is the timeout above.
+    """
+    dialog = Adw.MessageDialog(transient_for=parent, modal=parent is not None,
+                               title=title, heading=heading, body=body)
     dialog.add_response("refuse", refuse_label)
     dialog.add_response("agree", agree_label)
     dialog.set_response_appearance("agree", Adw.ResponseAppearance.SUGGESTED)
@@ -94,21 +104,58 @@ def make_consent(parent: "Gtk.Window | None") -> Callable[[str], bool]:
     return ask
 
 
-def make_set_consent(parent: "Gtk.Window | None") -> Callable[[str, list[str]], bool]:
+def make_set_consent(parent: "Gtk.Window | None") -> Callable[[str, "Plan"], bool]:
     """A consent callable for an install that carries dependencies. It names
-    every item before anything downloads, and a refusal refuses the whole
-    set."""
-    def ask(root_name: str, names: list[str]) -> bool:
-        listed = "\n".join(f"• {name}" for name in names)
+    every item, and everything the resolution could not deliver, before
+    anything downloads, and a refusal refuses the whole set."""
+    def ask(root_name: str, plan: "Plan") -> bool:
+        listed = "\n".join(f"• {name}" for name in plan.names())
+        body = (f"Installing {root_name} also installs the items it names, in "
+                f"this order:\n\n{listed}\n\nThey come from the store catalogs "
+                "this app is set to use. Removing an item later leaves the "
+                "others installed.")
+        if plan.unknown:
+            named = ", ".join(plan.unknown)
+            body += (f"\n\n{root_name} also asks for items that no catalog "
+                     f"lists, so they cannot be installed: {named}. It may not "
+                     "work without them.")
+        if plan.truncated:
+            body += ("\n\nThe items named go deeper than this app follows, so "
+                     "the list above may be short of what they ask for.")
         return _ask(f"dependency prompt for {root_name}", lambda record: _dialog(
             parent,
             title="Install these store items?",
             heading=f"{root_name} needs other store items",
-            body=(f"Installing {root_name} also installs the items it names, in "
-                  f"this order:\n\n{listed}\n\nThey come from the same vetted "
-                  "store catalog. Removing this plugin later leaves them "
-                  "installed."),
+            body=body,
             agree_label="Install all",
+            refuse_label="Cancel",
+            record=record,
+        ))
+
+    return ask
+
+
+def make_update_confirm(parent: "Gtk.Window | None") -> Callable[[], bool]:
+    """A confirmation for an update of every installed asset that arrived on
+    the exported action.
+
+    Any peer of the session bus can activate that action, and an update
+    reinstalls every out-of-date asset, which for a plugin can run that
+    plugin's install step. The answer here is what decides whether any of
+    that starts.
+    """
+    def ask() -> bool:
+        return _ask("update request", lambda record: _dialog(
+            parent,
+            title="Update all store assets?",
+            heading="Update every installed store asset?",
+            body=("Something outside this window asked for this update. That "
+                  "is the Update All button of a notification from this app, "
+                  "and it is also any other program on your desktop session. "
+                  "Updating reinstalls every plugin, icon pack and wallpaper "
+                  "pack that is out of date, and a plugin may run its own "
+                  "setup step while it installs."),
+            agree_label="Update all",
             refuse_label="Cancel",
             record=record,
         ))

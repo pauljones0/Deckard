@@ -77,12 +77,17 @@ bundle as a release asset.
   installs them first. The plugin's manifest carries a "dependencies" list of
   store ids, each naming another plugin, icon pack, wallpaper pack or SD+ bar
   wallpaper pack. Before anything downloads, one prompt names the whole set in
-  the order it will install, and cancelling there installs none of it. Only an
-  id the vetted store catalog already lists resolves, so a dependency reaches
-  no repository the catalog does not hold. An item you already have is left
-  alone. If one item of a set fails, the rest do not start and the report says
-  which ones installed, and those stay installed. Removing a plugin later
-  leaves the items it named in place.
+  the order it will install, with the kind of each item, and cancelling there
+  installs none of it. The prompt also names anything the plugin asked for
+  that no catalog lists, so a plugin cannot install looking healthy while
+  missing what it declared. Only an id a store catalog already lists resolves,
+  so a dependency reaches no repository your catalogs do not hold, and only a
+  plugin can name dependencies, so an icon pack or a wallpaper pack cannot
+  pull in code. An item you already have is left alone, whatever version it
+  is. If one item of a set fails, the rest do not start, and the report names
+  the one that failed and the ones that installed and stay installed. Removing
+  a plugin later leaves the items it named in place. The first-run page asks
+  the same questions the store does.
 
 ### Changed
 
@@ -340,16 +345,21 @@ bundle as a release asset.
 
 ### Security
 
-- A plugin install that another program on your desktop session asks for now
-  waits for your answer. The app publishes an install-plugin control on the
-  session bus, which is how the Install button of a "plugin missing"
-  notification reaches it, and any other program on the session could use the
-  same control. Such a request now raises a dialog that names the plugin, and
-  installs nothing until you agree, so no program can install a plugin behind
-  your back. The dialog comes before the store is contacted, so a request you
-  refuse costs nothing, and one request is handled at a time. The store window,
-  the first-run page and the "install the missing plugin" button never used
-  that control and are unchanged.
+- A plugin install or an asset update that another program on your desktop
+  session asks for now waits for your answer. The app publishes an
+  install-plugin control and an update-all-assets control on the session bus,
+  which is how the buttons of its own notifications reach it, and any other
+  program on the session could use the same controls. An update is the wider
+  of the two, because it reinstalls every out-of-date asset and a plugin may
+  run its own setup step while it installs. Either request now raises a dialog
+  that names what would happen, and nothing starts until you agree. The dialog
+  comes before the store is contacted, so a request you refuse costs nothing;
+  one request is handled at a time, and it stays held until the work finishes,
+  so two installs cannot run over each other. A request whose plugin name is
+  not a valid store id is dropped without a dialog, and after two refusals in
+  a row the control goes quiet for a minute, so a program cannot keep raising
+  dialogs at you. The store window, the first-run page and the "install the
+  missing plugin" button never used those controls and are unchanged.
 
 - Installing a plugin from the store now asks before it runs the plugin's
   install steps, and runs them confined. A plugin can ship a setup step

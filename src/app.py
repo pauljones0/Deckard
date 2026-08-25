@@ -43,7 +43,12 @@ from src.backend import ui_port
 from src.backend import startup_queue
 from src.backend.PageManagement import page_flush
 from src.backend.Store import dependencies
-from src.backend.Store.install_request import InstallActionGate
+from src.backend.Store.install_request import (
+    INSTALL_ACTION,
+    UPDATE_ACTION,
+    ConfirmedActionGate,
+    is_store_id,
+)
 from src.backend.Store.store_result import Ok
 from src.windows.ui_adapter import GtkUIAdapter
 from src.windows.mainWindow.mainWindow import MainWindow
@@ -600,23 +605,40 @@ class App(Adw.Application):
             signal.signal(signum, self._on_unix_signal)
 
     def add_signals(self) -> None:
-        self.update_all_assets_action = Gio.SimpleAction.new("update-all-assets", None)
-        self.update_all_assets_action.connect("activate", self.update_all_assets)
-        self.add_action(self.update_all_assets_action)
-
         # GApplication exports the whole action group on the session bus, so
-        # any peer can activate this one and name a plugin. The gate answers
-        # every activation with a confirmation before an install starts; the
-        # app's own install paths call the store backend directly and never
-        # reach this action.
-        self.install_gate = InstallActionGate(self._install_plugin, self._confirm_install_request)
+        # any peer can activate either of these. Both gates answer every
+        # activation with a confirmation before any work starts; the app's
+        # own install paths call the store backend directly and reach neither
+        # action. See src/backend/Store/install_request.py.
+        self.update_assets_gate = ConfirmedActionGate(
+            UPDATE_ACTION, self._update_all_assets, self._confirm_update_request)
+        self.update_all_assets_action = self.update_assets_gate.add_to(self)
+
+        self.install_gate = ConfirmedActionGate(
+            INSTALL_ACTION, self._install_plugin, self._confirm_install_request,
+            target_type="s", validate=is_store_id)
         self.install_plugin_action = self.install_gate.add_to(self)
 
-    def update_all_assets(self, *args: Any, **kwargs: Any) -> None:
-        threading.Thread(target=self._update_all_assets, name="update_all_assets").start()
+    def _dialog_parent(self) -> "Gtk.Window | None":
+        """A window to hang a gate's confirmation on, or None.
+
+        The app can run with no window at all, which the tray-only autostart
+        does, and a prompt then stands on its own rather than never appear.
+        """
+        window = self.get_active_window()
+        if window is not None:
+            return window
+        return getattr(self, "main_win", None)
+
+    def _confirm_update_request(self, _subject: str) -> bool:
+        """Whether an update of every asset that arrived on the exported
+        action may start. It runs on the gate's own thread, so the dialog
+        marshals itself."""
+        from src.windows.Store.install_consent import make_update_confirm
+        return make_update_confirm(self._dialog_parent())()
 
     @log.catch
-    def _update_all_assets(self) -> None:
+    def _update_all_assets(self, _subject: str = "") -> None:
         self.set_working(True)
 
         store_backend = gl.store_backend
@@ -640,7 +662,7 @@ class App(Adw.Application):
         """Whether an install that arrived on the exported action may start.
         It runs on the gate's own thread, so the dialog marshals itself."""
         from src.windows.Store.install_consent import make_install_confirm
-        return make_install_confirm(getattr(self, "main_win", None))(plugin_id)
+        return make_install_confirm(self._dialog_parent())(plugin_id)
 
     @log.catch
     def _install_plugin(self, plugin_id: str) -> None:
@@ -663,7 +685,7 @@ class App(Adw.Application):
         # names every item before the first download; the script prompt gates
         # each plugin's own install step.
         from src.windows.Store.install_consent import make_consent, make_set_consent
-        window = getattr(self, "main_win", None)
+        window = self._dialog_parent()
         report = dependencies.install_with_dependencies(
             store_backend, dependencies.plugin_item(plugin),
             confirm_set=make_set_consent(window),
