@@ -93,8 +93,17 @@ class LocaleManager:
         if result is None:
             result = fallback
 
-        # Escape HTML/XML entities for GTK markup compatibility
-        if result:
-            result = html.escape(result)
-
         return result
+
+    def get_markup(self, key: str, fallback: str | None = None) -> str:
+        """Return the translation escaped for a Pango markup consumer.
+
+        get() returns plain text, which is what a Gtk.Label, a title property
+        or a tooltip renders verbatim. A caller that feeds the value into a
+        markup-parsed property must escape the three markup-significant
+        characters first, or a translation holding "&" makes the parse fail.
+        Quotes stay literal: Pango needs them escaped only inside a tag
+        attribute, and escaping them puts "&#x27;" on screen wherever the
+        value reaches a plain renderer.
+        """
+        return html.escape(self.get(key, fallback), quote=False)

@@ -79,7 +79,7 @@ class DeleteConfirmationDialog(Adw.MessageDialog):
 
         self.set_transient_for(gl.asset_manager)
         self.set_modal(True)
-        self.set_title(gl.lm.get("asset-manager.custom-assets.remove-confirmation-dialog.tite"))
+        self.set_title(gl.lm.get("asset-manager.custom-assets.remove-confirmation-dialog.title"))
         self.add_response("cancel", gl.lm.get("asset-manager.custom-assets.remove-confirmation-dialog.cancel"))
         self.add_response("remove", gl.lm.get("asset-manager.custom-assets.remove-confirmation-dialog.remove"))
         self.set_default_response("cancel")

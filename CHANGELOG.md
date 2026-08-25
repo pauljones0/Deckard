@@ -128,6 +128,14 @@ bundle as a release asset.
 
 ### Fixed
 
+- Labels render apostrophes and ampersands as themselves in every language.
+  A French deck-settings label showed a code where its apostrophe belongs, and
+  a German onboarding line showed a code for its ampersand, because every
+  translated string was escaped whether or not the label reads markup. Plain
+  labels now get plain text and only markup labels get escaped text. The
+  removal dialog in the asset manager also shows its title again instead of a
+  raw label key.
+
 - Changing a fake deck's rows or columns now fills the new grid with the
   page's content right away. The resized grid stayed blank until the next page
   switch, and the replaced tiles released their media only when the garbage

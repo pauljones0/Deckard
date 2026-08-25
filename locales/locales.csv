@@ -29,7 +29,6 @@ main-page-deck-config;Tasten der Seite;Page Key Grid;Paramétrage des boutons;Cu
 toggle-config-to-page;Seite einstellen;Configure page;Configurer la page;Configurar página;Configurar página
 toggle-config-to-deck;Deck einstellen;Configure deck;Configurer le Deck;Configurar deck;Configurar deck
 open-store;Store öffnen;Open Store;Ouvrir le magasin;Abrir tienda;Abrir Loja
-page-settings-deck-heading;Einstellungen zum Deck;Deck Settings;Paramétrage du Deck;Ajustes del deck;Configurações do Deck
 page-settings-overwrite-brightness;Helligkeit des Decks überschreiben;Overwrite default deck brightness;Remplacer la luminosité par défaut du Deck;Sobreescribir el ajuste de brillo por defecto del deck;Substituir o brilho padrão do deck
 page-settings-overwrite-screensaver;Bildschirmschoner des Decks überschreiben;Overwrite default deck screensaver;Remplacer l'écran de veille par défaut du Deck;Sobreescribir el ajuste de salvapantallas por defecto;Substituir o protetor de tela padrão do deck
 enable;Aktivieren;Enable;Activer;Activo;Habilitar
@@ -87,8 +86,6 @@ settings-store-install-scripts-subtitle;Ausführen, wenn ein Plugin bei der Inst
 settings-store-install-scripts-ask;Fragen;Ask;Demander;Preguntar;Perguntar
 settings-store-install-scripts-always;Immer ausführen;Always run;Toujours exécuter;Ejecutar siempre;Sempre executar
 settings-store-install-scripts-never;Nie ausführen;Never run;Ne jamais exécuter;Nunca ejecutar;Nunca executar
-settings-store-settings-custom-stores;Benutzerdefinierte Stores;Use Custom Stores;Utiliser des magasins personnalisés;Utilizar tiendas personalizadas;Usar Lojas Personalizadas
-settings-store-settings-custom-plugins;Benutzerdefinierte Plugins;Use Custom Plugins;Utiliser des plugins personnalisés;Utilizar plugins personalizados;Usar Plugins Personalizados
 settings-store-custom-stores-header;Benutzerdefinierte Stores;Custom Stores;Magasins personnalisés;Tiendas personalizadas;Lojas Personalizadas
 settings-store-custom-plugins-header;Benutzerdefinierte Plugins;Custom Plugins;Plugins personnalisés;Plugins personalizados;Plugins Personalizados
 settings-ui-settings-title;UI;UI;IU;Interfaz de usuario;UI
@@ -142,7 +139,6 @@ deck.background-group.title;Hintergrund;Background;Fonds d'écran;Fondo;Fundo
 deck.background-group.description;Betreffen das ganze Deck, sofern nicht überschrieben;Applies to the whole deck unless overwritten;S'applique à tout le Deck sauf indication contraire;Se aplica a toda la cubierta a menos que se sobrescriba;Aplica-se a todo o deck a menos que seja substituído
 deck.background-group.enable;Hintergrund aktivieren;Enable Background;Activer l'arrière-plan;Habilitar fondo;Habilitar Fundo
 deck.background-group.extend-background-to-touchscreen;Hintergrund über Tasten und Touchscreen erstrecken;Extend the background across the buttons and touchscreen;Étendre l'arrière-plan sur les boutons et l'écran tactile;Extender el fondo por los botones y la pantalla táctil;Estender o fundo pelos botões e pela tela sensível ao toque
-deck.background-group-media-select-label;Auswählen;Selecionar;Sélectionner;Seleccionar;Selecionar
 background.processing;Verarbeiten...;Processing...;Traitement en cours…;Procesando…;Processando...
 asset-chooser.custom.browse-files;Durchsuchen;Browse Files;Parcourir les fichiers;Examinar archivos;Procurar Arquivos
 asset-chooser.custom.browse-files.dialog.title;Dateien auswählen;Select Files;Sélectionner des fichiers;Seleccionar archivos;Selecionar Arquivos
@@ -222,8 +218,6 @@ asset-manager.custom-assets.remove-confirmation-dialog.cancel;Abbrechen;Cancel;A
 asset-manager.custom-assets.remove-confirmation-dialog.remove;Entfernen;Remove;Supprimer;Eliminar;Remover
 asset-manager.custom-assets.remove-confirmation-dialog.body;Wollen Sie dieses Asset wirklich löschen?;Are you sure you want to remove the asset ;Êtes-vous sûr de vouloir supprimer cette ressource ?;¿Está seguro de que desea eliminar el activo?;Tem certeza de que deseja remover o ativo?
 errors.no-page.import;Importieren;Import;Importer;Importar;Importar
-page-manager-search-hint;Suchen;Search;Rechercher;Buscar;Buscar
-page-manager-add-page;Neue Seite;New page;Ajouter une page;Añadir;Nova página
 page-manager-rename;Umbenennen;Rename;Renommer;Renombrar;Renomear
 page-manager-remove;Löschen;Remove;Supprimer;Eliminar;Remover
 page-manager.duplicate;Duplizieren;Duplicate;Dupliquer;Duplicar;Duplicar

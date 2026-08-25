@@ -58,6 +58,118 @@ def test_background_group_asks_for_that_key() -> None:
     assert "Extend Background To Touchscreen" not in source, (
         "the raw sentence-case key must be gone from the call site"
     )
+    assert 'gl.lm.get("deck.background-group.media-select-label")' in source, (
+        "the media-select label must ask for the background group's own key, "
+        "not the deck group's"
+    )
+
+
+APOSTROPHE_KEY = "background-editor.color.dialog.title"
+
+# Keys whose translation holds a markup-significant character, split by the
+# renderer they reach. A markup consumer needs the character escaped or the
+# parse fails; a plain renderer shows the escape sequence verbatim, so it must
+# get the raw character.
+MARKUP_CONSUMED_KEYS = {
+    "settings.performance.header",   # Adw.PreferencesGroup title, markup
+    "onboarding.extension.hint",     # Gtk.Label with use_markup
+}
+PLAIN_CONSUMED_KEYS = {
+    "onboarding.productive.details",  # Gtk.Label without use_markup
+}
+
+MARKUP_CHARS = ("&", "<", ">")
+
+
+def test_plain_lookup_keeps_the_apostrophe_literal() -> None:
+    lm = LocaleManager(CSV_PATH)
+    lm.set_language("fr_FR")
+    value = lm.get(APOSTROPHE_KEY)
+    assert "'" in value, f"the French label lost its apostrophe: {value!r}"
+    for entity in ("&#x27;", "&#39;", "&apos;", "&quot;", "&amp;"):
+        assert entity not in value, (
+            f"the plain lookup escaped the label, so a Gtk.Label renders "
+            f"{entity} literally: {value!r}"
+        )
+
+
+def test_markup_lookup_escapes_only_what_pango_needs() -> None:
+    lm = LocaleManager(CSV_PATH)
+    lm.set_language("fr_FR")
+    assert lm.get_markup(APOSTROPHE_KEY) == lm.get(APOSTROPHE_KEY), (
+        "an apostrophe is legal in Pango markup, so the markup lookup must "
+        "leave it alone"
+    )
+    lm.set_language("en_US")
+    plain = lm.get("settings.performance.header")
+    markup = lm.get_markup("settings.performance.header")
+    assert "&" in plain and "&amp;" not in plain, (
+        f"the fixture key must carry a bare ampersand, got {plain!r}"
+    )
+    assert "&amp;" in markup, (
+        f"the markup lookup must escape the ampersand, got {markup!r}"
+    )
+
+
+def test_every_markup_character_has_a_markup_call_site() -> None:
+    lm = LocaleManager(CSV_PATH)
+    carriers = {
+        key
+        for key, row in lm.locale_data.items()
+        for value in row.values()
+        if value and any(char in value for char in MARKUP_CHARS)
+    }
+    assert carriers == MARKUP_CONSUMED_KEYS | PLAIN_CONSUMED_KEYS, (
+        f"a translation gained or lost a markup character: {carriers!r}. Look "
+        f"at the call site, pick get or get_markup by the renderer, then list "
+        f"the key in the matching set here."
+    )
+    sources = []
+    for directory, _subdirs, names in os.walk(os.path.join(REPO_ROOT, "src")):
+        for name in names:
+            if name.endswith(".py"):
+                with open(os.path.join(directory, name)) as source_file:
+                    sources.append(source_file.read())
+    blob = "\n".join(sources)
+    for key in MARKUP_CONSUMED_KEYS:
+        if f'"{key}"' not in blob:
+            continue
+        assert f'get_markup("{key}")' in blob, (
+            f"{key} holds a markup character but its call site uses the plain "
+            f"lookup, so the markup parse fails"
+        )
+    for key in PLAIN_CONSUMED_KEYS:
+        assert f'get_markup("{key}")' not in blob, (
+            f"{key} reaches a plain renderer, so the escaping lookup would "
+            f"put an escape sequence on screen"
+        )
+
+
+def test_a_markup_consumer_renders_the_escaped_text() -> None:
+    import gi
+
+    gi.require_version("Gtk", "4.0")
+    from gi.repository import Gtk
+
+    if not Gtk.init_check():
+        print("scenario_background_extend_locale: no display, markup render skipped")
+        return
+
+    lm = LocaleManager(CSV_PATH)
+    lm.set_language("en_US")
+    key = "settings.performance.header"
+    label = Gtk.Label(label=lm.get_markup(key), use_markup=True)
+    assert label.get_text() == lm.get(key), (
+        f"the markup label parsed to {label.get_text()!r}, not to the "
+        f"translation {lm.get(key)!r}"
+    )
+
+    plain = Gtk.Label(label=lm.get(APOSTROPHE_KEY))
+    lm.set_language("fr_FR")
+    plain.set_label(lm.get(APOSTROPHE_KEY))
+    assert "'" in plain.get_text(), (
+        f"the plain label shows an escape sequence: {plain.get_text()!r}"
+    )
 
 
 def main() -> None:
@@ -65,6 +177,10 @@ def main() -> None:
     test_key_resolves_to_a_sentence()
     test_every_shipped_locale_is_filled()
     test_background_group_asks_for_that_key()
+    test_plain_lookup_keeps_the_apostrophe_literal()
+    test_markup_lookup_escapes_only_what_pango_needs()
+    test_every_markup_character_has_a_markup_call_site()
+    test_a_markup_consumer_renders_the_escaped_text()
     print("scenario_background_extend_locale: PASS")
 
 

@@ -92,8 +92,10 @@ def check_tr_forwards_both_shapes() -> None:
     assert services.tr("fallback-only") == "fallback-only"
     assert services.tr("fallback-only") == lm.get("fallback-only")
 
-    # get() escapes for GTK markup, and tr() must not add or remove a layer.
-    assert services.tr("amp-key") == "A &amp; B" == lm.get("amp-key")
+    # get() returns plain text, and tr() must not add or remove a layer. The
+    # escaping lives in get_markup, which tr() does not reach.
+    assert services.tr("amp-key") == "A & B" == lm.get("amp-key")
+    assert lm.get_markup("amp-key") == "A &amp; B"
 
     # A per-call slot read means a rebound gl.lm is the one that answers.
     other = build_locale_manager()
