@@ -4,7 +4,6 @@ from gi.repository import Adw, GLib
 
 from collections.abc import Callable
 from typing import cast, TYPE_CHECKING, Any
-from GtkHelper.GtkHelper import better_disconnect
 
 if TYPE_CHECKING:
     from src.backend.PluginManager.ActionCore import ActionCore
@@ -64,7 +63,7 @@ class EntryRow(GenerativeUI[str]):
 
         This ensures that when the text in the entry row changes, the value is handled accordingly.
         """
-        self.widget.connect("changed", self._value_changed)
+        self._track_connect("changed", self.widget, "changed", self._value_changed)
 
     def disconnect_signals(self) -> None:
         """
@@ -72,7 +71,7 @@ class EntryRow(GenerativeUI[str]):
 
         Call it when the widget stops handling changes.
         """
-        better_disconnect(self.widget, self._value_changed)
+        self._track_disconnect("changed", self.widget)
 
     def set_text(self, text: str, update_setting: bool = False) -> None:
         """
@@ -110,8 +109,16 @@ class EntryRow(GenerativeUI[str]):
         Args:
             text (str): The text to reset in the entry row.
         """
-        better_disconnect(self.widget, self._value_changed)
+        self.disconnect_signals()
+        try:
+            self._reset_text(text)
+        finally:
+            # A reset that returns early or raises must still leave the row
+            # wired, or every later edit is dropped silently.
+            self.connect_signals()
 
+    def _reset_text(self, text: str) -> None:
+        """Writes text into the row and keeps the cursor where the user left it."""
         cursor_pos = self.widget.get_position()
         text_is_filtered = text != self.widget.get_text()
 
@@ -121,8 +128,6 @@ class EntryRow(GenerativeUI[str]):
             self.widget.set_position(cursor_pos - 1)
         else:
             self.widget.set_position(cursor_pos)
-
-        self.widget.connect("changed", self._value_changed)
 
     def _value_changed(self, entry_row: Adw.EntryRow) -> None:
         """

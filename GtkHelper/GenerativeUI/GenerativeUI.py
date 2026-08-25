@@ -4,7 +4,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable
 from typing import Any, Concatenate, ParamSpec, TypeVar, cast
 
-from gi.repository import Gtk
+from gi.repository import GObject, Gtk
 
 from typing import cast, TYPE_CHECKING
 
@@ -80,6 +80,11 @@ class GenerativeUI[T](ABC):
         self._auto_add = auto_add
         self._complex_var_name = complex_var_name
         self._widget = None
+        # The handler id per binding key, absent while that binding is
+        # disconnected. Tracked ids keep connect and disconnect idempotent: a
+        # disconnect while already off cannot raise, and a reconnect cannot
+        # stack a second handler.
+        self._signal_handlers: dict[str, int] = {}
         self._built = False
         self._build_flag_lock = threading.Lock()
         self._build_fn = build
@@ -141,6 +146,26 @@ class GenerativeUI[T](ABC):
     def disconnect_signals(self) -> None:
         """Disconnects signals for the UI element."""
         pass
+
+    def _track_connect(self, key: str, widget: GObject.Object, signal: str,
+                       callback: Callable[..., Any]) -> None:
+        """Connect callback to signal on widget once, under key.
+
+        A second call while the handler is already on does nothing, so a
+        reconnect cannot stack a second handler on the same widget.
+        """
+        if self._signal_handlers.get(key) is None:
+            self._signal_handlers[key] = widget.connect(signal, callback)
+
+    def _track_disconnect(self, key: str, widget: GObject.Object) -> None:
+        """Disconnect the handler stored under key, if one is on.
+
+        A call while the handler is already off does nothing, so a repeated
+        teardown cannot raise.
+        """
+        handler = self._signal_handlers.pop(key, None)
+        if handler is not None:
+            widget.disconnect(handler)
 
     @property
     def action_core(self) -> "ActionCore":

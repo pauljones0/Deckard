@@ -80,6 +80,10 @@ bundle as a release asset.
   edit. Spinning the rate down and back up no longer flashes the arrow on and
   off, and the spinner no longer shifts sideways under the pointer partway
   through a spin.
+- The GtkHelper module no longer ships its silent disconnect helper. It
+  swallowed every error around a signal disconnect, which hid real defects;
+  the app's own rows now track their handlers instead. A plugin that imported
+  the helper must disconnect by tracked handler id.
 - A key whose picture fills its whole tile with nothing see-through now costs
   almost nothing while an animated wallpaper plays behind it. Such a key hides
   every pixel the wallpaper changes, so the app keeps the picture it drew and

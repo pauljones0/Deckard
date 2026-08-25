@@ -5,7 +5,6 @@ from gi.repository import Adw
 from collections.abc import Callable
 from typing import cast, TYPE_CHECKING, Any
 
-from GtkHelper.GtkHelper import better_disconnect
 
 if TYPE_CHECKING:
     from src.backend.PluginManager.ActionCore import ActionCore
@@ -58,13 +57,13 @@ class SwitchRow(GenerativeUI[bool]):
         """
         Connects the signal handler for the switch widget to track changes in its state.
         """
-        self.widget.connect("notify::active", self._value_changed)
+        self._track_connect("active", self.widget, "notify::active", self._value_changed)
 
     def disconnect_signals(self) -> None:
         """
         Disconnects the signal handler for the switch widget.
         """
-        better_disconnect(self.widget, self._value_changed)
+        self._track_disconnect("active", self.widget)
 
     def set_active(self, active: bool, change_setting: bool = False) -> None:
         """

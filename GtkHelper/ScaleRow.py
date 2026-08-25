@@ -3,11 +3,11 @@ import re
 import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Gtk, Adw
+from gi.repository import GObject, Gtk, Adw
 
+from collections.abc import Callable
 from typing import Any
 
-from GtkHelper.GtkHelper import better_disconnect
 
 class ScaleRow(Adw.ActionRow):
     """
@@ -52,6 +52,12 @@ class ScaleRow(Adw.ActionRow):
         self._add_text_entry = add_text_entry
         self._draw_side_values = draw_side_values
 
+        # The handler id per binding key, absent while that binding is
+        # disconnected. Tracked ids keep connect and disconnect idempotent: a
+        # disconnect while already off cannot raise, and a reconnect cannot
+        # stack a second handler.
+        self._handlers: dict[str, int] = {}
+
         self.left = Gtk.Label(label=str(min), hexpand=False, halign=Gtk.Align.END)
         self.right = Gtk.Label(label=str(max), hexpand=False, halign=Gtk.Align.START)
 
@@ -87,21 +93,28 @@ class ScaleRow(Adw.ActionRow):
         if self._add_text_entry:
             self.add_suffix(self.entry_row)
 
-    def _connect_signals(self) -> None:
-        self._adjustment.connect("value-changed", self._correct_step_amount)
-
+    def _signal_bindings(self) -> list[tuple[str, GObject.Object, str, Callable[..., Any]]]:
+        bindings: list[tuple[str, GObject.Object, str, Callable[..., Any]]] = [
+            ("step", self._adjustment, "value-changed", self._correct_step_amount),
+        ]
         if self._add_text_entry:
-            self.entry_row.connect("activate", self._reset_entry_row)
-            self.entry_row.connect("changed", self._entry_row_changed)
-            self.entry_row_controller.connect("leave", self._reset_entry_row)
+            bindings += [
+                ("entry-activate", self.entry_row, "activate", self._reset_entry_row),
+                ("entry-changed", self.entry_row, "changed", self._entry_row_changed),
+                ("entry-leave", self.entry_row_controller, "leave", self._reset_entry_row),
+            ]
+        return bindings
+
+    def _connect_signals(self) -> None:
+        for key, widget, signal, callback in self._signal_bindings():
+            if self._handlers.get(key) is None:
+                self._handlers[key] = widget.connect(signal, callback)
 
     def _disconnect_signals(self) -> None:
-        better_disconnect(self._adjustment, self._correct_step_amount)
-
-        if self._add_text_entry:
-            better_disconnect(self.entry_row, self._entry_row_changed)
-            better_disconnect(self.entry_row, self._reset_entry_row)
-            better_disconnect(self.entry_row_controller, self._reset_entry_row)
+        for key, widget, _signal, _callback in self._signal_bindings():
+            handler = self._handlers.pop(key, None)
+            if handler is not None:
+                widget.disconnect(handler)
 
     def get_value(self) -> float:
         return self._adjustment.get_value()
@@ -179,37 +192,45 @@ class ScaleRow(Adw.ActionRow):
 
         if self._add_text_entry:
             self._disconnect_signals()
-            self.entry_row.set_text(str(rounded_value))
-            self._connect_signals()
+            try:
+                self.entry_row.set_text(str(rounded_value))
+            finally:
+                # An update that raises must still leave the row wired, or
+                # every later edit of it is dropped silently.
+                self._connect_signals()
 
     # Entry Row
 
     def _entry_row_changed(self, entry_row: Adw.EntryRow) -> None:
         self._disconnect_signals()
-
-        text = entry_row.get_text()
-
-        text = re.sub(r"[^0-9.-]", "", text)  # Remove invalid characters
-        text = re.sub(r"^-?(?!\d)", "", text)  # Remove leading '-' if not followed by a digit
-        text = re.sub(r"\.(?=.*\.)", "", text)  # Keep only the first decimal point
-
         try:
-            value = float(text)
-        except ValueError:
-            value = self._adjustment.get_value()
-        value = min(max(value, self._adjustment.get_lower()), self._adjustment.get_upper())
+            text = entry_row.get_text()
 
-        self.scale.set_value(value)
+            text = re.sub(r"[^0-9.-]", "", text)  # Remove invalid characters
+            text = re.sub(r"^-?(?!\d)", "", text)  # Remove leading '-' if not followed by a digit
+            text = re.sub(r"\.(?=.*\.)", "", text)  # Keep only the first decimal point
 
-        self._connect_signals()
+            try:
+                value = float(text)
+            except ValueError:
+                value = self._adjustment.get_value()
+            value = min(max(value, self._adjustment.get_lower()), self._adjustment.get_upper())
+
+            self.scale.set_value(value)
+        finally:
+            # An update that raises must still leave the row wired, or every
+            # later edit of it is dropped silently.
+            self._connect_signals()
 
     def _reset_entry_row(self, *args: Any) -> None:
         self._disconnect_signals()
+        try:
+            current_value = self.entry_row.get_text()
+            expected_value = str(self._adjustment.get_value())
 
-        current_value = self.entry_row.get_text()
-        expected_value = str(self._adjustment.get_value())
-
-        if current_value != expected_value:  # Avoid unnecessary updates
-            self.entry_row.set_text(expected_value)
-
-        self._connect_signals()
+            if current_value != expected_value:  # Avoid unnecessary updates
+                self.entry_row.set_text(expected_value)
+        finally:
+            # An update that raises must still leave the row wired, or every
+            # later edit of it is dropped silently.
+            self._connect_signals()

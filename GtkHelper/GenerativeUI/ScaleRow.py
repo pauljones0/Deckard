@@ -5,7 +5,7 @@ from gi.repository import Gtk
 from collections.abc import Callable
 from typing import cast, TYPE_CHECKING, Any
 
-from GtkHelper.GtkHelper import better_disconnect, on_main
+from GtkHelper.GtkHelper import on_main
 
 if TYPE_CHECKING:
     from src.backend.PluginManager.ActionCore import ActionCore
@@ -91,7 +91,7 @@ class ScaleRow(GenerativeUI[float]):
 
         This ensures that when the scale value is changed, the appropriate callback is called to handle the change.
         """
-        self.widget.scale.connect("value-changed", self._value_changed)
+        self._track_connect("value-changed", self.widget.scale, "value-changed", self._value_changed)
 
     def disconnect_signals(self) -> None:
         """
@@ -99,7 +99,7 @@ class ScaleRow(GenerativeUI[float]):
 
         The widget then handles no further scale value change.
         """
-        better_disconnect(self.widget.scale, self._value_changed)
+        self._track_disconnect("value-changed", self.widget.scale)
 
     def set_number(self, number: float, update_setting: bool = False) -> None:
         """
