@@ -587,7 +587,11 @@ class WindowGrabber:
         log.debug(f"Auto changing page: {matched_path} on deck {deck_controller.deck.get_serial_number()}")
         page = page_manager.get_page(matched_path, deck_controller)
         if page is None:
-            # The page went away between the rule read and the load.
+            # The page went away between the rule read and the load. A None
+            # handed to load_page would clear the deck, so the deck keeps the
+            # page it shows and the reason goes to the log: no surface exists
+            # to tell the user about an automatic switch.
+            log.error(f"Auto page change skipped: {matched_path} did not load")
             return
         # The load runs outside the decision, and a second routing that decided
         # on the same page reaches this too. allow_reload keeps the deck from
@@ -656,6 +660,7 @@ class WindowGrabber:
         if page is None:
             # The user deleted the manually chosen page. Nothing remains to go
             # back to, and a load of None takes the deck's page away.
+            log.error(f"Manual page restore skipped: {manual_path} did not load")
             return
         deck_controller.load_page(page, allow_reload=False)
 

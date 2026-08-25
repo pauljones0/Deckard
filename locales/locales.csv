@@ -23,6 +23,7 @@ header-page-selector-page-settings-hint;Einstellungen der Seite öffnen;Open Pag
 header-page-selector-page-manager-hint;Seiten verwalten;Open Page Manager;Ouvrir le gestionnaire de page;Abrir gestor de página;Abrir Gerenciador de Páginas
 header-page-selector-search-hint;Seiten durchsuchen;Search pages;Rechercher des pages;Buscar páginas;Pesquisar páginas
 header-page-selector-empty-hint;Keine Seiten gefunden;No pages found;Aucune page trouvée;No se han encontrado páginas;Nenhuma página encontrada
+page-selector-load-failed;Die Seite konnte nicht geladen werden;The page could not be loaded;La page n'a pas pu être chargée;No se ha podido cargar la página;Não foi possível carregar a página
 main-page-page-settings;Einstellungen der Seite;Page Settings;Paramétrage de la page;Ajustes de página;Configurações da Página
 main-page-deck-config;Tasten der Seite;Page Key Grid;Paramétrage des boutons;Cuadrícula de teclas de la página;Grade de Teclas da Página
 toggle-config-to-page;Seite einstellen;Configure page;Configurer la page;Configurar página;Configurar página
