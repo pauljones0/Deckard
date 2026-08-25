@@ -16,7 +16,7 @@ build-commands:
   pip-review pipenv platformdirs plumbum proglog psutil pulsectl py-gcode-metadata
   pycairo pycparser pydantic pydantic-core pyenchant Pygments PyGObject PyGObject-stubs
   pymongo pyparsing pyperclip pyproject-metadata Pyro5 pyspellchecker python-dateutil
-  python-wayland-extra pyudev pyusb PyYAML RapidFuzz regex req2flatpak requests requirements-parser
+  python-wayland-extra pyudev PyYAML RapidFuzz regex req2flatpak requests requirements-parser
   rich rpyc serpent setproctitle setuptools six smmap speedtest-cli streamcontroller-plugin-tools
   streamcontroller-streamdeck textual tinycss2 tqdm types-setuptools typing-inspection
   typing-extensions uc-micro-py urllib3 usb-monitor virtualenv webencodings websocket-client
@@ -408,9 +408,6 @@ sources:
 - type: file
   url: https://files.pythonhosted.org/packages/9d/3b/c37870f68ceb067707ca7b04db364a1478fcd40c6194007fb6e492ff9a92/pyudev-0.24.3-py3-none-any.whl
   sha256: e8246f0a014fe370119ba2bc781bfbe62c0298d0d6b39c94e83102a8a3f56960
-- type: file
-  url: https://files.pythonhosted.org/packages/28/b8/27e6312e86408a44fe16bd28ee12dd98608b39f7e7e57884a24e8f29b573/pyusb-1.3.1-py3-none-any.whl
-  sha256: bf9b754557af4717fe80c2b07cc2b923a9151f5c08d17bdb5345dac09d6a0430
 - type: file
   url: https://files.pythonhosted.org/packages/fc/fd/37868b75eaf63843165f1d2122ca6cb94bfc0271e4428cf58c0616786dce/regex-2024.11.6-cp313-cp313-manylinux_2_17_aarch64.manylinux2014_aarch64.whl
   sha256: bde01f35767c4a7899b7eb6e823b125a64de314a8ee9791367c9a34d56af18d0
