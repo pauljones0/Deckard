@@ -1,4 +1,5 @@
 import os
+import glob
 from typing import TYPE_CHECKING, Any
 from loguru import logger as log
 import appinfo
@@ -9,6 +10,65 @@ if TYPE_CHECKING:
     from gi.repository import Gio
 
     from src.windows.mainWindow.mainWindow import MainWindow
+
+# The file types a desktop shell loads a tray icon from.
+ICON_FILE_SUFFIXES = (".png", ".svg", ".xpm")
+
+
+def icon_search_roots() -> list[str]:
+    """The data dirs a desktop shell reads its icon themes from.
+
+    The user dir comes first, then the system dirs, as the desktop shell
+    itself orders them. A dir that is not absolute is one the spec tells
+    every reader to drop, and a relative dir would search from wherever the
+    app was started, so the defaults take its place.
+    """
+    home = os.environ.get("XDG_DATA_HOME", "")
+    if not os.path.isabs(home):
+        home = os.path.join(os.path.expanduser("~"), ".local", "share")
+    system = [entry for entry in os.environ.get("XDG_DATA_DIRS", "").split(os.pathsep)
+              if os.path.isabs(entry)]
+    if not system:
+        system = ["/usr/local/share", "/usr/share"]
+    return [home, *system]
+
+
+def host_theme_has_icon(icon_name: str) -> bool:
+    """True when an install put icon_name where a desktop shell finds it.
+
+    An application icon belongs in the hicolor fallback theme, and an older
+    install puts it in the pixmaps dir, so those two dirs are the whole
+    search. A miss costs little: the tray then names the icon dir that ships
+    with the app.
+    """
+    # Only the size dir stays a pattern. A dir or an icon name can hold a
+    # character that a pattern reads as a wildcard, and an unescaped one
+    # would search for something else or for nothing.
+    name = glob.escape(icon_name)
+    for root in icon_search_roots():
+        for stem in (os.path.join(glob.escape(root), "icons", "hicolor", "*", "apps", name),
+                     os.path.join(glob.escape(root), "pixmaps", name)):
+            for suffix in ICON_FILE_SUFFIXES:
+                if glob.glob(stem + suffix):
+                    return True
+    return False
+
+
+def tray_icon_theme_path(icon_name: str, main_path: str) -> str:
+    """The icon theme dir to hand the desktop shell, or "" to name none.
+
+    A shell that gets a theme path takes it over the icon theme the user
+    picked, so an installed copy hands it nothing and keeps the icon the host
+    theme already holds. A flatpak copy carries its icon in the sandbox data
+    dir that the search above covers, so it hands nothing over either, and
+    never a sandbox path that means nothing to a shell outside. Only a copy
+    that runs from a source tree points the shell at the icons that ship with
+    the app.
+    """
+    if host_theme_has_icon(icon_name):
+        return ""
+    return os.path.join(main_path, "Assets", "icons")
+
 
 class TrayIcon(DBusTrayIcon):
     # The item and its menu take separate D-Bus paths. The item registers at
@@ -29,8 +89,7 @@ class TrayIcon(DBusTrayIcon):
         self.menu.add_menu_item(7, "Quit", callback=self.on_quit)
         super().__init__(self.menu, path=self.IndicatorPath, menu_path=self.MenuPath,
                          app_id=self.AppId, title="Deckard")
-        icon_theme_path = os.path.join(gl.MAIN_PATH, "Assets", "icons")
-        self.set_icon(appinfo.APP_ID, path=icon_theme_path)
+        self.set_icon(appinfo.APP_ID, path=tray_icon_theme_path(appinfo.APP_ID, gl.MAIN_PATH))
         self.set_tooltip("Deckard")
         self.set_label("Deckard")
 
