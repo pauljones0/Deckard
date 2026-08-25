@@ -340,6 +340,77 @@ def leg_press_needs_a_running_instance() -> None:
     print("  PASS: a press is forwarded to a running instance or refused with a reason")
 
 
+DUMP = ('{"decks": [{"serial": "deck-a", "active_page": "Main", '
+        '"brightness": 60}], "pages": ["Main"]}')
+
+
+def leg_instance_verbs() -> None:
+    """The read-side and page verbs, decided by the fast path.
+
+    Each needs a running instance and is never handed back: a read cannot be
+    parked, and booting the application to answer one would spend the very
+    imports this module exists to skip.
+    """
+    print("leg 1d: the read-side and page verbs against a running instance, or nothing")
+
+    # --json prints the dump and ends with success, no application imported.
+    recorder = Recorder(running=True, query=DUMP)
+    outcome = cli_fast_path.answer_from_running_instance(parse(["--json"]), recorder)
+    assert outcome.exit_code == 0, outcome
+    assert outcome.output == (DUMP,), outcome.output
+    assert ("query_state",) in recorder.calls, recorder.calls
+    assert_nothing_parked("a state dump")
+
+    # --get-brightness reads one deck out of the same dump.
+    recorder = Recorder(running=True, query=DUMP)
+    outcome = cli_fast_path.answer_from_running_instance(
+        parse(["--get-brightness", "deck-a"]), recorder)
+    assert outcome.exit_code == 0 and outcome.output == ("60",), outcome
+
+    # Every command verb forwards and ends here.
+    for argv, call in (
+        (["--set-brightness", "deck-a", "60"], ("set-brightness", "deck-a", 60)),
+        (["--sleep", "deck-a"], ("sleep", "deck-a")),
+        (["--wake", "deck-a"], ("wake", "deck-a")),
+        (["--rename-page", "Main", "Home"], ("rename-page", "Main", "Home")),
+        (["--duplicate-page", "Main", "Home"], ("duplicate-page", "Main", "Home")),
+        (["--list-actions", "Main"], ("list_actions", "Main", "")),
+    ):
+        recorder = Recorder(running=True, query=DUMP)
+        outcome = cli_fast_path.answer_from_running_instance(parse(argv), recorder)
+        assert outcome.exit_code == 0, (argv, outcome)
+        assert call in recorder.calls, (argv, recorder.calls)
+
+    # With nothing running, every verb refuses here rather than boots.
+    for argv in (["--json"], ["--get-brightness", "deck-a"], ["--list-actions", "Main"],
+                 ["--set-brightness", "deck-a", "60"], ["--sleep", "deck-a"],
+                 ["--rename-page", "Main", "Home"]):
+        recorder = Recorder(running=False)
+        outcome = cli_fast_path.answer_from_running_instance(parse(argv), recorder)
+        assert outcome.exit_code == 1, (argv, outcome)
+        assert outcome.failures == (cli_forward._NOT_RUNNING_INSTANCE_MESSAGE,), (
+            argv, outcome.failures)
+        assert recorder.forwards() == [], (argv, recorder.forwards())
+        assert_nothing_parked(f"a refused {argv[0]}")
+
+    # A malformed verb voids the command before the bus, running or not.
+    recorder = Recorder(running=True)
+    outcome = cli_fast_path.answer_from_running_instance(
+        parse(["--set-brightness", "deck-a", "nope"]), recorder)
+    assert outcome.exit_code == 1 and cli_forward.USAGE in outcome.failures, outcome
+    assert recorder.calls == [], recorder.calls
+
+    # An unreachable bus ends a read verb with a reason. It is NOT handed back:
+    # a read cannot be parked, and the boot would import the application to
+    # answer a line.
+    with bus_transport_raising():
+        outcome = cli_fast_path.answer_from_running_instance(parse(["--json"]))
+    assert outcome.exit_code == 1, outcome
+    assert outcome.failures and "session bus" in outcome.failures[0], outcome.failures
+
+    print("  PASS: the read-side and page verbs forward to a running instance or refuse")
+
+
 def leg_both_halves_answer_alike() -> None:
     """One command line gets one answer, whichever half of the CLI sees it.
 
@@ -375,6 +446,23 @@ def leg_both_halves_answer_alike() -> None:
         ("a malformed press beside a listing",
          ["--emulate-input", "deck-a", "Alpha", "0,0", "smash", "--list-pages"],
          True, False),
+        # The read-side and page verbs. Neither half parks or boots them, and
+        # both read the same situation the same way.
+        ("a state dump, an instance running", ["--json"], True, False),
+        ("a state dump, nothing running", ["--json"], False, False),
+        ("a brightness read, an instance running",
+         ["--get-brightness", "deck-a"], True, False),
+        ("a brightness read, nothing running",
+         ["--get-brightness", "deck-a"], False, False),
+        ("a sleep, an instance running", ["--sleep", "deck-a"], True, False),
+        ("a page rename, an instance running",
+         ["--rename-page", "Main", "Home"], True, False),
+        ("a page duplicate, nothing running",
+         ["--duplicate-page", "Main", "Home"], False, False),
+        ("a malformed brightness",
+         ["--set-brightness", "deck-a", "nope"], True, False),
+        ("actions on a page, an instance running",
+         ["--list-actions", "Main", "0,0"], True, False),
     ]
 
     for what, argv, running, close_running in lines:
@@ -390,6 +478,9 @@ def leg_both_halves_answer_alike() -> None:
         assert tuple(boot.failures) == fast.failures, (
             f"{what}: the fast path says {fast.failures} and the boot path says "
             f"{tuple(boot.failures)} for the same command line")
+        assert tuple(boot.output) == fast.output, (
+            f"{what}: the fast path prints {fast.output} and the boot path "
+            f"prints {tuple(boot.output)} for the same command line")
         assert boot_recorder.forwards() == fast_recorder.forwards(), (
             f"{what}: the fast path sent {fast_recorder.forwards()} and the "
             f"boot path sent {boot_recorder.forwards()}")
@@ -468,7 +559,10 @@ class Transport:
 # path and not to this list fails here rather than at a person's first launch.
 args = argparse.Namespace(change_page=[["deck", "Page"]], change_state=None,
                           emulate_input=None, close_running=False,
-                          list_devices=False, list_pages=False)
+                          list_devices=False, list_pages=False,
+                          json=False, get_brightness=None, set_brightness=None,
+                          sleep=None, wake=None, list_actions=None,
+                          rename_page=None, duplicate_page=None)
 transport = Transport()
 outcome = cli_fast_path.answer_from_running_instance(args, transport)
 print("DECIDED %r %r" % (outcome.exit_code, transport.calls))
@@ -578,11 +672,14 @@ def reset_record(path: str) -> None:
         os.remove(path)
 
 
-def start_stub_instance(record_path: str, refuse: str = "") -> subprocess.Popen:
+def start_stub_instance(record_path: str, refuse: str = "",
+                        query_json: str = "") -> subprocess.Popen:
     env = dict(os.environ)
     env["DECKARD_STUB_APP_ID"] = appinfo.APP_ID
     env["DECKARD_STUB_RECORD"] = record_path
     env["DECKARD_STUB_REFUSE"] = refuse
+    if query_json:
+        env["DECKARD_STUB_QUERY_JSON"] = query_json
     proc = subprocess.Popen([sys.executable, STUB_INSTANCE], stdout=subprocess.PIPE,
                             text=True, env=env, preexec_fn=_die_with_parent)
     ready = (proc.stdout.readline() or "").strip()
@@ -793,11 +890,70 @@ def leg_entry_point() -> None:
           "leaks a traceback")
 
 
+def leg_read_verbs() -> None:
+    """The read verbs through the real entry point, against a stand-in.
+
+    --json and --get-brightness print the instance's answer to stdout and end
+    without importing the application. With nothing running they refuse, and
+    must not boot: a read has nothing to park, so a fall-through would build the
+    whole app to answer one line.
+    """
+    print("leg 5: the read verbs through the real entry point")
+    sentinel = make_cv2_sentinel(os.path.join(gl.DATA_PATH, "cv2-sentinel"))
+    record = os.path.join(gl.DATA_PATH, "read-verb-calls.jsonl")
+    scratch_data = os.path.join(gl.DATA_PATH, "read-verb-data")
+    dump = ('{"decks": [{"serial": "%s", "active_page": "Main", '
+            '"brightness": 55}], "pages": ["Main"]}') % SERIAL
+
+    # --json prints the dump the instance gave, and imports nothing expensive.
+    stub = start_stub_instance(record, query_json=dump)
+    try:
+        proc, _ = run_main(["--data", scratch_data, "--json"], sentinel)
+    finally:
+        stop_stub_instance(stub)
+    output = proc.stdout + proc.stderr
+    assert proc.returncode == 0, f"--json failed with {proc.returncode}:\n{output}"
+    assert proc.returncode != HEAVY_IMPORT_EXIT, (
+        f"--json built the application to read one line:\n{output}")
+    assert dump in proc.stdout, f"the dump never reached stdout:\n{proc.stdout!r}"
+    assert read_record(record) == [{"method": "QueryState", "args": []}], (
+        f"the instance was sent {read_record(record)}")
+
+    # --get-brightness reads one deck's value out of the same dump. It calls
+    # QueryState too, because the value lives in that one answer.
+    reset_record(record)
+    stub = start_stub_instance(record, query_json=dump)
+    try:
+        proc, _ = run_main(["--data", scratch_data, "--get-brightness", SERIAL], sentinel)
+    finally:
+        stop_stub_instance(stub)
+    output = proc.stdout + proc.stderr
+    assert proc.returncode == 0, f"--get-brightness failed with {proc.returncode}:\n{output}"
+    assert "55" in proc.stdout.splitlines(), f"the brightness was not printed:\n{proc.stdout!r}"
+    assert read_record(record) == [{"method": "QueryState", "args": []}], (
+        f"the instance was sent {read_record(record)}")
+
+    # Nothing running. The read verb refuses with a reason and must not boot.
+    reset_record(record)
+    proc, _ = run_main(["--data", scratch_data, "--json"], sentinel)
+    output = proc.stdout + proc.stderr
+    assert proc.returncode == 1, (
+        f"a read verb with nothing running must exit 1, not {proc.returncode}:\n{output}")
+    assert proc.returncode != HEAVY_IMPORT_EXIT, (
+        f"a read verb booted the application to answer it:\n{output}")
+    assert "not running" in proc.stderr, output
+    assert read_record(record) == [], (
+        f"nothing owns the name, so nothing may be sent: {read_record(record)}")
+
+    print("  PASS: the read verbs print the instance's answer without building the app")
+
+
 def main() -> int:
     fixtures.start_watchdog(WATCHDOG_SECONDS, label="scenario_cli_fast_path")
 
     leg_decision_table()
     leg_press_needs_a_running_instance()
+    leg_instance_verbs()
     leg_both_halves_answer_alike()
     leg_import_fence()
 
@@ -810,6 +966,7 @@ def main() -> int:
             "this scenario owns the app's real bus name, so it must never run "
             "on the developer's own session bus")
         leg_entry_point()
+        leg_read_verbs()
     finally:
         stop_private_bus(bus_proc)
 

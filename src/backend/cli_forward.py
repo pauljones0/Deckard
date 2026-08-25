@@ -27,6 +27,7 @@ the toolkit are both imported where they are used rather than here.
 """
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from typing import Any, TYPE_CHECKING
 
@@ -55,6 +56,27 @@ if TYPE_CHECKING:
 
         def emulate_input(self, serial: str, page: str, coords: str,
                           event: str) -> str:
+            """Empty on success, else the reason the instance gave."""
+
+        def query_state(self) -> str:
+            """One JSON object: the state dump, or {"error": "..."}."""
+
+        def list_actions(self, page: str, coords: str) -> str:
+            """One JSON object: the page's actions, or {"error": "..."}."""
+
+        def set_brightness(self, serial: str, value: int) -> str:
+            """Empty on success, else the reason the instance gave."""
+
+        def sleep(self, serial: str) -> str:
+            """Empty on success, else the reason the instance gave."""
+
+        def wake(self, serial: str) -> str:
+            """Empty on success, else the reason the instance gave."""
+
+        def rename_page(self, old: str, new: str) -> str:
+            """Empty on success, else the reason the instance gave."""
+
+        def duplicate_page(self, source: str, new: str) -> str:
             """Empty on success, else the reason the instance gave."""
 
 
@@ -144,13 +166,23 @@ Usage examples:
   --change-state CL123456789 Soundboard 2,1 0
   --emulate-input CL123456789 Main 0,0 press
   --emulate-input CL123456789 Soundboard 2,1 long-press
+  --json
+  --get-brightness CL123456789
+  --set-brightness CL123456789 60
+  --sleep CL123456789
+  --wake CL123456789
+  --list-actions Main
+  --list-actions Main 0,0
+  --rename-page Main Home
+  --duplicate-page Main Home
 
 Parameters:
   SERIAL_NUMBER: Device serial (e.g., CL123456789)
   PAGE_NAME: Page name (e.g., Main, Soundboard)
   COORDINATES: Position as x,y (e.g., 0,0 for top-left)
   STATE_NUMBER: State to change to (e.g., 0, 1, 2)
-  EVENT: press or long-press"""
+  EVENT: press or long-press
+  VALUE: brightness, a whole number from 0 to 100"""
 
 # What an invocation carrying an emulated input is told when there is no
 # running instance to press against. Both halves of the CLI answer with these,
@@ -201,11 +233,14 @@ class Verdict:
     has nothing left to do. False means that the requests are parked, or that
     none arrived, and this process boots on. failures holds the sentences for
     the person who typed the command. A non-empty list marks a failed
-    invocation, whatever handled says.
+    invocation, whatever handled says. output holds the lines a read verb
+    prints to stdout, which is empty for every request that only forwards or
+    parks.
     """
 
     handled: bool = False
     failures: list[str] = field(default_factory=list)
+    output: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -581,6 +616,14 @@ def forward_cli_requests(args: Namespace,
     and only to learn whether it can skip that import; a no there changes
     nothing here.
     """
+    if any_instance_verb(args):
+        # A read-side or page verb is answered by the running instance and
+        # never parked or booted. This is read before the listing and the
+        # request flow, so an instance verb is the command whatever else the
+        # line carries, and the fast path reads it the same way.
+        outcome = answer_instance_verbs(args, transport)
+        return Verdict(handled=True, failures=outcome.failures, output=outcome.output)
+
     if answered_by_a_listing(args):
         # First, as in the fast path, so that one command line reaches one
         # answer from either half. The listing is the whole command: a request
@@ -669,6 +712,286 @@ def forward_parked_requests(transport: Transport | None = None) -> list[str]:
     ), transport)
 
 
+# The read-side and page verbs
+#
+# These ask the running instance a question (--json, --get-brightness,
+# --list-actions) or give it one thing to do (--set-brightness, --sleep,
+# --wake, --rename-page, --duplicate-page). None of them park. A read has
+# nothing to answer without an instance, and a deck or page command has nothing
+# to act on, so with none running the whole command is refused with one
+# sentence, the way an emulated input is. Both halves of the CLI answer them
+# through answer_instance_verbs, and a scenario pins the two halves alike.
+
+_NOT_RUNNING_INSTANCE_MESSAGE = (
+    "Error: Deckard is not running, so there was nothing to read or change. "
+    "These commands act on the running Deckard, and none of them can wait for "
+    "a deck that is not open yet. Start Deckard, then run the command again.")
+
+
+@dataclass(frozen=True)
+class InstanceOutcome:
+    """What answering the instance verbs produced.
+
+    output holds the lines a read verb prints to stdout, in the order the verbs
+    were read. failures holds the sentences for stderr. A non-empty failures
+    marks a failed command, exit code 1, whatever output holds.
+    """
+
+    failures: list[str] = field(default_factory=list)
+    output: list[str] = field(default_factory=list)
+
+
+def any_instance_verb(args: Namespace) -> bool:
+    """Does this command carry a verb only a running instance can answer?
+
+    The named attributes raise if a flag is renamed in cli_args, rather than
+    quietly treating the command as an ordinary launch. Both halves read this
+    before the parking flow, so one command line reaches one answer.
+    """
+    return bool(args.json or args.get_brightness or args.set_brightness
+                or args.sleep or args.wake or args.list_actions
+                or args.rename_page or args.duplicate_page)
+
+
+def _plan_instance_verbs(args: Namespace) -> tuple[list[tuple[str, tuple[str, ...]]],
+                                                   list[str]]:
+    """Read and syntax-check every instance verb on the line.
+
+    Returns the jobs to forward, in a fixed order, and the syntax failures. A
+    failure voids the whole command, as the request parser does, so nothing is
+    asked of the instance when one verb is malformed. Every string an argument
+    carries is checked for bytes the bus cannot send, because the fast path
+    packs the call in a module body no exception hook covers.
+    """
+    jobs: list[tuple[str, tuple[str, ...]]] = []
+    failures: list[str] = []
+
+    if args.json:
+        jobs.append(("json", ()))
+
+    for flag, attr in (("--get-brightness", args.get_brightness),
+                       ("--sleep", args.sleep), ("--wake", args.wake)):
+        if not attr:
+            continue
+        bad = _unsendable(flag, "The serial number", attr)
+        if bad:
+            failures.append(bad)
+        else:
+            jobs.append((flag[2:], (attr,)))
+
+    if args.set_brightness:
+        serial, value = args.set_brightness
+        where = "--set-brightness"
+        bad = _unsendable(where, "The serial number", serial)
+        if bad:
+            failures.append(bad)
+        else:
+            try:
+                number = int(value)
+            except ValueError:
+                failures.append(f"Error: Invalid brightness in {where}: '{value}'. "
+                                f"Expected a whole number from 0 to 100")
+            else:
+                if number < 0 or number > 100:
+                    failures.append(f"Error: Brightness out of range in {where}: "
+                                    f"'{value}'. Expected a whole number from 0 to 100")
+                else:
+                    jobs.append(("set-brightness", (serial, str(number))))
+
+    if args.list_actions:
+        where = "--list-actions"
+        parts = args.list_actions
+        if len(parts) > 2:
+            failures.append(f"Error: Too many values in {where}: {parts!r}. "
+                            f"Expected a page name, and coordinates at most")
+        else:
+            page = parts[0]
+            coords = parts[1] if len(parts) == 2 else ""
+            bad = _unsendable(where, "The page name", page)
+            if not bad and coords:
+                bad = (_unsendable(where, "The coordinates", coords)
+                       or _bad_coords(where, coords))
+            if bad:
+                failures.append(bad)
+            else:
+                jobs.append(("list-actions", (page, coords)))
+
+    for flag, pair in (("--rename-page", args.rename_page),
+                       ("--duplicate-page", args.duplicate_page)):
+        if not pair:
+            continue
+        first, second = pair
+        bad = (_unsendable(flag, "The page name", first)
+               or _unsendable(flag, "The new page name", second))
+        if not bad and not first:
+            bad = f"Error: Invalid page name in {flag}: '{first}'"
+        if not bad and not second:
+            bad = f"Error: Invalid page name in {flag}: '{second}'"
+        if bad:
+            failures.append(bad)
+        else:
+            jobs.append((flag[2:], (first, second)))
+
+    return jobs, failures
+
+
+def _int_if_whole(value: Any) -> Any:
+    """Render a whole-number brightness as an int, so 75.0 reads as 75."""
+    try:
+        as_float = float(value)
+    except (TypeError, ValueError):
+        return value
+    return int(as_float) if as_float.is_integer() else value
+
+
+def _query_error(payload: str) -> str | None:
+    """The reason a query verb failed, or None for a payload to print.
+
+    A read method answers with one JSON object. A failure is {"error": "..."},
+    and no state or actions dump carries a top-level "error" key, so the two
+    never read alike. A payload that will not parse is itself the failure.
+    """
+    try:
+        obj = json.loads(payload)
+    except (ValueError, TypeError):
+        return "The running Deckard sent an answer this command could not read"
+    if isinstance(obj, dict) and "error" in obj:
+        return str(obj["error"])
+    return None
+
+
+def _brightness_from_dump(serial: str, payload: str) -> tuple[str, str | None]:
+    """Read one deck's brightness out of a QueryState dump, as (value, error).
+
+    error is None on success. It names an unknown serial, listing the serials
+    that are connected, because the answer to "did I mistype it?" belongs in
+    the failure. A brightness the instance has not sent to the device yet reads
+    as null, and this says so rather than print nothing.
+    """
+    try:
+        state = json.loads(payload)
+    except (ValueError, TypeError):
+        return ("", "The running Deckard sent a state this command could not read")
+    decks = state.get("decks", []) if isinstance(state, dict) else []
+    available: list[str] = []
+    for deck in decks:
+        if not isinstance(deck, dict):
+            continue
+        available.append(str(deck.get("serial")))
+        if deck.get("serial") == serial:
+            brightness = deck.get("brightness")
+            if brightness is None:
+                return ("", f"The brightness of {serial} is not set yet")
+            return (str(_int_if_whole(brightness)), None)
+    if available:
+        return ("", f"StreamDeck with serial '{serial}' not found. "
+                    f"Available devices: {', '.join(available)}")
+    return ("", f"StreamDeck with serial '{serial}' not found. No StreamDeck "
+                f"devices connected yet (the app may still be starting)")
+
+
+def _run_one_verb(kind: str, params: tuple[str, ...], transport: Transport,
+                  output: list[str], failures: list[str]) -> None:
+    """Forward one instance-verb job and collect its answer.
+
+    A query returns (error, payload): the error goes to failures and the
+    payload to output. A command returns a sentence on failure and nothing on
+    success, exactly as change_page does. An instance-returned reason is
+    printed as it arrived, without an "Error:" prefix, the way every other
+    forwarded failure is.
+    """
+    if kind == "json":
+        payload = transport.query_state()
+        error = _query_error(payload)
+        if error:
+            failures.append(error)
+        else:
+            output.append(payload)
+        return
+    if kind == "get-brightness":
+        (serial,) = params
+        payload = transport.query_state()
+        error = _query_error(payload)
+        if error:
+            failures.append(error)
+            return
+        value, why = _brightness_from_dump(serial, payload)
+        if why is not None:
+            failures.append(why)
+        else:
+            output.append(value)
+        return
+    if kind == "list-actions":
+        page, coords = params
+        payload = transport.list_actions(page, coords)
+        error = _query_error(payload)
+        if error:
+            failures.append(error)
+        else:
+            output.append(payload)
+        return
+    if kind == "set-brightness":
+        serial, value = params
+        message = transport.set_brightness(serial, int(value))
+    elif kind == "sleep":
+        message = transport.sleep(params[0])
+    elif kind == "wake":
+        message = transport.wake(params[0])
+    elif kind == "rename-page":
+        message = transport.rename_page(params[0], params[1])
+    else:  # duplicate-page
+        message = transport.duplicate_page(params[0], params[1])
+    if message:
+        failures.append(message)
+
+
+def run_instance_verbs(jobs: list[tuple[str, tuple[str, ...]]],
+                       transport: Transport) -> tuple[list[str], list[str]]:
+    """Forward every job and collect (output, failures).
+
+    A failed job does not stop the ones behind it, because each is independent.
+    A version-skewed instance or a broken conversation ends the run once, the
+    way forward() does: every job behind it fails the same way, and one answer
+    covers all of them.
+    """
+    output: list[str] = []
+    failures: list[str] = []
+    try:
+        for kind, params in jobs:
+            _run_one_verb(kind, params, transport, output, failures)
+    except OlderInstance:
+        failures.append(SKEW_MESSAGE)
+    except TransportError as e:
+        failures.append(str(e))
+    return output, failures
+
+
+def answer_instance_verbs(args: Namespace,
+                          transport: Transport | None = None) -> InstanceOutcome:
+    """Answer every read-side or page verb on the line, over the instance.
+
+    Both halves of the CLI call this, so one command line gets one answer from
+    whichever half sees it first. A syntax error voids the command before the
+    bus. With no session bus to open, or no instance to reach, the command is
+    refused with one sentence and never parked or booted: a read has nothing to
+    answer and a deck or page command nothing to act on, and neither waits for
+    a deck that is not open. This is why the fast path answers these here rather
+    than hand them back, which would boot the whole application to read a line.
+    """
+    jobs, failures = _plan_instance_verbs(args)
+    if failures:
+        return InstanceOutcome(failures=failures + [USAGE])
+    if transport is None:
+        try:
+            transport = bus_transport()
+        except TransportError as e:
+            return InstanceOutcome(failures=[str(e)])
+    if not transport.is_running():
+        return InstanceOutcome(failures=[_NOT_RUNNING_INSTANCE_MESSAGE])
+    output, run_failures = run_instance_verbs(jobs, transport)
+    return InstanceOutcome(failures=run_failures, output=output)
+
+
 # The real transport
 
 def bus_transport() -> Transport:
@@ -751,6 +1074,30 @@ class _BusTransport:
             "EmulateInput",
             self._glib.Variant("(ssss)", (serial, page, coords, event)),
         )
+
+    def query_state(self) -> str:
+        return self._call("QueryState", None)
+
+    def list_actions(self, page: str, coords: str) -> str:
+        return self._call(
+            "ListActions", self._glib.Variant("(ss)", (page, coords)))
+
+    def set_brightness(self, serial: str, value: int) -> str:
+        return self._call(
+            "SetDeckBrightness", self._glib.Variant("(si)", (serial, value)))
+
+    def sleep(self, serial: str) -> str:
+        return self._call("Sleep", self._glib.Variant("(s)", (serial,)))
+
+    def wake(self, serial: str) -> str:
+        return self._call("Wake", self._glib.Variant("(s)", (serial,)))
+
+    def rename_page(self, old: str, new: str) -> str:
+        return self._call("RenamePage", self._glib.Variant("(ss)", (old, new)))
+
+    def duplicate_page(self, source: str, new: str) -> str:
+        return self._call(
+            "DuplicatePage", self._glib.Variant("(ss)", (source, new)))
 
     def _call(self, method: str, params: "GLib.Variant | None") -> str:
         try:

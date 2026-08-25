@@ -53,10 +53,12 @@ class Recorder:
     """
 
     def __init__(self, running: bool = True, answers: dict | None = None,
-                 raises: Exception | None = None):
+                 raises: Exception | None = None,
+                 query: str = "{}"):
         self._running = running
         self._answers = answers or {}
         self._raises = raises
+        self._query = query
         self.calls: list[tuple] = []
 
     def is_running(self) -> bool:
@@ -74,6 +76,38 @@ class Recorder:
     def emulate_input(self, serial: str, page: str, coords: str, event: str) -> str:
         self.calls.append(("emulate", serial, page, coords, event))
         return self._answer(serial)
+
+    def query_state(self) -> str:
+        self.calls.append(("query_state",))
+        if self._raises is not None:
+            raise self._raises
+        return self._query
+
+    def list_actions(self, page: str, coords: str) -> str:
+        self.calls.append(("list_actions", page, coords))
+        if self._raises is not None:
+            raise self._raises
+        return self._query
+
+    def set_brightness(self, serial: str, value: int) -> str:
+        self.calls.append(("set-brightness", serial, value))
+        return self._answer(serial)
+
+    def sleep(self, serial: str) -> str:
+        self.calls.append(("sleep", serial))
+        return self._answer(serial)
+
+    def wake(self, serial: str) -> str:
+        self.calls.append(("wake", serial))
+        return self._answer(serial)
+
+    def rename_page(self, old: str, new: str) -> str:
+        self.calls.append(("rename-page", old, new))
+        return self._answer(old)
+
+    def duplicate_page(self, source: str, new: str) -> str:
+        self.calls.append(("duplicate-page", source, new))
+        return self._answer(source)
 
     def _answer(self, serial: str) -> str:
         if self._raises is not None:
@@ -728,6 +762,148 @@ def check_unreachable_bus_is_reported() -> None:
     print("PASS: an unreachable session bus ends the command with a reason")
 
 
+# The read-side and page verbs, which the instance answers and which never park
+
+# One deck's state, as QueryState hands it back. The read verbs read this.
+DUMP = ('{"decks": [{"serial": "deck-a", "active_page": "Main", '
+        '"brightness": 60}], "pages": ["Main", "Home"]}')
+
+
+def check_json_prints_the_dump() -> None:
+    clear_parking()
+    recorder = Recorder(query=DUMP)
+
+    verdict = cli_forward.forward_cli_requests(parse(["--json"]), recorder)
+
+    assert verdict.handled and verdict.failures == [], verdict
+    assert verdict.output == [DUMP], (
+        f"--json must print the instance's dump to stdout, not {verdict.output}")
+    assert recorder.calls == [("is_running",), ("query_state",)], recorder.calls
+    print("PASS: --json prints the running instance's state as one object")
+
+
+def check_get_brightness_reads_the_dump() -> None:
+    clear_parking()
+    recorder = Recorder(query=DUMP)
+    verdict = cli_forward.forward_cli_requests(
+        parse(["--get-brightness", "deck-a"]), recorder)
+    assert verdict.failures == [], verdict.failures
+    assert verdict.output == ["60"], (
+        f"--get-brightness must print the one deck's brightness: {verdict.output}")
+
+    # An unknown serial is a failure that names the decks that do exist, and
+    # prints nothing to stdout.
+    recorder = Recorder(query=DUMP)
+    verdict = cli_forward.forward_cli_requests(
+        parse(["--get-brightness", "deck-z"]), recorder)
+    assert verdict.output == [], verdict.output
+    assert verdict.failures and "deck-a" in verdict.failures[0], verdict.failures
+    print("PASS: --get-brightness reads one deck's brightness out of the dump")
+
+
+def check_command_verbs_forward() -> None:
+    clear_parking()
+    for argv, expected in (
+        (["--set-brightness", "deck-a", "60"], ("set-brightness", "deck-a", 60)),
+        (["--sleep", "deck-a"], ("sleep", "deck-a")),
+        (["--wake", "deck-a"], ("wake", "deck-a")),
+        (["--rename-page", "Main", "Home"], ("rename-page", "Main", "Home")),
+        (["--duplicate-page", "Main", "Home"], ("duplicate-page", "Main", "Home")),
+    ):
+        recorder = Recorder(running=True)
+        verdict = cli_forward.forward_cli_requests(parse(argv), recorder)
+        assert verdict.handled and verdict.failures == [], (argv, verdict)
+        assert verdict.output == [], (argv, verdict.output)
+        assert expected in recorder.calls, (argv, recorder.calls)
+    print("PASS: every command verb forwards to the running instance")
+
+
+def check_command_refusal_comes_back() -> None:
+    """What the instance says about a command is what the terminal shows."""
+    clear_parking()
+    refusal = "StreamDeck with serial 'deck-a' not found. Available devices: deck-b"
+    recorder = Recorder(running=True, answers={"deck-a": refusal})
+    verdict = cli_forward.forward_cli_requests(
+        parse(["--set-brightness", "deck-a", "60"]), recorder)
+    assert verdict.failures == [refusal], verdict.failures
+    assert verdict.output == [], verdict.output
+    print("PASS: a command the instance refuses comes back as its own sentence")
+
+
+def check_list_actions_forwards() -> None:
+    clear_parking()
+    payload = '{"page": "Main", "actions": {"keys": {"0x0": {"0": ["x"]}}}}'
+    recorder = Recorder(query=payload)
+    verdict = cli_forward.forward_cli_requests(parse(["--list-actions", "Main"]), recorder)
+    assert verdict.output == [payload], verdict.output
+    assert ("list_actions", "Main", "") in recorder.calls, recorder.calls
+
+    recorder = Recorder(query=payload)
+    cli_forward.forward_cli_requests(parse(["--list-actions", "Main", "0,0"]), recorder)
+    assert ("list_actions", "Main", "0,0") in recorder.calls, recorder.calls
+
+    # The instance names a page that does not exist as an error object, which
+    # becomes a sentence on stderr and not output on stdout.
+    recorder = Recorder(
+        query='{"error": "Page \'Nope\' not found. Available pages: Main"}')
+    verdict = cli_forward.forward_cli_requests(parse(["--list-actions", "Nope"]), recorder)
+    assert verdict.output == [] and verdict.failures and "Nope" in verdict.failures[0], (
+        verdict.failures)
+    print("PASS: --list-actions forwards the page and optional coordinates")
+
+
+def check_read_and_page_verbs_refuse_without_instance() -> None:
+    """Every new verb needs a running instance, and none of them park."""
+    for argv in (["--json"], ["--get-brightness", "deck-a"],
+                 ["--list-actions", "Main"], ["--list-actions", "Main", "0,0"],
+                 ["--set-brightness", "deck-a", "60"], ["--sleep", "deck-a"],
+                 ["--wake", "deck-a"], ["--rename-page", "Main", "Home"],
+                 ["--duplicate-page", "Main", "Home"]):
+        clear_parking()
+        recorder = Recorder(running=False)
+        verdict = cli_forward.forward_cli_requests(parse(argv), recorder)
+        assert verdict.failures == [cli_forward._NOT_RUNNING_INSTANCE_MESSAGE], (
+            argv, verdict.failures)
+        assert verdict.output == [], (argv, verdict.output)
+        assert recorder.forwards() == [], (argv, recorder.forwards())
+        assert not gl.api_page_requests and not gl.api_state_requests, (
+            f"{argv} parked something despite refusing")
+    assert "not running" in cli_forward._NOT_RUNNING_INSTANCE_MESSAGE
+    assert "Start Deckard" in cli_forward._NOT_RUNNING_INSTANCE_MESSAGE
+    print("PASS: with nothing running every read or page verb refuses with one sentence")
+
+
+def check_instance_verb_syntax_is_checked() -> None:
+    bad = [
+        ["--set-brightness", "deck-a", "nope"],     # not a number
+        ["--set-brightness", "deck-a", "900"],      # out of 0..100
+        ["--set-brightness", "deck-a", "-1"],       # below 0
+        ["--list-actions", "Main", "nope"],         # no comma
+        ["--list-actions", "Main", "1,2,3"],        # three of them
+        ["--list-actions", "Main", "a", "b"],       # too many values
+        ["--rename-page", "Main", ""],              # no new name
+    ]
+    for argv in bad:
+        clear_parking()
+        recorder = Recorder(running=True)
+        verdict = cli_forward.forward_cli_requests(parse(argv), recorder)
+        assert verdict.failures, f"{argv} was accepted"
+        assert verdict.failures[0].startswith("Error: "), (argv, verdict.failures)
+        assert cli_forward.USAGE in verdict.failures, (argv, verdict.failures)
+        assert recorder.calls == [], (
+            f"{argv} reached the bus before it was read: {recorder.calls}")
+    print("PASS: a malformed read or command verb is refused before the bus")
+
+
+def check_instance_verb_older_instance_reports_once() -> None:
+    clear_parking()
+    recorder = Recorder(running=True, raises=cli_forward.OlderInstance())
+    verdict = cli_forward.forward_cli_requests(parse(["--json"]), recorder)
+    assert verdict.failures == [cli_forward.SKEW_MESSAGE], verdict.failures
+    assert verdict.output == [], verdict.output
+    print("PASS: a query against an instance without the methods reports the skew")
+
+
 def main() -> None:
     fixtures.start_watchdog(WATCHDOG_SECONDS, label="scenario_cli_forward_all")
     try:
@@ -751,6 +927,14 @@ def main() -> None:
         check_unparkable_is_the_one_rule()
         check_no_requests_touches_nothing()
         check_unreachable_bus_is_reported()
+        check_json_prints_the_dump()
+        check_get_brightness_reads_the_dump()
+        check_command_verbs_forward()
+        check_command_refusal_comes_back()
+        check_list_actions_forwards()
+        check_read_and_page_verbs_refuse_without_instance()
+        check_instance_verb_syntax_is_checked()
+        check_instance_verb_older_instance_reports_once()
     finally:
         clear_parking()
 

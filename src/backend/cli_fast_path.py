@@ -82,6 +82,7 @@ class Outcome:
 
     exit_code: int | None = None
     failures: tuple[str, ...] = ()
+    output: tuple[str, ...] = ()
 
 
 #: Hand the invocation back to the ordinary startup path.
@@ -111,6 +112,17 @@ def answer_from_running_instance(args: Namespace,
     those scenarios; a real invocation builds one only once it knows it has
     something to send.
     """
+    if cli_forward.any_instance_verb(args):
+        # A read-side or page verb is answered by the running instance, or
+        # refused because none runs. It is never handed back: a read cannot be
+        # parked, and booting the whole application to answer one would spend
+        # the very imports this module exists to skip. The boot path reads the
+        # same verbs the same way, and a scenario pins the two halves alike.
+        outcome = cli_forward.answer_instance_verbs(args, transport)
+        return Outcome(exit_code=1 if outcome.failures else 0,
+                       failures=tuple(outcome.failures),
+                       output=tuple(outcome.output))
+
     if runs_in_this_process(args):
         # main.py answers the listing itself and returns straight after, so
         # nothing else on the line runs. A request that can be parked survives

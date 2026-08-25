@@ -72,6 +72,22 @@ def seed_multistate_page(page_name: str, key_ident: str, n_states: int) -> str:
     return path
 
 
+def seed_action_page(page_name: str, key_ident: str, action_id: str) -> str:
+    """Seed a page whose key_ident carries one action on its first state.
+
+    ListActions is then checked against the ids it reads back.
+    """
+    pages_dir = os.path.join(gl.DATA_PATH, "pages")
+    os.makedirs(pages_dir, exist_ok=True)
+    path = os.path.join(pages_dir, f"{page_name}.json")
+    with open(path, "w") as f:
+        json.dump({
+            "keys": {key_ident: {"states": {"0": {"actions": [{"id": action_id}]}}}},
+            "dials": {}, "touchscreens": {},
+        }, f)
+    return path
+
+
 def active_name(controller) -> str | None:
     page = controller.active_page
     return None if page is None else page.get_name()
@@ -99,6 +115,47 @@ class Client:
         reply = self._observer.call(
             api.DBUS_OBJECT_PATH, api.TOP_IFACE, "EmulateInput",
             GLib.Variant("(ssss)", (serial, page, coords, event)))
+        return reply.unpack()[0]
+
+    def query_state(self) -> str:
+        reply = self._observer.call(
+            api.DBUS_OBJECT_PATH, api.TOP_IFACE, "QueryState", None)
+        return reply.unpack()[0]
+
+    def list_actions(self, page: str, coords: str) -> str:
+        reply = self._observer.call(
+            api.DBUS_OBJECT_PATH, api.TOP_IFACE, "ListActions",
+            GLib.Variant("(ss)", (page, coords)))
+        return reply.unpack()[0]
+
+    def set_brightness(self, serial: str, value: int) -> str:
+        reply = self._observer.call(
+            api.DBUS_OBJECT_PATH, api.TOP_IFACE, "SetDeckBrightness",
+            GLib.Variant("(si)", (serial, value)))
+        return reply.unpack()[0]
+
+    def sleep(self, serial: str) -> str:
+        reply = self._observer.call(
+            api.DBUS_OBJECT_PATH, api.TOP_IFACE, "Sleep",
+            GLib.Variant("(s)", (serial,)))
+        return reply.unpack()[0]
+
+    def wake(self, serial: str) -> str:
+        reply = self._observer.call(
+            api.DBUS_OBJECT_PATH, api.TOP_IFACE, "Wake",
+            GLib.Variant("(s)", (serial,)))
+        return reply.unpack()[0]
+
+    def rename_page(self, old: str, new: str) -> str:
+        reply = self._observer.call(
+            api.DBUS_OBJECT_PATH, api.TOP_IFACE, "RenamePage",
+            GLib.Variant("(ss)", (old, new)))
+        return reply.unpack()[0]
+
+    def duplicate_page(self, source: str, new: str) -> str:
+        reply = self._observer.call(
+            api.DBUS_OBJECT_PATH, api.TOP_IFACE, "DuplicatePage",
+            GLib.Variant("(ss)", (source, new)))
         return reply.unpack()[0]
 
     def introspect(self) -> str:
@@ -266,16 +323,133 @@ def leg_emulate_errors(client, controller) -> None:
     print("  PASS: every rejected press answers with its reason")
 
 
+def leg_query_state(client, controller, other) -> None:
+    """QueryState names every deck with its page and brightness, and the pages."""
+    state = json.loads(client.query_state())
+    assert "error" not in state, f"a dump names what exists and does not fail: {state}"
+    by_serial = {d["serial"]: d for d in state["decks"]}
+    assert SERIAL in by_serial and OTHER_SERIAL in by_serial, state
+    assert "Main" in state["pages"] and "States" in state["pages"], state["pages"]
+    for deck in state["decks"]:
+        assert "active_page" in deck and "brightness" in deck, deck
+    assert by_serial[SERIAL]["active_page"] == active_name(controller), by_serial[SERIAL]
+    print("  PASS: QueryState names every deck, its page and its brightness")
+
+
+def leg_set_and_get_brightness(client, controller) -> None:
+    reply = client.set_brightness(SERIAL, 42)
+    assert reply == "", f"a brightness that was set must answer nothing: {reply!r}"
+    harness.pump_until(lambda: controller.brightness == 42, 5.0,
+                       f"the brightness never reached 42: {controller.brightness}")
+
+    settings = gl.settings_manager.get_deck_settings(SERIAL)
+    assert settings.get("brightness", {}).get("value") == 42, (
+        f"the brightness was not written to the deck settings: {settings.get('brightness')}")
+
+    deck = next(d for d in json.loads(client.query_state())["decks"]
+                if d["serial"] == SERIAL)
+    assert deck["brightness"] == 42, f"QueryState did not reflect the set brightness: {deck}"
+
+    unknown = client.set_brightness("not-a-deck", 10)
+    assert unknown and SERIAL in unknown, unknown
+    print("  PASS: SetDeckBrightness sets the deck, persists it and reports it")
+
+
+def leg_sleep_and_wake(client, controller) -> None:
+    assert not controller.screen_saver.showing, "this leg must start awake"
+    page_before = active_name(controller)
+
+    assert client.sleep(SERIAL) == "", "a sleep that worked must answer nothing"
+    harness.pump_until(lambda: controller.screen_saver.showing, 5.0,
+                       "the deck never showed its screensaver")
+    assert controller.allow_interaction, (
+        "sleep turned interaction off; a slept deck must still wake on a press")
+
+    assert client.wake(SERIAL) == "", "a wake that worked must answer nothing"
+    harness.pump_until(lambda: not controller.screen_saver.showing, 5.0,
+                       "the deck never left its screensaver")
+    harness.pump_until(lambda: active_name(controller) == page_before, 5.0,
+                       f"waking did not restore the page: {active_name(controller)}")
+
+    unknown = client.sleep("not-a-deck")
+    assert unknown and SERIAL in unknown, unknown
+    print("  PASS: Sleep shows the screensaver and Wake restores the page under it")
+
+
+def leg_list_actions(client) -> None:
+    data = json.loads(client.list_actions("Actioned", ""))
+    assert "error" not in data, data
+    assert data["page"] == "Actioned", data
+    assert data["actions"]["keys"]["0x0"]["0"] == ["demo::Action"], data
+
+    keys = json.loads(client.list_actions("Actioned", "0,0"))["actions"].get("keys", {})
+    assert set(keys) == {"0x0"}, f"the coordinate filter kept {set(keys)}"
+
+    bad = json.loads(client.list_actions("no-such-page", ""))
+    assert "error" in bad and "no-such-page" in bad["error"], bad
+
+    bad = json.loads(client.list_actions("Actioned", "nope"))
+    assert "error" in bad and "x,y" in bad["error"], bad
+    print("  PASS: ListActions reads a page's actions, filters by key, names errors")
+
+
+def leg_rename_and_duplicate_page(client, controller) -> None:
+    """Rename and duplicate go through the PageManager seam and touch disk.
+
+    The rename of the page a deck shows re-points that deck at the new file,
+    so nothing is left pointing at a name that is gone, and the duplicate is a
+    real second file with the same content.
+    """
+    pages_dir = os.path.join(gl.DATA_PATH, "pages")
+    old_path = os.path.join(pages_dir, "Renamable.json")
+    new_path = os.path.join(pages_dir, "Renamed.json")
+
+    assert client.change_page(SERIAL, "Renamable") == ""
+    assert active_name(controller) == "Renamable", active_name(controller)
+
+    assert client.rename_page("Renamable", "Renamed") == "", "the rename failed"
+    assert not os.path.exists(old_path), "the old page file was left behind"
+    assert os.path.exists(new_path), "the renamed page file is missing"
+    assert os.path.abspath(controller.active_page.json_path) == os.path.abspath(new_path), (
+        f"the deck showing the page did not follow the rename: "
+        f"{controller.active_page.json_path}")
+    assert active_name(controller) == "Renamed", active_name(controller)
+
+    pages = json.loads(client.query_state())["pages"]
+    assert "Renamed" in pages and "Renamable" not in pages, pages
+
+    taken = client.rename_page("Main", "Renamed")
+    assert taken and "already exists" in taken, taken
+    missing = client.rename_page("no-such-page", "Whatever")
+    assert missing and "not found" in missing, missing
+
+    # Duplicate the renamed page and confirm a real second file with the same
+    # content.
+    copy_path = os.path.join(pages_dir, "Copy.json")
+    assert client.duplicate_page("Renamed", "Copy") == "", "the duplicate failed"
+    assert os.path.exists(copy_path), "the duplicated page file is missing"
+    with open(new_path) as f:
+        source_data = json.load(f)
+    with open(copy_path) as f:
+        copy_data = json.load(f)
+    assert copy_data == source_data, "the duplicate does not match its source"
+
+    taken = client.duplicate_page("Renamed", "Copy")
+    assert taken and "already exists" in taken, taken
+    print("  PASS: RenamePage moves the file and the deck, DuplicatePage copies it")
+
+
 def leg_signatures_match_cli(client) -> None:
     """The published signatures are the ones the CLI composes calls from.
 
-    The CLI builds the (ss), (sssi) and (ssss) variants by hand. A wire
-    signature has no other guard, so a change here fails at the bus.
+    The CLI builds the variants by hand. A wire signature has no other guard,
+    so a change here fails at the bus.
     """
     xml = client.introspect()
-    assert '<method name="ChangePage">' in xml, xml
-    assert '<method name="ChangeState">' in xml, xml
-    assert '<method name="EmulateInput">' in xml, xml
+    for method in ("ChangePage", "ChangeState", "EmulateInput", "QueryState",
+                   "ListActions", "SetDeckBrightness", "Sleep", "Wake",
+                   "RenamePage", "DuplicatePage"):
+        assert f'<method name="{method}">' in xml, f"{method} is not on the bus"
 
     def signature(method: str) -> tuple[str, str]:
         block = xml.split(f'<method name="{method}">')[1].split("</method>")[0]
@@ -289,6 +463,13 @@ def leg_signatures_match_cli(client) -> None:
     assert signature("ChangePage") == ("ss", "s"), signature("ChangePage")
     assert signature("ChangeState") == ("sssi", "s"), signature("ChangeState")
     assert signature("EmulateInput") == ("ssss", "s"), signature("EmulateInput")
+    assert signature("QueryState") == ("", "s"), signature("QueryState")
+    assert signature("ListActions") == ("ss", "s"), signature("ListActions")
+    assert signature("SetDeckBrightness") == ("si", "s"), signature("SetDeckBrightness")
+    assert signature("Sleep") == ("s", "s"), signature("Sleep")
+    assert signature("Wake") == ("s", "s"), signature("Wake")
+    assert signature("RenamePage") == ("ss", "s"), signature("RenamePage")
+    assert signature("DuplicatePage") == ("ss", "s"), signature("DuplicatePage")
     print("  PASS: the published signatures are the ones the CLI calls with")
 
 
@@ -465,6 +646,11 @@ def run_legs(bus_address: str, controller, other) -> None:
         leg_state_errors(client, controller)
         leg_emulate_input(client, controller)
         leg_emulate_errors(client, controller)
+        leg_query_state(client, controller, other)
+        leg_set_and_get_brightness(client, controller)
+        leg_sleep_and_wake(client, controller)
+        leg_list_actions(client)
+        leg_rename_and_duplicate_page(client, controller)
         leg_signatures_match_cli(client)
         leg_cli_transport_reaches_service(controller)
         leg_instance_never_answers(controller)
@@ -483,7 +669,9 @@ def main() -> None:
     fixtures.seed_page("Main")
     fixtures.seed_page("Alpha")
     fixtures.seed_page("Beta")
+    fixtures.seed_page("Renamable")
     seed_multistate_page("States", STATE_KEY, STATE_COUNT)
+    seed_action_page("Actioned", "0x0", "demo::Action")
 
     bus_proc, bus_address = harness.start_private_bus()
     controller = fixtures.make_headless_controller(serial=SERIAL)

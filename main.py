@@ -76,6 +76,8 @@ except Exception as _error:
         exit_code=1,
         failures=(f"Deckard could not carry out that command: {_error}",))
 if _cli_outcome.exit_code is not None:
+    for _line in _cli_outcome.output:
+        print(_line)
     for _failure in _cli_outcome.failures:
         print(_failure, file=sys.stderr)
     sys.exit(_cli_outcome.exit_code)
@@ -438,6 +440,8 @@ def make_api_calls():
     where a test can reach it, because this module re-execs itself on import.
     """
     verdict = cli_forward.forward_cli_requests(gl.argparser.parse_args())
+    for line in verdict.output:
+        print(line)
     for failure in verdict.failures:
         print(failure, file=sys.stderr)
     if verdict.failures:
