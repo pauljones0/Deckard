@@ -97,30 +97,30 @@ def encode_native_key(deck: "BetterDeck", image: "Image.Image", quality: int = K
 
 
 def encode_native_touchscreen(deck: "BetterDeck", image: "Image.Image", quality: int = 90) -> bytes:
-    """PILHelper.to_native_touchscreen_format with a tunable JPEG quality,
-    and with no mutation of the caller's image. The library hardcodes q100,
-    and its _to_native_format calls image.thumbnail() in place when it
-    resizes, which corrupts the caller's copy. The touchscreen strip is the
-    largest single USB write on the deck. A smaller JPEG here buys back time
-    under the device write mutex. That time is dial-latency margin.
-    ControllerTouchScreen.update reuses the same image object afterward for
-    the UI mirror, so any resize here must work on a copy."""
+    """PILHelper.to_native_touchscreen_format with a tunable JPEG quality, a
+    turn for the deck's rotation, and no mutation of the caller's image,
+    which ControllerTouchScreen.update reuses for the UI mirror. image is the
+    strip in the frame the user sees, so the fit measures the logical size
+    and not the device buffer, its transpose on a quarter-turned deck, which
+    the turn then expands into. A wrongly sized composite lands well inside
+    that buffer once turned, so the turned size is checked as well."""
     fmt = deck.touchscreen_image_format()
-    if image.size != fmt["size"]:
+    if image.size != (logical_size := deck.logical_touchscreen_size() or fmt["size"]):
         image = image.copy()
-        image.thumbnail(fmt["size"])
-    if fmt["rotation"]:
-        image = image.rotate(fmt["rotation"])
-    if fmt["flip"][0]:
-        image = image.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
-    if fmt["flip"][1]:
-        image = image.transpose(Image.Transpose.FLIP_TOP_BOTTOM)
+        image.thumbnail(logical_size)
+    if turn := (deck.touchscreen_image_rotation() + fmt["rotation"]) % 360:
+        image = image.rotate(turn, expand=True)
+    if image.size != fmt["size"]:
+        raise ValueError(f"the strip composite is {image.size} after the turn, and the device buffer is {fmt['size']}")
+    for axis, flip in zip((Image.Transpose.FLIP_LEFT_RIGHT, Image.Transpose.FLIP_TOP_BOTTOM), fmt["flip"]):
+        if flip:
+            image = image.transpose(axis)
     with io.BytesIO() as buf:
         save_kwargs = {"quality": quality}
         if fmt["format"] == "JPEG":
-            # Force 4:4:4 as encode_native_key does. Below q95 Pillow
-            # switches to 4:2:0 chroma subsampling, which visibly desaturates
-            # the strip's icons and text.
+            # Force 4:4:4, as encode_native_key does: below q95 Pillow drops
+            # to 4:2:0 chroma subsampling, which visibly desaturates the
+            # strip's icons and text.
             save_kwargs["subsampling"] = 0
         image.save(buf, fmt["format"], **save_kwargs)
         return buf.getvalue()
@@ -158,7 +158,7 @@ class MediaPlayerSetTouchscreenImageTask:
             # is the bleed the present stamp exists to prevent.
             return
         try:
-            touchscreen_size = self.deck_controller.get_touchscreen_image_size()
+            touchscreen_size = self.deck_controller.deck.touchscreen_image_format()["size"]  # the device buffer, not the logical composite
             self.deck_controller.deck.set_touchscreen_image(ticket.native_image, x_pos=0, y_pos=0, width=touchscreen_size[0], height=touchscreen_size[1])  # maybe avoid merging the dial images before every apply
             # Record the presented image's hash here, not at render time. A
             # paint dropped at the write boundary must not advance the hash,

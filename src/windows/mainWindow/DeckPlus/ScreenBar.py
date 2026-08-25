@@ -67,7 +67,7 @@ class ScreenBar(Gtk.Frame):
         # self.image.set_from_file("Assets/800_100.png")
 
         self.image = ScreenBarImage(self)
-        self.image.set_image(Image.new("RGBA", (800, 100), (0, 0, 0, 0)))
+        self.image.set_image(Image.new("RGBA", self.deck_controller.get_touchscreen_image_size(), (0, 0, 0, 0)))
         self.set_child(self.image)
 
         # self.set_child(self.image)
@@ -196,11 +196,16 @@ class ScreenBar(Gtk.Frame):
         width = self.image.get_width()
         height = self.image.get_height()
 
-        # Map xy to 800x100
-        x, y = int(x * 800 / width), int(y * 100 / height)
+        # Map the widget position onto the strip the user sees, which is the
+        # tall one on a quarter-turned deck. The controller dispatches these
+        # against the same frame the deck's own touches arrive in.
+        strip_width, strip_height = self.deck_controller.get_touchscreen_image_size()
+        x, y = int(x * strip_width / width), int(y * strip_height / height)
 
-        x = max(0, min(x, 800))
-        y = max(0, min(y, 100))
+        # Inclusive clamp to the last pixel: the size itself is one past it,
+        # and an off-strip coordinate reaches no dial.
+        x = max(0, min(x, strip_width - 1))
+        y = max(0, min(y, strip_height - 1))
 
         return x, y
 
@@ -291,9 +296,16 @@ class ScreenBarImage(LazyMapTasks, Gtk.Picture):
         a live frame. The mapped check lives in set_pixbuf_and_del, because
         widget state needs the main thread.
         """
-        width = 385 #TODO: Find a better way to do this
+        length = 385 #TODO: Find a better way to do this
         thumbnail = image.copy()
-        thumbnail.thumbnail((width, width/8))
+        # The composite arrives in the frame the user sees, so it stands on
+        # its side on a quarter-turned deck. Bound the long axis either way,
+        # or a tall composite is squeezed into a horizontal box and reads as
+        # a sliver. The preview then shows upright content in a horizontal
+        # slot; moving the slot beside the key grid is the layout work.
+        box = ((length, length / 8) if image.width >= image.height
+               else (length / 8, length))
+        thumbnail.thumbnail(box)
 
         pixbuf = image2pixbuf(thumbnail.convert("RGBA"), force_transparency=True)
         # The task id travels with the pixbuf, so a paint that lost the race to

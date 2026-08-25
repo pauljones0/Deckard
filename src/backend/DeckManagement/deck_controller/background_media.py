@@ -29,7 +29,8 @@ from src.backend.DeckManagement.HelperMethods import is_video
 from src.backend.DeckManagement.Subclasses.background_video_cache import BackgroundVideoCache
 from src.backend.DeckManagement.deck_controller.gif_pipeline import GifBackground, GifBudgetExceeded
 from src.backend.DeckManagement.deck_controller.slideshow import IN_ORDER, Slideshow
-from src.backend.DeckManagement.deck_controller.strip_band import band_layout, clamp_box
+from src.backend.DeckManagement.deck_controller.strip_band import clamp_box
+from src.backend.DeckManagement.strip_geometry import StripBand, flat_band, oriented_band
 
 from typing import TYPE_CHECKING, cast
 if TYPE_CHECKING:
@@ -490,27 +491,39 @@ class BackgroundImage:
         return image
 
     def _grid_size(self) -> tuple[int, int]:
-        """The key grid's canvas size: keys plus the bezel spacing."""
+        """The key grid's canvas size: keys plus the bezel spacing, in the
+        frame the user sees, because key_layout() already turns with the
+        deck."""
         key_rows, key_cols = self.deck_controller.deck.key_layout()
         key_width, key_height = self.deck_controller.get_key_image_size()
         spacing_x, spacing_y = self.deck_controller.key_spacing
         return (key_width * key_cols + spacing_x * (key_cols - 1),
                 key_height * key_rows + spacing_y * (key_rows - 1))
 
+    def _band(self, extend_touchscreen: bool) -> "StripBand | None":
+        """Where the strip band lies beside the key grid, or None when the
+        deck reports no geometry at all.
+
+        A canvas that carries no band, because the deck has no strip or the
+        extension is off, is the key grid alone. Otherwise the band comes
+        from strip_band, turned into the frame the user sees, so the
+        wallpaper continues onto the strip along the edge the user sees it
+        against.
+        """
+        deck = getattr(self.deck_controller, "deck", None)
+        if deck is None:
+            return None
+        grid = self._grid_size()
+        if not extend_touchscreen or not deck.is_touch():
+            return flat_band(grid)
+        return oriented_band(self.deck_controller, deck.get_rotation(), grid)
+
     def _canvas_size(self, extend_touchscreen: bool) -> "tuple[int, int] | None":
         """The canvas size that create_full_deck_sized_image() targets, with
         the touchscreen strip when extend is on. Returns None when the deck
         geometry is absent; the caller then skips the fit and the re-decode."""
-        deck = getattr(self.deck_controller, "deck", None)
-        if deck is None:
-            return None
-        canvas_width, canvas_height = self._grid_size()
-
-        if extend_touchscreen and deck.is_touch():
-            canvas_width, canvas_height, _grid_x, _band = \
-                band_layout(self.deck_controller, canvas_width, canvas_height)
-
-        return (canvas_width, canvas_height)
+        band = self._band(extend_touchscreen)
+        return None if band is None else band.canvas_size
 
     def _fit_to_canvas(self, image: Image.Image, extend_touchscreen: bool) -> Image.Image:
         canvas = self._canvas_size(extend_touchscreen)
@@ -551,16 +564,17 @@ class BackgroundImage:
 
     def create_full_deck_sized_image(self, extend_touchscreen: bool = False) -> Image.Image:
         self._ensure_fits_canvas(extend_touchscreen)
-        canvas_width, canvas_height = self._grid_size()
-
-        # Extend the canvas to the union of the key grid and the strip's
-        # view: taller by the bezel gap plus the band, and wider when the
+        # The canvas covers the union of the key grid and the strip's view:
+        # bigger by the bezel gap plus the band, and bigger again where the
         # band overhangs the grid (the SD+ strip shows content beyond the
-        # outer key columns). strip_band owns that geometry; on an SD+ it is
-        # device-calibrated rather than derived from the spacing.
-        if extend_touchscreen:
-            canvas_width, canvas_height, _grid_x, _band = \
-                band_layout(self.deck_controller, canvas_width, canvas_height)
+        # outer key columns). strip_band owns how far the band reaches, and
+        # on an SD+ that is device-calibrated rather than derived from the
+        # spacing. _band turns that layout onto the edge the user sees the
+        # strip against.
+        band = self._band(extend_touchscreen)
+        if band is None:
+            raise RuntimeError("the deck reports no geometry to fit a background to")
+        canvas_width, canvas_height = band.canvas_size
 
         # close() releases the source image. Raise instead of composing a
         # transparent canvas. Background.update_tiles catches the raise and
@@ -578,16 +592,22 @@ class BackgroundImage:
         return ImageOps.fit(img_rgba, (canvas_width, canvas_height), Image.Resampling.LANCZOS)
 
     def get_touchscreen_image(self) -> Image.Image:
-        """The strip's view of the extended canvas, at strip resolution."""
+        """The strip's view of the extended canvas, at strip resolution.
+
+        The band is cut from the edge of the wallpaper the user sees beside
+        the strip, which moves with the deck's rotation. The result is the
+        logical strip size, so it stands on its side on a quarter-turned
+        deck."""
+        band = self._band(True)
+        if band is None:
+            raise RuntimeError("the deck reports no geometry to cut a strip band from")
         canvas = self.create_full_deck_sized_image(extend_touchscreen=True)
-        strip_width, strip_height = self.deck_controller.get_touchscreen_image_size()
-        grid_w, grid_h = self._grid_size()
-        _cw, _ch, _grid_x, band_crop = band_layout(self.deck_controller, grid_w, grid_h)
-        strip_slice = canvas.crop(clamp_box(band_crop, canvas.width, canvas.height))
-        return strip_slice.resize((strip_width, strip_height), Image.Resampling.LANCZOS)
-    
+        strip_slice = canvas.crop(clamp_box(band.box, canvas.width, canvas.height))
+        return strip_slice.resize(self.deck_controller.get_touchscreen_image_size(),
+                                  Image.Resampling.LANCZOS)
+
     def crop_key_image_from_deck_sized_image(self, image: Image.Image, key: int,
-                                             x_offset: int = 0) -> Image.Image:
+                                             origin: "tuple[int, int]" = (0, 0)) -> Image.Image:
         deck = self.deck_controller.deck
 
 
@@ -599,10 +619,12 @@ class BackgroundImage:
         row = key // key_cols
         col = key % key_cols
 
-        # Find the X and Y offset of the key in the full-size image. x_offset
-        # is the grid's position on a canvas whose strip band overhangs it.
-        start_x = x_offset + col * (key_width + spacing_x)
-        start_y = row * (key_height + spacing_y)
+        # Find the X and Y offset of the key in the full-size image. origin is
+        # where the key grid starts, which is not the canvas corner when the
+        # band overhangs the grid, nor when the band takes the top or the
+        # left edge.
+        start_x = origin[0] + col * (key_width + spacing_x)
+        start_y = origin[1] + row * (key_height + spacing_y)
 
         # Crop the region that the key occupies.
         region = (start_x, start_y, start_x + key_width, start_y + key_height)
@@ -610,20 +632,18 @@ class BackgroundImage:
 
         # Convert to RGBA to keep transparency.
         return segment.convert("RGBA")
-    
+
     def get_tiles(self, extend_touchscreen: bool = False) -> list[Image.Image]:
-        # The strip band can overhang the key grid, so the extended canvas
-        # holds the grid at an offset and the key crops shift with it.
+        # The extended canvas holds the key grid at an offset, because the
+        # band can overhang the grid and can take the top or the left edge,
+        # so the key crops shift with it.
+        band = self._band(extend_touchscreen)
+        origin = (0, 0) if band is None else band.key_origin
         full_deck_sized_image = self.create_full_deck_sized_image(extend_touchscreen)
-        grid_x = 0
-        if extend_touchscreen:
-            grid_w, grid_h = self._grid_size()
-            grid_x = band_layout(self.deck_controller, grid_w, grid_h)[2]
 
         tiles: list[Image.Image] = []
         for key in range(self.deck_controller.deck.key_count()):
-            key_image = self.crop_key_image_from_deck_sized_image(
-                full_deck_sized_image, key, x_offset=grid_x)
+            key_image = self.crop_key_image_from_deck_sized_image(full_deck_sized_image, key, origin)
             tiles.append(key_image)
 
         return tiles

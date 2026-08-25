@@ -195,6 +195,15 @@ bundle as a release asset.
   covers both the keys and the strip's full view and cut every surface from
   it. A cached background video built with the old geometry is detected by
   its frame size and rebuilt.
+- The touch strip reads upright on a deck turned a quarter turn. On a deck
+  rotated 90 or 270 the strip used to keep the device's own orientation, so
+  its labels and images read sideways and the dial areas ran the wrong way.
+  The strip now composes for the way the user sees it: content upright, the
+  dial areas stacked in the order of the knobs, touches and swipes landing
+  where the finger is, and the strip's band of an extended wallpaper cut from
+  the edge beside it. On an upside-down deck that band now also comes from the
+  correct edge. The window's strip preview shows the upright content; laying
+  the preview beside the sideways grid is still to come.
 - Turning a page of thumbnails in the asset manager no longer freezes the
   window. The icon, wallpaper and custom-asset grids used to decode every
   thumbnail on the page while you waited, about fifty images at once, and the

@@ -33,7 +33,7 @@ from src.backend.DeckManagement.Subclasses import cache_budget
 from src.backend.DeckManagement.Subclasses import mp4_tile_cache
 from src.backend.DeckManagement.Subclasses.SingleKeyAsset import SingleKeyAsset
 from src.backend.DeckManagement.Subclasses.mp4_tile_cache import get_video_md5
-from src.backend.DeckManagement.deck_controller.strip_band import band_layout
+from src.backend.DeckManagement.strip_geometry import StripBand, flat_band, oriented_band
 
 from collections.abc import Generator
 from typing import TYPE_CHECKING, cast
@@ -363,26 +363,29 @@ class GifBackground:
             key_w, key_h = deck.key_image_format()['size']
             spacing_x, spacing_y = deck_controller.key_spacing
 
-            grid_w = key_w * key_cols + spacing_x * (key_cols - 1)
-            grid_h = key_h * key_rows + spacing_y * (key_rows - 1)
-            canvas_w, canvas_h, grid_x = grid_w, grid_h, 0
+            grid = (key_w * key_cols + spacing_x * (key_cols - 1),
+                    key_h * key_rows + spacing_y * (key_rows - 1))
 
+            # The same strip_band layout BackgroundImage and
+            # BackgroundVideoCache cut from: the canvas covers the union of
+            # the key grid and the strip's view, and the grid sits at an
+            # offset inside it. The band takes the canvas edge the strip
+            # lies against in the frame the user sees.
+            band: StripBand = flat_band(grid)
             if self.extend_touchscreen:
-                # The same strip_band layout BackgroundImage and
-                # BackgroundVideoCache cut from: the canvas covers the union
-                # of the key grid and the strip's view, and the grid sits at
-                # grid_x when the band overhangs it.
                 self.strip_size = deck_controller.get_touchscreen_image_size()
-                canvas_w, canvas_h, grid_x, self._strip_box = band_layout(
-                    deck_controller, grid_w, grid_h)
+                band = oriented_band(deck_controller, deck.get_rotation(), grid)
+                self._strip_box = band.box
+            origin_x, origin_y = band.key_origin
 
             self._key_regions: "list[tuple[int, int, int, int]]" = []
             for key in range(self.key_count):
                 row, col = divmod(key, key_cols)
-                x = grid_x + col * (key_w + spacing_x)
-                y = row * (key_h + spacing_y)
+                x = origin_x + col * (key_w + spacing_x)
+                y = origin_y + row * (key_h + spacing_y)
                 self._key_regions.append((x, y, x + key_w, y + key_h))
-            canvas_size = (canvas_w, canvas_h)
+
+            canvas_size = band.canvas_size
         else:
             # In strip-background mode it serves whole frames only.
             self.key_count = 0

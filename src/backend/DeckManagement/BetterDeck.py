@@ -5,6 +5,8 @@ import traceback
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, TypedDict, TypeVar, cast
 
+from src.backend.DeckManagement.strip_geometry import SlotOrder
+
 if TYPE_CHECKING:
     import asyncio
 
@@ -817,7 +819,11 @@ class BetterDeck():
 
     def _touchscreen_size(self) -> "tuple[int, int] | None":
         """The device's own strip size, or None for a deck that has no
-        touchscreen or reports no size for it."""
+        touchscreen or reports no size for it.
+
+        A deck without a strip reports a zero size rather than nothing, and a
+        zero is no strip: it has no pixel to turn and no extent to map a
+        touch against."""
         image_format = getattr(self.deck, "touchscreen_image_format", None)
         if image_format is None:
             return None
@@ -827,75 +833,129 @@ class BetterDeck():
             return None
         if size is None or len(size) != 2 or None in size:
             return None
+        if not size[0] or not size[1]:
+            return None
         return int(size[0]), int(size[1])
 
-    def _strip_is_mirrored(self) -> bool:
-        """Whether the strip goes to the device turned end for end.
+    def _strip_turn(self) -> int:
+        """The turn between the strip the user sees and the strip the device
+        holds, in counter-clockwise degrees.
 
-        One answer decides both halves of that mirror, the image and the
-        touch positions, so the two can never disagree. A deck that reports
-        no strip size has nothing to mirror a touch position against, and a
-        turned image with unturned positions puts every touch at the far end
-        of what the user sees. Such a deck therefore keeps both as they are.
+        This is the one answer every strip surface asks: the image turn at
+        the encode boundary, the logical strip size, the touch positions, the
+        dial slot order and the background band edge all come off it, so no
+        two of them can disagree. It is the deck's own rotation, because a
+        deck turned a quarter turn clockwise needs its composite turned the
+        same quarter turn back to reach the device upright.
+
+        A deck that reports no strip size has no strip to turn, and it has
+        nothing to map a touch position against either, so it answers no
+        turn at all.
         """
-        return self.rotation == 180 and self._touchscreen_size() is not None
+        if self._touchscreen_size() is None:
+            return 0
+        return self.rotation
+
+    def _strip_is_mirrored(self) -> bool:
+        """Whether the strip goes to the device turned end for end."""
+        return self._strip_turn() == 180
+
+    def strip_is_transposed(self) -> bool:
+        """Whether the strip stands on its side under the user's hand, so the
+        composite is as tall as the device's strip is wide."""
+        return self._strip_turn() in (90, 270)
+
+    def logical_touchscreen_size(self) -> "tuple[int, int] | None":
+        """The strip size in the frame the user sees, or None for a deck with
+        no strip.
+
+        Every strip composer draws at this size and reads nothing else. It is
+        the device's own size at 0 and 180, and its transpose at 90 and 270,
+        where an upright strip stands on its side. The encode boundary turns
+        such a composite once, with expansion, and it lands in the device's
+        fixed buffer.
+        """
+        size = self._touchscreen_size()
+        if size is None:
+            return None
+        return (size[1], size[0]) if self.strip_is_transposed() else size
+
+    def dial_slot_order(self) -> SlotOrder:
+        """How the dial slots divide the strip the user sees.
+
+        At 90 and 270 they stack down the strip instead of running across it.
+        Which end takes dial 0 follows the turn, and the dial index map is
+        one for one at both, so dial 0 stays the knob at the end of the
+        device the strip starts at: the quarter turn clockwise brings that
+        end to the top, and the turn the other way brings it to the bottom.
+        """
+        turn = self._strip_turn()
+        if turn == 90:
+            return "y-down"
+        if turn == 270:
+            return "y-up"
+        return "x"
 
     def touchscreen_image_rotation(self) -> int:
         """Counter-clockwise degrees to turn a composed strip by, so that it
         reaches the device in the device's own orientation.
 
-        At 180 the strip lies end for end under the user's hand, so the
-        composite is turned through half a circle. At 90 and 270 the strip
-        stands on its side, and an upright composite would have to be as tall
-        as the strip is wide. The device takes a fixed 800 by 100 buffer, so
-        there is nothing to turn such a composite into: the strip keeps the
-        device's own orientation there, and its content reads sideways, which
-        is what a strip of fixed shape on a deck laid on its side does.
-        Presenting it upright needs a composite of the transposed size, which
-        reaches the dial slots, the strip background and the window's own
-        strip preview, and is not this.
-
-        This turns the composite the strip's own inputs drew. A background
-        image that extends onto the strip is cut from the band below the key
-        grid, and at 180 the band the user sees is the one above it, so that
-        content still comes off the wrong edge. It is a separate crop, on the
-        background's own geometry, and it is tracked separately.
+        The composite is drawn at logical_touchscreen_size(), which is the
+        transpose of the device's buffer at 90 and 270, so the turn runs with
+        expansion and the turned composite fills that buffer exactly.
         """
-        return 180 if self._strip_is_mirrored() else 0
+        return self._strip_turn()
 
     def logical_touch_value(self, value: "dict[str, int]") -> "dict[str, int]":
         """A touch event's positions, moved from where the device reports
         them to where the strip was composed.
 
-        The device reports a position in its own frame. At 180 the composite
-        was turned end for end before the write, so the pixel the user
-        touches is reported from the opposite corner, and both ends of a drag
-        move with it. At 0, 90 and 270 the strip goes to the device in the
-        device's own orientation (see touchscreen_image_rotation), so a
-        reported position already names the pixel the composite drew there.
+        The device reports a position in its own frame, and the composite
+        reached it turned by _strip_turn(), so this turns a reported position
+        back. At 180 that is a mirror on both axes. At 90 and 270 the axes
+        swap, one of them mirrored, which is what turns a position through a
+        quarter circle. Both ends of a drag move together, so a swipe reads
+        in the user's frame.
 
-        A position that does not lie on the strip stays where it is; see
+        A pair is transposed only when both of its members are present, and a
+        position that does not lie on the strip stays where it is; see
         _mirror_position.
 
         The event's dict is copied and never edited in place, because the
         library hands one object to every consumer of that event.
         """
-        if not self._strip_is_mirrored() or not isinstance(value, dict):
+        turn = self._strip_turn()
+        if not turn or not isinstance(value, dict):
             return value
         size = self._touchscreen_size()
         if size is None:
-            # Unreachable while _strip_is_mirrored() answers on the same
-            # size. It stays because this reads the size a second time, and
-            # a None here would mirror against nothing.
+            # Unreachable while _strip_turn() answers on the same size. It
+            # stays because this reads the size a second time, and a None
+            # here would map against nothing.
             return value
         width, height = size
         mapped = dict(value)
-        for key in ("x", "x_out"):
-            if key in mapped:
-                mapped[key] = self._mirror_position(mapped[key], width)
-        for key in ("y", "y_out"):
-            if key in mapped:
-                mapped[key] = self._mirror_position(mapped[key], height)
+        if turn == 180:
+            for key in ("x", "x_out"):
+                if key in mapped:
+                    mapped[key] = self._mirror_position(mapped[key], width)
+            for key in ("y", "y_out"):
+                if key in mapped:
+                    mapped[key] = self._mirror_position(mapped[key], height)
+            return mapped
+        for x_key, y_key in (("x", "y"), ("x_out", "y_out")):
+            if x_key not in mapped or y_key not in mapped:
+                # Deliberate: a quarter turn reads one axis off the other, so
+                # a lone axis names no position in the turned frame and is
+                # carried through rather than guessed at.
+                continue
+            device_x, device_y = mapped[x_key], mapped[y_key]
+            if turn == 90:
+                mapped[x_key] = self._mirror_position(device_y, height)
+                mapped[y_key] = device_x
+            else:
+                mapped[x_key] = device_y
+                mapped[y_key] = self._mirror_position(device_x, width)
         return mapped
 
     @staticmethod

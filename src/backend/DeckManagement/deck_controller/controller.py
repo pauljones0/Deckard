@@ -726,17 +726,22 @@ class DeckController:
         if cache is not None:
             cache_budget.set_min_age(cache, min_age)
 
-    def get_touchscreen_image_size(self) -> tuple[int, int]:
-        if self._touchscreen_image_size is not None:
-            return self._touchscreen_image_size
-        if not self.get_alive():
-            # The same dead-deck contract, and the same fallback caveat, as
-            # get_key_image_size. Callers unpack two ints and none None-checks.
-            return (800, 100)
-        size = self.deck.touchscreen_image_format()["size"]
-        size = max(size[0], 800), max(size[1], 100)
-        self._touchscreen_image_size = size
+    def device_touchscreen_image_size(self) -> tuple[int, int]:
+        """The strip size in the device's own frame, which no rotation turns and
+        which the band calibration is stated in. A dead deck keeps get_key_image_size's contract."""
+        size = self._touchscreen_image_size
+        if size is None:
+            if not self.get_alive():
+                return (800, 100)
+            device = self.deck.touchscreen_image_format()["size"]
+            self._touchscreen_image_size = size = (max(device[0], 800), max(device[1], 100))
         return size
+
+    def get_touchscreen_image_size(self) -> tuple[int, int]:
+        # What every strip composer draws at: the device's own size at 0 and 180,
+        # its transpose at 90 and 270. The device buffer is read at the write.
+        size = self.device_touchscreen_image_size()
+        return (size[1], size[0]) if self.deck.strip_is_transposed() else size
 
     # Page loading
 
@@ -1370,7 +1375,7 @@ class DeckController:
             self.deck.set_key_image(i, native_image)
 
         if self.deck.is_touch():
-            touchscreen_size = self.get_touchscreen_image_size()
+            touchscreen_size = self.deck.touchscreen_image_format()["size"]
             empty = Image.new("RGB", touchscreen_size, (0, 0, 0))
             native_image = PILHelper.to_native_touchscreen_format(self.deck, empty)
 
