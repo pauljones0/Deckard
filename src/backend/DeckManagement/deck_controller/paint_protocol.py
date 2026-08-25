@@ -115,9 +115,14 @@ class PresentState:
         mid-render invalidates this paint at the write boundary.
 
         The enqueued-hash stamp lands before the slot assignment and is not
-        synchronised with it. That edge is known: a paint that loses the race
-        to the slot leaves a hash saying it is in flight. The writer's Clear
-        and the pending-repaint retry are what recover from it.
+        synchronised with it here. The producer is what orders the two: every
+        caller offers while holding the paint lock of the input that owns this
+        target, so two paints of one target reach the slot in the order they
+        were composed, and no paint can stamp a hash the slot does not hold.
+        A producer that offers outside that lock reopens the edge, where a
+        paint that loses the race to the slot leaves a hash saying it is in
+        flight, and only the writer's Clear and the pending-repaint retry
+        recover from it.
         """
         if (not force and img_hash == self.last_presented_hash
                 and img_hash == self.last_enqueued_hash):

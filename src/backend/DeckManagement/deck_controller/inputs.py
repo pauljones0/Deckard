@@ -165,6 +165,34 @@ class ControllerInput(Generic[StateT]):
         # object. It must never land on a destroyed state.
         self._states_lock = threading.RLock()
 
+        # Serializes one input's compose-to-offer span, so the order paints are
+        # composed in is the order they reach the writer.
+        #
+        # The media tick, the main thread's preview push, a plugin worker after
+        # a media or label write, the loader pool and the deck's input callback
+        # all paint the same input. Each reads the state, composes a picture
+        # and offers it to the writer, whose per-target slot keeps the offer
+        # that arrives last. Compose order and offer order are independent
+        # without this lock, so a slow compose of an older state can offer
+        # after a fast compose of a newer one and take the slot from it. The
+        # offer stamps its own hash as in flight while it does, and no later
+        # paint corrects it, because nothing about the input has changed. The
+        # visible form is a key that stays pressed after the finger left.
+        #
+        # Lock order: _states_lock, then this, then the writer's slot lock, and
+        # never the reverse. Both holders of _states_lock release it before
+        # they call update(), and nothing a paint reaches takes it. The writer
+        # takes its slot lock inside the offer and releases it before it runs a
+        # task. _load_page_lock sits above all of it, held across the paints of
+        # a page load and a screensaver flip, and nothing a paint reaches takes
+        # that either. A paint takes no device lock: it hands encoded bytes to
+        # a slot instead of writing, and the deck reads it makes are lock-free.
+        # It blocks on no thread, because the UI mirror converts on the calling
+        # thread and arms an idle callback rather than waiting on the main
+        # loop. It is re-entrant so a paint that re-enters on its own thread
+        # cannot wedge itself; one thread's paints are ordered already.
+        self._paint_lock = threading.RLock()
+
         self.states: dict[int, StateT] = {
             0: self.ControllerStateClass(self, 0),
         }
@@ -478,6 +506,13 @@ class ControllerKey(ControllerInput["ControllerKeyState"]):
         return y * cols + x
 
     def update(self, force: bool = False) -> None:
+        # One paint of this key at a time, spanning the whole compose and offer
+        # below. See _paint_lock. The lock is released before the caller
+        # dispatches anything, so no action callback runs under it.
+        with self._paint_lock:
+            self._paint(force)
+
+    def _paint(self, force: bool) -> None:
         # Capture the page and the generation before the render, so a switch
         # mid-render invalidates this paint at the write boundary.
         page = self.deck_controller.active_page
@@ -1036,6 +1071,13 @@ class ControllerTouchScreen(ControllerInput["ControllerTouchScreenState"]):
         return []
 
     def update(self) -> None:
+        # One paint of the strip at a time, for the reason ControllerKey.update
+        # gives. The strip carries more producers than any key: every dial
+        # composites into it, and so does a background video extended onto it.
+        with self._paint_lock:
+            self._paint()
+
+    def _paint(self) -> None:
         page = self.deck_controller.active_page  # capture at render start (see ControllerKey.update)
         config_gen = self.config_gen
         image = self.get_current_image()

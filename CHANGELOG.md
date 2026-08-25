@@ -128,6 +128,12 @@ bundle as a release asset.
 
 ### Fixed
 
+- A key or the touch strip no longer keeps showing an out-of-date picture when
+  two things repaint it at once. Whichever repaint drew first reached the deck
+  last if it happened to be the slower one, and nothing corrected it, because
+  the content it drew from had already been replaced. The most visible form was
+  a key that stayed shrunken after the finger left it. Repaints of one key, or
+  of the strip, now reach the deck in the order they were drawn.
 - A plugin whose backend runs in its own environment says so when a system
   Python upgrade breaks it. Such an environment carries its own copy of Python,
   and an upgrade can leave that copy unable to start, so the backend never ran
