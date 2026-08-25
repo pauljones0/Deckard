@@ -32,6 +32,17 @@ bundle as a release asset.
 
 ### Changed
 
+- `--change-page` and `--change-state` answer in a fraction of the time when
+  Deckard is already running. Such a command needs one message to the running
+  app, and it now sends it and leaves instead of first building a second copy
+  of the whole app to throw away. A command that finds nothing running still
+  starts the app and applies its request to the deck as it appears.
+- A page or state command that cannot be carried out now says why and reports
+  failure, where some of these ended in a crash message or in silence with a
+  success code. That covers a state number too large to send, a page name or
+  serial the terminal passed as bytes that are not text, and a session bus
+  that cannot be opened. As before, one bad argument applies none of the
+  command, and the message names the flag and the argument it came from.
 - The page selector in the header opens a searchable list. Type any part of
   a page name to narrow it, walk the matches with the arrow keys and press
   Enter to open the best one. The list opens on the page the deck holds, and

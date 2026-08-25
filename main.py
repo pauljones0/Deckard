@@ -52,6 +52,34 @@ _rebrand_migrate()
 # the XDG data dir, after the rename, so the renamed tree lands first.
 _xdg_migrate()
 
+# The CLI fast path, and the last step before the expensive ones. An
+# invocation that only asks the running Deckard to change a page or a state
+# needs one message on the session bus, and every import below answers none of
+# it. This call finishes such an invocation here. It hands every other one
+# back untouched, and those run the same steps in the same order as before.
+# The parser comes from cli_args rather than gl.argparser, because globals is
+# what this call exists to skip; both names are the one parser object.
+#
+# This runs in a module body, which no exception hook covers: the hooks are
+# installed by the first line of main(), and loguru has no sink yet either. So
+# anything unforeseen becomes one sentence here, rather than a traceback with
+# an exit code of zero behind it. SystemExit passes through untouched, which is
+# how argparse still reports its own usage errors.
+from cli_args import argparser as _cli_argparser
+from src.backend import cli_fast_path as _cli_fast_path
+
+try:
+    _cli_outcome = _cli_fast_path.answer_from_running_instance(_cli_argparser.parse_args())
+except Exception as _error:
+    # One reporting site below, so a caught failure reads like every other one.
+    _cli_outcome = _cli_fast_path.Outcome(
+        exit_code=1,
+        failures=(f"Deckard could not carry out that command: {_error}",))
+if _cli_outcome.exit_code is not None:
+    for _failure in _cli_outcome.failures:
+        print(_failure, file=sys.stderr)
+    sys.exit(_cli_outcome.exit_code)
+
 import sys
 from loguru import logger as log
 import os

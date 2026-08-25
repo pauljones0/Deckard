@@ -32,9 +32,13 @@ EXTRA_MODULES = (
     # The forwarding half of the CLI. Its body runs on the deployment floor at
     # every --change-page and --change-state invocation, and main.py, the only
     # importer, cannot be imported by a scenario, so nothing else executes it on
-    # 3.13. Standard library plus the app id and the startup queue, with the
-    # toolkit imported inside the bus transport.
+    # 3.13. Standard library plus the app id, with the toolkit imported inside
+    # the bus transport and the startup queue inside the parking call.
     os.path.join(_REPO_ROOT, "src", "backend", "cli_forward.py"),
+    # The CLI fast path. main.py runs its body above every other import, so it
+    # executes on the floor before anything else in the tree does, and a name
+    # it cannot bind there fails the whole application rather than one command.
+    os.path.join(_REPO_ROOT, "src", "backend", "cli_fast_path.py"),
     # The typed gl accessors import globals and stdlib only, and every type they
     # name is TYPE_CHECKING-only, which is the shape this check exists for.
     os.path.join(_REPO_ROOT, "src", "backend", "services.py"),

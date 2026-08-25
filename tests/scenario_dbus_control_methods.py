@@ -255,7 +255,7 @@ def leg_cli_transport_reaches_service(controller) -> None:
     assert os.environ.get("DBUS_SESSION_BUS_ADDRESS"), \
         "the isolated bus address is not in the environment this transport reads"
 
-    transport = cli_forward._BusTransport()
+    transport = cli_forward.bus_transport()
 
     def drive(answers: dict) -> None:
         answers["running"] = transport.is_running()
@@ -298,6 +298,9 @@ def leg_instance_never_answers(controller) -> None:
     """
     from src.backend import cli_forward
 
+    # The class rather than bus_transport(), which is what every other caller
+    # uses. Phase 2 below drives _call directly, to reach a method name the
+    # public surface cannot ask for, and that needs the concrete object.
     transport = cli_forward._BusTransport()
     page_before = active_name(controller)
 
@@ -310,8 +313,10 @@ def leg_instance_never_answers(controller) -> None:
         answers["running"] = transport.is_running()
         # Drive the whole forwarding path, so the assertion covers the sentence
         # a person reads rather than a constant this file names.
-        answers["failures"] = cli_forward._forward(
-            transport, [(SERIAL, "Alpha")], [(SERIAL, "States", "0,0", 1)])
+        answers["failures"] = cli_forward.forward(
+            cli_forward.Plan(page_requests=[(SERIAL, "Alpha")],
+                             state_requests=[(SERIAL, "States", "0,0", 1)]),
+            transport)
 
     no_objects = drive_on_worker(drive_missing_object, "cli-transport-no-objects")
 
