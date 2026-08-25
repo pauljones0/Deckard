@@ -7,6 +7,7 @@ import collections
 import re
 import threading
 import time
+import typing
 
 import fixtures  # must be first; isolates DATA_PATH before import globals
 import globals as gl
@@ -118,25 +119,68 @@ class WedgedTransportDeck(FlakySerialDeck):
         super().set_key_image(key, image)
 
 
-def census() -> collections.Counter:
+POOL_SUFFIX = re.compile(r"_\d+$")
+
+
+class Census(typing.NamedTuple):
+    counts: collections.Counter
+    # The folded names that a numbered worker produced. Only these may lose a
+    # thread without the census being wrong.
+    pooled: frozenset
+
+
+def census() -> Census:
     """Live threads, with the pool-worker suffixes folded away.
 
     action_cb_3 and action_cb_7 are one kind, and their count varies with pool
     warm-up.
     """
-    return collections.Counter(re.sub(r"_\d+$", "", t.name) for t in threading.enumerate())
+    counts: collections.Counter = collections.Counter()
+    pooled = set()
+    for thread in threading.enumerate():
+        folded = POOL_SUFFIX.sub("", thread.name)
+        counts[folded] += 1
+        if folded != thread.name:
+            pooled.add(folded)
+    return Census(counts, frozenset(pooled))
 
 
-def census_delta(before: collections.Counter) -> dict:
+def census_state(before: Census) -> tuple[dict, dict]:
+    """One census read two ways: the whole delta, and the part that is not settled.
+
+    A positive entry is a thread that SURVIVED, which is what the legs hunt.
+
+    A negative entry means threads left. That is settled only for a pooled name,
+    where a numbered worker from an earlier leg reached its idle timeout inside
+    this leg's window: it never returns to zero, so waiting for it burns the
+    whole timeout and then fails the leg for a leak it does not have. A negative
+    on an unpooled name is a lost shared singleton, such as the timer wheel or
+    the cache budget, and must still fail.
+    """
     now = census()
-    now.subtract(before)
-    return {name: n for name, n in now.items() if n}
+    counts = now.counts.copy()
+    counts.subtract(before.counts)
+    delta = {name: n for name, n in counts.items() if n}
+    pooled = before.pooled | now.pooled
+    unsettled = {name: n for name, n in delta.items() if n > 0 or name not in pooled}
+    return delta, unsettled
 
 
-def assert_census_returns(before: collections.Counter, label: str) -> None:
-    settled = fixtures.wait_until(lambda: not census_delta(before), timeout=10)
-    assert settled, (
-        f"{label}: threads outlived their failed deck init -- {census_delta(before)}. "
+def assert_census_returns(before: Census, label: str) -> None:
+    # One state per poll, so the failure text names the census the wait gave up
+    # on rather than a fresh one a racing exit may have emptied.
+    state: tuple[dict, dict] = ({}, {})
+
+    def settled() -> bool:
+        nonlocal state
+        state = census_state(before)
+        return not state[1]
+
+    ok = fixtures.wait_until(settled, timeout=10)
+    delta, unsettled = state
+    assert ok, (
+        f"{label}: the thread census never settled -- {unsettled} "
+        f"(full delta {delta}). "
         "A constructor that raises after starting the writer must release it."
     )
     stale = [t.name for t in threading.enumerate() if t.name.startswith("MediaPlayerThread")]
