@@ -28,7 +28,7 @@ import gi
 gi.require_version("Xdp", "1.0")
 from gi.repository import Xdp
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, override
 if TYPE_CHECKING:
     from src.backend.WindowGrabber.WindowGrabber import WindowGrabber
 
@@ -44,6 +44,7 @@ class Sway(Integration):
         self.active_window_change_thread: "WatchForActiveWindowChange | None" = None
 
     @log.catch
+    @override
     def start_watching(self) -> None:
         thread = self.active_window_change_thread
         if thread is not None and thread.is_alive():
@@ -57,6 +58,7 @@ class Sway(Integration):
         thread.start()
 
     @log.catch
+    @override
     def stop_watching(self) -> None:
         thread = self.active_window_change_thread
         self.active_window_change_thread = None
@@ -79,9 +81,11 @@ class Sway(Integration):
             # way, so a later start builds a clean thread.
             log.warning("The Sway active window watcher did not stop within the timeout")
 
+    @override
     def get_all_windows(self) -> list[Window]:
         return [self._parse_window(client) for client in self._get_windows()]
 
+    @override
     def get_active_window(self) -> Window | None:
         window_list = self._get_windows()
 
@@ -143,6 +147,7 @@ class WatchForActiveWindowChange(threading.Thread):
         self._stop_event.set()
 
     @log.catch
+    @override
     def run(self) -> None:
         while gl.threads_running and not self._stop_event.is_set():
             # Wait on the stop event instead of a sleep, so a stop ends the
