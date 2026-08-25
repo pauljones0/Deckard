@@ -153,15 +153,24 @@ def check_action_media_stash_protocol(controller) -> None:
 
     # The touchscreen runs no stashing load, so it inherits the refusing base
     # rather than a silent no-op that would drop media if a load ever reached
-    # it.
+    # it. Both halves of the pair must refuse: an attach that returned quietly
+    # would silently swallow the media a future loader handed it.
     touch_state = controller.get_input(Input.Touchscreen("sd-plus")).get_active_state()
-    raised = False
+    detach_raised = False
     try:
         touch_state.detach_action_media()
     except NotImplementedError:
-        raised = True
-    check("touchscreen state refuses the stash pair", raised,
-          "a state class with no stashing load must refuse, not answer nothing")
+        detach_raised = True
+    check("touchscreen state refuses detach", detach_raised,
+          "a state class with no stashing load must refuse detach, not answer nothing")
+
+    attach_raised = False
+    try:
+        touch_state.attach_action_media(None, None)
+    except NotImplementedError:
+        attach_raised = True
+    check("touchscreen state refuses attach", attach_raised,
+          "a state class with no stashing load must refuse attach, not swallow media")
 
 
 def main() -> None:

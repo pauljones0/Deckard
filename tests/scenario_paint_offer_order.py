@@ -9,9 +9,12 @@ hash as in flight while it does, so no later paint corrects the slot: nothing
 about the input has changed. The key then shows the older picture until
 something else on it moves.
 
-The leg makes that interleaving exact. One thread composes the old picture and
+The legs make that interleaving exact. One thread composes the old picture and
 stalls before it offers. The main thread changes the label and paints. The last
-offer to reach the writer must show the new label.
+offer to reach the writer must show the new label. A key and the touch strip
+each get a leg, because each owns its own paint lock: the strip is the harder
+target, since every dial and an extended background video converge on the one
+strip slot.
 """
 import threading
 import time
@@ -21,8 +24,22 @@ import fixtures
 from src.backend.DeckManagement.InputIdentifier import Input
 from src.backend.DeckManagement.Subclasses.KeyLabel import KeyLabel
 from src.backend.DeckManagement.deck_controller.inputs import ControllerKey
+from src.backend.DeckManagement.deck_controller.input_state_classes import (
+    ControllerTouchScreenState,
+)
 
 STALL_S = 0.3
+
+
+def set_dial_label(dial, text: str) -> None:
+    """Write a dial's page label without a repaint. A dial composites into the
+    shared strip, so its label is part of the strip composite the leg races."""
+    state = dial.get_active_state()
+    state.label_manager.set_page_label(
+        "center",
+        KeyLabel(controller_input=dial, text=text, font_size=14,
+                 color=[255, 255, 255, 255]),
+        update=False)
 
 
 def set_label(key, text: str) -> None:
@@ -102,26 +119,122 @@ def leg_older_paint_never_wins(controller) -> None:
     print("PASS: the newest composite is the last offer the writer receives")
 
 
+def leg_older_strip_paint_never_wins(controller) -> None:
+    """The strip twin of leg_older_paint_never_wins.
+
+    Every dial composites into the one strip slot, so a dial's label is part of
+    the strip composite. One thread composes the strip with the old dial label
+    and stalls before it offers; the main thread moves the label and paints the
+    strip. The last touchscreen task the writer receives must carry the new
+    label. Without the strip's own paint lock the stalled paint offers last and
+    the strip holds the pre-edit picture.
+    """
+    touchscreen = controller.get_input(Input.Touchscreen("sd-plus"))
+    dial = controller.inputs[Input.Dial][0]
+    assert touchscreen is not None and dial is not None
+    assert controller.is_visual(), "the fake deck must have screens for an offer to run"
+
+    set_dial_label(dial, "OLD")
+
+    offers: list = []
+    real_add_touchscreen_task = controller.media_player.add_touchscreen_task
+
+    def recording_add_touchscreen_task(native_image, **kwargs):
+        offers.append(kwargs.get("img_hash"))
+        return real_add_touchscreen_task(native_image, **kwargs)
+
+    in_stall = threading.Event()
+    go = threading.Event()
+    stalled_once = threading.Event()
+    real_get_current_image = ControllerTouchScreenState.get_current_image
+
+    def stalling_get_current_image(self):
+        # Compose first, so the picture this paint carries reads the dial label
+        # from before it moved. The stall then models a paint whose compose was
+        # fast and whose offer is late.
+        image = real_get_current_image(self)
+        if self is touchscreen.get_active_state() and not stalled_once.is_set():
+            stalled_once.set()
+            in_stall.set()
+            go.wait(20)
+            time.sleep(STALL_S)
+        return image
+
+    controller.media_player.add_touchscreen_task = recording_add_touchscreen_task
+    ControllerTouchScreenState.get_current_image = stalling_get_current_image
+    try:
+        worker = threading.Thread(target=touchscreen.update, name="older-strip-paint", daemon=True)
+        worker.start()
+        assert in_stall.wait(20), "the stalling strip paint never composed"
+
+        # The dial label moves while that paint is still in flight.
+        set_dial_label(dial, "NEW")
+        go.set()
+
+        # The newer strip paint. Without the compose-to-offer lock it runs to
+        # completion here and the stalled paint offers after it.
+        touchscreen.update()
+        worker.join(20)
+        assert not worker.is_alive(), "the stalled strip paint never finished"
+    finally:
+        ControllerTouchScreenState.get_current_image = real_get_current_image
+        controller.media_player.add_touchscreen_task = real_add_touchscreen_task
+
+    assert len(offers) >= 2, (
+        "the leg needs both strip paints to reach the writer, so the order "
+        f"between them can be judged: {offers}")
+
+    with real_get_current_image(touchscreen.get_active_state()) as current:
+        expected = hash(current.tobytes())
+    assert offers[-1] == expected, (
+        "an older strip paint took the writer's slot from a newer one: the "
+        "last touchscreen task does not show the dial label the strip carries "
+        "now, so the deck holds the pre-edit strip and no repaint corrects it")
+
+    print("PASS: the newest strip composite is the last offer the writer receives")
+
+
 def leg_paint_lock_is_released_before_dispatch(controller) -> None:
     """A paint must not hold the lock past its own body.
 
     The input callback paints and then dispatches action events. A lock still
     held there would serialize plugin callbacks behind every repaint of the
-    same key, and a callback that paints that key would depend on re-entrancy
-    to survive at all.
+    same input, and a callback that paints that input would depend on
+    re-entrancy to survive at all.
+
+    The probe runs on a second thread. _paint_lock is re-entrant, so a
+    non-blocking acquire on the thread that owns it, or that just ran the paint,
+    returns True even while the lock is held. A separate thread sees the real
+    state, so a paint that leaked its lock, or never released it, blocks the
+    probe and fails the leg.
     """
+    def probe(lock) -> bool:
+        got: list = []
+
+        def run() -> None:
+            acquired = lock.acquire(timeout=5)
+            got.append(acquired)
+            if acquired:
+                # Release on this same thread. An RLock is owned by whoever
+                # took it, and a release from another thread raises.
+                lock.release()
+
+        t = threading.Thread(target=run, name="paint-lock-probe")
+        t.start()
+        t.join(10)
+        assert not t.is_alive(), "the lock probe thread never returned"
+        return bool(got and got[0])
+
     key = controller.get_input(Input.Key("0x0"))
     key.update()
-    assert key._paint_lock.acquire(blocking=False), \
-        "update() returned with the paint lock still held"
-    key._paint_lock.release()
+    assert probe(key._paint_lock), \
+        "update() returned with the key paint lock still held"
 
     touchscreen = controller.get_input(Input.Touchscreen("sd-plus"))
     assert touchscreen is not None
     touchscreen.update()
-    assert touchscreen._paint_lock.acquire(blocking=False), \
+    assert probe(touchscreen._paint_lock), \
         "the touchscreen update() returned with the paint lock still held"
-    touchscreen._paint_lock.release()
 
     print("PASS: a paint releases its lock before it returns")
 
@@ -131,6 +244,7 @@ def main() -> None:
     controller = fixtures.make_headless_controller(serial="paint-order-1")
     try:
         leg_older_paint_never_wins(controller)
+        leg_older_strip_paint_never_wins(controller)
         leg_paint_lock_is_released_before_dispatch(controller)
     finally:
         fixtures.teardown(controller)

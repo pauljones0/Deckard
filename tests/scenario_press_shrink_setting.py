@@ -158,8 +158,12 @@ def check_shrink_is_centred(controller) -> None:
     The margin is what lets the background show at the edges of a held key. An
     off-centre paste puts the whole margin on two sides, so the key looks as if
     it slid rather than shrank, and a page whose keys carry one picture between
-    them tears along one seam only. The check reads the opaque region's box, so
-    it fails on an offset of a single pixel in either direction.
+    them tears along one seam only. The check reads the opaque region's box. It
+    allows a one-pixel difference between the two margins, because an odd tile
+    or an odd shrunken size cannot split its leftover margin evenly, and a
+    centred paste then leaves one more pixel on one side. An off-centre paste,
+    which piles the whole margin on one side, is many pixels out and still
+    fails.
     """
     key = _key(controller, 0)
     source = Image.new("RGBA", controller.get_key_image_size(), OPAQUE)
@@ -169,10 +173,10 @@ def check_shrink_is_centred(controller) -> None:
         box = shrunk.getbbox()
         assert box is not None, "the shrink left nothing opaque to measure"
         left, top, right, bottom = box
-        assert left == width - right, (
+        assert abs(left - (width - right)) <= 1, (
             f"the shrunken picture is off centre horizontally: {left} px on the "
             f"left against {width - right} px on the right")
-        assert top == height - bottom, (
+        assert abs(top - (height - bottom)) <= 1, (
             f"the shrunken picture is off centre vertically: {top} px above "
             f"against {height - bottom} px below")
         assert left > 0 and top > 0, "the shrink left no margin at all"
