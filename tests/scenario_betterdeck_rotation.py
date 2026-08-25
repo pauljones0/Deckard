@@ -22,6 +22,26 @@ ROTATIONS = (0, 90, 180, 270)
 N_DIALS = 4
 STRIP_SIZE = (800, 100)
 
+# Which logical key each physical key of a 2 by 4 grid becomes, read off a
+# turned device and not off the mapping formula, so a map that is
+# self-consistent in the wrong direction still fails here.
+#
+# Hold a 2 by 4 deck and turn it a quarter turn clockwise, which is rotation
+# 90. The key at the top-left corner comes to lie at the top-right. In grid
+# terms, a physical key at (row, column) of a rows by cols grid comes to lie
+# at (column, rows - 1 - row) of a cols by rows grid, and a logical index
+# reads that grid row-major with `rows` keys per row. Physical 0 therefore
+# becomes logical 0 * 2 + (2 - 1 - 0) = 1, physical 4 becomes 0 * 2 + 0 = 0,
+# and so on. Rotation 270 is the same turn the other way, and 180 reverses
+# the whole grid.
+DIRECTION_ROWS, DIRECTION_COLS = 2, 4
+DIRECTION_TABLE = {
+    0: [0, 1, 2, 3, 4, 5, 6, 7],
+    90: [1, 3, 5, 7, 0, 2, 4, 6],
+    180: [7, 6, 5, 4, 3, 2, 1, 0],
+    270: [6, 4, 2, 0, 7, 5, 3, 1],
+}
+
 
 def check_rotation() -> int:
     deck = FaultyFakeDeck(serial_number="rot-1")
@@ -89,6 +109,38 @@ def check_async_setters() -> int:
         print(f"FAIL(b): setters never reached the wrapped deck: {missing}")
         return 1
     print("PASS: async callback setters delegate to the wrapped deck")
+    return 0
+
+
+def check_rotation_direction() -> int:
+    """The key map turns the grid the way the deck was turned.
+
+    The permutation checks above compare the two maps against each other, so
+    a pair that is wrong in the same direction satisfies them. This compares
+    one of them against a table read off the turned device, which nothing in
+    the implementation can agree with by construction.
+    """
+    deck = FaultyFakeDeck(serial_number="rot-direction")
+    deck.key_layout = lambda: (DIRECTION_ROWS, DIRECTION_COLS)
+    better = BetterDeck(deck)
+    total = DIRECTION_ROWS * DIRECTION_COLS
+
+    for rotation, table in DIRECTION_TABLE.items():
+        better.set_rotation(rotation)
+        logical = [better.get_logical_index(p) for p in range(total)]
+        if logical != table:
+            print(f"FAIL(g): rotation {rotation} maps the physical keys to "
+                  f"{logical}; a deck turned that way puts them at {table}")
+            return 1
+        physical = [better.get_physical_index(l) for l in table]
+        if physical != list(range(total)):
+            print(f"FAIL(g): rotation {rotation}: the physical map disagrees "
+                  f"with the turned deck; it sends {table} back to "
+                  f"{physical}, expected {list(range(total))}")
+            return 1
+
+    print("PASS: the key map turns the grid in the direction the deck was "
+          "turned")
     return 0
 
 
@@ -164,6 +216,19 @@ def check_touch_value() -> int:
     if carried.get("pressure") != 7:
         print(f"FAIL(d): rotation 180 dropped an unmapped key: {carried}")
         return 1
+
+    # A position past the end of the strip stays past the end at every
+    # rotation. The library clamps nothing, and mirroring an out-of-range x
+    # unclamped lands it back on the strip as -1, which a consumer's slot
+    # arithmetic reads as the first slot. x == width is the first such value.
+    for rotation in ROTATIONS:
+        better.set_rotation(rotation)
+        edge = better.logical_touch_value({"x": width, "y": height})
+        if 0 <= edge["x"] < width or 0 <= edge["y"] < height:
+            print(f"FAIL(d): rotation {rotation} moved a touch at "
+                  f"({width}, {height}), which is past the strip, onto it: "
+                  f"{edge}")
+            return 1
 
     print("PASS: touch positions map to the composed strip at every rotation")
     return 0
@@ -252,6 +317,7 @@ def main() -> int:
     fixtures.install_stub_globals()
     rc = check_rotation()
     rc |= check_async_setters()
+    rc |= check_rotation_direction()
     rc |= check_strip_turn()
     rc |= check_touch_value()
     rc |= check_dial_order()

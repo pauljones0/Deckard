@@ -6,8 +6,11 @@ so what the media thread writes is already what the device expects and no
 consumer below it holds a second copy of the rule.
 
 The legs encode a strip with a bright block in one corner, decode the bytes
-back and ask which corner the block came out in. JPEG is lossy, so each leg
-compares corner means with a wide margin instead of exact pixels.
+back and ask which of the four corners the block came out in. The block is
+shorter than the strip is tall, so a half turn moves it on both axes: a
+mirror on one axis alone lands it in a corner the checks call wrong. JPEG is
+lossy, so each leg compares corner means with a wide margin instead of exact
+pixels.
 
 Deck shape, stated once so a configurable fake deck can adopt it later: an
 800 by 100 strip, which is the Stream Deck + shape the fake deck models.
@@ -25,9 +28,11 @@ from src.backend.DeckManagement.deck_controller.native_encode import _encode_str
 
 ROTATIONS = (0, 90, 180, 270)
 STRIP_SIZE = (800, 100)
-# Side of the bright block, and the corner box each leg averages over. The box
-# is the block, so a correct turn puts the whole block inside one box.
-BLOCK = 100
+# The bright block, and the corner box each leg averages over. The box is the
+# block, so a correct turn puts the whole block inside exactly one box. The
+# block is deliberately not as tall as the strip: a block of full height
+# cannot tell a half turn from a left-to-right mirror.
+BLOCK_W, BLOCK_H = 100, 40
 
 
 class _StubController:
@@ -48,7 +53,7 @@ def make_strip(mode: str) -> Image.Image:
     """A black strip with a bright block in its top-left corner."""
     fill = (0, 0, 0, 255) if mode == "RGBA" else (0, 0, 0)
     strip = Image.new(mode, STRIP_SIZE, fill)
-    block = Image.new(mode, (BLOCK, BLOCK),
+    block = Image.new(mode, (BLOCK_W, BLOCK_H),
                       (255, 255, 255, 255) if mode == "RGBA" else (255, 255, 255))
     strip.paste(block, (0, 0))
     block.close()
@@ -56,12 +61,14 @@ def make_strip(mode: str) -> Image.Image:
 
 
 def corner_means(image: Image.Image) -> "dict[str, float]":
-    """Mean brightness of each corner box of a decoded strip."""
+    """Mean brightness of each of the four corner boxes of a decoded strip."""
     width, height = image.size
     grey = image.convert("L")
     boxes = {
-        "top_left": (0, 0, BLOCK, height),
-        "top_right": (width - BLOCK, 0, width, height),
+        "top_left": (0, 0, BLOCK_W, BLOCK_H),
+        "top_right": (width - BLOCK_W, 0, width, BLOCK_H),
+        "bottom_left": (0, height - BLOCK_H, BLOCK_W, height),
+        "bottom_right": (width - BLOCK_W, height - BLOCK_H, width, height),
     }
     means = {}
     for name, box in boxes.items():
@@ -105,21 +112,23 @@ def check_strip_pixels(mode: str) -> int:
         decoded.close()
         strip.close()
 
-        # At 180 the block belongs at the far end of the device's own strip,
-        # because the deck is upside down under the user's hand. Everywhere
-        # else the composite goes to the device as it was drawn.
-        lit, dark = (("top_right", "top_left") if rotation == 180
-                     else ("top_left", "top_right"))
+        # At 180 the block belongs in the opposite corner of the device's own
+        # strip, moved on both axes, because the deck is upside down under
+        # the user's hand. A mirror on one axis alone puts it in the
+        # top-right or the bottom-left, which the dark checks below refuse.
+        # Everywhere else the composite goes to the device as it was drawn.
+        lit = "bottom_right" if rotation == 180 else "top_left"
         if not means[lit] > 200:
             print(f"FAIL({mode}): rotation {rotation}: the block should sit "
                   f"in the {lit} of the written strip, mean {means[lit]:.1f} "
                   f"(corners {means})")
             return 1
-        if not means[dark] < 55:
-            print(f"FAIL({mode}): rotation {rotation}: the {dark} of the "
-                  f"written strip should be black, mean {means[dark]:.1f} "
-                  f"(corners {means})")
-            return 1
+        for dark in (name for name in means if name != lit):
+            if not means[dark] < 55:
+                print(f"FAIL({mode}): rotation {rotation}: the {dark} of the "
+                      f"written strip should be black, mean "
+                      f"{means[dark]:.1f} (corners {means})")
+                return 1
 
     print(f"PASS: a {mode} strip composite reaches the device turned for the "
           f"deck's orientation")

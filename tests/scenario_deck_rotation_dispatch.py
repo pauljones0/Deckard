@@ -11,8 +11,18 @@ and checks the whole chain at all four rotations:
       no present hash behind, so the corrective repaint is not hash-skipped;
   (c) a dial event reaches the dial that sits under the slot the composite
       drew, which runs the other way at 180;
-  (d) a touch reaches the slot the user touched, and a drag keeps its
-      direction under the user's hand.
+  (d) a touch reaches the slot the user touched, a touch past the end of the
+      strip reaches nothing at any rotation, and a drag keeps its direction
+      under the user's hand;
+  (e) the page load that ends a turn runs with the page lock released;
+  (f) the turn hands the media thread the retired input set and not the live
+      one, and the live one survives the release;
+  (g) two turns in a row retire two sets and empty both;
+  (h) a key held across a turn has its gesture cancelled on the retired
+      input, and the orphan release reaches the branch that dispatches
+      nothing;
+  (i) a turn drops the window's pending dirty markers, which name positions
+      the turned deck no longer has.
 
 Deck shape, stated once so a configurable fake deck can adopt it later: a 2
 by 4 key grid, four dials and an 800 by 100 strip, which is the Stream Deck +
@@ -24,6 +34,9 @@ import fixtures  # must be first; isolates DATA_PATH before import globals
 from StreamDeck.Devices.StreamDeck import DialEventType, TouchscreenEventType
 
 from src.backend.DeckManagement.InputIdentifier import Input
+from src.backend.DeckManagement.deck_controller.media_writer import (
+    ReleaseStashedInputsMsg,
+)
 
 ROTATIONS = (0, 90, 180, 270)
 KEY_ROWS, KEY_COLS = 2, 4
@@ -274,6 +287,18 @@ def check_touch_dispatch(controller) -> int:
                   f"{expected_dial}")
             return 1
 
+        # A touch past the right edge of the device's strip reaches no dial
+        # at any rotation. The library clamps nothing, so the device can
+        # report it. Mirroring it unclamped at 180 lands it back on the strip
+        # as -1, which the slot arithmetic reads as the first slot.
+        events.clear()
+        raw.fire_touchscreen_event(TouchscreenEventType.SHORT,
+                                   {"x": width, "y": 50})
+        if events:
+            print(f"FAIL(d): rotation {rotation}: a touch at x={width}, past "
+                  f"the end of the strip, reached {events}")
+            return 1
+
         # A drag drawn from the far end towards the near end of the device's
         # strip. At 180 the user drew it the other way round.
         drag_events: "list[str]" = []
@@ -295,8 +320,266 @@ def check_touch_dispatch(controller) -> int:
     return 0
 
 
+def live_set_is_complete(controller) -> "str | None":
+    """None when the live input set holds every input the deck offers, or a
+    description of what is missing."""
+    expected = {
+        Input.Key: KEY_TOTAL,
+        Input.Dial: N_DIALS,
+        Input.Touchscreen: 1,
+    }
+    for input_type, count in expected.items():
+        got = len(controller.inputs.get(input_type, []))
+        if got != count:
+            return f"{input_type.__name__}: {got} inputs, expected {count}"
+    keys = controller.inputs[Input.Key]
+    try:
+        image = keys[0].get_current_image()
+    except Exception as error:
+        return f"the first key could not compose an image: {error!r}"
+    image.close()
+    return None
+
+
+def check_load_outside_lock(controller) -> int:
+    """(e) The page load that ends a turn runs with the page lock released.
+
+    load_page takes that lock itself, and its tail marshals a plugin-facing
+    signal onto the main loop. A load called from inside a hold of the same
+    lock therefore deadlocks against any caller that marshals.
+    """
+    controller.set_rotation(0)
+    held: "list[bool]" = []
+    real_load_page = controller.load_page
+
+    def spy_load_page(*args, **kwargs):
+        held.append(controller._load_page_lock._is_owned())
+        return real_load_page(*args, **kwargs)
+
+    controller.load_page = spy_load_page
+    try:
+        controller.set_rotation(180)
+    finally:
+        del controller.load_page
+
+    if not held:
+        print("FAIL(e): the turn loaded no page at all")
+        return 1
+    if any(held):
+        print("FAIL(e): the turn called load_page while it still held the "
+              "page lock; load_page takes that lock and marshals onto the "
+              "main loop, so a call from inside a hold deadlocks")
+        return 1
+
+    print("PASS: the turn loads its page with the page lock released")
+    return 0
+
+
+def check_retire_release(controller) -> int:
+    """(f) The turn hands the media thread the retired set, not the live one.
+
+    The release is held back at the queue, which is the state a media thread
+    busy with a load leaves it in. What the turn submitted is then read
+    against the set that was live at that moment, before anything acts on it.
+    """
+    controller.set_rotation(0)
+    player = controller.media_player
+    real_submit = player.submit_control
+    held: "list[tuple[ReleaseStashedInputsMsg, int]]" = []
+
+    def spy_submit(msg):
+        if isinstance(msg, ReleaseStashedInputsMsg):
+            held.append((msg, id(controller.inputs)))
+            return
+        real_submit(msg)
+
+    player.submit_control = spy_submit
+    try:
+        controller.set_rotation(90)
+    finally:
+        del player.submit_control
+
+    if len(held) != 1:
+        print(f"FAIL(f): the turn submitted {len(held)} release messages, "
+              f"expected 1; a retired input set that is never released holds "
+              f"its page's media for the life of the process")
+        return 1
+    message, live_at_submit = held[0]
+    if message.stashed_inputs is controller.inputs:
+        print("FAIL(f): the turn handed the media thread the live input set; "
+              "releasing it closes the media of the page now on the deck")
+        return 1
+    if live_at_submit == id(message.stashed_inputs):
+        print("FAIL(f): the release was submitted before the replacement set "
+              "was published, so the set it names was still the live one")
+        return 1
+    if not message.stashed_inputs:
+        print("FAIL(f): the retired set was already emptied before the media "
+              "thread saw the release")
+        return 1
+    missing = live_set_is_complete(controller)
+    if missing is not None:
+        print(f"FAIL(f): the live input set is not intact after the turn "
+              f"({missing})")
+        return 1
+
+    real_submit(message)
+    if not fixtures.wait_until(lambda: not message.stashed_inputs, timeout=10.0):
+        print("FAIL(f): the media thread did not release the retired set")
+        return 1
+    missing = live_set_is_complete(controller)
+    if missing is not None:
+        print(f"FAIL(f): the release closed the live input set ({missing})")
+        return 1
+
+    print("PASS: the turn retires the old input set and the live one survives")
+    return 0
+
+
+def check_back_to_back_turns(controller) -> int:
+    """(g) Two turns in a row retire two sets and empty both."""
+    controller.set_rotation(0)
+    player = controller.media_player
+    real_submit = player.submit_control
+    retired: "list[dict]" = []
+
+    def spy_submit(msg):
+        if isinstance(msg, ReleaseStashedInputsMsg):
+            retired.append(msg.stashed_inputs)
+        real_submit(msg)
+
+    player.submit_control = spy_submit
+    try:
+        controller.set_rotation(90)
+        controller.set_rotation(180)
+    finally:
+        del player.submit_control
+
+    if len(retired) != 2:
+        print(f"FAIL(g): two turns retired {len(retired)} sets, expected 2")
+        return 1
+    if retired[0] is retired[1]:
+        print("FAIL(g): both turns retired the same set")
+        return 1
+    if not fixtures.wait_until(lambda: all(not s for s in retired), timeout=10.0):
+        still_held = [i for i, s in enumerate(retired) if s]
+        print(f"FAIL(g): retired set(s) {still_held} were never released")
+        return 1
+    missing = live_set_is_complete(controller)
+    if missing is not None:
+        print(f"FAIL(g): the live input set did not survive two turns "
+              f"({missing})")
+        return 1
+
+    print("PASS: two turns in a row retire two sets and empty both")
+    return 0
+
+
+def check_held_key_across_turn(controller) -> int:
+    """(h) A key held across a turn loses its gesture on the retired input,
+    and the physical release lands on the replacement with no clock to
+    dispatch against.
+
+    Without the cancel, the retired key keeps an armed hold timer that fires
+    HOLD_START into its pinned down-time snapshot after the finger left, and
+    pins that page's action objects for good.
+    """
+    controller.set_rotation(0)
+    if not fixtures.wait_until(controller._input_load_done.is_set, timeout=10.0):
+        print("FAIL(h): the input load did not finish before the press")
+        return 1
+    raw = fixtures.raw_deck(controller)
+
+    # Physical key 0 is logical 0 at rotation 0, and logical 1 at 90.
+    pressed = controller.get_input(Input.Key("0x0"))
+    if pressed is None:
+        print("FAIL(h): the deck offers no key at 0x0")
+        return 1
+    raw.fire_key_event(0, True)
+    if pressed.down_start_time is None or pressed._gesture is None:
+        print(f"FAIL(h): the press started no gesture "
+              f"(clock {pressed.down_start_time}, snapshot {pressed._gesture})")
+        return 1
+
+    controller.set_rotation(90)
+
+    if pressed._gesture is not None or pressed.down_start_time is not None:
+        print(f"FAIL(h): the retired key kept its gesture across the turn "
+              f"(clock {pressed.down_start_time}, snapshot {pressed._gesture}); "
+              f"its hold timer fires into a page that left the deck")
+        return 1
+
+    if not fixtures.wait_until(controller._input_load_done.is_set, timeout=10.0):
+        print("FAIL(h): the input load did not finish before the release")
+        return 1
+    landing = controller.get_input(Input.Key("1x0"))
+    if landing is None:
+        print("FAIL(h): the turned deck offers no key at 1x0")
+        return 1
+    dispatched: "list[str]" = []
+    landing.get_active_state().own_actions_event_callback_threaded = (
+        lambda event, *a, **k: dispatched.append(str(event)))
+
+    raw.fire_key_event(0, False)
+
+    if dispatched:
+        print(f"FAIL(h): the orphan release dispatched {dispatched} on the "
+              f"replacement key, which never saw the press")
+        return 1
+    if landing.down_start_time is not None or landing._gesture is not None:
+        print(f"FAIL(h): the orphan release left a gesture on the "
+              f"replacement key (clock {landing.down_start_time}, snapshot "
+              f"{landing._gesture})")
+        return 1
+
+    print("PASS: a key held across a turn ends its gesture on the retired "
+          "input")
+    return 0
+
+
+def check_window_markers_cleared(controller) -> int:
+    """(i) A turn drops the window's pending dirty markers.
+
+    Each marker names a position of the grid that was, and the window's key
+    grid indexes its button array by those coordinates. The array transposes
+    at a quarter turn, so a surviving marker sends the window past the end of
+    it. That raise escapes the turn after the old grid was already removed,
+    and the window is left with no key grid at all.
+    """
+    controller.set_rotation(0)
+    markers = controller.ui_image_changes_while_hidden
+    markers.clear()
+    for key in controller.inputs[Input.Key]:
+        markers[key.identifier] = True
+    if not markers:
+        print("FAIL(i): the deck offered no key to mark dirty")
+        return 1
+
+    controller.set_rotation(90)
+
+    # The window's own button array for the new layout, built the way
+    # KeyGrid.regenerate_buttons builds it.
+    rows, cols = controller.deck.key_layout()
+    buttons = [[None] * rows for _ in range(cols)]
+    for identifier in list(controller.ui_image_changes_while_hidden):
+        if not isinstance(identifier, Input.Key):
+            continue
+        x, y = identifier.coords
+        try:
+            buttons[x][y]
+        except IndexError:
+            print(f"FAIL(i): the turn left {identifier.json_identifier} "
+                  f"marked dirty, which is off the new {rows} by {cols} "
+                  f"grid; the window raises IndexError there and loses its "
+                  f"key grid")
+            return 1
+
+    print("PASS: a turn drops the window's pending dirty markers")
+    return 0
+
+
 def main() -> int:
-    fixtures.start_watchdog(80, label="deck_rotation_dispatch")
+    fixtures.start_watchdog(60, label="deck_rotation_dispatch")
     controller = fixtures.make_headless_controller(
         "rot-dispatch", key_layout=[KEY_ROWS, KEY_COLS])
     try:
@@ -307,6 +590,11 @@ def main() -> int:
         rc |= check_rotation_rebuild(controller)
         rc |= check_dial_dispatch(controller)
         rc |= check_touch_dispatch(controller)
+        rc |= check_load_outside_lock(controller)
+        rc |= check_retire_release(controller)
+        rc |= check_back_to_back_turns(controller)
+        rc |= check_held_key_across_turn(controller)
+        rc |= check_window_markers_cleared(controller)
     finally:
         fixtures.teardown(controller)
     if rc == 0:

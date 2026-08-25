@@ -228,14 +228,18 @@ def test_rotation_90_remap() -> int:
         _load_page_and_wait(controller, _seed_page(
             "KeyPage90", {"keys": {ident: True for ident in all_idents}}))
 
-        # The expected delivery coords for each physical key at rotation 90,
-        # computed from the same primitives the pipeline uses but assembled
-        # independently, so a bug in the pipeline cannot make this agree with
-        # it. The logical index comes from get_logical_index(p), and its
-        # coords are read off the rotated layout, which is the grid the
-        # identifiers above were named from. Reading them off the raw layout
-        # and swapping x for y instead names a different key for six of these
-        # eight: it decodes a row-major index with the wrong row length.
+        # The expected delivery coords for each physical key at rotation 90.
+        # This re-derives one step only, the composition of the two maps: the
+        # logical index comes from get_logical_index(p), and its coords are
+        # read off the rotated layout, which is the grid the identifiers
+        # above were named from. That step is where the historical defect
+        # was, and it is what this leg guards. It does not re-derive the
+        # rotation map itself, which shares get_logical_index with the code
+        # under test; the direction of that map is pinned against a
+        # hand-built table in tests/scenario_betterdeck_rotation.py.
+        # Reading the coords off the raw layout and swapping x for y instead
+        # names a different key for six of these eight: it decodes a
+        # row-major index with the wrong row length.
         _logical_rows, logical_cols = better.key_layout()  # rotated: (4, 2)
         for physical in range(deck.key_count()):
             logical = better.get_logical_index(physical)
