@@ -62,6 +62,7 @@ from src.backend.Store.asset_types import (
 from src.backend.Store import install_reload, install_script, json_root
 from src.backend.Store.prepare_pool import PreparePool
 from src.backend.Store.catalog_entry import COMMIT_SHA_RE, resolve_pinned_revision
+from src.backend.Store.data_type import DataType
 from src.backend.Store.store_result import Err, ErrReason, Ok, StoreFetchError, StoreResult
 
 
@@ -355,14 +356,14 @@ class StoreBackend:
 
     @overload
     def get_remote_file(self, repo_url: str, file_path: str, branch_name: "str | None" = ...,
-                        data_type: Literal["text"] = ..., force_refetch: bool = ...) -> str: ...
+                        data_type: Literal[DataType.TEXT] = ..., force_refetch: bool = ...) -> str: ...
 
     @overload
     def get_remote_file(self, repo_url: str, file_path: str, branch_name: "str | None" = ...,
-                        data_type: Literal["content"] = ..., force_refetch: bool = ...) -> bytes: ...
+                        data_type: Literal[DataType.CONTENT] = ..., force_refetch: bool = ...) -> bytes: ...
 
     def get_remote_file(self, repo_url: str, file_path: str, branch_name: "str | None" = "main",
-                        data_type: Literal["text", "content"] = "text",
+                        data_type: DataType = DataType.TEXT,
                         force_refetch: bool = False) -> "str | bytes":
         """
         Retrieves the content of a remote file from a GitHub repository.
@@ -385,8 +386,13 @@ class StoreBackend:
         # which of the two things open_cache_file hands back.
         read_mode: Literal["r", "rb"] = "r"
         write_mode: Literal["w", "wb"] = "w"
-        if data_type == "content":
+        if data_type == DataType.CONTENT:
             read_mode, write_mode = "rb", "wb"
+        elif data_type != DataType.TEXT:
+            # A raw string a dynamic caller pushes past the type once fell off
+            # both branches below and returned None. Treat it as text and say so.
+            log.error(f"Unexpected store data_type {data_type!r}; treating it as text")
+            data_type = DataType.TEXT
 
         # data_type belongs to the cache key. Without it a binary fetch
         # (data_type="content") of a repo path lands under the same index
@@ -403,8 +409,6 @@ class StoreBackend:
         if is_cached:
             with self.store_cache.open_cache_file(url=repo_url, branch=branch_name, path=file_path, data_type=data_type, mode=read_mode) as f:
                 return f.read()
-        else:
-            pass
 
         url = self.build_url(repo_url, file_path, branch_name)
 
@@ -428,16 +432,16 @@ class StoreBackend:
             raise StoreFetchError(url, f"could not fetch {file_path} and no fresh cache")
 
         with self.store_cache.open_cache_file(url=repo_url, branch=branch_name, path=file_path, data_type=data_type, mode=write_mode) as f:
-            if data_type == "text":
+            if data_type == DataType.TEXT:
                 f.write(answer.text)
-            elif data_type == "content":
+            elif data_type == DataType.CONTENT:
                 f.write(answer.content)
 
-        if data_type == "text":
+        if data_type == DataType.TEXT:
             return answer.text
-        elif data_type == "content":
+        elif data_type == DataType.CONTENT:
             return answer.content
-        
+
     def get_last_commit(self, repo_url: str, branch_name: str = "main") -> "str | None":
         """Resolves the tip sha of a branch via the GitHub API.
 
@@ -1184,7 +1188,7 @@ class StoreBackend:
 
     def get_web_image(self, url: str, path: str, branch: "str | None" = "main") -> "Image.Image | None":
         try:
-            result = self.get_remote_file(url, path, branch, data_type="content")
+            result = self.get_remote_file(url, path, branch, data_type=DataType.CONTENT)
         except StoreFetchError:
             return None  # Offline or rate-limited, and logged. List with no image.
         except Exception as e:
