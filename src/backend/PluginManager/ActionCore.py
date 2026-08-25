@@ -155,7 +155,7 @@ class ActionCore(rpyc.Service):
     def get_state(self) -> "ControllerInputState | None":
         i = self.get_input()
         if i is None: return None
-        return i.states.get(self.state)
+        return cast("ControllerInputState | None", i.states.get(self.state))
     
     def add_event_assigner(self, event_assigner: EventAssigner) -> None:
         self.event_manager.add_event_assigner(event_assigner)
@@ -723,7 +723,7 @@ class ActionCore(rpyc.Service):
                 continue
 
             widgets.append(widget)
-        return widgets
+        return cast("list[Gtk.Widget]", widgets)
 
     def load_initial_generative_ui(self) -> None:
         GLib.idle_add(self._do_load_initial_generative_ui)

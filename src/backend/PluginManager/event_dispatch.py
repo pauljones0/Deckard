@@ -47,7 +47,7 @@ import asyncio
 import threading
 import time
 from collections import deque
-from typing import Any, Callable, Iterable, TypedDict
+from typing import Any, Callable, Iterable, TypedDict, cast
 from weakref import WeakSet
 
 from loguru import logger as log
@@ -60,7 +60,7 @@ _thread_state = threading.local()
 
 
 def _get_loop() -> asyncio.AbstractEventLoop:
-    loop = getattr(_thread_state, "loop", None)
+    loop: "asyncio.AbstractEventLoop | None" = getattr(_thread_state, "loop", None)
     if loop is None or loop.is_closed():
         loop = asyncio.new_event_loop()
         # A create_task from an observer otherwise dies in asyncio's default
@@ -118,8 +118,8 @@ _shutdown = False
 
 
 def _observer_name(observer: object) -> str:
-    return getattr(observer, "__qualname__",
-                   getattr(observer, "__name__", repr(observer)))
+    return cast(str, getattr(observer, "__qualname__",
+                             getattr(observer, "__name__", repr(observer))))
 
 
 def _ensure_monitor() -> None:
