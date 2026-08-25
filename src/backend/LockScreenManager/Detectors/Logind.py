@@ -122,4 +122,6 @@ class LogindLockScreenDetector(LockScreenDetector):
             return
 
         if bool(reply.unpack()[0]):
-            self.lock_screen_manager.lock(True)
+            # initial=True: this read runs on the setup daemon thread, so the
+            # deck work goes to the main loop.
+            self.lock_screen_manager.lock(True, initial=True)

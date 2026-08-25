@@ -13,6 +13,9 @@ You should have received a copy of the GNU General Public License
 along with this program. If not, see <https://www.gnu.org/licenses/>.
 """
 import threading
+
+from gi.repository import GLib
+
 from src.backend.session_info import desktop_components
 from src.backend.LockScreenManager.Detectors.Gnome import GnomeLockScreenDetector
 from src.backend.LockScreenManager.Detectors.Cinnamon import CinnamonLockScreenDetector
@@ -57,7 +60,15 @@ class LockScreenManager:
         self.detector.read_initial_lock_state()
 
     @log.catch
-    def lock(self, active: bool) -> None:
+    def lock(self, active: bool, initial: bool = False) -> None:
+        """Apply a lock change.
+
+        initial marks the one-shot startup read, which runs on the setup
+        daemon thread. Its deck work goes to the main loop, because the deck
+        loop below touches the screen saver and the interaction flag, which
+        are main-thread surfaces. The signal-driven path leaves initial False:
+        GDBus dispatches those callbacks on the main loop already.
+        """
         gl.screen_locked = active
         if gl.presence_monitor:
             # Tell the monitor before the screensaver work below reads the
@@ -89,12 +100,34 @@ class LockScreenManager:
         # on the decks that enumerated after the read.
         self.locked = active
 
+        if initial:
+            # The startup read runs on the setup daemon thread. A deck
+            # manager that already exists by then would take the deck loop
+            # off the main thread, so queue it instead. The loop runs when
+            # the main loop next idles, whether or not it pumps yet. The
+            # idle re-reads self.locked when it fires: a real lock change
+            # can land between the queue and the fire (signals dispatch at a
+            # higher priority than idles), and applying the captured startup
+            # state would overwrite the newer one.
+            GLib.idle_add(lambda: self._apply_to_decks(self.locked))
+            return
+
+        self._apply_to_decks(active)
+
+    @log.catch
+    def _apply_to_decks(self, active: bool) -> bool:
+        """Show or hide the screen saver on every deck. Main thread only.
+
+        Returns GLib.SOURCE_REMOVE, so it also serves as a one-shot idle
+        callback.
+        """
         deck_manager = gl.deck_manager
         if deck_manager is None:
-            return
+            return GLib.SOURCE_REMOVE
         for controller in deck_manager.deck_controller:
             controller.allow_interaction = not active
             if active:
                 controller.screen_saver.show()
             else:
                 controller.screen_saver.hide()
+        return GLib.SOURCE_REMOVE

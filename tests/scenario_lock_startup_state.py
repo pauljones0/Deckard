@@ -26,9 +26,11 @@ class RecordingManager:
 
     def __init__(self):
         self.lock_calls = []
+        self.initial_flags = []
 
-    def lock(self, active):
+    def lock(self, active, initial=False):
         self.lock_calls.append(active)
+        self.initial_flags.append(initial)
 
 
 class FakeBus:
@@ -76,6 +78,8 @@ def logind_reads_locked_hint():
     detector = LogindLockScreenDetector(manager, bus=FakeBus(locked_hint=True))
     detector.read_initial_lock_state()
     assert manager.lock_calls == [True], manager.lock_calls
+    # The startup read marks the lock initial, so its deck work is marshalled.
+    assert manager.initial_flags == [True], manager.initial_flags
 
     # The property read hit LockedHint on the resolved session path.
     prop_calls = [c for c in detector.bus.calls if c[3] == "Get"]
@@ -128,6 +132,7 @@ def screen_saver_reads_get_active():
     detector._screen_saver_interface = "org.gnome.ScreenSaver"
     detector.read_initial_lock_state()
     assert manager.lock_calls == [True], manager.lock_calls
+    assert manager.initial_flags == [True], manager.initial_flags
 
     # The call went to GetActive on the recorded object, destination equal to
     # the interface.
@@ -283,6 +288,97 @@ def real_startup_lock_then_unlock_engages_the_branch():
     print("PASS: a real startup lock disengages on the first real unlock")
 
 
+def initial_deck_work_runs_on_the_main_loop():
+    """The startup read must not touch decks on the setup thread.
+
+    LockScreenManager.setup() runs the initial read on a daemon thread, and
+    the designed order has gl.deck_manager still None at that point. A slow
+    bus moves the read later, so the deck manager can already exist when the
+    read lands. The deck loop touches the screen saver and the interaction
+    flag, which are main-thread surfaces, so the initial lock must queue that
+    work on the main loop rather than run it on the reading thread.
+    """
+    import threading
+
+    import globals as gl
+    from src.backend.LockScreenManager.LockScreenManager import LockScreenManager
+    from src.backend.LockScreenManager.Detectors.Logind import LogindLockScreenDetector
+
+    os.environ["XDG_SESSION_ID"] = "7"
+
+    class RecordingScreenSaver:
+        def __init__(self):
+            self.show_threads = []
+
+        def show(self):
+            self.show_threads.append(threading.current_thread())
+
+        def hide(self):
+            pass
+
+    class RecordingController:
+        def __init__(self):
+            self.allow_interaction = True
+            self.screen_saver = RecordingScreenSaver()
+
+    class FakeDeckManager:
+        def __init__(self, controllers):
+            self.deck_controller = controllers
+
+    class FakeApp:
+        lock_on_lock_screen = True
+
+    class FakeSettingsManager:
+        def app(self):
+            return FakeApp()
+
+    manager = LockScreenManager.__new__(LockScreenManager)
+    manager.locked = False
+    manager.detector = None
+    detector = LogindLockScreenDetector(manager, bus=FakeBus(locked_hint=True))
+    manager.detector = detector
+
+    controllers = [RecordingController(), RecordingController()]
+    saved = (gl.deck_manager, gl.settings_manager, gl.presence_monitor,
+             gl.screen_locked)
+    loop = GLib.MainLoop()
+    try:
+        gl.presence_monitor = None
+        gl.settings_manager = FakeSettingsManager()
+        # The slow-bus order: the deck manager already exists when the read
+        # lands.
+        gl.deck_manager = FakeDeckManager(controllers)
+        gl.screen_locked = False
+
+        def read_on_worker():
+            detector.read_initial_lock_state()
+            # Queued after any deck work the read queued, so the loop stops
+            # only once that work has run.
+            GLib.idle_add(lambda: (loop.quit(), GLib.SOURCE_REMOVE)[1])
+
+        worker = threading.Thread(target=read_on_worker, name="lock_read")
+        # A missing quit must fail the scenario rather than hang it.
+        GLib.timeout_add_seconds(10, lambda: (loop.quit(), GLib.SOURCE_REMOVE)[1])
+        worker.start()
+        loop.run()
+        worker.join(timeout=10)
+
+        assert gl.screen_locked is True, gl.screen_locked
+        for c in controllers:
+            assert c.allow_interaction is False, (
+                "the initial lock must block interaction on the decks")
+            assert c.screen_saver.show_threads, (
+                "the initial lock must show the screen saver on the decks")
+            for t in c.screen_saver.show_threads:
+                assert t is threading.main_thread(), (
+                    f"the initial lock's deck work ran on {t.name}, not the main loop")
+    finally:
+        (gl.deck_manager, gl.settings_manager, gl.presence_monitor,
+         gl.screen_locked) = saved
+
+    print("PASS: the initial lock's deck work runs on the main loop")
+
+
 def main() -> None:
     fixtures.start_watchdog(30, label="scenario_lock_startup_state")
 
@@ -292,6 +388,7 @@ def main() -> None:
     base_read_is_inert_without_a_source()
     manager_setup_calls_the_read()
     real_startup_lock_then_unlock_engages_the_branch()
+    initial_deck_work_runs_on_the_main_loop()
 
     print("PASS: scenario_lock_startup_state")
 
