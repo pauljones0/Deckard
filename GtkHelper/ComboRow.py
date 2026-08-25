@@ -4,7 +4,7 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Gtk, Adw, Gio, GObject
 
-from typing import Any
+from typing import Any, override
 
 from loguru import logger as log
 
@@ -12,6 +12,7 @@ class BaseComboRowItem(GObject.GObject):
     def __init__(self) -> None:
         super().__init__()
 
+    @override
     def __str__(self) -> str:
         """Used to display values in the ComboRow"""
         # The subclasses override this. An empty string keeps str() valid
@@ -22,6 +23,7 @@ class BaseComboRowItem(GObject.GObject):
         """Used to retrieve the value that will be saved"""
         return self.__str__()
 
+    @override
     def __eq__(self, other: object) -> bool:
         if isinstance(other, BaseComboRowItem):
             return self.get_value() == other.get_value()
@@ -36,6 +38,7 @@ class ComboRowItem(BaseComboRowItem):
         super().__init__()
         self.label = label
 
+    @override
     def __str__(self) -> str:
         return self.label
     
@@ -45,9 +48,11 @@ class SimpleComboRowItem(BaseComboRowItem):
         self.value = value
         self.label = label
 
+    @override
     def __str__(self) -> str:
         return self.label
     
+    @override
     def get_value(self) -> str:
         return self.value
 
@@ -169,6 +174,7 @@ class ComboRow(Adw.ComboRow):
     def get_item_amount(self) -> int:
         return self.model.get_n_items()
 
+    @override
     def get_selected_item(self) -> BaseComboRowItem | None:
         selected_index = self.get_selected()
 

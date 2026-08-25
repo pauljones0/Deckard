@@ -3,7 +3,7 @@ from GtkHelper.GenerativeUI.GenerativeUI import GenerativeUI
 from gi.repository import Gtk, Adw
 
 from collections.abc import Callable
-from typing import cast, TYPE_CHECKING, Any
+from typing import cast, TYPE_CHECKING, Any, override
 
 from GtkHelper.GtkHelper import on_main
 
@@ -76,6 +76,7 @@ class SpinRow(GenerativeUI[float]):
             self.connect_signals()
         super().__init__(action_core, var_name, default_value, can_reset, auto_add, complex_var_name, on_change, build=build)
 
+    @override
     def connect_signals(self) -> None:
         """
         Connects the signal handlers for the spin row widget to track changes in its value.
@@ -83,6 +84,7 @@ class SpinRow(GenerativeUI[float]):
         self._track_connect("step", self._adjustment, "value-changed", self._correct_step_amount)
         self._track_connect("changed", self.widget, "changed", self._value_changed)
 
+    @override
     def disconnect_signals(self) -> None:
         """
         Disconnects the signal handlers for the spin row widget.
@@ -131,6 +133,7 @@ class SpinRow(GenerativeUI[float]):
         self._handle_value_changed(spin.get_value())
 
     @GenerativeUI.signal_manager
+    @override
     def set_ui_value(self, value: float) -> None:
         """
         Sets the value of the spin row widget in the UI.

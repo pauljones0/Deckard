@@ -3,7 +3,7 @@ from GtkHelper.GenerativeUI.GenerativeUI import GenerativeUI
 from gi.repository import Adw, Gtk
 
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, cast, override
 
 
 from GtkHelper.ToggleRow import ToggleRow as Toggle
@@ -45,6 +45,7 @@ class ToggleRow(GenerativeUI[int]):
             self.connect_signals()
         super().__init__(action_core, var_name, default_value, can_reset, auto_add, complex_var_name, on_change, build=build)
 
+    @override
     def _handle_value_changed(self, new_value: int, update_settings: bool = True, trigger_callback: bool = True) -> None:
         old_value = self.get_value()
 
@@ -66,9 +67,11 @@ class ToggleRow(GenerativeUI[int]):
             on_change = cast("Callable[[Any, Any, Any], None]", self.on_change)
             on_change(toggle_row, new_toggle, old_toggle)
 
+    @override
     def connect_signals(self) -> None:
         self._track_connect("active", self.widget.toggle_group, "notify::active", self._value_changed)
 
+    @override
     def disconnect_signals(self) -> None:
         self._track_disconnect("active", self.widget.toggle_group)
 
@@ -77,9 +80,11 @@ class ToggleRow(GenerativeUI[int]):
         self._handle_value_changed(index)
 
     @GenerativeUI.signal_manager
+    @override
     def set_ui_value(self, value: int) -> None:
         self.widget.set_active_toggle(value)
 
+    @override
     def reset_value(self) -> None:
         """Reset the active toggle to its default.
 

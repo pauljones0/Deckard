@@ -3,7 +3,7 @@ from GtkHelper.GenerativeUI.GenerativeUI import GenerativeUI
 from gi.repository import Adw, GLib
 
 from collections.abc import Callable
-from typing import cast, TYPE_CHECKING, Any
+from typing import cast, TYPE_CHECKING, Any, override
 
 if TYPE_CHECKING:
     from src.backend.PluginManager.ActionCore import ActionCore
@@ -56,6 +56,7 @@ class EntryRow(GenerativeUI[str]):
             self.connect_signals()
         super().__init__(action_core, var_name, default_value, can_reset, auto_add, complex_var_name, on_change, build=build)
 
+    @override
     def connect_signals(self) -> None:
         """
         Connects the signal handlers for the widget, specifically the 'changed' signal
@@ -65,6 +66,7 @@ class EntryRow(GenerativeUI[str]):
         """
         self._track_connect("changed", self.widget, "changed", self._value_changed)
 
+    @override
     def disconnect_signals(self) -> None:
         """
         Disconnects the signal handlers to prevent further handling of the 'changed' signal.
@@ -148,6 +150,7 @@ class EntryRow(GenerativeUI[str]):
         self._handle_value_changed(text)
 
     @GenerativeUI.signal_manager
+    @override
     def set_ui_value(self, value: str) -> None:
         """
         Sets the value in the UI widget.

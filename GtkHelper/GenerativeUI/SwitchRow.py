@@ -3,7 +3,7 @@ from GtkHelper.GenerativeUI.GenerativeUI import GenerativeUI
 from gi.repository import Adw
 
 from collections.abc import Callable
-from typing import cast, TYPE_CHECKING, Any
+from typing import cast, TYPE_CHECKING, Any, override
 
 
 if TYPE_CHECKING:
@@ -53,12 +53,14 @@ class SwitchRow(GenerativeUI[bool]):
             self.connect_signals()
         super().__init__(action_core, var_name, default_value, can_reset, auto_add, complex_var_name, on_change, build=build)
 
+    @override
     def connect_signals(self) -> None:
         """
         Connects the signal handler for the switch widget to track changes in its state.
         """
         self._track_connect("active", self.widget, "notify::active", self._value_changed)
 
+    @override
     def disconnect_signals(self) -> None:
         """
         Disconnects the signal handler for the switch widget.
@@ -104,6 +106,7 @@ class SwitchRow(GenerativeUI[bool]):
         self._handle_value_changed(switch.get_active())
 
     @GenerativeUI.signal_manager
+    @override
     def set_ui_value(self, value: bool) -> None:
         """
         Sets the state of the switch widget in the UI.

@@ -3,7 +3,7 @@ from GtkHelper.GenerativeUI.GenerativeUI import GenerativeUI
 from gi.repository import Gtk
 
 from collections.abc import Callable
-from typing import cast, TYPE_CHECKING, Any
+from typing import cast, TYPE_CHECKING, Any, override
 
 from GtkHelper.GtkHelper import on_main
 
@@ -85,6 +85,7 @@ class ScaleRow(GenerativeUI[float]):
             self.connect_signals()
         super().__init__(action_core, var_name, default_value, can_reset, auto_add, complex_var_name, on_change, build=build)
 
+    @override
     def connect_signals(self) -> None:
         """
         Connects the signal handler for the 'value-changed' signal to track changes in the scale's value.
@@ -93,6 +94,7 @@ class ScaleRow(GenerativeUI[float]):
         """
         self._track_connect("value-changed", self.widget.scale, "value-changed", self._value_changed)
 
+    @override
     def disconnect_signals(self) -> None:
         """
         Disconnects the signal handler for the 'value-changed' signal.
@@ -139,6 +141,7 @@ class ScaleRow(GenerativeUI[float]):
         self._handle_value_changed(scale.get_value())
 
     @GenerativeUI.signal_manager
+    @override
     def set_ui_value(self, value: float) -> None:
         """
         Sets the value of the scale widget in the UI.
