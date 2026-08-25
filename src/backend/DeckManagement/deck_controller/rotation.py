@@ -32,6 +32,11 @@ what its slot shows, and a fresh key carries none, so the page load below
 writes every key even where the composite is unchanged in pixels. That write
 is the point: the same picture belongs on a different key once the deck is
 turned, and a kept hash would skip exactly the write that moves it.
+
+A turn under a showing screensaver applies all of the above and repaints
+nothing. load_page() records the page and returns while the saver owns the
+deck, and hide() loads it then. The new layout is in place from this point
+on, so the page that hide() loads reaches the turned deck.
 """
 from src.backend.DeckManagement.InputIdentifier import Input
 from src.backend.DeckManagement.deck_controller.media_writer import (
@@ -95,6 +100,17 @@ def _swap_input_set(controller: "DeckController") -> None:
         key.cancel_gesture()
     for dial in retired.get(Input.Dial, []):
         dial.cancel_gesture()
+
+    # Drop the pending window markers with the set they name. Each marker is
+    # an identifier of the old grid, and the window's own grid indexes its
+    # button array by those coordinates. At a quarter turn the array
+    # transposes, so a marker left here sends KeyGrid.load_from_changes past
+    # the end of it. The raise escapes the turn after the old grid was
+    # already removed, and the window is left with no key grid at all.
+    # Nothing is lost by dropping them: every marker names a position the
+    # deck no longer has, and the page load that ends the turn repaints the
+    # whole new grid.
+    controller.ui_image_changes_while_hidden.clear()
 
     # init_inputs builds then swaps, so the concurrent media writer sees the
     # old complete set or the new complete one, never a partial one.

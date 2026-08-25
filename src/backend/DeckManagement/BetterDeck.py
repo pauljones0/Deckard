@@ -816,23 +816,6 @@ class BetterDeck():
             value = 0
         self.rotation = value
 
-    def touchscreen_image_rotation(self) -> int:
-        """Counter-clockwise degrees to turn a composed strip by, so that it
-        reaches the device in the device's own orientation.
-
-        At 180 the strip lies end for end under the user's hand, so the
-        composite is turned through half a circle. At 90 and 270 the strip
-        stands on its side, and an upright composite would have to be as tall
-        as the strip is wide. The device takes a fixed 800 by 100 buffer, so
-        there is nothing to turn such a composite into: the strip keeps the
-        device's own orientation there, and its content reads sideways, which
-        is what a strip of fixed shape on a deck laid on its side does.
-        Presenting it upright needs a composite of the transposed size, which
-        reaches the dial slots, the strip background and the window's own
-        strip preview, and is not this.
-        """
-        return 180 if self.rotation == 180 else 0
-
     def _touchscreen_size(self) -> "tuple[int, int] | None":
         """The device's own strip size, or None for a deck that has no
         touchscreen or reports no size for it."""
@@ -847,6 +830,40 @@ class BetterDeck():
             return None
         return int(size[0]), int(size[1])
 
+    def _strip_is_mirrored(self) -> bool:
+        """Whether the strip goes to the device turned end for end.
+
+        One answer decides both halves of that mirror, the image and the
+        touch positions, so the two can never disagree. A deck that reports
+        no strip size has nothing to mirror a touch position against, and a
+        turned image with unturned positions puts every touch at the far end
+        of what the user sees. Such a deck therefore keeps both as they are.
+        """
+        return self.rotation == 180 and self._touchscreen_size() is not None
+
+    def touchscreen_image_rotation(self) -> int:
+        """Counter-clockwise degrees to turn a composed strip by, so that it
+        reaches the device in the device's own orientation.
+
+        At 180 the strip lies end for end under the user's hand, so the
+        composite is turned through half a circle. At 90 and 270 the strip
+        stands on its side, and an upright composite would have to be as tall
+        as the strip is wide. The device takes a fixed 800 by 100 buffer, so
+        there is nothing to turn such a composite into: the strip keeps the
+        device's own orientation there, and its content reads sideways, which
+        is what a strip of fixed shape on a deck laid on its side does.
+        Presenting it upright needs a composite of the transposed size, which
+        reaches the dial slots, the strip background and the window's own
+        strip preview, and is not this.
+
+        This turns the composite the strip's own inputs drew. A background
+        image that extends onto the strip is cut from the band below the key
+        grid, and at 180 the band the user sees is the one above it, so that
+        content still comes off the wrong edge. It is a separate crop, on the
+        background's own geometry, and it is tracked separately.
+        """
+        return 180 if self._strip_is_mirrored() else 0
+
     def logical_touch_value(self, value: "dict[str, int]") -> "dict[str, int]":
         """A touch event's positions, moved from where the device reports
         them to where the strip was composed.
@@ -858,25 +875,46 @@ class BetterDeck():
         device's own orientation (see touchscreen_image_rotation), so a
         reported position already names the pixel the composite drew there.
 
+        A position that does not lie on the strip stays where it is; see
+        _mirror_position.
+
         The event's dict is copied and never edited in place, because the
         library hands one object to every consumer of that event.
         """
-        if self.rotation != 180 or not isinstance(value, dict):
+        if not self._strip_is_mirrored() or not isinstance(value, dict):
             return value
         size = self._touchscreen_size()
         if size is None:
-            # No size to mirror against. Report the device's own position
-            # rather than a position invented from a guessed strip width.
+            # Unreachable while _strip_is_mirrored() answers on the same
+            # size. It stays because this reads the size a second time, and
+            # a None here would mirror against nothing.
             return value
         width, height = size
         mapped = dict(value)
         for key in ("x", "x_out"):
             if key in mapped:
-                mapped[key] = width - 1 - mapped[key]
+                mapped[key] = self._mirror_position(mapped[key], width)
         for key in ("y", "y_out"):
             if key in mapped:
-                mapped[key] = height - 1 - mapped[key]
+                mapped[key] = self._mirror_position(mapped[key], height)
         return mapped
+
+    @staticmethod
+    def _mirror_position(position: int, extent: int) -> int:
+        """position measured from the other end of extent, or position
+        unchanged when it does not lie on the strip at all.
+
+        The library reports what the device sends and clamps nothing. A
+        mirror applied to a position past the end lands back on the strip: an
+        x one past the right edge comes out as -1, and the consumer's slot
+        arithmetic reads that as the first slot, so a touch off the end of a
+        deck held upside down would drive a dial. Leaving such a position
+        where it is keeps it past the end, which is where every other
+        rotation leaves it, and the consumer drops it there as it does then.
+        """
+        if not 0 <= position < extent:
+            return position
+        return extent - 1 - position
 
     def _dials_are_reversed(self) -> bool:
         """Whether logical dial order runs against physical dial order.

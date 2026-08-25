@@ -75,7 +75,7 @@ from src.Signals import Signals
 
 import globals as gl
 
-from typing import Any, TYPE_CHECKING, Generic, TypeVar, Protocol
+from typing import Any, TYPE_CHECKING, Generic, TypeVar
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
 
@@ -95,13 +95,6 @@ StateT = TypeVar("StateT", bound=ControllerInputState)
 #: condition, so it is drawn inside the picture it covers rather than over all
 #: of it, and the margin keeps the key's own content readable behind it.
 OVERLAY_TILE_FRACTION = 0.75
-
-
-class _KeyLayoutLike(Protocol):
-    """The one read Index_To_Coords needs: the raw device handle and the
-    BetterDeck wrapper both answer it."""
-
-    def key_layout(self) -> tuple[int, int]: ...
 
 
 class ControllerInput(Generic[StateT]):
@@ -558,10 +551,13 @@ class ControllerKey(ControllerInput["ControllerKeyState"]):
         return map(lambda x: f"{x[0]}x{x[1]}", map(lambda x: ControllerKey.Index_To_Coords(deck, x), range(deck.key_count())))
 
     @staticmethod
-    def Index_To_Coords(deck: "_KeyLayoutLike", index: int) -> "tuple[int, int]":
-        # The key-press path passes the raw device handle, whose key_layout
-        # is unrotated; the other callers pass the BetterDeck wrapper.
-        rows, cols = deck.key_layout()    
+    def Index_To_Coords(deck: "BetterDeck", index: int) -> "tuple[int, int]":
+        # deck is the wrapper, whose key_layout is the logical one. Every
+        # caller passes it: the registry that names the keys, the key-press
+        # path that has to reach those names, and the controller's own
+        # helpers. A raw device handle reports the unrotated layout and
+        # decodes a logical index against the wrong row length.
+        rows, cols = deck.key_layout()
         y = index // cols
         x = index % cols
         return x, y
