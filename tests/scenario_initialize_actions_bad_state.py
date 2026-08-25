@@ -9,6 +9,10 @@ through the @log.catch on initialize_actions, and the action is left with
 on_ready_called True and on_ready_finished False for the life of the page --
 its tick and on_update redraw gates never open. The scan must skip the bad key
 and reach the real state instead.
+
+The write path scans the same keys: set_action_dict backs set_action_settings
+and set_action_event_assigment, so a bare int() there breaks every plugin that
+persists settings or an event assignment on a corrupt page.
 """
 
 # fixtures must import first: it points argv at an isolated data dir.
@@ -104,6 +108,25 @@ def main() -> int:
             "stranded it in the ready handshake"
         )
         assert action.ready_ran, "on_ready never ran despite the finished flag"
+
+        # The write path scans the same state keys. A plugin persisting its
+        # settings or an event assignment must survive the bad key too, and the
+        # value must land on the real state's action dict.
+        page.set_action_settings(action_object=action, settings={"probe": 1})
+        assert page.get_action_settings(action_object=action) == {"probe": 1}, (
+            "set_action_settings did not persist onto the real state's dict"
+        )
+
+        page.set_action_event_assigment(None, "Key Down", action_object=action)
+        assert page.get_action_event_assignments(action_object=action) == {"Key Down": None}, (
+            "set_action_event_assigment did not persist onto the real state's dict"
+        )
+
+        # The bad state's action dict must stay untouched by the writes.
+        bad_actions = page.dict[ident.input_type][ident.json_identifier]["states"][BAD_STATE_KEY]["actions"]
+        assert bad_actions == [{"id": ACTION_ID}], (
+            f"the corrupt state was rewritten: {bad_actions!r}"
+        )
 
         print("PASS: scenario_initialize_actions_bad_state")
     finally:

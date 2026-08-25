@@ -500,9 +500,17 @@ class Page:
         # and makes the assignment below a self-assignment.
         ident = action_object.input_ident
         for state_key in ident.get_states(self):
+            try:
+                state_int = int(state_key)
+            except (TypeError, ValueError):
+                # A corrupt page json can carry a state key that is not an
+                # integer. Skip it, so the scan reaches the real state instead
+                # of raising out of a plugin's settings or event-assignment
+                # write.
+                continue
             actions = ident.get_actions(self, state_key)
             for i, _existing_dict in enumerate(actions):
-                if self.get_action(ident, int(state_key), i) is action_object:
+                if self.get_action(ident, state_int, i) is action_object:
                     actions[i] = action_dict
                     break
 
