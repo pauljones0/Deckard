@@ -3,6 +3,7 @@ import os
 import signal
 import importlib
 import shlex
+import shutil
 import socket
 import subprocess
 import sys
@@ -273,6 +274,242 @@ def backend_guard_env() -> dict[str, str]:
     return env
 
 
+# A backend runs on its own venv's interpreter. A system upgrade that removes
+# the interpreter that venv was built against strands it, and the backend never
+# starts again. The rebuild below repairs that, at most once per venv per
+# process, so a rebuild that cannot succeed costs one attempt and not one per
+# launch.
+_rebuilt_venvs: set[str] = set()
+# Guards _rebuilt_venvs and the per-venv lock table alone. Short critical
+# sections, never held across a rebuild.
+_rebuild_registry_lock = threading.Lock()
+# One lock per venv, held across the whole rebuild. A plugin's on_app_ready and
+# an action's on_ready can launch backends of the same venv at the same time,
+# and the second must wait rather than launch against a tree that is moved
+# aside or half built.
+_rebuild_locks: dict[str, threading.Lock] = {}
+
+# The launch-time rebuild takes a much shorter budget than a store install.
+# It runs inline on the plugin warm-up thread, which serves every plugin's
+# on_app_ready one at a time, so the gate's own generous budget would let one
+# plugin park the warm-up of all the others. A rebuild that needs longer than
+# this belongs in a store reinstall, which is interactive and runs to the
+# gate's full budget.
+BACKEND_VENV_REBUILD_TIMEOUT_S = 120.0
+
+# The probe that decides whether a venv's interpreter still works.
+_INTERPRETER_PROBE_TIMEOUT_S = 20.0
+
+
+def venv_python_tag(venv_path: str) -> str | None:
+    """The major.minor a venv records, or None when nothing says.
+
+    This is for the log line alone. It does not decide whether a venv is
+    usable: the interpreter itself answers that, in stale_venv_reason.
+    """
+    try:
+        # errors="replace" because a hand-written config can hold a byte that
+        # is not UTF-8, and a decode error here must not read as "no config".
+        with open(os.path.join(venv_path, "pyvenv.cfg"), errors="replace") as f:
+            for line in f:
+                key, _, value = line.partition("=")
+                if key.strip() in ("version", "version_info"):
+                    parts = value.strip().split(".")
+                    if len(parts) >= 2 and parts[0].isdigit() and parts[1].isdigit():
+                        return f"{parts[0]}.{parts[1]}"
+    except OSError:
+        pass
+    tags: list[tuple[int, int]] = []
+    for site_dir in glob.glob(os.path.join(venv_path, "lib", "python*", "site-packages")):
+        tag = os.path.basename(os.path.dirname(site_dir)).removeprefix("python")
+        parts = tag.split(".")
+        if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
+            tags.append((int(parts[0]), int(parts[1])))
+    if not tags:
+        return None
+    # The newest, because a venv upgraded in place keeps the older directory
+    # beside the one it uses, and the lowest would name the dead one.
+    major, minor = max(tags)
+    return f"{major}.{minor}"
+
+
+def _interpreter_runs(interpreter: str) -> bool:
+    """Whether this interpreter still starts.
+
+    A venv built with copies rather than symlinks keeps a binary that outlives
+    the standard library it needs, so the file being present proves nothing.
+    Starting it is the only answer that matches what the launch will do.
+    """
+    try:
+        result = subprocess.run([interpreter, "-c", ""], capture_output=True,
+                                timeout=_INTERPRETER_PROBE_TIMEOUT_S)
+    except (OSError, subprocess.SubprocessError) as e:
+        log.debug(f"Backend venv interpreter {interpreter} did not run: {e}")
+        return False
+    return result.returncode == 0
+
+
+def stale_venv_reason(venv_path: str) -> str | None:
+    """Why a backend cannot start from this venv, or None when it can.
+
+    Only what actually stops a launch counts. The backend runs the venv's own
+    interpreter, so a venv built for another Python version whose interpreter
+    is still installed launches correctly and is left alone. An absent venv is
+    no verdict here either: build_backend_launch_command reports that one,
+    with the path the caller passed.
+    """
+    if not os.path.isdir(venv_path):
+        return None
+    interpreter = os.path.join(venv_path, "bin", "python")
+    # exists() follows the link, so a dangling bin/python reads as absent.
+    if not os.path.exists(interpreter):
+        tag = venv_python_tag(venv_path)
+        built_for = f" (it was built for Python {tag})" if tag else ""
+        return f"its interpreter is gone{built_for}"
+    if not _interpreter_runs(interpreter):
+        return "its interpreter no longer starts"
+    return None
+
+
+def _refuse_unattended(display_name: str) -> bool:
+    """The consent answer of a backend launch, which is always no.
+
+    A launch runs on the plugin warm-up thread or a page-load thread, with no
+    window and nothing that may block on a dialog, so nobody is asked. Under
+    the "ask" policy an unattended run cannot tell a user who agreed from a
+    user who was never asked, and both would read the same way, so it refuses.
+    The "always" policy is a standing decision the user made, and the gate
+    honours that over this answer.
+    """
+    log.info(f"{display_name}: install steps need a decision that a backend launch "
+             f"cannot ask for")
+    return False
+
+
+def _rebuild_lock_for(key: str) -> threading.Lock:
+    with _rebuild_registry_lock:
+        lock = _rebuild_locks.get(key)
+        if lock is None:
+            lock = threading.Lock()
+            _rebuild_locks[key] = lock
+        return lock
+
+
+def ensure_backend_venv(venv_path: str, plugin_dir: str, display_name: str) -> None:
+    """Rebuild a backend venv whose interpreter no longer starts.
+
+    The rebuild is the plugin's own install steps, run through the same gate a
+    store install uses, so one policy governs both, a plugin whose install
+    steps the user declined stays declined, and the gate's confinement, its
+    timeout and its loopback-guard injection apply to the venv it creates.
+
+    A launch asks nobody, so it never runs those steps on the strength of the
+    default "ask" policy. Only the "always" policy, a standing decision the
+    user made, runs them here. Under "ask" the launch reports what the plugin
+    needs and changes nothing; a store reinstall then rebuilds it through the
+    real prompt.
+
+    One attempt per venv per process, and one at a time per venv. The stale
+    tree moves aside first and comes back on every failure path, a raise
+    included, so a rebuild never leaves the plugin with no venv at all.
+    """
+    key = os.path.realpath(venv_path)
+    # The lock comes before anything reads the tree, and there is no quick
+    # look ahead of it. A rebuild on another thread has the venv moved aside
+    # while it runs, and an absent venv is no verdict here, so a reader that
+    # did not wait would take that for "nothing to repair" and let the launch
+    # go on against a path that is not there. A launcher that waited here
+    # finds the venv already repaired and returns.
+    with _rebuild_lock_for(key):
+        reason = stale_venv_reason(venv_path)
+        if reason is None:
+            return
+        with _rebuild_registry_lock:
+            if key in _rebuilt_venvs:
+                return
+        _rebuild_backend_venv(venv_path, plugin_dir, display_name, reason)
+        # Booked only after the attempt returned. An attempt that raised is
+        # not an answer about this venv, so the next process tries again.
+        with _rebuild_registry_lock:
+            _rebuilt_venvs.add(key)
+
+
+def _rebuild_backend_venv(venv_path: str, plugin_dir: str, display_name: str,
+                          reason: str) -> None:
+    """One rebuild attempt. ensure_backend_venv owns the locking and the
+    once-per-process book-keeping."""
+    from src.backend.Store import install_script
+
+    if not plugin_dir or not os.path.isdir(plugin_dir):
+        log.error(f"{display_name}: the backend venv is unusable because {reason}, and "
+                  f"its plugin directory is unknown, so it cannot be rebuilt")
+        return
+
+    log.warning(f"{display_name}: the backend venv at {venv_path} is unusable because "
+                f"{reason}")
+    if not install_script.decide_install_scripts(plugin_dir, display_name, _refuse_unattended):
+        log.error(f"{display_name}: its backend will not start, and rebuilding it runs the "
+                  f"plugin's install scripts, which needs a decision this launch cannot ask "
+                  f"for. Reinstall the plugin to rebuild it.")
+        _report_rebuild_needs_consent(display_name)
+        return
+
+    stash = f"{venv_path}.stale"
+    try:
+        shutil.rmtree(stash, ignore_errors=True)
+        os.rename(venv_path, stash)
+    except OSError as e:
+        log.error(f"{display_name}: could not move the stale backend venv aside: {e}")
+        return
+
+    try:
+        outcome = install_script.run_install_steps(
+            plugin_dir, display_name, run=True, timeout_s=BACKEND_VENV_REBUILD_TIMEOUT_S)
+    except BaseException:
+        # The steps themselves fail through their return value. A raise here
+        # is the machinery around them, and it must not cost the plugin the
+        # venv it had: an absent venv is no verdict for stale_venv_reason, so
+        # no later launch would repair it.
+        log.opt(exception=True).error(f"{display_name}: the backend venv rebuild failed")
+        _restore_stashed_venv(stash, venv_path, display_name)
+        raise
+
+    if os.path.isdir(venv_path) and stale_venv_reason(venv_path) is None:
+        shutil.rmtree(stash, ignore_errors=True)
+        log.info(f"{display_name}: rebuilt the backend venv ({outcome.value})")
+        return
+
+    log.error(f"{display_name}: the install steps left no usable backend venv "
+              f"({outcome.value}); putting the previous one back")
+    _restore_stashed_venv(stash, venv_path, display_name)
+
+
+def _restore_stashed_venv(stash: str, venv_path: str, display_name: str) -> None:
+    """Put a moved-aside venv back where the launch looks for it."""
+    if not os.path.isdir(stash):
+        return
+    shutil.rmtree(venv_path, ignore_errors=True)
+    try:
+        os.rename(stash, venv_path)
+    except OSError as e:
+        log.error(f"{display_name}: could not restore the previous backend venv "
+                  f"from {stash}: {e}")
+
+
+def _report_rebuild_needs_consent(display_name: str) -> None:
+    """Tell the user that a plugin needs a rebuild only they can allow."""
+    notify = getattr(gl, "notify", None)
+    if notify is None:
+        return
+    try:
+        notify.error(
+            f"{display_name} needs its backend rebuilt, which runs the plugin's install "
+            f"scripts. Reinstall the plugin to do that.",
+            title="Plugins")
+    except Exception as e:
+        log.warning(f"Could not report the backend venv of {display_name}: {e}")
+
+
 class PluginManager:
     action_index: dict[str, ActionHolder] = {}
     def __init__(self) -> None:
@@ -498,11 +735,29 @@ class PluginManager:
                     self.load_errors[folder] = "did not register (invalid or incomplete manifest?)"
 
     def generate_action_index(self) -> None:
-        self.action_index.clear()
-        plugins = self.get_plugins()
-        for plugin in plugins.values():
+        """Rebuild the action index and publish it in one assignment.
+
+        A store install rebuilds this on its worker thread while a page load
+        resolves action ids on another. A clear() and a refill leave the index
+        empty, and then half filled, in between. A read in that window finds
+        no holder for an action that is installed, and the page keeps a
+        NoActionHolderFound placeholder for it until something reloads the
+        page, so one background install turns live actions into permanent
+        placeholders. The rebuild therefore fills a fresh dict and publishes
+        it with a single reference assignment: a reader holds either the whole
+        previous index or the whole new one, and never a partial one.
+
+        The slot is the class attribute, which is where the previous in-place
+        rebuild wrote and where every reader of a PluginManager still finds
+        it. An assignment through self would shadow it with an instance
+        attribute and leave a class-level reader on an index that never
+        changes again.
+        """
+        index: dict[str, ActionHolder] = {}
+        for plugin in self.get_plugins().values():
             plugin_base = plugin["object"]
-            self.action_index.update(plugin_base.action_holders)
+            index.update(plugin_base.action_holders)
+        PluginManager.action_index = index
 
     def get_plugins(self, include_disabled: bool = False) -> dict[str, Any]:
         # A copy. An in-place update of PluginBase.plugins, a class attribute,

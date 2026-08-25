@@ -1092,7 +1092,7 @@ class ControllerTouchScreen(ControllerInput["ControllerTouchScreenState"]):
         active_state = self.get_active_state()
         return active_state.get_current_image()
 
-    def event_callback(self, event_type: Any, value: Any) -> None:
+    def event_callback(self, event_type: TouchscreenEventType, value: "dict[str, int]") -> None:
         screensaver_was_showing = self.deck_controller.screen_saver.showing
         if event_type in (TouchscreenEventType.SHORT, TouchscreenEventType.LONG, TouchscreenEventType.DRAG):
             self.deck_controller.screen_saver.on_key_change()
@@ -1202,7 +1202,7 @@ class ControllerDial(ControllerInput["ControllerDialState"]):
     def Available_Identifiers(deck: "BetterDeck") -> "Iterable[str]":
         return map(str, range(deck.dial_count()))
 
-    def event_callback(self, event_type: Any, value: Any) -> None:
+    def event_callback(self, event_type: DialEventType, value: int) -> None:
         screensaver_was_showing = self.deck_controller.screen_saver.showing
         if event_type == DialEventType.TURN:
             self.deck_controller.screen_saver.on_key_change()

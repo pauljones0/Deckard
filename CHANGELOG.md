@@ -128,6 +128,37 @@ bundle as a release asset.
 
 ### Fixed
 
+- A plugin whose backend runs in its own environment says so when a system
+  Python upgrade breaks it. Such an environment carries its own copy of Python,
+  and an upgrade can leave that copy unable to start, so the backend never ran
+  again and the plugin's actions stayed inert with nothing on screen to say
+  why. The app now checks at launch whether that copy still starts. Rebuilding
+  it means running the plugin's install scripts, which a starting app cannot
+  ask you about, so it rebuilds only if you already set install scripts to run
+  always. Otherwise it tells you which plugin needs a reinstall and changes
+  nothing. An environment that still starts is left alone, whichever Python
+  version built it, and a rebuild that fails puts the previous one back.
+
+- A plugin no longer loses the first thing its backend reports. A backend takes
+  a moment to connect, and an event the plugin raised in that moment reached
+  nothing, so a device or state the backend reported at startup never showed on
+  the keys until something made the plugin report it again. Such an event is
+  now held briefly and delivered once the backend is up. The wait is short and
+  fixed, a newer value always wins over a held one, and a backend that
+  reconnects starts fresh instead of replaying what the failed attempt raised.
+  Only the newest value of each event is kept, so a plugin that reports several
+  different items under one event name in that moment delivers the last of
+  them.
+
+- The action list in the sidebar no longer fails to build for an action the app
+  has just torn down, which left the list short or empty until the page was
+  opened again.
+
+- Installing a plugin from the store no longer turns other plugins' actions on
+  your pages into a "no action holder found" placeholder. The install rebuilt
+  the list of available actions in place, and a page that loaded during that
+  rebuild found the list empty; the placeholder it stored then stayed until
+  that page was loaded again.
 - Labels render apostrophes and ampersands as themselves in every language.
   A French deck-settings label showed a code where its apostrophe belongs, and
   a German onboarding line showed a code for its ampersand, because every
