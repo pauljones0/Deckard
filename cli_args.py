@@ -47,4 +47,29 @@ argparser.add_argument("--emulate-input", action="append", nargs=4,
                            "Example: --emulate-input CL123456789 Main 0,0 press\n"
                            "Deckard has to be running already: a press cannot wait for a deck to appear",
                       metavar=("SERIAL", "PAGE", "COORDS", "EVENT"))
+# Read-side and page verbs. Each asks the running Deckard a question or gives
+# it one thing to do, and each needs an instance already running: a read has
+# nothing to answer without one, and none of these can wait for a deck that is
+# not open yet. They are refused, not parked, when nothing runs.
+argparser.add_argument("--json", action="store_true",
+                      help="Print the state of the running Deckard as one JSON object: "
+                           "every deck with its serial, active page and brightness, and "
+                           "the pages that exist")
+argparser.add_argument("--get-brightness", metavar="SERIAL",
+                      help="Print the brightness, 0 to 100, of the deck with this serial")
+argparser.add_argument("--set-brightness", nargs=2, metavar=("SERIAL", "VALUE"),
+                      help="Set the brightness of the deck with this serial. "
+                           "VALUE is a whole number from 0 to 100")
+argparser.add_argument("--sleep", metavar="SERIAL",
+                      help="Put the deck with this serial to its screensaver. A press wakes it")
+argparser.add_argument("--wake", metavar="SERIAL",
+                      help="Wake the deck with this serial from its screensaver")
+argparser.add_argument("--list-actions", nargs="+", metavar="PAGE",
+                      help="List the actions on a page as JSON. Format: PAGE [COORDS]\n"
+                           "  PAGE: Page name (e.g., Main, Soundboard)\n"
+                           "  COORDS: Position as x,y to list one key alone (optional)")
+argparser.add_argument("--rename-page", nargs=2, metavar=("OLD", "NEW"),
+                      help="Rename a page. The deck showing it follows the new name")
+argparser.add_argument("--duplicate-page", nargs=2, metavar=("SOURCE", "NEW"),
+                      help="Copy a page to a new name")
 argparser.add_argument("app_args", nargs="*")

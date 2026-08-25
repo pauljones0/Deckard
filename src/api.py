@@ -25,6 +25,7 @@ from gi.repository import GLib
 import appinfo
 import globals as gl
 from src.backend import control_plane
+from src.backend.atomic_json import require_containment
 
 WindowInfo = namedtuple("WindowInfo", ["name", "wm_class"])
 
@@ -226,6 +227,185 @@ class DeckardAPI:
             return ""
         log.warning(f"DBus API: EmulateInput – {result.message}")
         return result.message
+
+    def QueryState(self) -> Str:
+        """The running state as one JSON object.
+
+        The object holds every deck (its serial, active page and brightness)
+        and the page names that exist. The CLI prints it for --json and reads
+        one deck's brightness out of it for --get-brightness. An unexpected
+        failure comes back as {"error": "..."}, which the CLI prints as a
+        sentence and no data object has a top-level "error" key, so the two
+        never read alike. A dump itself cannot fail on a bad argument.
+        """
+        log.info("DBus API: QueryState read")
+        try:
+            return json.dumps(control_plane.get().dump_state())
+        except Exception as e:
+            log.error(f"DBus API: QueryState error: {e}")
+            return json.dumps({"error": f"Could not read the state: {e}"})
+
+    def ListActions(self, page: Str, coords: Str) -> Str:
+        """The actions on a page as one JSON object.
+
+        coords is empty for every input on the page, or "x,y" for the one key
+        there. The object maps each input type to its inputs, each input to its
+        states, and each state to the ids of the actions on it. A page that
+        does not exist, or a coordinate that does not read as x,y, comes back as
+        {"error": "..."}, which the CLI prints as a sentence.
+        """
+        log.info(f"DBus API: ListActions called – page={page!r} coords={coords!r}")
+        try:
+            error, data = control_plane.get().list_page_actions(page, coords)
+            if error is not None:
+                log.warning(f"DBus API: ListActions – {error}")
+                return json.dumps({"error": error})
+            return json.dumps(data)
+        except Exception as e:
+            log.error(f"DBus API: ListActions error: {e}")
+            return json.dumps({"error": f"Could not read the actions on page '{page}': {e}"})
+
+    def SetDeckBrightness(self, serial: Str, value: Int) -> Str:
+        """Set the brightness of the deck with serial to value, 0 to 100.
+
+        The answer matches ChangePage, empty on success and the reason
+        otherwise. The change is applied live and written to the deck settings,
+        so a later page load keeps it rather than restoring the stored value. A
+        page that overwrites brightness still wins on its own inputs, as the
+        deck-settings slider behaves.
+        """
+        log.info(f"DBus API: SetDeckBrightness called – serial={serial!r} value={value!r}")
+        result = control_plane.get().set_brightness(serial, value)
+        if not result.ok:
+            log.warning(f"DBus API: SetDeckBrightness – {result.message}")
+            return result.message
+        self._persist_deck_brightness(serial, value)
+        return ""
+
+    @staticmethod
+    def _persist_deck_brightness(serial: str, value: int) -> None:
+        """Write the deck's stored brightness value, so a page reload keeps it.
+
+        The live set already changed the device. The next page load reads this
+        value when the page does not override brightness, so without the write
+        the load would restore the old one. Best effort: a failed write leaves
+        the live change in place and says why in the log.
+
+        The value is clamped to 0..100 before it is written. The device layer
+        clamps its own writes, so a direct bus caller passing 150 lights the
+        deck at 100 but would otherwise store 150, which a settings reader then
+        shows out of range.
+        """
+        try:
+            if gl.settings_manager is None:
+                return
+            value = min(100, max(0, value))
+            settings = gl.settings_manager.get_deck_settings(serial)
+            settings.setdefault("brightness", {})["value"] = value
+            gl.settings_manager.save_deck_settings(serial, settings)
+        except Exception as e:
+            log.error(f"DBus API: could not persist brightness for {serial}: {e}")
+
+    def Sleep(self, serial: Str) -> Str:
+        """Put the deck with serial to its screensaver. Empty on success and
+        the reason otherwise. A press wakes it, as with an idle screensaver."""
+        log.info(f"DBus API: Sleep called – serial={serial!r}")
+        result = control_plane.get().sleep(serial)
+        if result.ok:
+            return ""
+        log.warning(f"DBus API: Sleep – {result.message}")
+        return result.message
+
+    def Wake(self, serial: Str) -> Str:
+        """Wake the deck with serial from its screensaver. Empty on success and
+        the reason otherwise."""
+        log.info(f"DBus API: Wake called – serial={serial!r}")
+        result = control_plane.get().wake(serial)
+        if result.ok:
+            return ""
+        log.warning(f"DBus API: Wake – {result.message}")
+        return result.message
+
+    def RenamePage(self, old: Str, new: Str) -> Str:
+        """Rename page old to new. Empty on success and the reason otherwise.
+
+        The deck showing the page follows it: move_page re-points every live
+        page at the new file and rewrites the stored default page, so nothing
+        is left pointing at a name that is gone. new must be free and must stay
+        inside the pages directory, and a plugin page cannot be renamed.
+        """
+        log.info(f"DBus API: RenamePage called – old={old!r} new={new!r}")
+        try:
+            page_manager = gl.page_manager
+            if page_manager is None:
+                return "Cannot rename a page: no page manager"
+            old_path = page_manager.find_matching_page_path(old)
+            if old_path is None:
+                return f"Page '{old}' not found"
+            # find_matching_page_path returns an absolute name unchanged when it
+            # is a file, so a caller-supplied path can resolve outside the pages
+            # folder. move_page copies then removes the source, so an unchecked
+            # name here would move a file that is not a page. Confine the source
+            # to the pages folder, the same guard remove_page applies.
+            try:
+                require_containment(page_manager.PAGE_PATH, old_path)
+            except ValueError:
+                return f"Page '{old}' is not a page in the pages folder"
+            if old_path in page_manager.custom_pages:
+                return f"Page '{old}' is provided by a plugin and cannot be renamed"
+            if not new:
+                return "The new page name is empty"
+            new_path = os.path.join(page_manager.PAGE_PATH, f"{new}.json")
+            try:
+                require_containment(page_manager.PAGE_PATH, new_path)
+            except ValueError:
+                return f"'{new}' is not a name a page can take"
+            if os.path.exists(new_path):
+                return f"A page named '{new}' already exists"
+            page_manager.move_page(old_path, new_path)
+            gl.signal_manager.trigger_signal(Signals.PageRename, old_path, new_path)
+            return ""
+        except Exception as e:
+            log.error(f"DBus API: RenamePage error: {e}")
+            return f"Could not rename page '{old}': {e}"
+
+    def DuplicatePage(self, source: Str, new: Str) -> Str:
+        """Copy page source to a new page named new. Empty on success and the
+        reason otherwise.
+
+        The copy is what source holds on disk now, its pending edits flushed
+        first by the read, so a duplicate of a page a deck shows matches the
+        screen. new must be free and must stay inside the pages directory.
+        """
+        log.info(f"DBus API: DuplicatePage called – source={source!r} new={new!r}")
+        try:
+            page_manager = gl.page_manager
+            if page_manager is None:
+                return "Cannot duplicate a page: no page manager"
+            source_path = page_manager.find_matching_page_path(source)
+            if source_path is None:
+                return f"Page '{source}' not found"
+            # As in RenamePage: find_matching_page_path returns an absolute name
+            # unchanged when it is a file, so confine the source to the pages
+            # folder before reading its bytes into a new page.
+            try:
+                require_containment(page_manager.PAGE_PATH, source_path)
+            except ValueError:
+                return f"Page '{source}' is not a page in the pages folder"
+            if not new:
+                return "The new page name is empty"
+            data = page_manager.get_page_data(source_path)
+            try:
+                new_path = page_manager.add_page(new, data)
+            except FileExistsError:
+                return f"A page named '{new}' already exists"
+            except ValueError:
+                return f"'{new}' is not a name a page can take"
+            gl.signal_manager.trigger_signal(Signals.PageAdd, new_path)
+            return ""
+        except Exception as e:
+            log.error(f"DBus API: DuplicatePage error: {e}")
+            return f"Could not duplicate page '{source}': {e}"
 
     def NotifyForegroundWindow(self, name: Str, wm_class: Str) -> None:
         """Tell Deckard the current foreground window.

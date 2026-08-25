@@ -23,11 +23,18 @@ APP_ID = os.environ["DECKARD_STUB_APP_ID"]
 OBJECT_PATH = "/" + APP_ID.replace(".", "/")
 RECORD_PATH = os.environ["DECKARD_STUB_RECORD"]
 REFUSE = os.environ.get("DECKARD_STUB_REFUSE", "")
+# What a query method returns as its one JSON object. The read verbs (--json,
+# --get-brightness) read this, so a scenario can drive a real dump through the
+# CLI without a live deck behind it.
+QUERY_JSON = os.environ.get("DECKARD_STUB_QUERY_JSON", "{}")
 
 # The methods src/backend/cli_forward.py calls, with the signatures src/api.py
 # exports. A signature that drifts from the app's own makes the reply
 # unreadable to the CLI, which is a failure this stand-in should show rather
-# than paper over.
+# than paper over. The read methods answer one JSON object; the rest answer the
+# reason alone, empty on success.
+_QUERY_METHODS = {"QueryState", "ListActions"}
+
 INTROSPECTION = f"""
 <node>
   <interface name="{APP_ID}">
@@ -50,6 +57,37 @@ INTROSPECTION = f"""
       <arg type="s" name="event" direction="in"/>
       <arg type="s" name="result" direction="out"/>
     </method>
+    <method name="QueryState">
+      <arg type="s" name="json" direction="out"/>
+    </method>
+    <method name="ListActions">
+      <arg type="s" name="page" direction="in"/>
+      <arg type="s" name="coords" direction="in"/>
+      <arg type="s" name="json" direction="out"/>
+    </method>
+    <method name="SetDeckBrightness">
+      <arg type="s" name="serial" direction="in"/>
+      <arg type="i" name="value" direction="in"/>
+      <arg type="s" name="result" direction="out"/>
+    </method>
+    <method name="Sleep">
+      <arg type="s" name="serial" direction="in"/>
+      <arg type="s" name="result" direction="out"/>
+    </method>
+    <method name="Wake">
+      <arg type="s" name="serial" direction="in"/>
+      <arg type="s" name="result" direction="out"/>
+    </method>
+    <method name="RenamePage">
+      <arg type="s" name="old" direction="in"/>
+      <arg type="s" name="new" direction="in"/>
+      <arg type="s" name="result" direction="out"/>
+    </method>
+    <method name="DuplicatePage">
+      <arg type="s" name="source" direction="in"/>
+      <arg type="s" name="new" direction="in"/>
+      <arg type="s" name="result" direction="out"/>
+    </method>
   </interface>
 </node>
 """
@@ -66,7 +104,10 @@ def record(entry: dict) -> None:
 
 def on_call(connection, sender, path, interface, method, params, invocation) -> None:
     record({"method": method, "args": list(params.unpack())})
-    invocation.return_value(GLib.Variant("(s)", (REFUSE,)))
+    if method in _QUERY_METHODS:
+        invocation.return_value(GLib.Variant("(s)", (QUERY_JSON,)))
+    else:
+        invocation.return_value(GLib.Variant("(s)", (REFUSE,)))
 
 
 def main() -> None:

@@ -9,6 +9,18 @@ bundle as a release asset.
 
 ### Added
 
+- Read and steer a running Deckard from the command line. `--json` prints the
+  state of the running app as one JSON object: every deck with its serial,
+  active page and brightness, and the pages that exist. `--get-brightness
+  SERIAL` prints one deck's brightness, and `--set-brightness SERIAL VALUE`
+  sets it, a whole number from 0 to 100, and keeps it across a page change.
+  `--sleep SERIAL` puts a deck to its screensaver and `--wake SERIAL` brings it
+  back; a press still wakes a sleeping deck. `--list-actions PAGE` prints the
+  actions on a page as JSON, and `--list-actions PAGE x,y` narrows that to one
+  key. Each of these needs Deckard already running, and says so when it is not.
+- Rename or copy a page from the command line. `--rename-page OLD NEW` renames
+  a page, and the deck showing it follows the new name. `--duplicate-page
+  SOURCE NEW` copies a page to a new name.
 - Turn a deck background into a slideshow of your own pictures. The background
   section of the deck settings carries an "Add Image" button that builds up an
   ordered list of images, an interval in seconds, and a shuffle switch. The

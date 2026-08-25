@@ -26,7 +26,7 @@ import os
 import threading
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 
 # globals and the input identifiers at runtime, everything else under
 # TYPE_CHECKING, and no gi. The deck controller imports this module, so it
@@ -701,6 +701,116 @@ class ControlPlane:
                              f"Emulated a {event} on ({x},{y}) on device "
                              f"{controller.serial_number()}")
 
+    def set_brightness_on(self, controller: DeckController, value: int) -> ControlResult:
+        """Set the brightness of controller to value, a whole percent.
+
+        The device layer clamps the value to 0..100. This applies the change
+        live; the caller that holds the serial writes the persisted deck
+        setting (see src/api.py), so the brightness survives the next page
+        reload rather than reverting to the stored value.
+
+        A deck mid-teardown answers get_alive() False, and set_brightness()
+        no-ops on it. This still reports success and the caller still persists
+        the value, which is deliberate: the value is what the user asked for,
+        and the deck picks it up from the setting when it comes back.
+        """
+        controller.set_brightness(float(value))
+        return ControlResult(True, "",
+                             f"Set the brightness of {controller.serial_number()} to {value}")
+
+    def sleep_on(self, controller: DeckController) -> ControlResult:
+        """Show controller's screensaver, the way its idle timer would.
+
+        allow_interaction is left alone, so the first press wakes the deck, as
+        it does for a screensaver that came up on its own. Turning interaction
+        off is what a locked session does, and a sleep request is not that. A
+        deck already showing its screensaver is left as it is.
+        """
+        controller.screen_saver.show()
+        return ControlResult(True, "",
+                             f"Device {controller.serial_number()} is showing its screensaver")
+
+    def wake_on(self, controller: DeckController) -> ControlResult:
+        """Hide controller's screensaver and restore the page under it. A deck
+        that is already awake is left as it is."""
+        controller.screen_saver.hide()
+        return ControlResult(True, "",
+                             f"Device {controller.serial_number()} is awake")
+
+    def dump_state(self) -> dict[str, Any]:
+        """The running state a read command reports: every deck with its
+        serial, active page and last-commanded brightness, and the page names
+        that exist. A stable shape, because a script reads it by key.
+
+        brightness is the value last sent to the device, which is null before
+        the first send. It reports as a whole number, because the CLI and the
+        docs describe it as one from 0 to 100. active_page is null on a deck
+        with nothing loaded.
+        """
+        decks: list[dict[str, Any]] = []
+        for controller in _controllers():
+            page = controller.active_page
+            brightness = controller.brightness
+            if isinstance(brightness, float) and brightness.is_integer():
+                brightness = int(brightness)
+            decks.append({
+                "serial": controller.serial_number(),
+                "active_page": None if page is None else page.get_name(),
+                "brightness": brightness,
+            })
+        page_manager = gl.page_manager
+        pages = page_manager.get_page_names() if page_manager is not None else []
+        return {"decks": decks, "pages": pages}
+
+    def list_page_actions(self, page_ref: str, coords: str) -> "tuple[str | None, dict[str, Any]]":
+        """The actions a page holds, read from its file, as (error, data).
+
+        error is a sentence when the page does not exist, and None otherwise.
+        data maps each input type this page configures to its inputs, each
+        input to its states, and each state to the ids of the actions on it.
+        coords, when it is not empty, narrows the read to the one key at x,y
+        and refuses a coordinate that does not read as x,y.
+
+        This reads the page file, not a live deck, so it answers for every
+        page and not only the one a deck shows. No device is touched, so no
+        serial is needed.
+        """
+        page_manager = gl.page_manager
+        if page_manager is None:
+            return ("Cannot read the actions on a page: no page manager", {})
+        page_path = page_manager.find_matching_page_path(page_ref)
+        if page_path is None:
+            return (_no_such_page(page_ref, page_manager).message, {})
+
+        key_filter: str | None = None
+        if coords:
+            try:
+                x, y = (int(part) for part in coords.split(","))
+            except (ValueError, AttributeError):
+                return (f"Invalid coordinate format '{coords}'. "
+                        f"Expected format: 'x,y' (e.g., '0,0')", {})
+            key_filter = f"{x}x{y}"
+
+        page_dict = page_manager.get_page_data(page_path)
+        actions: dict[str, Any] = {}
+        for input_type in ("keys", "dials", "touchscreens"):
+            group = page_dict.get(input_type, {})
+            if not isinstance(group, dict):
+                continue
+            for input_id, input_dict in group.items():
+                if key_filter is not None and (input_type != "keys" or input_id != key_filter):
+                    continue
+                states = input_dict.get("states", {}) if isinstance(input_dict, dict) else {}
+                by_state: dict[str, list[str]] = {}
+                for state_key, state_dict in states.items():
+                    entries = state_dict.get("actions", []) if isinstance(state_dict, dict) else []
+                    by_state[str(state_key)] = [
+                        str(entry.get("id")) for entry in entries
+                        if isinstance(entry, dict) and entry.get("id")
+                    ]
+                actions.setdefault(input_type, {})[input_id] = by_state
+        return (None, {"page": page_ref, "actions": actions})
+
     # The wrappers, which resolve a serial.
 
     def change_page(self, serial_number: str, page_ref: str) -> ControlResult:
@@ -725,6 +835,27 @@ class ControlPlane:
         if controller is None:
             return _no_such_deck(serial_number)
         return self.emulate_input_on(controller, page_ref, coords, event)
+
+    def set_brightness(self, serial_number: str, value: int) -> ControlResult:
+        """set_brightness_on for the deck that reports serial_number."""
+        controller = self._find(serial_number)
+        if controller is None:
+            return _no_such_deck(serial_number)
+        return self.set_brightness_on(controller, value)
+
+    def sleep(self, serial_number: str) -> ControlResult:
+        """sleep_on for the deck that reports serial_number."""
+        controller = self._find(serial_number)
+        if controller is None:
+            return _no_such_deck(serial_number)
+        return self.sleep_on(controller)
+
+    def wake(self, serial_number: str) -> ControlResult:
+        """wake_on for the deck that reports serial_number."""
+        controller = self._find(serial_number)
+        if controller is None:
+            return _no_such_deck(serial_number)
+        return self.wake_on(controller)
 
     def _find(self, serial_number: str) -> DeckController | None:
         """The first controller that reports serial_number, or None. A serial
