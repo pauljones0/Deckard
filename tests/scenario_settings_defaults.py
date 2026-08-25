@@ -29,6 +29,7 @@ gl.settings_manager = SettingsManager()
 EXPECTED_DEFAULTS = {
     ("general", "hold-time"): 0.5,
     ("general", "rolling-labels"): True,
+    ("general", "shrink-on-press"): True,
     ("general", "app-launches"): 0,
     ("general", "show-donate-window"): True,
     ("general", "default-font"): {},
@@ -70,6 +71,7 @@ EXPECTED_FONT_DEFAULTS = {
 PROPERTIES = {
     "hold_time": ("general", "hold-time"),
     "rolling_labels": ("general", "rolling-labels"),
+    "shrink_on_press": ("general", "shrink-on-press"),
     "app_launches": ("general", "app-launches"),
     "show_donate_window": ("general", "show-donate-window"),
     "default_font": ("general", "default-font"),
@@ -102,6 +104,7 @@ PROPERTIES = {
 SAMPLES = {
     "hold_time": 1.25,
     "rolling_labels": False,
+    "shrink_on_press": False,
     "app_launches": 42,
     "show_donate_window": False,
     "default_font": {"font-size": 22},

@@ -387,16 +387,21 @@ class GeneralPageGroup(Adw.PreferencesGroup):
         self.rolling_labels = Adw.SwitchRow(title="Rolling labels", subtitle="Enable automatic rolling/scrolling of too long labels")
         self.add(self.rolling_labels)
 
+        self.shrink_on_press = Adw.SwitchRow(title="Shrink keys while pressed", subtitle="Draw a held key smaller, so the background shows at its edges")
+        self.add(self.shrink_on_press)
+
         self.load_defaults()
 
         # Connect signals
         self.hold_time_row.connect("changed", self.on_n_fake_decks_row_changed)
         self.rolling_labels.connect("notify::active", self.on_rolling_labels_changed)
+        self.shrink_on_press.connect("notify::active", self.on_shrink_on_press_changed)
 
     def load_defaults(self) -> None:
         app = self.settings.app
         self.hold_time_row.set_value(app.hold_time)
         self.rolling_labels.set_active(app.rolling_labels)
+        self.shrink_on_press.set_active(app.shrink_on_press)
 
     def on_n_fake_decks_row_changed(self, *args: Any) -> None:
         self.settings.app.hold_time = self.hold_time_row.get_value()
@@ -419,6 +424,15 @@ class GeneralPageGroup(Adw.PreferencesGroup):
         # Reload all pages - TODO: might not be necessary
         for controller in services.require_deck_manager().deck_controller:
             controller.reload_page()
+
+    def on_shrink_on_press_changed(self, *args: Any) -> None:
+        self.settings.app.shrink_on_press = self.shrink_on_press.get_active()
+
+        # Save
+        self.settings.save_json()
+
+        # No reload. The press look is read per composite and no cache keeps
+        # one, so the next press on every deck draws the new choice.
 
 class FontPageGroup(Adw.PreferencesGroup):
     # Trailing window for the shared page-reload debounce, in milliseconds.

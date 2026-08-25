@@ -9,6 +9,13 @@ bundle as a release asset.
 
 ### Added
 
+- Keys can hold their size while they are pressed. The general settings carry
+  a "Shrink keys while pressed" switch, and turning it off leaves a held key
+  drawing exactly the picture it draws at rest, which suits a page whose keys
+  carry one image between them and whose seams the shrink breaks. It is on by
+  default, so a deck nobody configures presses as it always has, and a change
+  reaches the next press with no restart.
+
 - Press a key from outside Deckard. `--emulate-input SERIAL PAGE COORDS press`
   runs that key's actions through the deck's own input path, so they receive
   the events a press produces, and `long-press` holds the key past the hold

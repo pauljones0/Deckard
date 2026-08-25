@@ -246,6 +246,14 @@ class AppSettings(SchemaView):
         self.set("general", "rolling-labels", value)
 
     @property
+    def shrink_on_press(self) -> bool:
+        return cast(bool, self.get("general", "shrink-on-press"))
+
+    @shrink_on_press.setter
+    def shrink_on_press(self, value: bool) -> None:
+        self.set("general", "shrink-on-press", value)
+
+    @property
     def app_launches(self) -> int:
         return cast(int, self.get("general", "app-launches"))
 
