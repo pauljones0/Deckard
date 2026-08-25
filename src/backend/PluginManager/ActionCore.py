@@ -101,7 +101,11 @@ class ActionCore(rpyc.Service):
         self._cleanup_lock = threading.Lock()
 
         self.deck_controller = deck_controller
-        self.page = page
+        # A live action always has its page. The teardown in
+        # Page.clear_action_objects detaches it, because the page describes the
+        # live phase and that teardown ends it, so the slot states both and
+        # every reader guards. Construction still requires a real page.
+        self.page: "Page | None" = page
         self.state = state
         self.input_ident = input_ident
         self.action_id = action_id
@@ -523,12 +527,13 @@ class ActionCore(rpyc.Service):
     def get_is_multi_action(self) -> bool:
         self.raise_error_if_not_ready()
 
-        if not self.get_is_present(): return False
+        page = self.page
+        if page is None or not self.get_is_present(): return False
         # action_objects nests input -> identifier -> state -> index -> action,
         # so a read that stops at the identifier hands back the state map and
         # counts states, not actions. Ask the page for this input's actions at
         # the action's own state instead.
-        actions = self.page.get_all_actions_for_input(self.input_ident, self.state)
+        actions = page.get_all_actions_for_input(self.input_ident, self.state)
         return len(actions) > 1
 
     def get_asset_path(self, asset_name: str, subdirs: list[str] | None = None, asset_folder: str = "assets") -> str:
@@ -601,8 +606,9 @@ class ActionCore(rpyc.Service):
         return self in self.page.get_all_actions()
     
     def has_custom_user_asset(self) -> bool:
-        if not self.get_is_present(): return False
-        media = self.input_ident.get_state_dict(self.page, self.state).get("media", {})
+        page = self.page
+        if page is None or not self.get_is_present(): return False
+        media = self.input_ident.get_state_dict(page, self.state).get("media", {})
         return media.get("path", None) is not None
     
     def get_own_action_index(self) -> int | None:
@@ -611,8 +617,9 @@ class ActionCore(rpyc.Service):
         # this input's actions. None must stay, because a permission getter
         # compares it against an unset control-action entry, which is None
         # too. The annotation states both, and nothing normalizes them.
-        if not self.get_is_present(): return -1
-        actions = self.page.get_all_actions_for_input(self.input_ident, self.state)
+        page = self.page
+        if page is None or not self.get_is_present(): return -1
+        actions = page.get_all_actions_for_input(self.input_ident, self.state)
         if self not in actions:
             return None
         return cast(int | None, actions.index(self))
@@ -624,7 +631,12 @@ class ActionCore(rpyc.Service):
     def get_page_event_assignments(self) -> dict[InputEvent, InputEvent | None]:
         assignment: dict[InputEvent, InputEvent | None] = {}
 
-        page_assignment_dict = self.page.get_action_event_assignments(action_object=self)
+        # A detached action has no page to read from. An empty map then leaves
+        # every event mapped to itself below, which is what a page with no
+        # stored assignment gives too.
+        page = self.page
+        page_assignment_dict = ({} if page is None
+                                else page.get_action_event_assignments(action_object=self))
 
         all_events = Input.AllEvents()
         for event in all_events:
@@ -641,12 +653,25 @@ class ActionCore(rpyc.Service):
 
     
     def get_event_assignments(self) -> dict[str, str | None]:
-        return self.page.get_action_event_assignments(
+        # A detached action carries no stored assignments. load_event_overrides
+        # reads this on teardown paths, so an empty map keeps it working
+        # instead of raising on the missing page.
+        page = self.page
+        if page is None:
+            return {}
+        return page.get_action_event_assignments(
             action_object=self
         )
-    
+
     def set_event_assignment(self, input_event: InputEvent | None, event_assigner: EventAssigner | None) -> None:
-        self.page.set_action_event_assigment(
+        page = self.page
+        if page is None:
+            # The page owns the stored assignments, so a detached action has
+            # nowhere to write one. Dropping it silently would hide a UI edit
+            # that never landed.
+            log.warning(f"Action {self.action_id} has no page, so its event assignment was not stored")
+            return
+        page.set_action_event_assigment(
             event_assigner=event_assigner,
             input_event=input_event,
             action_object=self

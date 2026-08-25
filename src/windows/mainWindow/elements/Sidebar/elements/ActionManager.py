@@ -141,10 +141,11 @@ class ActionExpanderRow(BetterExpander):
         number_of_actions = len(actions)
         for i, action in enumerate(actions):
             if isinstance(action, ActionCore):
-                # Get action comment
-                comment = action.page.get_action_comment(index=i,
-                                                         state=action.state,
-                                                         identifier=action.input_ident)
+                # Get action comment. The page holds the comments, and an
+                # action the teardown detached has none to show.
+                action_page = action.page
+                comment = "" if action_page is None else action_page.get_action_comment(
+                    index=i, state=action.state, identifier=action.input_ident)
 
                 controls_image = action.has_image_control()
                 controls_background = action.has_background_control()

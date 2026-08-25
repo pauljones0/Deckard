@@ -624,7 +624,7 @@ class Page:
                         if isinstance(action, ActionCore):
                             # The action is torn down; page describes the
                             # live phase, so the detach steps outside it.
-                            action.page = None  # ty: ignore[invalid-assignment]  # the slot is typed for the live phase, which this teardown ends
+                            action.page = None
                     state_dict.clear()
             self.action_objects[input_type] = {}
 
