@@ -174,19 +174,18 @@ class ScreenSaver:
             # swaps, so the concurrent media writer sees the old complete dict
             # or the new complete dict, never an empty or partial one.
             #
-            # Key and dial gestures in flight die with the stash. After the
-            # swap the physical release arrives on the replacement input set,
-            # where the showing-screensaver guard swallows it, so a stashed
-            # input's hold timer stays armed and fires HOLD_START into its
-            # pinned down-time action snapshot mid-screensaver. Cancel the
-            # gestures here, while a racing input event still reaches the
-            # stashed inputs. This does bookkeeping only, with attribute
-            # stores and timer cancels. The touchscreen keeps no gesture
-            # state, because its events arrive pre-classified and single-shot.
-            for key in self.original_inputs.get(Input.Key, []):
-                key.cancel_gesture()
-            for dial in self.original_inputs.get(Input.Dial, []):
-                dial.cancel_gesture()
+            # Gestures in flight die with the stash. After the swap the
+            # physical release arrives on the replacement input set, where the
+            # showing-screensaver guard swallows it, so a stashed input's hold
+            # timer stays armed and fires HOLD_START into its pinned down-time
+            # action snapshot mid-screensaver. Cancel the gestures here, while
+            # a racing input event still reaches the stashed inputs. This does
+            # bookkeeping only, with attribute stores and timer cancels. Sweep
+            # every input type: the touchscreen dispatches no gesture, so its
+            # cancel clears state that is already clear.
+            for stashed_inputs in self.original_inputs.values():
+                for stashed_input in stashed_inputs:
+                    stashed_input.cancel_gesture()
             self.deck_controller.init_inputs()
 
             self.original_background = self.deck_controller.background

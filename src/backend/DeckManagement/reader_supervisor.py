@@ -62,7 +62,6 @@ import time
 
 from loguru import logger as log
 
-from src.backend.DeckManagement.InputIdentifier import Input
 from src.backend.DeckManagement.deck_controller.media_writer import ReopenDeckMsg
 
 import globals as gl
@@ -416,10 +415,14 @@ class DeckReaderSupervisor:
             self._hold_deadline = time.monotonic() + HOLD_WINDOW_S
 
     def _cancel_gestures(self) -> None:
-        for key in self.controller.inputs.get(Input.Key, []):
-            key.cancel_gesture()
-        for dial in self.controller.inputs.get(Input.Dial, []):
-            dial.cancel_gesture()
+        # Read the input dict once. The screensaver swaps the whole dict from
+        # another thread, so a second read can sweep a different input set and
+        # leave a gesture armed on the one it missed. Every input type is
+        # swept: the touchscreen dispatches no gesture, so its cancel clears
+        # state that is already clear.
+        for controller_inputs in self.controller.inputs.values():
+            for controller_input in controller_inputs:
+                controller_input.cancel_gesture()
 
     def _set_handle_down(self, down: bool) -> None:
         """Record that the handle is down or back, and mirror it onto the

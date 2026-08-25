@@ -40,7 +40,7 @@ from StreamDeck.Devices.StreamDeck import DialEventType, TouchscreenEventType
 from loguru import logger as log
 
 from src.backend.DeckManagement.HelperMethods import is_image, is_svg, is_video, svg_to_pil
-from src.backend.DeckManagement.InputIdentifier import Input, InputIdentifier
+from src.backend.DeckManagement.InputIdentifier import Input, InputEvent, InputIdentifier
 from src.backend.DeckManagement.Media.MediaConfig import MediaConfig
 from src.backend.DeckManagement.Subclasses.KeyImage import InputImage
 from src.backend.DeckManagement.Subclasses.KeyLabel import KeyLabel
@@ -107,6 +107,14 @@ class ControllerInput(Generic[StateT]):
     # no slot, so this declaration binds nothing at runtime.
     present_state: PresentState
 
+    # The event a completed hold dispatches into the DOWN-time snapshot. A key
+    # and a dial arm a hold timer and each names its own event here, so
+    # on_hold_timer_end below serves both. The touchscreen arms no timer and
+    # names none. This is a declaration and not an assignment, so an input type
+    # that arms a timer without naming its event raises AttributeError instead
+    # of sending a key event from a dial.
+    HOLD_START_EVENT: InputEvent
+
     def __init__(self, deck_controller: "DeckController", state_class: type[StateT], identifier: InputIdentifier):
         self.deck_controller = deck_controller
         self.state = 0
@@ -120,6 +128,31 @@ class ControllerInput(Generic[StateT]):
         # render start, and the write boundary drops that paint once a newer
         # generation supersedes it.
         self.config_gen: int = 0
+
+        # When the in-flight gesture went down, or None outside one. The hold
+        # branch of the release compares against it. A key and a dial keep it;
+        # the touchscreen dispatches no gesture and leaves it None.
+        self.down_start_time: float | None = None
+
+        # DOWN-time gesture snapshot, a (state, actions) pair captured when the
+        # input went down, or None outside a gesture. The rest of the gesture,
+        # HOLD_START, HOLD_STOP or SHORT_UP, and UP, dispatches to this
+        # snapshot, and not to whatever the input resolves to at release time.
+        # A ChangePage action on this input swaps active_page, and rebuilds
+        # this input's states, synchronously during the DOWN dispatch. Live
+        # resolution would then send the UP to the new page's actions, so the
+        # old page's actions never see their release and a registered-down
+        # latch jams shut, while the new page's actions get a SHORT_UP for a
+        # press that was not theirs.
+        #
+        # It is one attribute and not one per field, so a writer clears it in
+        # one atomic store and the hold-timer callback, which can race the UP
+        # branch past its cancel(), reads a coherent pair or None and never a
+        # torn half. The deck's serialized input-callback path writes it, and
+        # so does the cancel_gesture sweep of ScreenSaver.show(), which runs
+        # under _load_page_lock after this input left the live input set and
+        # can receive no further event.
+        self._gesture: "tuple[StateT, list[ActionCore | NoActionHolderFound | ActionOutdated]] | None" = None
 
         self.is_visual: bool = True
 
@@ -145,9 +178,43 @@ class ControllerInput(Generic[StateT]):
     def update(self) -> None:
         pass
 
+    def cancel_gesture(self) -> None:
+        """End an in-flight gesture without a dispatch of its release events.
+
+        It drops the DOWN-time snapshot, the gesture clock and the pending hold
+        timer. It serves the paths where the physical release can never reach
+        this input. ScreenSaver.show() confiscates the whole input set mid-hold,
+        and the release then lands on the replacement input and is swallowed.
+        Without this call, the hold timer stays armed, fires HOLD_START into the
+        pinned snapshot after the finger left, and pins that snapshot's action
+        objects forever.
+
+        An input type that dispatches no gesture keeps the base state this
+        clears, so the sweeps that call it need no per-type test.
+        """
+        self.down_start_time = None
+        self.stop_hold_timer()
+        self._gesture = None
+
     def on_hold_timer_end(self) -> None:
-        """The hold timer fired. Each input type defines what that means."""
-        raise NotImplementedError
+        """Dispatch this input's hold-start event into the DOWN-time snapshot.
+
+        HOLD_START_EVENT names the event, so a key sends the key event and a
+        dial the dial one. An input type that arms no hold timer never reaches
+        the dispatch: its snapshot is None and the guard below returns first.
+        """
+        gesture = self._gesture
+        if gesture is None:
+            # The gesture already ended. The UP branch or a cancel_gesture()
+            # raced this callback past the timer's cancel(). A late
+            # HOLD_START must not fire, and must never live-resolve onto
+            # whatever page is active now.
+            return
+        gesture_state, gesture_actions = gesture
+        gesture_state.own_actions_event_callback_threaded(
+            event=self.HOLD_START_EVENT,
+            actions=gesture_actions,
+        )
 
     def event_callback(self, *args: Any, **kwargs: Any) -> None:
         pass
@@ -375,6 +442,8 @@ class ControllerKey(ControllerInput["ControllerKeyState"]):
     # reader of the attribute on the base declaration, which owns no key index.
     present_state: KeyPresentState
 
+    HOLD_START_EVENT = Input.Key.Events.HOLD_START
+
     def __init__(self, deck_controller: "DeckController", ident: Input.Key):
         super().__init__(deck_controller, ControllerKeyState, ident)
         self.index = ident.get_index(deck_controller)
@@ -383,55 +452,6 @@ class ControllerKey(ControllerInput["ControllerKeyState"]):
         # compare against it. key_states() is indexed logically, with the
         # rotation applied there, so self.index selects this key's own state.
         self.press_state: bool = self.deck_controller.deck.key_states()[self.index]
-
-        self.down_start_time: float | None = None
-
-        # DOWN-time gesture snapshot, a (state, actions) pair captured when
-        # the key went down, or None outside a gesture. The rest of the
-        # gesture, HOLD_START, HOLD_STOP or SHORT_UP, and UP, dispatches to
-        # this snapshot, and not to whatever the key resolves to at release
-        # time. A ChangePage action on this key swaps
-        # active_page, and rebuilds this key's states, synchronously during
-        # the DOWN dispatch. Live resolution would then send the UP to the new
-        # page's actions, so the old page's actions never see their release
-        # and a registered-down latch jams shut, while the new page's actions
-        # get a SHORT_UP for a press that was not theirs.
-        #
-        # It is one attribute and not one per field, so a writer clears it in
-        # one atomic store and the hold-timer callback, which can race the UP
-        # branch past its cancel(), reads a coherent pair or None and never a
-        # torn half. The deck's serialized input-callback path writes it, and
-        # so does the cancel_gesture sweep of ScreenSaver.show(), which runs
-        # under _load_page_lock after this key left the live input set and can
-        # receive no further event.
-        self._gesture: "tuple[ControllerKeyState, list[ActionCore | NoActionHolderFound | ActionOutdated]] | None" = None
-
-    def cancel_gesture(self) -> None:
-        """End an in-flight gesture without a dispatch of its release
-        events. It drops the DOWN-time snapshot, the gesture clock and the
-        pending hold timer. It serves the paths where the physical release
-        can never reach this key. ScreenSaver.show() confiscates the whole
-        input set mid-hold, and the release then lands on the replacement key
-        and is swallowed. Without this call, the hold timer stays armed, fires
-        HOLD_START into the pinned snapshot after the finger left, and pins
-        that snapshot's action objects forever."""
-        self.down_start_time = None
-        self.stop_hold_timer()
-        self._gesture = None
-
-    def on_hold_timer_end(self) -> None:
-        gesture = self._gesture
-        if gesture is None:
-            # The gesture already ended. The UP branch or a cancel_gesture()
-            # raced this callback past the timer's cancel(). A late
-            # HOLD_START must not fire, and must never live-resolve onto
-            # whatever page is active now.
-            return
-        gesture_state, gesture_actions = gesture
-        gesture_state.own_actions_event_callback_threaded(
-            event=Input.Key.Events.HOLD_START,
-            actions=gesture_actions,
-        )
 
     @staticmethod
     def Available_Identifiers(deck: "BetterDeck") -> "Iterable[str]":
@@ -1152,48 +1172,10 @@ class ControllerTouchScreen(ControllerInput["ControllerTouchScreenState"]):
         return self.deck_controller.get_touchscreen_image_size()
 
 class ControllerDial(ControllerInput["ControllerDialState"]):
+    HOLD_START_EVENT = Input.Dial.Events.HOLD_START
+
     def __init__(self, deck_controller: "DeckController", ident: InputIdentifier):
         super().__init__(deck_controller, ControllerDialState, ident)
-
-        self.down_start_time: float | None = None
-
-        # DOWN-time gesture snapshot, the dial twin of ControllerKey._gesture;
-        # see its __init__ for the full reasoning. It is a (state, actions)
-        # pair captured when the dial went down, or None outside a gesture.
-        # The gesture tail dispatches to this snapshot, and not to whatever
-        # the dial resolves to at release time. A ChangePage on this dial's
-        # DOWN swaps active_page mid-gesture, and live resolution would send
-        # the tail to the new page's dial actions and jam a registered-down
-        # latch. It is one attribute, so a writer clears it in one atomic
-        # store and the hold-timer callback reads a coherent pair or None,
-        # never a torn half.
-        self._gesture: "tuple[ControllerDialState, list[ActionCore | NoActionHolderFound | ActionOutdated]] | None" = None
-
-    def cancel_gesture(self) -> None:
-        """End an in-flight gesture without a dispatch of its release
-        events. It drops the DOWN-time snapshot, the gesture clock and the
-        pending hold timer, on the same contract as
-        ControllerKey.cancel_gesture. It serves the paths where the physical
-        release can never reach this dial. ScreenSaver.show() confiscates
-        the whole input set mid-hold. The release then lands on the
-        replacement dial and is swallowed."""
-        self.down_start_time = None
-        self.stop_hold_timer()
-        self._gesture = None
-
-    def on_hold_timer_end(self) -> None:
-        gesture = self._gesture
-        if gesture is None:
-            # The gesture already ended. The UP branch or a cancel_gesture()
-            # raced this callback past the timer's cancel(). A late
-            # HOLD_START must not fire, and must never live-resolve onto
-            # whatever page is active now.
-            return
-        gesture_state, gesture_actions = gesture
-        gesture_state.own_actions_event_callback_threaded(
-            event=Input.Dial.Events.HOLD_START,
-            actions=gesture_actions,
-        )
 
     def get_touch_screen(self) -> "ControllerTouchScreen | None":
         return self.deck_controller.get_input(Input.Touchscreen("sd-plus"))
