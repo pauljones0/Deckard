@@ -35,6 +35,7 @@ from src.backend.DeckManagement.Subclasses.KeyImage import InputImage
 from src.backend.DeckManagement.Subclasses.KeyVideo import InputVideo
 from src.backend.DeckManagement.Subclasses.KeyLabel import KeyLabel
 from src.backend.DeckManagement.Subclasses.KeyLayout import ImageLayout
+from src.backend.DeckManagement.Subclasses.render_enums import LabelPosition
 from src.backend.DeckManagement.InputIdentifier import Input, InputEvent, InputIdentifier
 from src.Signals.Signals import Signal
 
@@ -415,7 +416,18 @@ class ActionCore(rpyc.Service):
         if font_style not in ["normal", "italic", "oblique", None]:
             raise ValueError("font_style must be one of ['normal', 'italic', 'oblique', None]")
 
-        label_index = 0 if position == "top" else 1 if position == "center" else 2
+        # position is a plain string off a plugin. An unknown value once fell
+        # through to the bottom slot silently; keep that fallback but log it.
+        match position:
+            case LabelPosition.TOP:
+                label_index = 0
+            case LabelPosition.CENTER:
+                label_index = 1
+            case LabelPosition.BOTTOM:
+                label_index = 2
+            case _:
+                log.warning(f"Unknown label position {position!r}; using the bottom slot")
+                label_index = 2
 
         if not self.has_label_control(label_index):
             return

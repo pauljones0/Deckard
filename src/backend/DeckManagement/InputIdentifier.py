@@ -1,11 +1,25 @@
 from collections.abc import Sequence
 from typing import cast, Any, TYPE_CHECKING, TypedDict
-from enum import Enum
+from enum import Enum, StrEnum
 
 if TYPE_CHECKING:
     from src.backend.PageManagement.Page import Page
     from src.backend.DeckManagement.deck_controller.controller import DeckController
     from src.backend.DeckManagement.deck_controller.inputs import ControllerInput
+
+
+class InputType(StrEnum):
+    """The top-level input family, and the key it takes in a page json.
+
+    Each member's value is the literal string a page file stores. StrEnum
+    members are real strings, so a member reads, compares and hashes as its
+    value: page.dict[InputType.KEYS] and page.dict["keys"] are one entry, and
+    json writes the member back as its plain string. Renaming a value would
+    break every stored page, so the values are frozen.
+    """
+    KEYS = "keys"
+    DIALS = "dials"
+    TOUCHSCREENS = "touchscreens"
 
 
 # Shape of one entry under an input's "states" map in a page json.
@@ -30,7 +44,7 @@ class InputIdentifier:
     # "Events") stays False.
     Events: "type[InputEvent]"
 
-    def __init__(self, input_type: str, json_identifier: str, controller_class_name: str):
+    def __init__(self, input_type: InputType, json_identifier: str, controller_class_name: str):
         self.input_type = input_type
         self.json_identifier: str = json_identifier
         self.controller_class_name = controller_class_name
@@ -106,7 +120,7 @@ class InputEvent(Enum):
     
 class Input:
     class Key(InputIdentifier):
-        input_type = "keys"
+        input_type = InputType.KEYS
         controller_class_name = "ControllerKey"
 
         class Events(InputEvent):
@@ -155,7 +169,7 @@ class Input:
             return self.Coords_To_Index(deck_controller, self.coords)
         
     class Dial(InputIdentifier):
-        input_type = "dials"
+        input_type = InputType.DIALS
         controller_class_name = "ControllerDial"
 
         class Events(InputEvent):
@@ -175,7 +189,7 @@ class Input:
 
 
     class Touchscreen(InputIdentifier):
-        input_type = "touchscreens"
+        input_type = InputType.TOUCHSCREENS
         controller_class_name = "ControllerTouchScreen"
 
         class Events(InputEvent):
@@ -191,14 +205,19 @@ class Input:
     
     @staticmethod
     def FromTypeIdentifier(input_type: str, json_identifier: str) -> "InputIdentifier":
+        # input_type arrives as a plain string, off a page json or a caller.
+        # It normalizes to an InputType member first, so a raw "keys" finds the
+        # InputType.KEYS entry; an unknown value raises, as it did before.
         input_map = {
-            "keys": Input.Key,
-            "dials": Input.Dial,
-            "touchscreens": Input.Touchscreen
+            InputType.KEYS: Input.Key,
+            InputType.DIALS: Input.Dial,
+            InputType.TOUCHSCREENS: Input.Touchscreen
         }
-        if input_type in input_map:
-            return input_map[input_type](json_identifier)
-        raise ValueError(f"Unknown input type {input_type}")
+        try:
+            key = InputType(input_type)
+        except ValueError:
+            raise ValueError(f"Unknown input type {input_type}") from None
+        return input_map[key](json_identifier)
     
     @staticmethod
     def AllEvents() -> list[InputEvent]:

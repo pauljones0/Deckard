@@ -31,6 +31,7 @@ from src.backend.DeckManagement.InputIdentifier import Input
 from src.backend.DeckManagement.Subclasses.KeyLabel import KeyLabel
 from src.backend.DeckManagement.Subclasses.KeyLayout import ImageLayout
 from src.backend.DeckManagement.Subclasses.media_pipeline_profiler import media_prof
+from src.backend.DeckManagement.Subclasses.render_enums import Alignment, FillMode, LabelPosition
 from src.backend import ui_port
 
 import globals as gl
@@ -886,9 +887,9 @@ class LabelManager:
             w, h = self._measure_text(label, labels[label])
 
             # The static and scrolling paths share the vertical placement.
-            if label == "top":
+            if label == LabelPosition.TOP:
                 y_position = h/2 + 3
-            elif label == "bottom":
+            elif label == LabelPosition.BOTTOM:
                 y_position = image.height - h/2 - 3
             else:
                 y_position = (image.height - 0) / 2
@@ -906,10 +907,10 @@ class LabelManager:
 
             # Set the x position from the alignment.
             padding = 3
-            if alignment == "left":
+            if alignment == Alignment.LEFT:
                 x_position = padding
                 anchor_x = "l"
-            elif alignment == "right":
+            elif alignment == Alignment.RIGHT:
                 x_position = image.width - padding
                 anchor_x = "r"
             else:  # center (default)
@@ -992,9 +993,9 @@ class LayoutManager:
             layout.halign = 0
         if layout.fill_mode is None:
             if isinstance(self.controller_input.identifier, Input.Key):
-                layout.fill_mode = "cover"
+                layout.fill_mode = FillMode.COVER
             else:
-                layout.fill_mode = "contain"
+                layout.fill_mode = FillMode.CONTAIN
         if layout.size is None:
             layout.size = 1
 
@@ -1091,9 +1092,9 @@ class LayoutManager:
 
         resized = image_resized is None
         if image_resized is None:
-            if layout.fill_mode == "stretch":
+            if layout.fill_mode == FillMode.STRETCH:
                 image_resized = image.resize(image_size, Image.Resampling.HAMMING)
-            elif layout.fill_mode == "cover":
+            elif layout.fill_mode == FillMode.COVER:
                 image_resized = ImageOps.cover(image, image_size, Image.Resampling.HAMMING)
             else:
                 image_resized = ImageOps.contain(image, image_size, Image.Resampling.HAMMING)
