@@ -475,7 +475,7 @@ class ControllerKey(ControllerInput["ControllerKeyState"]):
                 self._update_from_tile_identity(identified, page, config_gen, force)
                 return
 
-        if cover_cache.present(self, page, config_gen, force):
+        if self.get_active_state().key_image is not None and cover_cache.present(self, page, config_gen, force):
             return
         _t0 = _t1 = _t2 = 0.0  # definite binding; every read sits under the same media_prof guard as its write
         if media_prof:
@@ -673,7 +673,7 @@ class ControllerKey(ControllerInput["ControllerKeyState"]):
 
     def get_current_image(self) -> Image.Image:
         state = self.get_active_state()
-
+        cover_pre = cover_cache.precheck(self, state)
         # A bare key's composite is the shared background tile, so return a
         # copy of it directly. That saves work per frame over an animated
         # background.
@@ -762,7 +762,7 @@ class ControllerKey(ControllerInput["ControllerKeyState"]):
         if key_image is not labeled_image:
             key_image.close()
 
-        return cover_cache.remember(self, state, labeled_image)
+        return cover_cache.remember(self, state, labeled_image, cover_pre)
     
     def add_warning_point(self, image: Image.Image, margin: int = 10, size: int = 10, color: tuple[int, int, int] = (255, 150, 80)) -> Image.Image:
         draw = ImageDraw.Draw(image)

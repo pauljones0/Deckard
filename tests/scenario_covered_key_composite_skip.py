@@ -23,9 +23,9 @@ import time
 from PIL import Image, ImageDraw
 
 import globals as gl
-import src.backend.DeckManagement.deck_controller.label_engine as label_engine
 from fixtures import start_watchdog, teardown
 
+from src.backend.DeckManagement.ImageHelpers import hides_background
 from src.backend.DeckManagement.InputIdentifier import Input
 from src.backend.DeckManagement.Subclasses.KeyImage import InputImage
 from src.backend.DeckManagement.Subclasses.KeyLabel import KeyLabel
@@ -67,6 +67,26 @@ def _settle(controller) -> None:
     controller.media_player.add_task(ran.set)
     assert ran.wait(timeout=15), \
         "fixture sanity: the media player never ran the settle marker"
+
+
+def _disarm_repaint_retry(controller) -> None:
+    """Clear the armed full repaint.
+
+    A failed device write arms one, and the media loop fires it two seconds
+    later on its own clock: it resets every dedup hash and paints the whole
+    deck again. That is correct behaviour and it is noise for every count in
+    this file, so the counts start from a disarmed flag and _assert_no_repaint
+    reports it if one arms while they run.
+    """
+    controller._full_repaint_pending = False
+
+
+def _assert_no_repaint(controller) -> None:
+    assert not controller._full_repaint_pending, (
+        "a device write failed while this file was counting paints, which arms a "
+        "full repaint of the whole deck; the counts above are not this module's "
+        "doing"
+    )
 
 
 def _key(controller, index: int):
@@ -129,24 +149,39 @@ class _CompositeCounter:
         del self.key.get_current_image
 
 
-def _record_enqueued(controller) -> list:
-    """Every native the paint path hands the writer, in call order."""
-    enqueued: list = []
-    original = controller.media_player.add_image_task
+class _RecordEnqueued:
+    """Every native the paint path hands the writer, in call order.
 
-    def recording(key_index, native_image, **kwargs):
-        enqueued.append((key_index, native_image))
-        return original(key_index, native_image, **kwargs)
+    It restores the writer hook on the way out. A recorder that never
+    restored would leave the next one wrapping it, so a later check would see
+    an earlier check's paints as well as its own.
+    """
 
-    controller.media_player.add_image_task = recording
-    return enqueued
+    def __init__(self, controller):
+        self.controller = controller
+        self.natives: list = []
+        self._original = controller.media_player.add_image_task
+
+    def __enter__(self) -> "_RecordEnqueued":
+        def recording(key_index, native_image, **kwargs):
+            self.natives.append((key_index, native_image))
+            return self._original(key_index, native_image, **kwargs)
+
+        self.controller.media_player.add_image_task = recording
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.controller.media_player.add_image_task = self._original
+
+    def __len__(self) -> int:
+        return len(self.natives)
 
 
 # --- checks ---------------------------------------------------------------
 
 def check_cover_test() -> None:
     """The opacity and geometry test that decides every skip."""
-    covers = label_engine._foreground_hides_background
+    covers = hides_background
     tile = (72, 72)
 
     opaque_rgb = Image.new("RGB", tile, (10, 20, 30))
@@ -182,6 +217,13 @@ def check_cover_test() -> None:
     short = Image.new("RGBA", (72, 60), (10, 20, 30, 255))
     assert not covers(short, 0, 6, tile), "an image that misses two edges does not cover"
 
+    # Wide enough and short by itself, which is what a contain fit of a wide
+    # source produces. One dimension short is enough to fail.
+    assert not covers(short, 0, 0, tile), (
+        "an image that reaches the side edges and stops short of the bottom "
+        "leaves a strip of background visible"
+    )
+
     palette = Image.new("P", tile)
     palette.info["transparency"] = 0
     assert not covers(palette, 0, 0, tile), (
@@ -193,19 +235,20 @@ def check_cover_test() -> None:
 
 
 def check_opaque_cover_skips_composite(controller) -> None:
+    _disarm_repaint_retry(controller)
     key = _key(controller, 0)
     state = key.get_active_state()
     _give_media(key, _opaque_source())
     _set_tiles(controller, TILE_COLORS[0])
 
-    enqueued = _record_enqueued(controller)
-    with _CompositeCounter(key) as composites:
+    with _RecordEnqueued(controller) as enqueued, _CompositeCounter(key) as composites:
         key.update()
         assert composites.count == 1, "the first paint must composite"
         assert state.cover_cache._entry is not None, (
             "a full-size opaque foreground must leave a kept composite behind"
         )
         served = state.cover_cache._entry.image.tobytes()
+        first_native = enqueued.natives[0][1]
 
         for color in TILE_COLORS[1:]:
             _set_tiles(controller, color)
@@ -215,18 +258,28 @@ def check_opaque_cover_skips_composite(controller) -> None:
             f"hides it, and the key composited {composites.count} times -- the skip did "
             f"not hold"
         )
+        _assert_no_repaint(controller)
         assert len(enqueued) == 1, (
             f"a covered key must reach the device once and then hash-skip; the writer "
             f"took {len(enqueued)} paints"
         )
 
-        # force must still reach the device, hashes or no hashes.
+        # force must still reach the device, hashes or no hashes, and the
+        # bytes it sends must be the kept picture's own. The memo is emptied
+        # first, because a warm memo answers from the hash alone and would
+        # hide whatever the reuse path actually hands the encoder. A real
+        # eviction does the same thing at an unpredictable moment.
+        controller.encode_memo.clear()
         key.update(force=True)
         assert len(enqueued) == 2, (
             "a forced repaint of a covered key must reach the writer, as a forced "
             "repaint of any other key does"
         )
         assert composites.count == 1, "a forced repaint must not need a fresh composite"
+        assert enqueued.natives[1][1] == first_native, (
+            "the reuse path encoded something other than the picture it kept -- with "
+            "a cold memo those are the bytes the device receives"
+        )
 
         # The paint path closes a composite whose offer it hash-skipped, so
         # the cache has to hold a buffer of its own. The close is driven here
@@ -259,12 +312,12 @@ def check_opaque_cover_skips_composite(controller) -> None:
 
 
 def check_alpha_foreground_still_composites(controller) -> None:
+    _disarm_repaint_retry(controller)
     key = _key(controller, 1)
     state = key.get_active_state()
     _give_media(key, _alpha_source())
 
-    enqueued = _record_enqueued(controller)
-    with _CompositeCounter(key) as composites:
+    with _RecordEnqueued(controller) as enqueued, _CompositeCounter(key) as composites:
         for color in TILE_COLORS:
             _set_tiles(controller, color)
             key.update()
@@ -276,7 +329,7 @@ def check_alpha_foreground_still_composites(controller) -> None:
     assert state.cover_cache._entry is None, (
         "a foreground that lets the background through must keep no composite"
     )
-    natives = {native for _index, native in enqueued}
+    natives = {native for _index, native in enqueued.natives}
     assert len(natives) > 1, (
         "the background showed through a transparent border, so the device had to "
         "receive more than one distinct frame"
@@ -286,6 +339,7 @@ def check_alpha_foreground_still_composites(controller) -> None:
 
 
 def check_small_media_still_composites(controller) -> None:
+    _disarm_repaint_retry(controller)
     key = _key(controller, 2)
     state = key.get_active_state()
     _give_media(key, _opaque_source())
@@ -311,6 +365,7 @@ def check_zero_size_layout(controller) -> None:
     """A layout size of zero draws no foreground at all. The composite is then
     the bare background, which moves every frame, and the entry left over from
     when the same asset did cover must not claim it."""
+    _disarm_repaint_retry(controller)
     key = _key(controller, 6)
     state = key.get_active_state()
     _give_media(key, _opaque_source())
@@ -345,6 +400,7 @@ def check_scroll_label_composites(controller) -> None:
     file. Counts here are therefore lower bounds, and the kept composite,
     which only this file's paints can create, carries the contract.
     """
+    _disarm_repaint_retry(controller)
     key = _key(controller, 7)
     state = key.get_active_state()
     _give_media(key, _opaque_source())
@@ -374,6 +430,7 @@ def check_scroll_label_composites(controller) -> None:
 
 
 def check_label_invalidates(controller) -> None:
+    _disarm_repaint_retry(controller)
     key = _key(controller, 3)
     state = key.get_active_state()
     _give_media(key, _opaque_source())
@@ -414,6 +471,7 @@ def check_label_invalidates(controller) -> None:
 
 
 def check_press_composites(controller) -> None:
+    _disarm_repaint_retry(controller)
     key = _key(controller, 4)
     state = key.get_active_state()
     _give_media(key, _opaque_source())
@@ -444,9 +502,196 @@ def check_press_composites(controller) -> None:
     print("PASS: a press leaves the skip and the release returns to it")
 
 
+def check_warning_point_composites(controller) -> None:
+    """The warning point marks a key whose action is missing or out of date.
+    It is drawn over the foreground, so a covered key showing one must not
+    settle, or the dot outlives the repair that removed it."""
+    _disarm_repaint_retry(controller)
+    key = _key(controller, 9)
+    state = key.get_active_state()
+    _give_media(key, _opaque_source())
+    _set_tiles(controller, TILE_COLORS[0])
+
+    with _CompositeCounter(key) as composites:
+        key.update()
+        assert state.cover_cache._entry is not None, "fixture sanity: the key did not settle"
+        healthy = state.cover_cache._entry.image.tobytes()
+
+        # The page's action table decides this; drive it directly, so the
+        # check needs no plugin manager.
+        key.has_unavailable_action = lambda: True
+        key.update()
+        assert composites.count == 2, "an unavailable action must reach a fresh composite"
+        assert state.cover_cache._entry is None, (
+            "a key wearing the warning point must keep no composite -- the dot would "
+            "outlive the action that comes back"
+        )
+        dotted = key.get_current_image()
+        assert dotted.tobytes() != healthy, "fixture sanity: the warning point drew nothing"
+        dotted.close()
+
+        for color in TILE_COLORS[1:3]:
+            _set_tiles(controller, color)
+            key.update()
+        assert state.cover_cache._entry is None, \
+            "the warning point must keep the key off the skip for as long as it shows"
+
+        del key.has_unavailable_action
+        key.update()
+        assert state.cover_cache._entry is not None, \
+            "the action coming back must let the key settle again"
+        assert state.cover_cache._entry.image.tobytes() == healthy, \
+            "the settled picture must be the one with no dot on it"
+
+    print("PASS: the warning point keeps a covered key compositing until it clears")
+
+
+def check_release_during_composite(controller) -> None:
+    """A release that lands after the composite drew the pressed look.
+
+    The press is read twice, once to decide on the shrink and once to decide
+    on the store. A release between the two would make the second read say
+    "not pressed" over a picture that is, and nothing later retires it,
+    because press_state is already back to False and no stamp field moved.
+    The store is judged on the read taken before the composite for exactly
+    this. The release is driven from inside the composite, so the
+    interleaving is this file's decision and nothing sleeps.
+    """
+    _disarm_repaint_retry(controller)
+    key = _key(controller, 10)
+    state = key.get_active_state()
+    _give_media(key, _opaque_source())
+    _set_tiles(controller, TILE_COLORS[0])
+
+    key.update()
+    assert state.cover_cache._entry is not None, "fixture sanity: the key did not settle"
+    unpressed = state.cover_cache._entry.image.tobytes()
+
+    key.press_state = True
+    key.update()
+    assert state.cover_cache._entry is None, "fixture sanity: a pressed key kept a composite"
+
+    original_shrink = key.shrink_image
+
+    def shrink_then_release(image, factor: float = 0.7):
+        shrunk = original_shrink(image, factor)
+        # The finger comes off here, between the shrink and the store.
+        key.press_state = False
+        return shrunk
+
+    key.shrink_image = shrink_then_release
+    try:
+        key.update()
+    finally:
+        del key.shrink_image
+
+    assert state.cover_cache._entry is None, (
+        "a release inside the composite window stored the pressed picture. Nothing "
+        "retires it: press_state is False again and no stamp field moved, so the key "
+        "shows itself held down until the next press"
+    )
+
+    # And the key still recovers on the next paint.
+    key.update()
+    assert state.cover_cache._entry is not None, \
+        "the released key must settle on the next composite"
+    assert state.cover_cache._entry.image.tobytes() == unpressed, \
+        "the settled picture must be the unpressed one"
+
+    print("PASS: a release inside the composite window stores nothing")
+
+
+def check_label_edit_during_composite(controller) -> None:
+    """A label edit that lands after the composite drew the old label.
+
+    The concurrent actor completes a whole paint of its own from inside the
+    window, which is what a plugin worker or the GTK main thread does when it
+    sets a label and calls update(). Judged at the end, the first composite
+    would publish its old picture under the new label's stamp, and every later
+    read would match it forever.
+    """
+    _disarm_repaint_retry(controller)
+    key = _key(controller, 11)
+    state = key.get_active_state()
+    label_manager = state.label_manager
+    _give_media(key, _opaque_source())
+    _set_tiles(controller, TILE_COLORS[0])
+
+    def _label(text: str) -> KeyLabel:
+        return KeyLabel(controller_input=key, text=text, font_size=14,
+                        color=[255, 255, 255, 255])
+
+    label_manager.set_page_label("center", _label("ONE"), update=False)
+    key.update()
+    assert state.cover_cache._entry is not None, "fixture sanity: the key did not settle"
+    one_bytes = state.cover_cache._entry.image.tobytes()
+
+    original_add = label_manager.add_labels_to_image
+    fired: list[bool] = []
+
+    def add_then_edit(image):
+        labelled = original_add(image)
+        if not fired:
+            fired.append(True)
+            label_manager.set_page_label("center", _label("TWO"), update=False)
+            key.update()
+        return labelled
+
+    state.cover_cache.invalidate()
+    label_manager.add_labels_to_image = add_then_edit
+    try:
+        key.update()
+    finally:
+        del label_manager.add_labels_to_image
+    assert fired, "fixture sanity: the hook never ran"
+
+    # Read what settled BEFORE composing anything else. A composite of its own
+    # would store a fresh entry over the one under test.
+    entry = state.cover_cache._entry
+    stored_bytes = None if entry is None else entry.image.tobytes()
+
+    state.cover_cache.invalidate()
+    fresh = key.get_current_image()
+    two_bytes = fresh.tobytes()
+    fresh.close()
+    assert two_bytes != one_bytes, "fixture sanity: the label edit changed no pixel"
+
+    assert stored_bytes is None or stored_bytes == two_bytes, (
+        f"a label edit inside the composite window settled the cache on the old "
+        f"label (stored picture is the old one: {stored_bytes == one_bytes}). The "
+        f"stamp already holds the new epoch, so no later read retires it and the key "
+        f"serves the old label for as long as the page holds"
+    )
+
+    print("PASS: a label edit inside the composite window leaves no stale entry")
+
+
+def check_release_calls_drop_the_entry(controller) -> None:
+    """The memory claim rests on two calls. A state's teardown and its reset
+    for a fresh page load each have to release the picture it kept."""
+    _disarm_repaint_retry(controller)
+    for index, release in ((12, "close_resources"), (13, "clear")):
+        key = _key(controller, index)
+        state = key.get_active_state()
+        _give_media(key, _opaque_source())
+        _set_tiles(controller, TILE_COLORS[0])
+        key.update()
+        assert state.cover_cache._entry is not None, \
+            f"fixture sanity: the key did not settle before {release}()"
+
+        getattr(state, release)()
+        assert state.cover_cache._entry is None, (
+            f"{release}() left the kept composite behind. Nothing else bounds these "
+            f"images, so a page load would retain one per state it ever painted"
+        )
+
+    print("PASS: teardown and reset both release the kept composite")
+
+
 def check_overlay_composites(controller) -> None:
     """An overlay paints over the foreground and replaces the composite, so a
     covered key must drop what it kept the moment one is shown."""
+    _disarm_repaint_retry(controller)
     key = _key(controller, 8)
     state = key.get_active_state()
     _give_media(key, _opaque_source())
@@ -493,6 +738,7 @@ def check_capped_gif_background(controller) -> None:
     """The rate cap decides how often a GIF background advances; the cover
     verdict decides whether a key redraws when it does. The two are
     independent, and a covered key must redraw on neither."""
+    _disarm_repaint_retry(controller)
     gif_path = _make_gif(os.path.join(gl.DATA_PATH, "media", "cover_bg.gif"))
     # A rate under the media loop's own is what a capped page carries.
     background = GifBackground(controller, gif_path, loop=True, fps=10)
@@ -574,11 +820,16 @@ def main() -> None:
         check_zero_size_layout(controller)
         check_label_invalidates(controller)
         check_press_composites(controller)
+        check_warning_point_composites(controller)
         check_overlay_composites(controller)
+        check_release_during_composite(controller)
+        check_label_edit_during_composite(controller)
+        check_release_calls_drop_the_entry(controller)
         check_capped_gif_background(controller)
         # Last: it leaves a scroll label on the deck, which puts the media
         # loop back on per-tick key work for every check after it.
         check_scroll_label_composites(controller)
+        _assert_no_repaint(controller)
         print("PASS: scenario_covered_key_composite_skip")
     finally:
         teardown(controller)

@@ -26,6 +26,7 @@ from copy import copy
 from PIL import Image, ImageDraw, ImageOps, ImageFont
 from loguru import logger as log
 
+from src.backend.DeckManagement.ImageHelpers import hides_background
 from src.backend.DeckManagement.InputIdentifier import Input
 from src.backend.DeckManagement.Subclasses.KeyLabel import KeyLabel
 from src.backend.DeckManagement.Subclasses.KeyLayout import ImageLayout
@@ -923,41 +924,6 @@ class LabelManager:
         # return image.copy().rotate(self.deck.get_rotation())
 
 
-def _foreground_hides_background(image: Image.Image, left: int, top: int,
-                                 background_size: tuple[int, int]) -> bool:
-    """Whether pasting image at (left, top) leaves no pixel of a background of
-    background_size visible.
-
-    Two conditions, both exact. The paste must reach every pixel of the
-    background, and every pixel it lays down must be fully opaque. An image
-    with no alpha data replaces what it lands on outright; one with alpha is
-    pasted through itself as a mask, and a mask of 255 replaces the
-    destination pixel just as completely. Either way the result of the
-    composite is the same whatever the background held, which is what lets a
-    caller keep the composite and stop rebuilding it per frame.
-
-    Nothing here has a tolerance. One translucent pixel, or one row the paste
-    misses, and the composite depends on the background again. An answer of
-    False costs a composite that was not needed; a wrong True freezes a stale
-    frame on the device, so every case this cannot prove reads False. A
-    palette image that carries its transparency in info, and not in a band,
-    is one such case.
-    """
-    background_width, background_height = background_size
-    if left > 0 or top > 0:
-        return False
-    if image.width + left < background_width or image.height + top < background_height:
-        return False
-    if not image.has_transparency_data:
-        return True
-    try:
-        alpha = image.getchannel("A")
-    except ValueError:
-        return False
-    lowest, _highest = alpha.getextrema()
-    return lowest == 255
-
-
 class LayoutManager:
     def __init__(self, controller_input: "ControllerInput[Any]"):
         self.controller_input = controller_input
@@ -1048,19 +1014,27 @@ class LayoutManager:
         add_image_to_background pasted a foreground that hides the whole
         background, else None.
 
-        The entry is returned as an opaque token. A caller compares it by
-        identity to decide whether the composite it kept is still the one this
-        manager produces: the layout key inside it pins the asset, its backing
-        image, the alignment, the composed size and the background geometry,
-        so one identity check stands for all of them. Only the paths that
-        cache a resized foreground publish an entry, which is the static-image
-        path and no other, and both early returns of add_image_to_background
+        The entry is an opaque token to its caller, which compares it by
+        identity: the layout key inside it pins the asset, its backing image,
+        the alignment, the composed size and the background geometry, so one
+        identity check stands for all of them. Only the static-image path
+        publishes an entry, and both early returns of add_image_to_background
         drop it, so an entry never outlives a composite that skipped the
         paste."""
         cached = self._fg_cache
         if cached is None or not cached[3]:
             return None
         return cached
+
+    def foreground_proved_bare(self, cache_token: object) -> bool:
+        """Whether the entry cache_token last built says its paste left some
+        of the background visible.
+
+        It answers False when there is no entry for cache_token, because an
+        absent entry proves nothing either way. A caller uses it to skip work
+        that only a covering foreground can ever need."""
+        cached = self._fg_cache
+        return cached is not None and cached[0] is cache_token and not cached[3]
 
     def add_image_to_background(self, image: Image.Image | None, background: Image.Image, cache_token: object = None) -> Image.Image:
         if image is None:
@@ -1130,8 +1104,8 @@ class LayoutManager:
             self._fg_cache = None
         elif resized:
             self._fg_cache = (cache_token, fg_key, image_resized,
-                              _foreground_hides_background(image_resized, left_margin,
-                                                           top_margin, background.size))
+                              hides_background(image_resized, left_margin, top_margin,
+                                               background.size))
             if media_prof:
                 media_prof.count("fg_cache_miss")
 
