@@ -12,9 +12,13 @@ identity the USB layer reads. This scenario checks four things.
       "the one device of this model on the bus", so a fake that claimed the
       Elgato identity would aim a real reset at real hardware on the same host.
       The liveness probe must also keep taking its fallback arm for a fake.
-  (3) A real controller builds and loads a page over a Mini, an XL and an SD+,
+  (3) A model refuses a shape that cannot work, and the command line shapes the
+      deck at each index: one name covers every deck, several clamp at the last,
+      and the name "default" leaves a deck's own layout in charge. A deck of a
+      named model says which model it is.
+  (4) A real controller builds and loads a page over a Mini, an XL and an SD+,
       and its input registry matches each geometry.
-  (4) The default shape is what it always was. A frozen literal snapshot pins
+  (5) The default shape is what it always was. A frozen literal snapshot pins
       every value a scenario can read off the deck, the input registry of a
       default controller is the 2x4 grid with four dials and one touchscreen
       that the suite assumes, and the key-event remapper still behaves exactly
@@ -24,9 +28,15 @@ No hardware is involved. Import fixtures first.
 """
 import fixtures  # noqa: F401  (import first: sets up the isolated data dir)
 
+import contextlib
 import dataclasses
+import io
 import os
 import re
+import sys
+from types import SimpleNamespace
+
+from loguru import logger as log
 
 import globals as gl
 
@@ -42,10 +52,15 @@ from StreamDeck.Devices.StreamDeckXL import StreamDeckXL
 import cli_args
 from src.backend.DeckManagement import usb_reset
 from src.backend.DeckManagement.BetterDeck import BetterDeck, device_is_on_bus
+from src.backend.DeckManagement.DeckManager import (
+    fake_deck_display_name,
+    fake_deck_model_for_index,
+)
 from src.backend.DeckManagement.InputIdentifier import Input
 from src.backend.DeckManagement.Subclasses.FakeDeck import (
     DEFAULT_FAKE_DECK_MODEL,
     FAKE_DECK_MODELS,
+    FAKE_DECK_PRESETS,
     FakeDeck,
     fake_deck_model,
 )
@@ -187,14 +202,189 @@ def check_no_preset_claims_the_elgato_identity() -> None:
           "liveness fallback arm")
 
 
+@contextlib.contextmanager
+def _flags(*flags: str):
+    """Run the body with these flags appended to the command line.
+
+    fake_deck_model_for_index reads the parser, and the parser reads sys.argv,
+    so this is how a scenario states what the app was started with.
+    """
+    saved = list(sys.argv)
+    sys.argv = saved + list(flags)
+    try:
+        yield
+    finally:
+        sys.argv = saved
+
+
+@contextlib.contextmanager
+def _errors_logged():
+    """Collect the error lines the body logs."""
+    lines: "list[str]" = []
+    sink_id = log.add(lambda message: lines.append(str(message)), level="ERROR")
+    try:
+        yield lines
+    finally:
+        log.remove(sink_id)
+
+
+@contextlib.contextmanager
+def _parser_answering(names):
+    """Make the parser hand back names that argparse would have refused.
+
+    This shadows the parser's own parse_args, so the helper's fall back can be
+    reached at all: the flag itself accepts nothing but the preset names.
+    gl.argparser is this same object.
+    """
+    cli_args.argparser.parse_args = lambda *a, **k: SimpleNamespace(fake_deck_model=names)
+    try:
+        yield
+    finally:
+        del cli_args.argparser.parse_args
+
+
+def check_the_flag_shapes_each_deck() -> None:
+    """What the command line gives the fake deck at each index."""
+    with _flags("--fake-deck-model", "xl"):
+        picked = [fake_deck_model_for_index(i) for i in range(3)]
+    assert [m.name for m in picked] == ["xl", "xl", "xl"], (
+        f"one name must shape every fake deck; got {[m.name for m in picked]}")
+
+    # Two names, three decks: the last name covers the rest. It must clamp and
+    # never wrap, or deck three would silently go back to the first name.
+    with _flags("--fake-deck-model", "mini", "--fake-deck-model", "xl"):
+        picked = [fake_deck_model_for_index(i) for i in range(4)]
+    assert [m.name for m in picked] == ["mini", "xl", "xl", "xl"], (
+        f"two names must clamp at the last; got {[m.name for m in picked]}")
+
+    assert [fake_deck_model_for_index(i) for i in range(3)] == [None, None, None], (
+        "with no flag every fake deck keeps the shape it has")
+
+    with _flags("--fake-deck-model=plus"):
+        joined = fake_deck_model_for_index(0)
+    assert joined is not None and joined.name == "plus", (
+        f"--fake-deck-model=plus must resolve; got {joined}")
+
+    with _flags("--fake-deck", "neo"):
+        abbreviated = fake_deck_model_for_index(0)
+    assert abbreviated is not None and abbreviated.name == "neo", (
+        f"the --fake-deck abbreviation must resolve; got {abbreviated}")
+
+    # The name "default" leaves the deck alone. It must not resolve to the
+    # default model: a model, any model, states the geometry and drops a key
+    # layout the settings hold, and this flag reads by position, so "default"
+    # is how a caller shapes the second deck and leaves the first one alone.
+    gl.settings_manager.save_deck_settings("cli-default", {"key-layout": [5, 6]})
+    with _flags("--fake-deck-model", "default", "--fake-deck-model", "xl"):
+        first = fake_deck_model_for_index(0)
+        second = fake_deck_model_for_index(1)
+        untouched = FakeDeck(serial_number="cli-default", model=first)
+    assert first is None, f"the name default must leave the deck's shape alone; got {first}"
+    assert second is not None and second.name == "xl", (
+        f"the second deck must still take its own name; got {second}")
+    assert untouched.key_layout() == [5, 6], (
+        f"the name default must keep the persisted layout; got {untouched.key_layout()}")
+
+    # argparse refuses a name no preset carries, at the flag.
+    with _flags("--fake-deck-model", "stream-deck-4000"):
+        with contextlib.redirect_stderr(io.StringIO()) as complaint:
+            try:
+                fake_deck_model_for_index(0)
+            except SystemExit as e:
+                assert e.code == 2, f"a bad model name must exit 2; got {e.code}"
+            else:
+                raise AssertionError("argparse accepted a model name no preset carries")
+    assert "stream-deck-4000" in complaint.getvalue(), (
+        f"the refusal must name what was typed; got {complaint.getvalue()!r}")
+
+    # A name that reaches the helper any other way is reported once and leaves
+    # the deck's shape alone. The app still starts.
+    with _parser_answering(["stream-deck-4000"]), _errors_logged() as errors:
+        fallback = fake_deck_model_for_index(0)
+    assert fallback is None, f"an unknown name must leave the shape alone; got {fallback}"
+    assert len(errors) == 1, f"expected one logged error, got {len(errors)}: {errors}"
+    assert "stream-deck-4000" in errors[0] and "fake-deck-model" in errors[0], (
+        f"the logged error must name the flag and the typo; got {errors[0]!r}")
+
+    print("PASS: the flag shapes each deck by position, clamps at the last name, and the "
+          "name default leaves a deck alone")
+
+
+def check_the_deck_says_which_model_it_is() -> None:
+    """A deck shaped like a real model names it, and no other deck changes."""
+    assert fake_deck_display_name(0, FAKE_DECK_MODELS["xl"]) == "Fake Deck 1 (Stream Deck XL)", (
+        f"got {fake_deck_display_name(0, FAKE_DECK_MODELS['xl'])!r}")
+    assert fake_deck_display_name(1, FAKE_DECK_MODELS["plus"]) == "Fake Deck 2 (Stream Deck +)", (
+        f"got {fake_deck_display_name(1, FAKE_DECK_MODELS['plus'])!r}")
+    assert fake_deck_display_name(1, None) == "Fake Deck 2", (
+        f"a deck of no named model keeps its plain name; got {fake_deck_display_name(1, None)!r}")
+    assert fake_deck_display_name(0, DEFAULT_FAKE_DECK_MODEL) == "Fake Deck 1", (
+        "the default shape is nobody's hardware, so it names no model")
+
+    # The name reaches the device, which is what the deck list and the stack
+    # child read.
+    deck = FakeDeck(serial_number="named-deck",
+                    deck_type=fake_deck_display_name(0, FAKE_DECK_MODELS["xl"]),
+                    model="xl")
+    assert deck.deck_type() == "Fake Deck 1 (Stream Deck XL)", (
+        f"got {deck.deck_type()!r}")
+    print("PASS: a fake deck of a named model says which model it is")
+
+
+def check_a_model_refuses_a_shape_that_cannot_work() -> None:
+    """The three shapes that fail far from their cause are refused at the model."""
+    cases = (
+        ("the Elgato vendor id", FAKE_DECK_MODELS["xl"],
+         {"vendor_id": USBVendorIDs.USB_VID_ELGATO}),
+        ("touch with no touchscreen", FAKE_DECK_MODELS["xl"], {"is_touch": True}),
+        ("visual with no key size", FAKE_DECK_MODELS["pedal"], {"is_visual": True}),
+    )
+    for what, base, flip in cases:
+        try:
+            dataclasses.replace(base, **flip)
+        except ValueError as e:
+            assert base.name in str(e), f"{what}: the refusal must name the model; got {e}"
+        else:
+            raise AssertionError(f"a model with {what} was accepted")
+
+    # A flag flipped on a model that can carry it still builds.
+    ok = dataclasses.replace(FAKE_DECK_MODELS["plus"], is_touch=True, name="plus-touch")
+    assert ok.is_touch and FakeDeck(serial_number="ok-model", model=ok).is_touch(), (
+        "a touch model with a touchscreen must build")
+    assert len(FAKE_DECK_PRESETS) == len(FAKE_DECK_MODELS), (
+        f"{len(FAKE_DECK_PRESETS)} presets collapse into {len(FAKE_DECK_MODELS)} names, so two "
+        f"carry one name and one of them is unreachable")
+
+    print("PASS: a model refuses the Elgato identity, touch with no touchscreen and a visual "
+          "deck with no key size")
+
+
 def check_model_selection_rules() -> None:
-    """What a caller asks for beats what an earlier session persisted."""
+    """How the key grid is settled, in both branches.
+
+    With no model named the order is what it has always been: a layout the deck
+    settings hold, then the key_layout argument, then the default grid. The
+    settings win, because the row and column spinners write them and read them
+    back. With a model named the settings are not read at all, and the
+    key_layout argument still outranks the model's own grid.
+    """
     serial = "layout-persisted"
     gl.settings_manager.save_deck_settings(serial, {"key-layout": [3, 5]})
 
     plain = FakeDeck(serial_number=serial)
     assert plain.key_layout() == [3, 5], (
         f"with no model named, the persisted layout must still win; got {plain.key_layout()}")
+
+    gl.settings_manager.save_deck_settings("layout-combo", {"key-layout": [5, 6]})
+    combo = FakeDeck(serial_number="layout-combo", key_layout=[1, 2])
+    assert combo.key_layout() == [5, 6], (
+        f"with no model named, the persisted layout must outrank the key_layout argument; got "
+        f"{combo.key_layout()}")
+
+    fresh = FakeDeck(serial_number="layout-fresh", key_layout=[1, 2])
+    assert fresh.key_layout() == [1, 2], (
+        f"with no persisted layout, the key_layout argument must fill in; got "
+        f"{fresh.key_layout()}")
 
     with_model = FakeDeck(serial_number=serial, model="xl")
     assert with_model.key_layout() == [4, 8], (
@@ -228,17 +418,26 @@ def check_model_selection_rules() -> None:
     assert fake_deck_model("  XL  ") is FAKE_DECK_MODELS["xl"], (
         "a preset name must resolve whatever its spacing and case")
 
-    # The flag's own help text lists the presets, and cli_args cannot import
-    # the table (it stays importable before globals). Pin the two together.
+    # The flag carries the preset names twice over, as the choices argparse
+    # enforces and as the help a reader sees, and cli_args cannot import the
+    # table (it stays importable before globals). Pin all three together.
     flag = [a for a in cli_args.argparser._actions if "--fake-deck-model" in a.option_strings]
     assert len(flag) == 1, "the --fake-deck-model flag is gone"
+    assert set(cli_args.FAKE_DECK_MODEL_NAMES) == set(FAKE_DECK_MODELS), (
+        f"the flag accepts {sorted(cli_args.FAKE_DECK_MODEL_NAMES)}, the presets are "
+        f"{sorted(FAKE_DECK_MODELS)}")
+    assert len(cli_args.FAKE_DECK_MODEL_NAMES) == len(FAKE_DECK_MODELS), (
+        f"the flag's name list repeats itself: {cli_args.FAKE_DECK_MODEL_NAMES}")
+    assert set(flag[0].choices or ()) == set(FAKE_DECK_MODELS), (
+        f"argparse accepts {sorted(flag[0].choices or ())}, the presets are "
+        f"{sorted(FAKE_DECK_MODELS)}")
     listed = re.search(r"Shape of a fake deck: (.+?)\.", flag[0].help or "")
     assert listed is not None, f"cannot read the preset list out of the help: {flag[0].help!r}"
     names = {n for n in re.split(r"[,\s]+", listed.group(1)) if n and n != "or"}
     assert names == set(FAKE_DECK_MODELS), (
         f"the flag's help lists {sorted(names)}, the presets are {sorted(FAKE_DECK_MODELS)}")
 
-    print("PASS: model selection, the caller's own model, the refusal and the flag help "
+    print("PASS: model selection, the caller's own model, the refusal and the flag's names "
           "all hold")
 
 
@@ -390,7 +589,10 @@ def main() -> None:
 
     check_presets_match_the_hardware()
     check_no_preset_claims_the_elgato_identity()
+    check_a_model_refuses_a_shape_that_cannot_work()
     check_model_selection_rules()
+    check_the_flag_shapes_each_deck()
+    check_the_deck_says_which_model_it_is()
     check_default_shape_is_unchanged()
     check_controller_over_each_geometry()
 

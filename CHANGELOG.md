@@ -11,10 +11,12 @@ bundle as a release asset.
 
 - A fake deck can take the shape of a real model. `--fake-deck-model` gives
   each fake deck the key grid, dials, touchscreen and screen of a Stream Deck
-  Original, MK.2, Mini, XL, Plus, Neo or Pedal, so a page can be laid out for
-  hardware that is not on the desk. Repeat the flag once per fake deck; the
-  last name given covers the rest. Without the flag a fake deck keeps the
-  shape it has always had.
+  Original, MK.2, Mini, XL, Plus, Neo or Pedal, and the deck says which model
+  it stands for, so a page can be laid out for hardware that is not on the
+  desk. Repeat the flag once per fake deck; the last name given covers the
+  rest, and the name `default` leaves a deck with the shape and the key layout
+  it already has. Without the flag every fake deck keeps the shape it has
+  always had.
 - A key or dial with several states now opens on the state it was last
   left on. The page keeps that state, so a page switch and the next start
   of the app show the state you left instead of the first one. A page

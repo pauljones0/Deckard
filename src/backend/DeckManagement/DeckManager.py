@@ -33,7 +33,8 @@ from src.backend.DeckManagement.deck_controller.controller import DeckController
 from src.backend.DeckManagement.deck_controller.media_writer import ClearAndCloseMsg
 from src.backend import ui_port
 from src.backend.SettingsManager import SettingsManager
-from src.backend.DeckManagement.Subclasses.FakeDeck import FakeDeck, FakeDeckModel, fake_deck_model
+from src.backend.DeckManagement.Subclasses.FakeDeck import (
+    DEFAULT_FAKE_DECK_MODEL, FakeDeck, FakeDeckModel, fake_deck_model)
 from src.api import publish_controller, unpublish_controller
 
 # Import globals
@@ -49,23 +50,45 @@ ELGATO_VENDOR_ID = "0fd9"
 
 def fake_deck_model_for_index(index: int) -> "FakeDeckModel | None":
     """The model the command line gives the fake deck at this index, or None
-    for the default shape.
+    when this deck is to keep the shape it already has.
 
     --fake-deck-model repeats, one name per fake deck, and the last name given
     covers every deck after it. One name therefore shapes them all.
 
-    A name that no preset carries is a typo on a developer flag, so this logs
-    what the names are and hands back the default shape. The app still starts.
+    The name "default" answers None rather than the default model. The two
+    differ: a model, any model, states the geometry and so ignores a key layout
+    the deck settings hold, while None leaves that layout in charge. Because the
+    flag reads by position, "default" is how a caller shapes the second deck and
+    leaves the first one alone, and that must not quietly resize the first one.
+
+    A name no preset carries cannot arrive through the flag, which argparse
+    limits to the names it lists. One that arrives any other way is reported and
+    leaves the deck's shape alone, so the app still starts.
     """
     names = getattr(gl.argparser.parse_args(), "fake_deck_model", None)
     if not names:
         return None
     name = names[min(index, len(names) - 1)]
+    if name.strip().casefold() == DEFAULT_FAKE_DECK_MODEL.name:
+        return None
     try:
         return fake_deck_model(name)
     except ValueError as e:
-        log.error(f"--fake-deck-model: {e}. Fake deck {index + 1} takes the default shape.")
+        log.error(f"--fake-deck-model: {e}. Fake deck {index + 1} keeps the shape it has.")
         return None
+
+
+def fake_deck_display_name(index: int, model: "FakeDeckModel | None") -> str:
+    """The name a fake deck carries in the deck list and its stack child.
+
+    A deck shaped like a real model says which one, because two fake decks of
+    different shapes are otherwise told apart by counting keys on screen. A deck
+    of no named model keeps the plain name it always had.
+    """
+    name = f"Fake Deck {index + 1}"
+    if model is None or not model.deck_type:
+        return name
+    return f"{name} ({model.deck_type})"
 
 
 def close_all_controllers(controllers: "Iterable[Any]", join_timeout: float = 2.0) -> None:
@@ -384,9 +407,11 @@ class DeckManager:
             log.info(f"Loading {n_fake_decks - old_n_fake_decks} fake deck(s)")
             # Load difference in number of fake decks
             for _ in range(n_fake_decks - old_n_fake_decks):
-                a = f"Fake Deck {len(self.fake_deck_controller)+1}"
-                model = fake_deck_model_for_index(len(self.fake_deck_controller))
-                fake_deck = FakeDeck(serial_number = f"fake-deck-{len(self.fake_deck_controller)+1}", deck_type=f"Fake Deck {len(self.fake_deck_controller)+1}", model=model)
+                index = len(self.fake_deck_controller)
+                model = fake_deck_model_for_index(index)
+                fake_deck = FakeDeck(serial_number=f"fake-deck-{index+1}",
+                                     deck_type=fake_deck_display_name(index, model),
+                                     model=model)
                 self.add_newly_connected_deck(fake_deck, is_fake=True)
 
         elif n_fake_decks < old_n_fake_decks:
