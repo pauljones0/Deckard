@@ -36,6 +36,7 @@ if TYPE_CHECKING:
 # Import own modules
 from src.backend.DeckManagement.ImageHelpers import image2pixbuf
 from src.backend.settings_store import DECK_NAME_MAX_LENGTH
+from src.windows.mainWindow.lazy_map import LazyMapTasks
 
 class DeckGroup(Adw.PreferencesGroup):
     def __init__(self, settings_page: "DeckSettingsPage") -> None:
@@ -219,7 +220,7 @@ class Rotation(Adw.PreferencesRow):
             self.connect_signal()
 
 
-class Brightness(Adw.PreferencesRow):
+class Brightness(LazyMapTasks, Adw.PreferencesRow):
     def __init__(self, settings_page: "DeckSettingsPage", deck_serial_number: str) -> None:
         super().__init__()
         self.settings_page = settings_page
@@ -236,7 +237,7 @@ class Brightness(Adw.PreferencesRow):
         """
         To save performance and memory, we only load the thumbnail when the user sees the row
         """
-        self.on_map_tasks: list[Callable[[], None]] = []
+        self.on_map_tasks = []
         self.connect("map", self.on_map)
 
         # One handler, always: load_default defers itself at construction (an
@@ -244,11 +245,6 @@ class Brightness(Adw.PreferencesRow):
         # connect a no-op if it ever ran first.
         self.load_default()
         self.connect_signal()
-
-    def on_map(self, widget: Gtk.Widget) -> None:
-        for f in self.on_map_tasks:
-            f()
-        self.on_map_tasks.clear()
 
     def build(self) -> None:
         self.main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, hexpand=True,
@@ -312,7 +308,7 @@ class Brightness(Adw.PreferencesRow):
             self._scale_handler = None
 
 
-class Saturation(Adw.PreferencesRow):
+class Saturation(LazyMapTasks, Adw.PreferencesRow):
     """Per-deck display saturation boost, a PIL ImageEnhance.Color factor.
 
     It lives in the deck settings under display and saturation, and its default
@@ -337,7 +333,7 @@ class Saturation(Adw.PreferencesRow):
 
         self.build()
 
-        self.on_map_tasks: list[Callable[[], None]] = []
+        self.on_map_tasks = []
         self.connect("map", self.on_map)
 
         # The pending id of the trailing debounce below, None between runs.
@@ -345,11 +341,6 @@ class Saturation(Adw.PreferencesRow):
 
         self.load_default()  # defers at construction; see Brightness above
         self.connect_signal()
-
-    def on_map(self, widget: Gtk.Widget) -> None:
-        for f in self.on_map_tasks:
-            f()
-        self.on_map_tasks.clear()
 
     def build(self) -> None:
         self.main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, hexpand=True,
@@ -410,7 +401,7 @@ class Saturation(Adw.PreferencesRow):
             self._scale_handler = None
 
 
-class Screensaver(Adw.PreferencesRow):
+class Screensaver(LazyMapTasks, Adw.PreferencesRow):
     def __init__(self, settings_page: "DeckSettingsPage", deck_serial_number: str) -> None:
         super().__init__()
         self.settings_page = settings_page
@@ -427,7 +418,7 @@ class Screensaver(Adw.PreferencesRow):
         """
         To save performance and memory, we only load the thumbnail when the user sees the row
         """
-        self.on_map_tasks: list[Callable[[], None]] = []
+        self.on_map_tasks = []
         self.connect("map", self.on_map)
 
         self.load_defaults()
@@ -442,11 +433,6 @@ class Screensaver(Adw.PreferencesRow):
             ("brightness", self.scale, "value-changed", self.on_change_brightness),
         ]
 
-    def on_map(self, widget: Gtk.Widget) -> None:
-        for f in self.on_map_tasks:
-            f()
-        self.on_map_tasks.clear()
-    
     def build(self) -> None:
         self.main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, hexpand=True,
                                 margin_start=15, margin_end=15, margin_top=15, margin_bottom=15)

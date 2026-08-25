@@ -30,12 +30,12 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 
 from src.backend import services
+from src.windows.mainWindow.lazy_map import LazyMapTasks
 
 import globals as gl
 
 from gi.repository import Gtk, GLib, Gio
 
-from collections.abc import Callable
 from typing import Any, TYPE_CHECKING, TypeAlias
 if TYPE_CHECKING:
     from gi.repository import GdkPixbuf
@@ -253,7 +253,7 @@ class ScreenBar(Gtk.Frame):
         # Reload ui
         gl.app.main_win.sidebar.load_for_identifier(self.identifier, screen.state)
 
-class ScreenBarImage(Gtk.Picture):
+class ScreenBarImage(LazyMapTasks, Gtk.Picture):
     def __init__(self, screenbar: ScreenBar, **kwargs: Any) -> None:
         super().__init__(keep_aspect_ratio=True, can_shrink=True, content_fit=Gtk.ContentFit.SCALE_DOWN,
                          halign=Gtk.Align.CENTER, hexpand=False, width_request=80, height_request=10,
@@ -262,7 +262,7 @@ class ScreenBarImage(Gtk.Picture):
         
         self.screenbar = screenbar
 
-        self.on_map_tasks: list[Callable[[], object]] = []
+        self.on_map_tasks = []
         self.connect("map", self.on_map)
 
         # next() on a count is atomic, so two frames never take the same id,
@@ -273,11 +273,6 @@ class ScreenBarImage(Gtk.Picture):
         self.task_ids = itertools.count()
         # None until the first frame is queued.
         self.latest_task_id: int | None = None
-
-    def on_map(self, *args: object) -> None:
-        for task in self.on_map_tasks:
-            task()
-        self.on_map_tasks.clear()
 
     def get_new_task_id(self) -> int:
         return next(self.task_ids)

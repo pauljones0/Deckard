@@ -24,6 +24,7 @@ import gi
 
 from src.backend.DeckManagement.InputIdentifier import Input, InputIdentifier
 from src.windows.mainWindow.elements.PageSelector import PageSelector
+from src.windows.mainWindow.lazy_map import LazyMapTasks
 from src.windows.mainWindow.elements.Sidebar.elements.StateSwitcher import StateSwitcher
 from src.windows.mainWindow.elements.Sidebar.elements.ScreenEditor import ScreenEditor
 
@@ -50,7 +51,7 @@ from src.backend import services
 
 import globals as gl
 
-class Sidebar(Adw.NavigationPage):
+class Sidebar(LazyMapTasks, Adw.NavigationPage):
     def __init__(self, main_window: "MainWindow", **kwargs: Any) -> None:
         super().__init__(hexpand=True, title="Sidebar", **kwargs)
         self.main_window = main_window
@@ -60,15 +61,10 @@ class Sidebar(Adw.NavigationPage):
         """
         To save performance and memory, we only load the thumbnail when the user sees the row
         """
-        self.on_map_tasks: list[Callable[[], None]] = []
+        self.on_map_tasks = []
         self.connect("map", self.on_map)
 
         self.build()
-
-    def on_map(self, widget: Gtk.Widget) -> None:
-        for f in self.on_map_tasks:
-            f()
-        self.on_map_tasks.clear()
 
     def build(self) -> None:
         self.main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, hexpand=True)
