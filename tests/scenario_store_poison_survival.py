@@ -14,19 +14,16 @@ import fixtures  # noqa: F401  (isolated --data tempdir; import first)
 import globals as gl
 
 from src.backend.Store.StoreBackend import StoreBackend
+from src.backend.Store.prepare_pool import PreparePool
 from src.windows.Store.StoreData import IconData, SDPlusBarWallpaperData, WallpaperData
 
 
 def _make_backend() -> StoreBackend:
-    from concurrent.futures import ThreadPoolExecutor
     sb = StoreBackend.__new__(StoreBackend)  # skip __init__, which spawns a fetch thread
     from src.backend.Store.StoreCache import StoreCache
     sb.store_cache = StoreCache()
     sb.official_authors = []
-    sb._prepare_pool = ThreadPoolExecutor(
-        max_workers=StoreBackend.MAX_CONCURRENT_REQUESTS,
-        thread_name_prefix="store-prepare-test",
-    )
+    sb._prepare_pool = PreparePool(StoreBackend.MAX_CONCURRENT_REQUESTS)
     return sb
 
 

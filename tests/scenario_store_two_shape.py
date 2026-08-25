@@ -15,13 +15,13 @@ import globals as gl
 
 import json
 import threading
-from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 
 from PIL import Image
 
 from src.backend.Store.catalog_entry import PinnedRevision, resolve_pinned_revision
 from src.backend.Store.StoreBackend import InstalledAsset, StoreBackend
+from src.backend.Store.prepare_pool import PreparePool
 from src.backend.Store.StoreCache import StoreCache
 
 
@@ -64,7 +64,7 @@ def _make_backend() -> StoreBackend:
     sb = StoreBackend.__new__(StoreBackend)
     sb.store_cache = StoreCache()
     sb._fetch_limiter = threading.Semaphore(StoreBackend.MAX_CONCURRENT_REQUESTS)
-    sb._prepare_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="store-prepare")
+    sb._prepare_pool = PreparePool(StoreBackend.MAX_CONCURRENT_REQUESTS)
     sb.official_authors = []
     return sb
 

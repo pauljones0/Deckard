@@ -16,7 +16,6 @@ import json
 import os
 import shutil
 import threading
-from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 
 import fixtures  # noqa: F401  (isolated --data tempdir; import first)
@@ -25,6 +24,7 @@ import globals as gl
 from PIL import Image
 
 from src.backend.Store.StoreBackend import StoreBackend
+from src.backend.Store.prepare_pool import PreparePool
 from src.backend.Store.StoreCache import StoreCache
 from src.backend.Store.store_result import Ok, Err, ErrReason, StoreFetchError
 from src.windows.Store.StoreData import (
@@ -127,7 +127,7 @@ def _make_backend() -> StoreBackend:
     sb = StoreBackend.__new__(StoreBackend)
     sb.store_cache = StoreCache()
     sb._fetch_limiter = threading.Semaphore(StoreBackend.MAX_CONCURRENT_REQUESTS)
-    sb._prepare_pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="store-prepare")
+    sb._prepare_pool = PreparePool(StoreBackend.MAX_CONCURRENT_REQUESTS)
     sb.official_authors = []
     return sb
 

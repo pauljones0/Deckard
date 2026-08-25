@@ -373,6 +373,19 @@ class App(Adw.Application):
         except Exception as e:
             log.warning(f"Could not write pending page edits during shutdown: {e}")
 
+        # Release the store fan-out pool. Its workers are not daemons and park
+        # on the work queue between passes, so the join loop further below
+        # waits its full bound on each one and then rides the force-quit timer.
+        # It runs before the cache flush below, because a pass that keeps
+        # fetching through the deck teardown dirties the index again after the
+        # flush wrote it, and os._exit then drops those entries, which leaves
+        # cache files that no last-use clock ages out.
+        try:
+            if gl.store_backend is not None:
+                gl.store_backend.shutdown()
+        except Exception as e:
+            log.warning(f"Could not stop the store backend during shutdown: {e}")
+
         # Drain the deferred index writes of the store cache. This process
         # ends in os._exit(0), which skips the StoreCache atexit hook, and the
         # flush timer is a daemon, so without this call every quit loses the

@@ -76,6 +76,12 @@ bundle as a release asset.
 
 ### Fixed
 
+- Quitting no longer waits several seconds after the store has been open. The
+  worker threads that fetch the store catalog parked for the life of the app,
+  and the quit path waited its full bound for them before forcing the exit.
+  The workers are now released at quit, before the store cache writes its
+  index, so a quit is prompt and the cache index stays complete.
+
 - The event-assignment list and the deck settings rows (background, brightness,
   saturation, rotation, screensaver and the state switcher) keep working after
   an error, the same hardening the sidebar rows received. A failure part way
