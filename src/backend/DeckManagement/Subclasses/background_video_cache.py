@@ -10,7 +10,7 @@ import globals as gl
 from src.backend.DeckManagement.Subclasses.mp4_tile_cache import Mp4FrameCache, VID_CACHE
 
 # Import typing
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, override
 if TYPE_CHECKING:
     from src.backend.DeckManagement.deck_controller.controller import DeckController
 
@@ -55,6 +55,7 @@ class BackgroundVideoCache(Mp4FrameCache[list[Image.Image]]):
 
     # Geometry and cache-path hooks.
 
+    @override
     def _default_cache_path(self) -> str:
         # entry.split(".")[0] in video_cache_sweeper.py still resolves this to
         # video_md5 with the suffix present, because the suffix comes after
@@ -87,9 +88,11 @@ class BackgroundVideoCache(Mp4FrameCache[list[Image.Image]]):
 
         return (canvas_width, canvas_height)
 
+    @override
     def _on_promoted(self) -> None:
         self._remove_legacy_cache()
 
+    @override
     def _writer_enabled(self) -> bool:
         # This instance is self-contained and decides for itself whether to
         # build. KeyVideoCache instead gates once through its registry's
@@ -133,6 +136,7 @@ class BackgroundVideoCache(Mp4FrameCache[list[Image.Image]]):
             entries.append(Image.new("RGBA", self._require_strip_size(), (0, 0, 0, 0)))
         return entries
 
+    @override
     def _fallback_payload(self) -> list[Image.Image]:
         # Mp4FrameCache.get_frame prefers self.last_payload, the last tile
         # list it decoded, over this call. It reaches here only when no decode
@@ -155,6 +159,7 @@ class BackgroundVideoCache(Mp4FrameCache[list[Image.Image]]):
             return self._fallback_payload(), None
         return frame, index
 
+    @override
     def _payload_from_bgr(self, frame_bgr: npt.NDArray[np.uint8]) -> list[Image.Image]:
         # Crop the key tiles and the strip slice out of the canvas frame per
         # request, so no frame data stays in RAM beyond the decoder's buffers.

@@ -41,7 +41,7 @@ at runtime, so it sits under both the writer and the inputs.
 from dataclasses import dataclass, replace
 
 from collections.abc import Callable
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, override
 
 if TYPE_CHECKING:
     from src.backend.DeckManagement.deck_controller.media_writer import MediaPlayerThread
@@ -153,6 +153,7 @@ class KeyPresentState(PresentState):
         super().__init__()
         self.key_index = key_index
 
+    @override
     def _enqueue(self, media_player: "MediaPlayerThread", native_image: bytes,
                  page: "Page | None", config_gen: int | None, img_hash: int) -> None:
         media_player.add_image_task(self.key_index, native_image, page=page,
@@ -164,6 +165,7 @@ class TouchscreenPresentState(PresentState):
     """The present state of the touchscreen, whose slot is the single strip
     every dial, label and background video composites into."""
 
+    @override
     def _enqueue(self, media_player: "MediaPlayerThread", native_image: bytes,
                  page: "Page | None", config_gen: int | None, img_hash: int) -> None:
         media_player.add_touchscreen_task(native_image, page=page, config_gen=config_gen,

@@ -1,5 +1,5 @@
 from collections.abc import Sequence
-from typing import cast, Any, TYPE_CHECKING, TypedDict
+from typing import cast, Any, TYPE_CHECKING, TypedDict, override
 from enum import Enum, StrEnum
 
 if TYPE_CHECKING:
@@ -90,6 +90,7 @@ class InputIdentifier:
     def get_controller_input(self, controller: "DeckController") -> "ControllerInput[Any] | None":
         return controller.get_input(self)
     
+    @override
     def __eq__(self, o: object) -> bool:
         if o is None:
             return False
@@ -97,9 +98,11 @@ class InputIdentifier:
             raise ValueError(f"Invalid type {type(o)} for InputIdentifier")
         return self.input_type == o.input_type and self.json_identifier == o.json_identifier
 
+    @override
     def __str__(self) -> str:
         return f"Input({self.input_type}, {self.json_identifier})"
     
+    @override
     def __hash__(self) -> int:
         return hash((self.input_type, self.json_identifier))
 
@@ -114,6 +117,7 @@ class InputEvent(Enum):
         obj.string_name = string_name
         return obj
     
+    @override
     def __str__(self) -> str:
         return self.string_name
     

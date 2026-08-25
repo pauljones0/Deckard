@@ -32,7 +32,7 @@ from loguru import logger as log
 
 import globals as gl
 from src.backend.DeckManagement.Subclasses import cache_budget
-from typing import Generic, TypeVar, cast
+from typing import Generic, TypeVar, cast, override
 
 VID_CACHE = os.path.join(gl.DATA_PATH, "cache", "videos")
 os.makedirs(VID_CACHE, exist_ok=True)
@@ -643,10 +643,12 @@ class KeyVideoCache(Mp4FrameCache[Image.Image]):
     each consumer's own reader (is_builder=False, see acquire() below).
     """
 
+    @override
     def _payload_from_bgr(self, frame_bgr: "npt.NDArray[np.uint8]") -> Image.Image:
         # One RGB tile image per frame, decoded at tile resolution.
         return Image.fromarray(cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB))
 
+    @override
     def _default_cache_path(self) -> str:
         size_str = f"{self.out_size[0]}x{self.out_size[1]}"
         cache_dir = os.path.join(VID_CACHE, f"keys_{size_str}")

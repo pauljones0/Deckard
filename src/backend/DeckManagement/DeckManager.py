@@ -17,7 +17,7 @@ import contextlib
 import threading
 import time
 from collections.abc import Iterable
-from typing import Any
+from typing import Any, override
 from StreamDeck.DeviceManager import DeviceManager
 from StreamDeck.Devices import StreamDeck
 from loguru import logger as log
@@ -578,6 +578,7 @@ class FlatpakDeckDisconnectThread(threading.Thread):
         super().__init__(name="FlatpakDeckDisconnectThread")
         self.deck_manager = deck_manager
 
+    @override
     def run(self) -> None:
         while gl.threads_running:
             time.sleep(2)

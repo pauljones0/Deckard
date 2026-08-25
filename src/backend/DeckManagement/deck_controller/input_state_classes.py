@@ -48,7 +48,7 @@ from src.backend import ui_port
 
 import globals as gl
 
-from typing import Any, TYPE_CHECKING
+from typing import Any, TYPE_CHECKING, override
 if TYPE_CHECKING:
     from collections.abc import Callable
     from concurrent.futures import Future
@@ -416,6 +416,7 @@ class ControllerTouchScreenState(ControllerInputState):
 
         self.update()
 
+    @override
     def set_image(self, image: "InputImage | None", update: bool = True) -> None:
         """Attach this touchscreen's still media, or clear it with None. This
         matches the key and dial slots. get_current_image composites the media
@@ -432,6 +433,7 @@ class ControllerTouchScreenState(ControllerInputState):
         if update:
             self.update()
 
+    @override
     def set_video(self, video: "InputVideo | KeyGIF") -> None:
         """Attach this touchscreen's animated media, matching the key and dial
         slots. Both providers expose get_next_frame and close."""
@@ -696,6 +698,7 @@ class ControllerTouchScreenState(ControllerInputState):
         return background
 
 
+    @override
     def update(self) -> None:
         if self.controller_touch.get_active_state() is self:
             self.controller_touch.update()
@@ -709,6 +712,7 @@ class ControllerTouchScreenState(ControllerInputState):
         return
 
 
+    @override
     def clear(self) -> None:
         # Release any plugin-set media, as the key and dial clear() do, then
         # reset the mirror image.
@@ -721,6 +725,7 @@ class ControllerTouchScreenState(ControllerInputState):
         self.media_owner_action = None
         self.set_current_image(self.controller_touch.generate_empty_image())
 
+    @override
     def close_resources(self) -> None:
         # Only set_current_image() sets current_image. A touchscreen state
         # closed before its first render never gets one, such as a
@@ -767,6 +772,7 @@ class ControllerDialState(ControllerInputState):
 
         super().__init__(dial, state)
 
+    @override
     def set_image(self, image: "InputImage | None", update: bool = True) -> None:
         if self.image is not None:
             self.image.close()
@@ -777,6 +783,7 @@ class ControllerDialState(ControllerInputState):
         if update:
             self.update()
 
+    @override
     def set_video(self, video: "InputVideo | KeyGIF") -> None:
         if self.video is not None:
             self.video.close()
@@ -784,17 +791,20 @@ class ControllerDialState(ControllerInputState):
         self.video = video
         self.media_owner_action = None
 
+    @override
     def detach_action_media(self) -> "tuple[InputImage | None, InputVideo | KeyGIF | None]":
         media = (self.image, self.video)
         self.image = None
         self.video = None
         return media
 
+    @override
     def attach_action_media(self, image: "InputImage | None",
                             video: "InputVideo | KeyGIF | None") -> None:
         self.image = image
         self.video = video
 
+    @override
     def clear(self) -> None:
         # The dial twin of ControllerKeyState.clear(): release action-owned
         # media and reset the page-owned layers so a fresh page load starts
@@ -811,6 +821,7 @@ class ControllerDialState(ControllerInputState):
         self.layout_manager.clear()
         self.background_manager.set_page_color(None)
 
+    @override
     def close_resources(self) -> None:
         # The base class default does nothing, so this override releases a
         # dial's InputImage and InputVideo from
@@ -885,6 +896,7 @@ class ControllerKeyState(ControllerInputState):
         # carry action-owned media across the create_n_states wipe.
         self.media_owner_action: "ActionCore | None" = None
 
+    @override
     def close_resources(self) -> None:
         if self.key_image is not None:
             self.key_image.close()
@@ -895,6 +907,7 @@ class ControllerKeyState(ControllerInputState):
         self.media_owner_action = None
         self.cover_cache.invalidate()
 
+    @override
     def set_image(self, key_image: "InputImage | None", update: bool = True) -> None:
         if self.key_image is not None:
             self.key_image.close()
@@ -916,6 +929,7 @@ class ControllerKeyState(ControllerInputState):
         if update:
             self.update()
 
+    @override
     def set_video(self, key_video: "InputVideo | KeyGIF") -> None:
         if self.key_video is not None:
             # Close the previous video before this one overwrites it.
@@ -927,6 +941,7 @@ class ControllerKeyState(ControllerInputState):
         self.media_owner_action = None
         self.cover_cache.invalidate()
 
+    @override
     def detach_action_media(self) -> "tuple[InputImage | None, InputVideo | KeyGIF | None]":
         media = (self.key_image, self.key_video)
         self.key_image = None
@@ -938,11 +953,13 @@ class ControllerKeyState(ControllerInputState):
         self.cover_cache.invalidate()
         return media
 
+    @override
     def attach_action_media(self, image: "InputImage | None",
                             video: "InputVideo | KeyGIF | None") -> None:
         self.key_image = image
         self.key_video = video
 
+    @override
     def clear(self) -> None:
         if self.key_video is not None:
             # Close key_video here; a bare drop leaks its capture.

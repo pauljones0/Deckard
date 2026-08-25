@@ -15,7 +15,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 from collections import deque
 
 from src.backend.DeckManagement.Subclasses.byte_lru_cache import ByteLRUCache
-from typing import Any
+from typing import Any, override
 
 
 class EncodedImageCache(ByteLRUCache):
@@ -44,6 +44,7 @@ class EncodedImageCache(ByteLRUCache):
         self._doorkeeper_seen: set[Any] = set()
         self._doorkeeper_order: "deque[Any]" = deque()
 
+    @override
     def _admit(self, key: object) -> bool:
         """Doorkeeper check and record. The caller holds _lock.
 
@@ -67,6 +68,7 @@ class EncodedImageCache(ByteLRUCache):
             self._doorkeeper_seen.discard(oldest)
         return False
 
+    @override
     def _on_clear_locked(self) -> None:
         """clear() also resets the doorkeeper. Stale "seen" bookkeeping from
         the old content must not let one of its keys skip admission when that
