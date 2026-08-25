@@ -8,6 +8,7 @@ from loguru import logger as log
 
 import globals as gl
 from src.backend.DeckManagement.Subclasses.mp4_tile_cache import Mp4FrameCache, VID_CACHE
+from src.backend.DeckManagement.deck_controller.strip_band import band_layout, clamp_box
 
 # Import typing
 from typing import TYPE_CHECKING, override
@@ -43,6 +44,11 @@ class BackgroundVideoCache(Mp4FrameCache[list[Image.Image]]):
             self.deck_controller.get_touchscreen_image_size()
             if self.extend_touchscreen else None)
         self.entries_per_frame = self.key_count + (1 if self.extend_touchscreen else 0)
+        # Filled by _canvas_size() for an extended cache, before any crop
+        # runs: the key grid's x offset on the canvas (the band can overhang
+        # the grid) and the band's crop box, both in canvas coordinates.
+        self.grid_x = 0
+        self.strip_band_box: "tuple[int, int, int, int] | None" = None
 
         self.key_layout_str = f"{self.key_layout[0]}x{self.key_layout[1]}"
         if self.extend_touchscreen:
@@ -60,8 +66,15 @@ class BackgroundVideoCache(Mp4FrameCache[list[Image.Image]]):
         # entry.split(".")[0] in video_cache_sweeper.py still resolves this to
         # video_md5 with the suffix present, because the suffix comes after
         # the first dot-delimited component. The sweeper needs no change.
-        cache_dir = os.path.join(VID_CACHE, self.key_layout_str)
-        self._legacy_cache_path = os.path.join(cache_dir, f"{self.video_md5}.cache")
+        # The directory carries the canvas size. Two decks with the same key
+        # layout but different key sizes or bands (an SD+ and a Neo are both
+        # 2x4) must not resolve one file, or each open finds the other's
+        # frame size, removes the file as stale and re-encodes, in both
+        # directions. The legacy pickle kept the size-less directory.
+        legacy_dir = os.path.join(VID_CACHE, self.key_layout_str)
+        self._legacy_cache_path = os.path.join(legacy_dir, f"{self.video_md5}.cache")
+        cache_dir = os.path.join(
+            VID_CACHE, f"{self.key_layout_str}@{self.out_size[0]}x{self.out_size[1]}")
         return os.path.join(cache_dir, f"{self.video_md5}{self._sat_suffix}.mp4")
 
     def _canvas_size(self) -> tuple[int, int]:
@@ -80,11 +93,14 @@ class BackgroundVideoCache(Mp4FrameCache[list[Image.Image]]):
         canvas_width = key_width + total_spacing_x
         canvas_height = key_height + total_spacing_y
 
-        # Extend the canvas below the key grid, so the frame continues onto
-        # the touchscreen strip. That is one bezel gap plus the strip mapped
-        # into canvas coordinates, the same geometry as BackgroundImage.
+        # Extend the canvas to the union of the key grid and the strip's
+        # view, the same strip_band layout as BackgroundImage: taller by the
+        # gap plus the band, wider when the band overhangs the grid.
+        # Snapshot the layout here; the render thread must not call back
+        # into controller state.
         if self.extend_touchscreen:
-            canvas_height += spacing_y + self._get_strip_canvas_height(canvas_width)
+            canvas_width, canvas_height, self.grid_x, self.strip_band_box = \
+                band_layout(self.deck_controller, canvas_width, canvas_height)
 
         return (canvas_width, canvas_height)
 
@@ -172,17 +188,17 @@ class BackgroundVideoCache(Mp4FrameCache[list[Image.Image]]):
             entries.append(self.crop_strip_from_deck_sized_image(canvas))
         return entries
 
-    def _get_strip_canvas_height(self, canvas_width: int) -> int:
-        """Height of the touchscreen strip in key-grid canvas coordinates."""
-        strip_width, strip_height = self._require_strip_size()
-        return round(strip_height * canvas_width / strip_width)
-
     def crop_strip_from_deck_sized_image(self, image: Image.Image) -> Image.Image:
-        """The bottom slice of the extended canvas, at strip resolution."""
-        slice_height = self._get_strip_canvas_height(image.width)
-        strip_slice = image.crop(
-            (0, image.height - slice_height, image.width, image.height)
-        )
+        """The strip's view of the extended canvas, at strip resolution."""
+        if self.strip_band_box is None:
+            # The same class of miss as _require_strip_size: a subclass or
+            # refactor that reaches a strip crop before _canvas_size() filled
+            # the layout. A raise beats the silent black strip a 0x0 crop
+            # resizes into.
+            raise RuntimeError(
+                "this background video cache has no strip band (the canvas "
+                "size was never computed for an extended cache)")
+        strip_slice = image.crop(clamp_box(self.strip_band_box, image.width, image.height))
         return strip_slice.resize(self._require_strip_size(), Image.Resampling.HAMMING)
 
     def crop_key_image_from_deck_sized_image(self, image: Image.Image, key: int) -> Image.Image:
@@ -194,9 +210,10 @@ class BackgroundVideoCache(Mp4FrameCache[list[Image.Image]]):
         row = key // key_cols
         col = key % key_cols
 
-        # Compute the starting X and Y offsets into the full size image that the
-        # requested key should display.
-        start_x = col * (key_width + spacing_x)
+        # Compute the starting X and Y offsets into the full size image that
+        # the requested key should display. grid_x is the grid's position on
+        # a canvas whose strip band overhangs it.
+        start_x = self.grid_x + col * (key_width + spacing_x)
         start_y = row * (key_height + spacing_y)
 
         # Compute the region of the larger deck image that is occupied by the given

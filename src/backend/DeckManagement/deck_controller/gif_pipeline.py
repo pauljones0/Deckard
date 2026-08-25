@@ -33,6 +33,7 @@ from src.backend.DeckManagement.Subclasses import cache_budget
 from src.backend.DeckManagement.Subclasses import mp4_tile_cache
 from src.backend.DeckManagement.Subclasses.SingleKeyAsset import SingleKeyAsset
 from src.backend.DeckManagement.Subclasses.mp4_tile_cache import get_video_md5
+from src.backend.DeckManagement.deck_controller.strip_band import band_layout
 
 from collections.abc import Generator
 from typing import TYPE_CHECKING, cast
@@ -362,24 +363,25 @@ class GifBackground:
             key_w, key_h = deck.key_image_format()['size']
             spacing_x, spacing_y = deck_controller.key_spacing
 
-            canvas_w = key_w * key_cols + spacing_x * (key_cols - 1)
-            canvas_h = key_h * key_rows + spacing_y * (key_rows - 1)
+            grid_w = key_w * key_cols + spacing_x * (key_cols - 1)
+            grid_h = key_h * key_rows + spacing_y * (key_rows - 1)
+            canvas_w, canvas_h, grid_x = grid_w, grid_h, 0
+
+            if self.extend_touchscreen:
+                # The same strip_band layout BackgroundImage and
+                # BackgroundVideoCache cut from: the canvas covers the union
+                # of the key grid and the strip's view, and the grid sits at
+                # grid_x when the band overhangs it.
+                self.strip_size = deck_controller.get_touchscreen_image_size()
+                canvas_w, canvas_h, grid_x, self._strip_box = band_layout(
+                    deck_controller, grid_w, grid_h)
 
             self._key_regions: "list[tuple[int, int, int, int]]" = []
             for key in range(self.key_count):
                 row, col = divmod(key, key_cols)
-                x = col * (key_w + spacing_x)
+                x = grid_x + col * (key_w + spacing_x)
                 y = row * (key_h + spacing_y)
                 self._key_regions.append((x, y, x + key_w, y + key_h))
-
-            if self.extend_touchscreen:
-                # Extend the canvas below the key grid so the frame
-                # continues onto the strip: one bezel gap plus the strip in
-                # canvas coordinates. BackgroundImage uses this geometry too.
-                self.strip_size = deck_controller.get_touchscreen_image_size()
-                strip_canvas_h = round(self.strip_size[1] * canvas_w / self.strip_size[0])
-                canvas_h += spacing_y + strip_canvas_h
-                self._strip_box = (0, canvas_h - strip_canvas_h, canvas_w, canvas_h)
             canvas_size = (canvas_w, canvas_h)
         else:
             # In strip-background mode it serves whole frames only.

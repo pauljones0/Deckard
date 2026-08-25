@@ -184,6 +184,17 @@ bundle as a release asset.
 
 ### Fixed
 
+- A wallpaper extended onto the Stream Deck + touchscreen now lines up with
+  the keys. The strip's view was placed and scaled from an assumed key
+  spacing, and the device does not follow that arithmetic: the real gaps
+  between keys are far wider, the strip sits lower, shows a slice wider than
+  the key grid itself, and draws it slightly taller than the key displays
+  do. The key gaps and the strip's position, width and height were measured
+  on the device, the horizontal values with the strip's own touch sensor as
+  a ruler, and image, video and GIF backgrounds now compose one canvas that
+  covers both the keys and the strip's full view and cut every surface from
+  it. A cached background video built with the old geometry is detected by
+  its frame size and rebuilt.
 - Turning a page of thumbnails in the asset manager no longer freezes the
   window. The icon, wallpaper and custom-asset grids used to decode every
   thumbnail on the page while you waited, about fifty images at once, and the
