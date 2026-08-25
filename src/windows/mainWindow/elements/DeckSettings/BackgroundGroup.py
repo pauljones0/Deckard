@@ -35,6 +35,7 @@ import globals as gl
 
 # Import own modules
 from src.backend.DeckManagement.ImageHelpers import image2pixbuf
+from src.windows.mainWindow.lazy_map import LazyMapTasks
 
 class BackgroundGroup(Adw.PreferencesGroup):
     def __init__(self, settings_page: "DeckSettingsPage") -> None:
@@ -45,7 +46,7 @@ class BackgroundGroup(Adw.PreferencesGroup):
         self.add(self.media_row)
 
 
-class BackgroundMediaRow(Adw.PreferencesRow):
+class BackgroundMediaRow(LazyMapTasks, Adw.PreferencesRow):
     def __init__(self, settings_page: "DeckSettingsPage", deck_serial_number: str, **kwargs: Any) -> None:
         super().__init__()
         self.settings_page = settings_page
@@ -54,7 +55,7 @@ class BackgroundMediaRow(Adw.PreferencesRow):
         """
         To save performance and memory, we only load the thumbnail when the user sees the row
         """
-        self.on_map_tasks: list[Any] = []
+        self.on_map_tasks = []
         self.connect("map", self.on_map)
 
         # The handler id per widget key, absent while that widget is
@@ -64,11 +65,6 @@ class BackgroundMediaRow(Adw.PreferencesRow):
         self._handlers: dict[str, int] = {}
 
         self.build()
-
-    def on_map(self, widget: Gtk.Widget) -> None:
-        for f in self.on_map_tasks:
-            f()
-        self.on_map_tasks.clear()
 
     def build(self) -> None:
         self.main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, hexpand=True,
