@@ -31,7 +31,6 @@ from loguru import logger as log
 
 import globals as gl
 from src.backend import ui_port
-from src.backend.DeckManagement.HelperMethods import recursive_hasattr
 from src.backend.DeckManagement.InputIdentifier import Input
 
 # Seconds between on-screen touchscreen previews. The physical touchscreen
@@ -179,9 +178,11 @@ class GtkUIAdapter(ui_port.UIPort):
         # the USB monitor plugs in then gets no stack child, and a deck that it
         # unplugs leaves a stale one.
         window = self._window
-        if window is None or not recursive_hasattr(window, "leftArea.deck_stack"):
+        if window is None:
             return
-        deck_stack = window.leftArea.deck_stack
+        deck_stack = window.get_deck_stack()
+        if deck_stack is None:
+            return
         registered = getattr(getattr(gl, "deck_manager", None), "deck_controller", None)
         if registered is None:
             # No deck manager to reconcile against. Return instead of reading
@@ -211,12 +212,15 @@ class GtkUIAdapter(ui_port.UIPort):
         heals a rebuilt window.
         """
         window = self._window
-        if window is None or not recursive_hasattr(window, "leftArea.deck_stack"):
+        if window is None:
+            return
+        deck_stack = window.get_deck_stack()
+        if deck_stack is None:
             return
         # The stub's SelectionModel misses the ListModel iteration that
         # PyGObject provides at runtime. The Any item type also keeps the
         # trailing-None guard below alive for the checker.
-        pages = cast("Gio.ListModel[Any]", window.leftArea.deck_stack.get_pages())
+        pages = cast("Gio.ListModel[Any]", deck_stack.get_pages())
         for page in pages:
             if page is None:
                 # The ListModel iteration reads the length once, so a removed
@@ -253,14 +257,23 @@ class GtkUIAdapter(ui_port.UIPort):
     # Resolvers
 
     def _grid(self, child: "DeckStackChild") -> "KeyGrid | None":
-        if not recursive_hasattr(child, "page_settings.deck_config.grid"):
+        # The chain is absent while the child builds; the typed access reads
+        # None then instead of an AttributeError, and a wrong attribute name is
+        # now a check-time error.
+        try:
+            return child.page_settings.deck_config.grid
+        except AttributeError:
             return None
-        return child.page_settings.deck_config.grid
 
     def _screenbar(self, child: "DeckStackChild") -> "ScreenBar | None":
-        if not recursive_hasattr(child, "page_settings.deck_config.screenbar.image"):
+        # screenbar is absent on a deck with no touchscreen, and the whole
+        # chain is absent while the child builds; both raise AttributeError
+        # here. A built ScreenBar always carries image, its __init__ sets it,
+        # so the leaf the caller reads follows from the screenbar existing.
+        try:
+            return child.page_settings.deck_config.screenbar
+        except AttributeError:
             return None
-        return child.page_settings.deck_config.screenbar
 
     def _mirror_widget(self, child: "DeckStackChild", identifier: "InputIdentifier") -> "MirrorWidget[Any] | None":
         """The widget that mirrors identifier, or None when there is none.
@@ -386,16 +399,21 @@ class GtkUIAdapter(ui_port.UIPort):
         # unplugged controller.
         self._page_sync_queued.pop(controller, None)
         window = self._window
-        if window is None or not recursive_hasattr(window, "sidebar"):
+        if window is None:
+            return False
+        sidebar = window.get_sidebar()
+        if sidebar is None:
             return False
         child = self._children.get(controller)
         if child is None:
             return False
         # The sidebar mirrors the selected input of the visible deck, so a
         # page change on a background deck must not reload it.
-        if window.leftArea.deck_stack.get_visible_child() is not child:
+        deck_stack = window.get_deck_stack()
+        if deck_stack is None:
             return False
-        sidebar = window.sidebar
+        if deck_stack.get_visible_child() is not child:
+            return False
         # Do not pull the user out of a sub-view. Sidebar.load_for_* sets
         # main_stack back to the input editor, so a refresh while the
         # ActionChooser, the ActionConfigurator or the error page is up moves a
@@ -452,9 +470,11 @@ class GtkUIAdapter(ui_port.UIPort):
         This runs on the main loop, and it holds the widget reads.
         """
         window = self._window
-        if window is None or not recursive_hasattr(window, "sidebar.active_identifier"):
+        if window is None:
             return None
-        sidebar = window.sidebar
+        sidebar = window.get_sidebar()
+        if sidebar is None:
+            return None
         if sidebar.active_identifier != identifier:
             return None
         if require_active_deck and window.get_active_controller() is not controller:
@@ -525,9 +545,12 @@ class GtkUIAdapter(ui_port.UIPort):
 
     def on_deck_added(self, controller: "DeckController") -> None:
         window = self._window
-        if window is None or not recursive_hasattr(window, "leftArea.deck_stack"):
+        if window is None:
             return
-        GLib.idle_add(window.leftArea.deck_stack.add_page, controller)
+        deck_stack = window.get_deck_stack()
+        if deck_stack is None:
+            return
+        GLib.idle_add(deck_stack.add_page, controller)
 
     def on_deck_removed(self, controller: "DeckController") -> None:
         # Queue the detach idle here, before the return. The caller starts the
@@ -535,8 +558,9 @@ class GtkUIAdapter(ui_port.UIPort):
         # a late detach against a new add_page idle, which leaves two stack
         # children for one serial.
         window = self._window
-        if window is not None and recursive_hasattr(window, "leftArea.deck_stack"):
-            GLib.idle_add(window.leftArea.deck_stack.remove_page, controller)
+        deck_stack = window.get_deck_stack() if window is not None else None
+        if deck_stack is not None:
+            GLib.idle_add(deck_stack.remove_page, controller)
         self.unbind(controller)
 
     def refresh_deck_availability(self) -> None:
@@ -547,9 +571,12 @@ class GtkUIAdapter(ui_port.UIPort):
 
     def on_page_list_changed(self) -> None:
         window = self._window
-        if window is None or not recursive_hasattr(window, "sidebar.page_selector"):
+        if window is None:
             return
-        GLib.idle_add(window.sidebar.page_selector.update)
+        sidebar = window.get_sidebar()
+        if sidebar is None:
+            return
+        GLib.idle_add(sidebar.page_selector.update)
 
     def notify_plugin_problem(self, plugin_id: str, kind: str) -> None:
         app = getattr(gl, "app", None)
