@@ -368,6 +368,16 @@ class VideoFpsRow(Adw.PreferencesRow):
     MIN_FPS = 1
     MAX_FPS = 30
 
+    # How long a chosen rate must hold before the revert control appears. The
+    # spinner emits value-changed on every step, and its arrow repeats about
+    # twenty times a second while held, so a pass down the range and back, or
+    # one flick of the scroll wheel, would otherwise show the control and take
+    # it away again within a few frames. The control also shares a linked box
+    # with the spinner, so each appearance shifts the spinner sideways under
+    # the pointer. A quarter of a second outlasts a burst of steps and still
+    # reads as the answer to the edit rather than as a later event.
+    REVEAL_DELAY_MS = 250
+
     def __init__(self, sidebar: "Sidebar", expander: BackgroundExpanderRow, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.sidebar = sidebar
@@ -378,6 +388,11 @@ class VideoFpsRow(Adw.PreferencesRow):
         # The change handler id, or None while it is disconnected. A tracked id
         # keeps connect and disconnect idempotent across early-return loads.
         self._change_handler: int | None = None
+        # The pending reveal below, None while none is armed. Every path that
+        # touches it runs on the GTK main thread: the spinner and revert
+        # handlers arrive there, and the loads run from the sidebar or from an
+        # idle callback. One thread means the id needs no lock.
+        self._reveal_source: int | None = None
         self.build()
 
     def build(self) -> None:
@@ -413,6 +428,56 @@ class VideoFpsRow(Adw.PreferencesRow):
         if self._change_handler is not None:
             self.spinner.disconnect(self._change_handler)
             self._change_handler = None
+
+    def cancel_reveal(self) -> None:
+        """Drop a pending reveal, and answer for one that never existed.
+
+        Both ends of a reveal clear the id: this one and the fire below. An id
+        that outlives its source makes the next cancel remove a source the main
+        loop has already dropped, which it answers with a warning and nothing
+        else, leaving the reveal that cancel was meant to drop still running.
+        """
+        if self._reveal_source is not None:
+            GLib.source_remove(self._reveal_source)
+            self._reveal_source = None
+
+    def _reveal_revert(self) -> bool:
+        """Show the arrow if the row's input still carries a rate.
+
+        The armed source holds this bound method, and the method holds the row,
+        so a pending reveal cannot reach a widget that is gone. What it can
+        reach is a row whose input moved on: the expander hides this row
+        without loading it when the next input carries no video, which leaves
+        the row bound to the input before it. Reading the page again here is
+        what makes that harmless. The arrow then states what the input carries
+        now, rather than what an edit decided a quarter of a second ago.
+        """
+        self._reveal_source = None
+        target = _page_and_input(self)
+        if target is not None:
+            self.revert_button.set_visible(self._has_override(*target))
+        return GLib.SOURCE_REMOVE
+
+    def _request_revert(self, show: bool) -> None:
+        """Take the revert control away at once, and bring it back late.
+
+        A rate that goes away leaves nothing to revert, so the control must go
+        with it. A rate that arrives waits REVEAL_DELAY_MS, and each further
+        step restarts that wait, so a burst of steps reveals nothing until the
+        rate settles. A control already on screen stays where it is.
+
+        Only the reveal waits. The top of the range is a hard stop, so a pass
+        can leave it and come back at most once per direction, and a delayed
+        hide would answer that with an arrow still on screen for a rate that is
+        already gone. A late arrow is a small surprise; a stale one is wrong.
+        """
+        self.cancel_reveal()
+        if not show:
+            self.revert_button.set_visible(False)
+            return
+        if self.revert_button.get_visible():
+            return
+        self._reveal_source = GLib.timeout_add(self.REVEAL_DELAY_MS, self._reveal_revert)
 
     def _uses_media_fps(self) -> bool:
         # A key or a dial caps its media video, and the touchscreen caps its
@@ -479,7 +544,7 @@ class VideoFpsRow(Adw.PreferencesRow):
         # carries a cap with no effect.
         stored = None if fps >= self.MAX_FPS else fps
         self._write_fps(active_page, identifier, state, stored)
-        self.revert_button.set_visible(stored is not None)
+        self._request_revert(stored is not None)
 
     def on_revert(self, *args: object) -> None:
         # Ask before disconnecting. A return between the disconnect and the
@@ -494,6 +559,8 @@ class VideoFpsRow(Adw.PreferencesRow):
             # Read the rate back after the clear, so the row shows what the
             # media now runs at rather than the cap that was just dropped.
             self.spinner.set_value(self._displayed_fps(active_page, identifier, state))
+            # No cancel here. A reveal is armed only while the arrow is off
+            # screen, and an arrow that is off screen cannot be clicked.
             self.revert_button.set_visible(False)
         finally:
             # An exception in between must still leave the spinner wired, or
@@ -502,6 +569,11 @@ class VideoFpsRow(Adw.PreferencesRow):
 
     def load_for_identifier(self, identifier: InputIdentifier, state: int) -> None:
         self.disconnect_signals()
+        # A load states the arrow for the input it binds, so a reveal armed
+        # before it has nothing left to answer. Drop it here, ahead of every
+        # early return, or the arrow can still move a quarter of a second after
+        # a selection that already settled it.
+        self.cancel_reveal()
         try:
             self.active_identifier = identifier
             self.active_state = state

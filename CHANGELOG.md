@@ -53,6 +53,11 @@ bundle as a release asset.
 
 ### Changed
 
+- The revert arrow beside the frame-rate spinner in the background editor now
+  arrives a moment after the rate settles, instead of at the first step of the
+  edit. Spinning the rate down and back up no longer flashes the arrow on and
+  off, and the spinner no longer shifts sideways under the pointer partway
+  through a spin.
 - A key whose picture fills its whole tile with nothing see-through now costs
   almost nothing while an animated wallpaper plays behind it. Such a key hides
   every pixel the wallpaper changes, so the app keeps the picture it drew and
