@@ -573,7 +573,11 @@ class BetterDeck():
         :param function callback: Callback function to fire each time a button
                                 state changes.
         """
-        self.deck.set_dial_callback(callback)
+        def remapper_callback(deck: "StreamDeck.StreamDeck", dial: int,
+                              event_type: DialEventType, value: int) -> None:
+            callback(deck, self.get_logical_dial_index(dial), event_type, value)
+
+        self.deck.set_dial_callback(remapper_callback)
 
     def set_dial_callback_async(self, async_callback: "Callable[[StreamDeck.StreamDeck, int, DialEventType, int], Awaitable[None]]", loop: "asyncio.AbstractEventLoop | None" = None) -> None:
         """
@@ -591,9 +595,12 @@ class BetterDeck():
                                         each time a button state changes.
         :param asyncio.loop loop: Asyncio loop to dispatch the callback into
         """
+        async def remapper_callback(deck: "StreamDeck.StreamDeck", dial: int,
+                                    event_type: DialEventType, value: int) -> None:
+            await async_callback(deck, self.get_logical_dial_index(dial), event_type, value)
+
         # Delegate to the wrapped deck. A self-call recurses forever.
-        # Dials need no index remap (see set_dial_callback).
-        self.deck.set_dial_callback_async(async_callback, loop)
+        self.deck.set_dial_callback_async(remapper_callback, loop)
 
     def set_touchscreen_callback(self, callback: "Callable[[StreamDeck.StreamDeck, TouchscreenEventType, dict[str, int]], None]") -> None:
         """
@@ -612,7 +619,11 @@ class BetterDeck():
         :param function callback: Callback function to fire each time a button
                                 state changes.
         """
-        self.deck.set_touchscreen_callback(callback)
+        def remapper_callback(deck: "StreamDeck.StreamDeck", event_type: TouchscreenEventType,
+                              value: "dict[str, int]") -> None:
+            callback(deck, event_type, self.logical_touch_value(value))
+
+        self.deck.set_touchscreen_callback(remapper_callback)
 
     def set_touchscreen_callback_async(self, async_callback: "Callable[[StreamDeck.StreamDeck, TouchscreenEventType, dict[str, int]], Awaitable[None]]", loop: "asyncio.AbstractEventLoop | None" = None) -> None:
         """
@@ -630,9 +641,12 @@ class BetterDeck():
                                         each time a button state changes.
         :param asyncio.loop loop: Asyncio loop to dispatch the callback into
         """
+        async def remapper_callback(deck: "StreamDeck.StreamDeck", event_type: TouchscreenEventType,
+                                    value: "dict[str, int]") -> None:
+            await async_callback(deck, event_type, self.logical_touch_value(value))
+
         # Delegate to the wrapped deck. A self-call recurses forever.
-        # The touchscreen needs no index remap.
-        self.deck.set_touchscreen_callback_async(async_callback, loop)
+        self.deck.set_touchscreen_callback_async(remapper_callback, loop)
 
     def key_states(self) -> "list[bool]":
         """
@@ -659,7 +673,12 @@ class BetterDeck():
                  otherwise).
         """
         with self._lock:
-            return cast("list[bool]", self.deck.dial_states())
+            states = cast("list[bool]", self.deck.dial_states())
+            # Logical order, as key_states() is. The dial map is its own
+            # inverse, so one reversal serves both directions.
+            if self._dials_are_reversed():
+                return list(reversed(states))
+            return states
 
     def reset(self) -> None:
         """
@@ -774,6 +793,20 @@ class BetterDeck():
         with self._lock:
             self.deck.set_screen_image(image)
 
+    # ---- Rotation -------------------------------------------------------
+    #
+    # rotation is the quarter turn the user gave the physical deck, clockwise.
+    # The key map fixes what that means, and every other surface follows it.
+    # At 90, get_physical_index sends the logical top-left key to the physical
+    # bottom-left one, which is the key that comes to lie top-left once the
+    # device is turned a quarter turn clockwise. A composite is therefore
+    # turned counter-clockwise by rotation to reach the device upright, which
+    # is the direction PIL's Image.rotate takes.
+    #
+    # Everything below states the logical view. A caller of this wrapper
+    # never converts between the two, and nothing above it holds a second
+    # copy of these rules.
+
     def set_rotation(self, value: int) -> None:
         if not value in [0, 90, 180, 270]:
             # Reachable from persisted deck settings, where a hand edit or a
@@ -782,6 +815,90 @@ class BetterDeck():
             log.warning(f"Deck rotation {value!r} is not 0, 90, 180 or 270; using 0")
             value = 0
         self.rotation = value
+
+    def touchscreen_image_rotation(self) -> int:
+        """Counter-clockwise degrees to turn a composed strip by, so that it
+        reaches the device in the device's own orientation.
+
+        At 180 the strip lies end for end under the user's hand, so the
+        composite is turned through half a circle. At 90 and 270 the strip
+        stands on its side, and an upright composite would have to be as tall
+        as the strip is wide. The device takes a fixed 800 by 100 buffer, so
+        there is nothing to turn such a composite into: the strip keeps the
+        device's own orientation there, and its content reads sideways, which
+        is what a strip of fixed shape on a deck laid on its side does.
+        Presenting it upright needs a composite of the transposed size, which
+        reaches the dial slots, the strip background and the window's own
+        strip preview, and is not this.
+        """
+        return 180 if self.rotation == 180 else 0
+
+    def _touchscreen_size(self) -> "tuple[int, int] | None":
+        """The device's own strip size, or None for a deck that has no
+        touchscreen or reports no size for it."""
+        image_format = getattr(self.deck, "touchscreen_image_format", None)
+        if image_format is None:
+            return None
+        try:
+            size = image_format().get("size")
+        except (AttributeError, KeyError, TypeError):
+            return None
+        if size is None or len(size) != 2 or None in size:
+            return None
+        return int(size[0]), int(size[1])
+
+    def logical_touch_value(self, value: "dict[str, int]") -> "dict[str, int]":
+        """A touch event's positions, moved from where the device reports
+        them to where the strip was composed.
+
+        The device reports a position in its own frame. At 180 the composite
+        was turned end for end before the write, so the pixel the user
+        touches is reported from the opposite corner, and both ends of a drag
+        move with it. At 0, 90 and 270 the strip goes to the device in the
+        device's own orientation (see touchscreen_image_rotation), so a
+        reported position already names the pixel the composite drew there.
+
+        The event's dict is copied and never edited in place, because the
+        library hands one object to every consumer of that event.
+        """
+        if self.rotation != 180 or not isinstance(value, dict):
+            return value
+        size = self._touchscreen_size()
+        if size is None:
+            # No size to mirror against. Report the device's own position
+            # rather than a position invented from a guessed strip width.
+            return value
+        width, height = size
+        mapped = dict(value)
+        for key in ("x", "x_out"):
+            if key in mapped:
+                mapped[key] = width - 1 - mapped[key]
+        for key in ("y", "y_out"):
+            if key in mapped:
+                mapped[key] = height - 1 - mapped[key]
+        return mapped
+
+    def _dials_are_reversed(self) -> bool:
+        """Whether logical dial order runs against physical dial order.
+
+        The dials sit in one row along the strip, so they follow the strip.
+        At 180 the composite is turned end for end, which puts the slot drawn
+        first over the last knob. At 90 and 270 the strip is written in the
+        device's own orientation, so slot and knob still line up one for one,
+        whichever way round the row reads to the user.
+        """
+        return self.rotation == 180
+
+    def get_logical_dial_index(self, physical_index: int) -> int:
+        """The logical dial that an event from physical_index belongs to."""
+        if not self._dials_are_reversed():
+            return physical_index
+        return self.dial_count() - 1 - physical_index
+
+    def get_physical_dial_index(self, logical_index: int) -> int:
+        """The knob a logical dial's slot sits on. The map is its own
+        inverse, so it shares the body above."""
+        return self.get_logical_dial_index(logical_index)
 
     def get_physical_index(self, logical_index: int) -> int:
         physical_rows, physical_cols = self.deck.key_layout()
