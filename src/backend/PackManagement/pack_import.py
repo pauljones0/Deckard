@@ -19,10 +19,12 @@ and a later import sweeps a tree that a dead import left.
 
 Untrusted input is validated before a byte is written. An archive member whose
 name resolves outside the folder it unpacks into fails the whole archive, and a
-folder import skips a symlink and refuses a special file, so neither source
-copies a file the user did not choose. The destination of each file is built
-here, from the file name and at most one folder name, and never from the source
-string, and the built path is checked against the pack folder before the write.
+folder import skips a symlink, refuses a special file, and refuses a file whose
+inode carries a second name that could sit outside the folder, so neither
+source copies a file the user did not choose. The destination of each file is
+built here, from the file name and at most one folder name, and never from the
+source string, and the built path is checked against the pack folder before the
+write.
 
 An import has a size budget. An archive that declares more than the budget is
 refused before a byte is written, and every copy counts what it writes and
@@ -40,6 +42,7 @@ from __future__ import annotations
 import os
 import re
 import shutil
+import stat
 import tempfile
 import threading
 import zipfile
@@ -247,16 +250,34 @@ def _copy_planned_files(planned: list[_PlannedFile], assets_dir: str) -> None:
     """Copy each planned file into the pack's asset folder.
 
     It refuses a source that is not an ordinary file, so a named pipe or a
-    device a link once pointed at cannot be read forever, and it counts the
-    bytes it writes against the budget, so a source that grew since the plan
-    fills no disk.
+    device cannot be read without end, and one whose inode carries more than
+    one name, because a second name can sit outside the chosen folder and
+    would put that file's bytes in the pack. It counts the bytes it writes
+    against the budget, so a source that grew since the plan fills no disk.
     """
     written = 0
     for item in planned:
-        if os.path.islink(item.source) or not os.path.isfile(item.source):
+        try:
+            info = os.lstat(item.source)
+        except OSError as error:
+            raise PackImportError(
+                "A file in this folder could not be read, so nothing was imported."
+            ) from error
+        if not stat.S_ISREG(info.st_mode):
+            # A symlink, a pipe or a device: not a picture the user put here.
             raise PackImportError(
                 "A file in this folder is not an ordinary picture, so nothing "
                 "was imported."
+            )
+        if info.st_nlink > 1:
+            # A hardlink shares its bytes with another name, which can live
+            # outside the chosen folder. Refuse it, so the copy reads only
+            # files that live under the folder and nowhere else. A picture with
+            # a second name is rare, and keeping the folder the one source of
+            # what enters the pack is worth refusing it.
+            raise PackImportError(
+                "A file in this folder is shared with another outside it, so "
+                "nothing was imported."
             )
         target = _checked_target(assets_dir, item.dest_rel)
         os.makedirs(os.path.dirname(target), exist_ok=True)
@@ -349,9 +370,11 @@ def _extract_planned_files(archive: zipfile.ZipFile, planned: list[_PlannedFile]
         try:
             limit = _declared_size(archive, item.source)
         except KeyError as error:
-            # The member vanished from the archive's table between the plan and
-            # here, which a damaged archive does. Refuse rather than raise a
-            # bare lookup error past the import contract.
+            # The plan and this extraction read the same open archive's member
+            # table, so a member the plan named cannot vanish here in normal
+            # flow. This stays as defence against a malformed handle that
+            # answers namelist and getinfo differently, and refuses through the
+            # import contract rather than a bare lookup error.
             raise PackImportError(
                 "This archive is damaged, so nothing from it was imported."
             ) from error
@@ -450,9 +473,13 @@ def _new_staging(root: str) -> str:
 
     The name is random, so two imports never share one and the second cannot
     delete the first's tree. The dot prefix keeps the pack scanner out of it.
+
+    The create and the track happen under the one lock the sweep takes, so a
+    sweep cannot run between them and read the new directory as an untracked
+    leftover.
     """
-    staging = tempfile.mkdtemp(prefix=".", suffix=STAGING_SUFFIX, dir=root)
     with _staging_lock:
+        staging = tempfile.mkdtemp(prefix=".", suffix=STAGING_SUFFIX, dir=root)
         _live_staging.add(staging)
     return staging
 
@@ -474,21 +501,27 @@ def _sweep_stale_staging(root: str) -> None:
     A tree this session still holds open is spared, so a second import that
     starts while the first runs cannot delete the first's work. A leftover from
     a crashed run matches the staging name and no live tree, so it goes.
+
+    The whole sweep, from the snapshot of the live set through the listing to
+    the removals, runs under the one lock _new_staging takes. A new staging
+    directory is therefore either fully created and tracked before the sweep
+    reads the disk, or created after the sweep finished, and never seen by the
+    sweep as an untracked leftover in between.
     """
     with _staging_lock:
         live = set(_live_staging)
-    try:
-        entries = os.listdir(root)
-    except OSError:
-        return
-    for entry in entries:
-        if not (entry.startswith(".") and entry.endswith(STAGING_SUFFIX)):
-            continue
-        path = os.path.join(root, entry)
-        if path in live:
-            continue
-        if os.path.isdir(path) and not os.path.islink(path):
-            _remove_tree(path)
+        try:
+            entries = os.listdir(root)
+        except OSError:
+            return
+        for entry in entries:
+            if not (entry.startswith(".") and entry.endswith(STAGING_SUFFIX)):
+                continue
+            path = os.path.join(root, entry)
+            if path in live:
+                continue
+            if os.path.isdir(path) and not os.path.islink(path):
+                _remove_tree(path)
 
 
 def _remove_tree(path: str) -> None:

@@ -461,6 +461,50 @@ def check_folder_import_refuses_a_special_file() -> None:
     print("PASS: a special file in a folder is refused, not read")
 
 
+def check_folder_import_refuses_a_hardlink_out() -> None:
+    """A hardlink to a file outside the folder is refused, not copied in.
+
+    A hardlink is a second name for one inode, so it is a regular file and no
+    symlink, yet its bytes are the outside file's bytes. Copying it would put
+    a file the user did not put under the folder into the pack, so the whole
+    import is refused.
+    """
+    clear_packs()
+    secret = os.path.join(scratch("hardlink-secret"), "private.png")
+    write_png(secret, colour=(2, 2, 2, 255))
+    with open(secret, "rb") as handle:
+        secret_bytes = handle.read()
+
+    source = scratch("hardlink-folder")
+    write_png(os.path.join(source, "real.png"))
+    linked = os.path.join(source, "shared.png")
+    if os.path.lexists(linked):
+        os.remove(linked)
+    os.link(secret, linked)  # a hard link: one inode, two names
+    assert not os.path.islink(linked), "the probe must be a hard link, not a symlink"
+    assert os.stat(linked).st_nlink > 1, "the probe must share its inode"
+
+    try:
+        pack_import.import_icon_pack(source, "Hardlink Pack")
+    except PackImportError as error:
+        assert str(error).strip(), "the refusal must carry a sentence"
+    else:
+        raise AssertionError("a folder holding a hardlink to an outside file became a pack")
+    finally:
+        os.remove(linked)
+
+    assert pack_folders() == [], f"the refused import left {pack_folders()}"
+    # Prove the invariant the docstring states: the secret's bytes reached no
+    # pack folder anywhere under the packs root.
+    for dirpath, _dirs, files in os.walk(PACKS_ROOT):
+        for name in files:
+            with open(os.path.join(dirpath, name), "rb") as handle:
+                assert handle.read() != secret_bytes, (
+                    f"the outside file's bytes reached {os.path.join(dirpath, name)!r}"
+                )
+    print("PASS: a hardlink to a file outside the folder is refused")
+
+
 def check_folder_import_refuses_over_budget() -> None:
     """A folder whose pictures exceed the budget is refused before a write."""
     clear_packs()
@@ -1057,6 +1101,7 @@ def main() -> None:
     check_banner_is_used_when_given()
     check_folder_import_skips_a_symlinked_file()
     check_folder_import_refuses_a_special_file()
+    check_folder_import_refuses_a_hardlink_out()
     check_folder_import_refuses_over_budget()
     check_damaged_archive_is_refused()
     check_undecodable_banner_falls_back()
