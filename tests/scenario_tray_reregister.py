@@ -2,21 +2,29 @@
 Regression scenario. Tray icon registration must not be one-shot.
 
 A watcher that appears late must still receive the item, and the SNI spec
-requires an item to re-register with a watcher that restarted.
+requires an item to re-register with a watcher that restarted. The tray item
+and its menu must also take the D-Bus object paths their names state.
 """
 
 # This scenario runs an isolated session bus, registers the tray icon with no
 # watcher present, then starts one, kills it, and starts a fresh one.
 import fixtures  # noqa: F401  (must be imported first: isolates DATA_PATH)
 
+import gc
+import os
+import sys
 import time
+import traceback
 
 import gi
 gi.require_version("Gtk", "4.0")
 from gi.repository import Gio, GLib
 
+import globals as gl
 from src.backend.trayicon import DBusTrayIcon, DBusMenu
 
+
+REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
 WATCHER_NAME = "org.kde.StatusNotifierWatcher"
 
@@ -235,16 +243,82 @@ def check_sni_double_register_keeps_menu_live() -> None:
           "SNI and menu objects live (no leak, no menu teardown)")
 
 
+def check_item_and_menu_take_their_own_paths() -> None:
+    """The tray item and its menu must take the paths their names state.
+
+    The item registers at the item path and announces that path to the
+    StatusNotifierWatcher. The menu registers at the menu path, which the
+    item's Menu property carries. Passing the two the wrong way round keeps
+    the pair consistent on the wire, because both readers follow the same
+    two fields, and leaves every name in the code stating the opposite of
+    what it holds.
+    """
+    from src.tray import TrayIcon
+
+    tray = TrayIcon()
+    sni = tray.sni_service
+
+    assert TrayIcon.IndicatorPath != TrayIcon.MenuPath, (
+        "the item and the menu must take separate object paths"
+    )
+    assert sni.dbus_path == TrayIcon.IndicatorPath, (
+        f"the tray item took {sni.dbus_path!r}, which is the menu path; it "
+        f"must take the item path {TrayIcon.IndicatorPath!r}. The two "
+        "constructor arguments are the wrong way round."
+    )
+    assert sni.object_path == TrayIcon.IndicatorPath, (
+        f"the tray item registered at {sni.object_path!r}, not at "
+        f"{TrayIcon.IndicatorPath!r}"
+    )
+    assert sni._menu.dbus_path == TrayIcon.MenuPath, (
+        f"the tray menu took {sni._menu.dbus_path!r}, not the menu path "
+        f"{TrayIcon.MenuPath!r}"
+    )
+    assert sni._menu.object_path == TrayIcon.MenuPath, (
+        f"the tray menu registered at {sni._menu.object_path!r}, not at "
+        f"{TrayIcon.MenuPath!r}"
+    )
+    assert sni.Menu == TrayIcon.MenuPath, (
+        f"the Menu property points at {sni.Menu!r}, not at the menu path "
+        f"{TrayIcon.MenuPath!r}"
+    )
+    # The remaining two constructor arguments, pinned in the same order.
+    assert sni.Id == TrayIcon.AppId, (
+        f"the item id is {sni.Id!r}, not {TrayIcon.AppId!r}"
+    )
+    assert sni.Title == "Deckard", f"the item title is {sni.Title!r}"
+    print("PASS: the tray item and its menu take their own D-Bus paths")
+
+
 def main() -> None:
     fixtures.start_watchdog(60, label="scenario_tray_reregister")
     check_base_double_register_no_orphan()
     check_sni_double_register_keeps_menu_live()
 
+    gl.MAIN_PATH = REPO_ROOT  # install root; the shipped icon dir sits under it
+
     test_bus = Gio.TestDBus.new(Gio.TestDBusFlags.NONE)
     test_bus.up()  # also exports DBUS_SESSION_BUS_ADDRESS for bus_get_sync
     try:
+        check_item_and_menu_take_their_own_paths()
         run_checks(test_bus.get_bus_address())
+    except Exception:
+        traceback.print_exc()
+        sys.stdout.flush()
+        sys.stderr.flush()
+        # The traceback holds the frames of the failing check, which hold the
+        # TrayIcon, which holds the session bus. No collection can free that
+        # while the traceback lives, so the teardown below would wait its
+        # full 30 seconds and the failure would read as a timeout. Kill the
+        # daemon, which takes no wait, and leave at once.
+        test_bus.stop()
+        os._exit(1)
     finally:
+        # A TrayIcon holds its menu, whose items hold bound methods back to
+        # the TrayIcon, so reference counting alone never drops the tray or
+        # the session bus it holds. The bus below then waits 30 seconds for a
+        # reference that a collection releases at once.
+        gc.collect()
         test_bus.down()
     print("PASS: scenario_tray_reregister")
 

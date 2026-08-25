@@ -11,6 +11,9 @@ if TYPE_CHECKING:
     from src.windows.mainWindow.mainWindow import MainWindow
 
 class TrayIcon(DBusTrayIcon):
+    # The item and its menu take separate D-Bus paths. The item registers at
+    # the item path and announces it to the StatusNotifierWatcher; the menu
+    # registers at the menu path, which the item's Menu property carries.
     MenuPath = f"{appinfo.DBUS_OBJECT_PATH}/Menu"
     IndicatorPath = f"/org/ayatana/NotificationItem/{appinfo.DBUS_UNDERSCORE}_TrayIcon"
     AppId = f"{appinfo.APP_ID}.TrayIcon"
@@ -24,7 +27,8 @@ class TrayIcon(DBusTrayIcon):
         self.menu.add_menu_item(5, "About", callback=self.on_about)
         self.menu.add_menu_item(6, menu_type="separator")
         self.menu.add_menu_item(7, "Quit", callback=self.on_quit)
-        super().__init__(self.menu, self.MenuPath, self.IndicatorPath, self.AppId, "Deckard")
+        super().__init__(self.menu, path=self.IndicatorPath, menu_path=self.MenuPath,
+                         app_id=self.AppId, title="Deckard")
         icon_theme_path = os.path.join(gl.MAIN_PATH, "Assets", "icons")
         self.set_icon(appinfo.APP_ID, path=icon_theme_path)
         self.set_tooltip("Deckard")
