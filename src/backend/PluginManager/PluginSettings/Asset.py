@@ -2,7 +2,7 @@ from os.path import isfile
 
 from PIL import Image
 
-from typing import Any
+from typing import Any, override
 
 from src.backend.DeckManagement.Media.Media import Media
 
@@ -25,13 +25,16 @@ class Color(Asset):
         super().__init__(*args, **kwargs)
         self._color: tuple[int, int, int, int] = color
 
+    @override
     def get_values(self) -> tuple[int, int, int, int]:
         return self._color
 
+    @override
     def to_json(self) -> "list[int]":
         return list(self._color)
 
     @classmethod
+    @override
     def from_json(cls, *args: Any, **kwargs: Any) -> "Color":
         return cls(color=tuple(args[0]))
 
@@ -53,9 +56,11 @@ class Icon(Asset):
             self._icon = None
             self._rendered = None
 
+    @override
     def get_values(self) -> "tuple[Media | None, Image.Image | None]":
         return self._icon, self._rendered
 
+    @override
     def to_json(self) -> "dict[str, Any]":
         icon = self._icon
         save_data = {
@@ -67,6 +72,7 @@ class Icon(Asset):
         return save_data
 
     @classmethod
+    @override
     def from_json(cls, *args: Any, **kwargs: Any) -> "Icon":
         save_data: dict[str, Any] = args[0]
 

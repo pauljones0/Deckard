@@ -7,7 +7,7 @@ import threading
 import time
 import subprocess
 from collections.abc import Callable
-from typing import cast, Any, TypedDict, NotRequired
+from typing import cast, Any, TypedDict, NotRequired, override
 
 from packaging import version
 
@@ -857,6 +857,7 @@ class PluginBase(rpyc.Service):
                                      authenticator=frontend_authenticator)
         threading.Thread(target=self.server.start, name="server_start", daemon=True).start()
 
+    @override
     def on_disconnect(self, conn: "Connection | None") -> None:
         """Handle the disconnection of the rpyc server.
 

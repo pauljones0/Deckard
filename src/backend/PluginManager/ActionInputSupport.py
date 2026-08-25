@@ -1,4 +1,5 @@
 import enum
+from typing import override
 
 
 class ActionInputSupportStatus:
@@ -46,6 +47,7 @@ class ActionInputSupport(enum.Enum):
             return NotImplemented
         return int(self.value) >= int(other.value)
     
+    @override
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, ActionInputSupport):
             # NotImplemented, not a raised or returned TypeError: Python
