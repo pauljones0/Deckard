@@ -302,9 +302,19 @@ class Mp4FrameCache(Generic[PayloadT]):
             return False
         cap = self._open_cache_capture()
         n_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) if cap.isOpened() else 0
-        if n_frames <= 0:
+        cached_size = (int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
+                       int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))) if cap.isOpened() else (0, 0)
+        if n_frames <= 0 or cached_size != self.out_size:
+            # A frame-size mismatch means the render geometry changed since
+            # the cache was built (key spacing, strip band). The file name
+            # does not always carry the size, so reusing it would crop every
+            # tile from the wrong coordinates. Rebuild instead.
             cap.release()
-            log.warning(f"Removing unreadable video cache {self.cache_path}")
+            if n_frames <= 0:
+                log.warning(f"Removing unreadable video cache {self.cache_path}")
+            else:
+                log.info(f"Removing stale video cache ({cached_size[0]}x{cached_size[1]}, "
+                         f"need {self.out_size[0]}x{self.out_size[1]}): {self.cache_path}")
             with contextlib.suppress(OSError):
                 os.remove(self.cache_path)
             return False

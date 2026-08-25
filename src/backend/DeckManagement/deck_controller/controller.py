@@ -154,11 +154,13 @@ class DeckController:
         self.allow_interaction = True
         self.has_animated_keys = False
 
-        # Every deck tiles its background at this spacing. The SD+ gap was
-        # calibrated on the device with a striped background; the probe tests
-        # the wrapped handle, since self.deck is the BetterDeck wrapper here.
+        # Every deck tiles its background at this spacing. The SD+ pair was
+        # calibrated on the device with a striped background, one axis at a
+        # time; the probe tests the wrapped handle, since self.deck is the
+        # BetterDeck wrapper here.
         raw_deck = getattr(self.deck, "deck", None)
-        self.key_spacing = (20, 20) if isinstance(raw_deck, StreamDeckPlus) else (36, 36)
+        self.is_plus = isinstance(raw_deck, StreamDeckPlus)
+        self.key_spacing = (20, 36) if self.is_plus else (36, 36)
 
         # Per-deck saturation boost, a PIL ImageEnhance.Color factor over the
         # UI range 1.0 to 1.5. It is read once at boot and refreshed by

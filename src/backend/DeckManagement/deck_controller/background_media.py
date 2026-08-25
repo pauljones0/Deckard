@@ -29,6 +29,7 @@ from src.backend.DeckManagement.HelperMethods import is_video
 from src.backend.DeckManagement.Subclasses.background_video_cache import BackgroundVideoCache
 from src.backend.DeckManagement.deck_controller.gif_pipeline import GifBackground, GifBudgetExceeded
 from src.backend.DeckManagement.deck_controller.slideshow import IN_ORDER, Slideshow
+from src.backend.DeckManagement.deck_controller.strip_band import strip_band_geometry
 
 from typing import TYPE_CHECKING, cast
 if TYPE_CHECKING:
@@ -503,7 +504,9 @@ class BackgroundImage:
         canvas_height = key_height * key_rows + spacing_y * (key_rows - 1)
 
         if extend_touchscreen and deck.is_touch():
-            canvas_height += spacing_y + self._get_touchscreen_canvas_height(canvas_width)
+            gap, _span, _xoff, band_height = \
+                strip_band_geometry(self.deck_controller, canvas_width)
+            canvas_height += gap + band_height
 
         return (canvas_width, canvas_height)
 
@@ -561,10 +564,13 @@ class BackgroundImage:
         canvas_height = key_height + total_spacing_y
 
         # Grow the canvas below the key grid so the image continues onto the
-        # strip: one bezel gap plus the strip in canvas coordinates. The
-        # strip spans the full deck width.
+        # strip: the key-to-strip bezel gap plus the band height, both in
+        # canvas coordinates. strip_band owns that geometry; on an SD+ both
+        # are device-calibrated rather than derived from the spacing.
         if extend_touchscreen:
-            canvas_height += spacing_y + self._get_touchscreen_canvas_height(canvas_width)
+            gap, _span, _xoff, band_height = \
+                strip_band_geometry(self.deck_controller, canvas_width)
+            canvas_height += gap + band_height
 
         # close() releases the source image. Raise instead of composing a
         # transparent canvas. Background.update_tiles catches the raise and
@@ -581,18 +587,15 @@ class BackgroundImage:
         img_rgba = source.convert("RGBA")
         return ImageOps.fit(img_rgba, (canvas_width, canvas_height), Image.Resampling.LANCZOS)
 
-    def _get_touchscreen_canvas_height(self, canvas_width: int) -> int:
-        """Height of the touchscreen strip in key-grid canvas coordinates."""
-        strip_width, strip_height = self.deck_controller.get_touchscreen_image_size()
-        return round(strip_height * canvas_width / strip_width)
-
     def get_touchscreen_image(self) -> Image.Image:
-        """The bottom slice of the extended canvas, at strip resolution."""
+        """The strip's view of the extended canvas, at strip resolution."""
         canvas = self.create_full_deck_sized_image(extend_touchscreen=True)
         strip_width, strip_height = self.deck_controller.get_touchscreen_image_size()
-        slice_height = self._get_touchscreen_canvas_height(canvas.width)
+        _gap, span, xoff, band_height = \
+            strip_band_geometry(self.deck_controller, canvas.width)
+        left = (canvas.width - span) // 2 + xoff
         strip_slice = canvas.crop(
-            (0, canvas.height - slice_height, canvas.width, canvas.height)
+            (left, canvas.height - band_height, left + span, canvas.height)
         )
         return strip_slice.resize((strip_width, strip_height), Image.Resampling.LANCZOS)
     

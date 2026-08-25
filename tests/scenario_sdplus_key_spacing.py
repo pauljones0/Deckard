@@ -41,8 +41,8 @@ def main() -> None:
     fixtures.start_watchdog(60, label="scenario_sdplus_key_spacing")
 
     plus = make_controller("spacing-plus", plus=True)
-    assert plus.key_spacing == (20, 20), (
-        f"an SD+ raw deck must tile at the calibrated (20, 20), "
+    assert plus.key_spacing == (20, 36), (
+        f"an SD+ raw deck must tile at the calibrated (20, 36), "
         f"got {plus.key_spacing}")
     fixtures.teardown(plus)
 

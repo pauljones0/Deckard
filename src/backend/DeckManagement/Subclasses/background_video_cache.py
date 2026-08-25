@@ -8,6 +8,7 @@ from loguru import logger as log
 
 import globals as gl
 from src.backend.DeckManagement.Subclasses.mp4_tile_cache import Mp4FrameCache, VID_CACHE
+from src.backend.DeckManagement.deck_controller.strip_band import strip_band_geometry
 
 # Import typing
 from typing import TYPE_CHECKING, override
@@ -43,6 +44,9 @@ class BackgroundVideoCache(Mp4FrameCache[list[Image.Image]]):
             self.deck_controller.get_touchscreen_image_size()
             if self.extend_touchscreen else None)
         self.entries_per_frame = self.key_count + (1 if self.extend_touchscreen else 0)
+        # (gap, span, xoff, band_height) in canvas pixels; _canvas_size()
+        # fills it for an extended cache, before any strip crop runs.
+        self.strip_band: tuple[int, int, int, int] = (0, 0, 0, 0)
 
         self.key_layout_str = f"{self.key_layout[0]}x{self.key_layout[1]}"
         if self.extend_touchscreen:
@@ -81,10 +85,13 @@ class BackgroundVideoCache(Mp4FrameCache[list[Image.Image]]):
         canvas_height = key_height + total_spacing_y
 
         # Extend the canvas below the key grid, so the frame continues onto
-        # the touchscreen strip. That is one bezel gap plus the strip mapped
-        # into canvas coordinates, the same geometry as BackgroundImage.
+        # the touchscreen strip: the key-to-strip gap plus the band height,
+        # the same strip_band geometry as BackgroundImage. Snapshot it here;
+        # the render thread must not call back into controller state.
         if self.extend_touchscreen:
-            canvas_height += spacing_y + self._get_strip_canvas_height(canvas_width)
+            self.strip_band = strip_band_geometry(self.deck_controller, canvas_width)
+            gap, _span, _xoff, band_height = self.strip_band
+            canvas_height += gap + band_height
 
         return (canvas_width, canvas_height)
 
@@ -172,16 +179,12 @@ class BackgroundVideoCache(Mp4FrameCache[list[Image.Image]]):
             entries.append(self.crop_strip_from_deck_sized_image(canvas))
         return entries
 
-    def _get_strip_canvas_height(self, canvas_width: int) -> int:
-        """Height of the touchscreen strip in key-grid canvas coordinates."""
-        strip_width, strip_height = self._require_strip_size()
-        return round(strip_height * canvas_width / strip_width)
-
     def crop_strip_from_deck_sized_image(self, image: Image.Image) -> Image.Image:
-        """The bottom slice of the extended canvas, at strip resolution."""
-        slice_height = self._get_strip_canvas_height(image.width)
+        """The strip's view of the extended canvas, at strip resolution."""
+        _gap, span, xoff, band_height = self.strip_band
+        left = (image.width - span) // 2 + xoff
         strip_slice = image.crop(
-            (0, image.height - slice_height, image.width, image.height)
+            (left, image.height - band_height, left + span, image.height)
         )
         return strip_slice.resize(self._require_strip_size(), Image.Resampling.HAMMING)
 
