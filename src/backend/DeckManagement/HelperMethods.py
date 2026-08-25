@@ -228,6 +228,8 @@ def download_file(url: str, path: str = "", file_name: str | None = None) -> str
     Raises:
         requests.RequestException: on a network failure or an HTTP error
             status. Nothing is left on disk in either case.
+        OSError: when the directory, the temporary file the download fills, or
+            the rename onto the returned path fails.
     """
 
     # Import lazily. Nearly everything imports this module at startup, and

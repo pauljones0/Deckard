@@ -33,6 +33,8 @@ each thread-safe; a concurrent reconfiguration of a Session is not.
 """
 import os
 import threading
+import time
+import uuid
 
 import requests
 from requests.adapters import HTTPAdapter
@@ -43,6 +45,29 @@ from urllib3.util.retry import Retry  # requests.adapters re-exports this; impor
 # keep-alive connection. StoreBackend.MAX_CONCURRENT_REQUESTS aliases this
 # value, so the two cannot drift apart.
 POOL_MAXSIZE = 10
+
+# Name parts of the sidecar a download streams into. The name is hidden, it
+# carries a fixed prefix and suffix so the reaper recognizes one, and it takes
+# a random middle so two downloads never share a sidecar, whatever their target
+# names are.
+SIDECAR_PREFIX = ".download."
+SIDECAR_SUFFIX = ".part"
+
+# A hard kill mid-download orphans a sidecar, and nothing else cleans the cache
+# directories. The next download into the same directory removes one whose last
+# write is older than this (seconds). The age is a backstop for a sidecar no
+# live download owns, such as one an earlier run left when it was killed. It is
+# no guard for a running transfer: writes are buffered, so mtime stands still
+# between flushes and a body that trickles in under the buffer size reads as
+# untouched however long it runs, and a clock step forward ages every sidecar at
+# once. _in_flight_sidecars is what keeps a running download's file.
+STALE_SIDECAR_MAX_AGE = 60 * 60
+
+# The sidecars this process is writing right now, as absolute paths. The reaper
+# skips these whatever their age. Registration happens before the file is
+# created and lasts until the download published or removed it.
+_in_flight_sidecars: set[str] = set()
+_in_flight_lock = threading.Lock()
 
 _session: requests.Session | None = None
 _session_lock = threading.Lock()
@@ -96,29 +121,97 @@ def get(url: str, *, timeout: float, stream: bool = False) -> requests.Response:
     return get_session().get(url, timeout=timeout, stream=stream)
 
 
+def _reap_stale_sidecars(dir_path: str) -> None:
+    """Remove download sidecars that a hard kill orphaned in this directory.
+
+    Only the names this module writes count. A sidecar a download of this
+    process holds open is skipped whatever its age, which is the guard that
+    protects a running transfer; the age test then covers what is left, and
+    what is left has no owner alive to break. An unlink race with another
+    reaper is harmless, and every filesystem error is swallowed, because a
+    failed tidy-up must not break the download that triggered it.
+    """
+    try:
+        entries = os.listdir(dir_path)
+    except OSError:
+        return
+    with _in_flight_lock:
+        live = set(_in_flight_sidecars)
+    now = time.time()
+    for entry in entries:
+        if not (entry.startswith(SIDECAR_PREFIX) and entry.endswith(SIDECAR_SUFFIX)):
+            continue
+        path = os.path.join(dir_path, entry)
+        if os.path.abspath(path) in live:
+            continue
+        try:
+            if now - os.stat(path).st_mtime > STALE_SIDECAR_MAX_AGE:
+                os.remove(path)
+        except OSError:
+            pass
+
+
 def download_to_file(url: str, target_path: str, *, timeout: float = 30, chunk_size: int = 8192) -> None:
     """Stream url into target_path through the shared session.
 
     Raises the usual requests exceptions on a network error and on an HTTP
-    error status. An error page therefore never lands on disk as the requested
-    file. It leaves no partial or zero-byte file, because a failure
-    mid-download removes the target again.
+    error status, and OSError when the directory, the sidecar or the rename
+    fails. An error page therefore never lands on disk as the requested file.
+
+    The body streams into a sidecar in the target's own directory, and only a
+    complete, status-checked body moves onto target_path, with os.replace. Same
+    directory means same filesystem, which is what keeps that rename atomic.
+    A killed process therefore leaves no torn file under the name a cache
+    lookup trusts, and a transfer failure the client detects publishes nothing.
+
+    What lands is only as complete as what the server framed. A body with a
+    declared length that falls short, and a truncated chunked body, both raise
+    and publish nothing. A server that instead declares no length and closes
+    the connection early ends the stream cleanly, requests reports success, and
+    that short body is published like any other. No client can tell those
+    apart, so this guards a killed process and a detected failure, not every
+    truncation.
+
+    A symlink at target_path is replaced rather than written through, so a
+    stale link in a cache directory cannot redirect a download out of it.
+
+    This does not fsync, which is the case it guards: a rename carries a
+    completed write past a killed process without one. It orders nothing
+    against power loss, where the plausible state at target_path is a
+    zero-length or holed file. These targets are cache files that a re-download
+    replaces, so the flush a large media download would cost is not paid here.
     """
     directory = os.path.dirname(target_path)
-    if directory != "":
+    if directory:
         os.makedirs(directory, exist_ok=True)
+        # Reap only in a directory the caller named. A bare relative target
+        # lands in the working directory of the process, which is nobody's
+        # cache, so this sweeps no names there.
+        _reap_stale_sidecars(directory)
+    else:
+        directory = "."
 
+    sidecar = os.path.join(directory, f"{SIDECAR_PREFIX}{uuid.uuid4().hex}{SIDECAR_SUFFIX}")
+    # Register before the file exists. A reaper that lists the directory in
+    # between then finds no sidecar to consider, and one that lists it later
+    # finds it registered.
+    with _in_flight_lock:
+        _in_flight_sidecars.add(os.path.abspath(sidecar))
     try:
         # Call the module-level get(), so a test that patches http_client.get
         # covers this path too.
         with get(url, stream=True, timeout=timeout) as response:
             response.raise_for_status()
-            with open(target_path, "wb") as f:
+            with open(sidecar, "wb") as f:
                 for chunk in response.iter_content(chunk_size=chunk_size):
                     f.write(chunk)
+        os.replace(sidecar, target_path)
     except BaseException:
         try:
-            os.remove(target_path)
+            os.remove(sidecar)
         except OSError:
             pass
         raise
+    finally:
+        with _in_flight_lock:
+            _in_flight_sidecars.discard(os.path.abspath(sidecar))

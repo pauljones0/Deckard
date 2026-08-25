@@ -1404,8 +1404,8 @@ class StoreBackend:
         zip_path = os.path.join(gl.DATA_PATH, "cache", f"{projectname}-{sha}.zip")
 
         # The helper creates the cache directory, raises on an HTTP error
-        # status, and removes a partial or zero-byte archive itself, so a
-        # failed download leaves nothing behind to poison the next run.
+        # status, and moves the archive onto zip_path only once the whole body
+        # arrived, so a failed download poisons no later run.
         try:
             http_client.download_to_file(zip_url, zip_path, timeout=30)
         except Exception as e:
