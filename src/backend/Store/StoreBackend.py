@@ -59,7 +59,7 @@ from src.backend.Store.asset_types import (
     SD_PLUS_BAR,
     WALLPAPER,
 )
-from src.backend.Store import install_script
+from src.backend.Store import install_script, json_root
 from src.backend.Store.prepare_pool import PreparePool
 from src.backend.Store.catalog_entry import COMMIT_SHA_RE, resolve_pinned_revision
 from src.backend.Store.store_result import Err, ErrReason, Ok, StoreFetchError, StoreResult
@@ -603,7 +603,7 @@ class StoreBackend:
     
     def get_manifest(self, url: str, commit: "str | None") -> "dict[str, Any] | None":
         manifest = self.get_remote_file(url, "manifest.json", commit)  # raises on a failed fetch
-        return cast(dict[str, Any] | None, json.loads(manifest))
+        return json_root.json_object(manifest, f"manifest.json in {url}")  # None for a non-object root
 
     def get_attribution(self, url: str, commit: "str | None") -> dict[str, Any]:
         try:
@@ -611,7 +611,7 @@ class StoreBackend:
         except StoreFetchError:
             return {}  # An optional file, so a failed fetch reads as empty
         try:
-            return cast(dict[str, Any], json.loads(result))
+            return json_root.json_object(result, f"attribution.json in {url}") or {}  # empty for a non-object root
         except (json.decoder.JSONDecodeError, TypeError):
             return {}
 

@@ -5,7 +5,7 @@ from GtkHelper.FileDialogRow import FileDialogRow as FileDialog, FileDialogFilte
 from gi.repository import Gio
 
 from collections.abc import Callable
-from typing import cast, TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from src.backend.PluginManager.ActionCore import ActionCore
@@ -19,7 +19,8 @@ class FileDialogRow(GenerativeUI[str]):
     Inherits from GenerativeUI to provide generic UI management and functionality.
 
     Attributes:
-        selected_file (Gio.File): The currently selected file in the dialog.
+        selected_file (Gio.File | None): The file selected in the dialog, or
+            None while the dialog has returned none.
     """
 
     def __init__(self, action_core: "ActionCore",
@@ -92,7 +93,14 @@ class FileDialogRow(GenerativeUI[str]):
         """
         if self._widget is None:
             return Gio.File.new_for_path(self.get_value())
-        return cast("Gio.File", self.widget.selected_file)
+        selected_file = self.widget.selected_file
+        if selected_file is None:
+            # A built row whose dialog has never returned a file. initial_path
+            # seeds only the dialog's start folder, so it leaves this None.
+            # Read the value layer, the same source the unbuilt row reads,
+            # rather than assert a file that was never chosen.
+            return Gio.File.new_for_path(self.get_value())
+        return selected_file
 
     def _file_changed(self, file: Gio.File) -> None:
         """

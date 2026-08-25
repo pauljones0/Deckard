@@ -223,7 +223,13 @@ class StoreCache:
             return {}
         try:
             with open(self.files_json, "r") as f:
-                return cast(dict[str, Any], json.load(f))
+                root = json.load(f)
+            # The index is an object keyed by cache path. A file that decodes
+            # to any other root is unusable as an index, so treat it as empty.
+            if not isinstance(root, dict):
+                log.error(f"Cache index {self.files_json} does not hold a JSON object; reading it as empty")
+                return {}
+            return cast(dict[str, Any], root)
         except json.decoder.JSONDecodeError as e:
             log.error(e)
             return {}

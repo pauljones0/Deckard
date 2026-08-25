@@ -265,12 +265,6 @@ class Page:
         )
         return action_object
 
-    def _load_action_objects(self) -> None:
-        # Disabled. load_action_objects() above is the live loader; this
-        # variant returned before its body and had drifted out of step
-        # with it, comparing the builtin `type` against an input-type name.
-        return
-
     def switch_actions_of_inputs(self, input_1: InputIdentifier, input_2: InputIdentifier) -> None:
         input_1_dict = self.action_objects.get(input_1.input_type, {}).get(input_1.json_identifier, {})
         input_2_dict = self.action_objects.get(input_2.input_type, {}).get(input_2.json_identifier, {})
@@ -838,8 +832,8 @@ class Page:
         return cast("LabelManager | None", input_state.label_manager)
         
 
-    def get_label_text(self, identifier: InputIdentifier, state: int, label_position: str) -> str:
-        return cast(str, self._get_dict_value([identifier.input_type, identifier.json_identifier, "states", str(state), "labels", label_position, "text"]))
+    def get_label_text(self, identifier: InputIdentifier, state: int, label_position: str) -> str | None:
+        return cast(str | None, self._get_dict_value([identifier.input_type, identifier.json_identifier, "states", str(state), "labels", label_position, "text"]))
 
     def set_label_text(self, identifier: InputIdentifier, state: int, label_position: str, text: str | None, update: bool = True) -> None:
         for input_state in self.get_controller_input_states(identifier, state):
@@ -859,8 +853,8 @@ class Page:
         if update:
             self.update_input(identifier, state)
 
-    def get_label_font_family(self, identifier: InputIdentifier, state: int, label_position: str) -> str:
-        return cast(str, self._get_dict_value([identifier.input_type, identifier.json_identifier, "states", str(state), "labels", label_position, "font-family"]))
+    def get_label_font_family(self, identifier: InputIdentifier, state: int, label_position: str) -> str | None:
+        return cast(str | None, self._get_dict_value([identifier.input_type, identifier.json_identifier, "states", str(state), "labels", label_position, "font-family"]))
 
     def set_label_font_family(self, identifier: InputIdentifier, state: int, label_position: str, font_family: str | None, update: bool = True) -> None:
         for input_state in self.get_controller_input_states(identifier, state):
@@ -878,14 +872,14 @@ class Page:
         if update:
             self.update_input(identifier, state)
 
-    def get_label_font_size(self, identifier: InputIdentifier, state: int, label_position: str) -> int:
-        return cast(int, self._get_dict_value([identifier.input_type, identifier.json_identifier, "states", str(state), "labels", label_position, "font-size"]))
+    def get_label_font_size(self, identifier: InputIdentifier, state: int, label_position: str) -> int | None:
+        return cast(int | None, self._get_dict_value([identifier.input_type, identifier.json_identifier, "states", str(state), "labels", label_position, "font-size"]))
     
-    def get_label_font_style(self, identifier: InputIdentifier, state: int, label_position: str) -> int:
-        return cast(int, self._get_dict_value([identifier.input_type, identifier.json_identifier, "states", str(state), "labels", label_position, "font-style"]))
+    def get_label_font_style(self, identifier: InputIdentifier, state: int, label_position: str) -> int | None:
+        return cast(int | None, self._get_dict_value([identifier.input_type, identifier.json_identifier, "states", str(state), "labels", label_position, "font-style"]))
     
-    def get_label_font_weight(self, identifier: InputIdentifier, state: int, label_position: str) -> int:
-        return cast(int, self._get_dict_value([identifier.input_type, identifier.json_identifier, "states", str(state), "labels", label_position, "font-weight"]))
+    def get_label_font_weight(self, identifier: InputIdentifier, state: int, label_position: str) -> int | None:
+        return cast(int | None, self._get_dict_value([identifier.input_type, identifier.json_identifier, "states", str(state), "labels", label_position, "font-weight"]))
 
     def set_label_font_size(self, identifier: InputIdentifier, state: int, label_position: str, font_size: float | None, update: bool = True) -> None:
         for key_state in self.get_controller_input_states(identifier, state):
@@ -1002,8 +996,8 @@ class Page:
         if update:
             self.update_input(identifier, state)
 
-    def get_media_size(self, identifier: InputIdentifier, state: int) -> float:
-        return cast(float, self._get_dict_value([identifier.input_type, identifier.json_identifier, "states", str(state), "media", "size"]))
+    def get_media_size(self, identifier: InputIdentifier, state: int) -> float | None:
+        return cast(float | None, self._get_dict_value([identifier.input_type, identifier.json_identifier, "states", str(state), "media", "size"]))
 
     def set_media_size(self, identifier: InputIdentifier, state: int, size: float | None, update: bool = True) -> None:
         for key_state in self.get_controller_input_states(identifier, state):
@@ -1014,8 +1008,8 @@ class Page:
         if update:
             self.update_input(identifier, state)
 
-    def get_media_valign(self, identifier: InputIdentifier, state: int) -> float:
-        return cast(float, self._get_dict_value([identifier.input_type, identifier.json_identifier, "states", str(state), "media", "valign"]))
+    def get_media_valign(self, identifier: InputIdentifier, state: int) -> float | None:
+        return cast(float | None, self._get_dict_value([identifier.input_type, identifier.json_identifier, "states", str(state), "media", "valign"]))
 
     def set_media_valign(self, identifier: InputIdentifier, state: int, valign: float, update: bool = True) -> None:
         for key_state in self.get_controller_input_states(identifier, state):
@@ -1026,8 +1020,8 @@ class Page:
         if update:
             self.update_input(identifier, state)
 
-    def get_media_halign(self, identifier: InputIdentifier, state: int) -> float:
-        return cast(float, self._get_dict_value([identifier.input_type, identifier.json_identifier, "states", str(state), "media", "halign"]))
+    def get_media_halign(self, identifier: InputIdentifier, state: int) -> float | None:
+        return cast(float | None, self._get_dict_value([identifier.input_type, identifier.json_identifier, "states", str(state), "media", "halign"]))
 
     def set_media_halign(self, identifier: InputIdentifier, state: int, halign: float, update: bool = True) -> None:
         for key_state in self.get_controller_input_states(identifier, state):
