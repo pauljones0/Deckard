@@ -121,6 +121,7 @@ globals.py, so it stays importable before globals, which the fixtures.py
 contract needs, and importable by log_hooks without weakening the import
 contract of log_hooks.
 """
+import contextlib
 import getpass
 import ipaddress
 import os
@@ -283,10 +284,8 @@ def _hostname_candidates() -> list[str]:
     does one the allowlist keeps, so a machine called localhost.localdomain
     reads the same as any other loopback name."""
     raw: list[str] = []
-    try:
+    with contextlib.suppress(OSError):
         raw.append(socket.gethostname())
-    except OSError:
-        pass
     environment_name = os.environ.get("HOSTNAME")
     if environment_name:
         raw.append(environment_name)

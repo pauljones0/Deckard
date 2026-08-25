@@ -1,3 +1,4 @@
+import contextlib
 import importlib
 import os
 import inspect
@@ -251,13 +252,11 @@ class PluginBase(rpyc.Service):
                             dest = os.path.join(id_dir, entry)
                             if not os.path.exists(dest):
                                 os.rename(os.path.join(folder_dir, entry), dest)
-                        try:
+                        # The directory is not empty, because a name collided
+                        # and stayed in the source, or it resists removal. Both
+                        # are harmless.
+                        with contextlib.suppress(OSError):
                             os.rmdir(folder_dir)
-                        except OSError:
-                            # The directory is not empty, because a name
-                            # collided and stayed in the source, or it resists
-                            # removal. Both are harmless.
-                            pass
                     log.info(
                         f"Plugin {plugin_id}: migrated settings from folder-name "
                         f"path {folder_dir} to id path {id_dir}"
@@ -910,15 +909,11 @@ class PluginBase(rpyc.Service):
 
         # Drop these from the global registries. Both are list removals.
         if connection is not None and gl.plugin_manager is not None:
-            try:
+            with contextlib.suppress(ValueError):
                 gl.plugin_manager.backends.remove(connection)
-            except ValueError:
-                pass
         if process is not None and gl.plugin_manager is not None:
-            try:
+            with contextlib.suppress(ValueError):
                 gl.plugin_manager.backend_processes.remove(process)
-            except ValueError:
-                pass
 
         threading.Thread(
             target=self._teardown_backend_resources,

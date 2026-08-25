@@ -5,6 +5,7 @@ and the queued backlog. A piled-up backlog warns on the submit side too.
 """
 import fixtures  # noqa: F401  (import first: sets up the isolated data dir)
 
+import contextlib
 import threading
 
 from loguru import logger as log
@@ -51,10 +52,8 @@ def main() -> int:
         for r in records:
             if "wedged for" not in r:
                 continue
-            try:
+            with contextlib.suppress(IndexError, ValueError):
                 out.append(float(r.split("wedged for")[1].split("s inside")[0]))
-            except (IndexError, ValueError):
-                pass
         return out
 
     if not wait_until(lambda: len(set(_wedge_durations())) >= 2, timeout=5):

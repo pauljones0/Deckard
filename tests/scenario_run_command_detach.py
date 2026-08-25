@@ -7,6 +7,7 @@ It Popens the command line directly, so shell semantics such as redirection and
 
 # The call never blocks its caller, run_command(None) is a silent no-op, and an
 # unspawnable command is logged rather than raised.
+import contextlib
 import multiprocessing
 import os
 import time
@@ -87,10 +88,8 @@ def main() -> None:
     # Do not leave the sleeper behind for the rest of the run.
     for child in _own_children():
         if child.pid not in baseline_children:
-            try:
+            with contextlib.suppress(psutil.Error):
                 child.kill()
-            except psutil.Error:
-                pass
     fixtures.wait_until(
         lambda: {c.pid for c in _own_children()} <= baseline_children, timeout=10.0
     )

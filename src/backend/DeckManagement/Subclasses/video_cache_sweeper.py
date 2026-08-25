@@ -5,6 +5,7 @@ that no deck settings and no page reference becomes unreachable garbage. That
 happens the moment the user picks a different file. This sweep removes those,
 plus legacy pickle caches and abandoned writer temp files.
 """
+import contextlib
 import hashlib
 import math
 import os
@@ -186,10 +187,8 @@ def collect_referenced_video_hashes() -> set[str]:
 
     hashes = set()
     for path in video_paths:
-        try:
+        with contextlib.suppress(OSError):
             hashes.add(_md5_of_file(path))
-        except OSError:
-            pass
     return hashes
 
 

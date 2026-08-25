@@ -13,6 +13,7 @@ You should have received a copy of the GNU General Public License
 along with this program. If not, see <https://www.gnu.org/licenses/>.
 """
 # Import Python modules
+import contextlib
 import threading
 import time
 from collections.abc import Iterable
@@ -171,12 +172,10 @@ def init_deck_controller_round(deck_manager: Any, deck: Any, attempts: int,
             return DeckController(deck_manager, deck), False
         except StreamDeck.TransportError as e:
             log.warning(f"Transport error initializing deck (attempt {attempt}/{attempts}): {e}")
-            try:
+            with contextlib.suppress(Exception):
                 # The raw handle, because the wrapper lives on the controller
                 # that failed to build.
                 release_device_handle(deck)
-            except Exception:
-                pass
             if attempt < attempts:
                 time.sleep(retry_delay)
         except Exception as e:

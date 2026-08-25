@@ -1,3 +1,4 @@
+import contextlib
 import os
 import threading
 import traceback
@@ -102,10 +103,8 @@ def stop_device_read_thread(device: "StreamDeck.StreamDeck", timeout: "float | N
     device.run_read_thread = False
     read_thread = getattr(device, "read_thread", None)
     if read_thread is not None and read_thread is not threading.current_thread():
-        try:
+        with contextlib.suppress(RuntimeError):
             read_thread.join(READ_THREAD_JOIN_TIMEOUT_S if timeout is None else timeout)
-        except RuntimeError:
-            pass
 
 
 def release_device_handle(device: "StreamDeck.StreamDeck", timeout: "float | None" = None) -> None:

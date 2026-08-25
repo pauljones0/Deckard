@@ -392,13 +392,11 @@ def check_quit_is_idempotent() -> None:
     app_mod.stop_dbus_service = dbus
     try:
         with no_real_exit():
-            try:
+            # Without the guard the fall-through dies further down the
+            # teardown, because the harness has no main_win and no
+            # gl.signal_manager. The recorder below is the verdict.
+            with contextlib.suppress(BaseException):
                 App.on_quit(stub)
-            except BaseException:
-                # Without the guard the fall-through dies further down the
-                # teardown, because the harness has no main_win and no
-                # gl.signal_manager. The recorder below is the verdict.
-                pass
     finally:
         app_mod.stop_dbus_service = saved_dbus
 

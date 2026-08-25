@@ -18,6 +18,7 @@ The checks cover:
 """
 import fixtures  # noqa: F401  (must be imported first: isolates DATA_PATH)
 
+import contextlib
 import os
 import threading
 import time
@@ -154,10 +155,8 @@ class FakeDisplay:
     def close(self):
         self.closed = True
         for fd in (self._read_fd, self._write_fd):
-            try:
+            with contextlib.suppress(OSError):
                 os.close(fd)
-            except OSError:
-                pass
 
     # Test-side controls
 

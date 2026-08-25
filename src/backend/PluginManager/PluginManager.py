@@ -1,3 +1,4 @@
+import contextlib
 import glob
 import os
 import signal
@@ -36,10 +37,8 @@ def terminate_backend_process(process: "subprocess.Popen[bytes] | None", escalat
     except ProcessLookupError:
         return
     except OSError:
-        try:
+        with contextlib.suppress(Exception):
             process.terminate()
-        except Exception:
-            pass
     if not escalate:
         return
     try:
@@ -48,14 +47,10 @@ def terminate_backend_process(process: "subprocess.Popen[bytes] | None", escalat
         try:
             os.killpg(process.pid, signal.SIGKILL)
         except OSError:
-            try:
+            with contextlib.suppress(Exception):
                 process.kill()
-            except Exception:
-                pass
-        try:
+        with contextlib.suppress(Exception):
             process.wait(timeout=2)
-        except Exception:
-            pass
 
 
 def build_backend_launch_command(backend_path: str, venv_path: str | None, port: int,
@@ -252,10 +247,8 @@ def _write_if_differs(path: str, payload: bytes) -> None:
             f.write(payload)
         os.replace(tmp_path, path)
     except BaseException:
-        try:
+        with contextlib.suppress(OSError):
             os.unlink(tmp_path)
-        except OSError:
-            pass
         raise
 
 

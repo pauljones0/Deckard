@@ -1,4 +1,5 @@
 import atexit
+import contextlib
 import json
 import os
 import tempfile
@@ -70,10 +71,8 @@ class _AtomicCacheWriter:
             self._file = os.fdopen(fd, mode)
         except Exception:
             os.close(fd)
-            try:
+            with contextlib.suppress(OSError):
                 os.remove(self._tmp_path)
-            except OSError:
-                pass
             raise
 
     def write(self, data: "str | bytes") -> int:
@@ -100,10 +99,8 @@ class _AtomicCacheWriter:
         try:
             self._file.close()
         finally:
-            try:
+            with contextlib.suppress(OSError):
                 os.remove(self._tmp_path)
-            except OSError:
-                pass
             self._lock.release()
 
     def close(self) -> None:
@@ -118,10 +115,8 @@ class _AtomicCacheWriter:
             # Stamp only now that the whole content sits on disk.
             self._on_committed()
         except Exception:
-            try:
+            with contextlib.suppress(OSError):
                 os.remove(self._tmp_path)
-            except OSError:
-                pass
             raise
         finally:
             self._lock.release()
@@ -130,10 +125,8 @@ class _AtomicCacheWriter:
         # A caller dropped this handle without close() or abort(). Never
         # commit such a write.
         if not getattr(self, "_finished", True):
-            try:
+            with contextlib.suppress(Exception):
                 self.abort()
-            except Exception:
-                pass
 
 
 class StoreCache:

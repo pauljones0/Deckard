@@ -93,10 +93,8 @@ def _write_marker(marker_path: str, state: str) -> bool:
         return True
     except OSError as e:
         _log(f"could not durably write marker {marker_path} ({e})")
-        try:
+        with contextlib.suppress(OSError):
             os.unlink(tmp_path)
-        except OSError:
-            pass
         return False
 
 
