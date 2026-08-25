@@ -291,6 +291,18 @@ bundle as a release asset.
   through updating one of these rows left its control silently dead until a
   restart: edits typed into it were dropped. The rows now rewire themselves
   whatever happens during the update.
+- A rotated deck now answers where you press it. On a deck turned a quarter
+  turn, six of the eight keys of a Stream Deck + fired another key's action,
+  because a press was matched to the grid the deck has upright instead of the
+  turned one. Turning the deck also left the keys showing the old layout
+  until the page was reloaded by hand, and it never repainted a key whose
+  picture had not changed, so that picture stayed on the key it used to
+  belong to. On a deck turned upside down the touch strip is now drawn the
+  right way up, a touch reaches the dial under your finger, a swipe keeps the
+  direction you drew it in, and the dials count from the end you now hold on
+  the left. A deck turned a quarter turn keeps its strip in the deck's own
+  orientation, because the strip cannot be drawn upright in the space the
+  hardware gives it.
 
 - A background image on a Stream Deck + now lines up across the gaps between
   keys. The background was cut into key tiles at a spacing that did not match
