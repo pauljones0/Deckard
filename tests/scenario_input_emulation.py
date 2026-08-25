@@ -139,6 +139,84 @@ def key_input(controller, ident: str = KEY):
     return c_input
 
 
+def keys_are_idle(controller) -> bool:
+    """Whether no key on this deck is holding a gesture.
+
+    A key holds one from its DOWN until its release. The snapshot is dropped
+    last, after the release dispatched every event it owes, so a key that
+    holds none has handed all of them to the pool. The hold timer is read as
+    well: each path that ends a gesture cancels it, so a timer still alive
+    means none of them has run yet.
+    """
+    for c_input in controller.inputs[Input.Key]:
+        if c_input.down_start_time is not None or c_input._gesture is not None:
+            return False
+        timer = c_input.hold_start_timer
+        if timer is not None and timer.is_alive():
+            return False
+    return True
+
+
+def key_is_holding(c_input) -> bool:
+    """Whether this key has taken a press, and finished taking it.
+
+    The DOWN branch sets the gesture clock, resolves the snapshot, arms the
+    hold timer and dispatches, in that order, and resolving the snapshot is a
+    real call. A leg that waits on the clock alone acts on a press the key is
+    still in the middle of taking: it reads a snapshot that is not there yet,
+    or cancels a hold timer that is armed a moment after it.
+    """
+    return (c_input.down_start_time is not None
+            and c_input._gesture is not None
+            and c_input.hold_start_timer is not None)
+
+
+def drain_action_pool(controller, timeout: float = 10.0) -> None:
+    """Return once every action callback already queued has run.
+
+    The deck hands each input event to a pool of worker threads, so the order
+    the events are recorded in is not the order they were dispatched in: a
+    DOWN handed to a busy worker is recorded after an UP handed to a free one.
+    One job per worker, all waiting at the same barrier, holds the whole pool
+    at once. The pool has no worker left over for a job queued before them, so
+    every one of those has finished by the time the barrier trips.
+    """
+    pool = controller.action_executor
+    assert pool is not None, "the deck has no action pool to drain"
+    workers = pool._max_workers
+    barrier = threading.Barrier(workers + 1)
+    for _ in range(workers):
+        assert pool.submit(barrier.wait, timeout) is not None, (
+            "the action pool refused a drain job")
+    try:
+        barrier.wait(timeout)
+    except threading.BrokenBarrierError:
+        raise AssertionError(
+            f"the action pool held work for longer than {timeout:g}s, so an "
+            f"event dispatched here can still be recorded later") from None
+
+
+def settle(controller) -> None:
+    """Leave the deck owing nothing to whatever runs next.
+
+    A leg proves the events it waited for, and nothing else. Two things
+    outlive it otherwise. A release armed on the real wheel runs once the leg
+    has returned, and the pool records an event dispatched earlier later,
+    because it hands each one to whichever worker is free. Both land in the
+    next leg, which cleared the recorder on its way in, and read there as
+    events that leg produced: a key that went down twice, or a release with no
+    press in front of it.
+
+    So a leg ends here. First no key is holding a gesture, which is what a
+    release drops last and therefore proof that it dispatched. Then the pool
+    is drained, which is proof that what it dispatched was recorded.
+    """
+    assert fixtures.wait_until(lambda: keys_are_idle(controller), timeout=10.0), (
+        "a key is still holding the gesture this leg started, so its release "
+        "would land in the leg after it")
+    drain_action_pool(controller)
+
+
 def stub_wheel(fire_at_once: "tuple[str, ...]" = ()) -> StubWheel:
     """Put a stub wheel in front of the control plane. The caller restores.
 
@@ -285,6 +363,10 @@ def leg_short_press_semantics(plane, controller) -> None:
     finally:
         del controller.event_callback
 
+    # The UP this leg waited for says nothing about the events in front of it,
+    # which the pool may still be holding. Read the whole press only once they
+    # are all recorded.
+    settle(controller)
     delivered = events_on(KEY)
     assert SHORT_UP in delivered, (
         f"a press inside the deck's hold time must read as a short press: {delivered}")
@@ -322,6 +404,7 @@ def leg_long_press_semantics(plane, controller) -> None:
     assert fixtures.wait_until(lambda: UP in events_on(KEY), timeout=5.0), (
         f"the release never arrived: {events_on(KEY)}")
 
+    settle(controller)
     delivered = events_on(KEY)
     assert HOLD_STOP in delivered, (
         f"a release past the hold time must read as the end of a hold: {delivered}")
@@ -624,7 +707,15 @@ def leg_release_arms_when_the_press_raises(plane, controller) -> None:
         del controller.event_callback
 
     assert seen == [(True,), (False,)], f"the deck saw {seen}"
-    assert fixtures.wait_until(lambda: c_input.down_start_time is None, timeout=5.0), (
+    # The release clears the gesture clock first and drops the snapshot last,
+    # with a dispatch between the two. A wait on the clock alone reads the
+    # snapshot while the release is still running, and reports a press that
+    # held on to it when what it caught was this leg's own timing.
+    assert fixtures.wait_until(lambda: keys_are_idle(controller), timeout=5.0), (
+        f"the release never finished: gesture clock "
+        f"{c_input.down_start_time!r}, snapshot still held "
+        f"{c_input._gesture is not None}")
+    assert c_input.down_start_time is None, (
         "the input is still holding the gesture it took on the way down")
     assert c_input._gesture is None, (
         "the DOWN-time snapshot outlived the press, which pins the actions of "
@@ -693,17 +784,19 @@ def leg_release_only_ends_its_own_gesture(plane, controller) -> None:
     try:
         assert plane.emulate_input(SERIAL, "EmuMain", COORDS, "long-press").ok
         assert wheel.wait_for("EmulatedRelease"), wheel.log
-        assert fixtures.wait_until(lambda: c_input.down_start_time is not None), (
+        assert fixtures.wait_until(lambda: key_is_holding(c_input)), (
             "the emulated press never reached the key")
 
         # The emulated gesture ends without its release, which is what the
-        # screensaver's own sweep does to every input it confiscates.
+        # screensaver's own sweep does to every input it confiscates. It is
+        # cancelled once the key has finished taking the press, because a
+        # cancel inside that would leave the hold timer armed behind it.
         c_input.cancel_gesture()
         pipeline._reset_delivered()
 
         # A finger takes the same key.
         deck.fire_key_event(0, True)
-        assert fixtures.wait_until(lambda: c_input.down_start_time is not None), (
+        assert fixtures.wait_until(lambda: key_is_holding(c_input)), (
             "the finger's press never reached the key")
         finger_gesture = c_input._gesture
         assert finger_gesture is not None
@@ -743,7 +836,7 @@ def leg_second_press_on_a_held_key_is_refused(plane, controller) -> None:
 
     c_input = key_input(controller)
     assert plane.emulate_input(SERIAL, "EmuMain", COORDS, "long-press").ok
-    assert fixtures.wait_until(lambda: c_input.down_start_time is not None, timeout=5.0), (
+    assert fixtures.wait_until(lambda: key_is_holding(c_input), timeout=5.0), (
         "the first press never reached the key")
 
     second = plane.emulate_input(SERIAL, "EmuMain", COORDS, "press")
@@ -754,6 +847,7 @@ def leg_second_press_on_a_held_key_is_refused(plane, controller) -> None:
 
     assert fixtures.wait_until(lambda: UP in events_on(KEY), timeout=5.0), (
         f"the first press never released: {events_on(KEY)}")
+    settle(controller)
     delivered = events_on(KEY)
     assert delivered.count(DOWN) == 1, (
         f"the key went down more than once for one press: {delivered}")
@@ -918,23 +1012,32 @@ def main() -> None:
     plane = control_plane.get()
     controller = fixtures.make_headless_controller(serial=SERIAL)
     try:
-        leg_wheel_choreography(plane, controller)
-        leg_short_press_clamps_to_the_hold_time(plane, controller)
-        leg_short_press_semantics(plane, controller)
-        leg_long_press_semantics(plane, controller)
-        leg_press_switches_page_first(plane, controller)
-        leg_press_waits_for_the_rebuild(plane, controller)
-        leg_press_refuses_a_page_that_moved(plane, controller)
-        leg_press_survives_a_reload_of_the_same_page(plane, controller)
-        leg_locked_in_the_gap_refuses_the_press(plane, controller)
-        leg_press_gives_up_when_the_wheel_stalls(plane, controller)
-        leg_release_arms_when_the_press_raises(plane, controller)
-        leg_swallowed_press_arms_no_release(plane, controller)
-        leg_release_only_ends_its_own_gesture(plane, controller)
-        leg_second_press_on_a_held_key_is_refused(plane, controller)
-        leg_bad_event_word_moves_nothing(plane, controller)
-        leg_failures_match_the_state_verb(plane, controller)
-        leg_locked_session_refuses_the_press(plane, controller)
+        # Every leg is settled before the next one starts, whether or not it
+        # left anything behind: see settle. Driving that from here rather than
+        # from each leg keeps a leg added later from having to know.
+        for leg in (
+            leg_wheel_choreography,
+            leg_short_press_clamps_to_the_hold_time,
+            leg_short_press_semantics,
+            leg_long_press_semantics,
+            leg_press_switches_page_first,
+            leg_press_waits_for_the_rebuild,
+            leg_press_refuses_a_page_that_moved,
+            leg_press_survives_a_reload_of_the_same_page,
+            leg_locked_in_the_gap_refuses_the_press,
+            leg_press_gives_up_when_the_wheel_stalls,
+            leg_release_arms_when_the_press_raises,
+            leg_swallowed_press_arms_no_release,
+            leg_release_only_ends_its_own_gesture,
+            leg_second_press_on_a_held_key_is_refused,
+            leg_bad_event_word_moves_nothing,
+            leg_failures_match_the_state_verb,
+            leg_locked_session_refuses_the_press,
+        ):
+            leg(plane, controller)
+            settle(controller)
+        # This one builds a deck of its own and tears it down again, and no
+        # leg follows it, so it owes nothing to the deck above.
         leg_bounds_follow_the_rotation(plane)
     finally:
         control_plane.timer_wheel = timer_wheel_real
