@@ -19,7 +19,7 @@ import zipfile
 import requests
 import json
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import CancelledError
 from typing import Any, Literal, NamedTuple, TypeGuard, cast, overload
 from PIL import Image
 from io import BytesIO
@@ -60,6 +60,7 @@ from src.backend.Store.asset_types import (
     WALLPAPER,
 )
 from src.backend.Store import install_script
+from src.backend.Store.prepare_pool import PreparePool
 from src.backend.Store.catalog_entry import COMMIT_SHA_RE, resolve_pinned_revision
 from src.backend.Store.store_result import Err, ErrReason, Ok, StoreFetchError, StoreResult
 
@@ -221,24 +222,19 @@ class StoreBackend:
     def __init__(self) -> None:
         self.store_cache = StoreCache()
 
-        # Every fetch path shares this. The catalog prepare_* tasks on
-        # _prepare_pool take it, and so do the direct calls from UI worker
-        # threads for an install or an update. It caps the process-wide store
-        # HTTP concurrency.
+        # Every fetch path shares this: the catalog prepare_* tasks and the
+        # UI install and update threads. It caps store HTTP concurrency.
         self._fetch_limiter = threading.Semaphore(self.MAX_CONCURRENT_REQUESTS)
 
-        # Fan-out pool for the catalog prepare_* tasks of
-        # process_store_data. Its size matches the fetch cap, because further
-        # workers would only queue on _fetch_limiter. Nothing that runs on
-        # the pool submits to it, because prepare_* never re-enters, so the
-        # pool cannot starve itself.
-        self._prepare_pool = ThreadPoolExecutor(max_workers=self.MAX_CONCURRENT_REQUESTS, thread_name_prefix="store-prepare")
+        self._prepare_pool = PreparePool(self.MAX_CONCURRENT_REQUESTS)
 
-        # Seed the fallback list of official authors.
+        # The fallback list, until the background fetch below answers.
         self.official_authors = ["Core447", "StreamController"]
-
-        # Fetch the real official authors on a background thread.
         threading.Thread(target=self._fetch_official_authors_background, daemon=True).start()
+
+    def shutdown(self) -> None:
+        """Release the fan-out pool, on app quit; see PreparePool."""
+        self._prepare_pool.shutdown()
 
     def _fetch_official_authors_background(self) -> None:
         """Fetches official authors in a background thread and updates self.official_authors."""
@@ -309,11 +305,13 @@ class StoreBackend:
 
     def request_from_url(self, url: str) -> "requests.Response":
         # Callers run on worker threads, the prepare pool and the UI install
-        # threads. The connection and the body read both stay inside the
-        # limiter, which keeps a catalog load from looking like a scrape
-        # burst. The shared session retries a 429 or a 5xx inside the
-        # adapter, so a retry holds the same slot and cannot widen the burst.
+        # threads. Connection and body read both stay inside the limiter, so
+        # a catalog load cannot look like a scrape burst; the shared session
+        # retries a 429/5xx inside the adapter, holding the same slot.
         # Returns the read Response, or raises StoreFetchError.
+        pool = getattr(self, "_prepare_pool", None)  # __new__-built test backends carry no pool
+        if pool is not None and pool.stopping:
+            raise StoreFetchError(url, "the store backend is shutting down")
         try:
             with self._fetch_limiter:
                 req = http_client.get(url, stream=True, timeout=30)
@@ -568,10 +566,12 @@ class StoreBackend:
             for future in futures:
                 try:
                     results.append(future.result())
+                except CancelledError:
+                    continue  # the quit released the pool, so end quietly
                 except Exception as e:
                     # Drop this entry alone, for a StoreFetchError from its
-                    # fetch and for any other fault. Only a failure of every
-                    # store, below, counts as an error.
+                    # fetch and for any other fault. Only a whole-store
+                    # failure, below, is an error.
                     log.error(f"Store item preparation failed: {e!r}")
             narrowed: list[StoreDataT] = [result for result in results if isinstance(result, data_class)]
 

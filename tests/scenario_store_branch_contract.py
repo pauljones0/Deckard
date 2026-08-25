@@ -9,13 +9,13 @@ StorePage re-arms itself after a failed load. No network is involved.
 # shared parse.
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 
 import fixtures  # noqa: F401  (isolated --data tempdir; import first)
 import globals as gl
 
 from src.backend.Store.StoreBackend import StoreBackend
+from src.backend.Store.prepare_pool import PreparePool
 from src.backend.Store.store_result import StoreFetchError
 from src.backend.Store.StoreURL import parse_repo_url
 
@@ -35,7 +35,7 @@ def _make_backend() -> StoreBackend:
     sb.store_cache = StoreCache()
     # What __init__ would have built for the catalog fan-out.
     sb._fetch_limiter = threading.Semaphore(StoreBackend.MAX_CONCURRENT_REQUESTS)
-    sb._prepare_pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="store-prepare")
+    sb._prepare_pool = PreparePool(StoreBackend.MAX_CONCURRENT_REQUESTS)
     sb.official_authors = []
     return sb
 
