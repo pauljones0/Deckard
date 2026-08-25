@@ -3,9 +3,9 @@
 A backend launch is asynchronous, and an event a plugin fires before the
 backend registers reaches no observer, because the actions that listen are
 often not loaded yet. The hold keeps such an event for a bounded window and
-delivers it on registration. It holds one entry per event id, it drops what a
-relaunch superseded, and it drops the rest with one log line when the window
-closes on time.
+delivers it on registration. It holds one entry per holder and event id, a
+live dispatch supersedes what it holds, it drops what a relaunch superseded,
+and it drops the rest with one log line when the window closes on time.
 """
 
 import threading
@@ -137,6 +137,89 @@ def check_coalescing_and_multiple_ids() -> None:
         f"a second event id was coalesced away: {recorder_b.calls}"
     )
     print("PASS: the hold keeps one entry per event id, and the newest wins")
+
+
+def check_a_live_dispatch_supersedes_the_held_value() -> None:
+    """A held value never lands behind a newer one the observers already saw.
+
+    An event fires with nobody listening and the window keeps it. An action
+    then subscribes, and the source fires again, which dispatches live. The
+    release must not follow that with the older value, or the observer's last
+    reading is stale for good.
+    """
+    hold = BackendEventHold(label="supersede", bound_s=30.0)
+    holder = _holder(hold, "test::supersede")
+    hold.arm()
+
+    holder.trigger_event("stale")
+    recorder = _Recorder()
+    holder.add_listener(recorder)
+    holder.trigger_event("fresh")
+    assert recorder.got.wait(10), "the live event was not dispatched"
+
+    hold.release()
+    assert not _wait_until(lambda: len(recorder.calls) > 1, timeout=0.5), (
+        f"the release delivered a value older than the one already dispatched: "
+        f"{recorder.calls}"
+    )
+    assert recorder.calls[-1][0] == ("test::supersede", "fresh"), (
+        f"the observer's last reading is not the newest value: {recorder.calls}"
+    )
+    print("PASS: a live dispatch supersedes what the window holds for that event")
+
+
+def check_two_holders_sharing_an_event_id() -> None:
+    """Two holders of one plugin that share an event id keep an entry each.
+
+    EventHolder allows two holders on one event id. A hold keyed on the id
+    alone would let the second holder's event replace the first's, and the
+    first would vanish with no trace.
+    """
+    hold = BackendEventHold(label="shared-id", bound_s=30.0)
+    first = _holder(hold, "test::shared")
+    second = _holder(hold, "test::shared")
+    hold.arm()
+
+    first.trigger_event("from-first")
+    second.trigger_event("from-second")
+
+    first_recorder = _Recorder()
+    second_recorder = _Recorder()
+    first.add_listener(first_recorder)
+    second.add_listener(second_recorder)
+    hold.release()
+
+    assert first_recorder.got.wait(10), (
+        "the first holder's event was replaced by the second holder's; the hold "
+        "keys on the event id alone"
+    )
+    assert second_recorder.got.wait(10), "the second holder's event was lost"
+    assert first_recorder.calls[0][0] == ("test::shared", "from-first")
+    assert second_recorder.calls[0][0] == ("test::shared", "from-second")
+    print("PASS: two holders sharing an event id keep an entry each")
+
+
+def check_the_deadline_does_not_move() -> None:
+    """A later event does not push the deadline out.
+
+    The window is a bound on how long a plugin's events wait, so it has to
+    close at a fixed time after the launch. A timer re-armed per offer would
+    let a chatty source hold its events for the life of the process.
+    """
+    hold = BackendEventHold(label="deadline", bound_s=0.1)
+    holder = _holder(hold, "test::deadline")
+    hold.arm()
+
+    deadline = time.monotonic() + 1.0
+    while time.monotonic() < deadline:
+        holder.trigger_event("offer")
+        time.sleep(0.01)
+
+    assert not hold.armed, (
+        "the window is still open a long way past its bound; a later event moved "
+        "the deadline instead of leaving it where the launch set it"
+    )
+    print("PASS: a later event does not move the window's deadline")
 
 
 def check_bound_expiry_drops_and_shuts() -> None:
@@ -395,6 +478,50 @@ def check_register_backend_closes_the_window() -> None:
     print("PASS: register_backend closes the hold window and delivers what it held")
 
 
+def check_release_happens_before_the_plugin_hook() -> None:
+    """The window is shut by the time on_backend_ready runs.
+
+    That hook is where a plugin syncs the state its backend just gave it, and
+    an event it fires there must go out at once. A hook that ran while the
+    window was still open would have its own events held until something else
+    closed it.
+    """
+    hold = BackendEventHold(label="hook-order", bound_s=30.0)
+    seen: list = []
+
+    class _HookPlugin(PluginBase):
+        def on_backend_ready(self) -> None:
+            seen.append(self.backend_event_hold.armed)
+
+    plugin = _HookPlugin.__new__(_HookPlugin)
+    plugin._backend_event_hold = hold
+    plugin.server = types.SimpleNamespace(port=1)
+    plugin.backend = None
+    plugin.backend_connection = None
+    plugin.backend_process = None
+    plugin._backend_launch_gen = 0
+    plugin._backend_stop_requested = False
+    plugin._backend_via_terminal = False
+    plugin._backend_ready = threading.Event()
+
+    hold.arm()
+    real_verify = plugin_manager_module.verify_backend_port
+    real_rpyc = plugin_base_module.rpyc
+    plugin_manager_module.verify_backend_port = lambda *args, **kwargs: "127.0.0.1"
+    plugin_base_module.rpyc = types.SimpleNamespace(
+        connect=lambda *args, **kwargs: types.SimpleNamespace(root=object()))
+    try:
+        plugin.register_backend(port=1)
+    finally:
+        plugin_manager_module.verify_backend_port = real_verify
+        plugin_base_module.rpyc = real_rpyc
+
+    assert seen == [False], (
+        f"on_backend_ready ran while the hold window was still open: {seen}"
+    )
+    print("PASS: the hold window is shut before the plugin's backend hook runs")
+
+
 def check_teardown_closes_the_window() -> None:
     hold = BackendEventHold(label="wiring-cancel", bound_s=30.0)
     plugin = _wiring_plugin(hold)
@@ -427,6 +554,9 @@ def main() -> None:
     check_held_then_delivered_on_connect()
     check_observed_event_is_not_delayed()
     check_coalescing_and_multiple_ids()
+    check_a_live_dispatch_supersedes_the_held_value()
+    check_two_holders_sharing_an_event_id()
+    check_the_deadline_does_not_move()
     check_bound_expiry_drops_and_shuts()
     check_generation_guard_across_reconnect()
     check_cancel_drops_without_delivery()
@@ -434,6 +564,7 @@ def main() -> None:
     check_hold_exists_without_a_full_init()
     check_launch_backend_opens_the_window()
     check_register_backend_closes_the_window()
+    check_release_happens_before_the_plugin_hook()
     check_teardown_closes_the_window()
 
     print("PASS: scenario_backend_event_hold")

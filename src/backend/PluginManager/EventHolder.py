@@ -1,3 +1,4 @@
+import itertools
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
@@ -8,6 +9,10 @@ from src.Signals.weak_callbacks import CallbackRegistry
 
 if TYPE_CHECKING:
     from src.backend.PluginManager.PluginBase import PluginBase
+
+# Gives each holder a key of its own in the backend event hold. count() is
+# atomic across threads through its C implementation.
+_hold_serial = itertools.count()
 
 class EventHolder:
     """Holds the event callbacks of one event id."""
@@ -31,6 +36,12 @@ class EventHolder:
         # remove_listener() on teardown stops growing this list. See
         # docs/memory-footprint-plan.md.
         self.observers = CallbackRegistry()
+        # The key this holder uses in the plugin's backend event hold. It
+        # names the holder as well as the event id, because two holders can
+        # share one event id and a key on the id alone would let one holder's
+        # event replace the other's. The serial cannot repeat, which an id()
+        # of a collected holder can.
+        self._hold_key = f"{next(_hold_serial)}::{self.event_id}"
         # This holder's own dispatch lane. The observers of this event run in
         # order on a thread of their own, so an observer that blocks, as a
         # wedged pulsectl call does, stalls this event source's queue alone.
@@ -69,11 +80,18 @@ class EventHolder:
         # as args[0] and the pulsectl event as args[1]. Keep that order.
         payload = (self.event_id, *args)
 
-        def deliver() -> None:
+        def dispatch(from_hold: bool) -> None:
             # The observers are read here and not at the trigger, so an action
             # that subscribes while the hold keeps this event still gets it.
+            observers = self.observers.snapshot()
+            if from_hold and not observers:
+                # The window closes when the backend registers, which can win
+                # the race against the on_ready of the actions that listen.
+                # Say so rather than let the event disappear again.
+                log.info(f"Event {self.event_id} was held while the backend connected and "
+                         f"still reached no observer")
             try:
-                self._lane.dispatch(self.observers.snapshot(), payload, kwargs, label=self.event_id)
+                self._lane.dispatch(observers, payload, kwargs, label=self.event_id)
             except event_dispatch.DispatchShutdown:
                 # on_quit stopped the dispatcher, and a plugin event source keeps
                 # running until os._exit. AudioControl's pulse listener is a daemon
@@ -85,7 +103,12 @@ class EventHolder:
                 log.debug(f"Event {self.event_id} triggered after dispatch shutdown; dropped")
 
         plugin_base = self.plugin_base
-        if not self.observers and plugin_base is not None:
-            if plugin_base.backend_event_hold.submit(self.event_id, deliver):
+        hold = plugin_base.backend_event_hold if plugin_base is not None else None
+        if hold is not None:
+            if not self.observers and hold.submit(self._hold_key, lambda: dispatch(True)):
                 return
-        deliver()
+            # This event goes out now, so whatever the window still holds for
+            # this holder and event id is older than what the observers are
+            # about to see.
+            hold.drop(self._hold_key)
+        dispatch(False)
