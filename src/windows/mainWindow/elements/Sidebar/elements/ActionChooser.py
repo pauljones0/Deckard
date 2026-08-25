@@ -33,7 +33,7 @@ from src.backend.PluginManager.ActionHolder import ActionHolder
 from src.backend.PluginManager.PluginBase import PluginRegistration
 
 # Import typing
-from typing import Any, TYPE_CHECKING, cast
+from typing import Any, TYPE_CHECKING, cast, override
 if TYPE_CHECKING:
     from collections.abc import Callable
     from src.windows.mainWindow.elements.Sidebar.Sidebar import Sidebar
@@ -127,6 +127,7 @@ class ActionChooser(Gtk.Box):
         self.empty_state_label.set_label(text)
         self.empty_state_label.set_visible(True)
 
+    @override
     def show(self, callback_function: "Callable[..., Any] | None", current_stack_page: "Gtk.Widget | None", identifier: InputIdentifier, callback_args: "tuple[Any, ...]", callback_kwargs: "dict[str, Any]") -> None:  # ty: ignore[invalid-method-override]  # gi stub: shadows Gtk.Widget.show() with the show-for-this-action-slot entry point of the chooser; its one caller is Sidebar.let_user_select_action
         # current_stack_page matters when a plugin action in the
         # action_configurator calls let_user_select_action.
@@ -330,6 +331,7 @@ class PluginExpander(ActionChooserExpander):
         self.build()
         self.add_action_holders()
 
+    @override
     def build(self) -> None:
         # Texts
         self.set_title(self.plugin_name)
@@ -361,6 +363,7 @@ class PluginExpander(ActionChooserExpander):
 
             self.add_row(action_row)
 
+    @override
     def sort_func(self, row1: Gtk.ListBoxRow, row2: Gtk.ListBoxRow, user_data: None) -> int:
         # Returns -1 if row1 should be brefore row2, 0 if they are equal, and 1 otherwise
         search_string = self.plugin_group.action_chooser.search_entry.get_text()
@@ -382,6 +385,7 @@ class PluginExpander(ActionChooserExpander):
 
         return self.calculate_fuzz_ratio_sort(search_string, action1_label, action2_label)
     
+    @override
     def filter_func(self, row: "PluginActionRow | ActionGroupExpander", user_data: None) -> bool:
         search_string = self.plugin_group.action_chooser.search_entry.get_text()
 
@@ -414,6 +418,7 @@ class ActionGroupExpander(ActionChooserExpander):
         self.build()
         self.add_action_holders()
 
+    @override
     def build(self) -> None:
         # Texts
         self.set_title(self.holder_group.get_group_name())
@@ -453,6 +458,7 @@ class ActionGroupExpander(ActionChooserExpander):
         else:
             image.set_css_classes(["expander-arrow-not-activated"])
 
+    @override
     def sort_func(self, row1: Gtk.ListBoxRow, row2: Gtk.ListBoxRow, user_data: None) -> int:
         # Returns -1 if row1 should be brefore row2, 0 if they are equal, and 1 otherwise
         search_string = self.plugin_group.action_chooser.search_entry.get_text()
@@ -463,6 +469,7 @@ class ActionGroupExpander(ActionChooserExpander):
 
         return self.calculate_fuzz_ratio_sort(search_string, action1_label, action2_label)
 
+    @override
     def filter_func(self, row: "PluginActionRow", user_data: None) -> bool:
         search_string = self.plugin_group.action_chooser.search_entry.get_text()
 

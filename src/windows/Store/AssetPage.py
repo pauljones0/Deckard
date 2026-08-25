@@ -47,7 +47,7 @@ from src.windows.Store.StoreData import StoreAssetData
 from src.windows.Store.StorePage import StorePage
 
 # Typing
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, cast, override
 if TYPE_CHECKING:
     from src.windows.Store.Store import Store
 
@@ -77,6 +77,7 @@ class StoreAssetPage(StorePage):
 
     # Carry no @log.catch here. StorePage._load_guarded must see the failure,
     # so it can show the error page and arm the tab for a retry.
+    @override
     def load(self) -> None:
         self.set_loading()
         backend = self.store.backend
@@ -174,6 +175,7 @@ class StoreAssetPreview(StorePreview):
             return 1
         return 2
 
+    @override
     def install(self) -> bool:
         """Run on the download worker thread. Returns True on a real install.
 
@@ -234,6 +236,7 @@ class StoreAssetPreview(StorePreview):
         gl.notify.error(f"The {noun} {name} could not be installed",
                         title=f"{noun[:1].upper()}{noun[1:]} install failed")
 
+    @override
     def uninstall(self) -> None:
         uninstall_attr = self.descriptor.uninstall_attr
         if uninstall_attr is None:
@@ -252,9 +255,11 @@ class StoreAssetPreview(StorePreview):
         getattr(backend, uninstall_attr)(self.asset_data)
         self.set_install_state(0)
 
+    @override
     def update(self) -> None:
         self.install()
 
+    @override
     def on_click_main(self, button: Gtk.Button) -> None:
         page = self.store_page
         page.set_info_visible(True)

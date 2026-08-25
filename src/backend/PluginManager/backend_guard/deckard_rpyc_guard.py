@@ -26,7 +26,7 @@ import socket
 import sys
 import types
 from collections.abc import Callable, Sequence
-from typing import Any, NamedTuple, cast
+from typing import Any, NamedTuple, cast, override
 
 TCP_ESTABLISHED = "01"
 TCP_LISTEN = "0A"
@@ -257,10 +257,12 @@ class _PatchingLoader(importlib.abc.Loader):
     def __init__(self, loader: importlib.abc.Loader) -> None:
         self._loader = loader
 
+    @override
     def create_module(self, spec: importlib.machinery.ModuleSpec) -> types.ModuleType | None:
         create = getattr(self._loader, "create_module", None)
         return cast("types.ModuleType | None", create(spec) if create is not None else None)
 
+    @override
     def exec_module(self, module: types.ModuleType) -> None:
         self._loader.exec_module(module)
         try:
@@ -275,6 +277,7 @@ class _RpycServerFinder(importlib.abc.MetaPathFinder):
     def __init__(self) -> None:
         self._resolving = False
 
+    @override
     def find_spec(self, fullname: str, path: "Sequence[str] | None" = None, target: "types.ModuleType | None" = None) -> importlib.machinery.ModuleSpec | None:
         # The re-entrant find_spec call below scans sys.meta_path again; the
         # flag makes this finder answer None on that inner pass, so the

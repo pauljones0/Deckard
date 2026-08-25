@@ -15,7 +15,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 from src.backend.DeckManagement.Subclasses.SingleKeyAsset import SingleKeyAsset
 from PIL import Image, ImageEnhance
 
-from typing import Any, TYPE_CHECKING
+from typing import Any, TYPE_CHECKING, override
 if TYPE_CHECKING:
     from src.backend.DeckManagement.deck_controller.inputs import ControllerInput
 
@@ -167,12 +167,14 @@ class InputImage(SingleKeyAsset):
         # releases it.
         self.image = fresh
 
+    @override
     def get_raw_image(self) -> Image.Image | None:
         if not hasattr(self, "image") or self.image is None:
             return None
         self._ensure_fits_composed()
         return self.image
 
+    @override
     def close(self) -> None:
         if not hasattr(self, "image"):
             # Already closed

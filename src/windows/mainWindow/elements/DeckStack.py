@@ -31,7 +31,7 @@ from src.backend import ui_port
 from src.windows.mainWindow.elements.DeckStackChild import DeckStackChild as DeckStackChild
 
 # Import typing
-from typing import Any, TYPE_CHECKING, cast
+from typing import Any, TYPE_CHECKING, cast, override
 if TYPE_CHECKING:
     from src.backend.DeckManagement.DeckManager import DeckManager
     from src.backend.DeckManagement.deck_controller.controller import DeckController
@@ -271,6 +271,7 @@ class DeckStack(Gtk.Stack):
                 self.set_visible_child(page.get_child())
                 return
             
+    @override
     def get_visible_child(self) -> DeckStackChild | None:
         # None while the stack is empty (no deck connected yet).
         return super().get_visible_child()  # ty: ignore[invalid-return-type]  # gi stub: Gtk.Stack.get_visible_child is typed Gtk.Widget | None; every child of this stack is a DeckStackChild

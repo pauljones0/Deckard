@@ -23,7 +23,7 @@ import globals as gl
 
 from gi.repository import Gio, GLib
 
-from typing import cast, TYPE_CHECKING
+from typing import cast, TYPE_CHECKING, override
 if TYPE_CHECKING:
     from src.backend.WindowGrabber.WindowGrabber import WindowGrabber
 
@@ -77,6 +77,7 @@ class Gnome(Integration):
             pass
 
     @log.catch
+    @override
     def start_watching(self) -> None:
         proxy = self.proxy
         if proxy is None or self._signal_handler_id:
@@ -84,6 +85,7 @@ class Gnome(Integration):
         self._signal_handler_id = proxy.connect("g-signal", self.on_dbus_signal)
 
     @log.catch
+    @override
     def stop_watching(self) -> None:
         """Drops the shell's window-change subscription.
 
@@ -117,6 +119,7 @@ class Gnome(Integration):
         window = Window(parsed.get("wm_class"), parsed.get("title"))
         self.window_grabber.on_active_window_changed(window=window)
         
+    @override
     def get_all_windows(self) -> list[Window]:
         if not self.get_is_connected():
             return []
@@ -140,6 +143,7 @@ class Gnome(Integration):
 
         return windows
     
+    @override
     def get_active_window (self) -> Window | None:
         if not self.get_is_connected():
             return None

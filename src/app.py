@@ -16,7 +16,7 @@ import signal
 import threading
 import time
 from collections.abc import Callable
-from typing import Any, TYPE_CHECKING, cast
+from typing import Any, TYPE_CHECKING, cast, override
 
 if TYPE_CHECKING:
     from types import FrameType
@@ -722,6 +722,7 @@ class App(Adw.Application):
             GLib.idle_add(self.unmark_busy)
             GLib.idle_add(self.main_win.set_cursor_from_name, "default")
 
+    @override
     def send_notification(self,  # ty: ignore[invalid-method-override]  # shadows Gio.Application.send_notification with the (icon, title, body) form of this app; the parent_send binding below reaches the base signature
                           icon_name: str,
                           title: str,

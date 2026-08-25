@@ -33,7 +33,7 @@ import globals as gl
 
 # Import typing
 from collections.abc import Callable
-from typing import Any, TYPE_CHECKING
+from typing import Any, TYPE_CHECKING, override
 
 if TYPE_CHECKING:
     from src.backend.IconPackManagement.IconPack import IconPack
@@ -50,6 +50,7 @@ class IconPackChooserStack(GenericPackChooserStack[IconChooserPage]):
     LEAF_CHOOSER_CLASS = IconChooserPage
     LEAF_CHILD_TITLE = "Icon Chooser"
 
+    @override
     def prepare(self) -> None:
         self.on_loads_finished_tasks: list[Callable[[], Any]] = []
         # Serializes the two build_finished flags with the deferred-task

@@ -80,9 +80,7 @@ blanket-ignore-comment = "error"            # a suppression names the rule it su
 unsupported-dynamic-base = "error"          # a base class ty cannot compute hides the whole surface
 dynamic-function-decorator-return = "error" # a decorator that erases the wrapped signature
 unsound-return-statement = "error"          # a returned value is Any-tainted, assignable but not a subtype
-
-# Left off deliberately, each its own piece of work rather than a suppression:
-#   missing-override-decorator   250 sites
+missing-override-decorator = "error"        # a method that overrides a base declares @override
 
 [[tool.ty.overrides]]
 # Both modules are deprecated whole. Their own annotations and their Gio.ListStore
@@ -105,3 +103,15 @@ include = [
 
 [tool.ty.overrides.rules]
 unsound-return-statement = "ignore"
+
+[[tool.ty.overrides]]
+# Deferred: these files are under open touch-strip work; their override
+# decorators get added once that lands.
+include = [
+    "src/backend/DeckManagement/deck_controller/inputs.py",
+    "src/backend/DeckManagement/deck_controller/gif_pipeline.py",
+    "src/backend/DeckManagement/deck_controller/media_writer.py",
+]
+
+[tool.ty.overrides.rules]
+missing-override-decorator = "ignore"

@@ -31,7 +31,7 @@ import gi
 gi.require_version("Xdp", "1.0")
 from gi.repository import Xdp
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, override
 if TYPE_CHECKING:
     from src.backend.WindowGrabber.WindowGrabber import WindowGrabber
 
@@ -71,6 +71,7 @@ class Hyprland(Integration):
         return None
 
     @log.catch
+    @override
     def start_watching(self) -> None:
         thread = self.active_window_change_thread
         if thread is not None and thread.is_alive():
@@ -83,6 +84,7 @@ class Hyprland(Integration):
         thread.start()
 
     @log.catch
+    @override
     def stop_watching(self) -> None:
         thread = self.active_window_change_thread
         self.active_window_change_thread = None
@@ -104,6 +106,7 @@ class Hyprland(Integration):
             # either way, so a later start builds a clean thread.
             log.warning("The Hyprland active window watcher did not stop within the timeout")
 
+    @override
     def get_all_windows(self) -> list[Window]:
         windows: list[Window] = []
         try:
@@ -123,6 +126,7 @@ class Hyprland(Integration):
 
         return windows
 
+    @override
     def get_active_window(self) -> Window | None:
         try:
             output = subprocess.check_output([*self.command_prefix, "hyprctl", "activewindow", "-j"], text=True, cwd="/").strip()
@@ -178,6 +182,7 @@ class WatchForActiveWindowChange(threading.Thread):
             sock.shutdown(socket.SHUT_RDWR)
 
     @log.catch
+    @override
     def run(self) -> None:
         socket_path = self.hyprland._socket_path
 

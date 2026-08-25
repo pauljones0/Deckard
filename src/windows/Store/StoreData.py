@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import TypeVar
+from typing import TypeVar, override
 from PIL import Image
 
 from loguru import logger as log
@@ -101,6 +101,7 @@ class PluginData(StoreData, ImageData, LicenceData):
     plugin_id: str | None = None # Plugin ID in the com.author.name format
 
     @property
+    @override
     def asset_id(self) -> str | None:
         return self.plugin_id
 
@@ -119,6 +120,7 @@ class IconData(StoreData, ImageData, LicenceData):
     icon_id: str | None = None # Icon ID in the com.author.name format
 
     @property
+    @override
     def asset_id(self) -> str | None:
         return self.icon_id
 
@@ -137,6 +139,7 @@ class WallpaperData(StoreData, ImageData, LicenceData):
     wallpaper_id: str | None = None # Icon ID in the com.author.name format
 
     @property
+    @override
     def asset_id(self) -> str | None:
         return self.wallpaper_id
 
@@ -155,6 +158,7 @@ class SDPlusBarWallpaperData(StoreData, ImageData, LicenceData):
     id: str | None = None # SD+ Bar wallpaper ID in the com.author.name format
 
     @property
+    @override
     def asset_id(self) -> str | None:
         return self.id
 

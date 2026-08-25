@@ -67,7 +67,7 @@ from src.backend.DeckManagement.deck_controller.media_writer import ReopenDeckMs
 import globals as gl
 
 from collections.abc import Callable
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, cast, override
 
 if TYPE_CHECKING:
     from src.backend.DeckManagement.BetterDeck import BetterDeck
@@ -476,6 +476,7 @@ class DeckReaderWatchdog(threading.Thread):
         # the register, which is what keeps a closed deck from being held here.
         self._supervisors: "dict[DeckController, DeckReaderSupervisor]" = {}
 
+    @override
     def run(self) -> None:
         while gl.threads_running and not self._stop_event.is_set():
             self._stop_event.wait(WATCHDOG_INTERVAL_S)

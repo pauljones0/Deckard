@@ -5,7 +5,7 @@ from GtkHelper.FileDialogRow import FileDialogRow as FileDialog, FileDialogFilte
 from gi.repository import Gio
 
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, cast, override
 
 if TYPE_CHECKING:
     from src.backend.PluginManager.ActionCore import ActionCore
@@ -120,6 +120,7 @@ class FileDialogRow(GenerativeUI[str]):
         self._handle_value_changed(path)
 
     @GenerativeUI.signal_manager
+    @override
     def set_ui_value(self, value: str) -> None:
         """
         Sets the value (file path) in the UI file dialog widget.

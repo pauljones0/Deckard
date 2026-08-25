@@ -3,7 +3,7 @@ from GtkHelper.GenerativeUI.GenerativeUI import GenerativeUI
 
 
 from collections.abc import Callable
-from typing import cast, TYPE_CHECKING, Any
+from typing import cast, TYPE_CHECKING, Any, override
 if TYPE_CHECKING:
     from src.backend.PluginManager.ActionCore import ActionCore
 
@@ -69,10 +69,12 @@ class ComboRow(GenerativeUI[BaseComboRowItem | str | None]):
     def get_sensitive(self) -> bool:
         return cast(bool, self.widget.get_sensitive())
 
+    @override
     def connect_signals(self) -> None:
         """Connects the signal to detect selection changes in the combo box."""
         self._track_connect("selected", self.widget, "notify::selected", self._value_changed)
 
+    @override
     def disconnect_signals(self) -> None:
         """Disconnects the signal for selection changes."""
         self._track_disconnect("selected", self.widget)
@@ -82,6 +84,7 @@ class ComboRow(GenerativeUI[BaseComboRowItem | str | None]):
         item = combo_row.get_selected_item()
         self._handle_value_changed(item)
 
+    @override
     def _handle_value_changed(self, new_value: BaseComboRowItem | str | None, update_settings: bool = True, trigger_callback: bool = True) -> None:
         """Handles updating the stored value and triggering the change callback."""
         old_value = self.get_value(self._default_value)
@@ -96,6 +99,7 @@ class ComboRow(GenerativeUI[BaseComboRowItem | str | None]):
             # _handle_value_changed says why this must not force a build.
             self.on_change(self._widget, new_value, old_value)
 
+    @override
     def reset_value(self) -> None:
         """Reset the selection to its default.
 
@@ -113,16 +117,19 @@ class ComboRow(GenerativeUI[BaseComboRowItem | str | None]):
         selected_item = self.widget.set_selected_item(self._default_value)
         self._handle_value_changed(selected_item)
 
+    @override
     def load_initial_ui(self) -> None:
         value = self.get_value()
         selected_item = self.widget.set_selected_item(value)
         self._handle_value_changed(selected_item, False)
 
     @GenerativeUI.signal_manager
+    @override
     def set_ui_value(self, value: BaseComboRowItem | str | None) -> None:
         """Sets the selected item in the UI."""
         self.widget.set_selected_item(value)
 
+    @override
     def set_value(self, value: BaseComboRowItem | str | None) -> None:
         """Sets the selected item in the UI."""
 

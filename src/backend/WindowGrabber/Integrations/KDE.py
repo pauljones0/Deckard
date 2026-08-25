@@ -27,7 +27,7 @@ import gi
 gi.require_version("Xdp", "1.0")
 from gi.repository import Xdp
 
-from typing import TYPE_CHECKING, Optional, cast
+from typing import TYPE_CHECKING, Optional, cast, override
 if TYPE_CHECKING:
     from src.backend.WindowGrabber.WindowGrabber import WindowGrabber
 
@@ -66,6 +66,7 @@ class KDE(Integration):
             return False
 
     @log.catch
+    @override
     def start_watching(self) -> None:
         if not self.is_kdotool_installed:
             return
@@ -82,6 +83,7 @@ class KDE(Integration):
         thread.start()
 
     @log.catch
+    @override
     def stop_watching(self) -> None:
         thread = self.active_window_change_thread
         self.active_window_change_thread = None
@@ -105,6 +107,7 @@ class KDE(Integration):
             log.warning("The KDE active window watcher did not stop within the timeout")
 
     @log.catch
+    @override
     def get_all_windows(self) -> list[Window]:
         windows: list[Window] = []
 
@@ -144,6 +147,7 @@ class KDE(Integration):
             return None
 
     @log.catch
+    @override
     def get_active_window(self) -> Optional[Window]:
         window_id = self.get_active_window_id()
         if window_id is None:
@@ -206,6 +210,7 @@ class WatchForActiveWindowChange(threading.Thread):
         self._stop_event.set()
 
     @log.catch
+    @override
     def run(self) -> None:
         while gl.threads_running and not self._stop_event.is_set():
             # Wait on the stop event instead of a sleep, so a stop ends the

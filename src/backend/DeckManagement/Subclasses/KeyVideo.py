@@ -19,7 +19,7 @@ from src.backend.DeckManagement.Subclasses.SingleKeyAsset import SingleKeyAsset
 from src.backend.DeckManagement.Subclasses import mp4_tile_cache
 from PIL import Image
 
-from typing import Any, TYPE_CHECKING
+from typing import Any, TYPE_CHECKING, override
 if TYPE_CHECKING:
     from src.backend.DeckManagement.deck_controller.inputs import ControllerInput
 
@@ -157,11 +157,13 @@ class InputVideo(SingleKeyAsset):
         self.fps = fps
         self.loop = loop
 
+    @override
     def get_raw_image(self) -> Image.Image | None:
         # None once the reader closes, or when the source is degenerate. See
         # get_next_frame's early returns.
         return self.get_next_frame()
 
+    @override
     def close(self) -> None:
         """Detaches this reader from the shared tile-cache registry.
 

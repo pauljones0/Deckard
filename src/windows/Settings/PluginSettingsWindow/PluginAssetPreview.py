@@ -6,7 +6,7 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Gtk, GdkPixbuf, Pango, Gdk
 
-from typing import Any, TYPE_CHECKING
+from typing import Any, TYPE_CHECKING, override
 if TYPE_CHECKING:
     from PIL import Image
 
@@ -87,6 +87,7 @@ class IconPreview(AssetPreview):
 
         return self.pixbuf.scale_simple(new_width, new_height, GdkPixbuf.InterpType.BILINEAR)
 
+    @override
     def build(self) -> None:
         self.picture = Gtk.Picture(width_request=self.size[0], height_request=self.size[1], overflow=Gtk.Overflow.HIDDEN,
                                    content_fit=Gtk.ContentFit.COVER,
@@ -120,6 +121,7 @@ class ColorPreview(AssetPreview):
         self.color = color
         self.build()
 
+    @override
     def build(self) -> None:
         self.color_button = Gtk.ColorButton(title="Pick Color")
         self.color_button.set_sensitive(False)

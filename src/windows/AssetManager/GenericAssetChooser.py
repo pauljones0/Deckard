@@ -72,7 +72,7 @@ from src.windows.AssetManager.Preview import _PIXBUF_UNSET, Preview, _PixbufUnse
 import globals as gl
 
 # Import typing
-from typing import cast, Generic, Protocol, TYPE_CHECKING, TypeVar, Any
+from typing import cast, Generic, Protocol, TYPE_CHECKING, TypeVar, Any, override
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -194,6 +194,7 @@ class GenericPackPreview(Preview, Generic[PackT]):
         self.pack = pack
         self.pack_chooser = pack_chooser
 
+    @override
     def on_click_info(self, button: Gtk.Button) -> None:
         attribution = self.pack.get_pack_attribution()
         self.pack_chooser.asset_manager.show_info(
@@ -228,6 +229,7 @@ class GenericAssetPreview(Preview, Generic[AssetT]):
 
         self.asset: AssetT = None  # ty: ignore[invalid-assignment]  # late-init: set_asset
 
+    @override
     def on_click_info(self, button: Gtk.Button) -> None:
         # The window that owns this preview nulls the slot as it closes, and a
         # recycled child can outlive that, so answer a closed window with a log
@@ -386,6 +388,7 @@ class GenericPackChooserPage(_ChooserBuildPage, Generic[PackT, StackT]):
         self.start_build()
 
     @log.catch
+    @override
     def build(self) -> None:
         self.build_finished = False
 
@@ -495,6 +498,7 @@ class GenericPackChooserPage(_ChooserBuildPage, Generic[PackT, StackT]):
             return True
         return asset_search.matches(pack.name, self.search_entry.get_text())
 
+    @override
     def apply_search(self, query: str) -> None:
         pack_flow = self.pack_flow
         if pack_flow is None:
@@ -515,6 +519,7 @@ class GenericPackChooserPage(_ChooserBuildPage, Generic[PackT, StackT]):
         # recorded as rendered until they do.
         self.search_across_packs(query, self, self._search_generation)
 
+    @override
     def on_shown(self) -> None:
         """Empty the entry as this page shows. Main loop only.
 
@@ -759,6 +764,7 @@ class GenericAssetChooserPage(_ChooserBuildPage, Generic[PackT, AssetT, PreviewT
         self.start_build()
 
     @log.catch
+    @override
     def build(self) -> None:
         self.build_finished = False
         self.set_loading(True)
@@ -911,6 +917,7 @@ class GenericAssetChooserPage(_ChooserBuildPage, Generic[PackT, AssetT, PreviewT
         """Select the asset at path once the grid renders it."""
         self.selected_path = path
 
+    @override
     def _reset_build_state(self) -> None:
         # No grid renders either request and no build consumes them, so a kept
         # one strands without a word.
@@ -943,6 +950,7 @@ class GenericAssetChooserPage(_ChooserBuildPage, Generic[PackT, AssetT, PreviewT
         return compare_assets(item1, item2, self.search_entry.get_text(),
                               self.ASSET_PATH_ATTR)
 
+    @override
     def apply_search(self, query: str) -> None:
         if self.asset_flow is None:
             # Nothing rendered yet (build still queued on the main loop);

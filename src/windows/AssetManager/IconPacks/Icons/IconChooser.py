@@ -28,7 +28,7 @@ from src.windows.AssetManager.GenericAssetChooser import (
 # Import python modules
 
 # Import typing
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, override
 if TYPE_CHECKING:
     from src.backend.IconPackManagement.Icon import Icon
     from src.backend.IconPackManagement.IconPack import IconPack
@@ -44,15 +44,19 @@ class IconChooserPage(GenericAssetChooserPage["IconPack", "Icon",
     FLOW_BOX_CLASS = GenericAssetFlowBox
     PREVIEW_CLASS = GenericAssetPreview
 
+    @override
     def get_assets(self, pack: "IconPack") -> "list[Icon]":
         return pack.get_icons()
 
+    @override
     def bind_preview(self, preview: "GenericAssetPreview[Icon]", asset: "Icon") -> None:
         preview.set_asset(asset)
 
+    @override
     def get_child_asset(self, child: "GenericAssetPreview[Icon]") -> "Icon":
         return child.asset
 
+    @override
     def on_build_finished(self) -> None:
         # The icon stack gates a deferred show_for_path task on the
         # build_finished flag of each of its two pages.

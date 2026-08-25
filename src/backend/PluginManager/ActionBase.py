@@ -4,7 +4,7 @@ from src.backend.PluginManager.EventAssigner import EventAssigner
 from src.backend.DeckManagement.InputIdentifier import Input, InputEvent
 from src.backend.PluginManager.ActionCore import ActionCore
 
-from typing import Any, TYPE_CHECKING
+from typing import Any, TYPE_CHECKING, override
 if TYPE_CHECKING:
     from src.backend.DeckManagement.deck_controller.controller import DeckController
     from src.backend.DeckManagement.InputIdentifier import InputIdentifier
@@ -124,6 +124,7 @@ class ActionBase(ActionCore):
 
 
     # backward compatibility
+    @override
     def event_callback(self, event: InputEvent, data: dict[str, Any] | None = None) -> None:
         ## backward compatibility
         if event == Input.Key.Events.DOWN:

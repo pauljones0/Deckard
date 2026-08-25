@@ -42,7 +42,7 @@ from src.Signals.Signals import Signal
 import globals as gl
 
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any, TypedDict, cast
+from typing import TYPE_CHECKING, Any, TypedDict, cast, override
 # One stored label of this action, keyed by position. set_label writes every
 # key from the KeyLabel it builds; the hyphenated names force the functional
 # syntax.
@@ -752,6 +752,7 @@ class ActionCore(rpyc.Service):
                                      authenticator=frontend_authenticator)
         threading.Thread(target=self.server.start, name="server_start", daemon=True).start()
 
+    @override
     def on_disconnect(self, conn: "Connection | None" = None) -> None:
         # The rpyc disconnect hook. A dropped connection with a live process
         # orphans the backend, so the full teardown runs here too.

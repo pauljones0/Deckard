@@ -26,7 +26,7 @@ import globals as gl
 import os
 
 # Import typing
-from typing import Any, TYPE_CHECKING
+from typing import Any, TYPE_CHECKING, override
 if TYPE_CHECKING:
     from src.windows.AssetManager.CustomAssets.FlowBox import CustomAssetChooserFlowBox
 
@@ -51,6 +51,7 @@ class AssetPreview(Preview):
         self.set_text(asset["name"])
         self.set_image(asset["thumbnail"])
 
+    @override
     def on_click_info(self, button: Gtk.Button) -> None:
         self.flow.asset_chooser.asset_manager.show_info(
             internal_path = self.asset["internal-path"],
@@ -60,6 +61,7 @@ class AssetPreview(Preview):
             license_comment = self.asset["license"].get("comment")
         )
 
+    @override
     def on_click_remove(self, button: Gtk.Button) -> None:
         dial = DeleteConfirmationDialog(self)
         dial.present()

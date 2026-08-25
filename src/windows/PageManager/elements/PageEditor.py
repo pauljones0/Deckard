@@ -26,7 +26,7 @@ from gi.repository import GObject, Gtk, Adw, GLib
 
 # Import typing
 from collections.abc import Callable
-from typing import Any, TYPE_CHECKING
+from typing import Any, TYPE_CHECKING, override
 if TYPE_CHECKING:
     from src.windows.PageManager.PageManager import PageManager
 
@@ -237,16 +237,19 @@ class NameGroup(PageEditorGroup):
     def __init__(self, page_editor: PageEditor):
         super().__init__(page_editor)
 
+    @override
     def build(self) -> None:
         self.name_entry = Adw.EntryRow(title=gl.lm.get("page-manager.page-editor.name-group.name"), show_apply_button=True)
         self.add(self.name_entry)
 
+    @override
     def _signal_bindings(self) -> list[tuple[str, GObject.Object, str, Callable[..., Any]]]:
         return [
             ("name-changed", self.name_entry, "changed", self.on_name_changed),
             ("name-apply", self.name_entry, "apply", self.on_name_change_applied),
         ]
 
+    @override
     def load_config_settings(self, page_path: str | None) -> None:
         if page_path is None:
             return
@@ -292,6 +295,7 @@ class DefaultPageGroup(PageEditorGroup):
     def __init__(self, page_editor: PageEditor):
         super().__init__(page_editor, title=gl.lm.get("page-manager.page-editor.default-page.title"))
 
+    @override
     def build(self) -> None:
         self.deck_selector = MultiDeckSelectorRow(
             source_window=self.page_editor.page_manager,
@@ -302,6 +306,7 @@ class DefaultPageGroup(PageEditorGroup):
         )
         self.add(self.deck_selector)
 
+    @override
     def load_config_settings(self, page_path: str) -> None:
         if gl.page_manager is None:
             return
@@ -327,6 +332,7 @@ class AutoChangeGroup(PageEditorGroup):
     def __init__(self, page_editor: PageEditor):
         super().__init__(page_editor, title=gl.lm.get("page-manager.page-editor.change-group.title"))
 
+    @override
     def build(self) -> None:
         self.enable_toggle = Adw.SwitchRow(title=gl.lm.get("page-manager.page-editor.change-group.enable"))
         self.add(self.enable_toggle)
@@ -362,6 +368,7 @@ class AutoChangeGroup(PageEditorGroup):
         self.matching_window_expander = MatchingWindowExpander(auto_change_group=self)
         self.add(self.matching_window_expander)
 
+    @override
     def _signal_bindings(self) -> list[tuple[str, GObject.Object, str, Callable[..., Any]]]:
         return [
             ("enable", self.enable_toggle, "notify::active", self.on_enable_changed),
@@ -372,6 +379,7 @@ class AutoChangeGroup(PageEditorGroup):
             ("wm-class-leave", self.wm_class_focus, "leave", self.on_wm_class_focus_left),
         ]
 
+    @override
     def load_config_settings(self, page_path: str) -> None:
         active_page_path = self.page_editor.active_page_path
         if gl.page_manager is None or active_page_path is None:
@@ -510,6 +518,7 @@ class BrightnessGroup(PageEditorGroup):
     def __init__(self, page_editor: PageEditor):
         super().__init__(page_editor, title="Brightness Override")
 
+    @override
     def build(self) -> None:
         self.enable_expander = BetterExpander(
             title="Overwrite Brightness",
@@ -522,12 +531,14 @@ class BrightnessGroup(PageEditorGroup):
         self.brightness_scale = ScaleRow(0, 0, 100, digits=0, draw_value=True, draw_side_values=False, title="Brightness")
         self.enable_expander.add_row(self.brightness_scale)
 
+    @override
     def _signal_bindings(self) -> list[tuple[str, GObject.Object, str, Callable[..., Any]]]:
         return [
             ("enable", self.enable_expander, "notify::enable-expansion", self.on_enable_changed),
             ("brightness", self.brightness_scale.scale, "value-changed", self.on_brightness_changed),
         ]
 
+    @override
     def load_config_settings(self, page_path: str) -> None:
         if gl.page_manager is None:
             return
@@ -569,6 +580,7 @@ class BackgroundGroup(PageEditorGroup):
     def __init__(self, page_editor: PageEditor):
         super().__init__(page_editor, title="Background Override")
 
+    @override
     def build(self) -> None:
         self.enable_expander = BetterExpander(
             title="Overwrite Background",
@@ -612,6 +624,7 @@ class BackgroundGroup(PageEditorGroup):
 
         self.media_selector_image = Gtk.Image()
 
+    @override
     def _signal_bindings(self) -> list[tuple[str, GObject.Object, str, Callable[..., Any]]]:
         return [
             ("enable", self.enable_expander, "notify::enable-expansion", self.on_enable_changed),
@@ -622,6 +635,7 @@ class BackgroundGroup(PageEditorGroup):
             ("media-selector", self.media_selector_button, "clicked", self.on_media_selector_click),
         ]
 
+    @override
     def load_config_settings(self, page_path: str) -> None:
         if gl.page_manager is None:
             return
@@ -716,6 +730,7 @@ class ScreensaverGroup(PageEditorGroup):
     def __init__(self, page_editor: PageEditor):
         super().__init__(page_editor, title="Screensaver Overwrite")
 
+    @override
     def build(self) -> None:
         self.overwrite_expander = BetterExpander(
             title="Overwrite Screensaver",
@@ -762,6 +777,7 @@ class ScreensaverGroup(PageEditorGroup):
 
         self.media_selector_image = Gtk.Image()
 
+    @override
     def _signal_bindings(self) -> list[tuple[str, GObject.Object, str, Callable[..., Any]]]:
         return [
             ("overwrite", self.overwrite_expander, "notify::enable-expansion", self.on_overwrite_changed),
@@ -773,6 +789,7 @@ class ScreensaverGroup(PageEditorGroup):
             ("media-selector", self.media_selector_button, "clicked", self.on_media_selector_click),
         ]
 
+    @override
     def load_config_settings(self, page_path: str) -> None:
         if gl.page_manager is None:
             return

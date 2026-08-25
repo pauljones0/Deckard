@@ -17,7 +17,7 @@ import contextlib
 import os
 import select
 import threading
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, cast, override
 
 from loguru import logger as log
 
@@ -191,6 +191,7 @@ class X11(Integration):
         self.active_window_change_thread: "WatchForActiveWindowChange | None" = None
 
     @log.catch
+    @override
     def start_watching(self) -> None:
         thread = self.active_window_change_thread
         if thread is not None and thread.is_alive():
@@ -213,6 +214,7 @@ class X11(Integration):
             thread._close_wake_pipe()
 
     @log.catch
+    @override
     def stop_watching(self) -> None:
         thread = self.active_window_change_thread
         self.active_window_change_thread = None
@@ -236,6 +238,7 @@ class X11(Integration):
             log.warning("The X11 active window watcher did not stop within the timeout")
 
     @log.catch
+    @override
     def get_all_windows(self) -> list[Window]:
         display = _open_display()
         if display is None:
@@ -260,6 +263,7 @@ class X11(Integration):
         return windows
 
     @log.catch
+    @override
     def get_active_window(self) -> Window | None:
         display = _open_display()
         if display is None:
@@ -347,6 +351,7 @@ class WatchForActiveWindowChange(threading.Thread):
                     os.close(fd)
 
     @log.catch
+    @override
     def run(self) -> None:
         display = None
         try:

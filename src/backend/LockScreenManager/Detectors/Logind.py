@@ -5,7 +5,7 @@ from src.backend.LockScreenManager.LockScreenDetector import (
     LockScreenDetector,
 )
 
-from typing import cast, TYPE_CHECKING
+from typing import cast, TYPE_CHECKING, override
 if TYPE_CHECKING:
     from src.backend.LockScreenManager.LockScreenManager import LockScreenManager
 
@@ -90,6 +90,7 @@ class LogindLockScreenDetector(LockScreenDetector):
         elif signal_name == "Unlock":
             self.lock_screen_manager.lock(False)
 
+    @override
     def read_initial_lock_state(self) -> None:
         """Seed the lock from the session's current LockedHint, once, at startup.
 

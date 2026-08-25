@@ -4,7 +4,7 @@ from GtkHelper.ColorButtonRow import ColorButtonRow as ColorDialog
 
 from gi.repository import Gdk, Gtk
 
-from typing import cast, TYPE_CHECKING, Callable
+from typing import cast, TYPE_CHECKING, Callable, override
 
 
 if TYPE_CHECKING:
@@ -54,12 +54,14 @@ class ColorButtonRow(GenerativeUI[tuple[int, int, int, int]]):
             self.connect_signals()
         super().__init__(action_core, var_name, default_value, can_reset, auto_add, complex_var_name, on_change, build=build)
 
+    @override
     def connect_signals(self) -> None:
         """
         Connects the necessary signals for detecting color changes.
         """
         self._track_connect("color-set", self.widget.color_button, "color-set", self._value_changed)
 
+    @override
     def disconnect_signals(self) -> None:
         """
         Disconnects signals to prevent unwanted behavior.
@@ -102,6 +104,7 @@ class ColorButtonRow(GenerativeUI[tuple[int, int, int, int]]):
         self._handle_value_changed(self.widget.color)
 
     @GenerativeUI.signal_manager
+    @override
     def set_ui_value(self, value: tuple[int, int, int, int]) -> None:
         """
         Updates the UI with the given color.

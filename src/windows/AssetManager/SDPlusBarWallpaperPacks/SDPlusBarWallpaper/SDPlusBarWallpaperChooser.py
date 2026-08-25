@@ -28,7 +28,7 @@ from src.windows.AssetManager.GenericAssetChooser import (
 # Import python modules
 
 # Import typing
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, override
 if TYPE_CHECKING:
     from src.windows.AssetManager.SDPlusBarWallpaperPacks.Stack import SDPlusBarWallpaperPackChooserStack
     from src.backend.SDPlusBarWallpaperPackManagement.SDPlusBarWallpaper import SDPlusBarWallpaper
@@ -45,13 +45,16 @@ class SDPlusBarWallpaperChooserPage(
     FLOW_BOX_CLASS = GenericAssetFlowBox
     PREVIEW_CLASS = GenericAssetPreview
 
+    @override
     def get_assets(self, pack: "SDPlusBarWallpaperPack") -> "list[SDPlusBarWallpaper]":
         return pack.get_wallpapers()
 
+    @override
     def bind_preview(self, preview: "GenericAssetPreview[SDPlusBarWallpaper]",
                      asset: "SDPlusBarWallpaper") -> None:
         preview.set_asset(asset)
 
+    @override
     def get_child_asset(self,
                         child: "GenericAssetPreview[SDPlusBarWallpaper]") -> "SDPlusBarWallpaper":
         return child.asset

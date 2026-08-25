@@ -5,7 +5,7 @@ from datetime import datetime
 import base64
 from io import BytesIO
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, override
 
 if TYPE_CHECKING:
     from src.backend.DeckManagement.Subclasses.RemoteDeckManager import RemoteDeckManager
@@ -172,6 +172,7 @@ def create_handler(remote_deck_manager: "RemoteDeckManager") -> "type[BaseHTTPRe
             else:
                 self._send_json_response(404, {'error': 'Not found'})
 
+        @override
         def log_message(self, format: str, *args: Any) -> None:
             """Override to customize logging."""
             pass

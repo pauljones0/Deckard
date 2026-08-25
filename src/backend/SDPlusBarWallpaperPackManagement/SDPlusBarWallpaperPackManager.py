@@ -13,6 +13,8 @@ You should have received a copy of the GNU General Public License
 along with this program. If not, see <https://www.gnu.org/licenses/>.
 """
 
+from typing import override
+
 from src.backend.PackManagement.pack_family import PackManager
 from src.backend.SDPlusBarWallpaperPackManagement.SDPlusBarWallpaperPack import SDPlusBarWallpaperPack
 
@@ -22,6 +24,7 @@ class SDPlusBarWallpaperPackManager(PackManager[SDPlusBarWallpaperPack]):
     DATA_DIR = "sd_plus_bar_wallpapers"
     LABEL = "SD+ Bar Wallpaper"
 
+    @override
     def make_pack(self, path: str) -> SDPlusBarWallpaperPack:
         return SDPlusBarWallpaperPack(path)
 
