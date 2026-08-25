@@ -9,7 +9,7 @@ same band.
 import fixtures  # must be first; isolates DATA_PATH before import globals
 import globals as gl
 
-from src.backend.DeckManagement.deck_controller.strip_band import strip_band_geometry
+from src.backend.DeckManagement.deck_controller.strip_band import band_box, strip_band_geometry
 
 from PIL import Image
 from StreamDeck.Devices.StreamDeckPlus import StreamDeckPlus
@@ -85,9 +85,27 @@ def main() -> None:
     fixtures.start_watchdog(60, label="scenario_strip_band_geometry")
 
     plus = make_controller("band-plus", plus=True)
+    # The calibrated span and xoff are absolute canvas pixels, so the SD+
+    # canvas must still be the width they were measured at. A key-spacing
+    # change moves this width and needs a device recalibration; this pin
+    # breaks instead of letting the band drift silently.
+    key_w = plus.get_key_image_size()[0]
+    cols = plus.deck.key_layout()[1]
+    plus_canvas_w = key_w * cols + plus.key_spacing[0] * (cols - 1)
+    assert plus_canvas_w == 540, (
+        f"SD+ canvas width {plus_canvas_w} left the calibrated 540; "
+        f"recalibrate PLUS_BAND on the device")
     assert strip_band_geometry(plus, 540) == CALIBRATED, (
         f"SD+ must answer the calibrated band, got "
         f"{strip_band_geometry(plus, 540)}")
+    # A width the calibration does not cover falls back to the derived band.
+    fallback = strip_band_geometry(plus, 348)
+    assert fallback != CALIBRATED and fallback[1] == 348, (
+        f"an uncalibrated width must get the derived band, got {fallback}")
+    # The crop box clamps inside a canvas smaller than the band expects.
+    box = band_box(348, 200, CALIBRATED)
+    assert box[0] >= 0 and box[2] <= 348 and box[1] >= 0 and box[3] <= 200, (
+        f"band_box must stay inside the canvas, got {box}")
     check_image_band(plus, *CALIBRATED)
 
     # The video cache snapshots the same band.

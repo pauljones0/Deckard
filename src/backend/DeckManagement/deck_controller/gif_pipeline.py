@@ -33,6 +33,7 @@ from src.backend.DeckManagement.Subclasses import cache_budget
 from src.backend.DeckManagement.Subclasses import mp4_tile_cache
 from src.backend.DeckManagement.Subclasses.SingleKeyAsset import SingleKeyAsset
 from src.backend.DeckManagement.Subclasses.mp4_tile_cache import get_video_md5
+from src.backend.DeckManagement.deck_controller.strip_band import band_box, strip_band_geometry
 
 from collections.abc import Generator
 from typing import TYPE_CHECKING, cast
@@ -374,12 +375,13 @@ class GifBackground:
 
             if self.extend_touchscreen:
                 # Extend the canvas below the key grid so the frame
-                # continues onto the strip: one bezel gap plus the strip in
-                # canvas coordinates. BackgroundImage uses this geometry too.
+                # continues onto the strip: the key-to-strip gap plus the
+                # band height, the same strip_band geometry BackgroundImage
+                # and BackgroundVideoCache cut from.
                 self.strip_size = deck_controller.get_touchscreen_image_size()
-                strip_canvas_h = round(self.strip_size[1] * canvas_w / self.strip_size[0])
-                canvas_h += spacing_y + strip_canvas_h
-                self._strip_box = (0, canvas_h - strip_canvas_h, canvas_w, canvas_h)
+                band = strip_band_geometry(deck_controller, canvas_w)
+                canvas_h += band[0] + band[3]
+                self._strip_box = band_box(canvas_w, canvas_h, band)
             canvas_size = (canvas_w, canvas_h)
         else:
             # In strip-background mode it serves whole frames only.

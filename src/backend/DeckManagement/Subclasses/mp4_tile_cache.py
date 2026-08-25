@@ -304,17 +304,31 @@ class Mp4FrameCache(Generic[PayloadT]):
         n_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) if cap.isOpened() else 0
         cached_size = (int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
                        int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))) if cap.isOpened() else (0, 0)
-        if n_frames <= 0 or cached_size != self.out_size:
+        # mp4v truncates an odd dimension down to even, so a cache written
+        # for an odd out_size can only ever hold the truncated size. Compare
+        # against that, or every open of such a cache reads as stale and the
+        # rebuild loops forever.
+        writable_size = (self.out_size[0] - self.out_size[0] % 2,
+                         self.out_size[1] - self.out_size[1] % 2)
+        if n_frames <= 0 or cached_size != writable_size:
             # A frame-size mismatch means the render geometry changed since
             # the cache was built (key spacing, strip band). The file name
             # does not always carry the size, so reusing it would crop every
-            # tile from the wrong coordinates. Rebuild instead.
+            # tile from the wrong coordinates. Rebuild instead, but only
+            # delete when this instance can actually rebuild; with the cache
+            # writer disabled, leave the file and decode from source.
             cap.release()
+            can_rebuild = self.is_builder and self._writer_enabled()
             if n_frames <= 0:
                 log.warning(f"Removing unreadable video cache {self.cache_path}")
-            else:
+            elif can_rebuild:
                 log.info(f"Removing stale video cache ({cached_size[0]}x{cached_size[1]}, "
-                         f"need {self.out_size[0]}x{self.out_size[1]}): {self.cache_path}")
+                         f"need {writable_size[0]}x{writable_size[1]}): {self.cache_path}")
+            else:
+                log.info(f"Ignoring stale video cache ({cached_size[0]}x{cached_size[1]}, "
+                         f"need {writable_size[0]}x{writable_size[1]}, cache writer off): "
+                         f"{self.cache_path}")
+                return False
             with contextlib.suppress(OSError):
                 os.remove(self.cache_path)
             return False

@@ -8,7 +8,7 @@ from loguru import logger as log
 
 import globals as gl
 from src.backend.DeckManagement.Subclasses.mp4_tile_cache import Mp4FrameCache, VID_CACHE
-from src.backend.DeckManagement.deck_controller.strip_band import strip_band_geometry
+from src.backend.DeckManagement.deck_controller.strip_band import band_box, strip_band_geometry
 
 # Import typing
 from typing import TYPE_CHECKING, override
@@ -64,8 +64,15 @@ class BackgroundVideoCache(Mp4FrameCache[list[Image.Image]]):
         # entry.split(".")[0] in video_cache_sweeper.py still resolves this to
         # video_md5 with the suffix present, because the suffix comes after
         # the first dot-delimited component. The sweeper needs no change.
-        cache_dir = os.path.join(VID_CACHE, self.key_layout_str)
-        self._legacy_cache_path = os.path.join(cache_dir, f"{self.video_md5}.cache")
+        # The directory carries the canvas size. Two decks with the same key
+        # layout but different key sizes or bands (an SD+ and a Neo are both
+        # 2x4) must not resolve one file, or each open finds the other's
+        # frame size, removes the file as stale and re-encodes, in both
+        # directions. The legacy pickle kept the size-less directory.
+        legacy_dir = os.path.join(VID_CACHE, self.key_layout_str)
+        self._legacy_cache_path = os.path.join(legacy_dir, f"{self.video_md5}.cache")
+        cache_dir = os.path.join(
+            VID_CACHE, f"{self.key_layout_str}@{self.out_size[0]}x{self.out_size[1]}")
         return os.path.join(cache_dir, f"{self.video_md5}{self._sat_suffix}.mp4")
 
     def _canvas_size(self) -> tuple[int, int]:
@@ -181,11 +188,15 @@ class BackgroundVideoCache(Mp4FrameCache[list[Image.Image]]):
 
     def crop_strip_from_deck_sized_image(self, image: Image.Image) -> Image.Image:
         """The strip's view of the extended canvas, at strip resolution."""
-        _gap, span, xoff, band_height = self.strip_band
-        left = (image.width - span) // 2 + xoff
-        strip_slice = image.crop(
-            (left, image.height - band_height, left + span, image.height)
-        )
+        if self.strip_band == (0, 0, 0, 0):
+            # The same class of miss as _require_strip_size: a subclass or
+            # refactor that reaches a strip crop before _canvas_size() filled
+            # the band. A raise beats the silent black strip a 0x0 crop
+            # resizes into.
+            raise RuntimeError(
+                "this background video cache has no strip band (the canvas "
+                "size was never computed for an extended cache)")
+        strip_slice = image.crop(band_box(image.width, image.height, self.strip_band))
         return strip_slice.resize(self._require_strip_size(), Image.Resampling.HAMMING)
 
     def crop_key_image_from_deck_sized_image(self, image: Image.Image, key: int) -> Image.Image:

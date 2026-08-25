@@ -29,7 +29,7 @@ from src.backend.DeckManagement.HelperMethods import is_video
 from src.backend.DeckManagement.Subclasses.background_video_cache import BackgroundVideoCache
 from src.backend.DeckManagement.deck_controller.gif_pipeline import GifBackground, GifBudgetExceeded
 from src.backend.DeckManagement.deck_controller.slideshow import IN_ORDER, Slideshow
-from src.backend.DeckManagement.deck_controller.strip_band import strip_band_geometry
+from src.backend.DeckManagement.deck_controller.strip_band import band_box, strip_band_geometry
 
 from typing import TYPE_CHECKING, cast
 if TYPE_CHECKING:
@@ -591,12 +591,8 @@ class BackgroundImage:
         """The strip's view of the extended canvas, at strip resolution."""
         canvas = self.create_full_deck_sized_image(extend_touchscreen=True)
         strip_width, strip_height = self.deck_controller.get_touchscreen_image_size()
-        _gap, span, xoff, band_height = \
-            strip_band_geometry(self.deck_controller, canvas.width)
-        left = (canvas.width - span) // 2 + xoff
-        strip_slice = canvas.crop(
-            (left, canvas.height - band_height, left + span, canvas.height)
-        )
+        band = strip_band_geometry(self.deck_controller, canvas.width)
+        strip_slice = canvas.crop(band_box(canvas.width, canvas.height, band))
         return strip_slice.resize((strip_width, strip_height), Image.Resampling.LANCZOS)
     
     def crop_key_image_from_deck_sized_image(self, image: Image.Image, key: int) -> Image.Image:
