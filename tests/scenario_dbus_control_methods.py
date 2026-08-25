@@ -352,6 +352,11 @@ def leg_set_and_get_brightness(client, controller) -> None:
 
     unknown = client.set_brightness("not-a-deck", 10)
     assert unknown and SERIAL in unknown, unknown
+
+    # An empty serial is an unknown deck, not a no-op. The CLI plans and
+    # forwards it rather than dropping it into an ordinary launch.
+    empty = client.sleep("")
+    assert empty and SERIAL in empty, f"an empty serial was not refused: {empty!r}"
     print("  PASS: SetDeckBrightness sets the deck, persists it and reports it")
 
 
@@ -437,6 +442,83 @@ def leg_rename_and_duplicate_page(client, controller) -> None:
     taken = client.duplicate_page("Renamed", "Copy")
     assert taken and "already exists" in taken, taken
     print("  PASS: RenamePage moves the file and the deck, DuplicatePage copies it")
+
+
+def leg_page_containment(client) -> None:
+    """A page name that resolves outside the pages folder is refused.
+
+    find_matching_page_path returns an absolute name unchanged when it is a
+    file, so a caller-supplied path can name a file outside the pages folder.
+    Rename would move that file and Duplicate would read it, so both confine
+    the source to the pages folder, the guard remove_page already applies.
+    """
+    outside = os.path.join(gl.DATA_PATH, "outside_secret.json")
+    with open(outside, "w") as f:
+        json.dump({"keys": {}, "dials": {}, "touchscreens": {}}, f)
+    pages_dir = os.path.join(gl.DATA_PATH, "pages")
+
+    reply = client.rename_page(outside, "Stolen")
+    assert reply and "pages folder" in reply, f"rename did not refuse the path: {reply!r}"
+    assert os.path.exists(outside), "rename removed a file outside the pages folder"
+    assert not os.path.exists(os.path.join(pages_dir, "Stolen.json")), (
+        "rename copied a file from outside the pages folder into it")
+
+    reply = client.duplicate_page(outside, "Stolen2")
+    assert reply and "pages folder" in reply, f"duplicate did not refuse the path: {reply!r}"
+    assert os.path.exists(outside), "duplicate touched a file outside the pages folder"
+    assert not os.path.exists(os.path.join(pages_dir, "Stolen2.json")), (
+        "duplicate copied a file from outside the pages folder into it")
+
+    os.remove(outside)
+    print("  PASS: a page path outside the pages folder is refused, nothing moves")
+
+
+def leg_cli_transport_new_verbs(controller) -> None:
+    """The CLI's own transport drives every new verb against the real service.
+
+    A read verb, a deck command and a page command each compose their own
+    variant by hand, so a wrong method name or a swapped argument order breaks
+    only here and at a user's terminal. This drives each one end to end and
+    reads the effect back, on a worker because call_sync blocks while this
+    thread pumps.
+    """
+    from src.backend import cli_forward
+
+    transport = cli_forward.bus_transport()
+    pages_dir = os.path.join(gl.DATA_PATH, "pages")
+
+    def drive(answers: dict) -> None:
+        answers["query"] = transport.query_state()
+        answers["set_brightness"] = transport.set_brightness(SERIAL, 33)
+        answers["brightness_after"] = controller.brightness
+        answers["sleep"] = transport.sleep(SERIAL)
+        answers["asleep"] = controller.screen_saver.showing
+        answers["wake"] = transport.wake(SERIAL)
+        answers["awake_showing"] = controller.screen_saver.showing
+        answers["list_actions"] = transport.list_actions("Actioned", "")
+        answers["rename"] = transport.rename_page("WireRename", "WireRenamed")
+        answers["duplicate"] = transport.duplicate_page("WireRenamed", "WireCopy")
+        answers["bad_deck"] = transport.set_brightness("not-a-deck", 10)
+
+    answers = drive_on_worker(drive, "cli-transport-new-verbs")
+
+    state = json.loads(answers["query"])
+    assert any(d["serial"] == SERIAL for d in state["decks"]), answers["query"]
+    assert answers["set_brightness"] == "", answers["set_brightness"]
+    assert answers["brightness_after"] == 33, (
+        f"set_brightness over the real transport never reached the deck: "
+        f"{answers['brightness_after']}")
+    assert answers["sleep"] == "" and answers["asleep"] is True, answers
+    assert answers["wake"] == "" and answers["awake_showing"] is False, answers
+    assert json.loads(answers["list_actions"])["page"] == "Actioned", answers["list_actions"]
+    assert answers["rename"] == "", answers["rename"]
+    assert os.path.exists(os.path.join(pages_dir, "WireRenamed.json")), (
+        "rename over the real transport did not move the file")
+    assert answers["duplicate"] == "", answers["duplicate"]
+    assert os.path.exists(os.path.join(pages_dir, "WireCopy.json")), (
+        "duplicate over the real transport did not create the file")
+    assert answers["bad_deck"] and SERIAL in answers["bad_deck"], answers["bad_deck"]
+    print("  PASS: the CLI's own transport drives every new verb to the service")
 
 
 def leg_signatures_match_cli(client) -> None:
@@ -651,8 +733,10 @@ def run_legs(bus_address: str, controller, other) -> None:
         leg_sleep_and_wake(client, controller)
         leg_list_actions(client)
         leg_rename_and_duplicate_page(client, controller)
+        leg_page_containment(client)
         leg_signatures_match_cli(client)
         leg_cli_transport_reaches_service(controller)
+        leg_cli_transport_new_verbs(controller)
         leg_instance_never_answers(controller)
 
         assert other.active_page is other_page, (
@@ -670,6 +754,7 @@ def main() -> None:
     fixtures.seed_page("Alpha")
     fixtures.seed_page("Beta")
     fixtures.seed_page("Renamable")
+    fixtures.seed_page("WireRename")
     seed_multistate_page("States", STATE_KEY, STATE_COUNT)
     seed_action_page("Actioned", "0x0", "demo::Action")
 

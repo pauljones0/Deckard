@@ -408,6 +408,15 @@ def leg_instance_verbs() -> None:
     assert outcome.exit_code == 1, outcome
     assert outcome.failures and "session bus" in outcome.failures[0], outcome.failures
 
+    # An explicit empty serial is a verb that was given, not an absent one. It
+    # is answered here (forwarded, then refused as an unknown deck), never
+    # dropped into a full application launch.
+    for argv in (["--sleep", ""], ["--wake", ""], ["--get-brightness", ""]):
+        outcome = cli_fast_path.answer_from_running_instance(
+            parse(argv), Recorder(running=True, query=DUMP))
+        assert outcome.exit_code is not None, (
+            f"{argv} booted the application instead of answering: {outcome}")
+
     print("  PASS: the read-side and page verbs forward to a running instance or refuse")
 
 

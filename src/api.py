@@ -290,10 +290,16 @@ class DeckardAPI:
         value when the page does not override brightness, so without the write
         the load would restore the old one. Best effort: a failed write leaves
         the live change in place and says why in the log.
+
+        The value is clamped to 0..100 before it is written. The device layer
+        clamps its own writes, so a direct bus caller passing 150 lights the
+        deck at 100 but would otherwise store 150, which a settings reader then
+        shows out of range.
         """
         try:
             if gl.settings_manager is None:
                 return
+            value = min(100, max(0, value))
             settings = gl.settings_manager.get_deck_settings(serial)
             settings.setdefault("brightness", {})["value"] = value
             gl.settings_manager.save_deck_settings(serial, settings)
@@ -336,6 +342,15 @@ class DeckardAPI:
             old_path = page_manager.find_matching_page_path(old)
             if old_path is None:
                 return f"Page '{old}' not found"
+            # find_matching_page_path returns an absolute name unchanged when it
+            # is a file, so a caller-supplied path can resolve outside the pages
+            # folder. move_page copies then removes the source, so an unchecked
+            # name here would move a file that is not a page. Confine the source
+            # to the pages folder, the same guard remove_page applies.
+            try:
+                require_containment(page_manager.PAGE_PATH, old_path)
+            except ValueError:
+                return f"Page '{old}' is not a page in the pages folder"
             if old_path in page_manager.custom_pages:
                 return f"Page '{old}' is provided by a plugin and cannot be renamed"
             if not new:
@@ -370,6 +385,13 @@ class DeckardAPI:
             source_path = page_manager.find_matching_page_path(source)
             if source_path is None:
                 return f"Page '{source}' not found"
+            # As in RenamePage: find_matching_page_path returns an absolute name
+            # unchanged when it is a file, so confine the source to the pages
+            # folder before reading its bytes into a new page.
+            try:
+                require_containment(page_manager.PAGE_PATH, source_path)
+            except ValueError:
+                return f"Page '{source}' is not a page in the pages folder"
             if not new:
                 return "The new page name is empty"
             data = page_manager.get_page_data(source_path)

@@ -747,10 +747,20 @@ def any_instance_verb(args: Namespace) -> bool:
     The named attributes raise if a flag is renamed in cli_args, rather than
     quietly treating the command as an ordinary launch. Both halves read this
     before the parking flow, so one command line reaches one answer.
+
+    The single-serial verbs are tested for None and not for truth, because an
+    explicit empty serial (--sleep "") is a verb that was given, and the deck
+    it names is refused as unknown. Truthiness would read the empty string as
+    "no verb" and boot the whole application for a command a person typed.
     """
-    return bool(args.json or args.get_brightness or args.set_brightness
-                or args.sleep or args.wake or args.list_actions
-                or args.rename_page or args.duplicate_page)
+    return bool(args.json
+                or args.get_brightness is not None
+                or args.sleep is not None
+                or args.wake is not None
+                or args.set_brightness
+                or args.list_actions
+                or args.rename_page
+                or args.duplicate_page)
 
 
 def _plan_instance_verbs(args: Namespace) -> tuple[list[tuple[str, tuple[str, ...]]],
@@ -771,7 +781,10 @@ def _plan_instance_verbs(args: Namespace) -> tuple[list[tuple[str, tuple[str, ..
 
     for flag, attr in (("--get-brightness", args.get_brightness),
                        ("--sleep", args.sleep), ("--wake", args.wake)):
-        if not attr:
+        if attr is None:
+            # None means the flag was absent. An empty serial is a verb that
+            # was given, and it is planned and then refused as an unknown deck,
+            # not dropped into an ordinary launch.
             continue
         bad = _unsendable(flag, "The serial number", attr)
         if bad:
@@ -977,6 +990,11 @@ def answer_instance_verbs(args: Namespace,
     answer and a deck or page command nothing to act on, and neither waits for
     a deck that is not open. This is why the fast path answers these here rather
     than hand them back, which would boot the whole application to read a line.
+
+    An instance verb is the whole command. A parkable request typed beside it,
+    such as --change-page on a --json line, is not applied, the same way a
+    listing verb answers the whole line by itself. The instance verb wins
+    because both halves check it first.
     """
     jobs, failures = _plan_instance_verbs(args)
     if failures:

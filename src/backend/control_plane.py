@@ -708,6 +708,11 @@ class ControlPlane:
         live; the caller that holds the serial writes the persisted deck
         setting (see src/api.py), so the brightness survives the next page
         reload rather than reverting to the stored value.
+
+        A deck mid-teardown answers get_alive() False, and set_brightness()
+        no-ops on it. This still reports success and the caller still persists
+        the value, which is deliberate: the value is what the user asked for,
+        and the deck picks it up from the setting when it comes back.
         """
         controller.set_brightness(float(value))
         return ControlResult(True, "",
@@ -738,15 +743,20 @@ class ControlPlane:
         that exist. A stable shape, because a script reads it by key.
 
         brightness is the value last sent to the device, which is null before
-        the first send. active_page is null on a deck with nothing loaded.
+        the first send. It reports as a whole number, because the CLI and the
+        docs describe it as one from 0 to 100. active_page is null on a deck
+        with nothing loaded.
         """
         decks: list[dict[str, Any]] = []
         for controller in _controllers():
             page = controller.active_page
+            brightness = controller.brightness
+            if isinstance(brightness, float) and brightness.is_integer():
+                brightness = int(brightness)
             decks.append({
                 "serial": controller.serial_number(),
                 "active_page": None if page is None else page.get_name(),
-                "brightness": controller.brightness,
+                "brightness": brightness,
             })
         page_manager = gl.page_manager
         pages = page_manager.get_page_names() if page_manager is not None else []
