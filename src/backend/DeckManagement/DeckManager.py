@@ -33,7 +33,7 @@ from src.backend.DeckManagement.deck_controller.controller import DeckController
 from src.backend.DeckManagement.deck_controller.media_writer import ClearAndCloseMsg
 from src.backend import ui_port
 from src.backend.SettingsManager import SettingsManager
-from src.backend.DeckManagement.Subclasses.FakeDeck import FakeDeck
+from src.backend.DeckManagement.Subclasses.FakeDeck import FakeDeck, FakeDeckModel, fake_deck_model
 from src.api import publish_controller, unpublish_controller
 
 # Import globals
@@ -45,6 +45,27 @@ gi.require_version("Xdp", "1.0")
 from gi.repository import Xdp
 
 ELGATO_VENDOR_ID = "0fd9"
+
+
+def fake_deck_model_for_index(index: int) -> "FakeDeckModel | None":
+    """The model the command line gives the fake deck at this index, or None
+    for the default shape.
+
+    --fake-deck-model repeats, one name per fake deck, and the last name given
+    covers every deck after it. One name therefore shapes them all.
+
+    A name that no preset carries is a typo on a developer flag, so this logs
+    what the names are and hands back the default shape. The app still starts.
+    """
+    names = getattr(gl.argparser.parse_args(), "fake_deck_model", None)
+    if not names:
+        return None
+    name = names[min(index, len(names) - 1)]
+    try:
+        return fake_deck_model(name)
+    except ValueError as e:
+        log.error(f"--fake-deck-model: {e}. Fake deck {index + 1} takes the default shape.")
+        return None
 
 
 def close_all_controllers(controllers: "Iterable[Any]", join_timeout: float = 2.0) -> None:
@@ -364,7 +385,8 @@ class DeckManager:
             # Load difference in number of fake decks
             for _ in range(n_fake_decks - old_n_fake_decks):
                 a = f"Fake Deck {len(self.fake_deck_controller)+1}"
-                fake_deck = FakeDeck(serial_number = f"fake-deck-{len(self.fake_deck_controller)+1}", deck_type=f"Fake Deck {len(self.fake_deck_controller)+1}")
+                model = fake_deck_model_for_index(len(self.fake_deck_controller))
+                fake_deck = FakeDeck(serial_number = f"fake-deck-{len(self.fake_deck_controller)+1}", deck_type=f"Fake Deck {len(self.fake_deck_controller)+1}", model=model)
                 self.add_newly_connected_deck(fake_deck, is_fake=True)
 
         elif n_fake_decks < old_n_fake_decks:

@@ -510,18 +510,24 @@ def _install_integration_globals() -> None:
     _integration_globals_installed = True
 
 
-def make_headless_controller(serial: str = "headless-1", key_layout=None, page_name: str = "Main"):
+def make_headless_controller(serial: str = "headless-1", key_layout=None, page_name: str = "Main",
+                             model=None):
     """Build a real DeckController over a FaultyFakeDeck, the integration tier.
 
     No GTK main loop and no hardware. Seeds one empty page first, so
     load_default_page() at the end of __init__ has something to load.
+
+    model names a deck shape: a preset name such as "xl" or "plus", a
+    FakeDeckModel of its own, or None for the default shape every scenario
+    without an opinion gets.
     """
     _install_integration_globals()
     seed_page(page_name)
 
     from src.backend.DeckManagement.DeckController import DeckController
 
-    deck = FaultyFakeDeck(serial_number=serial, deck_type="Fake Deck", key_layout=key_layout)
+    deck = FaultyFakeDeck(serial_number=serial, deck_type="Fake Deck", key_layout=key_layout,
+                          model=model)
     controller = DeckController(gl.deck_manager, deck)
     gl.deck_manager.deck_controller.append(controller)
     return controller
