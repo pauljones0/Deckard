@@ -412,7 +412,16 @@ class PageSelector(Gtk.Box):
             gl.notify.error(gl.lm.get("page-selector-load-failed"))
             return
         log.info(f"Load page: {page}")
-        active_controller.load_page(page)
+        window_grabber = gl.window_grabber
+        if window_grabber is None:
+            active_controller.load_page(page)
+            return
+        # A pick here is the user choosing the deck's page. The window grabber
+        # owns the mark that says the page arrived by an automatic switch, and
+        # nothing else clears it, so without this the deck keeps that mark and
+        # a later restore takes it back to a page the user already left.
+        with window_grabber.manual_page_load(active_controller, page_path):
+            active_controller.load_page(page)
 
     def on_click_open_page_manager(self, button: Gtk.Button) -> None:
         if gl.page_manager_window is not None:

@@ -175,8 +175,213 @@ def check_auto_switch_keeps_the_page(page_manager: FakePageManager) -> None:
         f"nothing, the controller took {controller.loaded!r}")
     assert controller.active_page is held, (
         "the deck must keep its page when the matched page does not build")
+    assert controller.page_auto_loaded is False, (
+        "a switch that did not build must leave the deck on the user's page "
+        "and marked as the user's own choice")
+    assert controller.last_manual_loaded_page_path is None, (
+        f"a switch that did not build must write nothing down as the way "
+        f"back, it holds {controller.last_manual_loaded_page_path}")
+
+    # The page file returns, so the same window now switches the deck. The
+    # page the deck sat on the whole time is the one to come back to.
+    page_manager.missing.discard(rule_path)
+    grabber._apply_auto_change(controller, FIREFOX)
+    assert controller.active_page.json_path == rule_path, (
+        f"a matched page that builds must load, the deck shows "
+        f"{controller.active_page.json_path}")
+    assert controller.page_auto_loaded is True
+    assert controller.last_manual_loaded_page_path == held.json_path, (
+        f"the deck must come back to the page it left, it points at "
+        f"{controller.last_manual_loaded_page_path}")
     print("PASS: the automatic window switch keeps the deck's page when the "
-          "matched page does not build")
+          "matched page does not build, and marks nothing until one does")
+
+
+def check_hand_pick_ends_the_automatic_mark(
+        page_manager: FakePageManager) -> None:
+    """A page picked by hand must end the deck's automatic state.
+
+    Nothing outside the window grabber clears the mark. A deck left marked
+    after the user picks a page of their own is taken back to the page it
+    left the next time no rule matches, which is a page the user already
+    walked away from.
+    """
+    from src.windows.mainWindow.elements.PageSelector import PageSelector
+
+    gl.page_manager = page_manager
+    home = FakePage(page_manager.path_of("home"))
+    auto_path = page_manager.path_of("auto")
+    picked_path = page_manager.path_of("picked")
+    controller = FakeController("PICK", home)
+    page_manager.auto_change = {
+        auto_path: {"enable": True, "decks": ["PICK"],
+                    "wm-class": WM_CLASS, "title": ".*",
+                    "stay-on-page": False},
+    }
+
+    grabber = WindowGrabber.__new__(WindowGrabber)
+    grabber._dispatch_lock = threading.RLock()
+    gl.window_grabber = grabber
+    gl.notify = RecordingNotify()
+
+    grabber._apply_auto_change(controller, FIREFOX)
+    assert controller.active_page.json_path == auto_path
+    assert controller.page_auto_loaded is True
+
+    deck_stack = types.SimpleNamespace(
+        get_visible_child=lambda: types.SimpleNamespace(
+            deck_controller=controller))
+    selector = types.SimpleNamespace(
+        main_window=types.SimpleNamespace(
+            leftArea=types.SimpleNamespace(deck_stack=deck_stack)))
+    PageSelector.change_page.__get__(selector)(picked_path)
+    assert controller.active_page.json_path == picked_path, (
+        f"the pick must load, the deck shows "
+        f"{controller.active_page.json_path}")
+    assert controller.page_auto_loaded is False, (
+        "a page picked by hand must end the deck's automatic state")
+
+    # Focus moves to a window no rule matches. The deck is on the user's own
+    # page, so there is nothing to undo and nothing to load.
+    controller.loaded.clear()
+    grabber._apply_auto_change(controller, OTHER)
+    assert controller.loaded == [], (
+        f"a deck on a page the user picked must not be taken anywhere, the "
+        f"controller took {controller.loaded!r}")
+    assert controller.active_page.json_path == picked_path, (
+        f"the deck must keep the page the user picked, it shows "
+        f"{controller.active_page.json_path}")
+
+    # The next automatic switch comes back to the picked page, not to the one
+    # the user left before it.
+    grabber._apply_auto_change(controller, FIREFOX)
+    assert controller.last_manual_loaded_page_path == picked_path, (
+        f"the deck must come back to the page the user picked, it points at "
+        f"{controller.last_manual_loaded_page_path}")
+    gl.window_grabber = None
+    print("PASS: a page picked by hand ends the automatic state and becomes "
+          "the page the deck comes back to")
+
+
+def check_a_load_that_raises_keeps_the_mark(
+        page_manager: FakePageManager) -> None:
+    """A page load that raises must leave the deck's mark as it found it.
+
+    A deck torn down mid-call takes the load down with it. The deck still
+    shows the automatic page, so a deck left with the mark off has the next
+    automatic switch write that page down as the user's own choice.
+    """
+    gl.page_manager = page_manager
+    auto_page = FakePage(page_manager.path_of("auto"))
+    manual_path = page_manager.path_of("manual")
+    picked_path = page_manager.path_of("picked")
+    controller = FakeController("RAISE", auto_page)
+    controller.page_auto_loaded = True
+    controller.last_manual_loaded_page_path = manual_path
+
+    grabber = WindowGrabber.__new__(WindowGrabber)
+    grabber._dispatch_lock = threading.RLock()
+
+    def load_page(page, allow_reload: bool = True) -> None:
+        raise RuntimeError("the deck went away mid-load")
+
+    controller.load_page = load_page
+
+    raised = False
+    try:
+        with grabber.manual_page_load(controller, picked_path):
+            controller.load_page(FakePage(picked_path))
+    except RuntimeError:
+        raised = True
+
+    assert raised, "the load's error must reach the caller"
+    assert controller.active_page is auto_page, (
+        "a load that raised leaves the deck on the page it showed")
+    assert controller.page_auto_loaded is True, (
+        "a load that raised must leave the deck marked as it was, so the "
+        "page it still shows is not read as the user's own choice")
+    assert grabber._pending_manual_path(controller) is None, (
+        "a load that raised must retire its claim on the deck")
+
+    # The mark still stands, so the next automatic switch remembers the real
+    # manual page rather than the page the failed load left on the deck.
+    second_path = page_manager.path_of("auto-second")
+    page_manager.auto_change = {
+        second_path: {"enable": True, "decks": ["RAISE"],
+                      "wm-class": SECOND.wm_class, "title": ".*",
+                      "stay-on-page": False},
+    }
+    controller.load_page = types.MethodType(FakeController.load_page,
+                                            controller)
+    grabber._apply_auto_change(controller, SECOND)
+    assert controller.last_manual_loaded_page_path == manual_path, (
+        f"the deck must keep its way back after a load that raised, it "
+        f"points at {controller.last_manual_loaded_page_path}")
+    print("PASS: a page load that raises leaves the deck's mark and its way "
+          "back as they were")
+
+    # Two kinds of load claim a deck, the restore and a pick by hand. One
+    # that retired the other's claim would take the guard off a load still
+    # running, so a claim only retires on its own token.
+    with grabber.manual_page_load(controller, picked_path):
+        grabber._end_manual_load(controller, object())
+        assert grabber._pending_manual_path(controller) == picked_path, (
+            "a claim must survive another routing's retire")
+    assert grabber._pending_manual_path(controller) is None
+    print("PASS: a claim on a deck retires only on the token of the routing "
+          "that made it")
+
+
+def check_switch_during_a_restore_keeps_the_way_back(
+        page_manager: FakePageManager) -> None:
+    """An automatic switch landing during a restore must not record its page.
+
+    The restore clears the automatic mark and then loads, and the load
+    marshals onto the GTK main thread, so the deck shows the automatic page
+    for the whole of it. A switch that reads the deck there sees an automatic
+    page with no mark on it and writes that page down as the user's choice.
+    """
+    gl.page_manager = page_manager
+    auto_page = FakePage(page_manager.path_of("auto"))
+    manual_path = page_manager.path_of("manual")
+    second_path = page_manager.path_of("auto-second")
+    controller = FakeController("RACE", auto_page)
+    controller.page_auto_loaded = True
+    controller.last_manual_loaded_page_path = manual_path
+    page_manager.auto_change = {
+        auto_page.json_path: {"enable": True, "decks": ["RACE"],
+                              "wm-class": WM_CLASS, "title": ".*",
+                              "stay-on-page": False},
+        second_path: {"enable": True, "decks": ["RACE"],
+                      "wm-class": SECOND.wm_class, "title": ".*",
+                      "stay-on-page": False},
+    }
+
+    grabber = WindowGrabber.__new__(WindowGrabber)
+    grabber._dispatch_lock = threading.RLock()
+
+    # The switch runs at the point the restore has claimed the load and the
+    # deck still shows the page it is leaving.
+    switched: list[bool] = []
+    original_load = controller.load_page
+
+    def load_page(page, allow_reload: bool = True) -> None:
+        if not switched:
+            switched.append(True)
+            grabber._apply_auto_change(controller, SECOND)
+        original_load(page, allow_reload)
+
+    controller.load_page = load_page
+
+    grabber._apply_auto_change(controller, OTHER)
+
+    assert switched, "the switch must have run inside the restore's load"
+    assert controller.last_manual_loaded_page_path == manual_path, (
+        f"a switch inside a restore must not write the automatic page down "
+        f"as the user's choice, the deck points at "
+        f"{controller.last_manual_loaded_page_path}")
+    print("PASS: an automatic switch landing during a restore keeps the "
+          "deck's way back")
 
 
 def check_manual_restore_keeps_the_page(page_manager: FakePageManager) -> None:
@@ -284,6 +489,10 @@ def main() -> int:
     check_selector_keeps_the_page(page_manager)
     check_auto_switch_keeps_the_page(FakePageManager(page_dir))
     check_manual_restore_keeps_the_page(FakePageManager(page_dir))
+    check_hand_pick_ends_the_automatic_mark(FakePageManager(page_dir))
+    check_a_load_that_raises_keeps_the_mark(FakePageManager(page_dir))
+    check_switch_during_a_restore_keeps_the_way_back(
+        FakePageManager(page_dir))
 
     print("ALL PASS: scenario_missing_page_switch")
     return 0
