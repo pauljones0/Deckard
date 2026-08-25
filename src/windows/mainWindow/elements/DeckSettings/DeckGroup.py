@@ -16,7 +16,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 import os
 import gi
 
-from GtkHelper.GtkHelper import better_disconnect
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Gtk, Adw, GLib, GObject
@@ -29,7 +28,7 @@ from src.backend import services
 import globals as gl
 
 from collections.abc import Callable
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     # A runtime import cycles, because DeckSettingsPage imports this module.
     from src.windows.mainWindow.elements.DeckSettings.DeckSettingsPage import DeckSettingsPage
@@ -58,6 +57,12 @@ class Rotation(Adw.PreferencesRow):
         super().__init__()
         self.settings_page = settings_page
         self.deck_serial_number = deck_serial_number
+
+        # The active-handler id, or None while it is disconnected. A tracked id
+        # keeps connect and disconnect idempotent: a disconnect while already
+        # off cannot raise, and a reconnect cannot stack a second handler.
+        self._rotation_handler: int | None = None
+
         self.build()
 
         self.load_default()
@@ -87,7 +92,16 @@ class Rotation(Adw.PreferencesRow):
         self.toggle_group.add(self.toggle_270)
 
 
-        self.toggle_group.connect("notify::active", self.on_value_changed)
+        self.connect_signal()
+
+    def connect_signal(self) -> None:
+        if self._rotation_handler is None:
+            self._rotation_handler = self.toggle_group.connect("notify::active", self.on_value_changed)
+
+    def disconnect_signal(self) -> None:
+        if self._rotation_handler is not None:
+            self.toggle_group.disconnect(self._rotation_handler)
+            self._rotation_handler = None
 
     def on_value_changed(self, _: Adw.ToggleGroup, __: GObject.ParamSpec) -> None:
         GLib.idle_add(self.on_value_changed_idle)
@@ -107,16 +121,17 @@ class Rotation(Adw.PreferencesRow):
         self.settings_page.deck_controller.set_rotation(rot)
 
     def load_default(self, *args: object) -> None:
-        # Pass the handler, not the signal name. better_disconnect takes the
-        # callable and accepts a miss without a word, so a name here leaves
-        # the handler connected. set_active_name below then saves and applies
-        # a rotation that nobody changed, once more per open.
-        better_disconnect(self.toggle_group, self.on_value_changed)
-
-        rot = gl.settings_manager.deck(self.deck_serial_number).get("rotation")
-        self.toggle_group.set_active_name(str(rot))
-
-        self.toggle_group.connect("notify::active", self.on_value_changed)
+        # The handler stays off across the read and the set. A set that the
+        # handler sees saves and applies a rotation that nobody changed, once
+        # more per open of the page.
+        self.disconnect_signal()
+        try:
+            rot = gl.settings_manager.deck(self.deck_serial_number).get("rotation")
+            self.toggle_group.set_active_name(str(rot))
+        finally:
+            # A read that returns early or raises must still leave the group
+            # wired, or every later rotation choice is dropped silently.
+            self.connect_signal()
 
 
 class Brightness(Adw.PreferencesRow):
@@ -124,6 +139,13 @@ class Brightness(Adw.PreferencesRow):
         super().__init__()
         self.settings_page = settings_page
         self.deck_serial_number = deck_serial_number
+
+        # The value-changed handler id, or None while it is disconnected. A
+        # tracked id keeps connect and disconnect idempotent: a disconnect
+        # while already off cannot raise, and a reconnect cannot stack a second
+        # handler.
+        self._scale_handler: int | None = None
+
         self.build()
 
         """
@@ -133,9 +155,10 @@ class Brightness(Adw.PreferencesRow):
         self.connect("map", self.on_map)
 
         # One handler, always: load_default defers itself at construction (an
-        # unparented row is never mapped), so this connect is the first one.
+        # unparented row is never mapped), and the tracked id makes this
+        # connect a no-op if it ever ran first.
         self.load_default()
-        self.scale.connect("value-changed", self.on_value_changed)
+        self.connect_signal()
 
     def on_map(self, widget: Gtk.Widget) -> None:
         for f in self.on_map_tasks:
@@ -186,9 +209,22 @@ class Brightness(Adw.PreferencesRow):
         # nobody chose, and a load that the scale handler sees saves that
         # value and pushes it to the physical deck. An open of a settings page
         # is not a decision to change the deck.
-        better_disconnect(self.scale, self.on_value_changed)
-        self.scale.set_value(gl.settings_manager.deck(self.deck_serial_number).get("brightness", "value"))
-        self.scale.connect("value-changed", self.on_value_changed)
+        self.disconnect_signal()
+        try:
+            self.scale.set_value(gl.settings_manager.deck(self.deck_serial_number).get("brightness", "value"))
+        finally:
+            # A read that returns early or raises must still leave the scale
+            # wired, or every later brightness change is dropped silently.
+            self.connect_signal()
+
+    def connect_signal(self) -> None:
+        if self._scale_handler is None:
+            self._scale_handler = self.scale.connect("value-changed", self.on_value_changed)
+
+    def disconnect_signal(self) -> None:
+        if self._scale_handler is not None:
+            self.scale.disconnect(self._scale_handler)
+            self._scale_handler = None
 
 
 class Saturation(Adw.PreferencesRow):
@@ -207,6 +243,13 @@ class Saturation(Adw.PreferencesRow):
         super().__init__()
         self.settings_page = settings_page
         self.deck_serial_number = deck_serial_number
+
+        # The value-changed handler id, or None while it is disconnected. A
+        # tracked id keeps connect and disconnect idempotent: a disconnect
+        # while already off cannot raise, and a reconnect cannot stack a second
+        # handler.
+        self._scale_handler: int | None = None
+
         self.build()
 
         self.on_map_tasks: list[Callable[[], None]] = []
@@ -216,7 +259,7 @@ class Saturation(Adw.PreferencesRow):
         self._apply_source: int | None = None
 
         self.load_default()  # defers at construction; see Brightness above
-        self.scale.connect("value-changed", self.on_value_changed)
+        self.connect_signal()
 
     def on_map(self, widget: Gtk.Widget) -> None:
         for f in self.on_map_tasks:
@@ -264,9 +307,22 @@ class Saturation(Adw.PreferencesRow):
         # Read only, and with the handler off, for the reason that Brightness
         # above gives. An open of the page must not write the file, and must
         # not reload the page behind a factor that nobody changed.
-        better_disconnect(self.scale, self.on_value_changed)
-        self.scale.set_value(gl.settings_manager.deck(self.deck_serial_number).get("display", "saturation"))
-        self.scale.connect("value-changed", self.on_value_changed)
+        self.disconnect_signal()
+        try:
+            self.scale.set_value(gl.settings_manager.deck(self.deck_serial_number).get("display", "saturation"))
+        finally:
+            # A read that returns early or raises must still leave the scale
+            # wired, or every later saturation change is dropped silently.
+            self.connect_signal()
+
+    def connect_signal(self) -> None:
+        if self._scale_handler is None:
+            self._scale_handler = self.scale.connect("value-changed", self.on_value_changed)
+
+    def disconnect_signal(self) -> None:
+        if self._scale_handler is not None:
+            self.scale.disconnect(self._scale_handler)
+            self._scale_handler = None
 
 
 class Screensaver(Adw.PreferencesRow):
@@ -274,6 +330,13 @@ class Screensaver(Adw.PreferencesRow):
         super().__init__()
         self.settings_page = settings_page
         self.deck_serial_number = deck_serial_number
+
+        # The handler id per widget key, absent while that widget is
+        # disconnected. Tracked ids keep connect and disconnect idempotent: a
+        # disconnect while already off cannot raise, and a reconnect cannot
+        # stack a second handler.
+        self._handlers: dict[str, int] = {}
+
         self.build()
 
         """
@@ -283,6 +346,16 @@ class Screensaver(Adw.PreferencesRow):
         self.connect("map", self.on_map)
 
         self.load_defaults()
+
+    def _signal_bindings(self) -> list[tuple[str, GObject.Object, str, Callable[..., Any]]]:
+        return [
+            ("enable", self.enable_switch, "state-set", self.on_toggle_enable),
+            ("time", self.time_spinner, "value-changed", self.on_change_time),
+            ("media", self.media_selector_button, "clicked", self.on_choose_image),
+            ("loop", self.loop_switch, "state-set", self.on_toggle_loop),
+            ("fps", self.fps_spinner, "value-changed", self.on_change_fps),
+            ("brightness", self.scale, "value-changed", self.on_change_brightness),
+        ]
 
     def on_map(self, widget: Gtk.Widget) -> None:
         for f in self.on_map_tasks:
@@ -361,42 +434,40 @@ class Screensaver(Adw.PreferencesRow):
         self.connect_signals()
 
     def connect_signals(self) -> None:
-        self.enable_switch.connect("state-set", self.on_toggle_enable)
-        self.time_spinner.connect("value-changed", self.on_change_time)
-        self.media_selector_button.connect("clicked", self.on_choose_image)
-        self.loop_switch.connect("state-set", self.on_toggle_loop)
-        self.fps_spinner.connect("value-changed", self.on_change_fps)
-        self.scale.connect("value-changed", self.on_change_brightness)
+        for key, widget, signal, callback in self._signal_bindings():
+            if self._handlers.get(key) is None:
+                self._handlers[key] = widget.connect(signal, callback)
 
     def disconnect_signals(self) -> None:
-        self.enable_switch.disconnect_by_func(self.on_toggle_enable)
-        self.time_spinner.disconnect_by_func(self.on_change_time)
-        self.media_selector_button.disconnect_by_func(self.on_choose_image)
-        self.loop_switch.disconnect_by_func(self.on_toggle_loop)
-        self.fps_spinner.disconnect_by_func(self.on_change_fps)
-        self.scale.disconnect_by_func(self.on_change_brightness)
+        for key, widget, _signal, _callback in self._signal_bindings():
+            handler = self._handlers.pop(key, None)
+            if handler is not None:
+                widget.disconnect(handler)
 
     def load_defaults(self) -> None:
         self.disconnect_signals()
-        # One read, and read only. A missing key shows the default from the
-        # deck-settings schema and reaches no file. A write here pins the
-        # current default onto every deck whose settings page a user opened.
-        config = gl.settings_manager.deck(self.deck_serial_number).section("screensaver")
+        try:
+            # One read, and read only. A missing key shows the default from the
+            # deck-settings schema and reaches no file. A write here pins the
+            # current default onto every deck whose settings page a user opened.
+            config = gl.settings_manager.deck(self.deck_serial_number).section("screensaver")
 
-        # Update ui
-        self.enable_switch.set_active(config["enable"])
-        self.config_box.set_visible(config["enable"])
-        self.time_spinner.set_value(config["time-delay"])
-        self.loop_switch.set_active(config["loop"])
-        self.fps_spinner.set_value(config["fps"])
-        self.scale.set_value(config["brightness"])
+            # Update ui
+            self.enable_switch.set_active(config["enable"])
+            self.config_box.set_visible(config["enable"])
+            self.time_spinner.set_value(config["time-delay"])
+            self.loop_switch.set_active(config["loop"])
+            self.fps_spinner.set_value(config["fps"])
+            self.scale.set_value(config["brightness"])
 
-        path = config["media-path"]
-        if path is not None:
-            if os.path.isfile(path):
-                self.set_thumbnail(path)
-
-        self.connect_signals()
+            path = config["media-path"]
+            if path is not None:
+                if os.path.isfile(path):
+                    self.set_thumbnail(path)
+        finally:
+            # A read that returns early or raises must still leave the widgets
+            # wired, or every later change to this row is dropped silently.
+            self.connect_signals()
 
     def page_overwrites_screensaver(self) -> bool:
         # Missing page or missing "screensaver"/"overwrite" keys mean

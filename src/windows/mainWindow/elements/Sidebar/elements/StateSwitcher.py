@@ -34,6 +34,12 @@ class StateSwitcher(Gtk.ScrolledWindow):
         self.switch_callbacks: list[Callable[[], object]] = []
         self.add_new_callbacks: list[Callable[[int], object]] = []
 
+        # The visible-child-name handler id, or None while the stack is
+        # disconnected. A tracked id keeps connect and disconnect idempotent: a
+        # disconnect while already off cannot raise, and a reconnect cannot
+        # stack a second handler.
+        self._switch_handler: int | None = None
+
         self.build()
 
     def build(self) -> None:
@@ -65,12 +71,15 @@ class StateSwitcher(Gtk.ScrolledWindow):
 
     def set_n_states(self, n: int) -> None:
         self._disconnect_signal()
-        self.clear_stack()
+        try:
+            self.clear_stack()
 
-        for i in range(n):
-            self.stack.add_titled(Gtk.Box(), str(i+1), f"State {i+1}")
-
-        self._connect_signal()
+            for i in range(n):
+                self.stack.add_titled(Gtk.Box(), str(i+1), f"State {i+1}")
+        finally:
+            # An update that returns early or raises must still leave the stack
+            # wired, or every later state switch is dropped silently.
+            self._connect_signal()
 
     def on_add_click(self, button: Gtk.Button) -> None:
         main_win = services.require_main_window()
@@ -101,17 +110,21 @@ class StateSwitcher(Gtk.ScrolledWindow):
         if state >= self.get_n_states():
             return
         self._disconnect_signal()
-        self.stack.set_visible_child_name(str(state + 1))
-        self._connect_signal()
+        try:
+            self.stack.set_visible_child_name(str(state + 1))
+        finally:
+            # An update that returns early or raises must still leave the stack
+            # wired, or every later state switch is dropped silently.
+            self._connect_signal()
 
     def _connect_signal(self) -> None:
-        self.stack.connect("notify::visible-child-name", self.on_state_switch)
+        if self._switch_handler is None:
+            self._switch_handler = self.stack.connect("notify::visible-child-name", self.on_state_switch)
 
     def _disconnect_signal(self) -> None:
-        try:
-            self.stack.disconnect_by_func(self.on_state_switch)
-        except TypeError:
-            pass
+        if self._switch_handler is not None:
+            self.stack.disconnect(self._switch_handler)
+            self._switch_handler = None
 
     def add_switch_callback(self, callback: Callable[[], object]) -> None:
         self.switch_callbacks.append(callback)

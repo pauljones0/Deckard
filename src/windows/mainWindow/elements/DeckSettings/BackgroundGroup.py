@@ -14,6 +14,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 """
 # Import gtk modules
 import os
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -23,7 +24,7 @@ if TYPE_CHECKING:
 import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Gtk, Adw
+from gi.repository import Gtk, Adw, GObject
 
 # Import Python modules
 
@@ -55,7 +56,13 @@ class BackgroundMediaRow(Adw.PreferencesRow):
         """
         self.on_map_tasks: list[Any] = []
         self.connect("map", self.on_map)
-        
+
+        # The handler id per widget key, absent while that widget is
+        # disconnected. Tracked ids keep connect and disconnect idempotent: a
+        # disconnect while already off cannot raise, and a reconnect cannot
+        # stack a second handler.
+        self._handlers: dict[str, int] = {}
+
         self.build()
 
     def on_map(self, widget: Gtk.Widget) -> None:
@@ -123,20 +130,26 @@ class BackgroundMediaRow(Adw.PreferencesRow):
         self.connect_signals()
         self.load_defaults()
 
+    def _signal_bindings(self) -> list[tuple[str, GObject.Object, str, Callable[..., Any]]]:
+        return [
+            ("enable", self.enable_switch, "state-set", self.on_toggle_enable),
+            ("media", self.media_selector_button, "clicked", self.on_choose_image),
+            ("loop", self.loop_switch, "state-set", self.on_toggle_loop),
+            ("fps", self.fps_spinner, "value-changed", self.on_change_fps),
+            ("extend", self.extend_touchscreen_switch, "state-set", self.on_toggle_extend_touchscreen),
+        ]
+
     def connect_signals(self) -> None:
-        self.enable_switch.connect("state-set", self.on_toggle_enable)
-        self.media_selector_button.connect("clicked", self.on_choose_image)
-        self.loop_switch.connect("state-set", self.on_toggle_loop)
-        self.fps_spinner.connect("value-changed", self.on_change_fps)
-        self.extend_touchscreen_switch.connect("state-set", self.on_toggle_extend_touchscreen)
+        for key, widget, signal, callback in self._signal_bindings():
+            if self._handlers.get(key) is None:
+                self._handlers[key] = widget.connect(signal, callback)
 
 
     def disconnect_signals(self) -> None:
-        self.enable_switch.disconnect_by_func(self.on_toggle_enable)
-        self.media_selector_button.disconnect_by_func(self.on_choose_image)
-        self.loop_switch.disconnect_by_func(self.on_toggle_loop)
-        self.fps_spinner.disconnect_by_func(self.on_change_fps)
-        self.extend_touchscreen_switch.disconnect_by_func(self.on_toggle_extend_touchscreen)
+        for key, widget, _signal, _callback in self._signal_bindings():
+            handler = self._handlers.pop(key, None)
+            if handler is not None:
+                widget.disconnect(handler)
 
 
     def load_defaults(self) -> None:
@@ -145,22 +158,25 @@ class BackgroundMediaRow(Adw.PreferencesRow):
             self.on_map_tasks.append(lambda: self.load_defaults())
             return
         self.disconnect_signals()
-        # One read, and read-only: the missing keys show the deck-settings
-        # schema's defaults without being written into the file. Persisting
-        # them here is what made a deck background loop or not depending on
-        # whether anyone had ever opened this page.
-        config = gl.settings_manager.deck(self.deck_serial_number).section("background")
+        try:
+            # One read, and read-only: the missing keys show the deck-settings
+            # schema's defaults without being written into the file. Persisting
+            # them here is what made a deck background loop or not depending on
+            # whether anyone had ever opened this page.
+            config = gl.settings_manager.deck(self.deck_serial_number).section("background")
 
-        # Update ui
-        self.enable_switch.set_active(config["enable"])
-        self.config_box.set_visible(config["enable"])
-        self.loop_switch.set_active(config["loop"])
-        self.fps_spinner.set_value(config["fps"])
-        self.extend_touchscreen_switch.set_active(config["extend-to-touchscreen"])
-        self.extend_touchscreen_box.set_visible(self.settings_page.deck_controller.deck.is_touch())
-        self.set_thumbnail(config["media-path"])
-
-        self.connect_signals()
+            # Update ui
+            self.enable_switch.set_active(config["enable"])
+            self.config_box.set_visible(config["enable"])
+            self.loop_switch.set_active(config["loop"])
+            self.fps_spinner.set_value(config["fps"])
+            self.extend_touchscreen_switch.set_active(config["extend-to-touchscreen"])
+            self.extend_touchscreen_box.set_visible(self.settings_page.deck_controller.deck.is_touch())
+            self.set_thumbnail(config["media-path"])
+        finally:
+            # A read that returns early or raises must still leave the widgets
+            # wired, or every later change to this row is dropped silently.
+            self.connect_signals()
 
     def load_defaults_from_page(self) -> None:
         # The early return below disables this method, so the unguarded

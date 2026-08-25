@@ -447,14 +447,16 @@ def check_locked_deck_blanks_without_screensaver() -> None:
 class _Widget:
     """Stand-in for a Gtk scale, switch, spin button, toggle group or expander.
 
-    It holds a value, emits on every set, and refuses to disconnect a handler
-    that is not connected, which makes a swallowed better_disconnect argument
-    observable. Removal matches GTK and drops one matching handler per call.
+    It holds a value, emits on every set, and hands out a handler id per
+    connect, as GTK does. A disconnect by id drops that one handler, and a
+    disconnect of an id it does not hold raises, so a load that leaves a row
+    unwired or doubly wired is observable.
     """
 
     def __init__(self, value=None):
         self.value = value
-        self.handlers: list = []
+        self.handlers: dict = {}
+        self._next_handler = 1
         self.visible = None
 
     def get_value(self):
@@ -492,16 +494,23 @@ class _Widget:
         self.expanded = value
 
     def _emit(self):
-        for handler in list(self.handlers):
+        for handler in list(self.handlers.values()):
             handler(self)
 
     def connect(self, signal, handler):
-        self.handlers.append(handler)
+        hid = self._next_handler
+        self._next_handler += 1
+        self.handlers[hid] = handler
+        return hid
+
+    def disconnect(self, hid):
+        del self.handlers[hid]
 
     def disconnect_by_func(self, handler):
-        if handler not in self.handlers:
+        matches = [hid for hid, h in self.handlers.items() if h == handler]
+        if not matches:
             raise TypeError("nothing connected")
-        self.handlers.remove(handler)
+        del self.handlers[matches[0]]
 
 
 class _StubDeck:
@@ -577,7 +586,14 @@ class BrightnessRow(_Row):
         self.scale = _Widget(0)
         # The real row is in this state by the time load_default runs. It defers
         # itself to map, which is after __init__ connected the handler.
-        self.scale.connect("value-changed", self.on_value_changed)
+        self._scale_handler = None
+        self.connect_signal()
+
+    def connect_signal(self):
+        self._real.connect_signal(self)
+
+    def disconnect_signal(self):
+        self._real.disconnect_signal(self)
 
     def on_value_changed(self, scale):
         # The GLib.idle_add callback, run inline. The harness has no main loop,
@@ -595,7 +611,14 @@ class SaturationRow(_Row):
         from src.windows.mainWindow.elements.DeckSettings.DeckGroup import Saturation
         self._real = Saturation
         self.scale = _Widget(1.0)
-        self.scale.connect("value-changed", self.on_value_changed)
+        self._scale_handler = None
+        self.connect_signal()
+
+    def connect_signal(self):
+        self._real.connect_signal(self)
+
+    def disconnect_signal(self):
+        self._real.disconnect_signal(self)
 
     def on_value_changed(self, scale):
         # Recorded, not forwarded. The real handler is a 300 ms GLib debounce.
@@ -611,7 +634,14 @@ class RotationRow(_Row):
         from src.windows.mainWindow.elements.DeckSettings.DeckGroup import Rotation
         self._real = Rotation
         self.toggle_group = _Widget(0)
-        self.toggle_group.connect("notify::active", self.on_value_changed)
+        self._rotation_handler = None
+        self.connect_signal()
+
+    def connect_signal(self):
+        self._real.connect_signal(self)
+
+    def disconnect_signal(self):
+        self._real.disconnect_signal(self)
 
     def on_value_changed(self, *args):
         self.handler_calls.append(self.toggle_group.get_active_name())
