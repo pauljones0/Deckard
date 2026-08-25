@@ -297,6 +297,12 @@ class ActionRowLabelToggle(Gtk.Button):
         self.action_row = action_row
         super().__init__(tooltip_text="Control which labels are controlled by this action")
 
+        # The toggled-handler id per config button index, absent while that
+        # button is disconnected. Tracked ids keep connect and disconnect
+        # idempotent: a disconnect while already off cannot raise, and a
+        # reconnect cannot stack a second handler.
+        self._label_handlers: dict[int, int] = {}
+
         self.build()
 
     def build(self) -> None:
@@ -325,9 +331,10 @@ class ActionRowLabelToggle(Gtk.Button):
             check = Gtk.CheckButton(label=name, name=str(i))
             self.config_buttons.append(check)
             if "action-row-label-toggle-active" in self.indicators[i].get_css_classes():
-                check.set_active(True)    
-            check.connect("toggled", self.on_label_toggled)
+                check.set_active(True)
             self.config_box.append(check)
+
+        self.connect_signals()
 
 
         self.popover = Gtk.Popover(child=self.config_box)
@@ -352,28 +359,31 @@ class ActionRowLabelToggle(Gtk.Button):
         self.action_row.label_toggled(i, button.get_active())
 
     def connect_signals(self) -> None:
-        for button in self.config_buttons:
-            button.connect("toggled", self.on_label_toggled)
+        for i, button in enumerate(self.config_buttons):
+            if i not in self._label_handlers:
+                self._label_handlers[i] = button.connect("toggled", self.on_label_toggled)
 
     def disconnect_signals(self) -> None:
-        for button in self.config_buttons:
-            try:
-                button.disconnect_by_func(self.on_label_toggled)
-            except TypeError:
-                # disconnect_by_func raises TypeError when nothing is connected.
-                pass
+        for i, button in enumerate(self.config_buttons):
+            handler = self._label_handlers.pop(i, None)
+            if handler is not None:
+                button.disconnect(handler)
 
     def set_active(self, values: list[bool]) -> None:
         self.disconnect_signals()
-        for i, value in enumerate(values):
-            indicator = self.indicators[i]
-            if value:
-                indicator.set_css_classes(["action-row-label-toggle-active"])
-            else:
-                indicator.set_css_classes(["action-row-label-toggle-inactive"])
+        try:
+            for i, value in enumerate(values):
+                indicator = self.indicators[i]
+                if value:
+                    indicator.set_css_classes(["action-row-label-toggle-active"])
+                else:
+                    indicator.set_css_classes(["action-row-label-toggle-inactive"])
 
-            self.config_buttons[i].set_active(value)
-        self.connect_signals()
+                self.config_buttons[i].set_active(value)
+        finally:
+            # An update that returns early or raises must still leave every
+            # button wired, or the label controls stop reporting clicks.
+            self.connect_signals()
 
     def get_active(self) -> list[bool]:
         return [indicator.get_css_classes() == ["action-row-label-toggle-active"] for indicator in self.indicators]
@@ -396,6 +406,12 @@ class ActionRow(Adw.ActionRow):
         self.active_identifier = None
         self.total_rows = total_rows
         self.expander = expander
+        # The toggled-handler ids, or None while a toggle is disconnected. A
+        # tracked id keeps connect and disconnect idempotent: a disconnect while
+        # already off cannot raise, and a reconnect cannot stack a second
+        # handler.
+        self._image_handler: int | None = None
+        self._background_handler: int | None = None
         self.build()
         self.update_allow_box_visibility()
         # self.init_dnd() #FIXME: Add drag and drop
@@ -421,12 +437,12 @@ class ActionRow(Adw.ActionRow):
 
         self.allow_image_toggle = Gtk.ToggleButton(css_classes=["blue-toggle-button"], icon_name="image-x-generic-symbolic", active=self.controls_image,
                                                    tooltip_text="Allow action to control the media")
-        self.allow_image_toggle.connect("toggled", self.on_allow_image_toggled)
+        self.connect_image_signal()
         self.allow_box.append(self.allow_image_toggle)
 
         self.allow_background_toggle = Gtk.ToggleButton(css_classes=["blue-toggle-button"], icon_name="color-select-symbolic", active=self.controls_background,
                                                         tooltip_text="Allow action to control the background color")
-        self.allow_background_toggle.connect("toggled", self.on_allow_background_toggled)
+        self.connect_background_signal()
         self.allow_box.append(self.allow_background_toggle)
 
         self.allow_label_toggle = ActionRowLabelToggle(self)
@@ -557,25 +573,41 @@ class ActionRow(Adw.ActionRow):
 
         input_state.action_permission_manager.set_label_control_index(i, index_value, True, True)
 
+    def connect_image_signal(self) -> None:
+        if self._image_handler is None:
+            self._image_handler = self.allow_image_toggle.connect("toggled", self.on_allow_image_toggled)
+
+    def disconnect_image_signal(self) -> None:
+        if self._image_handler is not None:
+            self.allow_image_toggle.disconnect(self._image_handler)
+            self._image_handler = None
+
+    def connect_background_signal(self) -> None:
+        if self._background_handler is None:
+            self._background_handler = self.allow_background_toggle.connect("toggled", self.on_allow_background_toggled)
+
+    def disconnect_background_signal(self) -> None:
+        if self._background_handler is not None:
+            self.allow_background_toggle.disconnect(self._background_handler)
+            self._background_handler = None
+
     def set_image_toggled(self, value: bool) -> None:
+        self.disconnect_image_signal()
         try:
-            self.allow_image_toggle.disconnect_by_func(self.on_allow_image_toggled)
-        except TypeError:
-            pass
-
-        self.allow_image_toggle.set_active(value)
-
-        self.allow_image_toggle.connect("toggled", self.on_allow_image_toggled)
+            self.allow_image_toggle.set_active(value)
+        finally:
+            # An update that returns early or raises must still leave the toggle
+            # wired, or the button stops reporting every later click.
+            self.connect_image_signal()
 
     def set_background_toggled(self, value: bool) -> None:
+        self.disconnect_background_signal()
         try:
-            self.allow_background_toggle.disconnect_by_func(self.on_allow_background_toggled)
-        except TypeError:
-            pass
-
-        self.allow_background_toggle.set_active(value)
-
-        self.allow_background_toggle.connect("toggled", self.on_allow_background_toggled)
+            self.allow_background_toggle.set_active(value)
+        finally:
+            # An update that returns early or raises must still leave the toggle
+            # wired, or the button stops reporting every later click.
+            self.connect_background_signal()
 
     def on_click_up(self, button: Gtk.Button) -> None:
         # The neighbour is the row widget itself (ActionRow /

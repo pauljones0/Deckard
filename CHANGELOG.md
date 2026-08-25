@@ -48,6 +48,12 @@ bundle as a release asset.
 
 ### Fixed
 
+- The comment field and the allow-media, allow-background and per-label
+  toggles in the sidebar keep working after an error. A failure part way
+  through updating one of these rows left its control silently dead until a
+  restart: edits typed into it were dropped. The rows now rewire themselves
+  whatever happens during the update.
+
 - A background image on a Stream Deck + now lines up across the gaps between
   keys. The background was cut into key tiles at a spacing that did not match
   the device, so a line in the image jogged sideways at every key edge. The

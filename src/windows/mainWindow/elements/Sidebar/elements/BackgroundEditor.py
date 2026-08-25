@@ -277,10 +277,7 @@ class ColorRow(Adw.PreferencesRow):
                 log.error("State not found")
                 return
 
-            color = active_page.get_background_color(identifier=identifier, state=self.active_state)
-            color = c_state.background_manager.get_composed_color()
-
-            self.set_color(color)
+            self.set_color(c_state.background_manager.get_composed_color())
 
             self.button.revert_button.set_visible(c_state.background_manager.get_use_page_background())
         finally:
