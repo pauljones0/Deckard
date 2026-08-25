@@ -24,6 +24,11 @@ from loguru import logger as log
 
 import enum
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from src.windows.AssetManager.thumbnail_loader import ThumbnailLoader
+
 
 class _PixbufUnset(enum.Enum):
     # Separates a caller that passed a pixbuf, which can be None when the
@@ -37,6 +42,12 @@ _PIXBUF_UNSET = _PixbufUnset.TOKEN
 
 
 class Preview(Gtk.FlowBoxChild):
+    # The grid that pools a card sets this to its off-main thumbnail loader, so
+    # set_image hands the decode to a worker instead of running it on the main
+    # loop. A card built outside a grid keeps None and decodes inline. See
+    # DynamicFlowBox and thumbnail_loader.
+    _thumbnail_loader: "ThumbnailLoader | None" = None
+
     def __init__(self, image_path: str | os.PathLike[str] | None = None, text:str | None = None, can_be_deleted: bool = False,
                  pixbuf: "GdkPixbuf.Pixbuf | None | _PixbufUnset" = _PIXBUF_UNSET):
         super().__init__()
@@ -137,7 +148,17 @@ class Preview(Gtk.FlowBoxChild):
             return None
 
     def set_image(self, path: str | os.PathLike[str]) -> None:
-        self.set_pixbuf(self.decode_pixbuf(path))
+        """Show the thumbnail at path.
+
+        A card that a grid pools has a thumbnail loader, and the decode goes to
+        a worker: this returns at once and set_pixbuf lands later, on the main
+        loop. A card without a loader decodes inline, as before.
+        """
+        loader = self._thumbnail_loader
+        if loader is None:
+            self.set_pixbuf(self.decode_pixbuf(path))
+            return
+        loader.request(os.fspath(path) if path is not None else None, self)
 
     def set_pixbuf(self, pixbuf: GdkPixbuf.Pixbuf | None) -> None:
         """Shows an already-decoded pixbuf. None means the decode failed, so

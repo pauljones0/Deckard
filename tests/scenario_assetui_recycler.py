@@ -70,6 +70,21 @@ class FakeButton:
         self.sensitive = sensitive
 
 
+class NullThumbnailLoader:
+    """Stands in for the per-grid thumbnail loader.
+
+    _apply_range starts a new generation on every page, which cancels the
+    decodes the last page left. This recycler test drives the bind logic, not
+    the decode, so both calls are no-ops here.
+    """
+
+    def begin_generation(self):
+        pass
+
+    def request(self, key, target):
+        pass
+
+
 class StubFlow:
     """Carries exactly the attributes DynamicFlowBox.show_range touches."""
 
@@ -83,6 +98,7 @@ class StubFlow:
         self.back_button = FakeButton()
         self.next_button = FakeButton()
         self.factory_func = self._factory
+        self.thumbnail_loader = NullThumbnailLoader()
 
     def _factory(self, preview, item):
         self.event_log.append(("bind", preview._index, item))

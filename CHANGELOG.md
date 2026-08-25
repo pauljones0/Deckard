@@ -157,6 +157,13 @@ bundle as a release asset.
 
 ### Fixed
 
+- Turning a page of thumbnails in the asset manager no longer freezes the
+  window. The icon, wallpaper and custom-asset grids used to decode every
+  thumbnail on the page while you waited, about fifty images at once, and the
+  window locked up for most of a second on each turn. The thumbnails now decode
+  in the background and appear as they are ready, so the page turns at once. The
+  card you turned to loads first, a card you have already seen comes back from
+  memory without a second decode, and a page you turn away from stops loading.
 - The onboarding pages no longer change size as you move between them. Three of
   the welcome pages drew their icon larger than the pages on either side, so the
   icon grew and then shrank across a swipe. Every icon page now draws its icon

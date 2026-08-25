@@ -446,6 +446,11 @@ class App(Adw.Application):
         from src.backend.main_loop import shutdown_background_pool
         shutdown_background_pool()
 
+        from src.windows.AssetManager.thumbnail_loader import (
+            shutdown_thumbnail_pool,
+        )
+        shutdown_thumbnail_pool()
+
         # Stop the plugin-event batches, so a late trigger_event() cannot start
         # a new lane thread during the teardown. This joins nothing; lane
         # runners are daemon threads, so a wedged observer cannot delay the quit.
