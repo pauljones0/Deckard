@@ -15,6 +15,9 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 import re
 import threading
+import weakref
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Any, TYPE_CHECKING
 
 from loguru import logger as log
@@ -128,6 +131,23 @@ class WindowGrabber:
     # decisions that can meet. A holder takes no other lock of this class, and
     # a gate transition may take it, never the reverse.
     _dispatch_lock = threading.RLock()
+
+    # The page each deck is in the middle of loading by hand, held while that
+    # load runs. A load marshals onto the GTK main thread, so the deck shows
+    # the page it is leaving for the whole of it. An automatic switch that
+    # lands in that window would read the page on the deck as the user's own
+    # choice and write it down as the way back. An entry names the page the
+    # deck is about to show, and the automatic path records that instead.
+    #
+    # An entry pairs the page with a token the claiming routing holds. Two
+    # kinds of routing claim a deck here, the restore and a page picked by
+    # hand, and one that retired the other's claim would take the guard off a
+    # load still running. A claim retires on its own token only.
+    #
+    # Weak keys, so a deck torn down mid-load leaves nothing behind. The map
+    # sits on the class for the same reason the lock above does, and every
+    # holder of it takes that lock.
+    _pending_manual_loads: "weakref.WeakKeyDictionary[Any, tuple[object, str]]" = weakref.WeakKeyDictionary()
 
     def __init__(self) -> None:
         self.environment_components: list[str] = desktop_components()
@@ -581,7 +601,8 @@ class WindowGrabber:
             self._restore_manual_page(deck_controller)
             return
 
-        if not self._claim_auto_page(deck_controller, matched_path):
+        claimed_page = self._auto_page_to_leave(deck_controller, matched_path)
+        if claimed_page is None:
             return
 
         log.debug(f"Auto changing page: {matched_path} on deck {deck_controller.deck.get_serial_number()}")
@@ -593,19 +614,51 @@ class WindowGrabber:
             # to tell the user about an automatic switch.
             log.error(f"Auto page change skipped: {matched_path} did not load")
             return
+
+        if not self._claim_auto_page(deck_controller, claimed_page, matched_path):
+            return
         # The load runs outside the decision, and a second routing that decided
         # on the same page reaches this too. allow_reload keeps the deck from
         # building the page it already shows a second time: the page manager
         # answers both routings with the one cached page object for this deck.
         deck_controller.load_page(page, allow_reload=False)
 
-    def _claim_auto_page(self, deck_controller: "DeckController", page_path: str) -> bool:
+    def _auto_page_to_leave(self, deck_controller: "DeckController", page_path: str) -> "Page | None":
+        """Answers the page this automatic switch takes the deck off. None
+        where the deck already shows page_path or has no page at all.
+
+        This reads the routing state and writes none of it, because the page
+        build that follows can fail. A deck marked as automatically loaded
+        before that build sits on a page the user chose while it says the page
+        arrived on its own, and the page it remembers going back to is that
+        very page.
+        """
+        with self._dispatch_lock:
+            active_page = deck_controller.active_page
+            if active_page is None:
+                return None
+            if self._page_the_deck_will_show(deck_controller, active_page) == page_path:
+                if deck_controller not in self._pending_manual_loads:
+                    # The deck already shows the matched page, and no page
+                    # build follows that could fail in between. The page it
+                    # shows answers to a rule, so it is marked here, and a
+                    # later window change can take the deck off it. A deck
+                    # loading a page the user picked is left alone: that page
+                    # is their choice even where a rule names it too.
+                    deck_controller.page_auto_loaded = True
+                return None
+            return active_page
+
+    def _claim_auto_page(self, deck_controller: "DeckController", active_page: "Page",
+                         page_path: str) -> bool:
         """Records that this deck's page arrived automatically, and answers
-        whether a load is still needed.
+        whether this routing still owns the switch.
 
         This is the whole of the decision that two routings must not interleave.
         A deck taken off its manual page has to remember which page that was,
-        and two routings reading that flag at once lose the way back.
+        and two routings reading that flag at once lose the way back. The
+        conditions are read again here because the page build in between runs
+        outside the lock.
 
         It holds the routing lock and does no work of its own. The load stays
         outside, because a page load marshals onto the GTK main thread and
@@ -613,15 +666,89 @@ class WindowGrabber:
         waiting for, and then neither side moves until the marshal times out.
         """
         with self._dispatch_lock:
-            active_page = deck_controller.active_page
-            if active_page is None:
+            if deck_controller.active_page is not active_page:
+                # Another routing moved the deck while this page built, so it
+                # owns the decision now.
+                return False
+            pending_manual = self._pending_manual_path(deck_controller)
+            if self._page_the_deck_will_show(deck_controller, active_page) == page_path:
                 return False
 
-            needs_load = active_page.json_path != page_path
-            if needs_load and not deck_controller.page_auto_loaded:
+            if pending_manual is not None:
+                # A page picked by hand is loading onto this deck. It, not the
+                # page still on the deck, is the choice to come back to.
+                deck_controller.last_manual_loaded_page_path = pending_manual
+            elif not deck_controller.page_auto_loaded:
                 deck_controller.last_manual_loaded_page_path = active_page.json_path
             deck_controller.page_auto_loaded = True
-            return needs_load
+            return True
+
+    def _page_the_deck_will_show(self, deck_controller: "DeckController",
+                                 active_page: "Page") -> str:
+        """The page path this deck settles on once the loads in flight land.
+        Call under the routing lock."""
+        pending_manual = self._pending_manual_path(deck_controller)
+        if pending_manual is not None:
+            return pending_manual
+        return active_page.json_path
+
+    def _pending_manual_path(self, deck_controller: "DeckController") -> str | None:
+        """The page a load by hand is bringing to this deck, or None.
+        Call under the routing lock."""
+        claim = self._pending_manual_loads.get(deck_controller)
+        if claim is None:
+            return None
+        return claim[1]
+
+    def _begin_manual_load(self, deck_controller: "DeckController", page_path: str) -> object:
+        """Claims this deck for a load by hand and answers the token that
+        retires the claim. Call under the routing lock."""
+        token = object()
+        self._pending_manual_loads[deck_controller] = (token, page_path)
+        return token
+
+    def _end_manual_load(self, deck_controller: "DeckController", token: object) -> None:
+        """Retires a claim this routing made. A claim another routing has
+        since made on the same deck stands: its load is still running."""
+        with self._dispatch_lock:
+            claim = self._pending_manual_loads.get(deck_controller)
+            if claim is not None and claim[0] is token:
+                del self._pending_manual_loads[deck_controller]
+
+    @contextmanager
+    def manual_page_load(self, deck_controller: "DeckController", page_path: str) -> Iterator[None]:
+        """Wraps a page load the user asked for by hand on this deck.
+
+        Nothing outside this class clears the flag that says the deck's page
+        arrived automatically. A deck left marked that way after the user
+        picks a page of their own goes back to a page they already left the
+        next time no rule matches, so the pick clears the flag here.
+
+        The claim stands for the length of the load, which is why this is a
+        context manager: the deck shows the page it is leaving until the load
+        lands, and an automatic switch in that window must record the picked
+        page as the way back, not the one still on the deck.
+
+        A load that raises, such as one on a deck torn down mid-call, leaves
+        the deck on the page it already showed. The mark goes back to what it
+        was, because a deck left on an automatic page with the mark off has
+        the next automatic switch write that page down as the user's choice.
+        """
+        with self._dispatch_lock:
+            was_auto_loaded = getattr(deck_controller, "page_auto_loaded", False)
+            deck_controller.page_auto_loaded = False
+            token = self._begin_manual_load(deck_controller, page_path)
+        try:
+            yield
+        except BaseException:
+            if was_auto_loaded:
+                # Only ever back to the mark, never off one: an automatic
+                # switch that ran inside the load owns the mark it set.
+                with self._dispatch_lock:
+                    deck_controller.page_auto_loaded = True
+            raise
+        finally:
+            self._end_manual_load(deck_controller, token)
 
     def _restore_manual_page(self, deck_controller: "DeckController") -> None:
         """Returns one deck to its last manually loaded page.
@@ -667,9 +794,24 @@ class WindowGrabber:
             log.error(f"Manual page restore skipped: {manual_path} did not load")
             return
 
-        if not self._claim_manual_page(deck_controller, active_page):
+        token = self._claim_manual_page(deck_controller, active_page, manual_path)
+        if token is None:
             return
-        deck_controller.load_page(page, allow_reload=False)
+        try:
+            deck_controller.load_page(page, allow_reload=False)
+        except BaseException:
+            # The load did not land, such as on a deck torn down mid-call, so
+            # the deck keeps the automatic page. It carries the mark again,
+            # because a later window change is what retries the restore, and
+            # an automatic switch here must not read that page as a choice
+            # the user made.
+            with self._dispatch_lock:
+                deck_controller.page_auto_loaded = True
+            raise
+        finally:
+            # The claim stands only while the load runs. It is what keeps an
+            # automatic switch in that window off the remembered page.
+            self._end_manual_load(deck_controller, token)
 
     def _manual_page_to_restore(self, deck_controller: "DeckController", active_page: "Page") -> str | None:
         """Answers the page this deck goes back to. None when there is nothing
@@ -686,22 +828,27 @@ class WindowGrabber:
                 return None
             return deck_controller.last_manual_loaded_page_path
 
-    def _claim_manual_page(self, deck_controller: "DeckController", active_page: "Page") -> bool:
-        """Marks the deck as no longer automatically loaded, and answers
-        whether this routing still owns the restore.
+    def _claim_manual_page(self, deck_controller: "DeckController", active_page: "Page",
+                           manual_path: str) -> object | None:
+        """Marks the deck as no longer automatically loaded, and answers the
+        token that retires the claim. None where this routing no longer owns
+        the restore.
 
         The same decision as an automatic switch, and it holds the routing lock
         for the same reason: the flag it reads is the flag it writes, and two
         routings that both read it before either writes both undo the switch.
         The conditions are read again here because the page build in between
         runs outside the lock. The load stays outside the lock too, because it
-        marshals onto the GTK main thread.
+        marshals onto the GTK main thread. The claim on the page being restored
+        is recorded in the same hold as the flag it clears: between the two, a
+        deck showing an automatic page carries no mark of it, and an automatic
+        switch there would take that page for the user's own choice.
         """
         with self._dispatch_lock:
             if not self._restore_still_owned(deck_controller, active_page):
-                return False
+                return None
             deck_controller.page_auto_loaded = False
-            return True
+            return self._begin_manual_load(deck_controller, manual_path)
 
     def _restore_still_owned(self, deck_controller: "DeckController", active_page: "Page") -> bool:
         """Answers whether a restore off active_page is this routing's to make.
