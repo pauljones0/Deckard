@@ -191,6 +191,11 @@ def check_older_instance_reports_once() -> None:
     assert "restart" in cli_forward.SKEW_MESSAGE, (
         "the message has to say what to do about it")
     assert "older build" in cli_forward.SKEW_MESSAGE, cli_forward.SKEW_MESSAGE
+    for verb in ("page and state", "--change-page", "--change-state",
+                 "--emulate-input"):
+        assert verb not in cli_forward.SKEW_MESSAGE, (
+            f"the message names {verb!r}, and any of the control methods can "
+            f"be the one that meets an older instance: {cli_forward.SKEW_MESSAGE!r}")
     assert "shutting down" in cli_forward.SKEW_MESSAGE, (
         "an instance takes its interface off the bus before it lets go of the "
         "name, so it answers identically to one too old to have the methods -- "
@@ -351,6 +356,30 @@ def check_emulate_requests_are_forwarded() -> None:
     print("PASS: every emulated input is forwarded, after the page and state requests")
 
 
+def check_emulate_refusal_comes_back() -> None:
+    """What the instance says about a press is what the terminal shows.
+
+    A press the instance refuses, because the deck moved on or the key is held
+    or the serial is not there, has to reach the person who typed the command.
+    Dropped here it exits zero with nothing printed, which reads as pressed.
+    """
+    clear_parking()
+    refusal = "Position (0,0) on device deck-f is already held down"
+    recorder = Recorder(running=True, answers={"deck-f": refusal})
+
+    verdict = cli_forward.forward_cli_requests(parse(EMULATE_ARGV), recorder)
+
+    assert verdict.failures == [refusal], (
+        f"the instance's own sentence about the press never came back: "
+        f"{verdict.failures}")
+    assert verdict.handled, (
+        "an instance is running and took the command, refusal and all")
+    assert recorder.forwards() == EXPECTED_EMULATE_FORWARDS, (
+        f"a refused press must not stop the one behind it: {recorder.forwards()}")
+
+    print("PASS: a press the instance refuses comes back as its own sentence")
+
+
 def check_emulate_cannot_be_parked() -> None:
     """With nothing running, a press ends the command instead of parking.
 
@@ -411,12 +440,14 @@ def check_emulate_refuses_close_running() -> None:
         f"{recorder.forwards()}")
     assert not gl.api_page_requests and not gl.api_state_requests
 
-    # And with nothing running at all, the answer is the other one: there is no
-    # instance for --close-running to replace.
+    # The same answer with nothing running at all. That launch opens the decks
+    # either way, so the situation does not depend on the probe, and the fast
+    # path, which has no probe at that point, gives this same sentence.
     clear_parking()
     verdict = cli_forward.forward_cli_requests(
         parse([*EMULATE_ARGV, "--close-running"]), Recorder(running=False))
-    assert verdict.failures == [cli_forward.NOT_RUNNING_MESSAGE], verdict.failures
+    assert verdict.failures == [cli_forward.CLOSE_RUNNING_MESSAGE], verdict.failures
+    assert not gl.api_page_requests and not gl.api_state_requests
 
     print("PASS: --close-running refuses a press, and names its own reason")
 
@@ -479,22 +510,77 @@ def check_event_words_match_the_control_plane() -> None:
     print("PASS: the CLI accepts exactly the event words the control plane runs")
 
 
+def check_coordinate_failures_read_alike() -> None:
+    """Both verbs that carry coordinates refuse them with one sentence.
+
+    Only the flag named in the failure may differ. A copy of the check per verb
+    drifts, and one mistake then reads two ways.
+    """
+    for coords in ("nope", "1,2,3", "", "x,y", "-1,0"):
+        state = cli_forward.forward_cli_requests(
+            parse(["--change-state", "deck-a", "Alpha", coords, "1"]), Recorder())
+        press = cli_forward.forward_cli_requests(
+            parse(["--emulate-input", "deck-a", "Alpha", coords, "press"]), Recorder())
+        assert state.failures and press.failures, coords
+        assert press.failures[0] == state.failures[0].replace(
+            "--change-state argument", "--emulate-input argument"), (
+            f"{coords!r} reads two ways:\n  {state.failures[0]}\n  {press.failures[0]}")
+
+    print("PASS: both verbs refuse the same coordinates with the same sentence")
+
+
+def check_call_timeout_outlasts_the_instances_own_waits() -> None:
+    """A control call waits longer than the instance can take to answer it.
+
+    The instance waits for a page's inputs to rebuild, and then for the press
+    to reach the deck, before it replies. A call timeout below their sum gives
+    up on work the instance goes on to do: a state change survives that,
+    because asking twice sets the same state, but a press does not, and a
+    command that reports a timeout and presses anyway invites the retry that
+    presses twice.
+
+    The two constants live in modules that cannot import each other, because
+    this one stays importable before globals. This is where they meet.
+    """
+    from src.backend import control_plane
+
+    instance_waits = (control_plane._INPUT_LOAD_WAIT_S
+                      + control_plane._PRESS_START_WAIT_S)
+    assert cli_forward.CONTROL_CALL_TIMEOUT_MS / 1000 > instance_waits, (
+        f"a control call gives up after "
+        f"{cli_forward.CONTROL_CALL_TIMEOUT_MS / 1000}s, and the instance can "
+        f"take up to {instance_waits}s to answer one")
+    assert cli_forward.DBUS_CALL_TIMEOUT_MS < cli_forward.CONTROL_CALL_TIMEOUT_MS, (
+        "the probe that decides whether to boot must not wait as long as a "
+        "call that does work a person asked for")
+
+    print("PASS: a control call outwaits the longest answer the instance can give")
+
+
 def check_unparkable_is_the_one_rule() -> None:
     """One function answers "can a boot apply this?" for both halves of the CLI.
 
     The fast path and the boot path both ask it, which is what keeps park()
     free of a kind it has no queue for.
     """
+    situations = (cli_forward.NOT_RUNNING_MESSAGE,
+                  cli_forward.CLOSE_RUNNING_MESSAGE,
+                  cli_forward.LISTING_MESSAGE)
+
     parkable = cli_forward.Plan(page_requests=[("deck-a", "Alpha")],
                                 state_requests=[("deck-b", "Beta", "0,0", 1)])
-    assert cli_forward.unparkable(parkable) == [], (
-        "a page or state change is exactly what parking is for")
-    assert cli_forward.unparkable(parkable, replacing=True) == []
+    for message in situations:
+        assert cli_forward.unparkable(parkable, message) == [], (
+            "a page or state change is exactly what parking is for")
 
     pressing = cli_forward.Plan(emulate_requests=[("deck-f", "Zeta", "0,0", "press")])
-    assert cli_forward.unparkable(pressing) == [cli_forward.NOT_RUNNING_MESSAGE]
-    assert cli_forward.unparkable(pressing, replacing=True) == [
-        cli_forward.CLOSE_RUNNING_MESSAGE]
+    for message in situations:
+        assert cli_forward.unparkable(pressing, message) == [message], (
+            "the caller knows which situation it is in, and the answer is its "
+            "own sentence")
+    assert len(set(situations)) == len(situations), (
+        "the three situations must read differently, or a person cannot tell "
+        "which one they are in")
 
     assert not cli_forward.Plan(
         emulate_requests=[("deck-f", "Zeta", "0,0", "press")]).empty, (
@@ -577,10 +663,13 @@ def main() -> None:
         check_validation_is_syntax_only()
         check_large_decks_not_pre_rejected()
         check_emulate_requests_are_forwarded()
+        check_emulate_refusal_comes_back()
         check_emulate_cannot_be_parked()
         check_emulate_refuses_close_running()
         check_emulate_validation_is_syntax_only()
         check_event_words_match_the_control_plane()
+        check_coordinate_failures_read_alike()
+        check_call_timeout_outlasts_the_instances_own_waits()
         check_unparkable_is_the_one_rule()
         check_no_requests_touches_nothing()
         check_unreachable_bus_is_reported()

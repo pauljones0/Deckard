@@ -310,15 +310,76 @@ def leg_press_needs_a_running_instance() -> None:
         assert cli_forward.USAGE in outcome.failures, outcome.failures
         assert recorder.forwards() == [], recorder.forwards()
 
-    # A listing verb still runs in this process, press or no press.
-    recorder = Recorder(running=False)
-    outcome = cli_fast_path.answer_from_running_instance(
-        parse([*EMULATE_ARGV, "--list-pages"]), recorder)
-    assert outcome.exit_code is None, (
-        f"--list-pages is answered by main.py itself whatever else the line "
-        f"carries, and must not be refused here: {outcome.exit_code!r}")
+    # A listing verb is answered by main.py itself, which prints and returns
+    # before anything else on the line runs. A press on such a line is applied
+    # by nobody, so the line is refused rather than answered with a listing and
+    # a successful exit. It holds whether or not an instance is running,
+    # because the listing ends this process either way.
+    for running in (True, False):
+        for verb in ("--list-pages", "--list-devices"):
+            recorder = Recorder(running=running)
+            outcome = cli_fast_path.answer_from_running_instance(
+                parse([*EMULATE_ARGV, verb]), recorder)
+            assert outcome.exit_code == 1, (
+                f"{verb} with a press must refuse the line, not exit "
+                f"{outcome.exit_code!r} and drop the press")
+            assert outcome.failures == (cli_forward.LISTING_MESSAGE,), outcome.failures
+            assert recorder.calls == [], (
+                f"a refused line must not go near the bus: {recorder.calls}")
+
+    # A listing verb on its own is still that command, whatever else it carries
+    # that the boot can apply.
+    for verb in ("--list-pages", "--list-devices"):
+        recorder = Recorder(running=True)
+        outcome = cli_fast_path.answer_from_running_instance(
+            parse([*FORWARD_ARGV, verb]), recorder)
+        assert outcome.exit_code is None, (
+            f"{verb} must boot so this process can answer it, not exit "
+            f"{outcome.exit_code!r}")
 
     print("  PASS: a press is forwarded to a running instance or refused with a reason")
+
+
+def leg_both_halves_answer_alike() -> None:
+    """One command line gets one answer, whichever half of the CLI sees it.
+
+    The fast path answers before the application is imported and the boot path
+    answers after, and both meet the same three situations. They read the
+    situation from different places -- the boot path has a bus probe where the
+    fast path has none -- so the answers are pinned against each other here
+    rather than against a constant in each file. The pairing is what caught the
+    two halves calling the same command line two different things.
+    """
+    print("leg 1c: the two halves answer one command line the same way")
+
+    lines = [
+        ("nothing running", EMULATE_ARGV, False, False),
+        ("an instance running", EMULATE_ARGV, True, False),
+        ("--close-running over an instance", EMULATE_ARGV, True, True),
+        ("--close-running with nothing running", EMULATE_ARGV, False, True),
+        ("a press beside a page change, nothing running",
+         [*FORWARD_ARGV, *EMULATE_ARGV], False, False),
+        ("a malformed press", ["--emulate-input", "deck-a", "Alpha", "0,0", "smash"],
+         True, False),
+    ]
+
+    for what, argv, running, close_running in lines:
+        line = [*argv, "--close-running"] if close_running else argv
+        gl.api_page_requests.clear()
+        gl.api_state_requests.clear()
+
+        fast = cli_fast_path.answer_from_running_instance(
+            parse(line), Recorder(running=running))
+        boot = cli_forward.forward_cli_requests(parse(line), Recorder(running=running))
+
+        assert tuple(boot.failures) == fast.failures, (
+            f"{what}: the fast path says {fast.failures} and the boot path says "
+            f"{tuple(boot.failures)} for the same command line")
+        assert not gl.api_page_requests and not gl.api_state_requests, (
+            f"{what}: a refused line parked {gl.api_page_requests} / "
+            f"{gl.api_state_requests}")
+
+    print("  PASS: both halves give one answer per command line")
 
 
 # 2. The import fence
@@ -664,6 +725,25 @@ def leg_entry_point() -> None:
         {"method": "EmulateInput", "args": [SERIAL, "Alpha", "0,0", "press"]},
     ], f"the instance was sent {read_record(record)}"
 
+    # The instance refuses the press: the key is held, the page moved on, the
+    # deck is not there. That sentence is the whole answer a person gets, and
+    # dropped anywhere on the way it becomes a successful exit that printed
+    # nothing.
+    press_refusal = "Position (0,0) on device fastpath-deck-1 is already held down"
+    reset_record(record)
+    stub = start_stub_instance(record, refuse=press_refusal)
+    try:
+        proc, _ = run_main(press_argv, sentinel)
+    finally:
+        stop_stub_instance(stub)
+
+    output = proc.stdout + proc.stderr
+    assert proc.returncode == 1, (
+        f"a refused press must exit 1, not {proc.returncode}:\n{output}")
+    assert press_refusal in proc.stderr, (
+        f"the instance's own sentence about the press never reached the person "
+        f"who typed the command:\n{output}")
+
     reset_record(record)
     proc, _ = run_main(press_argv, sentinel)
     output = proc.stdout + proc.stderr
@@ -688,6 +768,7 @@ def main() -> int:
 
     leg_decision_table()
     leg_press_needs_a_running_instance()
+    leg_both_halves_answer_alike()
     leg_import_fence()
 
     bus_proc, bus_address = start_private_bus()

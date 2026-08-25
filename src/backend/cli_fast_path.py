@@ -47,11 +47,16 @@ the fall-through below harmless, so such a verb needs its own answer for "the
 instance is not running" rather than a boot.
 
 --emulate-input is the first of those, and cli_forward.unparkable() is where
-that answer lives, so both halves of the CLI give the same one. Two of the
-arms below ask it: the launch that is about to replace the instance, and the
-launch that finds none. The third case, no session bus to open, still hands
-back, because the boot path's own attempt reports it and one reporting site is
-what keeps the two paths from answering the same command differently.
+that answer lives. Three arms below ask it, one per situation, and each passes
+the sentence for the situation it is in rather than for what a probe said: a
+listing verb that answers the whole line by itself, a launch that is about to
+replace the instance, and a launch that finds none. The boot path reads the
+same three the same way, so one command line gets one answer from whichever
+half sees it first, and a scenario pins the two halves against each other.
+
+The fourth case, no session bus to open, still hands back, because the boot
+path's own attempt reports it and one reporting site is what keeps the two
+paths from answering the same command differently.
 """
 from __future__ import annotations
 
@@ -107,6 +112,16 @@ def answer_from_running_instance(args: Namespace,
     something to send.
     """
     if runs_in_this_process(args):
+        # main.py answers the listing itself and returns straight after, so
+        # nothing else on the line runs. A request that can be parked survives
+        # that, because the parking outlives this decision; a press does not
+        # exist any more once this process has printed a list and left. Refuse
+        # the whole line rather than print a listing and drop the press with a
+        # successful exit.
+        refusals = cli_forward.unparkable(cli_forward.plan_requests(args),
+                                          cli_forward.LISTING_MESSAGE)
+        if refusals:
+            return Outcome(exit_code=1, failures=tuple(refusals))
         return BOOT
 
     plan = cli_forward.plan_requests(args)
@@ -122,7 +137,7 @@ def answer_from_running_instance(args: Namespace,
         # requests belong to the decks it opens next, and it parks them. What
         # it cannot park it cannot carry out at all, and says so here rather
         # than boot to find that out.
-        refusals = cli_forward.unparkable(plan, replacing=True)
+        refusals = cli_forward.unparkable(plan, cli_forward.CLOSE_RUNNING_MESSAGE)
         if refusals:
             return Outcome(exit_code=1, failures=tuple(refusals))
         return BOOT
@@ -145,7 +160,7 @@ def answer_from_running_instance(args: Namespace,
         # applied by the boot either, and the fall-through below would end in a
         # launch that presses nothing and reports success, so it ends here with
         # its reason.
-        refusals = cli_forward.unparkable(plan)
+        refusals = cli_forward.unparkable(plan, cli_forward.NOT_RUNNING_MESSAGE)
         if refusals:
             return Outcome(exit_code=1, failures=tuple(refusals))
 

@@ -58,11 +58,27 @@ if TYPE_CHECKING:
             """Empty on success, else the reason the instance gave."""
 
 
-# Every CLI-side D-Bus call carries this rather than the 25s bus default.
+# Every CLI-side D-Bus probe carries this rather than the 25s bus default.
 # Without it a wedged instance that accepts and never replies blocks startup
 # for that long. The probes in main.py import it from here, so one number
 # serves both and no two numbers drift apart.
 DBUS_CALL_TIMEOUT_MS = 5000
+
+# What a control method gets instead. It must exceed the longest wait such a
+# method can make before it answers, or a caller gives up on work the instance
+# goes on to do. A state change is idempotent and survives that; a press is
+# not, and a command that reports a timeout and presses anyway invites the
+# retry that presses twice. The waits to clear are the control plane's input
+# load wait and its press start wait, which together bound every control
+# method, and this number stays above their sum with room to spare.
+# scenario_cli_forward_all pins the ordering, because the two sides of it live
+# in modules that cannot import each other.
+#
+# The cost is the other direction: an instance wedged mid-call holds a typed
+# command for this long rather than for the probe timeout above. A probe
+# decides whether to boot, so it stays short; a control call is work a person
+# asked for, so it waits.
+CONTROL_CALL_TIMEOUT_MS = 20000
 
 # The interface that the top-level object carries, which is the app id.
 TOP_IFACE = appinfo.APP_ID
@@ -93,8 +109,8 @@ _METHOD_MISSING = (
 # parked boot path stays correct, so this documents it rather than defends
 # against it.
 SKEW_MESSAGE = (
-    "The running Deckard is not answering to the page and state methods this "
-    "command needs. An older build does not have them at all, and restarting "
+    "The running Deckard is not answering to the control methods this command "
+    "needs. An older build does not have them at all, and restarting "
     "it is what picks up a build that does. An instance that is shutting down "
     "answers the same way until it is gone, so if one was just quitting, try "
     "again in a moment."
@@ -146,6 +162,15 @@ CLOSE_RUNNING_MESSAGE = (
     f"Error: --close-running makes this launch the Deckard that runs, so "
     f"nothing was pressed. {_UNPARKABLE_WHY} Run the two commands one after "
     f"the other instead.")
+
+# --list-devices and --list-pages are answered by the launched process itself,
+# which prints and leaves. Nothing else on the line runs, so a press on it
+# would be dropped with a successful exit, which is the outcome this whole rule
+# exists to prevent.
+LISTING_MESSAGE = (
+    "Error: a listing is answered by this command alone, and nothing else on "
+    "the line runs, so nothing was pressed. Ask for the listing and the press "
+    "in two commands.")
 
 
 class OlderInstance(Exception):
@@ -384,8 +409,8 @@ def _parse_emulate_requests(raw: list[Any]) -> tuple[list[tuple[str, str, str, s
     return parsed, failures
 
 
-def unparkable(plan: Plan, *, replacing: bool = False) -> list[str]:
-    """The sentences for the requests in plan that no boot can carry out.
+def unparkable(plan: Plan, message: str) -> list[str]:
+    """The sentences for the requests in plan that this process cannot apply.
 
     Parking is what lets an invocation that finds nothing running boot and
     apply its requests to the decks it opens next. An emulated input has no
@@ -393,15 +418,18 @@ def unparkable(plan: Plan, *, replacing: bool = False) -> list[str]:
     every other outcome either presses at a moment nobody asked for or applies
     half of what was typed.
 
-    Both halves of the CLI call this before they park, which is what keeps the
-    fast path's fall-through harmless and park() free of a kind it cannot take.
-    replacing tells the two cases apart for the reader: an invocation with
-    --close-running over a running instance, and one with nothing running at
-    all.
+    One predicate, three situations. The caller passes the message for the one
+    it is in, because it is the half that knows: nothing is running, this
+    launch is about to replace what is, or a listing verb is going to answer
+    the whole command by itself. Both halves of the CLI ask this before they
+    park, which is what keeps the fast path's fall-through harmless and park()
+    free of a kind it cannot take, and each situation reads the same in both
+    halves because the message travels with the situation and not with the
+    probe.
     """
     if not plan.emulate_requests:
         return []
-    return [CLOSE_RUNNING_MESSAGE if replacing else NOT_RUNNING_MESSAGE]
+    return [message]
 
 
 def plan_requests(args: Namespace) -> Plan:
@@ -547,13 +575,25 @@ def forward_cli_requests(args: Namespace,
             # ends the invocation with a non-zero code.
             return Verdict(handled=False, failures=[str(e)])
 
-    running = transport.is_running()
-    if not running or args.close_running:
-        # This process is the instance that applies these requests, once it has
-        # booted and opened the decks they name. Anything it cannot apply that
-        # way ends the invocation here, before a single request is parked: a
-        # command applies all of itself or none of it.
-        refusals = unparkable(plan, replacing=running)
+    # This process is the instance that applies these requests, once it has
+    # booted and opened the decks they name. Anything it cannot apply that way
+    # ends the invocation here, before a single request is parked: a command
+    # applies all of itself or none of it.
+    #
+    # --close-running is read before the probe, and not after it, because the
+    # answer does not depend on it. That launch takes the decks over whether or
+    # not an instance is running now, so the situation is the same either way,
+    # and the fast path, which cannot probe at that point, gives the same
+    # answer for the same command line.
+    if args.close_running:
+        refusals = unparkable(plan, CLOSE_RUNNING_MESSAGE)
+        if refusals:
+            return Verdict(handled=False, failures=refusals)
+        park(plan)
+        return Verdict(handled=False)
+
+    if not transport.is_running():
+        refusals = unparkable(plan, NOT_RUNNING_MESSAGE)
         if refusals:
             return Verdict(handled=False, failures=refusals)
         park(plan)
@@ -691,7 +731,7 @@ class _BusTransport:
                 params,
                 self._glib.VariantType("(s)"),
                 self._gio.DBusCallFlags.NO_AUTO_START,
-                DBUS_CALL_TIMEOUT_MS,
+                CONTROL_CALL_TIMEOUT_MS,
                 None,
             )
         except self._glib.Error as e:
