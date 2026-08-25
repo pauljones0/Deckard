@@ -219,7 +219,7 @@ def late_clear_recovers_content(controller, deck, key_count, blank_hash,
 
 
 def main() -> None:
-    fixtures.start_watchdog(180, label="scenario_screensaver_idle_tick")
+    fixtures.start_watchdog(60, label="scenario_screensaver_idle_tick")
     controller = fixtures.make_headless_controller(serial="ss-idle-1")
     try:
         deck = fixtures.raw_deck(controller)

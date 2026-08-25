@@ -733,7 +733,7 @@ CASES = [
 
 
 def main() -> int:
-    fixtures.start_watchdog(120, label="scenario_asset_chooser_offmain")
+    fixtures.start_watchdog(60, label="scenario_asset_chooser_offmain")
 
     gl.icon_pack_manager = FakePackManager()
     gl.wallpaper_pack_manager = FakePackManager()

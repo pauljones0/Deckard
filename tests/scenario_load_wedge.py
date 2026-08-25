@@ -491,7 +491,7 @@ def case_the_action_pool_takes_the_lifecycle_only() -> None:
 
 
 def main() -> None:
-    start_watchdog(120, label="scenario_load_wedge")
+    start_watchdog(60, label="scenario_load_wedge")
     case_wedge_names_only_the_started_task()
     case_healthy_batch_keeps_its_pool()
     case_a_refused_submit_is_reported_but_a_closing_pool_is_not()

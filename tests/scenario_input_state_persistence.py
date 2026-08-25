@@ -23,7 +23,7 @@ from src.backend.DeckManagement.InputIdentifier import Input
 from src.backend.DeckManagement.deck_controller.input_state import ACTIVE_STATE_KEY
 from src.backend.PageManagement import page_flush
 
-WATCHDOG_SECONDS = 120
+WATCHDOG_SECONDS = 60
 
 # The key every check drives. A page seeded below gives it several states.
 IDENT = Input.Key("0x0")
@@ -107,22 +107,32 @@ def stored_number(content: dict):
 
 
 def load_barrier(c_input) -> dict:
-    """Give a counter of the loads c_input has finished.
+    """Record which page each of c_input's loads rebuilt from.
 
     A page switch loads the inputs on the deck's own thread, so a check waits
     for the load to end rather than for a time to pass. A count of the states
     is no barrier: the load builds them first and picks the state last, so the
     count is right already when the page before had as many states.
+
+    The page is recorded, not just a count, because a bare count is not a
+    barrier for THIS page either. Under load a queued load from an earlier
+    page can land after the mark and bump a counter, and the check below then
+    reads the state list of the page before this one. DeckController.load_input
+    passes the page it is loading, so each entry names the page whose rebuild
+    finished.
     """
     box = getattr(c_input, "_test_loads", None)
     if box is not None:
         return box
-    box = {"n": 0}
+    box = {"pages": []}
     real = c_input.load_from_input_dict
 
     def counting(input_dict, *args, **kwargs):
         real(input_dict, *args, **kwargs)
-        box["n"] += 1
+        # load_from_input_dict(input_dict, update=True, page=None): page is
+        # the second positional, whichever way the caller passes it.
+        loaded = kwargs.get("page", args[1] if len(args) > 1 else None)
+        box["pages"].append(loaded)
 
     c_input.load_from_input_dict = counting
     c_input._test_loads = box
@@ -135,11 +145,12 @@ def show_page(controller, path: str, n_states: int):
     c_input = controller.get_input(IDENT)
     assert c_input is not None, "the fake deck has no key 0x0"
     box = load_barrier(c_input)
-    loads = box["n"]
+    mark = len(box["pages"])
     controller.load_page(page)
     assert wait_until(lambda: controller.active_page is page, timeout=SETTLE_TIMEOUT_S), (
         f"the deck never reached {os.path.basename(path)}")
-    assert wait_until(lambda: box["n"] > loads, timeout=SETTLE_TIMEOUT_S), (
+    assert wait_until(lambda: any(p is page for p in box["pages"][mark:]),
+                      timeout=SETTLE_TIMEOUT_S), (
         f"key 0x0 never finished loading from {os.path.basename(path)}")
     assert len(c_input.states) == n_states, (
         f"key 0x0 has {len(c_input.states)} states after loading "

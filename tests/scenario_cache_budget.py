@@ -516,7 +516,7 @@ def check_bound_under_concurrent_load() -> None:
 
 
 def main() -> None:
-    fixtures.start_watchdog(120, label="scenario_cache_budget")
+    fixtures.start_watchdog(60, label="scenario_cache_budget")
 
     # The deterministic checks run first, on a fake clock and a synchronous
     # _drain_once(). The daemon spawned by the first register() acts only on a

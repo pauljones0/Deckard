@@ -19,7 +19,7 @@ import globals as gl  # noqa: E402
 from src.backend import settings_store  # noqa: E402
 from src.backend.MediaManager import MediaManager  # noqa: E402
 
-WATCHDOG_SECONDS = 90
+WATCHDOG_SECONDS = 60
 
 fixtures._install_integration_globals()
 gl.media_manager = MediaManager()

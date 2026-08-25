@@ -904,7 +904,7 @@ def check_foreground_window_publishes_only_on_change() -> None:
 
 
 def main() -> None:
-    fixtures.start_watchdog(120, label="scenario_autoswitch_rule_edit")
+    fixtures.start_watchdog(60, label="scenario_autoswitch_rule_edit")
     _install_stub_selector()
     fixtures._install_integration_globals()
 

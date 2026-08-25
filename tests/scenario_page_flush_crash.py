@@ -19,7 +19,7 @@ import threading
 
 from fixtures import FaultyFakeDeck, start_watchdog
 
-WATCHDOG_SECONDS = 120
+WATCHDOG_SECONDS = 60
 CHILD_ENV = "DECKARD_PAGE_FLUSH_CRASH_CHILD"
 
 

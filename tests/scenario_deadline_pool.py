@@ -492,7 +492,7 @@ def case_a_task_that_raises_does_not_stop_the_sweep() -> None:
 
 
 def main() -> None:
-    start_watchdog(120, label="scenario_deadline_pool")
+    start_watchdog(60, label="scenario_deadline_pool")
     case_the_deadline_tells_a_stuck_task_from_a_late_one()
     case_the_replacement_takes_work_at_once()
     case_a_pool_that_does_not_replace_cancels_nothing()

@@ -13,7 +13,7 @@ import globals as gl  # noqa: E402
 
 from src.backend.DeckManagement.InputIdentifier import Input  # noqa: E402
 
-WATCHDOG_SECONDS = 120
+WATCHDOG_SECONDS = 60
 
 # Controller A is the stock 2x4 fake deck, used for everything about pages
 # rather than device geometry.

@@ -169,6 +169,13 @@ def _become_primary_loop(app_id: str, answer_quit: bool,
     # boot. It registered, so it answers nothing on the main context, including
     # the quit action above.
     time.sleep(float(os.environ.get("DECKARD_GATE_DISPATCH_DELAY", "0")))
+    # The boot is over and the loop starts on the next line. Printed from here
+    # rather than from an idle callback, so it cannot be reordered behind the
+    # first message this loop dispatches: everything the loop handles is
+    # strictly after this line. A parent leg reads it against WIRE-ACTIVATE to
+    # order the arrival of a quit against the end of the boot, without
+    # comparing two processes' clocks.
+    say("DISPATCHING")
     GLib.MainLoop().run()
 
 

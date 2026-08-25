@@ -480,7 +480,7 @@ def test_no_page_overrides_the_handler() -> None:
 
 
 def main() -> int:
-    fixtures.start_watchdog(90, label="scenario_search_debounce")
+    fixtures.start_watchdog(60, label="scenario_search_debounce")
 
     test_base_holds_the_defaults()
     test_the_entry_owns_the_wait()

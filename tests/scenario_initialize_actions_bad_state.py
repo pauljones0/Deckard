@@ -40,7 +40,7 @@ class StrandProbeAction(ActionCore):
 
 
 def main() -> int:
-    start_watchdog(90, "initialize_actions_bad_state")
+    start_watchdog(60, "initialize_actions_bad_state")
     fixtures._install_integration_globals()
 
     controller = make_headless_controller(serial="bad-state-strand")

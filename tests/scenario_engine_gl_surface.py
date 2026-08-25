@@ -21,7 +21,7 @@ from src.backend.DeckManagement.InputIdentifier import Input  # noqa: E402
 # parsed by the static sweep.
 import src.backend.DeckManagement.DeckManager  # noqa: E402,F401
 
-WATCHDOG_SECONDS = 90
+WATCHDOG_SECONDS = 60
 
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 

@@ -932,7 +932,7 @@ def check_page_editor_adds_no_handlers() -> None:
 
 
 if __name__ == "__main__":
-    fixtures.start_watchdog(180, label="scenario_deck_settings_defaults")
+    fixtures.start_watchdog(60, label="scenario_deck_settings_defaults")
 
     check_table_matches_expectations()
     check_clamp_site_agrees()

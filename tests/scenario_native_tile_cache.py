@@ -466,7 +466,7 @@ def check_swap_drops_stale_natives() -> None:
 
 
 def main() -> None:
-    fixtures.start_watchdog(120, label="scenario_native_tile_cache")
+    fixtures.start_watchdog(60, label="scenario_native_tile_cache")
 
     check_accounting_and_eviction()
     check_clear()

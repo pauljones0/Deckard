@@ -248,7 +248,7 @@ def check_mutation_proof() -> int:
 
 
 def main() -> int:
-    start_watchdog(90, "onready_gating")
+    start_watchdog(60, "onready_gating")
     fixtures._install_integration_globals()
     rc = check_compat_call_gated()
     if rc:

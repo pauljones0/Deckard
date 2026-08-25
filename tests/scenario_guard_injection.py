@@ -100,7 +100,7 @@ def check_guard_env() -> None:
 
 
 def main() -> None:
-    fixtures.start_watchdog(90, label="scenario_guard_injection")
+    fixtures.start_watchdog(60, label="scenario_guard_injection")
     check_injection_into_skeleton()
     check_pth_vector_in_real_venv()
     check_guard_env()
