@@ -300,7 +300,13 @@ class ActionExpanderRow(BetterExpander):
         if page is None or identifier is None or state is None:
             return
         comment = page.get_action_comment(index=action_index, state=state, identifier=identifier)
-        self.get_rows()[action_index].set_comment(comment)
+        rows = self.get_rows()
+        if not 0 <= action_index < len(rows):
+            # The sidebar rebuild runs at idle priority, so a comment update can
+            # name a row a later rebuild already dropped. An index past the rows
+            # then names nothing, and must move nothing rather than raise.
+            return
+        rows[action_index].set_comment(comment)
 
 
 class ActionRowLabelToggle(Gtk.Button):
