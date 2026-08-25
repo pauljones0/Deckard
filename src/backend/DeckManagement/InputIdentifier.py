@@ -206,16 +206,18 @@ class Input:
     @staticmethod
     def FromTypeIdentifier(input_type: str, json_identifier: str) -> "InputIdentifier":
         # input_type arrives as a plain string, off a page json or a caller.
-        # The InputType keys hold the same values, so a raw "keys" finds the
-        # InputType.KEYS entry and an unknown string still raises below.
+        # It normalizes to an InputType member first, so a raw "keys" finds the
+        # InputType.KEYS entry; an unknown value raises, as it did before.
         input_map = {
             InputType.KEYS: Input.Key,
             InputType.DIALS: Input.Dial,
             InputType.TOUCHSCREENS: Input.Touchscreen
         }
-        if input_type in input_map:
-            return input_map[input_type](json_identifier)
-        raise ValueError(f"Unknown input type {input_type}")
+        try:
+            key = InputType(input_type)
+        except ValueError:
+            raise ValueError(f"Unknown input type {input_type}") from None
+        return input_map[key](json_identifier)
     
     @staticmethod
     def AllEvents() -> list[InputEvent]:
