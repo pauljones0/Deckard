@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import os
 import threading
+import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -118,15 +119,70 @@ def _no_such_page(page_ref: str, page_manager: PageManagerBackend) -> ControlRes
 _INPUT_LOAD_WAIT_S = 12.0
 
 
+class InputLoadBarrier:
+    """Publishes which page generation's input rebuild has finished.
+
+    A bare flag cannot say which load it signals. Page loads overlap: a switch
+    can arm a rebuild while an earlier page's rebuild is still queued or
+    running, and that earlier rebuild finishing must not release a waiter that
+    asked about the newer page. So the generation is the key. arm records the
+    generation whose rebuild is outstanding, publish records the newest
+    generation whose rebuild has ended, and a wait clears only once the second
+    has caught up with the first.
+
+    Both numbers only ever rise, so a publish that lands out of order is a
+    no-op. Every load that ends without rebuilding anything, superseded, its
+    executor gone, or a page load that reloads no inputs, publishes its own
+    generation: nothing more is coming for it, and a waiter must not sit out
+    its bound for a rebuild that will never run. A superseder that armed a
+    higher generation keeps its own waiter blocked past those publishes.
+    """
+
+    def __init__(self) -> None:
+        self._cond = threading.Condition()
+        self._armed_gen: int = 0
+        self._done_gen: int = 0
+
+    def arm(self, gen: int, rebuilding: bool) -> None:
+        """Record generation gen. rebuilding says whether a rebuild for it is
+        on its way; when it is not, gen counts as already done."""
+        with self._cond:
+            if rebuilding:
+                self._armed_gen = max(self._armed_gen, gen)
+            else:
+                self._done_gen = max(self._done_gen, gen)
+            self._cond.notify_all()
+
+    def publish(self, gen: int | None) -> None:
+        """Record that the rebuild for generation gen has ended. gen is None
+        for a load outside the page-load path, which no waiter keys on."""
+        with self._cond:
+            if gen is not None:
+                self._done_gen = max(self._done_gen, gen)
+            self._cond.notify_all()
+
+    def wait(self, timeout: float) -> bool:
+        """Block until the armed generation's rebuild has ended, or timeout."""
+        deadline = time.monotonic() + timeout
+        with self._cond:
+            while self._done_gen < self._armed_gen:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return False
+                self._cond.wait(remaining)
+            return True
+
+
 def _wait_for_input_load(controller: DeckController) -> None:
     """Block until the input rebuild a page load queued has finished, or the
     bound elapses.
 
     change_page_on hands load_all_inputs to the media thread and returns before
     it runs, so a state check straight after a page switch races that rebuild
-    and reads an input's pre-rebuild single state. load_page clears
-    _input_load_done as it queues the rebuild, and load_all_inputs sets it when
-    the rebuild finishes, so this waits on exactly that rebuild.
+    and reads an input's pre-rebuild single state. load_page arms the barrier
+    with the generation it queues the rebuild for, and load_all_inputs
+    publishes that generation when the rebuild finishes, so this waits on
+    exactly that rebuild and not on an older one that lands late.
 
     It does not wait on the trailing paint task the load also queues. That task
     blocks the media thread for the whole background-video decode, and a barrier
@@ -134,11 +190,11 @@ def _wait_for_input_load(controller: DeckController) -> None:
     for the length of the decode. The rebuild is all a state check needs: it is
     where the page's own states become real.
 
-    The event starts set, so a barrier with no rebuild pending, a same-page
-    change that queues no load, returns at once. The wait holds no lock and
-    never runs on the media thread, so it cannot invert the single-writer order
-    or wait on itself. The bound covers a rebuild superseded or stalled before
-    it could finish.
+    The barrier starts level, so a wait with no rebuild pending, a same-page
+    change that queues no load, returns at once. The wait holds no other lock
+    and never runs on the media thread, so it cannot invert the single-writer
+    order or wait on itself. The bound covers a rebuild stalled before it could
+    finish.
     """
     media_player = controller.media_player
     if not media_player.is_alive() or threading.current_thread() is media_player:

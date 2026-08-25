@@ -7,6 +7,7 @@ import fixtures  # noqa: F401  (isolates DATA_PATH before src imports)
 
 import json  # noqa: E402
 import os  # noqa: E402
+import threading  # noqa: E402
 import time  # noqa: E402
 
 import globals as gl  # noqa: E402
@@ -613,11 +614,9 @@ def check_state_barrier_clears_before_background(plane, controller_b) -> None:
     bg_block_s. The barrier must clear far sooner, off the input rebuild alone.
     """
     load_named_page(controller_b, "Alpha")
-    # Drain Alpha's own input rebuild before measuring. load_named_page returns
-    # once the page is active, but its rebuild is still queued on the media
-    # thread; if it finishes after the change_state below clears the shared
-    # load-done event, it sets that event and releases the barrier before Wide's
-    # rebuild runs, so the state read lands on the pre-rebuild single state.
+    # Drain Alpha's own input rebuild before measuring. The barrier keys on
+    # generations now, so a straggling prior rebuild cannot release it early;
+    # the settle just keeps the timing below free of unrelated media work.
     settle(controller_b)
 
     bg_block_s = 5.0
@@ -644,6 +643,73 @@ def check_state_barrier_clears_before_background(plane, controller_b) -> None:
         f"just the input rebuild")
 
     print("PASS: a state change that switches pages does not wait on the background decode")
+
+
+def check_stale_rebuild_does_not_release_barrier(plane, controller_b) -> None:
+    """An older page's input rebuild must not release the state barrier.
+
+    Page loads overlap. Alpha's rebuild is held inside the load, past the point
+    where it decides it is current, so the switch to Wide below supersedes it
+    while it runs and it still reaches its completion. That completion lands
+    first, before Wide's own rebuild has finished. A barrier keyed on a bare
+    flag clears there, and the state request then reads the 9x9 input before
+    Wide's states exist, which rejects a valid state as "only has 1 state". The
+    barrier must stay shut until the rebuild for the generation the switch
+    armed has finished.
+
+    Holding each input, not the rebuild's entry, is what makes the stale
+    completion happen at all: a rebuild held before its own currency check
+    simply abandons itself and publishes nothing.
+    """
+    load_named_page(controller_b, "Beta")
+    settle(controller_b)
+
+    hold_s = 3.0
+    alpha_started = threading.Event()
+    real_load_input = controller_b.load_input
+
+    def held_load_input(controller_input, page, *args, **kwargs):
+        # Every page's inputs are held, Wide's included, so Wide's rebuild is
+        # still running when Alpha's stale one completes. The loads run
+        # concurrently on the per-deck pool, so a rebuild costs one hold.
+        if page.get_name() == "Alpha":
+            alpha_started.set()
+        time.sleep(hold_s)
+        return real_load_input(controller_input, page, *args, **kwargs)
+
+    controller_b.load_input = held_load_input
+    try:
+        load_named_page(controller_b, "Alpha")
+        assert alpha_started.wait(10.0), (
+            "Alpha's input rebuild never reached the media thread, so the "
+            "stale-completion race this guards cannot arise")
+        start = time.monotonic()
+        result = plane.change_state_on(controller_b, "Wide", "9,9", 7)
+        elapsed = time.monotonic() - start
+    finally:
+        del controller_b.load_input
+        settle(controller_b)
+
+    assert result.ok and result.code == "", (
+        f"a state change behind an older page's rebuild was rejected: {result} "
+        f"-- the barrier released on the stale rebuild's completion")
+    c_input = controller_b.get_input(Input.Key(WIDE_KEY))
+    assert c_input is not None and c_input.state == 7, (
+        f"the input must be on state 7: {None if c_input is None else c_input.state}")
+    # Alpha's held rebuild ends one hold in, Wide's one hold after that. A
+    # barrier that cannot tell the two apart returns at the first.
+    assert elapsed > hold_s * 1.5, (
+        f"change_state_on returned in {elapsed:.2f}s, about the {hold_s}s that "
+        f"the older page's rebuild took -- the barrier released on the stale "
+        f"rebuild rather than on the one this switch armed")
+    # And it must release on Wide's own rebuild, not by timing out: a strand
+    # that rides the wait bound would pass every check above by then.
+    from src.backend import control_plane
+    assert elapsed < control_plane._INPUT_LOAD_WAIT_S - 2.0, (
+        f"change_state_on returned in {elapsed:.2f}s, near the wait bound -- "
+        f"the barrier timed out instead of releasing on the armed rebuild")
+
+    print("PASS: an older page's rebuild does not release the state barrier")
 
 
 def main() -> None:
@@ -673,6 +739,7 @@ def main() -> None:
         check_dbus_delegate_matches_service(plane, controller_a)
         check_state_delegate_matches_service(plane, controller_b)
         check_state_barrier_clears_before_background(plane, controller_b)
+        check_stale_rebuild_does_not_release_barrier(plane, controller_b)
     finally:
         fixtures.teardown(controller_b)
         fixtures.teardown(controller_a)
