@@ -150,9 +150,10 @@ class BackgroundExpanderRow(Adw.ExpanderRow):
     def update_video_rows(self) -> bool:
         # The loop and FPS rows exist only while a video is configured. For
         # the touchscreen that video is its background image. For a key or a
-        # dial it is its media, and only the FPS row applies there, because a
-        # GIF carries its own timeline and the media loop stays a page-dict
-        # and plugin concern.
+        # dial it is its media, and only the FPS row applies there, because
+        # the media loop stays a page-dict and plugin concern. A GIF on a key
+        # takes the FPS row too: it keeps its own delay timeline, and the row
+        # caps how often that timeline is read.
         show_loop = False
         show_fps = False
         active_page = services.require_main_window().get_active_page()
@@ -168,7 +169,12 @@ class BackgroundExpanderRow(Adw.ExpanderRow):
                 show_loop = show_fps = bool(path and is_video(path))
             elif isinstance(identifier, (Input.Key, Input.Dial)):
                 path = active_page.get_media_path(identifier=identifier, state=state)
-                show_fps = bool(path and is_video(path) and not str(path).lower().endswith(".gif"))
+                show_fps = bool(path and is_video(path))
+                if isinstance(identifier, Input.Dial) and str(path).lower().endswith(".gif"):
+                    # A dial keeps the GIF exclusion. Its page load cannot
+                    # build a GIF at all yet, so a rate offered here would
+                    # edit media that never reaches the dial.
+                    show_fps = False
         self.video_loop_row.set_visible(show_loop)
         self.video_fps_row.set_visible(show_fps)
         # Neither flag can be true unless the block above ran, so the two
@@ -355,6 +361,13 @@ class VideoLoopRow(Adw.PreferencesRow):
 
 
 class VideoFpsRow(Adw.PreferencesRow):
+    # The spinner's range. 30 is MediaPlayerThread.FPS, the render ceiling of
+    # the loop, and the same range every other fps spinner in the app offers.
+    # A cap at the ceiling caps nothing, which is what a page with no fps key
+    # loads under.
+    MIN_FPS = 1
+    MAX_FPS = 30
+
     def __init__(self, sidebar: "Sidebar", expander: BackgroundExpanderRow, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.sidebar = sidebar
@@ -375,12 +388,21 @@ class VideoFpsRow(Adw.PreferencesRow):
         self.label = Gtk.Label(label="FPS", xalign=0, hexpand=True)
         self.main_box.append(self.label)
 
-        # 30 is MediaPlayerThread.FPS, the render ceiling of the loop, and
-        # the same range that every other fps spinner in the app offers.
-        self.spinner = Gtk.SpinButton.new_with_range(1, 30, 1)
-        self.spinner.set_valign(Gtk.Align.CENTER)
-        self.main_box.append(self.spinner)
+        self.button_box = Gtk.Box(css_classes=["linked"], valign=Gtk.Align.CENTER)
+        self.main_box.append(self.button_box)
 
+        self.spinner = Gtk.SpinButton.new_with_range(self.MIN_FPS, self.MAX_FPS, 1)
+        self.button_box.append(self.spinner)
+
+        self.revert_button = RevertButton()
+        self.revert_button.set_tooltip_text(gl.lm.get("background-editor.fps.reset"))
+        self.revert_button.set_visible(False)
+        self.button_box.append(self.revert_button)
+
+        # The revert click stays wired for the life of the row. Only the
+        # spinner handler toggles, so it alone is disconnected while a load
+        # writes values into the widget.
+        self.revert_button.connect("clicked", self.on_revert)
         self.connect_signals()
 
     def connect_signals(self) -> None:
@@ -397,18 +419,86 @@ class VideoFpsRow(Adw.PreferencesRow):
         # background video.
         return isinstance(self.active_identifier, (Input.Key, Input.Dial))
 
-    def on_change(self, *args: object) -> None:
-        target = _page_and_input(self)
-        if target is None:
-            return
-        active_page, identifier, state = target
-        fps = int(self.spinner.get_value())
+    def _write_fps(self, active_page: "Page", identifier: InputIdentifier, state: int,
+                   fps: int | None) -> None:
+        """Store a cap for this row's target, or clear it when fps is None."""
         if self._uses_media_fps():
             active_page.set_media_fps(identifier=identifier, state=state,
                                       fps=fps, update=True)
         else:
             active_page.set_background_fps(identifier=identifier, state=state,
                                            fps=fps, update=True)
+
+    def _stored_fps(self, active_page: "Page", identifier: InputIdentifier, state: int) -> int:
+        """The cap the page stores for this row's target, or the ceiling when
+        it stores none."""
+        if self._uses_media_fps():
+            return active_page.get_media_fps(identifier=identifier, state=state)
+        return active_page.get_background_fps(identifier=identifier, state=state)
+
+    def _has_override(self, active_page: "Page", identifier: InputIdentifier, state: int) -> bool:
+        """Does the page carry a cap that caps anything?
+
+        A stored value at the ceiling caps nothing, because no tick runs that
+        fast, so the row treats it as no cap at all: no revert control, and
+        the media's own rate on show. That keeps one meaning for the top of
+        the spinner's range whether a page reaches it through an old write or
+        through the range's top today.
+        """
+        if self._uses_media_fps():
+            stored = active_page.has_media_fps(identifier=identifier, state=state)
+        else:
+            stored = active_page.has_background_fps(identifier=identifier, state=state)
+        return stored and self._stored_fps(active_page, identifier, state) < self.MAX_FPS
+
+    def _displayed_fps(self, active_page: "Page", identifier: InputIdentifier, state: int) -> int:
+        """The number the spinner shows.
+
+        A cap that caps something shows itself. With no such cap the media
+        runs at its own rate, so the row shows THAT rate, rounded into the
+        spinner's range, and not a stored number. It falls back to the
+        ceiling when no pipeline reports a rate, which is where an uncapped
+        page sits anyway.
+        """
+        if self._has_override(active_page, identifier, state):
+            return self._stored_fps(active_page, identifier, state)
+        if self._uses_media_fps():
+            native = active_page.get_media_native_fps(identifier=identifier, state=state)
+            if native is not None:
+                return max(self.MIN_FPS, min(self.MAX_FPS, round(native)))
+        return self.MAX_FPS
+
+    def on_change(self, *args: object) -> None:
+        target = _page_and_input(self)
+        if target is None:
+            return
+        active_page, identifier, state = target
+        fps = int(self.spinner.get_value())
+        # The top of the range caps nothing, so store no key for it. Choosing
+        # it then means what the revert control means, and no page ever
+        # carries a cap with no effect.
+        stored = None if fps >= self.MAX_FPS else fps
+        self._write_fps(active_page, identifier, state, stored)
+        self.revert_button.set_visible(stored is not None)
+
+    def on_revert(self, *args: object) -> None:
+        # Ask before disconnecting. A return between the disconnect and the
+        # reconnect leaves the spinner silently unwired.
+        target = _page_and_input(self)
+        if target is None:
+            return
+        active_page, identifier, state = target
+        self.disconnect_signals()
+        try:
+            self._write_fps(active_page, identifier, state, None)
+            # Read the rate back after the clear, so the row shows what the
+            # media now runs at rather than the cap that was just dropped.
+            self.spinner.set_value(self._displayed_fps(active_page, identifier, state))
+            self.revert_button.set_visible(False)
+        finally:
+            # An exception in between must still leave the spinner wired, or
+            # every later change is dropped silently.
+            self.connect_signals()
 
     def load_for_identifier(self, identifier: InputIdentifier, state: int) -> None:
         self.disconnect_signals()
@@ -420,10 +510,8 @@ class VideoFpsRow(Adw.PreferencesRow):
             active_page = gl.app.main_win.get_active_page()
             if active_page is None:
                 return
-            if self._uses_media_fps():
-                self.spinner.set_value(active_page.get_media_fps(identifier=identifier, state=state))
-            else:
-                self.spinner.set_value(active_page.get_background_fps(identifier=identifier, state=state))
+            self.spinner.set_value(self._displayed_fps(active_page, identifier, state))
+            self.revert_button.set_visible(self._has_override(active_page, identifier, state))
         finally:
             # A lookup that returns early must still leave the spinner wired.
             self.connect_signals()

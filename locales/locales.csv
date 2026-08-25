@@ -153,6 +153,7 @@ background-editor-expander.subtitle;Hintergrund für diese Taste;Background for 
 background-editor.color.label;Farbe;Color;Couleur;Color;Cor
 background-editor.color.dialog.title;Hintergrundfarbe auswählen;Select Background Color;Sélectionner la couleur de l'arrière-plan;Seleccionar color de fondo;Selecionar Cor de Fundo
 background-editor.color.reset;Farbe zurücksetzen;Reset color;Réinitialiser la couleur;Restablecer color;Redefinir cor
+background-editor.fps.reset;Eigene Bildrate des Mediums verwenden;Use the media's own frame rate;Utiliser la fréquence d'images du média;Usar la velocidad de fotogramas del medio;Usar a taxa de quadros da própria mídia
 right-area.image-editor.layout.header;Layout;Layout;Disposition;Diseño;Layout
 right-area.image-editor.layout.subtitle;Layout für diese Taste;Layout for this key;Disposition pour cette touche;Diseño para esta tecla;Layout para esta tecla
 right-area.image-editor.layout.size.label;Größe (%);Size (%);Taille (%);Tamaño (%);Tamanho (%)

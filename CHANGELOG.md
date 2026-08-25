@@ -17,6 +17,15 @@ bundle as a release asset.
   rest, and the name `default` leaves a deck with the shape and the key layout
   it already has. Without the flag every fake deck keeps the shape it has
   always had.
+- The FPS row in the background editor now covers animated GIFs on a key,
+  and carries a revert arrow. The rate is a limit on how often the key is
+  redrawn, so lowering it drops frames: the animation still takes the same
+  time end to end, but fewer of its frames are shown, and which ones survive
+  depends on the rate you pick. Set it to save work on a busy page, not to
+  slow a GIF down. The arrow appears once you set a rate below the maximum
+  and clears it again, and the row then shows the rate the media itself runs
+  at. Choosing the maximum clears the rate too, because it limits nothing. A
+  page with no rate set is written exactly as before.
 - A key or dial with several states now opens on the state it was last
   left on. The page keeps that state, so a page switch and the next start
   of the app show the state you left instead of the first one. A page

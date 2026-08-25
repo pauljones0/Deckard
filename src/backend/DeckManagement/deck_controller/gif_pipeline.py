@@ -74,6 +74,23 @@ GIF_KEY_BUDGET_MB = 32
 # variant stops the two renderings from sharing a file.
 BOUNDED_TILE_VARIANT = ".bounded"
 
+# The media loop's own tick ceiling. A cap at or above it slows nothing down,
+# because no tick runs faster, so KeyGIF leaves its timeline untouched there
+# and a GIF that carries no cap plays exactly as it did before caps existed.
+# The number is repeated here rather than read from the loop, because this
+# module imports nothing from its sibling modules in the package.
+#
+# Five declarations hold this number independently, and they must move
+# together. MediaPlayerThread.FPS in media_writer.py is the authority, the
+# rate the loop actually ticks at. The other four follow it: this constant,
+# Page.DEFAULT_MEDIA_FPS (what a page with no fps key reads as),
+# MediaConfig.fps with its from_dict default (what a page load builds with),
+# and VideoFpsRow.MAX_FPS (the top of the sidebar range). Raising the loop
+# alone leaves the other four capping media the loop could now draw faster.
+# Scattered `or 30` fallbacks in KeyVideo.py and background_media.py spell
+# the same number for a falsy fps and follow the same rule.
+MEDIA_LOOP_FPS = 30
+
 # Raw DECKARD_GIF_KEY_BUDGET_MB values that already have a warning logged. A
 # bad or very small setting then costs one log line per distinct value for
 # the life of the process, not one per GIF key per page load.
@@ -824,7 +841,36 @@ class KeyGIF(SingleKeyAsset):
         self._last_frame_tick = now
 
         elapsed = now - self._play_start
-        t = elapsed % total_delay if self.loop else min(elapsed, total_delay)
+        # fps is a render cap here, never a playback rate. The GIF's own delay
+        # timeline still decides where in the animation the wall clock lands;
+        # the cap only coarsens how finely that position is read, so the
+        # picked frame advances at most fps times per second. Inside one cap
+        # window every tick picks the same frame, so the owner's hash dedup
+        # drops the redundant device write. A cap at or above the loop ceiling
+        # is left out of the arithmetic entirely, so an uncapped GIF keeps the
+        # exact picks it made before caps existed. Read fps once: set_playback
+        # rewrites it from the GTK thread while this tick runs.
+        cap = max(1.0, float(self.fps or MEDIA_LOOP_FPS))
+        # Read every pass at least twice. A cap whose period is as long as the
+        # whole animation puts every sample on one position, and the GIF stops
+        # dead on a single frame instead of running slowly.
+        cap = max(cap, 2.0 / total_delay)
+        if self.loop:
+            # Coarsen the position INSIDE the pass, never the raw elapsed
+            # time. A grid laid on elapsed and then folded through the modulo
+            # visits only the positions that one cap period generates in the
+            # loop: those positions step backwards mid-animation, and collapse
+            # to a single one whenever the animation length divides the cap
+            # period.
+            t = elapsed % total_delay
+            if cap < MEDIA_LOOP_FPS:
+                t = int(t * cap) / cap
+        else:
+            # No modulo on this arm, so a grid on elapsed is already
+            # monotonic, and clamping after it keeps the last frame reachable.
+            if cap < MEDIA_LOOP_FPS:
+                elapsed = int(elapsed * cap) / cap
+            t = min(elapsed, total_delay)
 
         frame = bisect.bisect_right(cum_delays, t)
         if frame >= n:
@@ -838,7 +884,31 @@ class KeyGIF(SingleKeyAsset):
         if self.active_frame < 0 or self.active_frame >= len(self.frame_delays):
             return 1.0 / self.fps  # fall back to fps-based timing
         return self.frame_delays[self.active_frame] / 1000.0
-    
+
+    def native_fps(self) -> float | None:
+        """The rate this GIF runs at with no cap, in frames per second: its
+        frame count over the length of its own delay timeline. An irregular
+        GIF has no single rate, so this is the average across one whole loop.
+        None while no timeline is installed, and after close() empties it.
+        The sidebar shows this number when the page carries no cap, so the
+        row reports what the media does instead of a placeholder."""
+        total = self._total_delay
+        n = len(self._cum_delays)
+        if n <= 0 or total <= 0:
+            return None
+        return n / total
+
+    def set_playback(self, fps: int, loop: bool) -> None:
+        """A new render cap and loop flag for a GIF that is already playing.
+
+        No timebase rebase runs. The position follows the wall clock over the
+        GIF's own delay timeline whatever fps says, so a new cap changes only
+        how often the picked frame advances. InputVideo needs the rebase
+        because without natural_speed its fps is the playback rate itself.
+        """
+        self.fps = fps
+        self.loop = loop
+
     def get_raw_image(self) -> "Image.Image | None":
         # None after close(), which empties the frame list so a late tick reads
         # zero frames. The siblings in Subclasses/ declare the same union for

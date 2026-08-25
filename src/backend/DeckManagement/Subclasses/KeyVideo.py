@@ -133,6 +133,17 @@ class InputVideo(SingleKeyAsset):
 
             return cache.get_frame(self.active_frame)
 
+    def native_fps(self) -> float | None:
+        """The rate this video runs at with no cap, in frames per second, as
+        the tile cache read it from the container. None while the reader is
+        gone, and None while the container reports no usable rate. With
+        natural_speed on this is the rate playback already runs at, and fps
+        only caps how often the picked frame advances."""
+        cache = self.video_cache
+        if cache is None:
+            return None
+        return cache.get_source_fps()
+
     def set_playback(self, fps: int, loop: bool) -> None:
         """Applies a new fps and loop to a playing video, at the same position.
 
