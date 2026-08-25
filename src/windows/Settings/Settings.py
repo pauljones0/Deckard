@@ -816,7 +816,9 @@ class PerformancePageGroup(Adw.PreferencesGroup):
 
     def __init__(self, settings: Settings):
         self.settings = settings
-        super().__init__(title=gl.lm.get("settings.performance.header"))
+        # Adw.PreferencesGroup parses its title as markup, and this one holds
+        # an ampersand, so the escaping lookup is the one that renders.
+        super().__init__(title=gl.lm.get_markup("settings.performance.header"))
 
         self.n_cached_pages = Adw.SpinRow.new_with_range(min=0, max=50, step=1)
         self.n_cached_pages.set_title(gl.lm.get("settings.performance.n-cached-pages.title"))

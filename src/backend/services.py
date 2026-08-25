@@ -43,7 +43,8 @@ def tr(key: str, fallback: str | None = None) -> str:
     locale, which defaults to the key itself, and only a value still None
     after that reaches fallback. So fallback does not answer an unknown key,
     and tr("missing", "FB") returns "missing" and not "FB". The result is
-    HTML-escaped for GTK markup.
+    plain text; a caller that renders it as Pango markup escapes it first
+    (gl.lm.get_markup does that for locale keys).
 
     No fallback and a fallback of None mean the same thing to the locale
     manager. This hands the call over in two shapes, because the parameter is

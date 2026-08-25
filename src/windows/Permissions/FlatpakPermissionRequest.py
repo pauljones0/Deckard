@@ -110,7 +110,8 @@ class FlatpakPermissionRequestWindow(Gtk.ApplicationWindow):
         self.info_label_box = Gtk.Box(hexpand=False, vexpand=False, homogeneous=False, halign=Gtk.Align.CENTER)
         self.main_box.append(self.info_label_box)
 
-        self.more_info_label = Gtk.Label(label=f'{gl.lm.get("permissions-window.info-beginning")}<a href="{self.flatpak_docs_link}">{gl.lm.get("permissions-window.flatpak-docs")}</a>',
+        # The label carries a link tag, so both translations are escaped.
+        self.more_info_label = Gtk.Label(label=f'{gl.lm.get_markup("permissions-window.info-beginning")}<a href="{self.flatpak_docs_link}">{gl.lm.get_markup("permissions-window.flatpak-docs")}</a>',
                                          use_markup=True, margin_bottom=60, wrap_mode=Pango.WrapMode.WORD_CHAR, wrap=True, halign=Gtk.Align.CENTER, justify=Gtk.Justification.CENTER,
                                          width_request=500, hexpand=False)
         # self.info_label_box.append(self.more_info_label) #FIXME: Somehow preventing the description label from wrapping
