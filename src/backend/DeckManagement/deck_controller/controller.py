@@ -160,7 +160,7 @@ class DeckController:
         # BetterDeck wrapper here.
         raw_deck = getattr(self.deck, "deck", None)
         self.is_plus = isinstance(raw_deck, StreamDeckPlus)
-        self.key_spacing = (20, 36) if self.is_plus else (36, 36)
+        self.key_spacing = (116, 34) if self.is_plus else (36, 36)
 
         # Per-deck saturation boost, a PIL ImageEnhance.Color factor over the
         # UI range 1.0 to 1.5. It is read once at boot and refreshed by

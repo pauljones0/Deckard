@@ -2,7 +2,7 @@
 
 The controller wraps its deck in BetterDeck before the spacing line runs, so
 the probe must test the wrapped raw device, not the wrapper. A raw deck that
-is a StreamDeckPlus gets the device-calibrated (20, 36); every other deck
+is a StreamDeckPlus gets the device-calibrated (116, 34); every other deck
 keeps (36, 36). The first leg reassigns the fake deck's class to a
 StreamDeckPlus subclass before construction, which is what the wrapper hands
 back to the probe; no device I/O differs between the legs.
@@ -41,8 +41,8 @@ def main() -> None:
     fixtures.start_watchdog(60, label="scenario_sdplus_key_spacing")
 
     plus = make_controller("spacing-plus", plus=True)
-    assert plus.key_spacing == (20, 36), (
-        f"an SD+ raw deck must tile at the calibrated (20, 36), "
+    assert plus.key_spacing == (116, 34), (
+        f"an SD+ raw deck must tile at the calibrated (116, 34), "
         f"got {plus.key_spacing}")
     fixtures.teardown(plus)
 

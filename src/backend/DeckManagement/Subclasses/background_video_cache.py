@@ -8,7 +8,7 @@ from loguru import logger as log
 
 import globals as gl
 from src.backend.DeckManagement.Subclasses.mp4_tile_cache import Mp4FrameCache, VID_CACHE
-from src.backend.DeckManagement.deck_controller.strip_band import band_box, strip_band_geometry
+from src.backend.DeckManagement.deck_controller.strip_band import band_layout, clamp_box
 
 # Import typing
 from typing import TYPE_CHECKING, override
@@ -44,9 +44,11 @@ class BackgroundVideoCache(Mp4FrameCache[list[Image.Image]]):
             self.deck_controller.get_touchscreen_image_size()
             if self.extend_touchscreen else None)
         self.entries_per_frame = self.key_count + (1 if self.extend_touchscreen else 0)
-        # (gap, span, xoff, band_height) in canvas pixels; _canvas_size()
-        # fills it for an extended cache, before any strip crop runs.
-        self.strip_band: tuple[int, int, int, int] = (0, 0, 0, 0)
+        # Filled by _canvas_size() for an extended cache, before any crop
+        # runs: the key grid's x offset on the canvas (the band can overhang
+        # the grid) and the band's crop box, both in canvas coordinates.
+        self.grid_x = 0
+        self.strip_band_box: "tuple[int, int, int, int] | None" = None
 
         self.key_layout_str = f"{self.key_layout[0]}x{self.key_layout[1]}"
         if self.extend_touchscreen:
@@ -91,14 +93,14 @@ class BackgroundVideoCache(Mp4FrameCache[list[Image.Image]]):
         canvas_width = key_width + total_spacing_x
         canvas_height = key_height + total_spacing_y
 
-        # Extend the canvas below the key grid, so the frame continues onto
-        # the touchscreen strip: the key-to-strip gap plus the band height,
-        # the same strip_band geometry as BackgroundImage. Snapshot it here;
-        # the render thread must not call back into controller state.
+        # Extend the canvas to the union of the key grid and the strip's
+        # view, the same strip_band layout as BackgroundImage: taller by the
+        # gap plus the band, wider when the band overhangs the grid.
+        # Snapshot the layout here; the render thread must not call back
+        # into controller state.
         if self.extend_touchscreen:
-            self.strip_band = strip_band_geometry(self.deck_controller, canvas_width)
-            gap, _span, _xoff, band_height = self.strip_band
-            canvas_height += gap + band_height
+            canvas_width, canvas_height, self.grid_x, self.strip_band_box = \
+                band_layout(self.deck_controller, canvas_width, canvas_height)
 
         return (canvas_width, canvas_height)
 
@@ -188,15 +190,15 @@ class BackgroundVideoCache(Mp4FrameCache[list[Image.Image]]):
 
     def crop_strip_from_deck_sized_image(self, image: Image.Image) -> Image.Image:
         """The strip's view of the extended canvas, at strip resolution."""
-        if self.strip_band == (0, 0, 0, 0):
+        if self.strip_band_box is None:
             # The same class of miss as _require_strip_size: a subclass or
             # refactor that reaches a strip crop before _canvas_size() filled
-            # the band. A raise beats the silent black strip a 0x0 crop
+            # the layout. A raise beats the silent black strip a 0x0 crop
             # resizes into.
             raise RuntimeError(
                 "this background video cache has no strip band (the canvas "
                 "size was never computed for an extended cache)")
-        strip_slice = image.crop(band_box(image.width, image.height, self.strip_band))
+        strip_slice = image.crop(clamp_box(self.strip_band_box, image.width, image.height))
         return strip_slice.resize(self._require_strip_size(), Image.Resampling.HAMMING)
 
     def crop_key_image_from_deck_sized_image(self, image: Image.Image, key: int) -> Image.Image:
@@ -208,9 +210,10 @@ class BackgroundVideoCache(Mp4FrameCache[list[Image.Image]]):
         row = key // key_cols
         col = key % key_cols
 
-        # Compute the starting X and Y offsets into the full size image that the
-        # requested key should display.
-        start_x = col * (key_width + spacing_x)
+        # Compute the starting X and Y offsets into the full size image that
+        # the requested key should display. grid_x is the grid's position on
+        # a canvas whose strip band overhangs it.
+        start_x = self.grid_x + col * (key_width + spacing_x)
         start_y = row * (key_height + spacing_y)
 
         # Compute the region of the larger deck image that is occupied by the given
