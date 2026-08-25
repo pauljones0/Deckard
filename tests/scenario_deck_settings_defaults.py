@@ -35,6 +35,7 @@ EXPECTED_DEFAULTS = {
     ("background", "extend-to-touchscreen"): False,
     ("display", "saturation"): 1.0,
     ("rotation", None): 0,
+    ("name", None): "",                 # "" means no chosen name, so the model name shows
 }
 
 # Not in the table. Whoever constructs a fake deck decides its key layout and

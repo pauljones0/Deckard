@@ -9,6 +9,11 @@ bundle as a release asset.
 
 ### Added
 
+- Give a deck a name of your own. The deck settings carry a "Name" row, and
+  what you put there becomes the name the deck switcher shows. An empty row
+  gives the model name back. Two decks under one name still read apart,
+  because the second one shows a "(2)" after the name. The name is kept per
+  deck, so it stays with that deck across restarts and reconnects.
 - Drag an action in the sidebar to reorder it. Hold an action row, drag it over
   another row, and a line marks the edge it lands on. The release moves it
   there and the page keeps the new order. The deck you are editing loads the

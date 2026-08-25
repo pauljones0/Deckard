@@ -24,6 +24,7 @@ from gi.repository import Gtk
 from loguru import logger as log
 
 # Import globals
+import globals as gl
 
 # Import own modules
 from src.backend import ui_port
@@ -110,11 +111,48 @@ class DeckStack(Gtk.Stack):
 
         self.main_window.reload_sidebar()
             
+    def base_title(self, deck_controller: "DeckController", serial_number: str) -> str:
+        """What this deck is called, before any duplicate suffix.
+
+        The name the user chose in the deck settings wins, and the model name
+        the device reports stands in while there is none. DeckSettings answers
+        a string for every input, so this does too. A caller that received
+        None here would have no label to put in the switcher and no way to
+        tell why one is missing.
+        """
+        try:
+            model_name = deck_controller.deck.deck_type()
+        except Exception as e:
+            # The model read reaches the device. A deck that went away between
+            # the serial read and this call still gets a title, from whatever
+            # the settings hold and then from its serial.
+            log.error(e)
+            model_name = None
+        return gl.settings_manager.deck(serial_number).display_name(model_name)
+
+    def unique_title(self, base_title: str) -> str:
+        """base_title, with a "(n)" suffix while the stack already shows it.
+
+        The suffix goes after the whole base title and never changes what is
+        inside it, because that turns a second "Stream Deck MK.2" into a
+        "Stream Deck MK.3". Two decks the user gave one name therefore read
+        "Name" and "Name (2)".
+
+        This records the title it hands out, so the next caller finds it
+        taken.
+        """
+        title = base_title
+        suffix = 2
+        while title in self.deck_names:
+            title = f"{base_title} ({suffix})"
+            suffix += 1
+        self.deck_names.append(title)
+        return title
+
     def get_page_attributes(self, deck_controller: "DeckController") -> tuple[Any, ...] | None:
         if deck_controller in self.deck_attributes:
             return self.deck_attributes[deck_controller]
-        
-        deck_type = deck_controller.deck.deck_type()
+
         try:
             # Use the cached accessor of the controller, not a fresh device
             # read. This string becomes the stack-child name, and every reader
@@ -126,24 +164,37 @@ class DeckStack(Gtk.Stack):
         self.deck_numbers.append(serial_number)
         deck_number = str(serial_number)
 
-        if deck_type not in self.deck_names:
-            self.deck_names.append(deck_type)
-            self.deck_attributes[deck_controller] = deck_number, deck_type
-            return deck_number, deck_type
-        # The name exists, so add a "(n)" suffix. Never change the digits in
-        # the model name, because that turns a second "Stream Deck MK.2" into
-        # "Stream Deck MK.3".
-        base_type = deck_type
-        suffix = 2
-        while deck_type in self.deck_names:
-            deck_type = f"{base_type} ({suffix})"
-            suffix += 1
+        title = self.unique_title(self.base_title(deck_controller, deck_number))
+        self.deck_attributes[deck_controller] = deck_number, title
 
-        self.deck_names.append(deck_type)
+        return deck_number, title
 
-        self.deck_attributes[deck_controller] = deck_number, deck_type
+    def refresh_page_title(self, deck_controller: "DeckController") -> None:
+        """Retitle the live stack child of this deck from its settings.
 
-        return deck_number, deck_type
+        The name row of the deck settings calls this after it saves. The old
+        title leaves the taken list first, or the deck collides with the title
+        it is giving up and takes a "(2)" of its own.
+
+        Main thread only. It touches the stack.
+        """
+        attr = self.deck_attributes.get(deck_controller)
+        if attr is None:
+            return
+        deck_number, old_title = attr
+        if old_title in self.deck_names:
+            self.deck_names.remove(old_title)
+
+        title = self.unique_title(self.base_title(deck_controller, deck_number))
+        self.deck_attributes[deck_controller] = deck_number, title
+
+        child = self.get_child_by_name(deck_number)
+        if child is None:
+            # The child is not in the stack. The recorded attributes hold the
+            # new title, and an add of the child reads them.
+            return
+        page = self.get_page(child)
+        page.set_title(title)
 
     def remove_page(self, deck_controller: "DeckController") -> None:
         adapter = ui_port.get()
