@@ -18,7 +18,7 @@ import os
 
 import globals as gl
 
-from typing import Any, TYPE_CHECKING
+from typing import Any, TYPE_CHECKING, cast
 if TYPE_CHECKING:
     from src.backend.DeckManagement.deck_controller.inputs import ControllerInput
 
@@ -43,7 +43,7 @@ class SingleKeyAsset:
             with Image.open(path) as img:
                 _error_image = img.copy()
         # Return a copy so callers can composite or close it freely.
-        return _error_image.copy()
+        return cast("Image.Image", _error_image.copy())
     
     def close(self) -> None:
         pass
