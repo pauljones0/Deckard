@@ -50,7 +50,7 @@ def describe_callback(cb: Callable[..., Any]) -> str:
     Public because the synchronous signal fan-out names a failed handler with
     the same string the prune log uses.
     """
-    qualname = getattr(cb, "__qualname__", None) or repr(cb)
+    qualname: str = getattr(cb, "__qualname__", None) or repr(cb)
     module = getattr(cb, "__module__", None)
     return f"{module}.{qualname}" if module else qualname
 

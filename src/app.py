@@ -16,7 +16,7 @@ import signal
 import threading
 import time
 from collections.abc import Callable
-from typing import Any, TYPE_CHECKING
+from typing import Any, TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
     from types import FrameType
@@ -633,7 +633,7 @@ class App(Adw.Application):
         window = self.get_active_window()
         if window is not None:
             return window
-        return getattr(self, "main_win", None)
+        return cast("Gtk.Window | None", getattr(self, "main_win", None))
 
     def _confirm_update_request(self, _subject: str) -> bool:
         """Whether an update of every asset that arrived on the exported

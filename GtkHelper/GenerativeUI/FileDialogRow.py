@@ -5,7 +5,7 @@ from GtkHelper.FileDialogRow import FileDialogRow as FileDialog, FileDialogFilte
 from gi.repository import Gio
 
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from src.backend.PluginManager.ActionCore import ActionCore
@@ -100,7 +100,7 @@ class FileDialogRow(GenerativeUI[str]):
             # Read the value layer, the same source the unbuilt row reads,
             # rather than assert a file that was never chosen.
             return Gio.File.new_for_path(self.get_value())
-        return selected_file
+        return cast(Gio.File, selected_file)
 
     def _file_changed(self, file: Gio.File) -> None:
         """
