@@ -446,6 +446,27 @@ class GenericPackChooserPage(_ChooserBuildPage, Generic[PackT, StackT]):
             preview = self.PACK_PREVIEW_CLASS(self, pack, pixbuf=pixbuf)
             flow_box.append(preview)
 
+    def reload(self) -> None:
+        """Read the packs from the disk again and rebuild the grid.
+
+        A pack that arrived after this page built, which an import is, shows
+        only after this. The old grid goes first, because _build_ui prepends
+        a fresh one and two grids would show every pack twice.
+
+        Main loop only. It returns while a build is already running, and that
+        build reads the disk after the import wrote it, so nothing is lost.
+        """
+        if self._build_running:
+            return
+        pack_flow = self.pack_flow
+        if pack_flow is not None:
+            self.scrolled_box.remove(pack_flow)
+            self.pack_flow = None
+        self.build_finished = False
+        self.build_failed = False
+        self.set_loading(True)
+        self.start_build()
+
     def get_pack_thumbnail_path(self, pack: PackT) -> "Path | None":
         """Where the pack's thumbnail lives. Called on the build worker."""
         return pack.get_thumbnail_path()

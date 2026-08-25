@@ -9,6 +9,14 @@ bundle as a release asset.
 
 ### Added
 
+- Make an icon pack out of your own pictures. The icon packs page of the asset
+  manager carries an "Import Pack" button. Point it at a zip archive or at a
+  folder, give the pack a name, and add a description and a banner if you want
+  one. Every png, jpg, gif and svg it finds goes into the new pack, which then
+  sits beside the packs from the store and works the same way. A pack of a
+  name another pack already carries keeps that name and takes its own place on
+  disk. The pack shows only once every file is in place, so an import that is
+  cut short leaves no part-built pack behind.
 - Give a deck a name of your own. The deck settings carry a "Name" row, and
   what you put there becomes the name the deck switcher shows. An empty row
   gives the model name back. Two decks under one name still read apart,
