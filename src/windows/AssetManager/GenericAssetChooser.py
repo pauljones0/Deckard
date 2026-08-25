@@ -905,7 +905,7 @@ class GenericAssetChooserPage(_ChooserBuildPage, Generic[PackT, AssetT, PreviewT
         """
         if not self.shows_pack_search:
             return None
-        return asset.pack.name
+        return cast(str, asset.pack.name)
 
     def select_asset(self, path: str) -> None:
         """Select the asset at path once the grid renders it."""
