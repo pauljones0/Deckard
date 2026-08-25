@@ -224,6 +224,12 @@ class LabelManager:
         self._has_visible_labels_cache = None
         self._composed_labels_cache = None
 
+    def get_label_epoch(self) -> int:
+        """The current label epoch. It moves whenever what a composed label
+        looks like changes, so a cache of a finished composite can hold it as
+        the label half of its stamp instead of comparing label objects."""
+        return self._label_epoch
+
     def invalidate_scroll_caches(self) -> None:
         """Drop the derived label caches so the next render recomputes scroll
         detection and geometry. Any path that mutates a label's attributes in
@@ -917,6 +923,41 @@ class LabelManager:
         # return image.copy().rotate(self.deck.get_rotation())
 
 
+def _foreground_hides_background(image: Image.Image, left: int, top: int,
+                                 background_size: tuple[int, int]) -> bool:
+    """Whether pasting image at (left, top) leaves no pixel of a background of
+    background_size visible.
+
+    Two conditions, both exact. The paste must reach every pixel of the
+    background, and every pixel it lays down must be fully opaque. An image
+    with no alpha data replaces what it lands on outright; one with alpha is
+    pasted through itself as a mask, and a mask of 255 replaces the
+    destination pixel just as completely. Either way the result of the
+    composite is the same whatever the background held, which is what lets a
+    caller keep the composite and stop rebuilding it per frame.
+
+    Nothing here has a tolerance. One translucent pixel, or one row the paste
+    misses, and the composite depends on the background again. An answer of
+    False costs a composite that was not needed; a wrong True freezes a stale
+    frame on the device, so every case this cannot prove reads False. A
+    palette image that carries its transparency in info, and not in a band,
+    is one such case.
+    """
+    background_width, background_height = background_size
+    if left > 0 or top > 0:
+        return False
+    if image.width + left < background_width or image.height + top < background_height:
+        return False
+    if not image.has_transparency_data:
+        return True
+    try:
+        alpha = image.getchannel("A")
+    except ValueError:
+        return False
+    lowest, _highest = alpha.getextrema()
+    return lowest == 255
+
+
 class LayoutManager:
     def __init__(self, controller_input: "ControllerInput[Any]"):
         self.controller_input = controller_input
@@ -924,12 +965,17 @@ class LayoutManager:
         self.action_layout = ImageLayout()
         self.page_layout = ImageLayout()
 
-        # (token, layout key, resized image) for the resized foreground of a
-        # static asset. It stays valid while the caller passes the same asset
-        # object, the same backing source image and the same layout geometry;
-        # an in-place re-decode swaps the source image. One tuple, so a
-        # concurrent update swaps it atomically.
-        self._fg_cache: "tuple[object, tuple[object, ...], Image.Image] | None" = None
+        # (token, layout key, resized image, cover verdict) for the resized
+        # foreground of a static asset. It stays valid while the caller passes
+        # the same asset object, the same backing source image and the same
+        # layout geometry; an in-place re-decode swaps the source image. One
+        # tuple, so a concurrent update swaps it atomically.
+        #
+        # The cover verdict says the paste of this foreground leaves no pixel
+        # of the background visible. It belongs here because it is a function
+        # of exactly what the layout key already pins, so it is computed with
+        # the resize and thrown away with it.
+        self._fg_cache: "tuple[object, tuple[object, ...], Image.Image, bool] | None" = None
 
     def clear(self) -> None:
         self.action_layout = ImageLayout()
@@ -997,8 +1043,30 @@ class LayoutManager:
             self.controller_input.deck_controller, self.controller_input.identifier,
             self.controller_input.state, "layout")
 
+    def get_covering_foreground(self) -> "tuple[object, ...] | None":
+        """The cached foreground entry when the last composite through
+        add_image_to_background pasted a foreground that hides the whole
+        background, else None.
+
+        The entry is returned as an opaque token. A caller compares it by
+        identity to decide whether the composite it kept is still the one this
+        manager produces: the layout key inside it pins the asset, its backing
+        image, the alignment, the composed size and the background geometry,
+        so one identity check stands for all of them. Only the paths that
+        cache a resized foreground publish an entry, which is the static-image
+        path and no other, and both early returns of add_image_to_background
+        drop it, so an entry never outlives a composite that skipped the
+        paste."""
+        cached = self._fg_cache
+        if cached is None or not cached[3]:
+            return None
+        return cached
+
     def add_image_to_background(self, image: Image.Image | None, background: Image.Image, cache_token: object = None) -> Image.Image:
         if image is None:
+            # No paste happened, so no entry may claim this composite covered
+            # the background. See get_covering_foreground().
+            self._fg_cache = None
             return background
         layout = self.get_composed_layout()
 
@@ -1006,6 +1074,7 @@ class LayoutManager:
         image_size = (int(width * layout.size), int(height * layout.size))
 
         if 0 in image_size:
+            self._fg_cache = None
             return background.copy()
 
         # The resized foreground depends only on the source asset and the
@@ -1023,8 +1092,12 @@ class LayoutManager:
         # change image_size. id(image) states the dependency explicitly, and
         # while cache_token is alive it holds a strong reference to image, so
         # no other object can take this id.
+        # background.size joins the key because the margins, and with them the
+        # cover verdict, depend on it, and image_size alone does not pin it: a
+        # layout size that grows while the tile shrinks leaves image_size where
+        # it was.
         fg_key = (layout.fill_mode, layout.halign, layout.valign, image_size,
-                  id(image), image.size)
+                  id(image), image.size, background.size)
         image_resized = None
         if cache_token is not None:
             cached = self._fg_cache
@@ -1033,6 +1106,7 @@ class LayoutManager:
                 if media_prof:
                     media_prof.count("fg_cache_hit")
 
+        resized = image_resized is None
         if image_resized is None:
             if layout.fill_mode == "stretch":
                 image_resized = image.resize(image_size, Image.Resampling.HAMMING)
@@ -1040,16 +1114,26 @@ class LayoutManager:
                 image_resized = ImageOps.cover(image, image_size, Image.Resampling.HAMMING)
             else:
                 image_resized = ImageOps.contain(image, image_size, Image.Resampling.HAMMING)
-            if cache_token is not None:
-                self._fg_cache = (cache_token, fg_key, image_resized)
-                if media_prof:
-                    media_prof.count("fg_cache_miss")
 
         halign = layout.halign
         valign = layout.valign
 
         left_margin = int((background.width - image_resized.width) * (halign + 1) / 2)
         top_margin = int((background.height - image_resized.height) * (valign + 1) / 2)
+
+        # The verdict rides the resize, so its alpha scan runs once per cached
+        # foreground and never per frame. The store sits after the margins
+        # because the verdict needs them.
+        if cache_token is None:
+            # There is nothing to key an entry on, so no entry may claim this
+            # composite. See get_covering_foreground().
+            self._fg_cache = None
+        elif resized:
+            self._fg_cache = (cache_token, fg_key, image_resized,
+                              _foreground_hides_background(image_resized, left_margin,
+                                                           top_margin, background.size))
+            if media_prof:
+                media_prof.count("fg_cache_miss")
 
         final_image = background.copy()
 
