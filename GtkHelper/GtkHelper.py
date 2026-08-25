@@ -256,9 +256,13 @@ class BetterPreferencesGroup(Adw.PreferencesGroup):
         return third_box.get_first_child() if third_box is not None else None
 
 class AttributeRow(Adw.PreferencesRow):
+    # The row draws its own two labels, so the caption and the value live in
+    # plain attributes and setters with names of their own. A name that the row
+    # inherits (title, set_title) would write the GObject property instead, and
+    # the property drives nothing here.
     def __init__(self, title:str, attr:str, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
-        self.title = title
+        self.title_str = title
         self.attr_str = attr
         self.build()
 
@@ -267,16 +271,16 @@ class AttributeRow(Adw.PreferencesRow):
                                 margin_top=15, margin_bottom=15)
         self.set_child(self.main_box)
 
-        self.title_label = Gtk.Label(label=self.title, xalign=0, hexpand=True, margin_start=15)
+        self.title_label = Gtk.Label(label=self.title_str, xalign=0, hexpand=True, margin_start=15)
         self.main_box.append(self.title_label)
 
         self.attribute_label = Gtk.Label(label=self.attr_str, halign=Gtk.Align.FILL, margin_end=15)
         self.main_box.append(self.attribute_label)
 
-    def set_title(self, title:str) -> None:
+    def set_attribute_title(self, title:str) -> None:
         self.title_label.set_label(title)
 
-    def set_url(self, attr: str | None) -> None:
+    def set_attribute(self, attr: str | None) -> None:
         if attr is None:
             attr = "N/A"
         self.attribute_label.set_label(attr)

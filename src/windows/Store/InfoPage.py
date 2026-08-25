@@ -75,22 +75,22 @@ class InfoPage(Gtk.Box):
         self.legal_group.add(self.license_description)
 
     def set_pack_name(self, name: str | None) -> None:
-        self.name_row.set_url(name)
+        self.name_row.set_attribute(name)
 
     def set_description(self, description: str | None) -> None:
         self.description_row.set_description(description)
 
     def set_author(self, author: str | None) -> None:
-        self.author_row.set_url(author)
+        self.author_row.set_attribute(author)
 
     def set_version(self, version: str | None) -> None:
-        self.version_row.set_url(version)
+        self.version_row.set_attribute(version)
 
     def set_license(self, license: str | None) -> None:
-        self.license_row.set_url(license)
+        self.license_row.set_attribute(license)
 
     def set_copyright(self, copyright: str | None) -> None:
-        self.copyright_row.set_url(copyright)
+        self.copyright_row.set_attribute(copyright)
 
     def set_license_description(self, description: str | None) -> None:
         self.license_description.set_description(description)
@@ -100,10 +100,13 @@ class InfoPage(Gtk.Box):
 
 
 class DescriptionRow(Adw.PreferencesRow):
+    # The row draws its own labels, so the caption and the text live in plain
+    # attributes. A name the row inherits (title) would write the GObject
+    # property instead, and the property drives nothing here.
     def __init__(self, title: str, desc: str, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
-        self.title = title
-        self.desc = desc
+        self.title_str = title
+        self.desc_str = desc
 
         self.build()
 
@@ -112,10 +115,10 @@ class DescriptionRow(Adw.PreferencesRow):
                                 margin_top=15, margin_bottom=15)
         self.set_child(self.main_box)
 
-        self.title_label = Gtk.Label(label=self.title, xalign=0, hexpand=True, margin_start=15)
+        self.title_label = Gtk.Label(label=self.title_str, xalign=0, hexpand=True, margin_start=15)
         self.main_box.append(self.title_label)
 
-        self.description_label = Gtk.Label(label=self.desc, xalign=0, wrap=True, wrap_mode=Pango.WrapMode.WORD,
+        self.description_label = Gtk.Label(label=self.desc_str, xalign=0, wrap=True, wrap_mode=Pango.WrapMode.WORD,
                                            margin_start=15, margin_top=15, margin_end=15)
         self.main_box.append(self.description_label)
 

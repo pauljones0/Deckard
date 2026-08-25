@@ -99,10 +99,10 @@ class InfoPage(Gtk.Box):
         else:
             self.show_for_img(internal_path)
 
-        self.license_type_row.set_url(licence_name)
-        self.license_author_row.set_url(author)
-        self.license_url_row.set_url(license_url)
-        self.license_comment_row.set_url(license_comment)
+        self.license_type_row.set_attribute(licence_name)
+        self.license_author_row.set_attribute(author)
+        self.license_url_row.set_attribute(license_url)
+        self.license_comment_row.set_attribute(license_comment)
         self.original_url_row.set_url(original_url)
 
 
@@ -112,10 +112,10 @@ class InfoPage(Gtk.Box):
         else:
             self.show_for_img(asset["internal-path"])
 
-        self.license_type_row.set_url(asset["license"].get("name"))
-        self.license_author_row.set_url(asset["license"].get("author"))
-        self.license_url_row.set_url(asset["license"].get("url"))
-        self.license_comment_row.set_url(asset["license"].get("comment"))
+        self.license_type_row.set_attribute(asset["license"].get("name"))
+        self.license_author_row.set_attribute(asset["license"].get("author"))
+        self.license_url_row.set_attribute(asset["license"].get("url"))
+        self.license_comment_row.set_attribute(asset["license"].get("comment"))
 
         
 
@@ -128,12 +128,12 @@ class InfoPage(Gtk.Box):
         # show unknown fields instead of killing the info-button handler.
         try:
             with Image.open(path) as img:
-                self.img_resolution_row.set_url(f"{img.width}x{img.height}")
-                self.img_aspect_ratio_row.set_url(f"{get_image_aspect_ratio(img)}")
+                self.img_resolution_row.set_attribute(f"{img.width}x{img.height}")
+                self.img_aspect_ratio_row.set_attribute(f"{get_image_aspect_ratio(img)}")
         except Exception as e:
             log.warning(f"Could not read image info for {path}: {e}")
-            self.img_resolution_row.set_url("unknown")
-            self.img_aspect_ratio_row.set_url("unknown")
+            self.img_resolution_row.set_attribute("unknown")
+            self.img_aspect_ratio_row.set_attribute("unknown")
 
     def show_for_vid(self, path:str) -> None:
         # Update ui vis
@@ -156,11 +156,11 @@ class InfoPage(Gtk.Box):
             if width <= 0 or height <= 0:
                 raise ValueError("cv2 reported zero dimensions")
             gcd = math.gcd(width, height)
-            self.video_resolution_row.set_url(f"{width}x{height}")
-            self.aspect_ratio_row.set_url(f"{width//gcd}:{height//gcd}")
-            self.video_framerate_row.set_url(f"{fps:.2f} fps")
+            self.video_resolution_row.set_attribute(f"{width}x{height}")
+            self.aspect_ratio_row.set_attribute(f"{width//gcd}:{height//gcd}")
+            self.video_framerate_row.set_attribute(f"{fps:.2f} fps")
         except Exception as e:
             log.warning(f"Could not read video info for {path}: {e}")
-            self.video_resolution_row.set_url("unknown")
-            self.aspect_ratio_row.set_url("unknown")
-            self.video_framerate_row.set_url("unknown")
+            self.video_resolution_row.set_attribute("unknown")
+            self.aspect_ratio_row.set_attribute("unknown")
+            self.video_framerate_row.set_attribute("unknown")
