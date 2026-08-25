@@ -76,6 +76,12 @@ bundle as a release asset.
 
 ### Fixed
 
+- An animated key or dial that hits an error while starting one update no
+  longer freezes for the life of the page. A failure in the moment between
+  marking the update busy and handing it off left that one input marked busy
+  forever, so it never animated again until a page reload. The mark is now
+  released when the hand-off did not happen.
+
 - Picking a page whose file is gone no longer blanks the deck. The page list
   can name a page whose file was deleted outside the app; choosing it cleared
   the deck to nothing. The deck now keeps its page and a message says the page

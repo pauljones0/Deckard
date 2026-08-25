@@ -274,11 +274,21 @@ class ControllerInputState:
         self._tick_running = True
         self._tick_stuck_warned = False
         self._tick_started_at = time.monotonic()
-        future = self._submit_action_callback(self.own_actions_tick)
-        if future is None:
-            self._tick_running = False
-        else:
-            future.add_done_callback(self._on_tick_done)
+        # The flag is armed above and the completion callback below is what
+        # disarms it, so every path between the two owns the flag. A raise in
+        # that window, or a submit that took no worker, leaves this input
+        # armed for good and silences it until the page reloads. Whoever
+        # reaches the completion callback hands the flag to it; nobody else
+        # leaves the window with the flag still set.
+        handed_over = False
+        try:
+            future = self._submit_action_callback(self.own_actions_tick)
+            if future is not None:
+                future.add_done_callback(self._on_tick_done)
+                handed_over = True
+        finally:
+            if not handed_over:
+                self._tick_running = False
 
     def _on_tick_done(self, _future: "Future[None]") -> None:
         self._tick_running = False
