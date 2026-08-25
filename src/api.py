@@ -211,9 +211,12 @@ class DeckardAPI:
         page first when it is not the active one.
 
         The answer matches ChangePage, empty on success and the reason
-        otherwise, and it comes back once the press is arranged rather than
-        once the actions have run. A caller held for the length of a long press
-        would be holding the main context this method is dispatched on.
+        otherwise. It comes back once the deck has taken the press, and not
+        once the actions have run or the release has landed, so this method
+        holds the main context it is dispatched on for the page load it may
+        make and then for the moment the press takes to reach the deck. Both
+        are bounded, and the CLI's own call timeout is sized above their sum;
+        a reply held for the length of a long press would not be.
         """
         log.info(f"DBus API: EmulateInput called – serial={serial!r} page={page!r} "
                  f"coords={coords!r} event={event!r}")

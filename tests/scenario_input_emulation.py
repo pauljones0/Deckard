@@ -95,6 +95,30 @@ class StubWheel:
             lambda: any(n == name for (_d, n) in self.log), timeout=timeout)
 
 
+def press_on_a_worker(plane, controller, wheel, page_ref="EmuMain", coords=COORDS,
+                      event="press"):
+    """Start a press on another thread and wait until it reaches the wheel.
+
+    The caller blocks until the press is taken or refused, so a leg that wants
+    to change the deck in that gap cannot be the caller. Returns the thread and
+    a dict that carries the answer once it comes back.
+    """
+    answer: dict = {}
+
+    def call() -> None:
+        answer["result"] = plane.emulate_input_on(controller, page_ref, coords, event)
+
+    caller = threading.Thread(target=call, name="emulate-caller")
+    caller.start()
+    assert wheel.wait_for("EmulatedPress"), (
+        f"the press never reached the wheel: {wheel.log}")
+    return caller, answer
+
+
+def armed_releases(wheel) -> list:
+    return [name for (_delay, name) in wheel.log if name == "EmulatedRelease"]
+
+
 def events_on(ident: str) -> list:
     return [event for (event, _data) in pipeline._delivered_events(ident)]
 
@@ -447,6 +471,124 @@ def leg_press_refuses_a_page_that_moved(plane, controller) -> None:
     print("PASS: a press whose page moved is refused instead of landing elsewhere")
 
 
+def leg_press_survives_a_reload_of_the_same_page(plane, controller) -> None:
+    """A page rebuilt in the gap is still the page the request named.
+
+    A cache eviction and a save in the page editor both build a new Page object
+    for the same file. The deck is showing what it was asked for either way, so
+    a press judged on the object rather than on the file is refused with a
+    failure that names one page on both sides of itself.
+    """
+    load(controller, "EmuMain")
+    controller.hold_time = 2.0
+    pipeline._reset_delivered()
+
+    path = gl.page_manager.find_matching_page_path("EmuMain")
+    wheel = stub_wheel()
+    saved_wait = control_plane._PRESS_START_WAIT_S
+    control_plane._PRESS_START_WAIT_S = 30.0
+    try:
+        caller, answer = press_on_a_worker(plane, controller, wheel)
+        # The same file, built again. This is what an eviction leaves behind.
+        rebuilt = gl.page_manager.load_page(path, controller)
+        assert rebuilt is not None and rebuilt is not controller.active_page, (
+            "this leg needs a second object for the same page file")
+        controller.load_page(rebuilt)
+        assert fixtures.wait_until(lambda: controller.active_page is rebuilt), (
+            "the rebuilt page never became the active one")
+
+        wheel.fire_next()
+        caller.join(timeout=10)
+        assert not caller.is_alive(), "the caller never came back from the press"
+    finally:
+        control_plane._PRESS_START_WAIT_S = saved_wait
+        control_plane.timer_wheel = timer_wheel_real
+
+    result = answer["result"]
+    assert result.ok, (
+        f"a page rebuilt from the same file was read as a different page: "
+        f"{result}")
+    assert fixtures.wait_until(lambda: DOWN in events_on(KEY), timeout=5.0), (
+        f"the press never reached the rebuilt page: {events_on(KEY)}")
+    assert armed_releases(wheel) == ["EmulatedRelease"], wheel.log
+    wheel.fire_next()
+    assert fixtures.wait_until(lambda: UP in events_on(KEY), timeout=5.0), events_on(KEY)
+
+    print("PASS: a press survives its page being rebuilt from the same file")
+
+
+def leg_locked_in_the_gap_refuses_the_press(plane, controller) -> None:
+    """A session that locks in the gap refuses the press at the deck.
+
+    The caller checks before it arms and the deck checks again before the key
+    goes down, because the lock arrives from logind whenever it arrives. Only
+    the second check can be true when it matters: the deck's own entry point
+    drops every event while interaction is off, so a press that went ahead
+    would be reported as made and dropped without a word.
+    """
+    load(controller, "EmuMain")
+    pipeline._reset_delivered()
+
+    wheel = stub_wheel()
+    saved_wait = control_plane._PRESS_START_WAIT_S
+    control_plane._PRESS_START_WAIT_S = 30.0
+    try:
+        caller, answer = press_on_a_worker(plane, controller, wheel)
+        controller.allow_interaction = False
+        wheel.fire_next()
+        caller.join(timeout=10)
+        assert not caller.is_alive(), "the caller never came back from the press"
+    finally:
+        controller.allow_interaction = True
+        control_plane._PRESS_START_WAIT_S = saved_wait
+        control_plane.timer_wheel = timer_wheel_real
+
+    result = answer["result"]
+    assert not result.ok and result.code == "input-blocked", (
+        f"a press into a locked session was reported as made: {result}")
+    assert events_on(KEY) == [], events_on(KEY)
+    assert armed_releases(wheel) == [], (
+        f"a press that never happened armed a release: {wheel.log}")
+
+    print("PASS: a session locked in the gap refuses the press at the deck")
+
+
+def leg_press_gives_up_when_the_wheel_stalls(plane, controller) -> None:
+    """A caller whose wait runs out takes the press with it.
+
+    The two threads settle who owns the press under one lock. Without that, a
+    caller that reports a failure leaves a job that presses the key anyway,
+    which is the same false answer in the other direction: a person told the
+    press was not made, and a deck that made it.
+    """
+    load(controller, "EmuMain")
+    pipeline._reset_delivered()
+
+    wheel = stub_wheel()
+    saved_wait = control_plane._PRESS_START_WAIT_S
+    control_plane._PRESS_START_WAIT_S = 0.2
+    try:
+        result = plane.emulate_input(SERIAL, "EmuMain", COORDS, "press")
+        assert not result.ok and result.code == "press-not-started", (
+            f"a press that never reached the deck was reported as made: {result}")
+        assert f"{0.2:g}s" in result.message, (
+            f"the failure must say how long it waited: {result.message!r}")
+
+        # The job arrives late, finds the press claimed, and presses nothing.
+        wheel.fire_next()
+    finally:
+        control_plane._PRESS_START_WAIT_S = saved_wait
+        control_plane.timer_wheel = timer_wheel_real
+
+    assert not fixtures.wait_until(lambda: bool(events_on(KEY)), timeout=1.0), (
+        f"the press was reported as not made and the key went down anyway: "
+        f"{events_on(KEY)}")
+    assert armed_releases(wheel) == [], (
+        f"a press nobody owns armed a release: {wheel.log}")
+
+    print("PASS: a press the caller gave up on is not made by the job behind it")
+
+
 # 4. What the deck is left holding
 
 def leg_release_arms_when_the_press_raises(plane, controller) -> None:
@@ -491,6 +633,101 @@ def leg_release_arms_when_the_press_raises(plane, controller) -> None:
         "the hold timer is still armed on a key nothing is holding")
 
     print("PASS: a press that raises still releases the key it took down")
+
+
+def leg_swallowed_press_arms_no_release(plane, controller) -> None:
+    """A DOWN the deck swallows leaves no release behind it.
+
+    The deck drops a DOWN without a word in more than one state, and this leg
+    uses the one it can produce on demand: the addressed input is gone by the
+    time the job runs, which a rebuild of the input set does. Nothing is held
+    down afterwards, so a release armed anyway would land on whatever the key
+    is doing later. A finger on that key would have its own press ended under
+    it, and then its own release swallowed as the stray it looks like.
+    """
+    load(controller, "EmuMain")
+    pipeline._reset_delivered()
+
+    wheel = stub_wheel()
+    saved_wait = control_plane._PRESS_START_WAIT_S
+    saved_keys = controller.inputs[Input.Key]
+    control_plane._PRESS_START_WAIT_S = 30.0
+    try:
+        caller, answer = press_on_a_worker(plane, controller, wheel)
+        # The input set goes out from under the press.
+        controller.inputs[Input.Key] = []
+        wheel.fire_next()
+        caller.join(timeout=10)
+        assert not caller.is_alive(), "the caller never came back from the press"
+    finally:
+        controller.inputs[Input.Key] = saved_keys
+        control_plane._PRESS_START_WAIT_S = saved_wait
+        control_plane.timer_wheel = timer_wheel_real
+
+    # The deck took the press and dropped it, as it drops a physical press on
+    # an input that is being rebuilt. What must not happen is the release.
+    assert answer["result"].ok, answer["result"]
+    assert events_on(KEY) == [], events_on(KEY)
+    assert armed_releases(wheel) == [], (
+        f"a DOWN that the deck swallowed armed a release: {wheel.log}")
+
+    print("PASS: a press the deck swallows arms no release")
+
+
+def leg_release_only_ends_its_own_gesture(plane, controller) -> None:
+    """A release ends the press it made, and never the one it finds.
+
+    A screensaver sweep, a rebuild of the inputs, or a finger that takes the
+    key all end the gesture an emulated press took. The release that was armed
+    for it must not then end whatever is on the key instead: that cuts a
+    finger's press short while the finger is still down, and the finger's own
+    release afterwards delivers nothing, because the key is already up.
+    """
+    load(controller, "EmuMain")
+    controller.hold_time = 1.0
+    pipeline._reset_delivered()
+
+    c_input = key_input(controller)
+    deck = fixtures.raw_deck(controller)
+    wheel = stub_wheel(fire_at_once=("EmulatedPress",))
+    try:
+        assert plane.emulate_input(SERIAL, "EmuMain", COORDS, "long-press").ok
+        assert wheel.wait_for("EmulatedRelease"), wheel.log
+        assert fixtures.wait_until(lambda: c_input.down_start_time is not None), (
+            "the emulated press never reached the key")
+
+        # The emulated gesture ends without its release, which is what the
+        # screensaver's own sweep does to every input it confiscates.
+        c_input.cancel_gesture()
+        pipeline._reset_delivered()
+
+        # A finger takes the same key.
+        deck.fire_key_event(0, True)
+        assert fixtures.wait_until(lambda: c_input.down_start_time is not None), (
+            "the finger's press never reached the key")
+        finger_gesture = c_input._gesture
+        assert finger_gesture is not None
+
+        # The release armed for the emulated press arrives now. It is not the
+        # finger's to end. fire_next runs the callback on this thread, so the
+        # state below is settled by the time it returns.
+        wheel.fire_next()
+        assert c_input._gesture is finger_gesture, (
+            "the stale release ended the finger's press")
+        assert c_input.down_start_time is not None, (
+            "the stale release let the key up while the finger was still down")
+        assert SHORT_UP not in events_on(KEY) and UP not in events_on(KEY), (
+            f"the stale release dispatched a release against the finger's "
+            f"gesture: {events_on(KEY)}")
+
+        # Let the finger go, so the deck is left as this leg found it.
+        deck.fire_key_event(0, False)
+        assert fixtures.wait_until(lambda: UP in events_on(KEY), timeout=5.0), (
+            f"the finger's own release delivered nothing: {events_on(KEY)}")
+    finally:
+        control_plane.timer_wheel = timer_wheel_real
+
+    print("PASS: a release ends the gesture its own press took, and no other")
 
 
 def leg_second_press_on_a_held_key_is_refused(plane, controller) -> None:
@@ -688,7 +925,12 @@ def main() -> None:
         leg_press_switches_page_first(plane, controller)
         leg_press_waits_for_the_rebuild(plane, controller)
         leg_press_refuses_a_page_that_moved(plane, controller)
+        leg_press_survives_a_reload_of_the_same_page(plane, controller)
+        leg_locked_in_the_gap_refuses_the_press(plane, controller)
+        leg_press_gives_up_when_the_wheel_stalls(plane, controller)
         leg_release_arms_when_the_press_raises(plane, controller)
+        leg_swallowed_press_arms_no_release(plane, controller)
+        leg_release_only_ends_its_own_gesture(plane, controller)
         leg_second_press_on_a_held_key_is_refused(plane, controller)
         leg_bad_event_word_moves_nothing(plane, controller)
         leg_failures_match_the_state_verb(plane, controller)

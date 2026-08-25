@@ -15,8 +15,8 @@ bundle as a release asset.
   time so the hold actions run too. The key is named by the same coordinates
   `--change-state` uses. The page is switched to first when it is not the one
   showing, and the press is dropped with a reason rather than made if the deck
-  leaves that page before it lands, or if the key is already held, or while
-  the session is locked. It needs Deckard to be running already, and says so
+  leaves that page before it lands, if the key is already held, if the session
+  locks in the meantime, or if the press cannot reach the deck in time. It needs Deckard to be running already, and says so
   instead of starting it: a press happens at a moment, so it cannot be held
   for a deck that is not plugged in yet. The same press is on the session bus
   as `EmulateInput`, beside `ChangePage` and `ChangeState`.
