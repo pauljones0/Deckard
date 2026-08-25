@@ -139,10 +139,17 @@ class ImportPackDialog(Adw.MessageDialog):
         source = self.source_path
         if source is None:
             return
+        if pack_import.import_is_running():
+            # A second import while one runs would race the first over the
+            # pack folders and the grid reload. The button that opens this
+            # dialog is guarded too; this is the guard for the dialog that is
+            # already open.
+            return
         name = self.name_row.get_text().strip()
         description = self.description_row.get_text().strip()
         banner = self.banner_path
 
+        pack_import.set_import_running(True)
         asset_manager = self.pack_chooser.asset_manager
         asset_manager.set_cursor_from_name("wait")
 
@@ -166,7 +173,17 @@ class ImportPackDialog(Adw.MessageDialog):
 
     def _finish_import(self, failure: "str | None") -> bool:
         """Runs on the main loop, whether the import worked or not."""
+        pack_import.set_import_running(False)
+
         asset_manager = self.pack_chooser.asset_manager
+        if gl.asset_manager is not asset_manager:
+            # The asset manager window closed while the import ran, so GTK is
+            # disposing its widgets. Touch none of them: a reload of a
+            # destroyed grid, a cursor on a gone window and a dialog transient
+            # for it all raise or warn. The pack is on disk, and the next open
+            # of the window reads it.
+            return GLib.SOURCE_REMOVE
+
         asset_manager.set_cursor_from_name("default")
         if failure is None:
             self.pack_chooser.reload()

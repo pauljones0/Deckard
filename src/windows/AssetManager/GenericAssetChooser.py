@@ -453,8 +453,13 @@ class GenericPackChooserPage(_ChooserBuildPage, Generic[PackT, StackT]):
         only after this. The old grid goes first, because _build_ui prepends
         a fresh one and two grids would show every pack twice.
 
-        Main loop only. It returns while a build is already running, and that
-        build reads the disk after the import wrote it, so nothing is lost.
+        Main loop only. It returns while a build is already running rather than
+        start a second one over the first. That running build usually reads the
+        disk after the new pack landed and so shows it. The one gap is a build
+        that already listed the disk before the import's rename: it finishes
+        without the new pack, and the pack shows on the next open of the window.
+        An import runs one at a time and reloads only after its own rename, so
+        this gap needs a concurrent unrelated build to open at all.
         """
         if self._build_running:
             return

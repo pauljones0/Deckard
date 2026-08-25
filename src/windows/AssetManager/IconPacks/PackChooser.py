@@ -28,6 +28,7 @@ from src.windows.AssetManager.GenericAssetChooser import (
     GenericPackFlowBox,
     GenericPackPreview,
 )
+from src.backend.PackManagement import pack_import
 from src.windows.AssetManager.IconPacks.ImportDialog import ImportPackDialog
 
 # Import globals
@@ -62,6 +63,11 @@ class IconPackChooser(GenericPackChooserPage["IconPack", "IconPackChooserStack"]
         self.nav_box.append(self.import_button)
 
     def on_import_clicked(self, _button: Gtk.Button) -> None:
+        # One import at a time. A second while the first still copies would
+        # race the first over the pack folders and the grid reload, so the
+        # button does nothing until the running import finishes.
+        if pack_import.import_is_running():
+            return
         ImportPackDialog(self).present()
 
     def get_packs(self) -> "dict[str, IconPack]":
