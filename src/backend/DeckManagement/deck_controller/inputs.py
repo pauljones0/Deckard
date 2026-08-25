@@ -47,7 +47,7 @@ from src.backend.DeckManagement.Subclasses.KeyLabel import KeyLabel
 from src.backend.DeckManagement.Subclasses.KeyLayout import ImageLayout
 from src.backend.DeckManagement.Subclasses.KeyVideo import InputVideo
 from src.backend.DeckManagement.Subclasses.media_pipeline_profiler import media_prof
-from src.backend.DeckManagement.deck_controller import cover_cache
+from src.backend.DeckManagement.deck_controller import cover_cache, press_look
 from src.backend.DeckManagement.deck_controller.gif_pipeline import KeyGIF
 from src.backend.DeckManagement.deck_controller.input_state import PersistedState
 from src.backend.DeckManagement.deck_controller.input_state_classes import (
@@ -748,7 +748,7 @@ class ControllerKey(ControllerInput["ControllerKeyState"]):
 
         # A gate that draws into the picture decides the store as well.
         if self.is_pressed():
-            labeled_image, cover_pre = self.shrink_image(labeled_image), cover_cache.NO_STORE
+            labeled_image, cover_pre = press_look.apply(self, labeled_image), cover_cache.NO_STORE
 
         if self.has_unavailable_action() and not self.deck_controller.screen_saver.showing:
             labeled_image, cover_pre = self.add_warning_point(labeled_image), cover_cache.NO_STORE

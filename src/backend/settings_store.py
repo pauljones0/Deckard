@@ -186,6 +186,11 @@ APP_DEFAULTS: dict[str, dict[str, Any]] = {
     "general": {
         "hold-time": 0.5,
         "rolling-labels": True,
+        # Whether a key draws smaller for as long as it is held down. True is
+        # the press feedback the app has always given. False leaves the
+        # picture where it is, which suits a page whose keys carry one image
+        # between them, and whose seams a shrink breaks.
+        "shrink-on-press": True,
         "app-launches": 0,
         "show-donate-window": True,
         "default-font": {},
