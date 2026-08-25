@@ -26,6 +26,7 @@ from copy import copy
 from PIL import Image, ImageDraw, ImageOps, ImageFont
 from loguru import logger as log
 
+from src.backend.DeckManagement.ImageHelpers import hides_background
 from src.backend.DeckManagement.InputIdentifier import Input
 from src.backend.DeckManagement.Subclasses.KeyLabel import KeyLabel
 from src.backend.DeckManagement.Subclasses.KeyLayout import ImageLayout
@@ -223,6 +224,12 @@ class LabelManager:
         self._scroll_widths_cache = None
         self._has_visible_labels_cache = None
         self._composed_labels_cache = None
+
+    def get_label_epoch(self) -> int:
+        """The current label epoch. It moves whenever what a composed label
+        looks like changes, so a cache of a finished composite can hold it as
+        the label half of its stamp instead of comparing label objects."""
+        return self._label_epoch
 
     def invalidate_scroll_caches(self) -> None:
         """Drop the derived label caches so the next render recomputes scroll
@@ -924,12 +931,17 @@ class LayoutManager:
         self.action_layout = ImageLayout()
         self.page_layout = ImageLayout()
 
-        # (token, layout key, resized image) for the resized foreground of a
-        # static asset. It stays valid while the caller passes the same asset
-        # object, the same backing source image and the same layout geometry;
-        # an in-place re-decode swaps the source image. One tuple, so a
-        # concurrent update swaps it atomically.
-        self._fg_cache: "tuple[object, tuple[object, ...], Image.Image] | None" = None
+        # (token, layout key, resized image, cover verdict) for the resized
+        # foreground of a static asset. It stays valid while the caller passes
+        # the same asset object, the same backing source image and the same
+        # layout geometry; an in-place re-decode swaps the source image. One
+        # tuple, so a concurrent update swaps it atomically.
+        #
+        # The cover verdict says the paste of this foreground leaves no pixel
+        # of the background visible. It belongs here because it is a function
+        # of exactly what the layout key already pins, so it is computed with
+        # the resize and thrown away with it.
+        self._fg_cache: "tuple[object, tuple[object, ...], Image.Image, bool] | None" = None
 
     def clear(self) -> None:
         self.action_layout = ImageLayout()
@@ -997,8 +1009,38 @@ class LayoutManager:
             self.controller_input.deck_controller, self.controller_input.identifier,
             self.controller_input.state, "layout")
 
+    def get_covering_foreground(self) -> "tuple[object, ...] | None":
+        """The cached foreground entry when the last composite through
+        add_image_to_background pasted a foreground that hides the whole
+        background, else None.
+
+        The entry is an opaque token to its caller, which compares it by
+        identity: the layout key inside it pins the asset, its backing image,
+        the alignment, the composed size and the background geometry, so one
+        identity check stands for all of them. Only the static-image path
+        publishes an entry, and both early returns of add_image_to_background
+        drop it, so an entry never outlives a composite that skipped the
+        paste."""
+        cached = self._fg_cache
+        if cached is None or not cached[3]:
+            return None
+        return cached
+
+    def foreground_proved_bare(self, cache_token: object) -> bool:
+        """Whether the entry cache_token last built says its paste left some
+        of the background visible.
+
+        It answers False when there is no entry for cache_token, because an
+        absent entry proves nothing either way. A caller uses it to skip work
+        that only a covering foreground can ever need."""
+        cached = self._fg_cache
+        return cached is not None and cached[0] is cache_token and not cached[3]
+
     def add_image_to_background(self, image: Image.Image | None, background: Image.Image, cache_token: object = None) -> Image.Image:
         if image is None:
+            # No paste happened, so no entry may claim this composite covered
+            # the background. See get_covering_foreground().
+            self._fg_cache = None
             return background
         layout = self.get_composed_layout()
 
@@ -1006,6 +1048,7 @@ class LayoutManager:
         image_size = (int(width * layout.size), int(height * layout.size))
 
         if 0 in image_size:
+            self._fg_cache = None
             return background.copy()
 
         # The resized foreground depends only on the source asset and the
@@ -1023,8 +1066,12 @@ class LayoutManager:
         # change image_size. id(image) states the dependency explicitly, and
         # while cache_token is alive it holds a strong reference to image, so
         # no other object can take this id.
+        # background.size joins the key because the margins, and with them the
+        # cover verdict, depend on it, and image_size alone does not pin it: a
+        # layout size that grows while the tile shrinks leaves image_size where
+        # it was.
         fg_key = (layout.fill_mode, layout.halign, layout.valign, image_size,
-                  id(image), image.size)
+                  id(image), image.size, background.size)
         image_resized = None
         if cache_token is not None:
             cached = self._fg_cache
@@ -1033,6 +1080,7 @@ class LayoutManager:
                 if media_prof:
                     media_prof.count("fg_cache_hit")
 
+        resized = image_resized is None
         if image_resized is None:
             if layout.fill_mode == "stretch":
                 image_resized = image.resize(image_size, Image.Resampling.HAMMING)
@@ -1040,16 +1088,26 @@ class LayoutManager:
                 image_resized = ImageOps.cover(image, image_size, Image.Resampling.HAMMING)
             else:
                 image_resized = ImageOps.contain(image, image_size, Image.Resampling.HAMMING)
-            if cache_token is not None:
-                self._fg_cache = (cache_token, fg_key, image_resized)
-                if media_prof:
-                    media_prof.count("fg_cache_miss")
 
         halign = layout.halign
         valign = layout.valign
 
         left_margin = int((background.width - image_resized.width) * (halign + 1) / 2)
         top_margin = int((background.height - image_resized.height) * (valign + 1) / 2)
+
+        # The verdict rides the resize, so its alpha scan runs once per cached
+        # foreground and never per frame. The store sits after the margins
+        # because the verdict needs them.
+        if cache_token is None:
+            # There is nothing to key an entry on, so no entry may claim this
+            # composite. See get_covering_foreground().
+            self._fg_cache = None
+        elif resized:
+            self._fg_cache = (cache_token, fg_key, image_resized,
+                              hides_background(image_resized, left_margin, top_margin,
+                                               background.size))
+            if media_prof:
+                media_prof.count("fg_cache_miss")
 
         final_image = background.copy()
 

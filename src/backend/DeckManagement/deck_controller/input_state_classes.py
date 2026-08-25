@@ -38,6 +38,7 @@ from src.backend.DeckManagement.InputIdentifier import Input, InputEvent
 from src.backend.DeckManagement.Subclasses.ActionPermissionManager import ActionPermissionManager
 from src.backend.DeckManagement.Subclasses.KeyImage import InputImage
 from src.backend.DeckManagement.Subclasses.KeyVideo import InputVideo
+from src.backend.DeckManagement.deck_controller.cover_cache import CoveredComposite
 from src.backend.DeckManagement.deck_controller.gif_pipeline import GifBackground, GifBudgetExceeded, KeyGIF
 from src.backend.DeckManagement.deck_controller.label_engine import BackgroundManager, LabelManager, LayoutManager
 from src.backend.PageManagement.Page import ActionOutdated, NoActionHolderFound
@@ -834,6 +835,9 @@ class ControllerKeyState(ControllerInputState):
         # InputVideo. Both expose the get_raw_image and close surface that the
         # key paint path and close_resources drive them through.
         self.key_video: "InputVideo | KeyGIF | None" = None
+        # The composite this state last produced, kept only while its own
+        # foreground hides the background and nothing else about it moved.
+        self.cover_cache = CoveredComposite()
         # The ActionCore that set the current key_image or key_video through
         # set_media(), or None when the page or the user owns the media. Every
         # other media writer resets it to None, and set_media() stamps it
@@ -849,6 +853,7 @@ class ControllerKeyState(ControllerInputState):
             self.key_video.close()
             self.key_video = None
         self.media_owner_action = None
+        self.cover_cache.invalidate()
 
     def set_image(self, key_image: "InputImage | None", update: bool = True) -> None:
         if self.key_image is not None:
@@ -862,6 +867,11 @@ class ControllerKeyState(ControllerInputState):
         self.key_image = key_image
         self.key_video = None
         self.media_owner_action = None
+        # The kept composite belongs to the media that just went away. A paint
+        # would drop it, but a key that keeps no media stops reaching the paint
+        # path that does: over a background video a bare key is served straight
+        # from the frame identity instead.
+        self.cover_cache.invalidate()
 
         if update:
             self.update()
@@ -875,6 +885,7 @@ class ControllerKeyState(ControllerInputState):
             self.key_image.close()
         self.key_image = None
         self.media_owner_action = None
+        self.cover_cache.invalidate()
 
     def clear(self) -> None:
         if self.key_video is not None:
@@ -883,6 +894,7 @@ class ControllerKeyState(ControllerInputState):
         self.key_image = None
         self.key_video = None
         self.media_owner_action = None
+        self.cover_cache.invalidate()
         self.label_manager.clear_labels()
         self.layout_manager.clear()
         self.background_manager.set_page_color(None)

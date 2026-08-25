@@ -53,6 +53,15 @@ bundle as a release asset.
 
 ### Changed
 
+- A key whose picture fills its whole tile with nothing see-through now costs
+  almost nothing while an animated wallpaper plays behind it. Such a key hides
+  every pixel the wallpaper changes, so the app keeps the picture it drew and
+  stops drawing it again on every frame. A grid of full-size icons over a video
+  or GIF wallpaper is where this shows most. Anything the wallpaper can still
+  show through, which is any picture with a transparent edge, a corner rounded
+  by the size setting or a picture smaller than the tile, is drawn as before,
+  and so is a key that is held down, carries a rolling label or plays its own
+  video.
 - `--change-page` and `--change-state` answer in a fraction of the time when
   Deckard is already running. Such a command needs one message to the running
   app, and it now sends it and leaves instead of first building a second copy
