@@ -252,7 +252,9 @@ def download_file(url: str, path: str = "", file_name: str | None = None) -> str
 def natural_keys(s: str) -> "list[int | str]":
     # The elements alternate text and digit runs; two keys only compare
     # int against int at an index when both names carry digits there.
-    return [int(text) if text.isdigit() else text.lower() for text in re.split('([0-9]+)', s)]
+    # isdecimal() is the test that matches what int() accepts: isdigit() is
+    # true for characters such as the superscript two, which int() rejects.
+    return [int(text) if text.isdecimal() else text.lower() for text in re.split('([0-9]+)', s)]
 
 
 def natural_sort(strings_list: list[str]) -> list[str]:

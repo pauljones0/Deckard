@@ -234,7 +234,7 @@ class StoreAssetPreview(StorePreview):
         page.set_info_visible(True)
 
         # Update info page
-        page.info_page.set_name(self.asset_data.asset_name)
+        page.info_page.set_pack_name(self.asset_data.asset_name)
         page.info_page.set_description(self.asset_data.description)
         page.info_page.set_author(self.asset_data.author)
         page.info_page.set_version(self.asset_data.asset_version)

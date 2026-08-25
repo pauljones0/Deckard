@@ -119,7 +119,7 @@ class BackgroundMediaRow(Adw.PreferencesRow):
         self.config_box.append(self.extend_touchscreen_box)
 
         self.extend_touchscreen_label = Gtk.Label(
-            label=gl.lm.get("Extend Background To Touchscreen", "Extend the background across the buttons and touchscreen"),
+            label=gl.lm.get("deck.background-group.extend-background-to-touchscreen"),
             hexpand=True, xalign=0
         )
         self.extend_touchscreen_box.append(self.extend_touchscreen_label)
