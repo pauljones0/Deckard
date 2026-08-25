@@ -16,6 +16,7 @@ KeyVideoCache reader with its own cv2.VideoCapture and its own last-frame
 memo. A reader decodes straight from the source until the builder promotes,
 then switches over.
 """
+import contextlib
 import hashlib
 import os
 import threading
@@ -304,10 +305,8 @@ class Mp4FrameCache(Generic[PayloadT]):
         if n_frames <= 0:
             cap.release()
             log.warning(f"Removing unreadable video cache {self.cache_path}")
-            try:
+            with contextlib.suppress(OSError):
                 os.remove(self.cache_path)
-            except OSError:
-                pass
             return False
         self._cache_cap = cap
         self._cache_pos = 0

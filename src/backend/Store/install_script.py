@@ -32,6 +32,7 @@ privileges, and the tier decides how loudly that is true, not whether it
 is.
 """
 
+import contextlib
 import enum
 import os
 import shutil
@@ -187,10 +188,8 @@ def _execute(cmd: list[str], timeout_s: float, env: "dict[str, str] | None" = No
 
 
 def _kill_group(pid: int, sig: int) -> None:
-    try:
+    with contextlib.suppress(ProcessLookupError, PermissionError):
         os.killpg(pid, sig)
-    except (ProcessLookupError, PermissionError):
-        pass
 
 
 def _policy() -> str:

@@ -1,3 +1,4 @@
+import contextlib
 import functools
 import threading
 from abc import ABC, abstractmethod
@@ -189,10 +190,8 @@ class GenerativeUI[T](ABC):
         self._ensure_built()
         # Back-reference so a container can recover the owning GenerativeUI object.
         if self._widget is not None:
-            try:
+            with contextlib.suppress(Exception):
                 setattr(self._widget, "_generative_ui_owner", self)
-            except Exception:
-                pass
         return self._widget
 
     @property
@@ -400,10 +399,8 @@ class GenerativeUI[T](ABC):
             # to unparent, and a .widget read here forces the build that this
             # class avoids.
             if self._widget is not None:
-                try:
+                with contextlib.suppress(Exception):
                     self.disconnect_signals()
-                except Exception:
-                    pass
             self._action_core.remove_generative_ui_object(self)
             widget = self._widget
             if widget is not None and widget.get_parent() is not None:

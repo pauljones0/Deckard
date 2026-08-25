@@ -31,6 +31,7 @@ prepare pool, the UI install threads and the asset-manager worker thread can
 share it. The connection pools of urllib3 and the cookie jar of requests are
 each thread-safe; a concurrent reconfiguration of a Session is not.
 """
+import contextlib
 import os
 import threading
 import time
@@ -207,10 +208,8 @@ def download_to_file(url: str, target_path: str, *, timeout: float = 30, chunk_s
                     f.write(chunk)
         os.replace(sidecar, target_path)
     except BaseException:
-        try:
+        with contextlib.suppress(OSError):
             os.remove(sidecar)
-        except OSError:
-            pass
         raise
     finally:
         with _in_flight_lock:

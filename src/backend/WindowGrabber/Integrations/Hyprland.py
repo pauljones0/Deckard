@@ -13,6 +13,7 @@ You should have received a copy of the GNU General Public License
 along with this program. If not, see <https://www.gnu.org/licenses/>.
 """
 
+import contextlib
 import os
 import socket
 import threading
@@ -171,11 +172,10 @@ class WatchForActiveWindowChange(threading.Thread):
         sock = self._sock
         if sock is None:
             return
-        try:
+        # The socket may be closed, or it may never have connected. Nothing to
+        # wake in either case.
+        with contextlib.suppress(OSError):
             sock.shutdown(socket.SHUT_RDWR)
-        except OSError:
-            # The socket is closed, or it never connected. Nothing to wake.
-            pass
 
     @log.catch
     def run(self) -> None:

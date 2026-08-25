@@ -13,6 +13,7 @@ You should have received a copy of the GNU General Public License
 along with this program. If not, see <https://www.gnu.org/licenses/>.
 """
  
+import contextlib
 import re
 import sys
 import zipfile
@@ -1264,10 +1265,8 @@ class StoreBackend:
         if os.path.isdir(path) and not os.path.islink(path):
             shutil.rmtree(path, ignore_errors=True)
         elif os.path.lexists(path):
-            try:
+            with contextlib.suppress(OSError):
                 os.remove(path)
-            except OSError:
-                pass
 
     def _staged_tree_acceptable(self, staging_tree: str, expected_id: str | None,
                                 gate_app_version: bool = True) -> bool:

@@ -16,6 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 # SettingsManager and the globals consumers exist, and must still import this.
 from typing import Any
 
+import contextlib
 import json
 import os
 import stat
@@ -263,8 +264,6 @@ def atomic_write_json(file_path: str, data: Any, indent: int | None = 4) -> None
         except OSError:
             pass
     except BaseException:
-        try:
+        with contextlib.suppress(OSError):
             os.remove(tmp_path)
-        except OSError:
-            pass
         raise

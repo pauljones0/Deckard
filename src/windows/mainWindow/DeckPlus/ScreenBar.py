@@ -13,6 +13,7 @@ You should have received a copy of the GNU General Public License
 along with this program. If not, see <https://www.gnu.org/licenses/>.
 """
 # Import gtk modules
+import contextlib
 import itertools
 import time
 import gi
@@ -133,10 +134,8 @@ class ScreenBar(Gtk.Frame):
                     self.image.set_image(controller_input.get_current_image())
                 except Exception:
                     log.exception(f"Failed to recomposite {self.identifier} on map")
-            try:
+            with contextlib.suppress(KeyError):
                 tasks.pop(self.identifier)
-            except KeyError:
-                pass
 
     def on_click(self, gesture: Gtk.GestureClick, n_press: int, x: float, y: float) -> None:
         # print(f"Click: {self.parse_xy(x, y)}")

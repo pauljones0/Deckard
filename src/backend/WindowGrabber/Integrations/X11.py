@@ -13,6 +13,7 @@ You should have received a copy of the GNU General Public License
 along with this program. If not, see <https://www.gnu.org/licenses/>.
 """
 
+import contextlib
 import os
 import select
 import threading
@@ -330,14 +331,11 @@ class WatchForActiveWindowChange(threading.Thread):
         with self._wake_lock:
             if self._wake_closed:
                 return
-            try:
+            # The non-blocking write end raises rather than blocks when the
+            # pipe is full, and a full pipe already holds an unread byte that
+            # wakes the select. Either way the loop reaches its next stop check.
+            with contextlib.suppress(OSError):
                 os.write(self._wake_write_fd, b"\x00")
-            except OSError:
-                # The non-blocking write end raises rather than blocks when the
-                # pipe is full, and a full pipe already holds an unread byte
-                # that wakes the select. Either way the loop reaches its next
-                # stop check.
-                pass
 
     def _close_wake_pipe(self) -> None:
         with self._wake_lock:
@@ -345,10 +343,8 @@ class WatchForActiveWindowChange(threading.Thread):
                 return
             self._wake_closed = True
             for fd in (self._wake_read_fd, self._wake_write_fd):
-                try:
+                with contextlib.suppress(OSError):
                     os.close(fd)
-                except OSError:
-                    pass
 
     @log.catch
     def run(self) -> None:
@@ -521,10 +517,8 @@ class WatchForActiveWindowChange(threading.Thread):
         if self._tracked_window is not None:
             # Stop watching the window this leaves. It may be gone already, so
             # the request is allowed to fail.
-            try:
+            with contextlib.suppress(XError):
                 self._tracked_window.change_attributes(event_mask=X.NoEventMask)
-            except XError:
-                pass
         self._tracked_window = None
         self._tracked_window_id = window_id
 

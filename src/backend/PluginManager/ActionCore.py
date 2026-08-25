@@ -13,6 +13,7 @@ This programm comes with ABSOLUTELY NO WARRANTY!
 You should have received a copy of the GNU General Public License
 along with this program. If not, see <https://www.gnu.org/licenses/>.
 """
+import contextlib
 import threading
 from loguru import logger as log
 import subprocess
@@ -357,7 +358,6 @@ class ActionCore(rpyc.Service):
             state.show_error(duration=duration)
         except AttributeError as e:
             log.error(e)
-            pass
 
     def hide_error(self) -> None:
         self.raise_error_if_not_ready()
@@ -367,10 +367,8 @@ class ActionCore(rpyc.Service):
         state = self.get_state()
         if state is None:
             return
-        try:
+        with contextlib.suppress(AttributeError):
             state.hide_error()
-        except AttributeError:
-            pass
 
     def show_overlay(self, image: Image.Image, duration: int = -1) -> None:
         self.raise_error_if_not_ready()
@@ -380,10 +378,8 @@ class ActionCore(rpyc.Service):
         state = self.get_state()
         if state is None:
             return
-        try:
+        with contextlib.suppress(AttributeError):
             state.show_overlay(image, duration=duration)
-        except AttributeError:
-            pass
 
     def hide_overlay(self) -> None:
         self.raise_error_if_not_ready()
@@ -393,10 +389,8 @@ class ActionCore(rpyc.Service):
         state = self.get_state()
         if state is None:
             return
-        try:
+        with contextlib.suppress(AttributeError):
             state.hide_overlay()
-        except AttributeError:
-            pass
 
     def set_label(self, text: str | None, position: str = "bottom", color: list[int] | None=None,
                   font_family: str | None=None, font_size: "float | None" = None, outline_width: int | None = None, outline_color: list[int] | None = None,
@@ -701,10 +695,8 @@ class ActionCore(rpyc.Service):
         """Unregister a GenerativeUI element, such as a rebuilt config row.
 
         The action then stops retaining it for its own lifetime."""
-        try:
+        with contextlib.suppress(ValueError):
             self.generative_ui_objects.remove(generative_ui_object)
-        except ValueError:
-            pass
 
     def get_generative_ui(self) -> "list[GenerativeUI[Any]]":
         return self.generative_ui_objects
@@ -963,15 +955,11 @@ class ActionCore(rpyc.Service):
 
         # Drop these from the global registries. Both are list removals.
         if connection is not None and gl.plugin_manager is not None:
-            try:
+            with contextlib.suppress(ValueError):
                 gl.plugin_manager.backends.remove(connection)
-            except ValueError:
-                pass
         if process is not None and gl.plugin_manager is not None:
-            try:
+            with contextlib.suppress(ValueError):
                 gl.plugin_manager.backend_processes.remove(process)
-            except ValueError:
-                pass
 
         threading.Thread(
             target=self._teardown_backend_resources,

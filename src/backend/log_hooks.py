@@ -33,6 +33,7 @@ unredacted traceback into a sink.
 """
 import asyncio
 import atexit
+import contextlib
 import faulthandler
 import fcntl
 import os
@@ -194,10 +195,8 @@ def _emit_pending(key: SiteKey, count: int, reason: str) -> None:
     try:
         _LOG.warning(message)
     except Exception:
-        try:
+        with contextlib.suppress(Exception):
             print(message, file=sys.__stderr__)
-        except Exception:
-            pass
 
 
 def _prune_locked(now: float) -> list[tuple[SiteKey, int]]:
@@ -331,15 +330,13 @@ def _announce_disabled() -> None:
     if _announced_disabled:
         return
     _announced_disabled = True
-    try:
+    with contextlib.suppress(Exception):
         _LOG.warning(
             "SC_NO_ERROR_HOOKS=1: the crash-logging exception hooks and the "
             "faulthandler redirection are DISABLED for this run -- uncaught "
             "exceptions reach stderr only, and native crash dumps are not "
             "written to logs/faulthandler.log (log redaction is unaffected)"
         )
-    except Exception:
-        pass
 
 
 def _is_terminal(exc_tb: TracebackType | None) -> bool:
@@ -568,10 +565,8 @@ def _bound_fault_log(path: str) -> None:
             log_file.write(notice + kept)
             log_file.truncate()
     except Exception as e:
-        try:
+        with contextlib.suppress(Exception):
             _LOG.warning(f"could not bound faulthandler.log ({e}); continuing boot")
-        except Exception:
-            pass
 
 
 def _scrub_fault_log(path: str) -> None:
@@ -645,14 +640,10 @@ def _scrub_fault_log(path: str) -> None:
         tmp_path = None
     except Exception as e:
         if tmp_path is not None:
-            try:
+            with contextlib.suppress(OSError):
                 os.unlink(tmp_path)
-            except OSError:
-                pass
-        try:
+        with contextlib.suppress(Exception):
             _LOG.warning(f"could not scrub faulthandler.log ({e}); continuing boot")
-        except Exception:
-            pass
 
 
 def redirect_faulthandler(directory: str) -> None:

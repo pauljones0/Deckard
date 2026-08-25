@@ -4,10 +4,10 @@ It arms the rpyc loopback guard in a backend that runs on the app's own
 interpreter. No plugin venv exists there to carry the .pth file. A failure
 here must never stop the child interpreter.
 """
-try:
+import contextlib
+
+with contextlib.suppress(Exception):
     import deckard_rpyc_guard  # noqa: F401
-except Exception:
-    pass
 
 # This directory is on PYTHONPATH only to arm the guard, and Python loads one
 # module named sitecustomize, so this file shadows a distro or venv
@@ -23,9 +23,7 @@ try:
     sys.path[:] = [p for p in sys.path if os.path.abspath(p or ".") != _here]
     del sys.modules["sitecustomize"]
     importlib.invalidate_caches()
-    try:
+    with contextlib.suppress(ImportError):
         import sitecustomize  # noqa: F401
-    except ImportError:
-        pass
 except Exception:
     pass

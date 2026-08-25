@@ -12,6 +12,8 @@ This programm comes with ABSOLUTELY NO WARRANTY!
 You should have received a copy of the GNU General Public License
 along with this program. If not, see <https://www.gnu.org/licenses/>.
 """
+import contextlib
+
 # Import gtk modules
 import gi
 
@@ -111,10 +113,8 @@ class KeyGrid(Gtk.Grid):
                     # this frame itself, so there is nothing to push here.
                     continue
                 self._push_current_image(identifier, button)
-                try:
+                with contextlib.suppress(KeyError):
                     tasks.pop(identifier)
-                except KeyError:
-                    pass
             elif isinstance(identifier, Input.Touchscreen):
                 # ScreenBar.load_from_changes normally consumes this entry,
                 # because it owns the widget that shows it. When the map
@@ -125,10 +125,8 @@ class KeyGrid(Gtk.Grid):
                 screenbar = self._find_screenbar()
                 if screenbar is not None:
                     self._push_current_image(identifier, screenbar.image)
-                    try:
+                    with contextlib.suppress(KeyError):
                         tasks.pop(identifier)
-                    except KeyError:
-                        pass
 
     def _find_screenbar(self) -> "ScreenBar | None":
         """The sibling screenbar, found by a walk up the widget tree.

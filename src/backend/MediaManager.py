@@ -12,6 +12,7 @@ This programm comes with ABSOLUTELY NO WARRANTY!
 You should have received a copy of the GNU General Public License
 along with this program. If not, see <https://www.gnu.org/licenses/>.
 """
+import contextlib
 import os
 import uuid
 import cv2
@@ -57,10 +58,8 @@ class MediaManager:
             os.replace(tmp_path, path)
         finally:
             if os.path.exists(tmp_path):
-                try:
+                with contextlib.suppress(OSError):
                     os.remove(tmp_path)
-                except OSError:
-                    pass
 
     def get_thumbnail(self, file_path: str) -> Image.Image:
         # Guard the whole body. sha256() raises on an unreadable file (chmod
@@ -93,10 +92,8 @@ class MediaManager:
                     # fall through to a fresh generation.
                     log.opt(exception=True).warning(
                         f"Poisoned thumbnail cache entry for {file_path}, regenerating: {e}")
-                    try:
+                    with contextlib.suppress(OSError):
                         os.remove(thumbnail_path)
-                    except OSError:
-                        pass
 
             thumbnail = self.generate_thumbnail(file_path)
             thumbnail.thumbnail((250, 250), resample=Image.Resampling.LANCZOS)
