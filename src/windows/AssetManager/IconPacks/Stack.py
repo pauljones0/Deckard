@@ -17,10 +17,13 @@ import threading
 
 import gi
 
+from loguru import logger as log
+
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 
 # Import own modules
+from GtkHelper.GtkHelper import run_on_main
 from src.windows.AssetManager.GenericAssetChooser import GenericPackChooserStack
 from src.windows.AssetManager.IconPacks.PackChooser import IconPackChooser
 from src.windows.AssetManager.IconPacks.Icons.IconChooser import IconChooserPage
@@ -30,7 +33,10 @@ import globals as gl
 
 # Import typing
 from collections.abc import Callable
-from typing import Any
+from typing import Any, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from src.backend.IconPackManagement.IconPack import IconPack
 
 
 class IconPackChooserStack(GenericPackChooserStack[IconChooserPage]):
@@ -74,12 +80,22 @@ class IconPackChooserStack(GenericPackChooserStack[IconChooserPage]):
             icons = pack.get_icons()
             for icon in icons:
                 if icon.path == path:
-                    self.leaf_chooser.load_for_pack(pack)
-                    self.leaf_chooser.select_asset(path=path)
-                    self.set_visible_child(self.leaf_chooser)
-                    self.asset_manager.asset_chooser.set_visible_child_name("icon-packs")
-                    self.asset_manager.back_button.set_visible(True)
+                    # The scan above reads pack data and runs on whichever
+                    # thread asked. The lines it hands over drive widgets, and
+                    # GTK4 takes calls from the main thread only, so they run
+                    # there. run_on_main runs inline when the caller already
+                    # holds the main thread, so the direct call from the window
+                    # and the deferred one from a build worker both work.
+                    run_on_main(self._show_pack_asset, pack, path)
                     return
+
+    def _show_pack_asset(self, pack: "IconPack", path: str) -> None:
+        """Turn the window to the icon of path inside pack. Main loop only."""
+        self.leaf_chooser.load_for_pack(pack)
+        self.leaf_chooser.select_asset(path=path)
+        self.set_visible_child(self.leaf_chooser)
+        self.asset_manager.asset_chooser.set_visible_child_name("icon-packs")
+        self.asset_manager.back_button.set_visible(True)
 
     def get_is_build_finished(self) -> bool:
         return (hasattr(self, "pack_chooser") and self.pack_chooser.build_finished
@@ -100,4 +116,10 @@ class IconPackChooserStack(GenericPackChooserStack[IconChooserPage]):
             tasks = list(self.on_loads_finished_tasks)
             self.on_loads_finished_tasks.clear()
         for task in tasks:
-            task()
+            try:
+                task()
+            except Exception as e:
+                # A task marshals to the main loop, which can time out. The
+                # caller is the tail of a build worker, so a raise here would
+                # end that thread instead of the one task.
+                log.opt(exception=True).warning(f"Deferred icon-pack task failed: {e}")

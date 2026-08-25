@@ -566,6 +566,105 @@ def check_marshal_timeout(label: str, module_path: str, class_name: str) -> int:
     return 0
 
 
+# 2c. The icon stack's deferred drill-in runs its widget half on the main loop
+
+def check_stack_drain_marshals() -> int:
+    """A deferred show_for_path drains on a build worker and must marshal.
+
+    IconPackChooser.on_build_finished and IconChooserPage.on_build_finished
+    both run at the tail of a build thread and both call
+    IconPackChooserStack.on_load_finished, which runs the deferred tasks. The
+    widget half of that task therefore has to reach the main loop, and it has
+    to run once, not once per finished page.
+    """
+    from src.windows.AssetManager.IconPacks.Stack import IconPackChooserStack
+
+    target = "/icons/pack-0/battery.png"
+
+    class StubAsset:
+        path = target
+
+    class StubPack:
+        name = "stub-pack"
+
+        def get_icons(self): return [StubAsset()]
+
+    class StubManager:
+        def get_icon_packs(self): return {"pack-0": StubPack()}
+
+    calls: list[threading.Thread] = []
+
+    class StubLeaf:
+        build_finished = False
+
+        def load_for_pack(self, pack): calls.append(threading.current_thread())
+        def select_asset(self, path): pass
+
+    stack = IconPackChooserStack.__new__(IconPackChooserStack)
+    stack.prepare()
+    stack.pack_chooser = types.SimpleNamespace(build_finished=False)
+    stack.leaf_chooser = StubLeaf()
+    stack.set_visible_child = lambda child: None
+    stack.asset_manager = types.SimpleNamespace(
+        asset_chooser=types.SimpleNamespace(
+            set_visible_child_name=lambda name: None),
+        back_button=types.SimpleNamespace(set_visible=lambda visible: None))
+
+    real_manager = gl.icon_pack_manager
+    gl.icon_pack_manager = StubManager()
+    try:
+        # The window asks for the path while both pages still build, so the
+        # request goes on the deferred queue.
+        stack.show_for_path(target)
+        if not stack.on_loads_finished_tasks:
+            print("FAIL(stack-drain): the request was not deferred, so the "
+                  "drain path this check is about never runs")
+            return 1
+
+        # The pack page finishes first. The other page is still building, so
+        # nothing drains yet.
+        stack.pack_chooser.build_finished = True
+        early = threading.Thread(target=stack.on_load_finished,
+                                 name="pack-build", daemon=True)
+        early.start()
+        early.join(timeout=5)
+        if calls:
+            print("FAIL(stack-drain): the queue drained with one page still "
+                  "building")
+            return 1
+
+        # The icon page finishes and its worker drains the queue. This thread
+        # is the main loop, so it pumps while that worker marshals.
+        stack.leaf_chooser.build_finished = True
+        drained = threading.Event()
+
+        def _drain():
+            try:
+                stack.on_load_finished()
+            finally:
+                drained.set()
+
+        worker = threading.Thread(target=_drain, name="icon-build", daemon=True)
+        worker.start()
+        pump_until(drained.is_set, 10, "the deferred drill-in never drained")
+        worker.join(timeout=5)
+    finally:
+        gl.icon_pack_manager = real_manager
+
+    if len(calls) != 1:
+        print(f"FAIL(stack-drain): the deferred drill-in ran {len(calls)} "
+              f"times, expected exactly 1")
+        return 1
+    if calls[0] is not threading.main_thread():
+        print(f"FAIL(stack-drain): the drill-in drove the widgets on "
+              f"{calls[0].name}, not the main thread (off-main GTK, the "
+              f"process-fatal class)")
+        return 1
+    print("PASS: the icon stack drains a deferred drill-in on the build worker "
+          "and drives its widgets on the main loop, exactly once")
+    return 0
+
+
 # 3. Real-widget check over the actual window, when a display is available.
 
 def check_real_window() -> int:
@@ -772,6 +871,7 @@ def main() -> int:
           "legs stall the loop on purpose and this is the log the fix emits.")
     for label, module_path, class_name, _ in (CASES[0], CASES[1]):
         rc |= check_marshal_timeout(label, module_path, class_name)
+    rc |= check_stack_drain_marshals()
     # Run last, because it installs a real window and real gl.* collaborators.
     rc |= check_real_window()
 
