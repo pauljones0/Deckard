@@ -8,6 +8,7 @@ Three small guards.
 # atomically under a per-page lock, at both of its entry points.
 import fixtures  # noqa: F401  (import first: sets up the isolated data dir)
 
+import contextlib
 import threading
 
 from fixtures import make_headless_controller, seed_page, start_watchdog
@@ -126,10 +127,8 @@ def _make_claim_probe(barrier):
             value = self.__dict__["_ready"]
             if value:
                 return value  # the serialized second reader
-            try:
+            with contextlib.suppress(threading.BrokenBarrierError):
                 barrier.wait(timeout=0.5)
-            except threading.BrokenBarrierError:
-                pass
             return value
 
         @on_ready_called.setter

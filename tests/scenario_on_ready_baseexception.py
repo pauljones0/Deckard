@@ -11,6 +11,8 @@ it runs whatever on_ready raised.
 # fixtures must import first: it points argv at an isolated data dir.
 import fixtures
 
+import contextlib
+
 from fixtures import make_headless_controller, start_watchdog
 
 from src.backend.DeckManagement.InputIdentifier import Input
@@ -75,10 +77,9 @@ def main() -> int:
         # The fixed method: the BaseException still propagates, but the redraw
         # runs first.
         action = _make_action(controller, page)
-        try:
+        # Expected: the finally runs the redraw before _ReadyAbort unwinds.
+        with contextlib.suppress(_ReadyAbort):
             page._run_ready_callbacks(action)
-        except _ReadyAbort:
-            pass  # expected: the finally must run the redraw before this unwinds
 
         assert action.ready_entered, "on_ready never ran -- setup is wrong"
         assert action.on_ready_finished, (
@@ -95,10 +96,8 @@ def main() -> int:
         Page._run_ready_callbacks = _prefix_run_ready_callbacks
         try:
             action2 = _make_action(controller, page)
-            try:
+            with contextlib.suppress(_ReadyAbort):
                 page._run_ready_callbacks(action2)
-            except _ReadyAbort:
-                pass
             assert action2.ready_entered, "pre-fix leg: on_ready never ran"
             assert action2.on_ready_finished, "pre-fix leg: gate must still open"
             assert not action2.redrawn, (

@@ -10,6 +10,7 @@ constructing thread.
 # selection read and the custom-asset chooser build.
 import fixtures  # noqa: F401  (import first: sets up the isolated data dir)
 
+import contextlib
 import threading
 import time
 import types
@@ -178,10 +179,8 @@ def check_selection_read() -> int:
     # An empty selection reaches it and raises. This check asserts only where
     # the selection read ran, so the worker swallows that raise.
     def _drive_worker():
-        try:
+        with contextlib.suppress(Exception):
             holder._on_start_button_click(obj)
-        except Exception:
-            pass
     worker = threading.Thread(target=_drive_worker, daemon=True)
     worker.start()
     pump_until(lambda: bool(read_threads), 5,

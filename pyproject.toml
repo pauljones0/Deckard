@@ -17,7 +17,14 @@ select = [
   "F541",  # f-strings without placeholders
   "E722",  # bare `except:` — house style is a narrow except or @log.catch
   "B030",  # `except` handlers that aren't exception classes/tuples
+  "SIM105",  # try/except/pass that a contextlib.suppress states as intent
 ]
+
+[tool.ruff.lint.per-file-ignores]
+# This module sits at its grandfathered module-size cap. Its one suppressible
+# swallow is left for a separate change that nets no new line here. Drop this
+# entry once that swallow reads as contextlib.suppress.
+"src/backend/DeckManagement/deck_controller/media_writer.py" = ["SIM105"]
 
 [tool.pyright]
 # Editor/LSP navigation config only. The type gate is ty (lint:types).
