@@ -97,10 +97,25 @@ def _encode_tile_native(key: "ControllerKey", tile: Image.Image, video_md5: str,
 
 def _encode_strip_native(touchscreen: "ControllerTouchScreen", image: Image.Image) -> bytes:
     """The device-ready JPEG for the composited strip. The touchscreen
-    takes JPEG only, so an RGBA composite goes onto black first."""
+    takes JPEG only, so an RGBA composite goes onto black first, and the
+    strip is turned into the device's orientation here, on the producer
+    side, as a key composite is.
+
+    The deck says how far to turn it. image belongs to the caller, which
+    reuses it for the window's own strip preview, so every intermediate is
+    built and released here and image itself is never touched."""
     if image.mode == "RGBA":
         device_image = Image.new("RGB", image.size, (0, 0, 0))
         device_image.paste(image, (0, 0), image)
     else:
         device_image = image
-    return encode_native_touchscreen(touchscreen.deck_controller.deck, device_image)
+    deck = touchscreen.deck_controller.deck
+    turn = deck.touchscreen_image_rotation()
+    oriented = device_image.rotate(turn) if turn else device_image
+    try:
+        return encode_native_touchscreen(deck, oriented)
+    finally:
+        if oriented is not device_image:
+            oriented.close()
+        if device_image is not image:
+            device_image.close()

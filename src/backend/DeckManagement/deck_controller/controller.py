@@ -64,6 +64,7 @@ from src.backend.DeckManagement.deck_controller.media_writer import (
     SetBrightnessMsg,
     _install_fair_transport_lock,
 )
+from src.backend.DeckManagement.deck_controller.rotation import apply_rotation
 from src.backend.PageManagement.Page import Page
 from src.backend.deadline_pool import BatchWording, DeadlinePool
 from src.backend.mem_telemetry import page_switches
@@ -601,13 +602,15 @@ class DeckController:
         i.event_callback(*args, **kwargs)
 
     def key_event_callback(self, deck: Any, key: int, *args: Any, **kwargs: Any) -> None:
-        # deck is the raw handle from the reader thread; its key_layout is
-        # unrotated, and the swap below applies the rotation.
-        coords = ControllerKey.Index_To_Coords(deck, key)
-        if self.deck.rotation % 180 != 0:
-            coords = (coords[1], coords[0])
+        # key arrives already mapped into the logical grid. Decode it against
+        # the wrapper, whose key_layout is the logical one and is what
+        # Available_Identifiers named the registry from. deck is the raw
+        # handle the reader thread passes, and it reports the unrotated
+        # layout: decoding against that names a different key for six of the
+        # eight positions of a two by four grid at 90 and at 270.
+        coords = ControllerKey.Index_To_Coords(self.deck, key)
         ident = Input.Key(f"{coords[0]}x{coords[1]}")
-        self.event_callback(ident,*args, **kwargs)
+        self.event_callback(ident, *args, **kwargs)
 
     def dial_event_callback(self, deck: Any, dial: Any, *args: Any, **kwargs: Any) -> None:
         ident = Input.Dial(str(dial))
@@ -1149,20 +1152,10 @@ class DeckController:
         self.media_player.submit_control(SetBrightnessMsg(value))
 
     def set_rotation(self, value: int) -> None:
-        self.deck.set_rotation(value)
-        # Both native cache keys hold the rotation, so nothing stale can be
-        # served. This clear is memory hygiene, because every entry encoded
-        # for the old rotation is dead as soon as the rotation changes.
-        self.clear_encoded_key_caches()
-
-        # The UI rebuilds its key grid for the new geometry. This is
-        # synchronous on the main loop, where the only caller runs, so the
-        # load_page below repaints into the new grid and not the transposed
-        # old one.
-        ui_port.get().on_deck_layout_changed(self)
-
-        if not self.get_alive(): return
-        self.load_page(self.active_page)
+        """Turn the deck. The transition rebuilds the input set, the caches
+        and the window's grid; see deck_controller/rotation.py for the order
+        it runs in and why."""
+        apply_rotation(self, value)
 
     # Longest quiet period between two tick-failure tracebacks, and the state
     # that enforces it. A failure that repeats on every walk would otherwise
