@@ -402,6 +402,15 @@ class PageSelector(Gtk.Box):
             # page already loads or is loaded. Do not start a second load.
             return
         page = services.require_page_manager().get_page(path=page_path, deck_controller = active_controller)
+        if page is None:
+            # The row named a page that did not build, such as one whose file
+            # was removed from disk after the list was filled. A None handed
+            # to load_page clears the deck, so the pick would blank the device
+            # with nothing said. The deck keeps what it shows, and the user
+            # hears why the pick did nothing.
+            log.error(f"Page {page_path} did not load; the deck keeps its page")
+            gl.notify.error(gl.lm.get("page-selector-load-failed"))
+            return
         log.info(f"Load page: {page}")
         active_controller.load_page(page)
 

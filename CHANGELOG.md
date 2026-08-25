@@ -48,6 +48,11 @@ bundle as a release asset.
 
 ### Fixed
 
+- Picking a page whose file is gone no longer blanks the deck. The page list
+  can name a page whose file was deleted outside the app; choosing it cleared
+  the deck to nothing. The deck now keeps its page and a message says the page
+  could not be loaded.
+
 - The comment field and the allow-media, allow-background and per-label
   toggles in the sidebar keep working after an error. A failure part way
   through updating one of these rows left its control silently dead until a
