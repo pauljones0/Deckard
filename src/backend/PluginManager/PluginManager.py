@@ -703,6 +703,11 @@ class PluginManager:
     def _is_plugin_disabled(plugin_base: PluginBase) -> bool:
         return any(entry.get("object") is plugin_base for entry in PluginBase.disabled_plugins.values())
 
+    def load_error_of(self, folder: str) -> "str | None":
+        """The recorded load failure of one plugin folder, or None."""
+        with self._load_errors_lock:
+            return self.load_errors.get(folder)
+
     def init_plugins(self) -> None:
         subclasses = PluginBase.__subclasses__()
         for subclass in subclasses:

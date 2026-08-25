@@ -59,7 +59,7 @@ from src.backend.Store.asset_types import (
     SD_PLUS_BAR,
     WALLPAPER,
 )
-from src.backend.Store import install_script, json_root
+from src.backend.Store import install_reload, install_script, json_root
 from src.backend.Store.prepare_pool import PreparePool
 from src.backend.Store.catalog_entry import COMMIT_SHA_RE, resolve_pinned_revision
 from src.backend.Store.store_result import Err, ErrReason, Ok, StoreFetchError, StoreResult
@@ -1586,10 +1586,9 @@ class StoreBackend:
         local_path = os.path.join(gl.PLUGIN_DIR, plugin_id)
 
         # Decide the install steps before the download swaps the tree, so a
-        # decline never destroys a working install. Declining an update
-        # keeps the registered version rather than replace it with one
-        # whose dependencies never got installed; a fresh install proceeds
-        # and skips the steps.
+        # decline never destroys a working install: a declined update keeps
+        # the registered version rather than replace it with one whose
+        # dependencies never got installed; a fresh install proceeds bare.
         plugin_manager = gl.plugin_manager
         is_update = plugin_manager is not None and plugin_manager.get_plugin_by_id(plugin_id) is not None
         run_scripts = install_script.decide_install_scripts(
@@ -1599,16 +1598,13 @@ class StoreBackend:
 
         response = self.download_repo(repo_url=url, directory=local_path, commit_sha=plugin_data.commit_sha, branch_name=plugin_data.branch, expected_id=plugin_id)
 
-        # Stop before an install script runs, or a plugin reload lands, on a
-        # missing or partial tree.
         if isinstance(response, Err):
-            return response
+            return response  # no script run and no reload on a partial tree
 
-        # On an update the new tree already sits in place. Deregister the
-        # old version now, which also purges sys.modules, so load_plugins
-        # below imports the new code. A deregister after a successful download
-        # leaves a failed update with the old version on disk and registered,
-        # while a deregister first would need a recovery reload.
+        # On an update the new tree already sits in place. Deregister the old
+        # version now, which also purges sys.modules, so load_plugins imports
+        # the new code; deregistering before the download would need a
+        # recovery reload on a failed fetch.
         if is_update:
             try:
                 self.uninstall_plugin(plugin_id, remove_from_pages=False, remove_files=False)
@@ -1616,37 +1612,41 @@ class StoreBackend:
                 log.error(f"Deregistering the old version of {plugin_id} failed: {e}")
 
         # The install steps run only through the gate, which owns the
-        # confinement, the timeout, the process-group kill, and the
-        # loopback-guard re-injection. run_scripts was decided pre-download.
+        # confinement, timeout, process-group kill and loopback-guard
+        # re-injection; run_scripts was decided pre-download.
         outcome = install_script.run_install_steps(local_path, plugin_id, run=run_scripts)
         if outcome not in (install_script.Outcome.RAN, install_script.Outcome.NO_STEPS):
             log.warning(f"Install steps of {plugin_id}: {outcome.value}")
 
-        # Update the plugin manager.
-        if plugin_manager is not None:
-            plugin_manager.load_plugins()
-            plugin_manager.init_plugins()
-            plugin_manager.generate_action_index()
+        # The reload drops the import-finder caches (a dependency the steps
+        # just pip-installed must import in this process) and surfaces a
+        # plugin that failed to come up. The UI and deck refresh below run
+        # either way, or an update that already deregistered the old version
+        # would leave the chooser and the decks showing it.
+        load_error = install_reload.reload_after_install(plugin_id)
 
-        # A version-gated plugin installs without an error. Its files land
-        # on disk and the store button flips to installed, but the reload
-        # above puts it in disabled_plugins. Tell the user now. Without this
-        # call the first feedback is the disabled-plugins toast of the next
-        # launch, which a user reads as a config reset after a restart.
-        self.notify_if_installed_disabled(plugin_id)
+        # A version-gated plugin installs without an error, but the reload
+        # puts it in disabled_plugins; tell the user now, or the next
+        # launch's disabled toast is the first feedback.
+        if load_error is None:
+            self.notify_if_installed_disabled(plugin_id)
 
         # Update the UI.
         if gl.app is not None and recursive_hasattr(gl, "app.main_win.sidebar.action_chooser"):
             GLib.idle_add(gl.app.main_win.sidebar.action_chooser.plugin_group.update)
 
-        # Update the page on every deck.
+        # Update the page on every deck; check both, so an auto-update
+        # raises no error here.
         for controller in (gl.deck_manager.deck_controller if gl.deck_manager is not None else []):
-            # Check both, so an auto-update raises no error here.
             if hasattr(controller, "active_page"):
                 if controller.active_page is not None:
                     # Load the action objects.
                     controller.active_page.load_action_objects()
                     controller.load_page(controller.active_page)
+
+        if load_error is not None:
+            # No install signal, no success log; the error toast is the report.
+            return Ok(None)
 
         # Tell the plugin actions.
         gl.signal_manager.trigger_signal(Signals.PluginInstall, plugin_data.plugin_id)
@@ -1740,9 +1740,9 @@ class StoreBackend:
         # for controller in gl.deck_manager.deck_controller:
             # controller.active_page.update_inputs_with_actions_from_plugin(plugin_id)
 
-        # Update the page on every deck.
+        # Update the page on every deck; check both, so an auto-update
+        # raises no error here.
         for controller in (gl.deck_manager.deck_controller if gl.deck_manager is not None else []):
-            # Check both, so an auto-update raises no error here.
             if hasattr(controller, "active_page"):
                 if controller.active_page is not None:
                     # Load the action objects.

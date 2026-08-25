@@ -26,6 +26,7 @@ class RecordingPluginManager:
     def generate_action_index(self): self.calls.append("generate_action_index")
     def get_plugins(self): return {}
     def get_plugin_by_id(self, plugin_id, include_disabled=True): return None
+    def load_error_of(self, folder): return None
 
 
 def _make_backend() -> StoreBackend:
@@ -235,8 +236,49 @@ def test_install_icon_propagates_download_result() -> None:
     )
 
 
+def test_install_load_failure_refreshes_but_stays_silent() -> None:
+    # A plugin whose reload fails after install must still refresh the UI
+    # and decks (an update already deregistered the old version), but fire
+    # no install signal and log no success for a plugin nobody can use.
+    fixtures.install_stub_globals()
+    gl.plugin_manager = RecordingPluginManager()
+
+    signals = []
+
+    class RecordingSignalManager:
+        def trigger_signal(self, *a, **k): signals.append(a)
+
+    gl.signal_manager = RecordingSignalManager()
+    gl.deck_manager = None
+    gl.app = None
+
+    sb = _make_backend()
+    sb.download_repo = lambda **kwargs: Ok(None)
+
+    from src.backend.Store import install_reload, install_script
+    real_reload = install_reload.reload_after_install
+    real_decide = install_script.decide_install_scripts
+    real_run = install_script.run_install_steps
+    install_reload.reload_after_install = lambda plugin_id: "import failed: no module"
+    install_script.decide_install_scripts = lambda *a, **k: False
+    install_script.run_install_steps = lambda *a, **k: install_script.Outcome.SKIPPED
+    try:
+        data = PluginData(github="https://github.com/test/test", plugin_id="com_test_Broken")
+        result = sb.install_plugin(data)
+    finally:
+        install_reload.reload_after_install = real_reload
+        install_script.decide_install_scripts = real_decide
+        install_script.run_install_steps = real_run
+
+    assert isinstance(result, Ok), (
+        f"the files installed, so the store answer stays Ok: {result!r}")
+    assert signals == [], (
+        f"a plugin that failed to load must fire no install signal: {signals}")
+
+
 def main() -> None:
     fixtures.start_watchdog(30, label="scenario_store_install_contract")
+    test_install_load_failure_refreshes_but_stays_silent()
     test_install_plugin_failure_skips_reload()
     test_update_all_plugins_counts_never_predeletes()
     test_update_everything_checks_all_four_legs()
