@@ -96,11 +96,11 @@ def runs_in_this_process(args: Namespace) -> bool:
     after, so an invocation carrying one is that command whatever else is on
     the line, and this module must not answer it instead.
 
-    The attributes are named rather than looked up, so a flag renamed in
-    cli_args raises here on the next launch instead of quietly turning a
-    listing command into a forward.
+    The rule lives in cli_forward, which the boot path reads too. Two copies of
+    it would let one half treat a listing line as a listing and the other half
+    forward what was beside it.
     """
-    return bool(args.list_devices or args.list_pages)
+    return cli_forward.answered_by_a_listing(args)
 
 
 def answer_from_running_instance(args: Namespace,

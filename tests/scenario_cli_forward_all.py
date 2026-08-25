@@ -557,6 +557,83 @@ def check_call_timeout_outlasts_the_instances_own_waits() -> None:
     print("PASS: a control call outwaits the longest answer the instance can give")
 
 
+class _Reply:
+    def __init__(self, text: str = ""):
+        self._text = text
+
+    def unpack(self):
+        return (self._text,)
+
+
+class _RecordingConnection:
+    """A bus connection that answers everything and remembers the timeouts."""
+
+    def __init__(self, running: bool = True):
+        self.calls: list[tuple[str, int]] = []
+        self._running = running
+
+    def call_sync(self, destination, path, interface, method, params, reply_type,
+                  flags, timeout_ms, cancellable):
+        self.calls.append((method, timeout_ms))
+        if method == "NameHasOwner":
+            return _Reply(self._running)
+        return _Reply("")
+
+    def timeout_for(self, method: str) -> int:
+        return next(ms for (name, ms) in self.calls if name == method)
+
+
+class _StubGLib:
+    class Error(Exception):
+        pass
+
+    @staticmethod
+    def Variant(signature, values):
+        return (signature, values)
+
+    @staticmethod
+    def VariantType(signature):
+        return signature
+
+
+class _StubGio:
+    class DBusCallFlags:
+        NO_AUTO_START = 0
+
+    class DBusError:
+        @staticmethod
+        def get_remote_error(error):
+            return ""
+
+
+def check_control_calls_take_the_longer_timeout() -> None:
+    """The transport spends the control timeout on a control call.
+
+    The number above is only worth having if the call site uses it. The probe
+    keeps the short one, because it decides whether to boot and nothing a
+    person typed waits on its answer.
+    """
+    transport = object.__new__(cli_forward._BusTransport)
+    connection = _RecordingConnection()
+    transport._gio = _StubGio
+    transport._glib = _StubGLib
+    transport._connection = connection
+
+    assert transport.is_running() is True
+    assert transport.change_page("deck-a", "Alpha") == ""
+    assert transport.change_state("deck-a", "Alpha", "0,0", 1) == ""
+    assert transport.emulate_input("deck-a", "Alpha", "0,0", "press") == ""
+
+    assert connection.timeout_for("NameHasOwner") == cli_forward.DBUS_CALL_TIMEOUT_MS, (
+        f"the probe spent {connection.timeout_for('NameHasOwner')}ms")
+    for method in ("ChangePage", "ChangeState", "EmulateInput"):
+        assert connection.timeout_for(method) == cli_forward.CONTROL_CALL_TIMEOUT_MS, (
+            f"{method} gave up after {connection.timeout_for(method)}ms, which is "
+            f"not the control timeout of {cli_forward.CONTROL_CALL_TIMEOUT_MS}ms")
+
+    print("PASS: a control call spends the control timeout and a probe does not")
+
+
 def check_unparkable_is_the_one_rule() -> None:
     """One function answers "can a boot apply this?" for both halves of the CLI.
 
@@ -670,6 +747,7 @@ def main() -> None:
         check_event_words_match_the_control_plane()
         check_coordinate_failures_read_alike()
         check_call_timeout_outlasts_the_instances_own_waits()
+        check_control_calls_take_the_longer_timeout()
         check_unparkable_is_the_one_rule()
         check_no_requests_touches_nothing()
         check_unreachable_bus_is_reported()

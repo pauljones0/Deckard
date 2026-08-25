@@ -361,6 +361,20 @@ def leg_both_halves_answer_alike() -> None:
          [*FORWARD_ARGV, *EMULATE_ARGV], False, False),
         ("a malformed press", ["--emulate-input", "deck-a", "Alpha", "0,0", "smash"],
          True, False),
+        # A listing verb answers the whole line by itself, so neither half may
+        # apply what is beside it, and a press beside it is refused rather than
+        # dropped. Only main.py's own ordering keeps the boot path from seeing
+        # these lines in the field, and nothing pins that ordering, so both
+        # halves answer them the same way here.
+        ("a press beside a listing, an instance running",
+         [*EMULATE_ARGV, "--list-pages"], True, False),
+        ("a press beside a listing, nothing running",
+         [*EMULATE_ARGV, "--list-devices"], False, False),
+        ("a page change beside a listing, an instance running",
+         [*FORWARD_ARGV, "--list-pages"], True, False),
+        ("a malformed press beside a listing",
+         ["--emulate-input", "deck-a", "Alpha", "0,0", "smash", "--list-pages"],
+         True, False),
     ]
 
     for what, argv, running, close_running in lines:
@@ -368,16 +382,32 @@ def leg_both_halves_answer_alike() -> None:
         gl.api_page_requests.clear()
         gl.api_state_requests.clear()
 
-        fast = cli_fast_path.answer_from_running_instance(
-            parse(line), Recorder(running=running))
-        boot = cli_forward.forward_cli_requests(parse(line), Recorder(running=running))
+        fast_recorder = Recorder(running=running)
+        boot_recorder = Recorder(running=running)
+        fast = cli_fast_path.answer_from_running_instance(parse(line), fast_recorder)
+        boot = cli_forward.forward_cli_requests(parse(line), boot_recorder)
 
         assert tuple(boot.failures) == fast.failures, (
             f"{what}: the fast path says {fast.failures} and the boot path says "
             f"{tuple(boot.failures)} for the same command line")
+        assert boot_recorder.forwards() == fast_recorder.forwards(), (
+            f"{what}: the fast path sent {fast_recorder.forwards()} and the "
+            f"boot path sent {boot_recorder.forwards()}")
         assert not gl.api_page_requests and not gl.api_state_requests, (
             f"{what}: a refused line parked {gl.api_page_requests} / "
             f"{gl.api_state_requests}")
+
+    # A listing beside a request the boot could apply is still just a listing:
+    # nothing is sent, nothing is parked, and the process goes on to print it.
+    gl.api_page_requests.clear()
+    gl.api_state_requests.clear()
+    recorder = Recorder(running=False)
+    boot = cli_forward.forward_cli_requests(
+        parse([*FORWARD_ARGV, "--list-pages"]), recorder)
+    assert not boot.handled and boot.failures == [], boot
+    assert recorder.forwards() == [], recorder.forwards()
+    assert not gl.api_page_requests and not gl.api_state_requests, (
+        f"a listing line parked {gl.api_page_requests} / {gl.api_state_requests}")
 
     print("  PASS: both halves give one answer per command line")
 

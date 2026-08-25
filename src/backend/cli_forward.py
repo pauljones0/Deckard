@@ -64,20 +64,26 @@ if TYPE_CHECKING:
 # serves both and no two numbers drift apart.
 DBUS_CALL_TIMEOUT_MS = 5000
 
-# What a control method gets instead. It must exceed the longest wait such a
-# method can make before it answers, or a caller gives up on work the instance
-# goes on to do. A state change is idempotent and survives that; a press is
-# not, and a command that reports a timeout and presses anyway invites the
-# retry that presses twice. The waits to clear are the control plane's input
-# load wait and its press start wait, which together bound every control
-# method, and this number stays above their sum with room to spare.
-# scenario_cli_forward_all pins the ordering, because the two sides of it live
-# in modules that cannot import each other.
+# What a control method gets instead. A caller that gives up on work the
+# instance goes on to do is the failure to avoid: a state change survives being
+# asked twice, and a press does not, so a command that reports a timeout and
+# presses anyway invites the retry that presses twice.
+#
+# This clears the two waits a control method makes by design and states a bound
+# for: the control plane's input load wait, and its wait for a press to reach
+# the deck. It is not a bound on everything such a method can do. A page switch
+# serializes on the deck's page lock, and building a page is as long as the
+# page is, so a call can still outlast this number. It clears what can be
+# named. scenario_cli_forward_all pins the ordering, because the two sides of
+# it live in modules that cannot import each other.
 #
 # The cost is the other direction: an instance wedged mid-call holds a typed
 # command for this long rather than for the probe timeout above. A probe
 # decides whether to boot, so it stays short; a control call is work a person
-# asked for, so it waits.
+# asked for, so it waits. One tail is left standing either way: the handover
+# call in src/backend/instance_gate.py keeps the probe timeout, so a second
+# launch can still time out against a main context that a long control call is
+# holding, and it reports that rather than lose anything.
 CONTROL_CALL_TIMEOUT_MS = 20000
 
 # The interface that the top-level object carries, which is the app id.
@@ -409,6 +415,22 @@ def _parse_emulate_requests(raw: list[Any]) -> tuple[list[tuple[str, str, str, s
     return parsed, failures
 
 
+def answered_by_a_listing(args: Namespace) -> bool:
+    """Does this command line carry a verb the launched process answers itself?
+
+    --list-devices and --list-pages are answered inside main.py, which prints
+    and returns before it looks at the requests on the line. Such an invocation
+    is that command whatever else was typed, and nothing else on the line is
+    applied. Both halves of the CLI read that from here, so a listing line gets
+    one answer whichever half sees it.
+
+    The attributes are named rather than looked up, so a flag renamed in
+    cli_args raises on the next launch instead of quietly turning a listing
+    command into a forward.
+    """
+    return bool(args.list_devices or args.list_pages)
+
+
 def unparkable(plan: Plan, message: str) -> list[str]:
     """The sentences for the requests in plan that this process cannot apply.
 
@@ -559,6 +581,15 @@ def forward_cli_requests(args: Namespace,
     and only to learn whether it can skip that import; a no there changes
     nothing here.
     """
+    if answered_by_a_listing(args):
+        # First, as in the fast path, so that one command line reaches one
+        # answer from either half. The listing is the whole command: a request
+        # that could be parked is left alone, because nothing on the line runs
+        # after the listing prints, and a press is refused, because a press
+        # that nothing applies must not exit as though it was made.
+        return Verdict(handled=False,
+                       failures=unparkable(plan_requests(args), LISTING_MESSAGE))
+
     plan = plan_requests(args)
     if plan.failures:
         return Verdict(handled=False, failures=plan.failures)
