@@ -1,5 +1,6 @@
 """The CLI half of the control plane. This decides what an invocation that
-carries --change-page or --change-state does with the requests it was given.
+carries --change-page, --change-state or --emulate-input does with the
+requests it was given.
 
 An invocation that names a deck has two jobs, by whether Deckard already runs.
 With nothing running, and with --close-running, which is about to stop what
@@ -7,6 +8,10 @@ runs, the invocation becomes the instance. It parks its requests for the deck
 that has not enumerated yet and boots; see legs B and C in
 src/backend/startup_queue.py. With an instance running, the requests go over
 the bus to that instance and this process ends.
+
+An emulated input has only the second job. It is a press, which happens at a
+moment, so there is nothing to hold for a deck that appears later. Such an
+invocation is refused where the others park; see unparkable().
 
 Parking happens before the process knows which of the two it is. A launch
 that parks and then loses the race for the application name holds requests
@@ -46,6 +51,10 @@ if TYPE_CHECKING:
 
         def change_state(self, serial: str, page: str, coords: str,
                          state: int) -> str:
+            """Empty on success, else the reason the instance gave."""
+
+        def emulate_input(self, serial: str, page: str, coords: str,
+                          event: str) -> str:
             """Empty on success, else the reason the instance gave."""
 
 
@@ -99,16 +108,44 @@ SKEW_MESSAGE = (
 # what hardware has, which is why it is checked and the coordinates are not.
 MAX_STATE_NUMBER = 2**31 - 1
 
+# The event words --emulate-input takes. control_plane.EMULATED_EVENTS is the
+# same list, and owns it: that module decides what each word does to an input.
+# This copy exists because this body stays importable before globals and that
+# module is not, and scenario_cli_forward_all pins the two to each other. A
+# word missing from this copy is refused here, before the instance that would
+# have carried it out is asked.
+EMULATE_EVENTS = ("press", "long-press")
+
 USAGE = """
 Usage examples:
   --change-state CL123456789 Main 0,0 1
   --change-state CL123456789 Soundboard 2,1 0
+  --emulate-input CL123456789 Main 0,0 press
+  --emulate-input CL123456789 Soundboard 2,1 long-press
 
 Parameters:
   SERIAL_NUMBER: Device serial (e.g., CL123456789)
   PAGE_NAME: Page name (e.g., Main, Soundboard)
   COORDINATES: Position as x,y (e.g., 0,0 for top-left)
-  STATE_NUMBER: State to change to (e.g., 0, 1, 2)"""
+  STATE_NUMBER: State to change to (e.g., 0, 1, 2)
+  EVENT: press or long-press"""
+
+# What an invocation carrying an emulated input is told when there is no
+# running instance to press against. Both halves of the CLI answer with these,
+# and neither parks such a request; see park() and Plan.
+_UNPARKABLE_WHY = (
+    "An emulated input means nothing to a deck that is not open yet. A page or "
+    "a state change waits for its deck and applies when it appears; a press "
+    "cannot wait, because it would land at a moment nobody asked for.")
+
+NOT_RUNNING_MESSAGE = (
+    f"Error: Deckard is not running, so nothing was pressed. {_UNPARKABLE_WHY} "
+    f"Start Deckard, then send the command again.")
+
+CLOSE_RUNNING_MESSAGE = (
+    f"Error: --close-running makes this launch the Deckard that runs, so "
+    f"nothing was pressed. {_UNPARKABLE_WHY} Run the two commands one after "
+    f"the other instead.")
 
 
 class OlderInstance(Exception):
@@ -160,15 +197,23 @@ class Plan:
     send and a park are per-kind work either way. The fast path
     (src/backend/cli_fast_path.py) needs no edit, with one exception named in
     its own docstring: a kind that cannot be parked.
+
+    The emulated inputs are that exception, and their fourth edit is
+    unparkable() rather than a branch in park(). A press is an instant and not
+    a setting, so there is nothing to apply when the deck finally appears.
+    Both halves of the CLI ask unparkable() before they park, and the
+    invocation ends there with a sentence and a non-zero code.
     """
 
     page_requests: list[tuple[str, str]] = field(default_factory=list)
     state_requests: list[tuple[str, str, str, int]] = field(default_factory=list)
+    emulate_requests: list[tuple[str, str, str, str]] = field(default_factory=list)
     failures: list[str] = field(default_factory=list)
 
     @property
     def empty(self) -> bool:
-        return not self.page_requests and not self.state_requests
+        return not (self.page_requests or self.state_requests
+                    or self.emulate_requests)
 
 
 # Syntax
@@ -187,6 +232,32 @@ def _unsendable(where: str, what: str, value: str) -> str | None:
     except UnicodeEncodeError:
         return (f"Error: {what} in {where} is not text this command can send: "
                 f"{value!r}. The bus carries UTF-8 and these bytes are not.")
+    return None
+
+
+def _bad_coords(where: str, coords: str) -> str | None:
+    """The sentence for an x,y group that does not read as one, or None.
+
+    Shape alone, which needs no device. Whether (9,9) sits on the deck is the
+    running instance's answer, and the text travels there as it was typed. A
+    cap here, such as coordinates at most 10, matches no hardware and rejects a
+    valid request for a large deck before a device sees it.
+
+    The coordinates take no UTF-8 check of their own. A lone surrogate is no
+    digit, so the int conversion refuses one as a bad coordinate before it can
+    reach the wire. Both kinds of request that carry coordinates read them
+    here, so both refuse the same text with the same sentence.
+    """
+    if not coords or "," not in coords:
+        return (f"Error: Invalid coordinate format in {where}: '{coords}'. "
+                f"Expected format: 'x,y' (e.g., '0,0')")
+    try:
+        x, y = (int(part) for part in coords.split(","))
+    except ValueError:
+        return (f"Error: Invalid coordinate format in {where}: '{coords}'. "
+                f"Expected integers like '0,0'")
+    if x < 0 or y < 0:
+        return f"Error: Coordinates must be non-negative in {where}: '{coords}'"
     return None
 
 
@@ -251,23 +322,9 @@ def _parse_state_requests(raw: list[Any]) -> tuple[list[tuple[str, str, str, int
         if unsendable:
             failures.append(unsendable)
             continue
-        # The coordinates take no such check of their own. A lone surrogate is
-        # no digit, so the int conversion below refuses one as a bad coordinate
-        # before it can reach the wire.
-        if not coords or "," not in coords:
-            failures.append(
-                f"Error: Invalid coordinate format in {where}: '{coords}'. "
-                f"Expected format: 'x,y' (e.g., '0,0')")
-            continue
-        try:
-            x, y = (int(part) for part in coords.split(","))
-        except ValueError:
-            failures.append(
-                f"Error: Invalid coordinate format in {where}: '{coords}'. "
-                f"Expected integers like '0,0'")
-            continue
-        if x < 0 or y < 0:
-            failures.append(f"Error: Coordinates must be non-negative in {where}: '{coords}'")
+        bad_coords = _bad_coords(where, coords)
+        if bad_coords is not None:
+            failures.append(bad_coords)
             continue
         try:
             state = int(state_number)
@@ -290,6 +347,63 @@ def _parse_state_requests(raw: list[Any]) -> tuple[list[tuple[str, str, str, int
     return parsed, failures
 
 
+def _parse_emulate_requests(raw: list[Any]) -> tuple[list[tuple[str, str, str, str]],
+                                                     list[str]]:
+    """Read the --emulate-input groups into (serial, page, coords, event).
+
+    All or nothing, as the state groups are. The event word is judged here
+    against this module's own copy of the vocabulary, because a word no
+    instance knows costs a round trip to learn and reads better named beside
+    the ones that work.
+    """
+    parsed: list[tuple[str, str, str, str]] = []
+    failures: list[str] = []
+    for i, (serial_number, page_name, coords, event) in enumerate(raw):
+        where = f"--emulate-input argument {i + 1}"
+        if not serial_number:
+            failures.append(f"Error: Invalid serial number in {where}: '{serial_number}'")
+            continue
+        if not page_name:
+            failures.append(f"Error: Invalid page name in {where}: '{page_name}'")
+            continue
+        unsendable = (_unsendable(where, "The serial number", serial_number)
+                      or _unsendable(where, "The page name", page_name))
+        if unsendable:
+            failures.append(unsendable)
+            continue
+        bad_coords = _bad_coords(where, coords)
+        if bad_coords is not None:
+            failures.append(bad_coords)
+            continue
+        if event not in EMULATE_EVENTS:
+            failures.append(
+                f"Error: Invalid event in {where}: '{event}'. "
+                f"Expected one of: {', '.join(EMULATE_EVENTS)}")
+            continue
+        parsed.append((serial_number, page_name, coords, event))
+    return parsed, failures
+
+
+def unparkable(plan: Plan, *, replacing: bool = False) -> list[str]:
+    """The sentences for the requests in plan that no boot can carry out.
+
+    Parking is what lets an invocation that finds nothing running boot and
+    apply its requests to the decks it opens next. An emulated input has no
+    such meaning, so it is refused instead, and the whole command with it:
+    every other outcome either presses at a moment nobody asked for or applies
+    half of what was typed.
+
+    Both halves of the CLI call this before they park, which is what keeps the
+    fast path's fall-through harmless and park() free of a kind it cannot take.
+    replacing tells the two cases apart for the reader: an invocation with
+    --close-running over a running instance, and one with nothing running at
+    all.
+    """
+    if not plan.emulate_requests:
+        return []
+    return [CLOSE_RUNNING_MESSAGE if replacing else NOT_RUNNING_MESSAGE]
+
+
 def plan_requests(args: Namespace) -> Plan:
     """Read this invocation's requests out of argv. It touches nothing else.
 
@@ -305,31 +419,39 @@ def plan_requests(args: Namespace) -> Plan:
     """
     raw_page_requests = args.change_page or []
     raw_state_requests = args.change_state or []
-    if not raw_page_requests and not raw_state_requests:
+    raw_emulate_requests = args.emulate_input or []
+    if not raw_page_requests and not raw_state_requests and not raw_emulate_requests:
         return Plan()
 
     # argparse hands each group over as a list. A tuple per request keeps one
-    # shape for both kinds and matches what the startup queue hands back when a
+    # shape for every kind and matches what the startup queue hands back when a
     # lost launch claims its parking again.
     page_requests, page_failures = _parse_page_requests(raw_page_requests)
     state_requests, state_failures = _parse_state_requests(raw_state_requests)
-    failures = page_failures + state_failures
+    emulate_requests, emulate_failures = _parse_emulate_requests(raw_emulate_requests)
+    failures = page_failures + state_failures + emulate_failures
     if failures:
         # Nothing is parked or sent yet, and nothing gets parked or sent.
         return Plan(failures=failures + [USAGE])
 
-    return Plan(page_requests=page_requests, state_requests=state_requests)
+    return Plan(page_requests=page_requests, state_requests=state_requests,
+                emulate_requests=emulate_requests)
 
 
 # The two things an invocation can do with its requests
 
 def park(plan: Plan) -> None:
-    """Hand every request to the startup queue, for the decks this process
-    enumerates next. The serial keys each request and the last write wins,
-    which is the parking contract rather than an effect of this loop.
+    """Hand every parkable request to the startup queue, for the decks this
+    process enumerates next. The serial keys each request and the last write
+    wins, which is the parking contract rather than an effect of this loop.
 
     The startup queue imports globals, and this module's body must not, so the
     import sits here. Only a process that goes on to boot reaches this call.
+
+    A plan carrying an emulated input never reaches here, because both callers
+    ask unparkable() first and end the invocation on its answer. That is why
+    this takes no branch for a kind it has no queue for, and why nothing on
+    that queue has to be swept for a press that arrived too early.
     """
     from src.backend import startup_queue
 
@@ -353,9 +475,11 @@ def forward(plan: Plan, transport: Transport) -> list[str]:
     --change-page.
 
     The order is every page request as argv gave them, then every state
-    request as argv gave them. argparse collects the two flags into two lists,
-    so nothing here recovers how they interleaved, and this is the order the
-    CLI applies.
+    request, then every emulated input, each group in the order argv gave it.
+    argparse collects each flag into a list of its own, so nothing here
+    recovers how they interleaved, and this is the order the CLI applies. The
+    presses come last on purpose: a command that sets a state and then presses
+    the input presses the state it just set.
 
     The caller must see a failure. The bus methods answer with a sentence, and
     those sentences reach the verdict for main.py to print. A failed request
@@ -373,6 +497,10 @@ def forward(plan: Plan, transport: Transport) -> list[str]:
             message = transport.change_state(serial_number, page_name, coords, state)
             if message:
                 failures.append(message)
+        for serial_number, page_name, coords, event in plan.emulate_requests:
+            message = transport.emulate_input(serial_number, page_name, coords, event)
+            if message:
+                failures.append(message)
     except OlderInstance:
         # Every request behind this one fails the same way, and one answer
         # covers all of them.
@@ -388,11 +516,14 @@ def forward(plan: Plan, transport: Transport) -> list[str]:
 
 def forward_cli_requests(args: Namespace,
                          transport: Transport | None = None) -> Verdict:
-    """Apply the invocation's --change-page and --change-state requests.
+    """Apply the invocation's --change-page, --change-state and
+    --emulate-input requests.
 
     It parks them for this process to pick up as it boots, or forwards them to
-    the instance already running; see the module docstring. It never exits and
-    never prints. The verdict says what happened, and main.py owns both.
+    the instance already running; see the module docstring. A press is never
+    parked, and an invocation carrying one with nothing to press against ends
+    in the verdict's failures instead. It never exits and never prints. The
+    verdict says what happened, and main.py owns both.
 
     This is the boot path's call. A process that reaches it has imported the
     application, so the probe below is the one that decides, and it is the
@@ -416,7 +547,15 @@ def forward_cli_requests(args: Namespace,
             # ends the invocation with a non-zero code.
             return Verdict(handled=False, failures=[str(e)])
 
-    if not transport.is_running() or args.close_running:
+    running = transport.is_running()
+    if not running or args.close_running:
+        # This process is the instance that applies these requests, once it has
+        # booted and opened the decks they name. Anything it cannot apply that
+        # way ends the invocation here, before a single request is parked: a
+        # command applies all of itself or none of it.
+        refusals = unparkable(plan, replacing=running)
+        if refusals:
+            return Verdict(handled=False, failures=refusals)
         park(plan)
         return Verdict(handled=False)
 
@@ -534,6 +673,12 @@ class _BusTransport:
         return self._call(
             "ChangeState",
             self._glib.Variant("(sssi)", (serial, page, coords, state)),
+        )
+
+    def emulate_input(self, serial: str, page: str, coords: str, event: str) -> str:
+        return self._call(
+            "EmulateInput",
+            self._glib.Variant("(ssss)", (serial, page, coords, event)),
         )
 
     def _call(self, method: str, params: "GLib.Variant | None") -> str:

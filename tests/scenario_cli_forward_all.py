@@ -1,7 +1,9 @@
 """Pins the CLI half of the control plane in src/backend/cli_forward.py.
 
-Every page and state request is forwarded or parked. Validation is syntax
-only and all-or-nothing, and a failure never stops the requests behind it.
+Every page and state request is forwarded or parked, and every emulated input
+is forwarded or refused, because a press cannot wait for a deck. Validation is
+syntax only and all-or-nothing, and a failure never stops the requests behind
+it.
 """
 import fixtures  # noqa: F401  (must be first: isolates DATA_PATH before globals)
 
@@ -67,6 +69,10 @@ class Recorder:
 
     def change_state(self, serial: str, page: str, coords: str, state: int) -> str:
         self.calls.append(("state", serial, page, coords, state))
+        return self._answer(serial)
+
+    def emulate_input(self, serial: str, page: str, coords: str, event: str) -> str:
+        self.calls.append(("emulate", serial, page, coords, event))
         return self._answer(serial)
 
     def _answer(self, serial: str) -> str:
@@ -310,6 +316,201 @@ def check_large_decks_not_pre_rejected() -> None:
     print("PASS: coordinates and states the device decides on are passed through")
 
 
+# The emulated inputs, which forward like the rest and park unlike it
+
+EMULATE_ARGV = [
+    "--emulate-input", "deck-f", "Zeta", "0,0", "press",
+    "--emulate-input", "deck-g", "Eta", "1,2", "long-press",
+]
+
+EXPECTED_EMULATE_FORWARDS = [
+    ("emulate", "deck-f", "Zeta", "0,0", "press"),
+    ("emulate", "deck-g", "Eta", "1,2", "long-press"),
+]
+
+
+def check_emulate_requests_are_forwarded() -> None:
+    """Every press goes to the instance, after the changes on the same line.
+
+    A command that sets a state and then presses that input has to press the
+    state it just set, which is what the order of the sends decides.
+    """
+    clear_parking()
+    recorder = Recorder(running=True)
+
+    verdict = cli_forward.forward_cli_requests(parse(ARGV + EMULATE_ARGV), recorder)
+
+    assert verdict.handled and verdict.failures == [], verdict
+    assert recorder.forwards() == EXPECTED_FORWARDS + EXPECTED_EMULATE_FORWARDS, (
+        f"the instance was sent {recorder.forwards()} instead of the page and "
+        f"state requests followed by the presses")
+    assert not gl.api_page_requests and not gl.api_state_requests, (
+        f"forwarded requests must not also be parked: {gl.api_page_requests} / "
+        f"{gl.api_state_requests}")
+
+    print("PASS: every emulated input is forwarded, after the page and state requests")
+
+
+def check_emulate_cannot_be_parked() -> None:
+    """With nothing running, a press ends the command instead of parking.
+
+    Parking exists so an invocation that finds nothing running can boot and
+    apply its requests to the decks it opens. A press has no such meaning: it
+    would fire at whatever moment the deck turned up. So the whole command is
+    refused, and nothing on it is applied, because a command applies all of
+    itself or none of it.
+    """
+    clear_parking()
+    recorder = Recorder(running=False)
+
+    verdict = cli_forward.forward_cli_requests(parse(EMULATE_ARGV), recorder)
+
+    assert not verdict.handled, verdict
+    assert verdict.failures == [cli_forward.NOT_RUNNING_MESSAGE], verdict.failures
+    assert "not running" in cli_forward.NOT_RUNNING_MESSAGE, cli_forward.NOT_RUNNING_MESSAGE
+    assert "Start Deckard" in cli_forward.NOT_RUNNING_MESSAGE, (
+        "the message has to say what to do about it")
+    assert recorder.forwards() == [], (
+        f"nothing is running, so nothing may be sent: {recorder.forwards()}")
+    assert not gl.api_page_requests and not gl.api_state_requests, (
+        f"a press must not be parked, and must not drag the rest of its "
+        f"command into the parking either: {gl.api_page_requests} / "
+        f"{gl.api_state_requests}")
+
+    # The same command with a parkable request beside the press. The press is
+    # what the boot cannot carry out, so the page change parks nothing either.
+    clear_parking()
+    verdict = cli_forward.forward_cli_requests(
+        parse(["--change-page", "deck-a", "Alpha", *EMULATE_ARGV]), Recorder(running=False))
+    assert verdict.failures == [cli_forward.NOT_RUNNING_MESSAGE], verdict.failures
+    assert not gl.api_page_requests and not gl.api_state_requests, (
+        f"a refused command applied part of itself: {gl.api_page_requests} / "
+        f"{gl.api_state_requests}")
+
+    print("PASS: with nothing running a press ends the command and parks nothing")
+
+
+def check_emulate_refuses_close_running() -> None:
+    """--close-running is the same case, and says so in its own words.
+
+    That launch stops the instance and becomes it, so its requests belong to
+    the decks it opens next. A press cannot wait for those either.
+    """
+    clear_parking()
+    recorder = Recorder(running=True)
+
+    verdict = cli_forward.forward_cli_requests(
+        parse([*EMULATE_ARGV, "--close-running"]), recorder)
+
+    assert not verdict.handled, verdict
+    assert verdict.failures == [cli_forward.CLOSE_RUNNING_MESSAGE], verdict.failures
+    assert "--close-running" in cli_forward.CLOSE_RUNNING_MESSAGE, (
+        cli_forward.CLOSE_RUNNING_MESSAGE)
+    assert recorder.forwards() == [], (
+        f"the instance is about to be stopped, so nothing may be sent to it: "
+        f"{recorder.forwards()}")
+    assert not gl.api_page_requests and not gl.api_state_requests
+
+    # And with nothing running at all, the answer is the other one: there is no
+    # instance for --close-running to replace.
+    clear_parking()
+    verdict = cli_forward.forward_cli_requests(
+        parse([*EMULATE_ARGV, "--close-running"]), Recorder(running=False))
+    assert verdict.failures == [cli_forward.NOT_RUNNING_MESSAGE], verdict.failures
+
+    print("PASS: --close-running refuses a press, and names its own reason")
+
+
+def check_emulate_validation_is_syntax_only() -> None:
+    bad = [
+        ["--emulate-input", "deck-a", "Alpha", "0,0", "smash"],   # no such event
+        ["--emulate-input", "deck-a", "Alpha", "0,0", ""],        # no event at all
+        ["--emulate-input", "deck-a", "Alpha", "0,0", "Press"],   # the words are exact
+        ["--emulate-input", "deck-a", "Alpha", "nope", "press"],  # no comma
+        ["--emulate-input", "deck-a", "Alpha", "-1,0", "press"],  # before the first key
+        ["--emulate-input", "", "Alpha", "0,0", "press"],         # no deck named
+        ["--emulate-input", "deck-a", "", "0,0", "press"],        # no page named
+    ]
+    for argv in bad:
+        clear_parking()
+        recorder = Recorder(running=True)
+        verdict = cli_forward.forward_cli_requests(parse(argv), recorder)
+        assert verdict.failures, f"{argv} was accepted"
+        assert verdict.failures[0].startswith("Error: "), verdict.failures
+        assert cli_forward.USAGE in verdict.failures, (
+            f"a malformed command has to be shown the shape of a good one: "
+            f"{verdict.failures}")
+        assert not verdict.handled, argv
+        assert recorder.calls == [], (
+            f"{argv} reached the bus before it was read: {recorder.calls}")
+        assert not gl.api_page_requests and not gl.api_state_requests, (
+            f"{argv} parked something despite being rejected")
+
+    # The large-deck rule holds here too: coordinates the CLI cannot judge go
+    # to the instance, which has the device to judge them against.
+    clear_parking()
+    recorder = Recorder(running=True)
+    verdict = cli_forward.forward_cli_requests(
+        parse(["--emulate-input", "deck-a", "Alpha", "14,7", "press"]), recorder)
+    assert verdict.failures == [], verdict.failures
+    assert recorder.forwards() == [("emulate", "deck-a", "Alpha", "14,7", "press")], (
+        recorder.forwards())
+
+    print("PASS: a malformed press rejects the whole command before anything happens")
+
+
+def check_event_words_match_the_control_plane() -> None:
+    """The CLI's copy of the vocabulary is the control plane's list.
+
+    This module stays importable before globals and the control plane is not,
+    so the words are written out twice. A word added on one side and not the
+    other is either a command the CLI refuses and the instance would have run,
+    or one it sends for the instance to refuse.
+    """
+    from src.backend import control_plane
+
+    assert cli_forward.EMULATE_EVENTS == control_plane.EMULATED_EVENTS, (
+        f"the CLI knows {cli_forward.EMULATE_EVENTS} and the control plane "
+        f"knows {control_plane.EMULATED_EVENTS}")
+    for word in cli_forward.EMULATE_EVENTS:
+        assert word in cli_forward.USAGE, (
+            f"the usage text must show every word that works: {word!r}")
+
+    print("PASS: the CLI accepts exactly the event words the control plane runs")
+
+
+def check_unparkable_is_the_one_rule() -> None:
+    """One function answers "can a boot apply this?" for both halves of the CLI.
+
+    The fast path and the boot path both ask it, which is what keeps park()
+    free of a kind it has no queue for.
+    """
+    parkable = cli_forward.Plan(page_requests=[("deck-a", "Alpha")],
+                                state_requests=[("deck-b", "Beta", "0,0", 1)])
+    assert cli_forward.unparkable(parkable) == [], (
+        "a page or state change is exactly what parking is for")
+    assert cli_forward.unparkable(parkable, replacing=True) == []
+
+    pressing = cli_forward.Plan(emulate_requests=[("deck-f", "Zeta", "0,0", "press")])
+    assert cli_forward.unparkable(pressing) == [cli_forward.NOT_RUNNING_MESSAGE]
+    assert cli_forward.unparkable(pressing, replacing=True) == [
+        cli_forward.CLOSE_RUNNING_MESSAGE]
+
+    assert not cli_forward.Plan(
+        emulate_requests=[("deck-f", "Zeta", "0,0", "press")]).empty, (
+        "a command carrying only presses asks for something, and an empty plan "
+        "would boot as an ordinary launch and lose them")
+
+    # Nothing about a press reaches the startup queue, so no slot on it holds
+    # one and nothing has to sweep one that arrived too early.
+    clear_parking()
+    cli_forward.park(parkable)
+    assert set(gl.api_page_requests) == {"deck-a"} and set(gl.api_state_requests) == {"deck-b"}, (
+        f"{gl.api_page_requests} / {gl.api_state_requests}")
+
+    print("PASS: one rule decides what a boot cannot apply, and presses are it")
+
+
 # 8. Nothing asked for
 
 def check_no_requests_touches_nothing() -> None:
@@ -375,6 +576,12 @@ def main() -> None:
         check_broken_conversation_reported()
         check_validation_is_syntax_only()
         check_large_decks_not_pre_rejected()
+        check_emulate_requests_are_forwarded()
+        check_emulate_cannot_be_parked()
+        check_emulate_refuses_close_running()
+        check_emulate_validation_is_syntax_only()
+        check_event_words_match_the_control_plane()
+        check_unparkable_is_the_one_rule()
         check_no_requests_touches_nothing()
         check_unreachable_bus_is_reported()
     finally:

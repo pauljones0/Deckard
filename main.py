@@ -427,10 +427,13 @@ def handle_listing_commands():
     return False
 
 def make_api_calls():
-    """Apply the --change-page and --change-state requests from argv.
+    """Apply the --change-page, --change-state and --emulate-input requests
+    from argv.
 
     True means a running instance took them and this process stops.
     False means the requests are parked, or absent, and this process boots.
+    A request no boot can carry out, which is a press with nothing running,
+    ends the invocation here with the reason instead.
     Everything but reading argv and leaving the process lives in cli_forward,
     where a test can reach it, because this module re-execs itself on import.
     """

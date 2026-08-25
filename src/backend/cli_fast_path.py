@@ -45,6 +45,13 @@ the whole path here follows without an edit. One shape does not: a verb that
 cannot be parked for a deck which has not appeared yet. Parking is what makes
 the fall-through below harmless, so such a verb needs its own answer for "the
 instance is not running" rather than a boot.
+
+--emulate-input is the first of those, and cli_forward.unparkable() is where
+that answer lives, so both halves of the CLI give the same one. Two of the
+arms below ask it: the launch that is about to replace the instance, and the
+launch that finds none. The third case, no session bus to open, still hands
+back, because the boot path's own attempt reports it and one reporting site is
+what keeps the two paths from answering the same command differently.
 """
 from __future__ import annotations
 
@@ -112,7 +119,12 @@ def answer_from_running_instance(args: Namespace,
         return BOOT
     if args.close_running:
         # This launch is about to stop what runs and take its place, so its
-        # requests belong to the decks it opens next, and it parks them.
+        # requests belong to the decks it opens next, and it parks them. What
+        # it cannot park it cannot carry out at all, and says so here rather
+        # than boot to find that out.
+        refusals = cli_forward.unparkable(plan, replacing=True)
+        if refusals:
+            return Outcome(exit_code=1, failures=tuple(refusals))
         return BOOT
 
     if transport is None:
@@ -129,6 +141,14 @@ def answer_from_running_instance(args: Namespace,
             return BOOT
 
     if not transport.is_running():
+        # Nothing to forward to. A request that cannot be parked cannot be
+        # applied by the boot either, and the fall-through below would end in a
+        # launch that presses nothing and reports success, so it ends here with
+        # its reason.
+        refusals = cli_forward.unparkable(plan)
+        if refusals:
+            return Outcome(exit_code=1, failures=tuple(refusals))
+
         # Boot. The probe that decides is the one the boot path makes once the
         # application is up, which is where it was made before this module
         # existed, so a launch that races another for the application name
