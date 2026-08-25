@@ -52,6 +52,7 @@ class PluginSettingsGroup(BetterPreferencesGroup):
             # Nothing to list before main.create_global_objects() builds it,
             # and this page can open with no plugins at all.
             return
+        plugin_bases: list[PluginBase] = []
         for plugin_id in plugin_manager.get_plugins():
             plugin_base = plugin_manager.get_plugin_by_id(plugin_id)
             if plugin_base is None:
@@ -59,6 +60,13 @@ class PluginSettingsGroup(BetterPreferencesGroup):
                 # another thread removed it. Skip the row rather than build
                 # one whose every button dereferences None.
                 continue
+            plugin_bases.append(plugin_base)
+        # Show the rows in the order of the titles they carry. get_plugins hands
+        # them back in discovery order, so a case-insensitive sort by name is
+        # what makes the list read alphabetically. A manifest without a name
+        # sorts as empty, which is the title its row shows too.
+        plugin_bases.sort(key=lambda base: (base.plugin_name or "").lower())
+        for plugin_base in plugin_bases:
             self.add(PluginExpander(settings_group=self, plugin_base=plugin_base))
 
 

@@ -157,6 +157,14 @@ bundle as a release asset.
 
 ### Fixed
 
+- The onboarding pages no longer change size as you move between them. Three of
+  the welcome pages drew their icon larger than the pages on either side, so the
+  icon grew and then shrank across a swipe. Every icon page now draws its icon
+  at the size the rest of the onboarding uses.
+- The plugin list in the settings is now in alphabetical order. It followed the
+  order the plugins loaded in, which you cannot predict, so a plugin was hard to
+  find in a long list. The rows now sort by name, and upper or lower case does
+  not change where a name sits.
 - A key or the touch strip no longer keeps showing an out-of-date picture when
   two things repaint it at once. Whichever repaint drew first reached the deck
   last if it happened to be the slower one, and nothing corrected it, because
