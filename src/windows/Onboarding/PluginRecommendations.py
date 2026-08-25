@@ -1,12 +1,12 @@
 from typing import Any
 
-import threading
 from gi.repository import Gtk, Adw, GLib
 from loguru import logger as log
 
 from GtkHelper.GtkHelper import BetterPreferencesGroup, LoadingScreen
 
 import globals as gl
+from src.backend.main_loop import run_in_background
 from src.backend.Store.store_result import Err
 from src.windows.Store.StoreData import PluginData
 
@@ -65,7 +65,7 @@ class PluginRecommendations(Gtk.Box):
         self.retry_button.connect("clicked", self.on_retry_clicked)
         self.error_box.append(self.retry_button)
 
-        threading.Thread(target=self.load).start()
+        run_in_background(self.load)
 
     def set_loading(self, loading: bool) -> None:
         # The whole body marshals, because load() calls it from a plain
@@ -83,7 +83,7 @@ class PluginRecommendations(Gtk.Box):
 
     def on_retry_clicked(self, button: Gtk.Button) -> None:
         self.retry_button.set_sensitive(False)
-        threading.Thread(target=self.load).start()
+        run_in_background(self.load)
 
     def load(self) -> None:
         self.set_loading(True)
