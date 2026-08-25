@@ -329,6 +329,17 @@ bundle as a release asset.
 
 ### Security
 
+- A plugin install that another program on your desktop session asks for now
+  waits for your answer. The app publishes an install-plugin control on the
+  session bus, which is how the Install button of a "plugin missing"
+  notification reaches it, and any other program on the session could use the
+  same control. Such a request now raises a dialog that names the plugin, and
+  installs nothing until you agree, so no program can install a plugin behind
+  your back. The dialog comes before the store is contacted, so a request you
+  refuse costs nothing, and one request is handled at a time. The store window,
+  the first-run page and the "install the missing plugin" button never used
+  that control and are unchanged.
+
 - Installing a plugin from the store now asks before it runs the plugin's
   install steps, and runs them confined. A plugin can ship a setup step
   that runs on this computer at install time; one such step silently

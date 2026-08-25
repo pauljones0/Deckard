@@ -13,13 +13,23 @@ step, confines each step, and re-injects the loopback guard into every
 venv a script created, so a rebuilt or fresh venv never launches
 unguarded. The future venv rebuild path calls run_install_steps too.
 
-Confinement has two tiers. Under bwrap, where it operates, a step runs on
-a read-only filesystem with only the writable paths it needs, no session
-socket, and its own pid namespace: that is the real boundary. Without
-bwrap the gate can only poison the session-bus variables in the child
-environment, which a determined script recovers from the parent's /proc
-and which cannot contain a script that daemonizes; there the consent
-prompt is the boundary, not the environment.
+Confinement has two tiers, and only one of them confines.
+
+Under bwrap, where it operates, a step runs on a read-only filesystem
+with only the writable paths it needs, no session socket, and its own pid
+namespace: that is the real boundary.
+
+Without bwrap there is no boundary, only a discouragement. The gate
+poisons the session-bus and display variables in the child environment
+and nothing else, so the step still runs as the user, with the user's
+whole filesystem readable and writable, with the network open, and with
+no limit on the processes it starts. Even the environment is
+best-effort: a determined script reads the real values back from the
+parent's /proc, and a step that daemonizes outlives the timeout that
+kills its process group. On such a host the consent prompt is the whole
+boundary. What the user agreed to there is arbitrary code with their own
+privileges, and the tier decides how loudly that is true, not whether it
+is.
 """
 
 import enum
@@ -99,7 +109,8 @@ def run_install_steps(plugin_dir: str, display_name: str, run: bool,
     Returns the worst outcome; a later step still runs after an earlier one
     failed, matching the two previously independent calls.
 
-    The script step is confined (see the module docstring). The
+    Each step is confined as far as the host allows, which on a host
+    without a working bwrap is not at all (see the module docstring). The
     requirements step installs into this app's own interpreter, so its
     write target, the interpreter prefix, is bound writable rather than
     left read-only; every other confinement still applies."""
