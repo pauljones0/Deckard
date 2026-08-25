@@ -34,12 +34,13 @@ from src.windows.Store.AssetPage import StoreAssetPage, StoreAssetPreview
 from src.windows.Store.StoreData import StoreAssetData
 
 # Typing
-from typing import Any
+from typing import Any, override
 
 
 class PluginPage(StoreAssetPage):
     descriptor = asset_types.PLUGIN
 
+    @override
     def skip_entry(self, asset: StoreAssetData) -> bool:
         # A catalog row that prepared to an empty record shows nothing, and
         # every read below it would raise on the loader thread.
@@ -58,6 +59,7 @@ class PluginPreview(StoreAssetPreview):
     # incompatible plugin in the incompatible section.
     shows_incompatible_border = False
 
+    @override
     def _install_kwargs(self) -> "dict[str, Any]":
         # Only a plugin carries an install script, so only a plugin install
         # prompts. The dialog is transient for the store window and answered
@@ -66,6 +68,7 @@ class PluginPreview(StoreAssetPreview):
         return {"ask_install_script": make_consent(self.store)}
 
     @staticmethod
+    @override
     def get_install_state_for(asset_data: StoreAssetData) -> int:
         """0 is not installed, 1 is installed, and 2 is update available.
 
@@ -94,6 +97,7 @@ class PluginPreview(StoreAssetPreview):
             return 1
         return 2
 
+    @override
     def uninstall(self) -> None:
         backend = self.store.backend
         plugin_id = self.asset_data.asset_id
