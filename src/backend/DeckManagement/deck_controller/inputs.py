@@ -945,9 +945,9 @@ class ControllerKey(ControllerInput["ControllerKeyState"]):
                 state.label_manager.clear_labels()
 
             # Reset the action layout, except on a state whose action-owned
-            # media the block above restored. Its action layout belongs to the
-            # same action, which is still present, and a reset would restore
-            # the image but lose the alignment and the size.
+            # media _recreate_states_keeping_action_media restored. Its action
+            # layout belongs to the same action, which is still present, and a
+            # reset would restore the image but lose the alignment and the size.
             if state.state not in restored:
                 layout = ImageLayout()
                 state.layout_manager.set_action_layout(layout, update=False)
@@ -1353,9 +1353,9 @@ class ControllerDial(ControllerInput["ControllerDialState"]):
             state_dict = input_dict["states"][str(state.state)]
 
             # Reset the action layout, except on a state whose action-owned
-            # media the block above restored: that layout belongs to the same
-            # still-present action, and a reset would lose its alignment and
-            # size.
+            # media _recreate_states_keeping_action_media restored: that layout
+            # belongs to the same still-present action, and a reset would lose
+            # its alignment and size.
             if state.state not in restored:
                 layout = ImageLayout()
                 state.layout_manager.set_action_layout(layout, update=False)

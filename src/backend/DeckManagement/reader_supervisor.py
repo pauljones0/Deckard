@@ -392,7 +392,8 @@ class DeckReaderSupervisor:
         # collect: the physical up event went nowhere. Without this, the first
         # callback after the reopen dispatches a hold stop or an up into the
         # snapshot taken before the outage, against a page the deck may have
-        # left. The touchscreen keeps no gesture state.
+        # left. The touchscreen inherits the gesture fields but never populates
+        # them, so its cancel clears state that is already clear.
         self._cancel_gestures()
         # The device lost its handle and took a new one, so no present state
         # describes what it shows any more. The repaint clears them itself

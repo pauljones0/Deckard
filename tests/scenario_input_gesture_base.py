@@ -1,11 +1,14 @@
 """One gesture body serves every input type that dispatches a gesture.
 
-cancel_gesture and on_hold_timer_end live on ControllerInput. A key and a dial
-each name their own hold-start event through HOLD_START_EVENT, and nothing else
-about the two paths differs. These legs pin both halves. The shared body must
-serve a key and a dial alike, and each input type must still dispatch its own
-event class. The touchscreen dispatches no gesture and inherits a body that
-clears state which is already clear.
+cancel_gesture and on_hold_timer_end live on ControllerInput. Those two methods
+are byte-identical between a key and a dial apart from the hold-start event each
+sends, which each names through HOLD_START_EVENT. The rest of the two gesture
+paths does differ, for reasons that are not this dedup's: a dial stops its hold
+timer before it dispatches the release, and a key after. So these legs pin the
+two shared methods only. The shared body must serve a key and a dial alike, and
+each input type must still dispatch its own event class. The touchscreen
+dispatches no gesture and inherits a body that clears state which is already
+clear.
 """
 import fixtures
 

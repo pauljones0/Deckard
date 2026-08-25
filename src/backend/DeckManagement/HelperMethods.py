@@ -515,8 +515,13 @@ def svg_string_to_pil(svg_string: str, width: int = 96, height: int = 96) -> Ima
 
 
 #: The width a page or action SVG asset is rasterized at before the layout
-#: manager fits it to its target. It is twice the largest key tile, 96 pixels
-#: on an XL, so the fit is always a downscale and the icon keeps its detail.
+#: manager fits it to its target. It is passed as the width only, and
+#: svg_to_pil keeps its own default height of 96, so the raster canvas is
+#: 192x96 and a square icon lands letterboxed in the middle 96x96 of it. That
+#: 96-pixel square is what the fit then downscales, so an SVG renders at about
+#: half the linear size of a bitmap at the same tile. This names the width the
+#: two former literals passed and is byte-identical to them; correcting the
+#: half-size render is a separate change, not this one.
 SVG_RASTER_WIDTH_PX = 192
 
 

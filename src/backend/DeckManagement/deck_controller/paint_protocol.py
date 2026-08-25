@@ -118,11 +118,18 @@ class PresentState:
         synchronised with it here. The producer is what orders the two: every
         caller offers while holding the paint lock of the input that owns this
         target, so two paints of one target reach the slot in the order they
-        were composed, and no paint can stamp a hash the slot does not hold.
-        A producer that offers outside that lock reopens the edge, where a
-        paint that loses the race to the slot leaves a hash saying it is in
-        flight, and only the writer's Clear and the pending-repaint retry
-        recover from it.
+        were composed, and no paint can stamp a hash the slot does not hold. A
+        producer that offers outside that lock reopens that race, where a paint
+        that loses to the slot leaves a hash saying it is in flight.
+
+        The stamp still runs ahead of the device write, which the lock does not
+        change. A paint stamped here is dropped later at the write boundary when
+        _is_current judges its page or generation stale, or when a Clear wipes
+        it, and note_presented never runs for it. last_enqueued_hash then names
+        bytes the device never got. The dual-hash skip above is what recovers:
+        the correcting repaint still differs from last_presented_hash, which
+        names what the device actually holds, so the two-way test fails and the
+        repaint is offered rather than skipped as a repeat.
         """
         if (not force and img_hash == self.last_presented_hash
                 and img_hash == self.last_enqueued_hash):
