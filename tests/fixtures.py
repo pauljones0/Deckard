@@ -171,6 +171,13 @@ def install_stub_globals(app_settings: dict = None) -> StubDeckManager:
 class StubBackground:
     def __init__(self):
         self.video = None
+        self.slideshow = None
+
+    def slideshow_tick(self, now=None):
+        # The media tick calls this every pass. A real Background returns False
+        # here too whenever no slideshow is set, so a deck with a single-image
+        # or no background never advances anything.
+        return False
 
 
 class StubScreenSaver:

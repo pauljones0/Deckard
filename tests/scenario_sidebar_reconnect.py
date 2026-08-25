@@ -91,6 +91,17 @@ class FakeBox:
         self.visible = value
 
 
+class FakeLabel:
+    """A label the load path writes text into. It carries no handler, so the
+    reconnect count never sees it."""
+
+    def __init__(self) -> None:
+        self.text = None
+
+    def set_label(self, text):
+        self.text = text
+
+
 # --- 1. EventAssignerRow ----------------------------------------------------
 
 class FakeModelItem:
@@ -381,6 +392,9 @@ _BACKGROUND_VALUES = {
     "fps": 10,
     "extend-to-touchscreen": False,
     "media-path": None,
+    "media-paths": [],
+    "slideshow-interval": 10,
+    "slideshow-order": "in-order",
 }
 
 _SCREENSAVER_VALUES = {
@@ -408,11 +422,16 @@ class FakeBackgroundRow:
         self._handlers: dict[str, int] = {}
         self.enable_switch = FakeSetValueWidget()
         self.media_selector_button = FakeWidget()
+        self.add_image_button = FakeWidget()
+        self.clear_slideshow_button = FakeWidget()
+        self.interval_spinner = FakeSetValueWidget()
+        self.shuffle_switch = FakeSetValueWidget()
         self.loop_switch = FakeSetValueWidget()
         self.fps_spinner = FakeSetValueWidget()
         self.extend_touchscreen_switch = FakeSetValueWidget()
         self.config_box = FakeBox()
         self.extend_touchscreen_box = FakeBox()
+        self.slideshow_count_label = FakeLabel()
         self.thumbnails = 0
         self.calls: list[str] = []
         self.connect_signals()
@@ -428,6 +447,18 @@ class FakeBackgroundRow:
 
     def on_choose_image(self, *args):
         self.calls.append("media")
+
+    def on_add_image(self, *args):
+        self.calls.append("add-image")
+
+    def on_clear_slideshow(self, *args):
+        self.calls.append("clear-slideshow")
+
+    def on_change_interval(self, *args):
+        self.calls.append("interval")
+
+    def on_toggle_shuffle(self, *args):
+        self.calls.append("shuffle")
 
     def on_toggle_loop(self, *args):
         self.calls.append("loop")
