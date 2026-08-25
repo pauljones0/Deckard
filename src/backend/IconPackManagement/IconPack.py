@@ -13,6 +13,8 @@ You should have received a copy of the GNU General Public License
 along with this program. If not, see <https://www.gnu.org/licenses/>.
 """
 
+from typing import override
+
 from src.backend.IconPackManagement.Icon import Icon
 from src.backend.PackManagement.pack_family import Pack
 
@@ -21,6 +23,7 @@ class IconPack(Pack[Icon]):
 
     ASSET_MANIFEST_KEY = "icons"
 
+    @override
     def make_asset(self, path: str) -> Icon:
         return Icon(icon_pack=self, path=path)
 

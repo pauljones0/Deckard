@@ -16,6 +16,7 @@ from src.backend.Migration.Migrator import Migrator
 from src.backend.atomic_json import atomic_write_json
 import json
 import os
+from typing import override
 
 import globals as gl
 
@@ -23,6 +24,7 @@ class Migrator_1_5_0_beta_5(Migrator):
     def __init__(self) -> None:
         super().__init__("1.5.0-beta.5")
         
+    @override
     def migrate(self) -> None:
         self.migrate_pages()
         self.migrate_plugin_settings()

@@ -19,6 +19,7 @@ import itertools
 import os
 import threading
 import time
+from typing import override
 
 from loguru import logger as log
 
@@ -198,6 +199,7 @@ class MemTelemetrySampler(threading.Thread):
     def stop(self) -> None:
         self._stop_event.set()
 
+    @override
     def run(self) -> None:
         while not self._stop_event.wait(SAMPLE_INTERVAL):
             try:

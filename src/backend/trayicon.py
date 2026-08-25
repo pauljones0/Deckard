@@ -1,7 +1,7 @@
 # Inspired by code of deltragon/SafeEyes repo.
 # Link: https://github.com/deltragon/SafeEyes/blob/f25f554585c79a11621e3a505cc6ce5af08a3d58/safeeyes/plugins/trayicon/plugin.py
 
-from typing import Any, Callable, TypedDict
+from typing import Any, Callable, TypedDict, override
 
 from gi.repository import Gio, GLib
 
@@ -398,6 +398,7 @@ class StatusNotifierItemService(DBusService):
             self._menu = DBusMenuService(session_bus, menu_items, menu_path)
         self.Menu = self._menu.dbus_path
 
+    @override
     def register(self) -> None:
         self._menu.register()
         super().register()
@@ -442,6 +443,7 @@ class StatusNotifierItemService(DBusService):
     def _on_watcher_vanished(self, connection: Gio.DBusConnection, name: str) -> None:
         log.info("StatusNotifierWatcher vanished, re-announcing the tray icon once it returns")
 
+    @override
     def unregister(self) -> None:
         if self._watcher_watch_id is not None:
             Gio.bus_unwatch_name(self._watcher_watch_id)

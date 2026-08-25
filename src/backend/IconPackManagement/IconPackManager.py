@@ -13,6 +13,8 @@ You should have received a copy of the GNU General Public License
 along with this program. If not, see <https://www.gnu.org/licenses/>.
 """
 
+from typing import override
+
 from src.backend.IconPackManagement.IconPack import IconPack
 from src.backend.PackManagement.pack_family import PackManager
 
@@ -22,6 +24,7 @@ class IconPackManager(PackManager[IconPack]):
     DATA_DIR = "icons"
     LABEL = "Icon"
 
+    @override
     def make_pack(self, path: str) -> IconPack:
         return IconPack(path)
 
