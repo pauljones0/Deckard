@@ -76,6 +76,14 @@ bundle as a release asset.
 
 ### Fixed
 
+- Killing the app during a download no longer leaves a half-written file
+  behind. An image or video fetched from a url, and a plugin archive from the
+  store, were written straight to their final name, so a kill part way through
+  left a truncated file that the app later took for a complete one. A download
+  now fills a temporary file and takes its final name in one step, so a killed
+  download leaves nothing under that name and a failed one publishes nothing.
+  A server that ends a body early without ever saying how long it should be
+  still cannot be told from one that sent everything.
 - Quitting no longer waits several seconds after the store has been open. The
   worker threads that fetch the store catalog parked for the life of the app,
   and the quit path waited its full bound for them before forcing the exit.
