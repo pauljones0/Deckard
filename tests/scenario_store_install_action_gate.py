@@ -384,6 +384,7 @@ def leg_internal_path_installs_unprompted(recorder: Recorder) -> None:
         def generate_action_index(self) -> None: self.calls.append("generate_action_index")
         def get_plugins(self) -> dict: return {}
         def get_plugin_by_id(self, plugin_id, include_disabled=True): return None
+        def load_error_of(self, folder): return None
 
     class RecordingSignalManager:
         def __init__(self) -> None:
