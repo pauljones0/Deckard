@@ -203,6 +203,27 @@ class DeckardAPI:
         log.warning(f"DBus API: ChangeState – {result.message}")
         return result.message
 
+    def EmulateInput(self, serial: Str, page: Str, coords: Str, event: Str) -> Str:
+        """Press the input at coords on page of the deck with serial.
+
+        event is press or long-press. The press runs the deck's own input path,
+        so the actions on that input see what a finger produces. This loads the
+        page first when it is not the active one.
+
+        The answer matches ChangePage, empty on success and the reason
+        otherwise, and it comes back once the press is arranged rather than
+        once the actions have run. A caller held for the length of a long press
+        would be holding the main context this method is dispatched on.
+        """
+        log.info(f"DBus API: EmulateInput called – serial={serial!r} page={page!r} "
+                 f"coords={coords!r} event={event!r}")
+        result = control_plane.get().emulate_input(serial, page, coords, event)
+        if result.ok:
+            log.info(f"DBus API: EmulateInput – {result.message}")
+            return ""
+        log.warning(f"DBus API: EmulateInput – {result.message}")
+        return result.message
+
     def NotifyForegroundWindow(self, name: Str, wm_class: Str) -> None:
         """Tell Deckard the current foreground window.
 
