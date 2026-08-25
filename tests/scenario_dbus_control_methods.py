@@ -1,4 +1,5 @@
-"""Pins the top-level DBus control methods ChangePage and ChangeState.
+"""Pins the top-level DBus control methods ChangePage, ChangeState and
+EmulateInput.
 
 They run over a real bus against real controllers. The answer matters as much
 as the effect. An empty string means done; anything else is a sentence to read.
@@ -92,6 +93,12 @@ class Client:
         reply = self._observer.call(
             api.DBUS_OBJECT_PATH, api.TOP_IFACE, "ChangeState",
             GLib.Variant("(sssi)", (serial, page, coords, state)))
+        return reply.unpack()[0]
+
+    def emulate_input(self, serial: str, page: str, coords: str, event: str) -> str:
+        reply = self._observer.call(
+            api.DBUS_OBJECT_PATH, api.TOP_IFACE, "EmulateInput",
+            GLib.Variant("(ssss)", (serial, page, coords, event)))
         return reply.unpack()[0]
 
     def introspect(self) -> str:
@@ -193,15 +200,82 @@ def leg_state_errors(client, controller) -> None:
     print("  PASS: every rejected state change answers with its reason")
 
 
+def leg_emulate_input(client, controller) -> None:
+    """EmulateInput presses the input it names, through the deck's own path.
+
+    No plugin manager is installed here, so the addressed input carries no
+    action whose events could be recorded. The deck's own entry point is
+    watched instead, which is where a hardware press arrives once the reader
+    thread has turned a key index into an identifier: a down and then an up,
+    for the key that was named, neither on the thread that made the call.
+    """
+    controller.hold_time = 2.0
+    seen: list = []
+    real_event_callback = controller.event_callback
+
+    def recording_event_callback(ident, *args, **kwargs):
+        seen.append((ident.json_identifier, args, threading.current_thread()))
+        return real_event_callback(ident, *args, **kwargs)
+
+    controller.event_callback = recording_event_callback
+    try:
+        reply = client.emulate_input(SERIAL, "States", "0,0", "press")
+        assert reply == "", (
+            f"a press that was arranged must answer with nothing at all: {reply!r}")
+        assert active_name(controller) == "States", (
+            "EmulateInput loads the page whose input it is addressing")
+        harness.pump_until(lambda: len(seen) >= 2, 10.0,
+                           f"the emulated press never released the key: {seen}")
+    finally:
+        del controller.event_callback
+
+    assert [(ident, args) for (ident, args, _thread) in seen] == [
+        (STATE_KEY, (True,)), (STATE_KEY, (False,)),
+    ], f"the press reached the deck as {seen}"
+    assert all(thread is not threading.main_thread() for (_i, _a, thread) in seen), (
+        f"the press ran on the main thread: {[t.name for (_i, _a, t) in seen]} -- "
+        f"a hardware press never does, and this method is dispatched there")
+
+    print("  PASS: EmulateInput presses and releases the input it names")
+
+
+def leg_emulate_errors(client, controller) -> None:
+    page_before = active_name(controller)
+
+    unknown_event = client.emulate_input(SERIAL, "States", "0,0", "smash")
+    assert unknown_event and "press" in unknown_event, unknown_event
+    assert active_name(controller) == page_before, (
+        f"a word the app does not know must not move the deck first: "
+        f"{active_name(controller)}")
+
+    off_device = client.emulate_input(SERIAL, "States", "99,0", "press")
+    assert off_device and "out of bounds" in off_device, off_device
+
+    unparsable = client.emulate_input(SERIAL, "States", "nope", "press")
+    assert unparsable and "x,y" in unparsable, unparsable
+
+    unknown_deck = client.emulate_input("not-a-deck", "States", "0,0", "press")
+    assert unknown_deck and SERIAL in unknown_deck, unknown_deck
+
+    unknown_page = client.emulate_input(SERIAL, "no-such-page", "0,0", "press")
+    assert unknown_page and "States" in unknown_page, unknown_page
+
+    assert active_name(controller) == page_before, (
+        f"a rejected press must leave the deck where it was: "
+        f"{active_name(controller)}")
+    print("  PASS: every rejected press answers with its reason")
+
+
 def leg_signatures_match_cli(client) -> None:
     """The published signatures are the ones the CLI composes calls from.
 
-    The CLI builds the (ss) and (sssi) variants by hand. A wire signature has
-    no other guard, so a change here fails at the bus.
+    The CLI builds the (ss), (sssi) and (ssss) variants by hand. A wire
+    signature has no other guard, so a change here fails at the bus.
     """
     xml = client.introspect()
     assert '<method name="ChangePage">' in xml, xml
     assert '<method name="ChangeState">' in xml, xml
+    assert '<method name="EmulateInput">' in xml, xml
 
     def signature(method: str) -> tuple[str, str]:
         block = xml.split(f'<method name="{method}">')[1].split("</method>")[0]
@@ -214,6 +288,7 @@ def leg_signatures_match_cli(client) -> None:
 
     assert signature("ChangePage") == ("ss", "s"), signature("ChangePage")
     assert signature("ChangeState") == ("sssi", "s"), signature("ChangeState")
+    assert signature("EmulateInput") == ("ssss", "s"), signature("EmulateInput")
     print("  PASS: the published signatures are the ones the CLI calls with")
 
 
@@ -388,6 +463,8 @@ def run_legs(bus_address: str, controller, other) -> None:
         leg_errors_name_what_exists(client, controller)
         leg_change_state(client, controller)
         leg_state_errors(client, controller)
+        leg_emulate_input(client, controller)
+        leg_emulate_errors(client, controller)
         leg_signatures_match_cli(client)
         leg_cli_transport_reaches_service(controller)
         leg_instance_never_answers(controller)

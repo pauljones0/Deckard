@@ -238,6 +238,180 @@ def leg_decision_table() -> None:
     print("  PASS: the fast path finishes only what it can finish")
 
 
+# 1b. The verb that cannot be parked
+
+EMULATE_ARGV = ["--emulate-input", "deck-a", "Alpha", "0,0", "press"]
+EMULATE_FORWARDS = [("emulate", "deck-a", "Alpha", "0,0", "press")]
+
+
+def leg_press_needs_a_running_instance() -> None:
+    """A press is forwarded, or the invocation ends. It is never handed back.
+
+    Parking is what makes handing an invocation back harmless: the launch that
+    boots applies its requests to the decks it opens. A press cannot be held
+    for a deck that has not appeared, so a fall-through here would end in a
+    launch that presses nothing and reports success.
+    """
+    print("leg 1b: an emulated input against a running instance, or nothing")
+
+    # An instance is running. This is the whole reason the verb exists, and it
+    # ends here without the application being imported at all.
+    recorder = Recorder(running=True)
+    outcome = cli_fast_path.answer_from_running_instance(parse(EMULATE_ARGV), recorder)
+    assert outcome.exit_code == 0, (
+        f"a press the instance accepted must end the invocation with a success "
+        f"code, not {outcome.exit_code!r}")
+    assert outcome.failures == (), outcome.failures
+    assert recorder.forwards() == EMULATE_FORWARDS, recorder.forwards()
+    assert_nothing_parked("a forwarded press")
+
+    # Nothing running. The boot cannot carry it out either, so the invocation
+    # ends here with the reason rather than starting an application to find
+    # that out.
+    recorder = Recorder(running=False)
+    outcome = cli_fast_path.answer_from_running_instance(parse(EMULATE_ARGV), recorder)
+    assert outcome.exit_code == 1, (
+        f"with nothing running a press must end the invocation, not boot: "
+        f"{outcome.exit_code!r}")
+    assert outcome.failures == (cli_forward.NOT_RUNNING_MESSAGE,), outcome.failures
+    assert recorder.forwards() == [], recorder.forwards()
+    assert_nothing_parked("a press with nothing running")
+
+    # --close-running makes this launch the instance, which is the same case.
+    recorder = Recorder(running=True)
+    outcome = cli_fast_path.answer_from_running_instance(
+        parse([*EMULATE_ARGV, "--close-running"]), recorder)
+    assert outcome.exit_code == 1, (
+        f"--close-running cannot press either, and must not boot: "
+        f"{outcome.exit_code!r}")
+    assert outcome.failures == (cli_forward.CLOSE_RUNNING_MESSAGE,), outcome.failures
+    assert recorder.forwards() == [], (
+        f"nothing may be sent to the instance this launch is about to stop: "
+        f"{recorder.forwards()}")
+
+    # A press beside a parkable request refuses the whole command, so half of
+    # it is never applied by a process the other half was not meant for.
+    recorder = Recorder(running=False)
+    outcome = cli_fast_path.answer_from_running_instance(
+        parse([*FORWARD_ARGV, *EMULATE_ARGV]), recorder)
+    assert outcome.exit_code == 1, outcome.exit_code
+    assert outcome.failures == (cli_forward.NOT_RUNNING_MESSAGE,), outcome.failures
+    assert_nothing_parked("a mixed command with nothing running")
+
+    # A malformed press is malformed whether or not anything runs, and it says
+    # so here rather than at the transport.
+    for argv in (["--emulate-input", "deck-a", "Alpha", "0,0", "smash"],
+                 ["--emulate-input", "deck-a", "Alpha", "nope", "press"],
+                 ["--emulate-input", "deck-a", NOT_UTF8, "0,0", "press"]):
+        recorder = Recorder(running=True)
+        outcome = cli_fast_path.answer_from_running_instance(parse(argv), recorder)
+        assert outcome.exit_code == 1, (
+            f"{argv} is malformed and must fail, not exit {outcome.exit_code!r}")
+        assert cli_forward.USAGE in outcome.failures, outcome.failures
+        assert recorder.forwards() == [], recorder.forwards()
+
+    # A listing verb is answered by main.py itself, which prints and returns
+    # before anything else on the line runs. A press on such a line is applied
+    # by nobody, so the line is refused rather than answered with a listing and
+    # a successful exit. It holds whether or not an instance is running,
+    # because the listing ends this process either way.
+    for running in (True, False):
+        for verb in ("--list-pages", "--list-devices"):
+            recorder = Recorder(running=running)
+            outcome = cli_fast_path.answer_from_running_instance(
+                parse([*EMULATE_ARGV, verb]), recorder)
+            assert outcome.exit_code == 1, (
+                f"{verb} with a press must refuse the line, not exit "
+                f"{outcome.exit_code!r} and drop the press")
+            assert outcome.failures == (cli_forward.LISTING_MESSAGE,), outcome.failures
+            assert recorder.calls == [], (
+                f"a refused line must not go near the bus: {recorder.calls}")
+
+    # A listing verb on its own is still that command, whatever else it carries
+    # that the boot can apply.
+    for verb in ("--list-pages", "--list-devices"):
+        recorder = Recorder(running=True)
+        outcome = cli_fast_path.answer_from_running_instance(
+            parse([*FORWARD_ARGV, verb]), recorder)
+        assert outcome.exit_code is None, (
+            f"{verb} must boot so this process can answer it, not exit "
+            f"{outcome.exit_code!r}")
+
+    print("  PASS: a press is forwarded to a running instance or refused with a reason")
+
+
+def leg_both_halves_answer_alike() -> None:
+    """One command line gets one answer, whichever half of the CLI sees it.
+
+    The fast path answers before the application is imported and the boot path
+    answers after, and both meet the same three situations. They read the
+    situation from different places -- the boot path has a bus probe where the
+    fast path has none -- so the answers are pinned against each other here
+    rather than against a constant in each file. The pairing is what caught the
+    two halves calling the same command line two different things.
+    """
+    print("leg 1c: the two halves answer one command line the same way")
+
+    lines = [
+        ("nothing running", EMULATE_ARGV, False, False),
+        ("an instance running", EMULATE_ARGV, True, False),
+        ("--close-running over an instance", EMULATE_ARGV, True, True),
+        ("--close-running with nothing running", EMULATE_ARGV, False, True),
+        ("a press beside a page change, nothing running",
+         [*FORWARD_ARGV, *EMULATE_ARGV], False, False),
+        ("a malformed press", ["--emulate-input", "deck-a", "Alpha", "0,0", "smash"],
+         True, False),
+        # A listing verb answers the whole line by itself, so neither half may
+        # apply what is beside it, and a press beside it is refused rather than
+        # dropped. Only main.py's own ordering keeps the boot path from seeing
+        # these lines in the field, and nothing pins that ordering, so both
+        # halves answer them the same way here.
+        ("a press beside a listing, an instance running",
+         [*EMULATE_ARGV, "--list-pages"], True, False),
+        ("a press beside a listing, nothing running",
+         [*EMULATE_ARGV, "--list-devices"], False, False),
+        ("a page change beside a listing, an instance running",
+         [*FORWARD_ARGV, "--list-pages"], True, False),
+        ("a malformed press beside a listing",
+         ["--emulate-input", "deck-a", "Alpha", "0,0", "smash", "--list-pages"],
+         True, False),
+    ]
+
+    for what, argv, running, close_running in lines:
+        line = [*argv, "--close-running"] if close_running else argv
+        gl.api_page_requests.clear()
+        gl.api_state_requests.clear()
+
+        fast_recorder = Recorder(running=running)
+        boot_recorder = Recorder(running=running)
+        fast = cli_fast_path.answer_from_running_instance(parse(line), fast_recorder)
+        boot = cli_forward.forward_cli_requests(parse(line), boot_recorder)
+
+        assert tuple(boot.failures) == fast.failures, (
+            f"{what}: the fast path says {fast.failures} and the boot path says "
+            f"{tuple(boot.failures)} for the same command line")
+        assert boot_recorder.forwards() == fast_recorder.forwards(), (
+            f"{what}: the fast path sent {fast_recorder.forwards()} and the "
+            f"boot path sent {boot_recorder.forwards()}")
+        assert not gl.api_page_requests and not gl.api_state_requests, (
+            f"{what}: a refused line parked {gl.api_page_requests} / "
+            f"{gl.api_state_requests}")
+
+    # A listing beside a request the boot could apply is still just a listing:
+    # nothing is sent, nothing is parked, and the process goes on to print it.
+    gl.api_page_requests.clear()
+    gl.api_state_requests.clear()
+    recorder = Recorder(running=False)
+    boot = cli_forward.forward_cli_requests(
+        parse([*FORWARD_ARGV, "--list-pages"]), recorder)
+    assert not boot.handled and boot.failures == [], boot
+    assert recorder.forwards() == [], recorder.forwards()
+    assert not gl.api_page_requests and not gl.api_state_requests, (
+        f"a listing line parked {gl.api_page_requests} / {gl.api_state_requests}")
+
+    print("  PASS: both halves give one answer per command line")
+
+
 # 2. The import fence
 
 _FENCE_CHILD = r'''
@@ -285,10 +459,16 @@ class Transport:
         self.calls.append((serial, page, coords, state))
         return ""
 
+    def emulate_input(self, serial, page, coords, event):
+        self.calls.append((serial, page, coords, event))
+        return ""
 
+
+# Every argv attribute the decision reads, written out. A flag added to the
+# path and not to this list fails here rather than at a person's first launch.
 args = argparse.Namespace(change_page=[["deck", "Page"]], change_state=None,
-                          close_running=False, list_devices=False,
-                          list_pages=False)
+                          emulate_input=None, close_running=False,
+                          list_devices=False, list_pages=False)
 transport = Transport()
 outcome = cli_fast_path.answer_from_running_instance(args, transport)
 print("DECIDED %r %r" % (outcome.exit_code, transport.calls))
@@ -554,6 +734,61 @@ def leg_entry_point() -> None:
     assert "could not carry out that command" in proc.stderr, (
         f"the call site printed no sentence for it:\n{output}")
 
+    # 3f. The verb that cannot be parked, through the real entry point. With an
+    # instance it forwards like the rest. With none, the invocation has to end
+    # here: the fall-through would boot an application that presses nothing and
+    # exits zero, and the expensive imports are where that shows.
+    press_argv = ["--data", scratch_data,
+                  "--emulate-input", SERIAL, "Alpha", "0,0", "press"]
+
+    reset_record(record)
+    stub = start_stub_instance(record)
+    try:
+        proc, _ = run_main(press_argv, sentinel)
+    finally:
+        stop_stub_instance(stub)
+
+    assert proc.returncode == 0, (
+        f"the forwarded press failed with {proc.returncode}:"
+        f"\n{proc.stdout}{proc.stderr}")
+    assert read_record(record) == [
+        {"method": "EmulateInput", "args": [SERIAL, "Alpha", "0,0", "press"]},
+    ], f"the instance was sent {read_record(record)}"
+
+    # The instance refuses the press: the key is held, the page moved on, the
+    # deck is not there. That sentence is the whole answer a person gets, and
+    # dropped anywhere on the way it becomes a successful exit that printed
+    # nothing.
+    press_refusal = "Position (0,0) on device fastpath-deck-1 is already held down"
+    reset_record(record)
+    stub = start_stub_instance(record, refuse=press_refusal)
+    try:
+        proc, _ = run_main(press_argv, sentinel)
+    finally:
+        stop_stub_instance(stub)
+
+    output = proc.stdout + proc.stderr
+    assert proc.returncode == 1, (
+        f"a refused press must exit 1, not {proc.returncode}:\n{output}")
+    assert press_refusal in proc.stderr, (
+        f"the instance's own sentence about the press never reached the person "
+        f"who typed the command:\n{output}")
+
+    reset_record(record)
+    proc, _ = run_main(press_argv, sentinel)
+    output = proc.stdout + proc.stderr
+    assert proc.returncode == 1, (
+        f"with nothing running a press must end the invocation with a reason, "
+        f"and it exited {proc.returncode} instead:\n{output}")
+    assert proc.returncode != HEAVY_IMPORT_EXIT, (
+        f"the invocation booted the application to press a deck it has not "
+        f"opened yet:\n{output}")
+    assert "not running" in proc.stderr, (
+        f"the refusal reached the person who typed the command without its "
+        f"reason:\n{output}")
+    assert read_record(record) == [], (
+        f"nothing owns the name, so nothing may be sent: {read_record(record)}")
+
     print("  PASS: the entry point forwards, falls through, reports and never "
           "leaks a traceback")
 
@@ -562,6 +797,8 @@ def main() -> int:
     fixtures.start_watchdog(WATCHDOG_SECONDS, label="scenario_cli_fast_path")
 
     leg_decision_table()
+    leg_press_needs_a_running_instance()
+    leg_both_halves_answer_alike()
     leg_import_fence()
 
     bus_proc, bus_address = start_private_bus()

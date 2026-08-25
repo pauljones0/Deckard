@@ -38,4 +38,13 @@ argparser.add_argument("--change-state", action="append", nargs=4,
                            "  STATE: State number to change to (0, 1, 2, etc.)\n"
                            "Example: --change-state CL123456789 Main 0,0 1",
                       metavar=("SERIAL", "PAGE", "COORDS", "STATE"))
+argparser.add_argument("--emulate-input", action="append", nargs=4,
+                      help="Press an input on a StreamDeck, as a finger would. Format: SERIAL PAGE COORDS EVENT\n"
+                           "  SERIAL: Device serial number (e.g., CL123456789)\n"
+                           "  PAGE: Page name (e.g., Main, Soundboard)\n"
+                           "  COORDS: Position as x,y (e.g., 0,0 for top-left)\n"
+                           "  EVENT: press or long-press\n"
+                           "Example: --emulate-input CL123456789 Main 0,0 press\n"
+                           "Deckard has to be running already: a press cannot wait for a deck to appear",
+                      metavar=("SERIAL", "PAGE", "COORDS", "EVENT"))
 argparser.add_argument("app_args", nargs="*")

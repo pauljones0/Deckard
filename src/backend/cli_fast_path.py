@@ -45,6 +45,18 @@ the whole path here follows without an edit. One shape does not: a verb that
 cannot be parked for a deck which has not appeared yet. Parking is what makes
 the fall-through below harmless, so such a verb needs its own answer for "the
 instance is not running" rather than a boot.
+
+--emulate-input is the first of those, and cli_forward.unparkable() is where
+that answer lives. Three arms below ask it, one per situation, and each passes
+the sentence for the situation it is in rather than for what a probe said: a
+listing verb that answers the whole line by itself, a launch that is about to
+replace the instance, and a launch that finds none. The boot path reads the
+same three the same way, so one command line gets one answer from whichever
+half sees it first, and a scenario pins the two halves against each other.
+
+The fourth case, no session bus to open, still hands back, because the boot
+path's own attempt reports it and one reporting site is what keeps the two
+paths from answering the same command differently.
 """
 from __future__ import annotations
 
@@ -84,11 +96,11 @@ def runs_in_this_process(args: Namespace) -> bool:
     after, so an invocation carrying one is that command whatever else is on
     the line, and this module must not answer it instead.
 
-    The attributes are named rather than looked up, so a flag renamed in
-    cli_args raises here on the next launch instead of quietly turning a
-    listing command into a forward.
+    The rule lives in cli_forward, which the boot path reads too. Two copies of
+    it would let one half treat a listing line as a listing and the other half
+    forward what was beside it.
     """
-    return bool(args.list_devices or args.list_pages)
+    return cli_forward.answered_by_a_listing(args)
 
 
 def answer_from_running_instance(args: Namespace,
@@ -100,6 +112,16 @@ def answer_from_running_instance(args: Namespace,
     something to send.
     """
     if runs_in_this_process(args):
+        # main.py answers the listing itself and returns straight after, so
+        # nothing else on the line runs. A request that can be parked survives
+        # that, because the parking outlives this decision; a press does not
+        # exist any more once this process has printed a list and left. Refuse
+        # the whole line rather than print a listing and drop the press with a
+        # successful exit.
+        refusals = cli_forward.unparkable(cli_forward.plan_requests(args),
+                                          cli_forward.LISTING_MESSAGE)
+        if refusals:
+            return Outcome(exit_code=1, failures=tuple(refusals))
         return BOOT
 
     plan = cli_forward.plan_requests(args)
@@ -112,7 +134,12 @@ def answer_from_running_instance(args: Namespace,
         return BOOT
     if args.close_running:
         # This launch is about to stop what runs and take its place, so its
-        # requests belong to the decks it opens next, and it parks them.
+        # requests belong to the decks it opens next, and it parks them. What
+        # it cannot park it cannot carry out at all, and says so here rather
+        # than boot to find that out.
+        refusals = cli_forward.unparkable(plan, cli_forward.CLOSE_RUNNING_MESSAGE)
+        if refusals:
+            return Outcome(exit_code=1, failures=tuple(refusals))
         return BOOT
 
     if transport is None:
@@ -129,6 +156,14 @@ def answer_from_running_instance(args: Namespace,
             return BOOT
 
     if not transport.is_running():
+        # Nothing to forward to. A request that cannot be parked cannot be
+        # applied by the boot either, and the fall-through below would end in a
+        # launch that presses nothing and reports success, so it ends here with
+        # its reason.
+        refusals = cli_forward.unparkable(plan, cli_forward.NOT_RUNNING_MESSAGE)
+        if refusals:
+            return Outcome(exit_code=1, failures=tuple(refusals))
+
         # Boot. The probe that decides is the one the boot path makes once the
         # application is up, which is where it was made before this module
         # existed, so a launch that races another for the application name

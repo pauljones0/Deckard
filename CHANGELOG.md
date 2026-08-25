@@ -9,6 +9,18 @@ bundle as a release asset.
 
 ### Added
 
+- Press a key from outside Deckard. `--emulate-input SERIAL PAGE COORDS press`
+  runs that key's actions through the deck's own input path, so they receive
+  the events a press produces, and `long-press` holds the key past the hold
+  time so the hold actions run too. The key is named by the same coordinates
+  `--change-state` uses. The page is switched to first when it is not the one
+  showing, and the press is dropped with a reason rather than made if the deck
+  leaves that page before it lands, if the key is already held, if the session
+  locks in the meantime, or if the press cannot reach the deck in time. It needs Deckard to be running already, and says so
+  instead of starting it: a press happens at a moment, so it cannot be held
+  for a deck that is not plugged in yet. The same press is on the session bus
+  as `EmulateInput`, beside `ChangePage` and `ChangeState`.
+
 - A fake deck can take the shape of a real model. `--fake-deck-model` gives
   each fake deck the key grid, dials, touchscreen and screen of a Stream Deck
   Original, MK.2, Mini, XL, Plus, Neo or Pedal, and the deck says which model
