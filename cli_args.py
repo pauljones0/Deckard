@@ -14,6 +14,17 @@ argparser = argparse.ArgumentParser()
 argparser.add_argument("-b", help="Open in background", action="store_true")
 argparser.add_argument("--devel", help="Developer mode (disables auto update)", action="store_true")
 argparser.add_argument("--skip-load-hardware-decks", help="Skips initilization/use of hardware decks", action="store_true")
+# The fake deck model presets, spelled out. This module stays importable before
+# globals, and the model table is not, so the names live here as a literal and a
+# scenario pins the two lists to each other. argparse refuses anything else, so
+# a typo stops the app at the flag instead of at the eighth line of a log.
+FAKE_DECK_MODEL_NAMES = ("default", "original", "mk2", "mini", "xl", "plus", "neo", "pedal")
+argparser.add_argument("--fake-deck-model", action="append", metavar="MODEL",
+                       choices=FAKE_DECK_MODEL_NAMES,
+                       help="Shape of a fake deck: default, original, mk2, mini, xl, plus, neo or pedal. "
+                            "Repeat it once per fake deck; the last one given covers the rest. "
+                            "The name default keeps the shape a fake deck already has, including a "
+                            "key layout its settings hold")
 argparser.add_argument("--close-running", help="Close running", action="store_true")
 argparser.add_argument("--data", help="Data path", type=str)
 argparser.add_argument("--change-page", action="append", nargs=2, help="Change the page for a device", metavar=("SERIAL_NUMBER", "PAGE_NAME"))
