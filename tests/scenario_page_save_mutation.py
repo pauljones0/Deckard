@@ -68,7 +68,13 @@ def main() -> int:
     t = threading.Thread(target=mutator, daemon=True)
     t.start()
     try:
-        for i in range(100):
+        # The mutator holds the GIL in tight batches, so one round already
+        # spans tens of scheduler slices with the dict at a size the round did
+        # not start from. A snapshot that walked the live dict raises on the
+        # second round at the latest, measured against this same setup, so the
+        # rounds below sit far past the point where the race is caught. More of
+        # them buy nothing and cost ~0.45 s each.
+        for i in range(20):
             try:
                 # save() marks the page. The serialization, and the
                 # RuntimeError this pins, happen in the flush, asked for here
