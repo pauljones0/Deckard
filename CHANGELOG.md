@@ -9,6 +9,13 @@ bundle as a release asset.
 
 ### Added
 
+- Drag an action in the sidebar to reorder it. Hold an action row, drag it over
+  another row, and a line marks the edge it lands on. The release moves it
+  there, the key runs its actions in the new order straight away, and the page
+  keeps the order. Each action takes its own settings, its comment and its
+  event assignments with it, and the media, background and label permissions
+  stay with the action that holds them. The up and down buttons on each row
+  make the same move, so a reorder needs no pointer.
 - Keys can hold their size while they are pressed. The general settings carry
   a "Shrink keys while pressed" switch, and turning it off leaves a held key
   drawing exactly the picture it draws at rest, which suits a page whose keys
