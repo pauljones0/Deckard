@@ -39,6 +39,11 @@ if TYPE_CHECKING:
 # annotation there reaches the builtin through this alias.
 _Dict = dict
 
+# The frame-rate cap a state's media and background load under when the page
+# carries no fps key: the media loop's own tick ceiling, so no cap at all.
+# MediaConfig.from_dict applies the same default when it reads the page dict.
+DEFAULT_MEDIA_FPS = 30
+
 # The action-objects registry: input type -> json identifier -> state ->
 # index -> the action, a placeholder for an unresolved or outdated one, or
 # None for an empty slot.
@@ -715,6 +720,35 @@ class Page:
 
         self.save()
 
+    def _del_dict_value(self, keys: list[str]) -> None:
+        """Remove the leaf at keys and leave every parent in place.
+
+        This is how a revert clears an override. The leaf is gone, so a
+        default that later changes reaches the page, which storing today's
+        default in the file would block. A page the setter never touched is
+        the one that stays byte-identical; a set and then a revert leaves the
+        empty parent the set created, which every reader treats as absent.
+
+        A path that does not lead to the leaf, or a leaf that is already gone,
+        is already in the wanted state, so the walk stops and no save runs.
+        The isinstance test is what makes that true of a hand-edited page
+        whose parent holds a string: without it the walk reaches the delete
+        and raises on a value it cannot index.
+        """
+        # Any, because the walk descends out of the page's mapping into
+        # whatever the branch holds, exactly as _get_dict_value does.
+        d: Any = self.dict
+        for key in keys[:-1]:
+            branch = d.get(key)
+            if not isinstance(branch, dict):
+                return
+            d = branch
+        if keys[-1] not in d:
+            return
+        del d[keys[-1]]
+
+        self.save()
+
     def update_key_image(self, coords: str | tuple[int, int], state: int) -> None:
         #TODO: Move to DeckController
         #TODO: Make input specific
@@ -1016,27 +1050,64 @@ class Page:
         if update:
             self.update_input(identifier, state)
 
-    def get_media_fps(self, identifier: InputIdentifier, state: int) -> int:
-        value = self._get_dict_value([identifier.input_type, identifier.json_identifier, "states", str(state), "media", "fps"])
-        return 30 if value is None else int(value)
+    def _media_fps_keys(self, identifier: InputIdentifier, state: int) -> list[str]:
+        """The dict path of a state's media frame-rate cap. Three callers walk
+        it, and a path spelled once cannot disagree with itself."""
+        return [identifier.input_type, identifier.json_identifier, "states", str(state), "media", "fps"]
 
-    def set_media_fps(self, identifier: InputIdentifier, state: int, fps: int, update: bool = True) -> None:
-        # Apply to a playing video at once, so the change waits for no page
-        # reload. GIF media (KeyGIF) keeps its own timeline and has no
-        # set_playback, so only InputVideo media takes the cap.
+    def get_media_fps(self, identifier: InputIdentifier, state: int) -> int:
+        """The frame-rate cap this state's media renders under. A page that
+        carries no cap reports the loop ceiling, which caps nothing."""
+        value = self._get_dict_value(self._media_fps_keys(identifier, state))
+        return DEFAULT_MEDIA_FPS if value is None else int(value)
+
+    def has_media_fps(self, identifier: InputIdentifier, state: int) -> bool:
+        """Does the page carry an explicit cap for this state's media? The
+        sidebar shows its revert control only then, because there is nothing
+        to revert to while the media already runs at its own rate."""
+        return self._get_dict_value(self._media_fps_keys(identifier, state)) is not None
+
+    def get_media_native_fps(self, identifier: InputIdentifier, state: int) -> float | None:
+        """The rate this state's media runs at with no cap, as the pipeline
+        that decoded it probed it: the container's rate for a video, and the
+        frame count over the delay timeline for a GIF. None while no media is
+        loaded for that state on a controller showing this page, and None
+        while the pipeline reports no usable rate. The sidebar shows it after
+        a revert clears the cap."""
         for input_state in self.get_controller_input_states(identifier, state):
-            # Only where this page shows, which is the filter update_input
-            # uses. Without it, an edit of one page's FPS row rebases the video
-            # timeline on a deck that shows another page.
-            controller = getattr(input_state, "deck_controller", None)
-            active_page = getattr(controller, "active_page", None)
-            if active_page is None or active_page.json_path != self.json_path:
+            video = getattr(input_state, "key_video", None) or getattr(input_state, "video", None)
+            native = getattr(video, "native_fps", None)
+            if not callable(native):
                 continue
+            rate = native()
+            if rate:
+                return float(rate)
+        return None
+
+    def set_media_fps(self, identifier: InputIdentifier, state: int, fps: int | None, update: bool = True) -> None:
+        """Set or clear the frame-rate cap for this state's media.
+
+        None removes the key, so the media runs at its own rate again and the
+        file reads as one the cap never reached. Playing media takes the
+        change at once, so it waits for no page reload: InputVideo and KeyGIF
+        both accept a cap through set_playback.
+        """
+        # A cleared cap must reach playing media as the value a fresh page
+        # load would give it, or the media keeps the old cap until a reload.
+        applied = DEFAULT_MEDIA_FPS if fps is None else fps
+        # get_controller_inputs already drops every controller that shows
+        # another page, so this walk cannot rebase a video on a deck holding a
+        # different page.
+        for input_state in self.get_controller_input_states(identifier, state):
             video = getattr(input_state, "key_video", None) or getattr(input_state, "video", None)
             if video is not None and hasattr(video, "set_playback"):
-                video.set_playback(fps=fps, loop=video.loop)
+                video.set_playback(fps=applied, loop=video.loop)
 
-        self._set_dict_value([identifier.input_type, identifier.json_identifier, "states", str(state), "media", "fps"], fps)
+        keys = self._media_fps_keys(identifier, state)
+        if fps is None:
+            self._del_dict_value(keys)
+        else:
+            self._set_dict_value(keys, fps)
 
         if update:
             self.update_input(identifier, state)
@@ -1067,12 +1138,29 @@ class Page:
         if update:
             self.update_input(identifier, state)
 
-    def get_background_fps(self, identifier: InputIdentifier, state: int) -> int:
-        value = self._get_dict_value([identifier.input_type, identifier.json_identifier, "states", str(state), "background", "fps"])
-        return 30 if value is None else int(value)
+    def _background_fps_keys(self, identifier: InputIdentifier, state: int) -> list[str]:
+        """The dict path of a state's background frame-rate cap."""
+        return [identifier.input_type, identifier.json_identifier, "states", str(state), "background", "fps"]
 
-    def set_background_fps(self, identifier: InputIdentifier, state: int, fps: int, update: bool = True) -> None:
-        self._set_dict_value([identifier.input_type, identifier.json_identifier, "states", str(state), "background", "fps"], fps)
+    def get_background_fps(self, identifier: InputIdentifier, state: int) -> int:
+        """The frame-rate cap this state's background video renders under. A
+        page that carries no cap reports the loop ceiling, which caps
+        nothing."""
+        value = self._get_dict_value(self._background_fps_keys(identifier, state))
+        return DEFAULT_MEDIA_FPS if value is None else int(value)
+
+    def has_background_fps(self, identifier: InputIdentifier, state: int) -> bool:
+        """Does the page carry an explicit cap for this state's background?"""
+        return self._get_dict_value(self._background_fps_keys(identifier, state)) is not None
+
+    def set_background_fps(self, identifier: InputIdentifier, state: int, fps: int | None, update: bool = True) -> None:
+        """Set or clear the frame-rate cap for this state's background video.
+        None removes the key, as set_media_fps does."""
+        keys = self._background_fps_keys(identifier, state)
+        if fps is None:
+            self._del_dict_value(keys)
+        else:
+            self._set_dict_value(keys, fps)
         if update:
             self.update_input(identifier, state)
 
