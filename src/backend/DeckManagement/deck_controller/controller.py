@@ -52,6 +52,7 @@ from loguru import logger as log
 from src.backend.DeckManagement.BetterDeck import BetterDeck, open_device_handle
 from src.backend.DeckManagement.InputIdentifier import Input, InputIdentifier
 from src.backend.DeckManagement.Subclasses import cache_budget
+from src.backend.DeckManagement.HelperMethods import is_image
 from src.backend.DeckManagement.Subclasses.ScreenSaver import ScreenSaver
 from src.backend.DeckManagement.Subclasses.encoded_image_cache import EncodedImageCache
 from src.backend.DeckManagement.Subclasses.native_tile_cache import NativeTileCache, native_tile_cache_max_bytes
@@ -814,12 +815,33 @@ class DeckController:
             self.background.set_extend_to_touchscreen(
                 config.get("extend-to-touchscreen", False), update=False
             )
-            self.background.set_from_path(
-                path=config.get("media-path"),
-                update=update,
-                loop=config.get("loop", False),
-                fps=config.get("fps", 30),
-            )
+            # A slideshow is a list of two or more still images that rotate on
+            # an interval. It wins over the single media-path, image or video:
+            # the user built the list, so it is the more specific intent, and a
+            # rotation of stills and one playing video cannot both show. One or
+            # zero images falls back to the single media-path, which keeps a
+            # plain single-image or video background loading exactly as before.
+            # Only real, existing image files count; a deleted or video entry
+            # drops out here rather than blank a frame later.
+            slideshow_paths = [
+                p for p in (config.get("media-paths") or [])
+                if isinstance(p, str) and is_image(p)
+            ]
+            if len(slideshow_paths) >= 2:
+                self.background.set_slideshow(
+                    slideshow_paths,
+                    interval=config.get("slideshow-interval", 10),
+                    order=config.get("slideshow-order", "in-order"),
+                    update=update,
+                )
+            else:
+                single = slideshow_paths[0] if slideshow_paths else config.get("media-path")
+                self.background.set_from_path(
+                    path=single,
+                    update=update,
+                    loop=config.get("loop", False),
+                    fps=config.get("fps", 30),
+                )
 
     @log.catch
     def load_brightness(self, page: Page) -> None:

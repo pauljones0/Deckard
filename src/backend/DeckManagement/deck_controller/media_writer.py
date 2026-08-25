@@ -693,6 +693,15 @@ class MediaPlayerThread(threading.Thread):
                     # touchscreen re-composited for the new frame.
                     bg_strip_dirty = self.deck_controller.background.get_touchscreen_image() is not None
 
+        # Advance a still-image slideshow when its interval has elapsed. The
+        # model no-ops without a rotation, so a video or single-image
+        # background pays one attribute read here. It reads its own monotonic
+        # clock, matching the seed the load path set, and swaps the background
+        # image plus repaints when a frame comes due. Gated pauses it, as it
+        # pauses every animation above.
+        if not gated:
+            self.deck_controller.background.slideshow_tick()
+
         # Iterate the keys only when animated content needs an update.
         if not gated and (video_repaint or self._needs_key_ticks()):
             # Snapshot the dict and use .get, because the screensaver swaps

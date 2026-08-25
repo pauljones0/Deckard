@@ -139,6 +139,19 @@ DECK_DEFAULTS: dict[str, Any] = {
         "loop": True,
         "fps": 30,
         "extend-to-touchscreen": False,
+        # An ordered list of still-image paths that rotate on an interval. It
+        # sits beside media-path, not in place of it, so a background that
+        # predates the slideshow keeps its single media-path and reads this as
+        # empty. Two or more images here make a slideshow, which wins over
+        # media-path; fewer fall back to the single media-path. Empty by
+        # default: nothing rotates until the user builds a list.
+        "media-paths": [],
+        # Seconds one slideshow image shows before the next. A non-positive
+        # value holds the first image rather than flickering.
+        "slideshow-interval": 10,
+        # "in-order" walks the list as built; "shuffle" walks a random
+        # permutation, reshuffled each cycle.
+        "slideshow-order": "in-order",
     },
     "display": {
         # A factor that changes nothing. Every application site compares
