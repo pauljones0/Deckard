@@ -446,6 +446,11 @@ class EventAssignerRow(Adw.ComboRow):
         self.event = event
         self.available_events: list[EventAssigner] = []
 
+        # The selection-handler id, or None while it is disconnected. A tracked
+        # id keeps connect and disconnect idempotent: a disconnect while already
+        # off cannot raise, and a reconnect cannot stack a second handler.
+        self._selected_handler: int | None = None
+
         # Create the item list factory
         self.factory = Gtk.SignalListItemFactory()
         self.set_factory(self.factory)
@@ -465,60 +470,64 @@ class EventAssignerRow(Adw.ComboRow):
             label.set_tooltip_text(row_item.tooltip)
         self.factory.connect("bind", f_bind)
 
-        self.connect("notify::selected", self.on_changed)
+        self._connect_signal()
 
 
 
     def _connect_signal(self) -> None:
-        self.connect("notify::selected", self.on_changed)
+        if self._selected_handler is None:
+            self._selected_handler = self.connect("notify::selected", self.on_changed)
 
     def _disconnect_signal(self) -> None:
-        try:
-            self.disconnect_by_func(self.on_changed)
-        except TypeError:
-            pass
+        if self._selected_handler is not None:
+            self.disconnect(self._selected_handler)
+            self._selected_handler = None
 
     def set_available_events(self, events: list[EventAssigner]) -> None:
         self._disconnect_signal()
-        model = Gio.ListStore.new(EventAssignerRowItem)
-        self.set_model(model)
+        try:
+            model = Gio.ListStore.new(EventAssignerRowItem)
+            self.set_model(model)
 
-        model.append(EventAssignerRowItem(None))
+            model.append(EventAssignerRowItem(None))
 
-        for event in events:
-            model.append(EventAssignerRowItem(event))
+            for event in events:
+                model.append(EventAssignerRowItem(event))
 
-        self.set_selected(0)
-        self._connect_signal()
+            self.set_selected(0)
+        finally:
+            # An update that returns early or raises must still leave the row
+            # wired, or every later selection is dropped silently.
+            self._connect_signal()
 
     def select_event(self, event_assigner: EventAssigner | None) -> None:
         self._disconnect_signal()
-
-        model = self.get_model()
-        if model is None:
-            self._connect_signal()
-            return
-
-        for i in range(model.get_n_items()):
-            e = model.get_item(i)
-            if e is None:
-                continue
-            if event_assigner is None:
-                if e.id is None:
-                    self.set_selected(i)
-                    self._connect_signal()
-                    return
-                # This is not the None entry, so keep looking. A fall-through
-                # here reads the None event_assigner below.
-                continue
-
-            if e.id == event_assigner.id:
-                self.set_selected(i)
-                self._connect_signal()
+        try:
+            model = self.get_model()
+            if model is None:
                 return
-            
-        self.set_selected(Gtk.INVALID_LIST_POSITION)
-        self._connect_signal()
+
+            for i in range(model.get_n_items()):
+                e = model.get_item(i)
+                if e is None:
+                    continue
+                if event_assigner is None:
+                    if e.id is None:
+                        self.set_selected(i)
+                        return
+                    # This is not the None entry, so keep looking. A
+                    # fall-through here reads the None event_assigner below.
+                    continue
+
+                if e.id == event_assigner.id:
+                    self.set_selected(i)
+                    return
+
+            self.set_selected(Gtk.INVALID_LIST_POSITION)
+        finally:
+            # An update that returns early or raises must still leave the row
+            # wired, or every later selection is dropped silently.
+            self._connect_signal()
 
     def on_changed(self, *args: Any) -> None:
         selected = self.get_selected_item()

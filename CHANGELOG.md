@@ -76,6 +76,11 @@ bundle as a release asset.
 
 ### Fixed
 
+- The event-assignment list and the deck settings rows (background, brightness,
+  saturation, rotation, screensaver and the state switcher) keep working after
+  an error, the same hardening the sidebar rows received. A failure part way
+  through updating one of them left the control silently dead until a restart.
+
 - An animated key or dial that hits an error while starting one update no
   longer freezes for the life of the page. A failure in the moment between
   marking the update busy and handing it off left that one input marked busy
