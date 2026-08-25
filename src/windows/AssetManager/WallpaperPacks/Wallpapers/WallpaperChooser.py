@@ -28,7 +28,7 @@ from src.windows.AssetManager.GenericAssetChooser import (
 # Import python modules
 
 # Import typing
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, override
 if TYPE_CHECKING:
     from src.windows.AssetManager.WallpaperPacks.Stack import WallpaperPackChooserStack
     from src.backend.WallpaperPackManagement.Wallpaper import Wallpaper
@@ -44,12 +44,15 @@ class WallpaperChooserPage(GenericAssetChooserPage["WallpaperPack", "Wallpaper",
     FLOW_BOX_CLASS = GenericAssetFlowBox
     PREVIEW_CLASS = GenericAssetPreview
 
+    @override
     def get_assets(self, pack: "WallpaperPack") -> "list[Wallpaper]":
         return pack.get_wallpapers()
 
+    @override
     def bind_preview(self, preview: "GenericAssetPreview[Wallpaper]",
                      asset: "Wallpaper") -> None:
         preview.set_asset(asset)
 
+    @override
     def get_child_asset(self, child: "GenericAssetPreview[Wallpaper]") -> "Wallpaper":
         return child.asset

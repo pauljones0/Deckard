@@ -35,7 +35,7 @@ from src.windows.AssetManager.IconPacks.ImportDialog import ImportPackDialog
 import globals as gl
 
 # Import typing
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, override
 if TYPE_CHECKING:
     from src.backend.IconPackManagement.IconPack import IconPack
     from src.windows.AssetManager.AssetManager import AssetManager
@@ -70,6 +70,7 @@ class IconPackChooser(GenericPackChooserPage["IconPack", "IconPackChooserStack"]
             return
         ImportPackDialog(self).present()
 
+    @override
     def get_packs(self) -> "dict[str, IconPack]":
         if gl.icon_pack_manager is None:
             # The boot order keeps the window shut until the manager exists,
@@ -77,9 +78,11 @@ class IconPackChooser(GenericPackChooserPage["IconPack", "IconPackChooserStack"]
             return {}
         return gl.icon_pack_manager.get_icon_packs()
 
+    @override
     def get_leaf_chooser(self) -> "IconChooserPage":
         return self.stack.leaf_chooser
 
+    @override
     def on_build_finished(self) -> None:
         # The icon stack gates a deferred show_for_path task on the
         # build_finished flag of each of its two pages.

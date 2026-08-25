@@ -31,7 +31,7 @@ from src.windows.AssetManager.GenericAssetChooser import (
 import globals as gl
 
 # Import typing
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, override
 if TYPE_CHECKING:
     from src.backend.WallpaperPackManagement.WallpaperPack import WallpaperPack
     from src.windows.AssetManager.WallpaperPacks.Stack import WallpaperPackChooserStack
@@ -46,8 +46,10 @@ class WallpaperPackChooser(GenericPackChooserPage["WallpaperPack", "WallpaperPac
     PACK_PREVIEW_CLASS = GenericPackPreview
     LEAF_CHILD_NAME = "wallpaper-chooser"
 
+    @override
     def get_packs(self) -> "dict[str, WallpaperPack]":
         return gl.wallpaper_pack_manager.get_wallpaper_packs()
 
+    @override
     def get_leaf_chooser(self) -> "WallpaperChooserPage":
         return self.stack.leaf_chooser

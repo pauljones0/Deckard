@@ -35,7 +35,7 @@ import globals as gl
 # Import typing modules
 from collections.abc import Callable
 from collections.abc import Iterable
-from typing import Any, TYPE_CHECKING
+from typing import Any, TYPE_CHECKING, override
 if TYPE_CHECKING:
     from src.windows.AssetManager.AssetManager import AssetManager
 
@@ -115,9 +115,11 @@ class CustomAssetChooser(ChooserPage):
             except Exception as e:
                 log.opt(exception=True).warning(f"Deferred asset-chooser task failed: {e}")
 
+    @override
     def on_dnd_accept(self, drop: Gtk.DropTarget, user_data: Gdk.Drop) -> bool:
         return True
     
+    @override
     def on_dnd_drop(self, drop_target: Gtk.DropTarget, value: Gdk.FileList, x: float, y: float) -> bool:
         paths = value.get_files()
         self.add_files(paths)
@@ -151,6 +153,7 @@ class CustomAssetChooser(ChooserPage):
         if asset_manager is not None:
             asset_manager.set_cursor_from_name("default")
 
+    @override
     def show_for_path(self, path: str) -> None:
         def show_now() -> None:
             chooser = self.asset_chooser
@@ -169,6 +172,7 @@ class CustomAssetChooser(ChooserPage):
                 return
         show_now()
 
+    @override
     def on_video_toggled(self, button: Gtk.ToggleButton) -> None:
         # Read-modify-write serialized against the other toggle, so flipping
         # both in quick succession cannot lose one.
@@ -179,6 +183,7 @@ class CustomAssetChooser(ChooserPage):
         if self.asset_chooser is not None:
             self.asset_chooser.refresh()
 
+    @override
     def on_image_toggled(self, button: Gtk.ToggleButton) -> None:
         with settings_store.get().edit(settings_store.UI_ASSET_MANAGER) as settings:
             settings["image-toggle"] = button.get_active()
@@ -194,6 +199,7 @@ class CustomAssetChooser(ChooserPage):
         run_on_main(self.video_button.set_active, settings.get("video-toggle"))
         run_on_main(self.image_button.set_active, settings.get("image-toggle"))
 
+    @override
     def apply_search(self, query: str) -> None:
         if self.asset_chooser is not None:
             self.asset_chooser.refresh()

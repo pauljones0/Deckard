@@ -31,7 +31,7 @@ from src.windows.AssetManager.GenericAssetChooser import (
 import globals as gl
 
 # Import typing
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, override
 if TYPE_CHECKING:
     from src.backend.SDPlusBarWallpaperPackManagement.SDPlusBarWallpaperPack import SDPlusBarWallpaperPack
     from src.windows.AssetManager.SDPlusBarWallpaperPacks.SDPlusBarWallpaper.SDPlusBarWallpaperChooser import SDPlusBarWallpaperChooserPage
@@ -46,8 +46,10 @@ class SDPlusBarWallpaperPackChooser(GenericPackChooserPage["SDPlusBarWallpaperPa
     PACK_PREVIEW_CLASS = GenericPackPreview
     LEAF_CHILD_NAME = "wallpaper-chooser"
 
+    @override
     def get_packs(self) -> "dict[str, SDPlusBarWallpaperPack]":
         return gl.sd_plus_bar_wallpaper_pack_manager.get_wallpaper_packs()
 
+    @override
     def get_leaf_chooser(self) -> "SDPlusBarWallpaperChooserPage":
         return self.stack.leaf_chooser
