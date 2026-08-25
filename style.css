@@ -414,6 +414,22 @@
   border-radius: 99px;
 }
 
+/* Where a dragged action row lands. The line sits inside the row, because a
+   row has neighbours on both edges and an outer line would touch both. */
+.action-row-drop-above {
+  box-shadow: inset 0 3px 0 0 @accent_bg_color;
+}
+
+.action-row-drop-below {
+  box-shadow: inset 0 -3px 0 0 @accent_bg_color;
+}
+
+/* The row that the drag holds. The drag itself carries a picture of the row,
+   so the row under it is dimmed and not hidden. */
+.action-row-dragged {
+  opacity: 0.4;
+}
+
 .state-switcher button{
   /* border-top-right-radius: 0px; */
   /* border-bottom-right-radius: 0px; */

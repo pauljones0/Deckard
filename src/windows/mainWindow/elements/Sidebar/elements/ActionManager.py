@@ -24,7 +24,6 @@ from gi.repository import Gtk, Adw, Gdk, GLib, Pango
 
 # Import Python modules
 from loguru import logger as log
-from copy import copy
 
 # Import globals
 from src.backend import services
@@ -34,15 +33,19 @@ import globals as gl
 # Import own modules
 from src.backend.PluginManager.ActionCore import ActionCore
 from GtkHelper.GtkHelper import BetterExpander
+from src.backend.PageManagement import action_order
 from src.backend.PageManagement.Page import NoActionHolderFound, ActionOutdated
 from src.windows.mainWindow.elements.Sidebar.elements.ActionMissing.MisingActionButtonRow import MissingActionButtonRow
 from src.windows.mainWindow.elements.Sidebar.elements.ActionMissing.OutdatedActionRow import OutdatedActionRow
 
 from collections.abc import Collection
-from typing import Any, TYPE_CHECKING, TypeVar
+from typing import Any, TYPE_CHECKING
 
-# The element a reorder moves; the helpers never inspect it.
-_ReorderT = TypeVar("_ReorderT")
+# The CSS classes that mark where a dragged action row lands.
+DROP_ABOVE_CLASS = "action-row-drop-above"
+DROP_BELOW_CLASS = "action-row-drop-below"
+DRAGGED_CLASS = "action-row-dragged"
+
 if TYPE_CHECKING:
     from src.backend.PluginManager.ActionHolder import ActionHolder
     from src.windows.mainWindow.elements.Sidebar.Sidebar import Sidebar
@@ -95,7 +98,9 @@ class ActionExpanderRow(BetterExpander):
         self.action_group = action_group
         self.active_state: "int | None" = None
 
-        self.preview: "Adw.PreferencesRow | None" = None
+        # The row a drag holds, between drag-begin and drag-end. The drop
+        # target reads it to say where the row lands before it is dropped.
+        self.dragged_row: "ActionRow | None" = None
 
         self.build()
 
@@ -170,114 +175,119 @@ class ActionExpanderRow(BetterExpander):
         if keep_add_button:
             self.add_row(self.add_action_button)
 
-    def add_drop_preview(self, index: int) -> None:
-        #TODO: Fix this function, it does not work
-        # return
-        if hasattr(self, "preview"):
-            if self.preview is not None:
-                # self.reorder_child_after(self.preview, self.get_rows()[index])
-                GLib.idle_add(self.reorder_child_after, self.preview, self.get_rows()[index])
-                return
-
-
-        self.preview = Adw.PreferencesRow(title="Preview", height_request=100)
-        self.preview.set_sensitive(False)
-        self.add_row(self.preview)
-
-        self.reorder_child_after(self.preview, self.get_rows()[index])
-
     def update_indices(self) -> None:
         for i, row in enumerate(self.get_rows()):
             row.index = i
 
-    def reorder_index_after(self, lst: "list[_ReorderT]", move_index: int, after_index: int) -> "list[_ReorderT]":
-        if move_index < 0 or move_index >= len(lst):
-            raise ValueError("Move index out of range.")
-        
-        if after_index < 0 or after_index >= len(lst):
-            raise ValueError("After index out of range.")
+    def action_rows(self) -> list[Any]:
+        """The rows that stand for an action, in the order they are shown.
 
-        move_item = lst.pop(move_index)
-        lst.insert(after_index + 1 if move_index > after_index else after_index, move_item)
-        
-        return lst
-    
-    def reorder_action_objects(self, action_objects: "dict[int, _ReorderT]", move_index: int, after_index: int) -> "dict[int, _ReorderT]":
-        objects = list(action_objects.values())
-        reordered = self.reorder_index_after(objects, move_index, after_index)
+        The add button is a row of the same list and stands for no action, so
+        it is never one of these. Every other row holds one entry of the page's
+        actions list, which covers the rows for an action whose plugin is
+        missing or outdated, so a position here is an action index.
+        """
+        rows = self.get_rows() or []
+        return [row for row in rows if row is not self.add_action_button]
 
-        new = {}
-        for i, obj in enumerate(reordered):
-            new[i] = obj
+    def plan_drop(self, source_row: "ActionRow", target_row: "ActionRow", drop_below: bool) -> "tuple[int, int] | None":
+        """Answer the source and destination index of a drop, or None for a drop that moves nothing."""
+        rows = self.action_rows()
+        if source_row not in rows or target_row not in rows:
+            return None
 
-        return new
+        source_index = rows.index(source_row)
+        dest_index = action_order.resolve_drop_index(source_index, rows.index(target_row), drop_below, len(rows))
+        if dest_index is None:
+            return None
+        return source_index, dest_index
 
+    def show_drop_indicator(self, row: "ActionRow", drop_below: bool) -> None:
+        """Mark the edge of row that the dragged row lands on."""
+        self.clear_drop_indicators()
+        row.add_css_class(DROP_BELOW_CLASS if drop_below else DROP_ABOVE_CLASS)
 
-    def update_action_objects_order(self) -> None:
-        new_objects = {}
-        for i, row in enumerate(self.get_rows()):
-            if not isinstance(row, ActionRow):
-                continue
-            new_objects[i] = row.action_object
+    def clear_drop_indicators(self) -> None:
+        for row in self.get_rows() or []:
+            row.remove_css_class(DROP_ABOVE_CLASS)
+            row.remove_css_class(DROP_BELOW_CLASS)
 
+    def apply_drop(self, source_index: int, dest_index: int,
+                   identifier: "InputIdentifier | None", state: "int | None") -> bool:
+        """Run a planned drop from the idle the drop handler queues.
 
-    def reorder_actions(self, move_index: int, after_index: int) -> None:
+        The sidebar can load another input or another state between the drop and
+        this idle. The planned rows then name a list that nobody dropped
+        anything on, so the drop goes no further.
+        """
+        if identifier != self.active_identifier or state != self.active_state:
+            return GLib.SOURCE_REMOVE
+
+        rows = self.action_rows()
+        if 0 <= source_index < len(rows):
+            self.move_row(rows[source_index], dest_index)
+        return GLib.SOURCE_REMOVE
+
+    def move_row_by(self, row: "ActionRow", offset: int) -> None:
+        """Move one action row offset places down the list, or up for a negative offset."""
+        rows = self.action_rows()
+        if row not in rows:
+            return
+        self.move_row(row, rows.index(row) + offset)
+
+    def move_row(self, row: "ActionRow", dest_index: int) -> None:
+        """Move one action row to dest_index, and take the page and the deck with it.
+
+        A destination outside the action rows is a no-op, which is what the
+        first row asks for on a move up and the last row on a move down.
+        """
+        rows = self.action_rows()
+        if row not in rows:
+            return
+        source_index = rows.index(row)
+        if not 0 <= dest_index < len(rows):
+            return
+        if dest_index == source_index:
+            return
+
+        # The page first. A row that moves ahead of a write that does not
+        # happen shows an order the page does not hold, until the next rebuild.
+        if not self.reorder_actions(source_index, dest_index):
+            return
+
+        # reorder_child_after puts the row on the far side of its neighbour,
+        # which is below the neighbour for a row that starts above it and above
+        # the neighbour for a row that starts below it. The row at dest_index
+        # is therefore the neighbour to name in both directions.
+        self.reorder_child_after(row, rows[dest_index])
+
+        # Keep row.index in step with the new visual order. The sidebar rebuild
+        # runs at idle priority, because the page-change notification queues it
+        # with GLib.idle_add, so a second move can dispatch before that rebuild
+        # lands and read a stale index.
+        self.update_indices()
+
+    def reorder_actions(self, source_index: int, dest_index: int) -> bool:
+        """Write the new order to the page, and load the page onto the deck.
+
+        Answers whether the page changed.
+        """
         controller = services.require_main_window().get_active_controller()
         if controller is None:
-            return
+            return False
         identifier = self.active_identifier
         state = self.active_state
         page = controller.active_page
         if identifier is None or state is None or page is None:
-            return
+            return False
 
-        state_dict = identifier.get_state_dict(page, state)
-
-        actions = state_dict["actions"]
-        reordered = self.reorder_index_after(copy(actions), move_index, after_index)
-
-        action_objects = page.action_objects[identifier.input_type][identifier.json_identifier][state]
-        reordered_action_objects = self.reorder_action_objects(action_objects, move_index, after_index)
-
-
-        # Reorder in page dict
-        state_dict["actions"] = reordered
-
-        # Reorder in action objects
-        page.action_objects[identifier.input_type][identifier.json_identifier][state] = reordered_action_objects
-
-
-        ## Update control indices
-        action_order_map: dict[int, int] = {}
-
-        for i, action in enumerate(action_objects.values()):
-            action_order_map[i] = list(reordered_action_objects.values()).index(action)
-
-
-        image_control_action_index = state_dict.get("image-control-action")
-        state_dict["image-control-action"] = None if image_control_action_index is None else action_order_map.get(image_control_action_index, None)
-
-        # The background permission follows its action, as the image
-        # permission does. Without this remap the persisted index points at
-        # whatever action moved into the old slot.
-        background_control_action_index = state_dict.get("background-control-action")
-        state_dict["background-control-action"] = None if background_control_action_index is None else action_order_map.get(background_control_action_index, None)
-
-        # The key can be absent on a page that add_action never touched,
-        # which covers a hand-edited, imported or old page. Use the same
-        # default as ActionPermissionManager.get_label_control_indices instead
-        # of a raise. The page dict and action_objects are reordered at this
-        # point and nothing is saved, so an exception here leaves memory and
-        # disk out of step.
-        label_control_actions = state_dict.get("label-control-actions", [None, None, None])
-        for i, label_control_action in enumerate(label_control_actions):
-            label_control_actions[i] = action_order_map.get(label_control_action)
-        state_dict["label-control-actions"] = label_control_actions
-
-        page.save()
+        if not action_order.move_action(page, identifier, state, source_index, dest_index):
+            # The page is untouched, so there is nothing to load.
+            return False
 
         controller.load_page(page)
- 
+        return True
+
     def update_comment_for_index(self, action_index: int) -> None:
         visible_child = services.require_main_window().leftArea.deck_stack.get_visible_child()
         if visible_child is None:
@@ -414,7 +424,7 @@ class ActionRow(Adw.ActionRow):
         self._background_handler: int | None = None
         self.build()
         self.update_allow_box_visibility()
-        # self.init_dnd() #FIXME: Add drag and drop
+        self.init_dnd()
 
     def build(self) -> None:
         # self.overlay = Gtk.Overlay()
@@ -610,57 +620,37 @@ class ActionRow(Adw.ActionRow):
             self.connect_background_signal()
 
     def on_click_up(self, button: Gtk.Button) -> None:
-        # The neighbour is the row widget itself (ActionRow /
-        # MissingActionButtonRow / the add-action Adw.ButtonRow). The add
-        # button is only reachable here via the index-0 wrap-around
-        # (get_rows()[-1]); moving past it makes no sense, so bail.
-        index = self.index
-        one_up_child = self.expander.get_rows()[index - 1]
-        if one_up_child is self.expander.add_action_button:
-            return
-        self.expander.reorder_child_after(self, one_up_child)
-        self.expander.reorder_actions(index - 1, index)
-
-        # Keep row.index in step with the new visual order. The sidebar
-        # rebuild runs at idle priority, because load_page queues
-        # update_ui_on_page_change with GLib.idle_add, so a second click can
-        # dispatch before that rebuild lands and read a stale index.
-        self.expander.update_indices()
-
+        self.expander.move_row_by(self, -1)
 
     def on_click_down(self, button: Gtk.Button) -> None:
-        index = self.index
-        one_down_child = self.expander.get_rows()[index + 1]
-        if one_down_child is self.expander.add_action_button:
-            return
-        self.expander.reorder_child_after(self, one_down_child)
-        self.expander.reorder_actions(index, index + 1)
-
-        self.expander.update_indices()
+        self.expander.move_row_by(self, 1)
 
     def init_dnd(self) -> None:
-        # DnD Source
+        """Let the user drag this row onto another one to reorder the actions.
+
+        The up and down buttons stay, because a drag needs a pointer and they
+        do not.
+
+        Only a row that stands for a loaded action takes a drag or a drop. The
+        row for an action whose plugin is missing or outdated holds a place in
+        the list and accepts neither. That costs almost nothing, because a drop
+        on the upper half of a row names the same place as a drop on the lower
+        half of the row above it. The one place a drag cannot name is the end of
+        a list that ends in such a row. The up and down buttons reach it, one
+        step at a time.
+        """
         dnd_source = Gtk.DragSource()
         dnd_source.set_actions(Gdk.DragAction.MOVE)
         dnd_source.connect("prepare", self.on_dnd_prepare)
         dnd_source.connect("drag-begin", self.on_dnd_begin)
         dnd_source.connect("drag-end", self.on_dnd_end)
-
         self.add_controller(dnd_source)
 
-        # DnD Target
         dnd_target = Gtk.DropTarget.new(ActionRow, Gdk.DragAction.MOVE)
-        dnd_target.set_gtypes([ActionRow])
         dnd_target.connect("drop", self.on_dnd_drop)
         dnd_target.connect("motion", self.on_dnd_motion)
-
+        dnd_target.connect("leave", self.on_dnd_leave)
         self.add_controller(dnd_target)
-
-    def on_dnd_begin(self, drag_source: Gtk.DragSource, data: Gdk.Drag) -> None:
-        content = data.get_content()
-
-    def on_dnd_end(self, drag_source: Gtk.DragSource, data: Gdk.Drag, flag: bool) -> None:
-        pass
 
     def on_dnd_prepare(self, drag_source: Gtk.DragSource, x: float, y: float) -> Gdk.ContentProvider:
         drag_source.set_icon(
@@ -668,23 +658,54 @@ class ActionRow(Adw.ActionRow):
             # The paintable hotspot takes ints; the halves round down.
             self.get_width() // 2, self.get_height() // 2
         )
-        content = Gdk.ContentProvider.new_for_value(self)
-        return content
+        return Gdk.ContentProvider.new_for_value(self)
+
+    def on_dnd_begin(self, drag_source: Gtk.DragSource, data: Gdk.Drag) -> None:
+        # The drop target reads this to tell a real move from a drop that
+        # changes nothing, before the row is dropped.
+        self.expander.dragged_row = self
+        self.add_css_class(DRAGGED_CLASS)
+
+    def on_dnd_end(self, drag_source: Gtk.DragSource, data: Gdk.Drag, flag: bool) -> None:
+        self.expander.dragged_row = None
+        self.remove_css_class(DRAGGED_CLASS)
+        # A drop clears the indicator itself. This covers the drag that ends
+        # anywhere else, where no drop handler runs.
+        self.expander.clear_drop_indicators()
+
+    def on_dnd_motion(self, drop_target: Gtk.DropTarget, x: float, y: float) -> Gdk.DragAction:
+        source_row = self.expander.dragged_row
+        drop_below = y > self.get_height() / 2
+        if source_row is None or self.expander.plan_drop(source_row, self, drop_below) is None:
+            # Nothing to show, and nothing to accept. The pointer sits on the
+            # dragged row itself, or on the edge it already occupies.
+            self.expander.clear_drop_indicators()
+            return Gdk.DragAction(0)
+
+        self.expander.show_drop_indicator(self, drop_below)
+        return Gdk.DragAction.MOVE
+
+    def on_dnd_leave(self, drop_target: Gtk.DropTarget) -> None:
+        self.remove_css_class(DROP_ABOVE_CLASS)
+        self.remove_css_class(DROP_BELOW_CLASS)
 
     def on_dnd_drop(self, drop_target: Gtk.DropTarget, value: Any, x: float, y: float) -> bool:
+        self.expander.clear_drop_indicators()
         if not isinstance(value, ActionRow):
             return False
-        
-        self.sidebar.key_editor.action_editor.action_group.expander.reorder_child_after(value, self)
+
+        plan = self.expander.plan_drop(value, self, y > self.get_height() / 2)
+        if plan is None:
+            return False
+        source_index, dest_index = plan
+
+        # Move on an idle, not here. This handler runs inside the drop, and the
+        # move rebuilds every row of the list, which takes the widget the
+        # handler belongs to out of the tree mid-drop. The input and the state
+        # travel with the plan, because the sidebar can load another one first.
+        GLib.idle_add(self.expander.apply_drop, source_index, dest_index,
+                      self.expander.active_identifier, self.expander.active_state)
         return True
-    
-    def on_dnd_motion(self, drop_target: Gtk.DropTarget, x: float, y: float) -> Gdk.DragAction:
-        index = self.index
-        if y > self.get_height() / 2:
-            self.sidebar.key_editor.action_editor.action_group.expander.add_drop_preview(index-1)
-        else:
-            self.sidebar.key_editor.action_editor.action_group.expander.add_drop_preview(index)
-        return Gdk.DragAction.MOVE
 
     def on_click(self, button: Gtk.Button) -> None:
         self.sidebar.action_configurator.load_for_action(self.action_object, self.index)
