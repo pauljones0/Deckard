@@ -33,10 +33,17 @@ from src.backend.settings_store import (
     APP_FONT_DEFAULTS,
     DECK,
     DECK_DEFAULTS,
+    DECK_NAME_MAX_LENGTH,
     PLUGIN,
     PLUGIN_FILE_VERSION,
     get,
 )
+
+
+#: The label a deck takes when it reports no name, no model and no serial.
+#: It stays out of the locale table on purpose. It is the product name that
+#: the device itself prints, and no reader of it is a sentence.
+UNNAMED_DECK = "Stream Deck"
 
 
 def _copied(value: Any) -> Any:
@@ -188,6 +195,35 @@ class DeckSettings(SchemaView):
     def __init__(self, data: dict[str, Any], serial: str | None = None):
         super().__init__(data, DECK_DEFAULTS)
         self.serial: str | None = serial
+
+    def display_name(self, model_name: str | None = None) -> str:
+        """What to call this deck, as a string that is never empty.
+
+        The chosen name wins. Without one, the model name the device reports
+        wins. Without that, the serial. This runs on a load path that puts the
+        result straight into a switcher label, so it answers a string for
+        every input, including a settings file that somebody edited by hand.
+        A caller that receives None here has no label to show and no way to
+        tell why.
+
+        Surrounding space goes, because a name of spaces is an empty label
+        that reads as a broken app. The cap cuts the chosen name only, for the
+        reason DECK_NAME_MAX_LENGTH gives: the user types that one, so the row
+        holds it to a width the switcher can show. The model name and the
+        serial come from the device and reach the switcher whole, because a
+        cut model name reads as a broken read rather than a long choice.
+        """
+        stored = self.get("name")
+        chosen = stored.strip()[:DECK_NAME_MAX_LENGTH] if isinstance(stored, str) else ""
+        if chosen:
+            return chosen
+        if isinstance(model_name, str) and model_name.strip():
+            return model_name.strip()
+        if isinstance(self.serial, str) and self.serial.strip():
+            return self.serial.strip()
+        # Every source was empty. A deck with no name, no model and no serial
+        # is a broken read rather than a state to render blank.
+        return UNNAMED_DECK
 
     def save(self) -> None:
         """Persist what a caller set through this view. This is the write

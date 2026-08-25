@@ -37,7 +37,7 @@ from src.backend.Store.StoreCache import StoreCache
 from src.backend.Store.StoreURL import RepoRef, parse_repo_url
 from src.backend.PluginManager.PluginBase import PluginBase
 from src.backend.DeckManagement.HelperMethods import recursive_hasattr
-from src.backend import http_client
+from src.backend import archive_safety, http_client
 
 from src.Signals import Signals
 
@@ -1238,28 +1238,25 @@ class StoreBackend:
         return extracted_folder_name
 
     def zip_has_unsafe_members(self, zip_path: str) -> bool:
-        """A second Zip-Slip check on a downloaded archive.
+        """A second check on the member paths of a downloaded archive.
 
         This app downloads a GitHub-generated .zip archive only. CPython's
         zipfile strips a leading "/" and ".." during extraction, so that
         library is the first guard. This check keeps a later change safe, such
         as another archive source, or a tar or other format that CPython does
         not sanitize the same way. A member whose normalized path is absolute,
-        or which escapes the extraction root, fails the whole archive.
+        or which resolves outside the extraction root, fails the whole
+        archive.
+
+        The rule itself lives in archive_safety, so the pack import and this
+        download read one set of member names as acceptable.
         """
-        with zipfile.ZipFile(zip_path, "r") as zip_ref:
-            for name in zip_ref.namelist():
-                # Reject absolute paths and drive-style/backslash members.
-                if name.startswith(("/", "\\")) or (len(name) > 1 and name[1] == ":"):
-                    log.error(f"Archive member has absolute path, refusing: {name!r}")
-                    return True
-                normalized = os.path.normpath(name.replace("\\", "/"))
-                # normpath collapses "a/../b". A leading "..", or a bare
-                # "..", resolves outside the extraction root.
-                if normalized == ".." or normalized.startswith(".." + os.sep) or normalized.startswith("../"):
-                    log.error(f"Archive member escapes extraction root, refusing: {name!r}")
-                    return True
-        return False
+        unsafe = archive_safety.first_unsafe_member(zip_path)
+        if unsafe is None:
+            return False
+        name, reason = unsafe
+        log.error(f"Refusing archive: {reason}: {name!r}")
+        return True
 
     @staticmethod
     def _remove_leftover(path: str) -> None:

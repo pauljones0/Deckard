@@ -6,6 +6,7 @@ widget is built and no display is needed.
 import fixtures  # noqa: F401  (must be first: isolates the data dir)
 
 import inspect
+from types import MethodType
 
 import globals as gl
 
@@ -75,6 +76,11 @@ def check_deck_name_dedup() -> None:
     from src.windows.mainWindow.elements.DeckStack import DeckStack
 
     stub = Obj(deck_attributes={}, deck_names=[], deck_numbers=[])
+    # The title resolution runs through two more methods of the stack, and the
+    # base title reads the deck settings for a chosen name.
+    stub.base_title = MethodType(DeckStack.base_title, stub)
+    stub._settings_serial = MethodType(DeckStack._settings_serial, stub)
+    stub.unique_title = MethodType(DeckStack.unique_title, stub)
 
     def make_controller(serial):
         deck = Obj(
@@ -85,9 +91,14 @@ def check_deck_name_dedup() -> None:
         # controller, not the device.
         return Obj(deck=deck, serial_number=lambda: serial)
 
-    _, first = DeckStack.get_page_attributes(stub, make_controller("SN1"))
-    _, second = DeckStack.get_page_attributes(stub, make_controller("SN2"))
-    _, third = DeckStack.get_page_attributes(stub, make_controller("SN3"))
+    saved_sm = getattr(gl, "settings_manager", None)
+    gl.settings_manager = fixtures.StubSettingsManager()
+    try:
+        _, first = DeckStack.get_page_attributes(stub, make_controller("SN1"))
+        _, second = DeckStack.get_page_attributes(stub, make_controller("SN2"))
+        _, third = DeckStack.get_page_attributes(stub, make_controller("SN3"))
+    finally:
+        gl.settings_manager = saved_sm
 
     assert first == "Stream Deck MK.2", first
     assert second == "Stream Deck MK.2 (2)", (

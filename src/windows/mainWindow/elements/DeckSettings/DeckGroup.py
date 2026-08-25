@@ -35,21 +35,106 @@ if TYPE_CHECKING:
 
 # Import own modules
 from src.backend.DeckManagement.ImageHelpers import image2pixbuf
+from src.backend.settings_store import DECK_NAME_MAX_LENGTH
 
 class DeckGroup(Adw.PreferencesGroup):
     def __init__(self, settings_page: "DeckSettingsPage") -> None:
         super().__init__(title=gl.lm.get("deck.deck-group.title"), description=gl.lm.get("deck.deck-group.description"))
         self.deck_serial_number = settings_page.deck_serial_number
 
+        self.name_row = DeckName(settings_page, self.deck_serial_number)
         self.brightness = Brightness(settings_page, self.deck_serial_number)
         self.saturation = Saturation(settings_page, self.deck_serial_number)
         self.screensaver = Screensaver(settings_page, self.deck_serial_number)
         self.rotation = Rotation(settings_page, self.deck_serial_number)
 
+        # The name first. It says which deck the rest of the group applies to.
+        self.add(self.name_row)
         self.add(self.brightness)
         self.add(self.saturation)
         self.add(self.screensaver)
         self.add(self.rotation)
+
+
+class DeckName(Adw.EntryRow):
+    """What the user calls this deck, shown by the switcher of the header bar.
+
+    An empty row means no chosen name, and the deck then shows the model name
+    that the device reports. Surrounding space goes at the write, so a name of
+    spaces cannot leave the switcher blank.
+
+    The row writes when the user applies it, which is the apply button or the
+    Enter key, and the write is the whole of the work. It holds no pending
+    timeout, so a settings page that goes away leaves nothing armed behind it.
+    """
+
+    def __init__(self, settings_page: "DeckSettingsPage", deck_serial_number: str) -> None:
+        super().__init__(title=gl.lm.get("deck.deck-group.name"), show_apply_button=True)
+        self.settings_page = settings_page
+        self.deck_serial_number = deck_serial_number
+
+        # The apply-handler id, or None while it is disconnected. A tracked id
+        # keeps connect and disconnect idempotent: a disconnect while already
+        # off cannot raise, and a reconnect cannot stack a second handler.
+        self._apply_handler: int | None = None
+
+        # The switcher does not shorten a long label, so the row refuses what
+        # the switcher cannot show. See DECK_NAME_MAX_LENGTH.
+        self.set_max_length(DECK_NAME_MAX_LENGTH)
+
+        self.connect_signal()
+
+        self.load_default()
+        self.connect("map", self.load_default)
+
+    def connect_signal(self) -> None:
+        if self._apply_handler is None:
+            self._apply_handler = self.connect("apply", self.on_apply)
+
+    def disconnect_signal(self) -> None:
+        if self._apply_handler is not None:
+            self.disconnect(self._apply_handler)
+            self._apply_handler = None
+
+    def deck_stack(self) -> Any:
+        """The deck stack this settings page sits in, or None.
+
+        The settings page takes its parent as an untyped argument, and a
+        window rebuild can leave a row whose page has no parent, so each step
+        is guarded. A missing stack costs the live retitle and nothing else:
+        the name is already saved, and the next build of the stack reads it.
+        """
+        stack_child = getattr(self.settings_page, "deck_stack_child", None)
+        return getattr(stack_child, "deck_stack", None)
+
+    def on_apply(self, _: Adw.EntryRow) -> None:
+        name = self.get_text().strip()
+
+        settings = gl.settings_manager.deck(self.deck_serial_number)
+        settings.set_value("name", name)
+        settings.save()
+
+        # Show what was stored. Space the user typed around the name is not in
+        # the file, and a row that keeps showing it describes the file wrongly.
+        if name != self.get_text():
+            self.set_text(name)
+
+        deck_stack = self.deck_stack()
+        if deck_stack is not None:
+            deck_stack.refresh_page_title(self.settings_page.deck_controller)
+
+    def load_default(self, *args: object) -> None:
+        # Read only, and with the handler off, for the reason Brightness below
+        # gives. This runs at every open of the page, and a set that the apply
+        # handler saw would write a name that nobody chose.
+        self.disconnect_signal()
+        try:
+            name = gl.settings_manager.deck(self.deck_serial_number).get("name")
+            self.set_text(name if isinstance(name, str) else "")
+        finally:
+            # A read that returns early or raises must still leave the row
+            # wired, or every later name change is dropped silently.
+            self.connect_signal()
 
 
 class Rotation(Adw.PreferencesRow):

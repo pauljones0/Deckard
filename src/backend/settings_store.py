@@ -151,10 +151,24 @@ DECK_DEFAULTS: dict[str, Any] = {
     # Degrees. Stored as a bare int rather than a section, so it reads and
     # writes without a key.
     "rotation": 0,
+    # What the user calls this deck. An empty string means "no chosen name",
+    # and every reader then shows the model name the device reports. The
+    # default is "" rather than None because the entry row that edits it takes
+    # a string, and because DeckSettings.display_name treats both the same.
+    # Stored as a bare value, the way the rotation is.
+    "name": "",
     # This table names no "key-layout". Whoever constructs a fake deck decides
     # its layout and passes that caller's own fallback, so no single shape
     # fits here.
 }
+
+#: How long a chosen deck name may be. The name becomes a button label in the
+#: switcher of the header bar, and that switcher does not shorten a label. A
+#: name of any length there widens the header, and with it the smallest width
+#: the window can take. The entry row that edits the name refuses more than
+#: this, and DeckSettings.display_name cuts a longer stored name back, so a
+#: hand-edited settings file cannot widen the window either.
+DECK_NAME_MAX_LENGTH = 32
 
 #: Per-deck settings, one file per serial. Cached, because the render path
 #: reads them again and again and each read parses JSON. Deep-copied per read,
@@ -658,6 +672,7 @@ def get() -> SettingsStore:
 # settings_views directly. It is this module's back half, reached through
 # here.
 from src.backend.settings_views import (  # noqa: E402, F401
+    UNNAMED_DECK as UNNAMED_DECK,
     AppSettings as AppSettings,
     DeckSettings as DeckSettings,
     PluginSettings as PluginSettings,

@@ -126,6 +126,7 @@ onboarding.ready.header;Bereit?;Ready?;Prêt ?;¿Preparado?;Pronto?
 onboarding.ready.button;Start;Start;Commencez;Iniciar;Começar
 deck.deck-group.title;Deck Einstellungen;Deck Settings;Paramètres du Deck;Configuración del deck;Configurações do Deck
 deck.deck-group.description;Betreffen das ganze Deck, sofern nicht überschrieben;Applies to the whole deck unless overwritten;S'applique à tout le Deck sauf indication contraire;Se aplica a todo el deck a menos que se sobrescriba;Aplica-se a todo o deck a menos que seja substituído
+deck.deck-group.name;Name;Name;Nom;Nombre;Nome
 deck.deck-group.brightness;Helligkeit;Brightness;Luminosité;Brillo;Brilho
 deck.deck-group.saturation;Sättigung;Saturation;Saturation;Saturación;Saturação
 deck.deck-group.enable-screensaver;Bildschirmschoner;Enable Screensaver;Activer l'économiseur d'écran;Activar salvapantallas;Habilitar Protetor de Tela
@@ -143,6 +144,25 @@ background.processing;Verarbeiten...;Processing...;Traitement en cours…;Proces
 asset-chooser.custom.browse-files;Durchsuchen;Browse Files;Parcourir les fichiers;Examinar archivos;Procurar Arquivos
 asset-chooser.custom.browse-files.dialog.title;Dateien auswählen;Select Files;Sélectionner des fichiers;Seleccionar archivos;Selecionar Arquivos
 asset-chooser.custom.browse-files.dialog.select-button;Auswählen;Select;Sélectionner;Seleccione;Selecionar
+asset-chooser.icon-packs.import;Paket importieren;Import Pack;Importer un paquet;Importar paquete;Importar Pacote
+asset-chooser.icon-packs.import.heading;Symbolpaket importieren;Import an icon pack;Importer un paquet d'icônes;Importar un paquete de iconos;Importar um pacote de ícones
+asset-chooser.icon-packs.import.body;Wählen Sie ein ZIP-Archiv oder einen Ordner mit Bildern;Choose a zip archive or a folder of pictures;Choisissez une archive zip ou un dossier d'images;Elija un archivo zip o una carpeta de imágenes;Escolha um arquivo zip ou uma pasta de imagens
+asset-chooser.icon-packs.import.name;Name;Name;Nom;Nombre;Nome
+asset-chooser.icon-packs.import.description;Beschreibung;Description;Description;Descripción;Descrição
+asset-chooser.icon-packs.import.source;Bilder;Pictures;Images;Imágenes;Imagens
+asset-chooser.icon-packs.import.source-none;Nichts gewählt;Nothing chosen;Rien de choisi;Nada elegido;Nada escolhido
+asset-chooser.icon-packs.import.banner;Vorschaubild;Banner;Bannière;Banner;Banner
+asset-chooser.icon-packs.import.banner-none;Erstes Bild verwenden;Use the first picture;Utiliser la première image;Usar la primera imagen;Usar a primeira imagem
+asset-chooser.icon-packs.import.choose-archive;Archiv;Archive;Archive;Archivo;Arquivo
+asset-chooser.icon-packs.import.choose-folder;Ordner;Folder;Dossier;Carpeta;Pasta
+asset-chooser.icon-packs.import.choose-banner;Wählen;Choose;Choisir;Elegir;Escolher
+asset-chooser.icon-packs.import.filter-archive;ZIP-Archive;Zip archives;Archives zip;Archivos zip;Arquivos zip
+asset-chooser.icon-packs.import.filter-picture;Bilder;Pictures;Images;Imágenes;Imagens
+asset-chooser.icon-packs.import.confirm;Importieren;Import;Importer;Importar;Importar
+asset-chooser.icon-packs.import.cancel;Abbrechen;Cancel;Annuler;Cancelar;Cancelar
+asset-chooser.icon-packs.import.close;Schließen;Close;Fermer;Cerrar;Fechar
+asset-chooser.icon-packs.import.failed;Import fehlgeschlagen;Import failed;Échec de l'importation;Error de importación;Falha na importação
+asset-chooser.icon-packs.import.failed-body;Das Paket konnte nicht importiert werden;The pack could not be imported;Le paquet n'a pas pu être importé;No se pudo importar el paquete;Não foi possível importar o pacote
 asset-chooser.search.no-match;Kein Paket enthält einen Treffer für diese Suche;No pack holds a match for this search;Aucun paquet ne contient de résultat pour cette recherche;Ningún paquete contiene coincidencias para esta búsqueda;Nenhum pacote contém resultados para esta busca
 background-editor.header;Hintergrund;Background;L'arrière-plan;Fondo;Fundo
 asset-chooser.add-more-button.label;Mehr hinzufügen;Add More;Ajouter plus;Añadir más;Adicionar Mais

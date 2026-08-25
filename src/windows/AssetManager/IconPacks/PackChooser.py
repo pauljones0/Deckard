@@ -18,6 +18,7 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
+from gi.repository import Gtk
 
 # Import python modules
 
@@ -27,6 +28,8 @@ from src.windows.AssetManager.GenericAssetChooser import (
     GenericPackFlowBox,
     GenericPackPreview,
 )
+from src.backend.PackManagement import pack_import
+from src.windows.AssetManager.IconPacks.ImportDialog import ImportPackDialog
 
 # Import globals
 import globals as gl
@@ -35,6 +38,7 @@ import globals as gl
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from src.backend.IconPackManagement.IconPack import IconPack
+    from src.windows.AssetManager.AssetManager import AssetManager
     from src.windows.AssetManager.IconPacks.Icons.IconChooser import IconChooserPage
     from src.windows.AssetManager.IconPacks.Stack import IconPackChooserStack
 
@@ -46,6 +50,25 @@ class IconPackChooser(GenericPackChooserPage["IconPack", "IconPackChooserStack"]
     PACK_FLOW_BOX_CLASS = GenericPackFlowBox
     PACK_PREVIEW_CLASS = GenericPackPreview
     LEAF_CHILD_NAME = "icon-chooser"
+
+    def __init__(self, stack: "IconPackChooserStack", asset_manager: "AssetManager") -> None:
+        super().__init__(stack, asset_manager)
+        # The nav box already holds the search entry, and this sits beside it.
+        # The base constructor built that box on this thread, which is the
+        # main one, so the button goes in here rather than in the build worker.
+        self.import_button = Gtk.Button(
+            label=gl.lm.get("asset-chooser.icon-packs.import"),
+            margin_start=15, valign=Gtk.Align.CENTER)
+        self.import_button.connect("clicked", self.on_import_clicked)
+        self.nav_box.append(self.import_button)
+
+    def on_import_clicked(self, _button: Gtk.Button) -> None:
+        # One import at a time. A second while the first still copies would
+        # race the first over the pack folders and the grid reload, so the
+        # button does nothing until the running import finishes.
+        if pack_import.import_is_running():
+            return
+        ImportPackDialog(self).present()
 
     def get_packs(self) -> "dict[str, IconPack]":
         if gl.icon_pack_manager is None:
