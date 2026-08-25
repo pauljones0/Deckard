@@ -12,6 +12,7 @@ import fixtures  # noqa: F401  (isolates DATA_PATH before src imports)
 import ast
 import os
 import sys
+from types import SimpleNamespace
 
 import globals as gl  # noqa: E402
 
@@ -205,6 +206,41 @@ def check_require_main_window() -> None:
     print("PASS: require_main_window() names both absences and returns the window")
 
 
+def check_sidebar_and_deck_stack_accessors() -> None:
+    # No app: both read None, not an AttributeError on the missing chain.
+    gl.app = None
+    assert services.sidebar() is None, "no app means no sidebar"
+    assert services.deck_stack() is None, "no app means no deck stack"
+
+    # An app with no window: still None. main_window() reads main_win with
+    # getattr, so a dropped window-None guard would dereference None one call
+    # later and raise right here.
+    running = FakeApp()
+    gl.app = running
+    assert not hasattr(running, "main_win"), "the fixture's premise: main_win is unbound"
+    assert services.sidebar() is None, "an app without a window has no sidebar"
+    assert services.deck_stack() is None, "an app without a window has no deck stack"
+
+    # A window present: each accessor forwards to the window's own typed
+    # method and hands back exactly what it returns, identity included.
+    sentinel_sidebar = object()
+    sentinel_stack = object()
+    running.main_win = SimpleNamespace(
+        get_sidebar=lambda: sentinel_sidebar,
+        get_deck_stack=lambda: sentinel_stack,
+    )
+    assert services.sidebar() is sentinel_sidebar, "sidebar() must forward the window's result"
+    assert services.deck_stack() is sentinel_stack, "deck_stack() must forward the window's result"
+
+    # The window can answer None while it is still building; the accessor
+    # forwards that None rather than invent a value.
+    running.main_win = SimpleNamespace(get_sidebar=lambda: None, get_deck_stack=lambda: None)
+    assert services.sidebar() is None
+    assert services.deck_stack() is None
+
+    print("PASS: sidebar()/deck_stack() forward the window accessor and stay None-safe")
+
+
 def check_settings_accessors_pass_through() -> None:
     manager = fixtures.StubSettingsManager(app_settings={"general": {"hold-time": 0.75}})
     gl.settings_manager = manager
@@ -305,6 +341,7 @@ def main() -> None:
         check_app_and_require_app()
         check_main_window_covers_both_absences()
         check_require_main_window()
+        check_sidebar_and_deck_stack_accessors()
         check_settings_accessors_pass_through()
         check_page_manager_pair()
         check_runtime_imports_are_globals_only()

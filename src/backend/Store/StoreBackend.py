@@ -37,8 +37,7 @@ from autostart import is_flatpak
 from src.backend.Store.StoreCache import StoreCache
 from src.backend.Store.StoreURL import RepoRef, parse_repo_url
 from src.backend.PluginManager.PluginBase import PluginBase
-from src.backend.DeckManagement.HelperMethods import recursive_hasattr
-from src.backend import archive_safety, http_client
+from src.backend import archive_safety, http_client, services
 
 from src.Signals import Signals
 
@@ -1628,8 +1627,9 @@ class StoreBackend:
             self.notify_if_installed_disabled(plugin_id)
 
         # Update the UI.
-        if gl.app is not None and recursive_hasattr(gl, "app.main_win.sidebar.action_chooser"):
-            GLib.idle_add(gl.app.main_win.sidebar.action_chooser.plugin_group.update)
+        sidebar = services.sidebar()
+        if sidebar is not None:
+            GLib.idle_add(sidebar.action_chooser.plugin_group.update)
 
         # Update the page on every deck; check both, so an auto-update
         # raises no error here.

@@ -95,9 +95,10 @@ def _fake_child(controller, grid):
 def _fake_window(deck_stack):
     # attach_window needs get_mapped and connect. Without them it takes its
     # except branch and skips nothing else, and the real path is worth
-    # exercising.
+    # exercising. The rescan reaches the stack through the window's typed
+    # accessor, so the fake exposes get_deck_stack.
     return SimpleNamespace(
-        leftArea=SimpleNamespace(deck_stack=deck_stack),
+        get_deck_stack=lambda: deck_stack,
         get_mapped=lambda: False,
         connect=lambda *args: None,
     )

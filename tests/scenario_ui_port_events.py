@@ -450,13 +450,12 @@ def check_dial_preview_rides_strip_payload() -> None:
     real_glib, real_app = screenbar_mod.GLib, gl.app
     screenbar_mod.GLib = SimpleNamespace(
         idle_add=lambda callback, *args, **kwargs: scheduled.append(callback))
+    dial_sidebar = SimpleNamespace(
+        active_identifier=Input.Dial("0"),
+        key_editor=SimpleNamespace(icon_selector=icon_selector),
+    )
     gl.app = SimpleNamespace(
-        main_win=SimpleNamespace(
-            sidebar=SimpleNamespace(
-                active_identifier=Input.Dial("0"),
-                key_editor=SimpleNamespace(icon_selector=icon_selector),
-            )
-        )
+        main_win=SimpleNamespace(get_sidebar=lambda: dial_sidebar)
     )
     try:
         frame = Image.new("RGBA", (800, 100), (10, 20, 30, 255))
@@ -494,7 +493,7 @@ def check_dial_preview_rides_strip_payload() -> None:
         )
 
         # No dial selected. Nothing rides along.
-        gl.app.main_win.sidebar.active_identifier = Input.Key("0x0")
+        dial_sidebar.active_identifier = Input.Key("0x0")
         assert ScreenBarImage.prepare_mirror_frame(strip, frame)[2] is None, (
             "a strip frame carried a dial preview with no dial selected"
         )
