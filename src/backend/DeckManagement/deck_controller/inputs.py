@@ -274,6 +274,54 @@ class ControllerInput(Generic[StateT]):
         config = self.identifier.get_config(page)
         self.load_from_input_dict(config, page=page)
 
+    def _recreate_states_keeping_action_media(self, n_states: int) -> "set[int]":
+        """Rebuild this input's states for a page load, carrying action-owned
+        media across the rebuild. It answers the state indexes whose media it
+        put back, which the caller must not then reset the action layout on.
+
+        create_n_states destroys every state object and closes its action-set
+        media. Only on_update() repaints afterwards, and an action that dedups
+        there never does, so the input settles permanently blank. So the media
+        and its action layout come off before the wipe, and go back on only
+        where the same action object still drives the recreated state. A
+        same-page reload reuses the action objects, so the identity matches and
+        the paint returns. A cross-page load builds new ones, so the identity
+        differs, the media closes and nothing bleeds.
+
+        Under _states_lock a concurrent set_media paint lands fully before the
+        wipe, where the stash carries it over, or fully after it on the
+        recreated state, and never on a destroyed state object.
+        """
+        with self._states_lock:
+            stashed: "dict[int, tuple[ActionCore, InputImage | None, InputVideo | KeyGIF | None, ImageLayout]]" = {}
+            for index, old_state in self.states.items():
+                owner = old_state.media_owner_action
+                if owner is None:
+                    continue
+                image, video = old_state.detach_action_media()
+                if image is None and video is None:
+                    continue
+                stashed[index] = (owner, image, video,
+                                  old_state.layout_manager.action_layout)
+                old_state.media_owner_action = None
+
+            self.create_n_states(max(1, n_states))
+
+            restored: set[int] = set()
+            for index, (owner, image, video, action_layout) in stashed.items():
+                new_state = self.states.get(index)
+                if new_state is not None and owner in new_state.get_own_actions():
+                    new_state.attach_action_media(image, video)
+                    new_state.media_owner_action = owner
+                    new_state.layout_manager.set_action_layout(action_layout, update=False)
+                    restored.add(index)
+                else:
+                    if image is not None:
+                        image.close()
+                    if video is not None:
+                        video.close()
+            return restored
+
     def get_current_image(self) -> "Image.Image":
         """The input's current composition. The key and touchscreen inputs
         implement it; a dial composes into the touchscreen strip and has no
@@ -867,48 +915,7 @@ class ControllerKey(ControllerInput["ControllerKeyState"]):
         """
         n_states = len(input_dict.get("states", {}))
 
-        # create_n_states destroys every state object and closes any
-        # action-set media. Only on_update() can repaint afterwards, and an
-        # action that dedups there never does, so the key settles permanently
-        # blank. Detach the action-owned media, and its action layout, before
-        # the wipe. Restore it only when the exact action object that painted
-        # it still drives the recreated state. A same-page reload reuses the
-        # action objects, so the identity matches and the paint returns. A
-        # cross-page load builds new ones, so the identity differs, the media
-        # closes and nothing bleeds. This runs under _states_lock, so a
-        # concurrent set_media paint lands fully before the wipe, where the
-        # stash carries it over, or fully after it, on the recreated state,
-        # and never on a destroyed state object.
-        with self._states_lock:
-            stashed: "dict[int, tuple[ActionCore, InputImage | None, InputVideo | KeyGIF | None, ImageLayout]]" = {}
-            for index, old_state in self.states.items():
-                owner = old_state.media_owner_action
-                if owner is None:
-                    continue
-                if old_state.key_image is None and old_state.key_video is None:
-                    continue
-                stashed[index] = (owner, old_state.key_image, old_state.key_video,
-                                  old_state.layout_manager.action_layout)
-                old_state.key_image = None
-                old_state.key_video = None
-                old_state.media_owner_action = None
-
-            self.create_n_states(max(1, n_states))
-
-            restored: set[int] = set()
-            for index, (owner, key_image, key_video, action_layout) in stashed.items():
-                new_state = self.states.get(index)
-                if new_state is not None and owner in new_state.get_own_actions():
-                    new_state.key_image = key_image
-                    new_state.key_video = key_video
-                    new_state.media_owner_action = owner
-                    new_state.layout_manager.set_action_layout(action_layout, update=False)
-                    restored.add(index)
-                else:
-                    if key_image is not None:
-                        key_image.close()
-                    if key_video is not None:
-                        key_video.close()
+        restored = self._recreate_states_keeping_action_media(n_states)
 
         self.state = self.persisted_state.on_load(self, input_dict, page)
 
@@ -1320,48 +1327,7 @@ class ControllerDial(ControllerInput["ControllerDialState"]):
     def load_from_input_dict(self, input_dict: "dict[str, Any]", update: bool = True, page: "Page | None" = None) -> None:
         n_states = len(input_dict.get("states", {}))
 
-        # create_n_states destroys every state object and closes its
-        # action-set media. A dial action that painted through set_media then
-        # dedups in on_update and never repaints, so the dial settles blank.
-        # Detach the action-owned media and its action layout before the wipe,
-        # and restore it when that same action still drives the recreated
-        # state, as ControllerKey.load_from_input_dict does for a key. A
-        # same-page reload reuses the action objects, so the identity matches
-        # and the paint returns; a cross-page load builds new ones, so the
-        # media closes and nothing bleeds. Under _states_lock a concurrent
-        # set_media paint lands fully before the wipe, where the stash carries
-        # it over, or fully after it on the recreated state, never on a
-        # destroyed one.
-        with self._states_lock:
-            stashed: "dict[int, tuple[ActionCore, InputImage | None, InputVideo | KeyGIF | None, ImageLayout]]" = {}
-            for index, old_state in self.states.items():
-                owner = old_state.media_owner_action
-                if owner is None:
-                    continue
-                if old_state.image is None and old_state.video is None:
-                    continue
-                stashed[index] = (owner, old_state.image, old_state.video,
-                                  old_state.layout_manager.action_layout)
-                old_state.image = None
-                old_state.video = None
-                old_state.media_owner_action = None
-
-            self.create_n_states(max(1, n_states))
-
-            restored: set[int] = set()
-            for index, (owner, image, video, action_layout) in stashed.items():
-                new_state = self.states.get(index)
-                if new_state is not None and owner in new_state.get_own_actions():
-                    new_state.image = image
-                    new_state.video = video
-                    new_state.media_owner_action = owner
-                    new_state.layout_manager.set_action_layout(action_layout, update=False)
-                    restored.add(index)
-                else:
-                    if image is not None:
-                        image.close()
-                    if video is not None:
-                        video.close()
+        restored = self._recreate_states_keeping_action_media(n_states)
 
         self.state = self.persisted_state.on_load(self, input_dict, page)
 

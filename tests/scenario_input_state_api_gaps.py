@@ -108,6 +108,62 @@ def check_touchscreen_media(controller) -> None:
     state.close_resources()
 
 
+def check_action_media_stash_protocol(controller) -> None:
+    """The pair a page load uses to carry action-owned media across the wipe.
+
+    One load path serves every input type that stashes, so the two state
+    classes it reaches must answer the same pair with the same semantics. A
+    detach hands the media out and clears the slot without closing it, because
+    the caller puts that same object back. A closing detach, or one that routed
+    through set_image, would hand back released media and repaint a state that
+    is about to be destroyed.
+    """
+    key = controller.inputs[Input.Key][0]
+    dial = controller.inputs[Input.Dial][0]
+
+    green = make_test_png(
+        os.path.join(gl.DATA_PATH, "media", "stash_icon.png"), color=(0, 200, 0))
+
+    for name, controller_input, slot in (("key", key, "key_image"), ("dial", dial, "image")):
+        state = controller_input.get_active_state()
+        with Image.open(green) as img:
+            media = InputImage(controller_input=controller_input, image=img.copy(), path=green)
+        state.set_image(media, update=False)
+        check(f"{name} set_image stored the media", getattr(state, slot) is media)
+
+        detached_image, detached_video = state.detach_action_media()
+        check(f"{name} detach handed back the media", detached_image is media)
+        check(f"{name} detach cleared the still slot", getattr(state, slot) is None)
+        check(f"{name} detach reported no video", detached_video is None)
+        # The caller puts this object back, so the detach must leave it usable.
+        check(f"{name} detach left the media open",
+              detached_image is not None and detached_image.get_raw_image() is not None,
+              "the detach closed media the restore is about to reattach")
+
+        # The owner stamp is not the pair's to clear. The shared load path
+        # clears it, and only for a state whose media it actually stashed.
+        state.media_owner_action = None
+
+        state.attach_action_media(detached_image, detached_video)
+        check(f"{name} attach put the media back", getattr(state, slot) is media)
+
+        state.attach_action_media(None, None)
+        check(f"{name} attach clears with a None pair", getattr(state, slot) is None)
+        media.close()
+
+    # The touchscreen runs no stashing load, so it inherits the refusing base
+    # rather than a silent no-op that would drop media if a load ever reached
+    # it.
+    touch_state = controller.get_input(Input.Touchscreen("sd-plus")).get_active_state()
+    raised = False
+    try:
+        touch_state.detach_action_media()
+    except NotImplementedError:
+        raised = True
+    check("touchscreen state refuses the stash pair", raised,
+          "a state class with no stashing load must refuse, not answer nothing")
+
+
 def main() -> None:
     start_watchdog(WATCHDOG_SECONDS, label="scenario_input_state_api_gaps")
     controller = fixtures.make_headless_controller(serial="api-gaps-1")
@@ -116,6 +172,7 @@ def main() -> None:
         settle_inputs(controller)
         check_dial_clear(controller)
         check_touchscreen_media(controller)
+        check_action_media_stash_protocol(controller)
     finally:
         teardown(controller)
 

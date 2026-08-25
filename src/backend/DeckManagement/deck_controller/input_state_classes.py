@@ -62,6 +62,13 @@ if TYPE_CHECKING:
 
 
 class ControllerInputState:
+    # The ActionCore that set this state's media through set_media(), or None
+    # when the page or the user owns it. Every state class that carries media
+    # assigns it in its own __init__. The declaration sits here so the shared
+    # page-load path can read it off any state without knowing which class it
+    # got, and it binds nothing at runtime.
+    media_owner_action: "ActionCore | None"
+
     def __init__(self, controller_input: "ControllerInput[Any]", state: int):
         self.controller_input = controller_input
         self.deck_controller = controller_input.deck_controller
@@ -323,6 +330,28 @@ class ControllerInputState:
         implements it and why the base body is unreachable. It accepts both
         providers; the .gif route builds a KeyGIF and every other route builds
         an InputVideo."""
+        raise NotImplementedError
+
+    def detach_action_media(self) -> "tuple[InputImage | None, InputVideo | KeyGIF | None]":
+        """Take this state's media off it, without closing it, and hand it back.
+
+        A page load calls it before create_n_states destroys every state
+        object, so action-owned media survives the wipe and can go back on the
+        state that replaces this one. The slots are cleared directly, and not
+        through set_image, because a setter closes the media it replaces and
+        repaints a state that is about to be destroyed.
+
+        ControllerKeyState and ControllerDialState implement it, which are the
+        two state classes a stashing load reaches. See set_image for the same
+        contract on the media protocol.
+        """
+        raise NotImplementedError
+
+    def attach_action_media(self, image: "InputImage | None",
+                            video: "InputVideo | KeyGIF | None") -> None:
+        """Put stashed media back on this state, directly and without a
+        repaint. See detach_action_media for who implements it and why the
+        assignment bypasses the setters."""
         raise NotImplementedError
 
     def remove_media(self) -> None:
@@ -755,6 +784,17 @@ class ControllerDialState(ControllerInputState):
         self.video = video
         self.media_owner_action = None
 
+    def detach_action_media(self) -> "tuple[InputImage | None, InputVideo | KeyGIF | None]":
+        media = (self.image, self.video)
+        self.image = None
+        self.video = None
+        return media
+
+    def attach_action_media(self, image: "InputImage | None",
+                            video: "InputVideo | KeyGIF | None") -> None:
+        self.image = image
+        self.video = video
+
     def clear(self) -> None:
         # The dial twin of ControllerKeyState.clear(): release action-owned
         # media and reset the page-owned layers so a fresh page load starts
@@ -886,6 +926,22 @@ class ControllerKeyState(ControllerInputState):
         self.key_image = None
         self.media_owner_action = None
         self.cover_cache.invalidate()
+
+    def detach_action_media(self) -> "tuple[InputImage | None, InputVideo | KeyGIF | None]":
+        media = (self.key_image, self.key_video)
+        self.key_image = None
+        self.key_video = None
+        # The kept composite belongs to the media that just came off, as it
+        # does in set_image. This state is destroyed straight after, and its
+        # teardown drops the composite too, but the order is not this method's
+        # to rely on.
+        self.cover_cache.invalidate()
+        return media
+
+    def attach_action_media(self, image: "InputImage | None",
+                            video: "InputVideo | KeyGIF | None") -> None:
+        self.key_image = image
+        self.key_video = video
 
     def clear(self) -> None:
         if self.key_video is not None:
