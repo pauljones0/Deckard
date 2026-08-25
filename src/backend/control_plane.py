@@ -543,7 +543,19 @@ class ControlPlane:
             return ControlResult(False, "page-build-failed",
                                  f"Page '{page_ref}' could not be loaded")
 
-        controller.load_page(page)
+        # A request that names a page is the user choosing the deck's page,
+        # whether it arrives from the CLI or over D-Bus. The window grabber
+        # owns the mark that says the page arrived by an automatic switch, and
+        # nothing else clears it, so without this the deck keeps that mark and
+        # a later restore takes it back to a page the user already left. The
+        # wrap sits here, around the one load that actually happens: a refused
+        # request and a page already active leave the mark alone.
+        window_grabber = gl.window_grabber
+        if window_grabber is None:
+            controller.load_page(page)
+            return ControlResult(True)
+        with window_grabber.manual_page_load(controller, page_path):
+            controller.load_page(page)
         return ControlResult(True)
 
     def change_state_on(self, controller: DeckController, page_ref: str,
