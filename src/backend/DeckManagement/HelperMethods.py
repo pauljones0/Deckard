@@ -403,7 +403,7 @@ def get_values_from_pango_font_description(desc: "Pango.FontDescription") -> tup
     # the data.
     Pango = _load_pango()
     font_family = desc.get_family()
-    font_size = desc.get_size() / Pango.SCALE
+    font_size: float = desc.get_size() / Pango.SCALE
     font_weight = desc.get_weight()
     font_style = desc.get_style()
 

@@ -160,7 +160,7 @@ def _exc_site(exc_type: type[BaseException] | None, exc_value: BaseException | N
     such as an asyncio message-only context or a synthesized error, falls back
     to the message text, so two unrelated failures of that shape keep separate
     budgets."""
-    type_name = getattr(exc_type, "__name__", None) or str(exc_type)
+    type_name: str = getattr(exc_type, "__name__", None) or str(exc_type)
     tb = exc_tb
     while tb is not None and tb.tb_next is not None:
         tb = tb.tb_next
@@ -313,7 +313,7 @@ def _rate_limit(key: SiteKey) -> tuple[bool, int]:
     # every other thread's hook.
     for dropped_key, count in dropped:
         _emit_pending(dropped_key, count, "rate-limit state pruned")
-    return suppress, suppressed
+    return suppress, cast(int, suppressed)
 
 
 def _announce_disabled() -> None:

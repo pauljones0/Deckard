@@ -68,7 +68,7 @@ import fcntl
 import os
 import threading
 import weakref
-from typing import TYPE_CHECKING, NamedTuple
+from typing import TYPE_CHECKING, NamedTuple, cast
 
 from loguru import logger as log
 
@@ -355,7 +355,7 @@ def _enumerated_serial(deck: object) -> "str | None":
     except Exception:
         return None
     if isinstance(value, str) and value.strip():
-        return value.strip()
+        return cast(str, value.strip())
     return None
 
 
@@ -458,7 +458,7 @@ def _escalate(controller: "DeckController", watchdog: "DeckReaderWatchdog") -> N
 
 
 def _label(controller: "DeckController") -> str:
-    return getattr(controller, "_serial_number", None) or "unknown"
+    return cast(str, getattr(controller, "_serial_number", None) or "unknown")
 
 
 def install_give_up_escalation(watchdog: "DeckReaderWatchdog") -> None:

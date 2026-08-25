@@ -1,3 +1,5 @@
+from typing import cast
+
 from fontTools import ttLib
 
 import gi
@@ -26,7 +28,7 @@ def font_family_from_path(path: str) -> str:
         elif record.nameID == FONT_SPECIFIER_FAMILY_ID and not family: 
             family = name_str
         if name and family: break
-    return family
+    return cast(str, family)
 
 def hex_to_rgba255(color_hex: str | None) -> list[int] | None:
     if color_hex in [None, ""]: return None

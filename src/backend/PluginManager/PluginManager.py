@@ -157,7 +157,7 @@ def verify_backend_port(port: int, process: subprocess.Popen[bytes] | None,
         matched = [row for row in rows if row.uid == os.getuid()]
         detail = "no listener on that port belongs to this user"
     elif process is None:
-        matched = []
+        matched: list[deckard_rpyc_guard.TcpRow] = []
         detail = "no backend process was launched"
     else:
         matched = [row for row in rows
@@ -686,7 +686,7 @@ class PluginManager:
 
         The module plugins.<folder>.main gives <folder>, which load_errors
         keys by."""
-        module = getattr(subclass, "__module__", "") or ""
+        module = cast(str, getattr(subclass, "__module__", "") or "")
         parts = module.split(".")
         if len(parts) >= 2 and parts[0] == "plugins":
             return parts[1]

@@ -407,7 +407,7 @@ class BetterDeck():
         :rtype: (int, int)
         :return (rows, columns): Number of button rows and columns.
         """
-        rows, cols = self.deck.key_layout()
+        rows, cols = cast("tuple[int, int]", self.deck.key_layout())
         if self.rotation in [0, 180]:
             return rows, cols
         else:

@@ -26,7 +26,7 @@ import socket
 import sys
 import types
 from collections.abc import Callable, Sequence
-from typing import Any, NamedTuple
+from typing import Any, NamedTuple, cast
 
 TCP_ESTABLISHED = "01"
 TCP_LISTEN = "0A"
@@ -259,7 +259,7 @@ class _PatchingLoader(importlib.abc.Loader):
 
     def create_module(self, spec: importlib.machinery.ModuleSpec) -> types.ModuleType | None:
         create = getattr(self._loader, "create_module", None)
-        return create(spec) if create is not None else None
+        return cast("types.ModuleType | None", create(spec) if create is not None else None)
 
     def exec_module(self, module: types.ModuleType) -> None:
         self._loader.exec_module(module)

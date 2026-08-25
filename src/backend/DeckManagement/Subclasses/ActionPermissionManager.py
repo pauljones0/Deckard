@@ -46,7 +46,7 @@ class ActionPermissionManager:
     ## Media
     def get_image_control_index(self) -> int | None:
         state_dict = self.get_state_dict()
-        return state_dict.get("image-control-action", None)
+        return cast("int | None", state_dict.get("image-control-action", None))
     
     def set_image_control_index(self, index: int, reload_pages: bool = True, reload_self: bool = True) -> None:
         state_dict = self.get_state_dict()
@@ -58,7 +58,7 @@ class ActionPermissionManager:
     ## Background
     def get_background_control_index(self) -> int | None:
         state_dict = self.get_state_dict()
-        return state_dict.get("background-control-action", None)
+        return cast("int | None", state_dict.get("background-control-action", None))
     
     def set_background_control_index(self, index: int, reload_pages: bool = True, reload_self: bool = True) -> None:
         state_dict = self.get_state_dict()

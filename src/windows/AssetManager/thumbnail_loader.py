@@ -41,7 +41,7 @@ import threading
 import weakref
 from collections import OrderedDict
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from loguru import logger as log
 
@@ -244,7 +244,7 @@ def _serialize(pixbuf: Any) -> bytes:
     )
     # get_pixels() copies the pixel buffer into a bytes object, so the value is
     # immutable and safe to hand out of the cache by reference.
-    return header + pixbuf.get_pixels()
+    return cast(bytes, header + pixbuf.get_pixels())
 
 
 def _deserialize(data: bytes) -> Any:

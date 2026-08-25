@@ -129,7 +129,7 @@ import re
 import socket
 import traceback
 from collections.abc import Callable
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
     from loguru import Record
@@ -315,7 +315,7 @@ def _url_host_replacement(match: re.Match[str]) -> str:
         return match.group(0)
     if host.startswith("["):
         token = f"[{token}]"
-    return match.group(1) + token
+    return cast(str, match.group(1) + token)
 
 
 def _at_host_replacement(match: re.Match[str]) -> str:

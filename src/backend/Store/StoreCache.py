@@ -478,7 +478,7 @@ class StoreCache:
             self.files[cache_string] = entry
             self._mark_index_dirty_locked()
 
-        return open(cache_path, mode)
+        return cast("IO[str] | IO[bytes]", open(cache_path, mode))
 
     def get_fetched_date(self, url: str, path: str, branch: "str | None" = "main", data_type: str = "text") -> float | None:
         """When a write last landed the cached content, or None when that is

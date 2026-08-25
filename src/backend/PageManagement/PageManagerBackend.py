@@ -347,7 +347,7 @@ class PageManagerBackend:
             page_settings["default-pages"][deck_serial_number] = path
 
     def get_all_default_page_serial_numbers(self) -> list[str]:
-        serial_numbers = []
+        serial_numbers: list[str] = []
 
         page_settings = settings_store.get().read(settings_store.PAGES)
         for serial_number, page_path in page_settings.get("default-pages", {}).items():
@@ -358,7 +358,7 @@ class PageManagerBackend:
         return serial_numbers
 
     def get_serial_numbers_from_page(self, path: str | None) -> list[str]:
-        serial_numbers = []
+        serial_numbers: list[str] = []
 
         page_settings = settings_store.get().read(settings_store.PAGES)
         for serial_number, page_path in page_settings.get("default-pages", {}).items():

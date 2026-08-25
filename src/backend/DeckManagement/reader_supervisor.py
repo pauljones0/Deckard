@@ -67,7 +67,7 @@ from src.backend.DeckManagement.deck_controller.media_writer import ReopenDeckMs
 import globals as gl
 
 from collections.abc import Callable
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
     from src.backend.DeckManagement.BetterDeck import BetterDeck
@@ -446,7 +446,7 @@ class DeckReaderSupervisor:
                 f"Deck {self._serial()}: the give-up escalation hook raised")
 
     def _serial(self) -> str:
-        return getattr(self.controller, "_serial_number", None) or "unknown"
+        return cast(str, getattr(self.controller, "_serial_number", None) or "unknown")
 
 
 class DeckReaderWatchdog(threading.Thread):

@@ -178,7 +178,7 @@ class PluginBase(rpyc.Service):
             return cast(str, cached)
         manifest = self.get_manifest()
         self._plugin_id_cache = manifest.get("id") or self.get_plugin_id_from_folder_name()
-        return self._plugin_id_cache
+        return cast(str, self._plugin_id_cache)
 
     def _resolve_settings_path(self) -> str:
         """Give the settings path of this plugin, under the manifest id.
@@ -608,7 +608,7 @@ class PluginBase(rpyc.Service):
                 if lock is None:
                     lock = threading.Lock()
                     self._settings_lock = lock
-        return lock
+        return cast("threading.Lock", lock)
 
     def get_settings(self) -> "dict[str, Any]":
         """Read the settings from the settings file.

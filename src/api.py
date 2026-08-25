@@ -9,7 +9,7 @@ import json
 import os
 import re
 from collections import namedtuple
-from typing import Any, Tuple, TYPE_CHECKING
+from typing import Any, Tuple, TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
     from src.backend.DeckManagement.deck_controller.controller import DeckController
@@ -463,7 +463,7 @@ class DeckardAPI:
 
         A client needs it to compose valid JSON page files.
         """
-        return gl.DATA_PATH
+        return cast(str, gl.DATA_PATH)
     
     @property
     def Controllers(self) -> List[Str]:
@@ -486,7 +486,7 @@ class DeckardAPI:
     @property
     def ForegroundWindow(self) -> Tuple[Str, Str]:
         """The current foreground window as (name, wm_class)."""
-        return (self._foreground_window.name, self._foreground_window.wm_class)
+        return cast("tuple[str, str]", (self._foreground_window.name, self._foreground_window.wm_class))
 
     @ForegroundWindow.setter
     def ForegroundWindow(self, value: Tuple[Str, Str]) -> None:
@@ -566,7 +566,7 @@ def _known_serial(controller: "DeckController") -> str:
 
     A failure path can use it, where the deck itself may be the fault.
     """
-    return getattr(controller, "_serial_number", None) or "<unknown>"
+    return cast(str, getattr(controller, "_serial_number", None) or "<unknown>")
 
 
 def _publish_on_main(controller: "DeckController") -> bool:

@@ -17,7 +17,7 @@ import contextlib
 import os
 import select
 import threading
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from loguru import logger as log
 
@@ -83,7 +83,7 @@ def _close_display(display) -> None:
 
 
 def _intern_title_atoms(display) -> tuple[int, ...]:
-    return tuple(display.intern_atom(name) for name in _TITLE_PROPERTIES)
+    return cast("tuple[int, ...]", tuple(display.intern_atom(name) for name in _TITLE_PROPERTIES))
 
 
 def _active_window_id(root, active_atom) -> int | None:
@@ -123,7 +123,7 @@ def _read_window_title(window, title_atoms) -> str | None:
         if value is None or len(value) == 0:
             continue
         if isinstance(value, bytes):
-            return value.decode("utf-8", errors="replace").rstrip("\x00")
+            return cast(str, value.decode("utf-8", errors="replace").rstrip("\x00"))
         return str(value).rstrip("\x00")
     return None
 
@@ -139,7 +139,7 @@ def _read_window_class(window) -> str | None:
     if not pair or len(pair) < 2:
         return None
     window_class = pair[1]
-    return window_class or None
+    return cast("str | None", window_class or None)
 
 
 def _read_window(display, window_id, title_atoms) -> Window | None:
@@ -169,7 +169,7 @@ def _is_active_window_change(event, root_id: int, active_atom: int) -> bool:
         return False
     if event.atom != active_atom:
         return False
-    return event.window.id == root_id
+    return cast(bool, event.window.id == root_id)
 
 
 def _is_title_change(event, window_id: int | None, title_atoms: tuple[int, ...]) -> bool:
