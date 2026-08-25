@@ -30,7 +30,7 @@ gi.require_version("Adw", "1")
 
 from gi.repository import Gtk, Gdk, GLib, Gio
 
-from typing import Any, TYPE_CHECKING
+from typing import Any, TYPE_CHECKING, override
 if TYPE_CHECKING:
     from src.backend.DeckManagement.deck_controller.inputs import ControllerDial
     from src.windows.mainWindow.elements.PageSettingsPage import PageSettingsPage
@@ -478,6 +478,7 @@ class DialContextMenu(Gtk.PopoverMenu):
 
         self.set_menu_model(self.main_menu)
 
+    @override
     def popup(self) -> None:
         """Override popup to set parent just before showing"""
         if self.dial and not self.get_parent():

@@ -24,7 +24,7 @@ from .PluginAssetPreview import IconPreview, ColorPreview
 from loguru import logger as log
 
 from collections.abc import Callable
-from typing import Any
+from typing import Any, override
 
 class PluginSettingsWindow(Adw.PreferencesDialog):
     def __init__(self, plugin_base: PluginBase):
@@ -226,6 +226,7 @@ class IconPage(PluginSettingsPage):
             preview.edit_button.connect("clicked", self.edit_button_clicked, preview)
             self.flow_box.append(preview)
 
+    @override
     def reset_button_clicked(self, *args: Any) -> None:
         preview = args[1]
         if type(preview) == IconPreview:
@@ -305,6 +306,7 @@ class ColorPage(PluginSettingsPage):
             preview = ColorPreview(window=self, name=name, color=rgba, size=(100, 100), hexpand=False, vexpand=False)
             self.flow_box.append(preview)
 
+    @override
     def reset_button_clicked(self, *args: Any) -> None:
         preview = args[1]
         if type(preview) == ColorPreview:

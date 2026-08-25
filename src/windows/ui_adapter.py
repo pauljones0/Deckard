@@ -12,7 +12,7 @@ and its docstring says why.
 # in the rotation path.
 import threading
 import time
-from typing import Any, Generic, Protocol, TYPE_CHECKING, TypeVar, cast
+from typing import Any, Generic, Protocol, TYPE_CHECKING, TypeVar, cast, override
 
 if TYPE_CHECKING:
     from PIL import Image
@@ -294,6 +294,7 @@ class GtkUIAdapter(ui_port.UIPort):
 
     # Render mirror
 
+    @override
     def push_input_image(self, controller: "DeckController", identifier: "InputIdentifier", image: "Image.Image | None") -> bool:
         try:
             if image is None or not self._window_mapped:
@@ -382,6 +383,7 @@ class GtkUIAdapter(ui_port.UIPort):
 
     # Deck sync
 
+    @override
     def on_page_changed(self, controller: "DeckController") -> None:
         # Coalesce the page-load completions into one pending idle, so a burst
         # of page changes does not queue a sidebar rebuild for each one. Each
@@ -429,6 +431,7 @@ class GtkUIAdapter(ui_port.UIPort):
         "background": "background_editor",
     }
 
+    @override
     def on_input_visuals_changed(self, controller: "DeckController", identifier: "InputIdentifier", state: int, aspect: str) -> None:
         GLib.idle_add(self._run_input_visuals_changed, controller, identifier, state, aspect)
 
@@ -443,6 +446,7 @@ class GtkUIAdapter(ui_port.UIPort):
         getattr(sidebar.key_editor, editor_name).load_for_identifier(identifier, state)
         return False
 
+    @override
     def on_input_states_changed(self, controller: "DeckController", identifier: "InputIdentifier", n_states: int) -> None:
         GLib.idle_add(self._run_input_states_changed, controller, identifier, n_states)
 
@@ -453,6 +457,7 @@ class GtkUIAdapter(ui_port.UIPort):
         sidebar.key_editor.state_switcher.set_n_states(n_states)
         return False
 
+    @override
     def on_input_state_selected(self, controller: "DeckController", identifier: "InputIdentifier", state: int) -> None:
         GLib.idle_add(self._run_input_state_selected, controller, identifier, state)
 
@@ -481,6 +486,7 @@ class GtkUIAdapter(ui_port.UIPort):
             return None
         return sidebar
 
+    @override
     def set_low_fps_warning(self, controller: "DeckController", shown: bool) -> None:
         GLib.idle_add(self._run_set_low_fps_warning, controller, shown)
 
@@ -491,6 +497,7 @@ class GtkUIAdapter(ui_port.UIPort):
         child.low_fps_banner.set_revealed(shown)
         return False
 
+    @override
     def on_deck_layout_changed(self, controller: "DeckController") -> None:
         """Rebuild the key grid of the deck for a new rotation.
 
@@ -521,6 +528,7 @@ class GtkUIAdapter(ui_port.UIPort):
 
     # Deprecated queries
 
+    @override
     def query_input_widget(self, controller: "DeckController", identifier: "InputIdentifier") -> "object | None":
         child = self._children.get(controller)
         if child is None:
@@ -531,6 +539,7 @@ class GtkUIAdapter(ui_port.UIPort):
             log.opt(exception=True).warning(f"Could not resolve the widget for {identifier}")
         return None
 
+    @override
     def query_deck_widget(self, controller: "DeckController", part: str) -> "object | None":
         child = self._children.get(controller)
         if child is None:
@@ -543,6 +552,7 @@ class GtkUIAdapter(ui_port.UIPort):
 
     # App level
 
+    @override
     def on_deck_added(self, controller: "DeckController") -> None:
         window = self._window
         if window is None:
@@ -552,6 +562,7 @@ class GtkUIAdapter(ui_port.UIPort):
             return
         GLib.idle_add(deck_stack.add_page, controller)
 
+    @override
     def on_deck_removed(self, controller: "DeckController") -> None:
         # Queue the detach idle here, before the return. The caller starts the
         # slow close thread at once, and a fast unplug and replug must not race
@@ -563,12 +574,14 @@ class GtkUIAdapter(ui_port.UIPort):
             GLib.idle_add(deck_stack.remove_page, controller)
         self.unbind(controller)
 
+    @override
     def refresh_deck_availability(self) -> None:
         window = self._window
         if window is None:
             return
         GLib.idle_add(window.check_for_errors)
 
+    @override
     def on_page_list_changed(self) -> None:
         window = self._window
         if window is None:
@@ -578,6 +591,7 @@ class GtkUIAdapter(ui_port.UIPort):
             return
         GLib.idle_add(sidebar.page_selector.update)
 
+    @override
     def notify_plugin_problem(self, plugin_id: str, kind: str) -> None:
         app = getattr(gl, "app", None)
         if app is None:
