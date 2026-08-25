@@ -101,6 +101,10 @@ class CommentGroup(Adw.PreferencesGroup):
         self.parent = parent
         self.action: ActionCore = None  # ty: ignore[invalid-assignment]  # late-init: load_for_action
         self.index: int = None  # ty: ignore[invalid-assignment]  # late-init: load_for_action
+        # The changed-handler id, or None while it is disconnected. A tracked id
+        # keeps connect and disconnect idempotent: a disconnect while already
+        # off cannot raise, and a reconnect cannot stack a second handler.
+        self._comment_handler: int | None = None
         self.build()
 
     def build(self) -> None:
@@ -110,15 +114,18 @@ class CommentGroup(Adw.PreferencesGroup):
 
     def load_for_action(self, action: "ActionCore", index: int) -> None:
         self.disconnect_signals()
-        self.action = action
-        self.index = index
+        try:
+            self.action = action
+            self.index = index
 
-        comment = self.get_comment()
-        if comment is None:
-            comment = ""
-        self.comment_row.set_text(comment)
-
-        self.connect_signals()
+            comment = self.get_comment()
+            if comment is None:
+                comment = ""
+            self.comment_row.set_text(comment)
+        finally:
+            # A lookup that returns early or raises must still leave the row
+            # wired, or every later comment edit is dropped silently.
+            self.connect_signals()
 
     def on_comment_changed(self, entry: Gtk.Editable) -> None:
         self.set_comment(entry.get_text())
@@ -127,10 +134,13 @@ class CommentGroup(Adw.PreferencesGroup):
         services.require_main_window().sidebar.key_editor.action_editor.load_for_identifier(self.action.input_ident, self.action.state)
 
     def connect_signals(self) -> None:
-        self.comment_row.connect("changed", self.on_comment_changed)
+        if self._comment_handler is None:
+            self._comment_handler = self.comment_row.connect("changed", self.on_comment_changed)
 
     def disconnect_signals(self) -> None:
-        self.comment_row.disconnect_by_func(self.on_comment_changed)
+        if self._comment_handler is not None:
+            self.comment_row.disconnect(self._comment_handler)
+            self._comment_handler = None
     
 
     def get_comment(self) -> str | None:
