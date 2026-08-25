@@ -47,6 +47,7 @@ from src.backend.DeckManagement.Subclasses.KeyLabel import KeyLabel
 from src.backend.DeckManagement.Subclasses.KeyLayout import ImageLayout
 from src.backend.DeckManagement.Subclasses.KeyVideo import InputVideo
 from src.backend.DeckManagement.Subclasses.media_pipeline_profiler import media_prof
+from src.backend.DeckManagement.deck_controller import cover_cache
 from src.backend.DeckManagement.deck_controller.gif_pipeline import KeyGIF
 from src.backend.DeckManagement.deck_controller.input_state import PersistedState
 from src.backend.DeckManagement.deck_controller.input_state_classes import (
@@ -474,6 +475,8 @@ class ControllerKey(ControllerInput["ControllerKeyState"]):
                 self._update_from_tile_identity(identified, page, config_gen, force)
                 return
 
+        if cover_cache.present(self, page, config_gen, force):
+            return
         _t0 = _t1 = _t2 = 0.0  # definite binding; every read sits under the same media_prof guard as its write
         if media_prof:
             _t0 = time.perf_counter()
@@ -695,14 +698,12 @@ class ControllerKey(ControllerInput["ControllerKeyState"]):
 
         if background_color[-1] > 0:
             background_color_img = Image.new("RGBA", self.deck_controller.get_key_image_size(), color=tuple(background_color))
-            
             if background is None:
                 # Use the color as the only background. This happens at a
                 # background color alpha of 255.
                 background = background_color_img
             else:
                 background.paste(background_color_img, (0, 0), background_color_img)
-
 
         if background is None:
             background = self.deck_controller.generate_alpha_key().copy()
@@ -716,7 +717,6 @@ class ControllerKey(ControllerInput["ControllerKeyState"]):
             img = state._overlay.resize((height, height))
             background.paste(img, (int((self.deck_controller.get_key_image_size()[0] - height) // 2), int((self.deck_controller.get_key_image_size()[1] - height) // 2)), img)
             return background
-
 
         key_image: Image.Image | None = None
         # rotation = self.deck_controller.get_deck_settings().get("rotation", {}).get("value", 0)
@@ -762,7 +762,7 @@ class ControllerKey(ControllerInput["ControllerKeyState"]):
         if key_image is not labeled_image:
             key_image.close()
 
-        return labeled_image
+        return cover_cache.remember(self, state, labeled_image)
     
     def add_warning_point(self, image: Image.Image, margin: int = 10, size: int = 10, color: tuple[int, int, int] = (255, 150, 80)) -> Image.Image:
         draw = ImageDraw.Draw(image)
