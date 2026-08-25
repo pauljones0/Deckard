@@ -30,6 +30,7 @@ if TYPE_CHECKING:
     from src.windows.mainWindow.elements.DeckSettings.DeckSettingsPage import DeckSettingsPage
 
 # Import own modules
+from src.backend.DeckManagement.deck_controller.media_writer import ReleaseStashedInputsMsg
 
 class FakeDeckGroup(Adw.PreferencesGroup):
     def __init__(self, settings_page: "DeckSettingsPage") -> None:
@@ -85,23 +86,47 @@ class Layout(Adw.PreferencesRow):
 
         deck = cast("FakeDeck", self.settings_page.deck_controller.deck.deck)
 
-        deck.set_key_layout([rows, deck.key_layout()[1]])
-
-        self.settings_page.deck_controller.init_inputs()
-
-        grid = self.settings_page.deck_stack_child.page_settings.grid_page
-        grid.regenerate_buttons()
-        grid.build()
+        self.apply_key_layout([rows, deck.key_layout()[1]])
 
     def on_change_columns(self, widget: Gtk.SpinButton) -> None:
         columns = self.columns_spinner.get_value_as_int()
 
         deck = cast("FakeDeck", self.settings_page.deck_controller.deck.deck)
 
-        deck.set_key_layout([deck.key_layout()[0], columns])
+        self.apply_key_layout([deck.key_layout()[0], columns])
 
-        self.settings_page.deck_controller.init_inputs()
+    def apply_key_layout(self, key_layout: list[int]) -> None:
+        """Resize the fake deck and put the page back onto the new inputs.
+
+        init_inputs() replaces the input registry with empty inputs, so the
+        deck and the editor grid both show nothing until the reload below
+        fills them. Every other caller of init_inputs() pairs it with a page
+        load for that reason. The reload runs after the grid rebuild, so the
+        editor already asks for the new size when the page lands.
+
+        The replaced inputs still hold the media of the page that was showing.
+        A drop alone leaves that image and video data to the collector, so the
+        release goes through the media player's control queue as a
+        ReleaseStashedInputsMsg, the same route ScreenSaver.show() takes.
+        Never close them inline here. init_inputs() only guarantees that
+        deck_controller.inputs points at a fresh dict; a media-thread tick
+        that began just before that swap still renders against the old input
+        objects, so the sole writer has to serialize the close. A control
+        message carries no active-page affinity either, so the reload below
+        cannot drop it.
+        """
+        controller = self.settings_page.deck_controller
+        deck = cast("FakeDeck", controller.deck.deck)
+
+        deck.set_key_layout(key_layout)
+
+        outgoing = controller.inputs
+        controller.init_inputs()
+        if outgoing:
+            controller.media_player.submit_control(ReleaseStashedInputsMsg(outgoing))
 
         grid = self.settings_page.deck_stack_child.page_settings.grid_page
         grid.regenerate_buttons()
         grid.build()
+
+        controller.reload_page()

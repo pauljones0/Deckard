@@ -109,6 +109,13 @@ bundle as a release asset.
 
 ### Fixed
 
+- Changing a fake deck's rows or columns now fills the new grid with the
+  page's content right away. The resized grid stayed blank until the next page
+  switch, and the replaced tiles released their media only when the garbage
+  collector got to them. The next and back arrows in the asset chooser also no
+  longer crash when clicked before the first pack loads; they stay disabled
+  until there is something to page through.
+
 - A page or asset whose name carries a character that looks like a digit but
   is not one, such as a superscript two, no longer breaks sorting. Sorting
   pages or assets with such a name raised an error and mis-sorted the list;
