@@ -498,11 +498,29 @@ class PluginManager:
                     self.load_errors[folder] = "did not register (invalid or incomplete manifest?)"
 
     def generate_action_index(self) -> None:
-        self.action_index.clear()
-        plugins = self.get_plugins()
-        for plugin in plugins.values():
+        """Rebuild the action index and publish it in one assignment.
+
+        A store install rebuilds this on its worker thread while a page load
+        resolves action ids on another. A clear() and a refill leave the index
+        empty, and then half filled, in between. A read in that window finds
+        no holder for an action that is installed, and the page keeps a
+        NoActionHolderFound placeholder for it until something reloads the
+        page, so one background install turns live actions into permanent
+        placeholders. The rebuild therefore fills a fresh dict and publishes
+        it with a single reference assignment: a reader holds either the whole
+        previous index or the whole new one, and never a partial one.
+
+        The slot is the class attribute, which is where the previous in-place
+        rebuild wrote and where every reader of a PluginManager still finds
+        it. An assignment through self would shadow it with an instance
+        attribute and leave a class-level reader on an index that never
+        changes again.
+        """
+        index: dict[str, ActionHolder] = {}
+        for plugin in self.get_plugins().values():
             plugin_base = plugin["object"]
-            self.action_index.update(plugin_base.action_holders)
+            index.update(plugin_base.action_holders)
+        PluginManager.action_index = index
 
     def get_plugins(self, include_disabled: bool = False) -> dict[str, Any]:
         # A copy. An in-place update of PluginBase.plugins, a class attribute,
