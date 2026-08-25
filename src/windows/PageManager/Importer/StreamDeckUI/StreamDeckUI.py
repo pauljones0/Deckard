@@ -4,7 +4,6 @@ from collections.abc import Iterable
 import json
 
 from src.backend import services
-from src.backend.DeckManagement.HelperMethods import recursive_hasattr
 from src.backend.PageManagement import page_flush
 from src.backend import settings_store
 from src.backend.atomic_json import atomic_write_json
@@ -305,9 +304,13 @@ class StreamDeckUIImporter:
         log.success("Imported all pages from StreamDeck UI")
 
         main_win = services.main_window()
-        if main_win is not None and recursive_hasattr(main_win, "sidebar.page_selector"):
-            GLib.idle_add(main_win.sidebar.page_selector.update)
+        if main_win is not None:
+            sidebar = main_win.get_sidebar()
+            if sidebar is not None:
+                GLib.idle_add(sidebar.page_selector.update)
         page_manager_window = gl.page_manager_window
-        if page_manager_window is not None and recursive_hasattr(page_manager_window, "page_selector"):
-            GLib.idle_add(page_manager_window.page_selector.load_pages)
+        if page_manager_window is not None:
+            page_selector = page_manager_window.get_page_selector()
+            if page_selector is not None:
+                GLib.idle_add(page_selector.load_pages)
         log.success("Updated ui")

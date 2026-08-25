@@ -133,6 +133,9 @@ class KeyGrid(Gtk.Grid):
 
         The lookup is duck-typed, because an import of DeckStackChild or
         DeckConfig here is a cycle, and the engine caches no child to read.
+        The parent chain is a plain Gtk.Widget with no static screenbar
+        attribute, so this stays a string existence check where the other UI
+        reachability guards became typed accessors.
         """
         # The lookup may fail. During __init__ this grid is not in the widget
         # tree, because DeckConfig.build appends the grid before the screenbar
@@ -433,14 +436,17 @@ class KeyButton(Gtk.Frame):
 
     def set_icon_selector_previews(self, pixbuf: "GdkPixbuf.Pixbuf | None") -> None:
         # Main loop only, because the gating below reads widget state.
-        if not recursive_hasattr(gl, "app.main_win.sidebar"):
+        sidebar = services.sidebar()
+        if sidebar is None:
             return
-        sidebar = services.require_main_window().sidebar
         if pixbuf is None:
             return
         if sidebar.key_editor.label_editor.label_group.expander.active_identifier != self.identifier:
             return
-        child = services.require_main_window().leftArea.deck_stack.get_visible_child()
+        deck_stack = services.deck_stack()
+        if deck_stack is None:
+            return
+        child = deck_stack.get_visible_child()
         if child is None:
             return
         if child.deck_controller != self.key_grid.deck_controller:
@@ -501,9 +507,9 @@ class KeyButton(Gtk.Frame):
         self.set_border_active(True)
 
     def update_sidebar(self) -> None:
-        if not recursive_hasattr(gl, "app.main_win.sidebar"):
+        sidebar = services.sidebar()
+        if sidebar is None:
             return
-        sidebar = services.require_main_window().sidebar
         # Check if already loaded for this coords
         if sidebar.active_identifier == self.identifier:
             if not self.get_mapped():

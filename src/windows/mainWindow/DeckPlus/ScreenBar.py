@@ -23,7 +23,6 @@ from PIL import Image
 
 from src.backend.DeckManagement.InputIdentifier import Input
 from src.backend.DeckManagement.ImageHelpers import image2pixbuf
-from src.backend.DeckManagement.HelperMethods import recursive_hasattr
 
 from StreamDeck.Devices.StreamDeck import TouchscreenEventType
 
@@ -332,10 +331,11 @@ class ScreenBarImage(LazyMapTasks, Gtk.Picture):
         step and costs no second callback. A direct call to
         IconSelector.set_image would add one uncoalesced idle per frame.
         """
-        if gl.app is None or not recursive_hasattr(gl, "app.main_win.sidebar"):
+        sidebar = services.sidebar()
+        if sidebar is None:
             return None
 
-        identifier = gl.app.main_win.sidebar.active_identifier
+        identifier = sidebar.active_identifier
         if not isinstance(identifier, Input.Dial):
             return None
         # Use the own controller, not the visible deck. This widget belongs
@@ -345,7 +345,7 @@ class ScreenBarImage(LazyMapTasks, Gtk.Picture):
         if touch_screen is None:
             return None
 
-        icon_selector = gl.app.main_win.sidebar.key_editor.icon_selector
+        icon_selector = sidebar.key_editor.icon_selector
         dial_image = image.crop(touch_screen.get_dial_image_area(identifier))
         pixbuf = image2pixbuf(dial_image.convert("RGBA"), force_transparency=True)
         # The same read-modify-write as the screenbar stamp. This frame reads
