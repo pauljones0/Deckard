@@ -40,6 +40,13 @@ SortFunc = Callable[[T, T], int]
 FactoryFunc = Callable[[WidgetT, T], None]
 
 class DynamicFlowBox(Gtk.Box, Generic[WidgetT, T]):
+    # The page offset the nav buttons step. show_range owns it from the first
+    # pack on. The class default covers the window before that, where a nav
+    # click has no page to step from. It stays a class default rather than a
+    # constructor assignment, so a subclass that wants another first page can
+    # still declare one and have it read.
+    current_start_index: int = 0
+
     def __init__(self, base_class: "type[WidgetT]", *args: Any, **kwargs: Any):
         """
         base_class: The class of the items in the flow box. Its constructor is not allowed to require any arguments because empty
@@ -80,13 +87,15 @@ class DynamicFlowBox(Gtk.Box, Generic[WidgetT, T]):
                                margin_top=15, margin_bottom=15, margin_start=15, margin_end=15)
         self.append(self.nav_box)
 
-        self.back_button = Gtk.Button(icon_name="go-previous-symbolic")
+        # Both start insensitive. An empty pool has no page to step to, and
+        # _apply_range sets the true sensitivity from the first range on.
+        self.back_button = Gtk.Button(icon_name="go-previous-symbolic", sensitive=False)
         self.back_button.connect("clicked", self.on_back)
         self.nav_box.append(self.back_button)
 
         self.nav_box.append(Gtk.Box(hexpand=True))
 
-        self.next_button = Gtk.Button(icon_name="go-next-symbolic")
+        self.next_button = Gtk.Button(icon_name="go-next-symbolic", sensitive=False)
         self.next_button.connect("clicked", self.on_next)
         self.nav_box.append(self.next_button)
 
@@ -180,12 +189,25 @@ class DynamicFlowBox(Gtk.Box, Generic[WidgetT, T]):
 
 
     def on_next(self, *args: object) -> None:
-        self.current_start_index += self.N_ITEMS_PER_PAGE
-        self.show_range(self.current_start_index, self.current_start_index + self.N_ITEMS_PER_PAGE)
+        self.step_to(self.current_start_index + self.N_ITEMS_PER_PAGE)
 
     def on_back(self, *args: object) -> None:
-        self.current_start_index -= self.N_ITEMS_PER_PAGE
-        self.show_range(self.current_start_index, self.current_start_index + self.N_ITEMS_PER_PAGE)
+        self.step_to(self.current_start_index - self.N_ITEMS_PER_PAGE)
+
+    def step_to(self, start: int) -> None:
+        """Show the page that begins at start, or do nothing if there is none.
+
+        The nav buttons reach show_range only through here. A start outside
+        the item list stops, so a step off either end leaves the page that
+        shows in place. A box that has loaded nothing yet has no items, so
+        every start is outside and the step stops there too. The buttons of
+        such a box are insensitive until _apply_range makes them meaningful,
+        which is what keeps a user from reaching this at all; the guard covers
+        a direct call.
+        """
+        if start < 0 or start >= len(self.get_items_to_show()):
+            return
+        self.show_range(start, start + self.N_ITEMS_PER_PAGE)
 
 
     def set_item_list(self, items: list[T]) -> None:
