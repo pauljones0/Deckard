@@ -216,7 +216,7 @@ class DeckSettings(SchemaView):
         stored = self.get("name")
         chosen = stored.strip()[:DECK_NAME_MAX_LENGTH] if isinstance(stored, str) else ""
         if chosen:
-            return chosen
+            return cast(str, chosen)
         if isinstance(model_name, str) and model_name.strip():
             return model_name.strip()
         if isinstance(self.serial, str) and self.serial.strip():
@@ -446,7 +446,7 @@ class AppSettings(SchemaView):
         # decides whether a fresh install asks first. Garbage reads as
         # "ask", the safe default.
         value = self.get("store", "install-scripts")
-        return value if value in ("ask", "always", "never") else "ask"
+        return cast(str, value if value in ("ask", "always", "never") else "ask")
 
     @install_scripts.setter
     def install_scripts(self, value: str) -> None:

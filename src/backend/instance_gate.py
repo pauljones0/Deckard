@@ -172,7 +172,7 @@ def is_no_reply(error: GLib.Error) -> bool:
     """
     if Gio.DBusError.get_remote_error(error) == "org.freedesktop.DBus.Error.NoReply":
         return True
-    return error.matches(Gio.io_error_quark(), Gio.IOErrorEnum.TIMED_OUT)
+    return cast(bool, error.matches(Gio.io_error_quark(), Gio.IOErrorEnum.TIMED_OUT))
 
 
 def _session_bus() -> Gio.DBusConnection | None:
