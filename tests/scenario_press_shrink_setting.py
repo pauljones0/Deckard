@@ -152,6 +152,41 @@ def check_default_shrinks(controller) -> None:
     print("PASS: a key with no setting stored shrinks while it is pressed")
 
 
+def check_shrink_is_centred(controller) -> None:
+    """The shrunken picture sits in the middle of the transparent margin.
+
+    The margin is what lets the background show at the edges of a held key. An
+    off-centre paste puts the whole margin on two sides, so the key looks as if
+    it slid rather than shrank, and a page whose keys carry one picture between
+    them tears along one seam only. The check reads the opaque region's box. It
+    allows a one-pixel difference between the two margins, because an odd tile
+    or an odd shrunken size cannot split its leftover margin evenly, and a
+    centred paste then leaves one more pixel on one side. An off-centre paste,
+    which piles the whole margin on one side, is many pixels out and still
+    fails.
+    """
+    key = _key(controller, 0)
+    source = Image.new("RGBA", controller.get_key_image_size(), OPAQUE)
+    shrunk = key.shrink_image(source, factor=0.5)
+    try:
+        width, height = shrunk.size
+        box = shrunk.getbbox()
+        assert box is not None, "the shrink left nothing opaque to measure"
+        left, top, right, bottom = box
+        assert abs(left - (width - right)) <= 1, (
+            f"the shrunken picture is off centre horizontally: {left} px on the "
+            f"left against {width - right} px on the right")
+        assert abs(top - (height - bottom)) <= 1, (
+            f"the shrunken picture is off centre vertically: {top} px above "
+            f"against {height - bottom} px below")
+        assert left > 0 and top > 0, "the shrink left no margin at all"
+    finally:
+        shrunk.close()
+        source.close()
+
+    print("PASS: the shrink a pressed key draws is centred on its margin")
+
+
 def check_setting_stops_the_shrink(controller) -> None:
     """The setting off means a pressed key draws exactly what it drew at rest.
 
@@ -337,6 +372,7 @@ def main() -> None:
     try:
         _settle(controller)
         check_default_shrinks(controller)
+        check_shrink_is_centred(controller)
         check_setting_stops_the_shrink(controller)
         check_press_keeps_no_composite(controller)
         check_press_inside_composite_stores_nothing(controller)

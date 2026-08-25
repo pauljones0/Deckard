@@ -237,12 +237,13 @@ class CoveredComposite:
     def invalidate(self) -> None:
         """Drop the kept composite.
 
-        Four callers release an image, and the memory claim above rests on
+        Five callers release an image, and the memory claim above rests on
         them: the state's teardown, its reset for a fresh page load, its media
-        setters, and present() when it finds a key with no static media. A
-        reuse that no longer holds drops the entry too, but a key that stops
-        qualifying may also stop reaching reuse(), which is why the setters
-        and present() do not leave it to that.
+        setters, its detach of action-owned media for a page load, and present()
+        when it finds a key with no static media. A reuse that no longer holds
+        drops the entry too, but a key that stops qualifying may also stop
+        reaching reuse(), which is why the setters, the detach and present() do
+        not leave it to that.
 
         The image is released by reference count and never closed here. A
         thread that took this entry out of reuse() may still be encoding it,

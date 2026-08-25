@@ -62,7 +62,6 @@ import time
 
 from loguru import logger as log
 
-from src.backend.DeckManagement.InputIdentifier import Input
 from src.backend.DeckManagement.deck_controller.media_writer import ReopenDeckMsg
 
 import globals as gl
@@ -393,7 +392,8 @@ class DeckReaderSupervisor:
         # collect: the physical up event went nowhere. Without this, the first
         # callback after the reopen dispatches a hold stop or an up into the
         # snapshot taken before the outage, against a page the deck may have
-        # left. The touchscreen keeps no gesture state.
+        # left. The touchscreen inherits the gesture fields but never populates
+        # them, so its cancel clears state that is already clear.
         self._cancel_gestures()
         # The device lost its handle and took a new one, so no present state
         # describes what it shows any more. The repaint clears them itself
@@ -416,10 +416,14 @@ class DeckReaderSupervisor:
             self._hold_deadline = time.monotonic() + HOLD_WINDOW_S
 
     def _cancel_gestures(self) -> None:
-        for key in self.controller.inputs.get(Input.Key, []):
-            key.cancel_gesture()
-        for dial in self.controller.inputs.get(Input.Dial, []):
-            dial.cancel_gesture()
+        # Read the input dict once. The screensaver swaps the whole dict from
+        # another thread, so a second read can sweep a different input set and
+        # leave a gesture armed on the one it missed. Every input type is
+        # swept: the touchscreen dispatches no gesture, so its cancel clears
+        # state that is already clear.
+        for controller_inputs in self.controller.inputs.values():
+            for controller_input in controller_inputs:
+                controller_input.cancel_gesture()
 
     def _set_handle_down(self, down: bool) -> None:
         """Record that the handle is down or back, and mirror it onto the

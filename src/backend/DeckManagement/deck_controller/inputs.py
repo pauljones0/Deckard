@@ -39,8 +39,8 @@ from PIL import Image, ImageDraw
 from StreamDeck.Devices.StreamDeck import DialEventType, TouchscreenEventType
 from loguru import logger as log
 
-from src.backend.DeckManagement.HelperMethods import is_image, is_svg, is_video, svg_to_pil
-from src.backend.DeckManagement.InputIdentifier import Input, InputIdentifier
+from src.backend.DeckManagement.HelperMethods import SVG_RASTER_WIDTH_PX, centered_paste_offset, is_image, is_svg, is_video, svg_to_pil
+from src.backend.DeckManagement.InputIdentifier import Input, InputEvent, InputIdentifier
 from src.backend.DeckManagement.Media.MediaConfig import MediaConfig
 from src.backend.DeckManagement.Subclasses.KeyImage import InputImage
 from src.backend.DeckManagement.Subclasses.KeyLabel import KeyLabel
@@ -91,6 +91,11 @@ if TYPE_CHECKING:
 #: state type at every get_active_state() call.
 StateT = TypeVar("StateT", bound=ControllerInputState)
 
+#: The share of a key tile an overlay covers. An overlay marks a transient
+#: condition, so it is drawn inside the picture it covers rather than over all
+#: of it, and the margin keeps the key's own content readable behind it.
+OVERLAY_TILE_FRACTION = 0.75
+
 
 class _KeyLayoutLike(Protocol):
     """The one read Index_To_Coords needs: the raw device handle and the
@@ -107,6 +112,14 @@ class ControllerInput(Generic[StateT]):
     # no slot, so this declaration binds nothing at runtime.
     present_state: PresentState
 
+    # The event a completed hold dispatches into the DOWN-time snapshot. A key
+    # and a dial arm a hold timer and each names its own event here, so
+    # on_hold_timer_end below serves both. The touchscreen arms no timer and
+    # names none. This is a declaration and not an assignment, so an input type
+    # that arms a timer without naming its event raises AttributeError instead
+    # of sending a key event from a dial.
+    HOLD_START_EVENT: InputEvent
+
     def __init__(self, deck_controller: "DeckController", state_class: type[StateT], identifier: InputIdentifier):
         self.deck_controller = deck_controller
         self.state = 0
@@ -121,6 +134,31 @@ class ControllerInput(Generic[StateT]):
         # generation supersedes it.
         self.config_gen: int = 0
 
+        # When the in-flight gesture went down, or None outside one. The hold
+        # branch of the release compares against it. A key and a dial keep it;
+        # the touchscreen dispatches no gesture and leaves it None.
+        self.down_start_time: float | None = None
+
+        # DOWN-time gesture snapshot, a (state, actions) pair captured when the
+        # input went down, or None outside a gesture. The rest of the gesture,
+        # HOLD_START, HOLD_STOP or SHORT_UP, and UP, dispatches to this
+        # snapshot, and not to whatever the input resolves to at release time.
+        # A ChangePage action on this input swaps active_page, and rebuilds
+        # this input's states, synchronously during the DOWN dispatch. Live
+        # resolution would then send the UP to the new page's actions, so the
+        # old page's actions never see their release and a registered-down
+        # latch jams shut, while the new page's actions get a SHORT_UP for a
+        # press that was not theirs.
+        #
+        # It is one attribute and not one per field, so a writer clears it in
+        # one atomic store and the hold-timer callback, which can race the UP
+        # branch past its cancel(), reads a coherent pair or None and never a
+        # torn half. The deck's serialized input-callback path writes it, and
+        # so does the cancel_gesture sweep of ScreenSaver.show(), which runs
+        # under _load_page_lock after this input left the live input set and
+        # can receive no further event.
+        self._gesture: "tuple[StateT, list[ActionCore | NoActionHolderFound | ActionOutdated]] | None" = None
+
         self.is_visual: bool = True
 
         self.enable_states: bool = True
@@ -131,6 +169,34 @@ class ControllerInput(Generic[StateT]):
         # restore carries it over, or fully after it, on the recreated state
         # object. It must never land on a destroyed state.
         self._states_lock = threading.RLock()
+
+        # Serializes one input's compose-to-offer span, so the order paints are
+        # composed in is the order they reach the writer.
+        #
+        # The media tick, the main thread's preview push, a plugin worker after
+        # a media or label write, the loader pool and the deck's input callback
+        # all paint the same input. Each reads the state, composes a picture
+        # and offers it to the writer, whose per-target slot keeps the offer
+        # that arrives last. Compose order and offer order are independent
+        # without this lock, so a slow compose of an older state can offer
+        # after a fast compose of a newer one and take the slot from it. The
+        # offer stamps its own hash as in flight while it does, and no later
+        # paint corrects it, because nothing about the input has changed. The
+        # visible form is a key that stays pressed after the finger left.
+        #
+        # Lock order: _states_lock, then this, then the writer's slot lock, and
+        # never the reverse. Both holders of _states_lock release it before
+        # they call update(), and nothing a paint reaches takes it. The writer
+        # takes its slot lock inside the offer and releases it before it runs a
+        # task. _load_page_lock sits above all of it, held across the paints of
+        # a page load and a screensaver flip, and nothing a paint reaches takes
+        # that either. A paint takes no device lock: it hands encoded bytes to
+        # a slot instead of writing, and the deck reads it makes are lock-free.
+        # It blocks on no thread, because the UI mirror converts on the calling
+        # thread and arms an idle callback rather than waiting on the main
+        # loop. It is re-entrant so a paint that re-enters on its own thread
+        # cannot wedge itself; one thread's paints are ordered already.
+        self._paint_lock = threading.RLock()
 
         self.states: dict[int, StateT] = {
             0: self.ControllerStateClass(self, 0),
@@ -145,9 +211,43 @@ class ControllerInput(Generic[StateT]):
     def update(self) -> None:
         pass
 
+    def cancel_gesture(self) -> None:
+        """End an in-flight gesture without a dispatch of its release events.
+
+        It drops the DOWN-time snapshot, the gesture clock and the pending hold
+        timer. It serves the paths where the physical release can never reach
+        this input. ScreenSaver.show() confiscates the whole input set mid-hold,
+        and the release then lands on the replacement input and is swallowed.
+        Without this call, the hold timer stays armed, fires HOLD_START into the
+        pinned snapshot after the finger left, and pins that snapshot's action
+        objects forever.
+
+        An input type that dispatches no gesture keeps the base state this
+        clears, so the sweeps that call it need no per-type test.
+        """
+        self.down_start_time = None
+        self.stop_hold_timer()
+        self._gesture = None
+
     def on_hold_timer_end(self) -> None:
-        """The hold timer fired. Each input type defines what that means."""
-        raise NotImplementedError
+        """Dispatch this input's hold-start event into the DOWN-time snapshot.
+
+        HOLD_START_EVENT names the event, so a key sends the key event and a
+        dial the dial one. An input type that arms no hold timer never reaches
+        the dispatch: its snapshot is None and the guard below returns first.
+        """
+        gesture = self._gesture
+        if gesture is None:
+            # The gesture already ended. The UP branch or a cancel_gesture()
+            # raced this callback past the timer's cancel(). A late
+            # HOLD_START must not fire, and must never live-resolve onto
+            # whatever page is active now.
+            return
+        gesture_state, gesture_actions = gesture
+        gesture_state.own_actions_event_callback_threaded(
+            event=self.HOLD_START_EVENT,
+            actions=gesture_actions,
+        )
 
     def event_callback(self, *args: Any, **kwargs: Any) -> None:
         pass
@@ -178,6 +278,73 @@ class ControllerInput(Generic[StateT]):
     def load_from_page(self, page: Page) -> None:
         config = self.identifier.get_config(page)
         self.load_from_input_dict(config, page=page)
+
+    def _recreate_states_keeping_action_media(self, n_states: int) -> "set[int]":
+        """Rebuild this input's states for a page load, carrying action-owned
+        media across the rebuild. It answers the state indexes whose media it
+        put back, which the caller must not then reset the action layout on.
+
+        create_n_states destroys every state object and closes its action-set
+        media. Only on_update() repaints afterwards, and an action that dedups
+        there never does, so the input settles permanently blank. So the media
+        and its action layout come off before the wipe, and go back on only
+        where the same action object still drives the recreated state. A
+        same-page reload reuses the action objects, so the identity matches and
+        the paint returns. A cross-page load builds new ones, so the identity
+        differs, the media closes and nothing bleeds.
+
+        Under _states_lock a concurrent set_media paint lands fully before the
+        wipe, where the stash carries it over, or fully after it on the
+        recreated state, and never on a destroyed state object.
+        """
+        with self._states_lock:
+            stashed: "dict[int, tuple[ActionCore, InputImage | None, InputVideo | KeyGIF | None, ImageLayout]]" = {}
+            for index, old_state in self.states.items():
+                owner = old_state.media_owner_action
+                if owner is None:
+                    continue
+                image, video = old_state.detach_action_media()
+                if image is None and video is None:
+                    continue
+                stashed[index] = (owner, image, video,
+                                  old_state.layout_manager.action_layout)
+                old_state.media_owner_action = None
+
+            self.create_n_states(max(1, n_states))
+
+            restored: set[int] = set()
+            for index, (owner, image, video, action_layout) in stashed.items():
+                new_state = self.states.get(index)
+                if new_state is not None and owner in new_state.get_own_actions():
+                    new_state.attach_action_media(image, video)
+                    new_state.media_owner_action = owner
+                    new_state.layout_manager.set_action_layout(action_layout, update=False)
+                    restored.add(index)
+                else:
+                    if image is not None:
+                        image.close()
+                    if video is not None:
+                        video.close()
+            return restored
+
+    def _tick_animation_clocks(self) -> "tuple[StateT, bool]":
+        """Advance this input's tick count and its rolling labels, and answer
+        the state that tick read beside whether a scroll offset visibly moved.
+
+        A rolling label advances here, on the tick, whether or not anything
+        else forces a repaint, because rendering is pure. The input then
+        re-renders only when a scroll offset moved, instead of producing thirty
+        frames a second for the hash de-dup to discard.
+
+        The state comes back with the answer so the caller judges the rest of
+        its tick against the object this advanced. A page load that lands
+        mid-tick would otherwise let the two read different states.
+        """
+        self.media_ticks += 1
+        state = self.get_active_state()
+        if state.label_manager.get_has_scroll_labels():
+            return state, state.label_manager.tick_scroll_labels()
+        return state, False
 
     def get_current_image(self) -> "Image.Image":
         """The input's current composition. The key and touchscreen inputs
@@ -375,6 +542,8 @@ class ControllerKey(ControllerInput["ControllerKeyState"]):
     # reader of the attribute on the base declaration, which owns no key index.
     present_state: KeyPresentState
 
+    HOLD_START_EVENT = Input.Key.Events.HOLD_START
+
     def __init__(self, deck_controller: "DeckController", ident: Input.Key):
         super().__init__(deck_controller, ControllerKeyState, ident)
         self.index = ident.get_index(deck_controller)
@@ -383,55 +552,6 @@ class ControllerKey(ControllerInput["ControllerKeyState"]):
         # compare against it. key_states() is indexed logically, with the
         # rotation applied there, so self.index selects this key's own state.
         self.press_state: bool = self.deck_controller.deck.key_states()[self.index]
-
-        self.down_start_time: float | None = None
-
-        # DOWN-time gesture snapshot, a (state, actions) pair captured when
-        # the key went down, or None outside a gesture. The rest of the
-        # gesture, HOLD_START, HOLD_STOP or SHORT_UP, and UP, dispatches to
-        # this snapshot, and not to whatever the key resolves to at release
-        # time. A ChangePage action on this key swaps
-        # active_page, and rebuilds this key's states, synchronously during
-        # the DOWN dispatch. Live resolution would then send the UP to the new
-        # page's actions, so the old page's actions never see their release
-        # and a registered-down latch jams shut, while the new page's actions
-        # get a SHORT_UP for a press that was not theirs.
-        #
-        # It is one attribute and not one per field, so a writer clears it in
-        # one atomic store and the hold-timer callback, which can race the UP
-        # branch past its cancel(), reads a coherent pair or None and never a
-        # torn half. The deck's serialized input-callback path writes it, and
-        # so does the cancel_gesture sweep of ScreenSaver.show(), which runs
-        # under _load_page_lock after this key left the live input set and can
-        # receive no further event.
-        self._gesture: "tuple[ControllerKeyState, list[ActionCore | NoActionHolderFound | ActionOutdated]] | None" = None
-
-    def cancel_gesture(self) -> None:
-        """End an in-flight gesture without a dispatch of its release
-        events. It drops the DOWN-time snapshot, the gesture clock and the
-        pending hold timer. It serves the paths where the physical release
-        can never reach this key. ScreenSaver.show() confiscates the whole
-        input set mid-hold, and the release then lands on the replacement key
-        and is swallowed. Without this call, the hold timer stays armed, fires
-        HOLD_START into the pinned snapshot after the finger left, and pins
-        that snapshot's action objects forever."""
-        self.down_start_time = None
-        self.stop_hold_timer()
-        self._gesture = None
-
-    def on_hold_timer_end(self) -> None:
-        gesture = self._gesture
-        if gesture is None:
-            # The gesture already ended. The UP branch or a cancel_gesture()
-            # raced this callback past the timer's cancel(). A late
-            # HOLD_START must not fire, and must never live-resolve onto
-            # whatever page is active now.
-            return
-        gesture_state, gesture_actions = gesture
-        gesture_state.own_actions_event_callback_threaded(
-            event=Input.Key.Events.HOLD_START,
-            actions=gesture_actions,
-        )
 
     @staticmethod
     def Available_Identifiers(deck: "BetterDeck") -> "Iterable[str]":
@@ -458,6 +578,13 @@ class ControllerKey(ControllerInput["ControllerKeyState"]):
         return y * cols + x
 
     def update(self, force: bool = False) -> None:
+        # One paint of this key at a time, spanning the whole compose and offer
+        # below. See _paint_lock. The lock is released before the caller
+        # dispatches anything, so no action callback runs under it.
+        with self._paint_lock:
+            self._paint(force)
+
+    def _paint(self, force: bool) -> None:
         # Capture the page and the generation before the render, so a switch
         # mid-render invalidates this paint at the write boundary.
         page = self.deck_controller.active_page
@@ -545,18 +672,8 @@ class ControllerKey(ControllerInput["ControllerKeyState"]):
         return super().get_active_state()
 
     def on_media_player_tick(self) -> None:
-        self.media_ticks += 1
-
-        state = self.get_active_state()
+        state, scroll_moved = self._tick_animation_clocks()
         needs_update = False
-
-        # A rolling label advances its state here, on the tick, whether or
-        # not anything else forces a repaint, because rendering is pure. The
-        # key re-renders only when a scroll offset visibly moved, instead of
-        # producing 30 frames a second that the hash de-dup discards.
-        scroll_moved = False
-        if state.label_manager.get_has_scroll_labels():
-            scroll_moved = state.label_manager.tick_scroll_labels()
 
         # Decide on an update from the content type.
         if state.key_video is not None:
@@ -714,9 +831,9 @@ class ControllerKey(ControllerInput["ControllerKeyState"]):
             media_prof.add("c_tile", _t1 - _t0)
 
         if state._overlay:
-            height = round(self.deck_controller.get_key_image_size()[1]*0.75)
+            height = round(self.deck_controller.get_key_image_size()[1] * OVERLAY_TILE_FRACTION)
             img = state._overlay.resize((height, height))
-            background.paste(img, (int((self.deck_controller.get_key_image_size()[0] - height) // 2), int((self.deck_controller.get_key_image_size()[1] - height) // 2)), img)
+            background.paste(img, centered_paste_offset(self.deck_controller.get_key_image_size(), img.size), img)
             return background
 
         key_image: Image.Image | None = None
@@ -797,10 +914,10 @@ class ControllerKey(ControllerInput["ControllerKeyState"]):
 
         background = Image.new("RGBA", self.deck_controller.get_key_image_size(), (0, 0, 0, 0))
 
-        if image.has_transparency_data:
-            background.paste(image, (int((self.deck_controller.get_key_image_size()[0] - width) / 2), int((self.deck_controller.get_key_image_size()[1] - height) / 2)), image)
-        else:
-            background.paste(image, (int((self.deck_controller.get_key_image_size()[0] - width) / 2), int((self.deck_controller.get_key_image_size()[1] - height) / 2)))
+        # The mask is the image itself only when it carries alpha. Passing an
+        # image with no alpha as its own mask raises.
+        background.paste(image, centered_paste_offset(background.size, image.size),
+                         image if image.has_transparency_data else None)
 
         image.close()
 
@@ -812,48 +929,7 @@ class ControllerKey(ControllerInput["ControllerKeyState"]):
         """
         n_states = len(input_dict.get("states", {}))
 
-        # create_n_states destroys every state object and closes any
-        # action-set media. Only on_update() can repaint afterwards, and an
-        # action that dedups there never does, so the key settles permanently
-        # blank. Detach the action-owned media, and its action layout, before
-        # the wipe. Restore it only when the exact action object that painted
-        # it still drives the recreated state. A same-page reload reuses the
-        # action objects, so the identity matches and the paint returns. A
-        # cross-page load builds new ones, so the identity differs, the media
-        # closes and nothing bleeds. This runs under _states_lock, so a
-        # concurrent set_media paint lands fully before the wipe, where the
-        # stash carries it over, or fully after it, on the recreated state,
-        # and never on a destroyed state object.
-        with self._states_lock:
-            stashed: "dict[int, tuple[ActionCore, InputImage | None, InputVideo | KeyGIF | None, ImageLayout]]" = {}
-            for index, old_state in self.states.items():
-                owner = old_state.media_owner_action
-                if owner is None:
-                    continue
-                if old_state.key_image is None and old_state.key_video is None:
-                    continue
-                stashed[index] = (owner, old_state.key_image, old_state.key_video,
-                                  old_state.layout_manager.action_layout)
-                old_state.key_image = None
-                old_state.key_video = None
-                old_state.media_owner_action = None
-
-            self.create_n_states(max(1, n_states))
-
-            restored: set[int] = set()
-            for index, (owner, key_image, key_video, action_layout) in stashed.items():
-                new_state = self.states.get(index)
-                if new_state is not None and owner in new_state.get_own_actions():
-                    new_state.key_image = key_image
-                    new_state.key_video = key_video
-                    new_state.media_owner_action = owner
-                    new_state.layout_manager.set_action_layout(action_layout, update=False)
-                    restored.add(index)
-                else:
-                    if key_image is not None:
-                        key_image.close()
-                    if key_video is not None:
-                        key_video.close()
+        restored = self._recreate_states_keeping_action_media(n_states)
 
         self.state = self.persisted_state.on_load(self, input_dict, page)
 
@@ -869,9 +945,9 @@ class ControllerKey(ControllerInput["ControllerKeyState"]):
                 state.label_manager.clear_labels()
 
             # Reset the action layout, except on a state whose action-owned
-            # media the block above restored. Its action layout belongs to the
-            # same action, which is still present, and a reset would restore
-            # the image but lose the alignment and the size.
+            # media _recreate_states_keeping_action_media restored. Its action
+            # layout belongs to the same action, which is still present, and a
+            # reset would restore the image but lose the alignment and the size.
             if state.state not in restored:
                 layout = ImageLayout()
                 state.layout_manager.set_action_layout(layout, update=False)
@@ -909,7 +985,7 @@ class ControllerKey(ControllerInput["ControllerKeyState"]):
                             ), update=False)
                             
                     elif is_svg(path):
-                        img = svg_to_pil(path, 192)
+                        img = svg_to_pil(path, SVG_RASTER_WIDTH_PX)
                         state.set_image(InputImage(
                             controller_input=self,
                             image=img
@@ -1016,6 +1092,13 @@ class ControllerTouchScreen(ControllerInput["ControllerTouchScreenState"]):
         return []
 
     def update(self) -> None:
+        # One paint of the strip at a time, for the reason ControllerKey.update
+        # gives. The strip carries more producers than any key: every dial
+        # composites into it, and so does a background video extended onto it.
+        with self._paint_lock:
+            self._paint()
+
+    def _paint(self) -> None:
         page = self.deck_controller.active_page  # capture at render start (see ControllerKey.update)
         config_gen = self.config_gen
         image = self.get_current_image()
@@ -1152,48 +1235,10 @@ class ControllerTouchScreen(ControllerInput["ControllerTouchScreenState"]):
         return self.deck_controller.get_touchscreen_image_size()
 
 class ControllerDial(ControllerInput["ControllerDialState"]):
+    HOLD_START_EVENT = Input.Dial.Events.HOLD_START
+
     def __init__(self, deck_controller: "DeckController", ident: InputIdentifier):
         super().__init__(deck_controller, ControllerDialState, ident)
-
-        self.down_start_time: float | None = None
-
-        # DOWN-time gesture snapshot, the dial twin of ControllerKey._gesture;
-        # see its __init__ for the full reasoning. It is a (state, actions)
-        # pair captured when the dial went down, or None outside a gesture.
-        # The gesture tail dispatches to this snapshot, and not to whatever
-        # the dial resolves to at release time. A ChangePage on this dial's
-        # DOWN swaps active_page mid-gesture, and live resolution would send
-        # the tail to the new page's dial actions and jam a registered-down
-        # latch. It is one attribute, so a writer clears it in one atomic
-        # store and the hold-timer callback reads a coherent pair or None,
-        # never a torn half.
-        self._gesture: "tuple[ControllerDialState, list[ActionCore | NoActionHolderFound | ActionOutdated]] | None" = None
-
-    def cancel_gesture(self) -> None:
-        """End an in-flight gesture without a dispatch of its release
-        events. It drops the DOWN-time snapshot, the gesture clock and the
-        pending hold timer, on the same contract as
-        ControllerKey.cancel_gesture. It serves the paths where the physical
-        release can never reach this dial. ScreenSaver.show() confiscates
-        the whole input set mid-hold. The release then lands on the
-        replacement dial and is swallowed."""
-        self.down_start_time = None
-        self.stop_hold_timer()
-        self._gesture = None
-
-    def on_hold_timer_end(self) -> None:
-        gesture = self._gesture
-        if gesture is None:
-            # The gesture already ended. The UP branch or a cancel_gesture()
-            # raced this callback past the timer's cancel(). A late
-            # HOLD_START must not fire, and must never live-resolve onto
-            # whatever page is active now.
-            return
-        gesture_state, gesture_actions = gesture
-        gesture_state.own_actions_event_callback_threaded(
-            event=Input.Dial.Events.HOLD_START,
-            actions=gesture_actions,
-        )
 
     def get_touch_screen(self) -> "ControllerTouchScreen | None":
         return self.deck_controller.get_input(Input.Touchscreen("sd-plus"))
@@ -1296,48 +1341,7 @@ class ControllerDial(ControllerInput["ControllerDialState"]):
     def load_from_input_dict(self, input_dict: "dict[str, Any]", update: bool = True, page: "Page | None" = None) -> None:
         n_states = len(input_dict.get("states", {}))
 
-        # create_n_states destroys every state object and closes its
-        # action-set media. A dial action that painted through set_media then
-        # dedups in on_update and never repaints, so the dial settles blank.
-        # Detach the action-owned media and its action layout before the wipe,
-        # and restore it when that same action still drives the recreated
-        # state, as ControllerKey.load_from_input_dict does for a key. A
-        # same-page reload reuses the action objects, so the identity matches
-        # and the paint returns; a cross-page load builds new ones, so the
-        # media closes and nothing bleeds. Under _states_lock a concurrent
-        # set_media paint lands fully before the wipe, where the stash carries
-        # it over, or fully after it on the recreated state, never on a
-        # destroyed one.
-        with self._states_lock:
-            stashed: "dict[int, tuple[ActionCore, InputImage | None, InputVideo | KeyGIF | None, ImageLayout]]" = {}
-            for index, old_state in self.states.items():
-                owner = old_state.media_owner_action
-                if owner is None:
-                    continue
-                if old_state.image is None and old_state.video is None:
-                    continue
-                stashed[index] = (owner, old_state.image, old_state.video,
-                                  old_state.layout_manager.action_layout)
-                old_state.image = None
-                old_state.video = None
-                old_state.media_owner_action = None
-
-            self.create_n_states(max(1, n_states))
-
-            restored: set[int] = set()
-            for index, (owner, image, video, action_layout) in stashed.items():
-                new_state = self.states.get(index)
-                if new_state is not None and owner in new_state.get_own_actions():
-                    new_state.image = image
-                    new_state.video = video
-                    new_state.media_owner_action = owner
-                    new_state.layout_manager.set_action_layout(action_layout, update=False)
-                    restored.add(index)
-                else:
-                    if image is not None:
-                        image.close()
-                    if video is not None:
-                        video.close()
+        restored = self._recreate_states_keeping_action_media(n_states)
 
         self.state = self.persisted_state.on_load(self, input_dict, page)
 
@@ -1349,9 +1353,9 @@ class ControllerDial(ControllerInput["ControllerDialState"]):
             state_dict = input_dict["states"][str(state.state)]
 
             # Reset the action layout, except on a state whose action-owned
-            # media the block above restored: that layout belongs to the same
-            # still-present action, and a reset would lose its alignment and
-            # size.
+            # media _recreate_states_keeping_action_media restored: that layout
+            # belongs to the same still-present action, and a reset would lose
+            # its alignment and size.
             if state.state not in restored:
                 layout = ImageLayout()
                 state.layout_manager.set_action_layout(layout, update=False)
@@ -1384,7 +1388,7 @@ class ControllerDial(ControllerInput["ControllerDialState"]):
                     )
                     state.set_image(image, update=False)
                 elif is_svg(path):
-                    img = svg_to_pil(path, 192)
+                    img = svg_to_pil(path, SVG_RASTER_WIDTH_PX)
                     state.set_image(InputImage(
                         controller_input=self,
                         image=img
@@ -1433,16 +1437,10 @@ class ControllerDial(ControllerInput["ControllerDialState"]):
         return super().get_active_state()
 
     def on_media_player_tick(self) -> bool:
-        # Advance the animation clock and report whether a redraw is needed.
-        # The caller renders the shared touchscreen once per frame.
-        self.media_ticks += 1
-
-        state = self.get_active_state()
-        # A rolling label advances here on the tick, because rendering is
-        # pure. The strip re-renders only when a scroll offset visibly moved.
-        scroll_moved = False
-        if state.label_manager.get_has_scroll_labels():
-            scroll_moved = state.label_manager.tick_scroll_labels()
+        # Report whether a redraw is needed instead of painting. A dial has no
+        # slot of its own, so the caller renders the shared touchscreen once
+        # per frame rather than once per dial.
+        state, scroll_moved = self._tick_animation_clocks()
         return state.video is not None or scroll_moved
 
     def get_image_size(self) -> tuple[int, int]:
