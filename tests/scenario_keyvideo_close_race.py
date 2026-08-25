@@ -182,10 +182,34 @@ def check_real_inputvideo_close() -> None:
     print("PASS: real-registry InputVideo close under concurrent ticks")
 
 
+def join_tile_cache_builders(timeout: float = 30.0) -> None:
+    """Wait for every detached tile-cache builder thread to end.
+
+    acquire() starts one builder per new cache file, and release() only
+    signals its stop event: the thread is a daemon and nobody joins it. A
+    builder still inside cv2 when the interpreter starts to tear down runs
+    C++ code against a runtime that is going away, and the process aborts
+    with "terminate called without an active exception" after every check
+    here has passed. The stop event is already set by the time this runs, so
+    the join is bounded, and a builder that outlasts the timeout is a real
+    defect in the stop path rather than something to wait longer for.
+    """
+    for thread in threading.enumerate():
+        if thread.name != "tile-cache-builder":
+            continue
+        thread.join(timeout=timeout)
+        assert not thread.is_alive(), (
+            f"{thread.name} ignored its stop event and is still decoding "
+            f"{timeout}s after release() -- it would be killed mid-cv2 at "
+            f"interpreter exit"
+        )
+
+
 def main() -> None:
     fixtures.start_watchdog(60, "scenario_keyvideo_close_race")
     check_close_race_hammer()
     check_real_inputvideo_close()
+    join_tile_cache_builders()
     print("PASS: scenario_keyvideo_close_race")
 
 

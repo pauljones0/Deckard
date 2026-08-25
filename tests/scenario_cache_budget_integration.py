@@ -290,7 +290,7 @@ def check_close_zeroes_share(controller) -> None:
 
 
 def main() -> None:
-    fixtures.start_watchdog(180, label="scenario_cache_budget_integration")
+    fixtures.start_watchdog(60, label="scenario_cache_budget_integration")
 
     red = fixtures.make_test_png(os.path.join(gl.DATA_PATH, "media", "budget_red.png"), color=(220, 20, 20))
     blue = fixtures.make_test_png(os.path.join(gl.DATA_PATH, "media", "budget_blue.png"), color=(20, 20, 220))

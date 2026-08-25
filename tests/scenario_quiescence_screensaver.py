@@ -48,7 +48,7 @@ def wait_until_quiet(deck, quiet_for: float = 0.5, timeout: float = 10.0) -> boo
 
 
 def main() -> None:
-    fixtures.start_watchdog(120, label="scenario_quiescence_screensaver")
+    fixtures.start_watchdog(60, label="scenario_quiescence_screensaver")
 
     media = os.path.join(gl.DATA_PATH, "media")
     page_video = fixtures.make_test_mp4(os.path.join(media, "ss_page.mp4"),

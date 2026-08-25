@@ -23,7 +23,7 @@ from fixtures import make_headless_controller, seed_page, start_watchdog, teardo
 import globals as gl
 from src.backend.PageManagement import page_flush
 
-WATCHDOG_SECONDS = 120
+WATCHDOG_SECONDS = 60
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 SRC = os.path.join(REPO_ROOT, "src")

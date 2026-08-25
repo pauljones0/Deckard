@@ -813,7 +813,7 @@ def test_stamp_matches_catalog_case_insensitive() -> None:
 
 
 def main() -> None:
-    fixtures.start_watchdog(90, label="scenario_store_update_check_cost")
+    fixtures.start_watchdog(60, label="scenario_store_update_check_cost")
     test_update_check_skips_uninstalled()
     test_backup_directory_never_claims()
     test_shared_commit_resolves_own_install()

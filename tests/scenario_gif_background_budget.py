@@ -29,7 +29,7 @@ def _make_many_frame_gif(path: str, n_frames: int, size=(8, 8)) -> str:
 
 
 def main() -> None:
-    start_watchdog(90, label="scenario_gif_background_budget")
+    start_watchdog(60, label="scenario_gif_background_budget")
 
     controller = fixtures.make_headless_controller(serial="gif-budget-1")
     try:

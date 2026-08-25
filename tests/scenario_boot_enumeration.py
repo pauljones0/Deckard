@@ -246,7 +246,7 @@ def phase_clean_shutdown_during_backoff() -> None:
 
 
 def main() -> None:
-    fixtures.start_watchdog(120, "scenario_boot_enumeration")
+    fixtures.start_watchdog(60, "scenario_boot_enumeration")
     fixtures._install_integration_globals()
     fixtures.seed_page("Main")
 

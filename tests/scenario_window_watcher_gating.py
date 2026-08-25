@@ -567,7 +567,7 @@ def check_reset_rebuilds_and_regates() -> None:
 
 
 def main() -> None:
-    fixtures.start_watchdog(90, label="scenario_window_watcher_gating")
+    fixtures.start_watchdog(60, label="scenario_window_watcher_gating")
     _install_stub_selector()
     fixtures._install_integration_globals()
 

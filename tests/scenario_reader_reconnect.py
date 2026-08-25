@@ -750,7 +750,7 @@ def test_a_reopen_that_holds_clears_the_count() -> None:
 def main() -> None:
     # A reopen that waits on a handle it cannot take parks here, and must fail
     # loud rather than sit until the per-scenario timeout of run_all.py.
-    fixtures.start_watchdog(240, label="scenario_reader_reconnect")
+    fixtures.start_watchdog(60, label="scenario_reader_reconnect")
 
     # One ordinary controller first. It installs the integration globals and
     # warms every lazily started global thread, so a leg measures its own deck.

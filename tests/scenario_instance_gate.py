@@ -27,7 +27,7 @@ from scenario_api_lifecycle_publish import (  # noqa: E402
 # the object the forwarding rules are already pinned against.
 from scenario_cli_forward_all import Recorder  # noqa: E402
 
-WATCHDOG_SECONDS = 180
+WATCHDOG_SECONDS = 60
 
 CHILD = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                      "instance_gate_child.py")
@@ -96,18 +96,39 @@ def wait_for_line(proc: subprocess.Popen, expected: str,
             raise AssertionError(f"child never printed {expected!r}")
 
 
+def _said_lines(proc: subprocess.Popen, timeout: float = 60.0) -> list[tuple[str, str]]:
+    """Wait for the child to exit and give every line it said as
+    (first word, rest), in order.
+
+    The result is kept on the process, because communicate() drains the pipe
+    once and a leg that wants both the values and their order would otherwise
+    get an empty second read.
+    """
+    said = getattr(proc, "_said_lines", None)
+    if said is None:
+        out, _ = proc.communicate(timeout=timeout)
+        said = [(key, value) for key, _, value in
+                (line.strip().partition(" ") for line in out.splitlines())
+                if key]
+        proc._said_lines = said
+    return said
+
+
+def transcript(proc: subprocess.Popen, timeout: float = 60.0) -> list[str]:
+    """The first word of each line the child said, in the order it said them.
+
+    A leg that checks an ordering reads this, where records() flattens the run
+    to one value per key and loses when each arrived.
+    """
+    return [key for key, _ in _said_lines(proc, timeout)]
+
+
 def records(proc: subprocess.Popen, timeout: float = 60.0) -> dict[str, str]:
     """Wait for the child to exit and return everything it said.
 
     The result is keyed by the first word of each line.
     """
-    out, _ = proc.communicate(timeout=timeout)
-    said = {}
-    for line in out.splitlines():
-        key, _, value = line.strip().partition(" ")
-        if key:
-            said[key] = value
-    return said
+    return dict(_said_lines(proc, timeout))
 
 
 def kill(proc: subprocess.Popen) -> None:
@@ -298,10 +319,23 @@ def leg_close_running_mid_boot(observer: Observer) -> None:
         assert said.get("QUIT-RECEIVED") == "", (
             f"the instance was never asked once it could answer: {said}")
         assert child.returncode == 0, child.returncode
-        assert took >= dispatch_delay, (
-            f"the launch took over after {took:.2f}s, before the instance was "
-            f"dispatching ({dispatch_delay}s) -- the quit went into its queue, "
-            f"not to a loop that could act on it"
+        # Ordering inside the child, not elapsed time across two processes.
+        # The child says DISPATCHING when its boot delay is over, and
+        # WIRE-ACTIVATE from the GDBus reader when a quit arrives, so the two
+        # events are stamped by one process against one clock. Elapsed time
+        # cannot say this: the parent starts counting after it reads READY,
+        # which the child prints before its boot sleep begins, so a correct
+        # run measures a hair under the delay and fails on the rounding.
+        order = transcript(child)
+        assert "DISPATCHING" in order, (
+            f"the instance never reached its main loop: {order}")
+        assert "WIRE-ACTIVATE" in order, (
+            f"no quit ever arrived at the instance: {order}")
+        assert order.index("DISPATCHING") < order.index("WIRE-ACTIVATE"), (
+            f"the quit arrived while the instance was still booting ({order}) "
+            f"-- it went into its queue, not to a loop that could act on it, "
+            f"and it would have killed the instance a moment after this "
+            f"launch had already given up"
         )
     finally:
         kill(child)

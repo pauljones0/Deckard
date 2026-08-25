@@ -352,7 +352,7 @@ def check_serialized_and_lock_order() -> None:
 
 
 def main() -> None:
-    fixtures.start_watchdog(90, label="scenario_plugin_settings_store")
+    fixtures.start_watchdog(60, label="scenario_plugin_settings_store")
 
     check_one_loader()
     check_unreadable_not_fatal()

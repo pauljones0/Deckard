@@ -730,7 +730,7 @@ def test_the_reset_request_number_is_the_kernel_one() -> None:
 
 
 def main() -> None:
-    fixtures.start_watchdog(240, label="scenario_usb_reset")
+    fixtures.start_watchdog(60, label="scenario_usb_reset")
 
     # One ordinary controller first. It installs the integration globals and
     # warms every lazily started global thread, so a leg measures its own deck.

@@ -822,7 +822,7 @@ def check_no_backend_yet(main_window):
 
 
 def main() -> int:
-    fixtures.start_watchdog(300, label="scenario_page_selector_search")
+    fixtures.start_watchdog(60, label="scenario_page_selector_search")
 
     check_locale_keys()
 

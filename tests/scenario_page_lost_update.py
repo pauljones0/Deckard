@@ -18,7 +18,7 @@ from fixtures import make_headless_controller, start_watchdog, teardown
 
 from src.backend.PageManagement import page_flush
 
-WATCHDOG_SECONDS = 90
+WATCHDOG_SECONDS = 60
 
 # How long any wait in here may take before the interleaving is declared
 # broken rather than slow.

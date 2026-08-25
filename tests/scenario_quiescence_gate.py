@@ -85,7 +85,7 @@ def wait_for_playback(deck, label: str) -> None:
 
 
 def main() -> None:
-    fixtures.start_watchdog(120, label="scenario_quiescence_gate")
+    fixtures.start_watchdog(60, label="scenario_quiescence_gate")
 
     media = os.path.join(gl.DATA_PATH, "media")
     video_a = fixtures.make_test_mp4(os.path.join(media, "gate_a.mp4"),

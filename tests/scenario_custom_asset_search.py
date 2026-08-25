@@ -584,7 +584,7 @@ def has_display() -> bool:
 
 
 def main() -> int:
-    fixtures.start_watchdog(120, label="scenario_custom_asset_search")
+    fixtures.start_watchdog(60, label="scenario_custom_asset_search")
 
     check_install_wiring()
     check_tripwire_self_test()
