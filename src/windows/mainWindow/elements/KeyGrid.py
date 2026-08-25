@@ -234,7 +234,14 @@ class KeyButton(Gtk.Frame):
 
     @property
     def state(self) -> int:
-        return self.get_key().state
+        key = self.get_key()
+        if key is None:
+            # The controller holds no input under this identifier, which a
+            # stale identifier or a changed deck model both produce. State 0
+            # exists on every input, so the caller reads the default one.
+            log.warning(f"No input {self.identifier} on deck {self._deck_name()}; reading state 0")
+            return 0
+        return key.state
 
     def init_dnd(self) -> None:
         self.drag_source = Gtk.DragSource()
@@ -356,7 +363,7 @@ class KeyButton(Gtk.Frame):
             return None
         active_identifier = gl.app.main_win.sidebar.active_identifier
         if active_identifier == self.identifier:
-            gl.app.main_win.sidebar.key_editor.icon_selector.load_for_identifier(self.identifier, self.get_key().state)
+            gl.app.main_win.sidebar.key_editor.icon_selector.load_for_identifier(self.identifier, self.state)
         return None
 
         
@@ -541,7 +548,7 @@ class KeyButton(Gtk.Frame):
         active_page.reload_similar_pages(self.identifier, reload_self=True)
 
         # Reload ui
-        services.require_main_window().sidebar.load_for_identifier(self.identifier, self.get_key().state)
+        services.require_main_window().sidebar.load_for_identifier(self.identifier, self.state)
         return False
 
     def on_remove(self, *args: Any) -> bool:
@@ -560,16 +567,29 @@ class KeyButton(Gtk.Frame):
         active_page.reload_similar_pages(self.identifier, reload_self=True)
 
         # Reload ui
-        services.require_main_window().sidebar.load_for_identifier(self.identifier, self.get_key().state)
+        services.require_main_window().sidebar.load_for_identifier(self.identifier, self.state)
         return False
 
-    def get_key(self) -> "ControllerKey":
+    def _deck_name(self) -> str:
+        """The deck this widget draws, for a log line. Reads the cached serial
+        rather than the device, so a log on a missing input cannot itself
+        reach hardware."""
         controller = self.key_grid.deck_controller
+        return str(getattr(controller, "_serial_number", None) or "unknown")
 
-        return cast("ControllerKey", controller.get_input(self.identifier))
+    def get_key(self) -> "ControllerKey | None":
+        """The controller input this widget stands for, or None when the
+        controller carries no input under the identifier. get_input answers
+        None for a stale identifier and for a deck model that has no such
+        input, so the None is a real answer, not an error."""
+        controller = self.key_grid.deck_controller
+        return controller.get_input(self.identifier)
 
     def remove_media(self) -> None:
         key = self.get_key()
+        if key is None:
+            log.warning(f"No input {self.identifier} on deck {self._deck_name()}; nothing to remove media from")
+            return
         state = key.get_active_state()
 
         state.remove_media()

@@ -318,6 +318,11 @@ class GenerativeUI[T](ABC):
                 return fallback if fallback is not None else self._default_value
             d = d[key]
 
+        # The widest assertion in the tree, and a deliberate boundary. The walk
+        # above proves only that every intermediate node is a dict; the leaf is
+        # whatever JSON the plugin last wrote. A leaf of the wrong type reaches
+        # set_ui_value unchecked, because T is erased at runtime and there is
+        # no per-row validator to test it against.
         return cast("T", d)
 
     def load_initial_ui(self) -> None:

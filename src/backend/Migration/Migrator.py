@@ -49,11 +49,20 @@ class Migrator:
             return {}
         try:
             with open(self.SETTINGS_DIR, "r") as f:
-                return cast(dict[str, Any], json.load(f))
+                root = json.load(f)
+            # A hand-edited file can hold any JSON root. Only an object
+            # carries the migration keys, so a list or a scalar is as
+            # unreadable here as undecodable bytes are. Raise into the
+            # recovery branch below, so the file is preserved rather than
+            # clobbered by the next set_migrated.
+            if not isinstance(root, dict):
+                raise ValueError(f"root is a JSON {type(root).__name__}, not an object")
+            return cast(dict[str, Any], root)
         except ValueError as e:
             # Catch ValueError. A file of garbage bytes raises
-            # UnicodeDecodeError while the reader decodes it, and json raises
-            # JSONDecodeError. Both derive from ValueError.
+            # UnicodeDecodeError while the reader decodes it, json raises
+            # JSONDecodeError, and a decodable file with a non-object root
+            # raises the one above. All three derive from ValueError.
             #
             # Quarantine the file and report every migration as pending. A
             # re-run is safe. beta_5 writes before it deletes and leaves an
