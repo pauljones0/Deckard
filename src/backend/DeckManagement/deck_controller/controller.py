@@ -195,18 +195,16 @@ class DeckController:
         self._page_gen_lock = threading.Lock()
         # Serializes load_page's switch body so racing switches cannot
         # interleave. An older switch can cancel the newer one's background
-        # future or strand its queued work. It is an RLock, because a
-        # ChangePage handler nests a load_page.
+        # future or strand its queued work. An RLock, because a ChangePage
+        # handler nests a load_page.
         self._load_page_lock = threading.RLock()
-        # Page recorded by load_page's screensaver guard, consumed by
-        # ScreenSaver.hide() via take_pending_screensaver_page().
+        # Page recorded by load_page's screensaver guard, consumed by hide().
         self._screensaver_pending_page: "Page | None" = None
         # Serializes background loads on the pool. A superseded load must not
         # overwrite a newer page's background.
         self._background_load_lock = threading.Lock()
         self._bg_future: "Future[None] | None" = None
-        self._input_load_done = threading.Event()
-        self._input_load_done.set()
+        self._input_load_done = control_plane.InputLoadBarrier()
 
         # Native encoded key image caches. Build them before the inputs and
         # the background, because the paint path dereferences both directly
@@ -877,22 +875,24 @@ class DeckController:
     @log.catch
     def load_all_inputs(self, page: Page, update: bool = True, gen: "int | None" = None) -> None:
         if not self._page_is_current(gen):
+            # This generation's rebuild will never run; publish it. A
+            # superseder that armed higher keeps its waiter blocked, and a
+            # bump that armed nothing (screensaver, close) frees its waiter.
+            self._input_load_done.publish(gen)
             return
         start = time.time()
-        # Use the persistent per-deck pool, not a throwaway one per call. This
-        # runs on the media-player thread, so a pool built and torn down on
-        # every page switch is churn on the sole writer's path.
+        # The persistent per-deck pool: this runs on the media-player thread,
+        # and a pool torn down per page switch is churn on the sole writer.
         executor = self.load_executor
         if executor is None:
-            # close() sets the pools to None, so a load that started before
-            # it has nothing left to submit onto. A .submit() on None raises
-            # AttributeError, which no caller of this catches.
+            # close() set the pools to None; nothing will rebuild for this
+            # generation now, so release a waiter on it.
+            self._input_load_done.publish(gen)
             return
         # Each task re-checks the page generation before it touches an input,
-        # which is what lets the pool abandon a wedged executor and let the
-        # queue drain late: a switch during the drain then lands nothing. A
-        # task already past that check and inside the load can still finish
-        # late, and that window is the load's.
+        # which lets the pool abandon a wedged executor and drain late: a
+        # switch during the drain then lands nothing. A task already inside
+        # the load can still finish late, and that window is the load's.
         tasks = [
             (str(controller_input.identifier),
              partial(self._load_input_if_current, controller_input, page, update, gen))
@@ -901,7 +901,7 @@ class DeckController:
         ]
         executor.run_batch(tasks, deadline=self.LOAD_INPUTS_TIMEOUT)
         log.info(f"Loading all inputs took {time.time() - start} seconds")
-        self._input_load_done.set()
+        self._input_load_done.publish(gen)
 
     def _load_input_if_current(self, controller_input: "ControllerInput[Any]", page: Page, update: bool = True, gen: "int | None" = None) -> None:
         # A slower in-flight page load must not paint the previous page's
@@ -1026,6 +1026,8 @@ class DeckController:
                 self.active_page = page
                 self._page_load_generation += 1
                 gen = self._page_load_generation
+                # Key the input-load barrier to this generation under the bump.
+                self._input_load_done.arm(gen, load_inputs and page is not None)
 
                 # Stamp every input with the new generation now, under the
                 # same lock as the bump. Threads outside the load pool trigger
@@ -1061,13 +1063,12 @@ class DeckController:
             # Do not trigger the UI sync here. The new page's input states and
             # actions do not exist yet, so a sidebar rebuild renders the old
             # page's data and nothing corrects it later. It fires from the
-            # load-completion side instead, at the end of the awaited input
-            # load on the media thread, and after initialize_actions below.
+            # load-completion side instead, after initialize_actions below.
 
             bg_future = None
             if load_background:
                 # Decode the background off the media thread so it overlaps the
-                # input load. The update task below waits for it before compositing.
+                # input load. The update task below awaits it before compositing.
                 from src.backend.main_loop import run_in_background
                 if self._bg_future is not None:
                     self._bg_future.cancel()
@@ -1078,7 +1079,6 @@ class DeckController:
             if load_screensaver:
                 self.load_screensaver(page)
             if load_inputs:
-                self._input_load_done.clear()
                 self.media_player.add_task(self.load_all_inputs, page, update=False, gen=gen)
             else:
                 # No content reloads, but the generation bumped. Advance each
