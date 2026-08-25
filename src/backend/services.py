@@ -30,6 +30,8 @@ if TYPE_CHECKING:
     from src.backend.DeckManagement.DeckManager import DeckManager
     from src.backend.PageManagement.PageManagerBackend import PageManagerBackend
     from src.backend.SettingsManager import AppSettings, SettingsManager
+    from src.windows.mainWindow.elements.DeckStack import DeckStack
+    from src.windows.mainWindow.elements.Sidebar.Sidebar import Sidebar
     from src.windows.mainWindow.mainWindow import MainWindow
 
 
@@ -160,6 +162,32 @@ def require_main_window() -> MainWindow:
             "no window attribute on it."
         )
     return window
+
+
+def sidebar() -> "Sidebar | None":
+    """The window's sidebar, or None while there is not one.
+
+    None covers all three absences at once: no App, no window, and a window
+    whose build() has not reached the sidebar. The typed return lets a caller
+    read a sidebar attribute that the checker verifies, in place of a dotted
+    string that a typo could silence.
+    """
+    window = main_window()
+    if window is None:
+        return None
+    return window.get_sidebar()
+
+
+def deck_stack() -> "DeckStack | None":
+    """The window's deck stack, or None while there is not one.
+
+    The same three absences as sidebar(). Use it for a gl-rooted read; a
+    caller that already holds the window calls window.get_deck_stack().
+    """
+    window = main_window()
+    if window is None:
+        return None
+    return window.get_deck_stack()
 
 
 # Settings

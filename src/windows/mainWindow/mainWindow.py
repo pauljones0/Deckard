@@ -15,7 +15,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 # Import gtk modules
 import gi
 
-from src.backend.DeckManagement.HelperMethods import recursive_hasattr
 from src.windows.mainWindow.elements.DeckSettingsButton import DeckSettingsButton
 
 
@@ -43,6 +42,7 @@ from typing import TYPE_CHECKING, cast, Any
 
 if TYPE_CHECKING:
     from src.backend.DeckManagement.DeckManager import DeckManager
+    from src.windows.mainWindow.elements.DeckStack import DeckStack
 
 
 
@@ -346,9 +346,38 @@ class MainWindow(Adw.ApplicationWindow):
         self.toast_overlay.add_toast(toast)
         return GLib.SOURCE_REMOVE
 
+    def get_deck_stack(self) -> "DeckStack | None":
+        """The deck stack, or None while the window is still building it.
+
+        leftArea and its deck_stack bind inside build(), which runs after the
+        window publishes itself as the app's main window. A caller that reaches
+        this in that gap, such as a USB plug event on the media thread, gets
+        None rather than an AttributeError. The typed access makes a wrong
+        attribute name a check-time error, which a dotted string never caught.
+        """
+        try:
+            return self.leftArea.deck_stack
+        except AttributeError:
+            return None
+
+    def get_sidebar(self) -> "Sidebar | None":
+        """The sidebar, or None while the window is still building it.
+
+        The sidebar binds inside build(), after the window publishes itself.
+        Every attribute a caller reads on it (active_identifier, page_selector,
+        action_chooser, key_editor) binds in Sidebar.__init__, so a built
+        sidebar carries them all and this one guard covers each site.
+        """
+        try:
+            return self.sidebar
+        except AttributeError:
+            return None
+
     def get_active_controller(self) -> DeckController | None:
-        if not recursive_hasattr(self, "leftArea.deck_stack"): return None
-        visible_child = self.leftArea.deck_stack.get_visible_child()
+        deck_stack = self.get_deck_stack()
+        if deck_stack is None:
+            return None
+        visible_child = deck_stack.get_visible_child()
         if visible_child is None:
             return None
         return cast("DeckController | None", visible_child.deck_controller)

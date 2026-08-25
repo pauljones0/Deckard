@@ -66,6 +66,17 @@ class PageManager(Adw.ApplicationWindow):
         self.page_selector = PageSelector(self)
         self.split.set_sidebar(self.page_selector)
 
+    def get_page_selector(self) -> "PageSelector | None":
+        """The page selector, or None while build() has not set it yet.
+
+        The typed access makes a wrong attribute name a check-time error, which
+        a dotted-string guard never caught.
+        """
+        try:
+            return self.page_selector
+        except AttributeError:
+            return None
+
     def add_page_from_name(self, page_name: str) -> None:
         page_manager = gl.page_manager
         if page_manager is None:
