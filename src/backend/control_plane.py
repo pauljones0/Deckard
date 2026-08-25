@@ -1,10 +1,11 @@
 """One place decides whether a page or state switch is valid.
 
-"Switch deck S to page P" and "set input (x,y) on page P of deck S to state N"
-arrive from several transports. D-Bus methods carry them to the running
-instance, from an external tool or from a second CLI invocation. Argv
-requests carry them into a booting process, which parks each one for a deck
-that has not enumerated yet.
+"Switch deck S to page P", "set input (x,y) on page P of deck S to state N"
+and "press input (x,y) on page P of deck S" arrive from several transports.
+D-Bus methods carry them to the running instance, from an external tool or
+from a second CLI invocation. Argv requests carry the first two into a booting
+process, which parks each one for a deck that has not enumerated yet. A press
+is not one of those: see emulate_input_on.
 A copy of the rules per transport drifts apart, so this module is the one rule
 set they all ask. The decision lives here, and the rendering stays at the
 surface. Nothing here logs, and nothing here touches the toolkit.
@@ -36,10 +37,12 @@ from typing import TYPE_CHECKING
 # Python 3.13, which evaluates an annotation at definition time, and the
 # future import above prevents that.
 import globals as gl
-from src.backend.DeckManagement.InputIdentifier import Input
+from src.backend import timer_wheel
+from src.backend.DeckManagement.InputIdentifier import Input, InputIdentifier
 
 if TYPE_CHECKING:
     from src.backend.DeckManagement.deck_controller.controller import DeckController
+    from src.backend.DeckManagement.deck_controller.inputs import ControllerKey
     from src.backend.PageManagement.PageManagerBackend import PageManagerBackend
 
 
@@ -65,6 +68,9 @@ class ControlResult:
       "no-such-input"         in bounds, and the deck has no input there
       "bad-state"             the state number is no integer
       "state-out-of-range"    that input has no such state
+      "bad-event"             no emulated input event goes by that word
+      "input-blocked"         the deck is not taking input, because the
+                              session is locked
     """
 
     ok: bool
@@ -109,6 +115,103 @@ def _no_such_page(page_ref: str, page_manager: PageManagerBackend) -> ControlRes
     return ControlResult(False, "no-such-page",
                          f"Page '{page_ref}' not found. "
                          f"Available pages: {', '.join(available)}")
+
+
+def _key_at(controller: DeckController, coords: str) -> "tuple[ControllerKey, int, int] | ControlResult":
+    """The key input at coords on controller, with its coordinates, or the
+    result that says why there is none.
+
+    Both entry points that address one input read it from here, so they refuse
+    the same coordinates with the same sentence. The coordinates come back
+    parsed, because each caller names them in its own message. The bounds are
+    this device's own key layout and this input's own presence. No constant
+    supplies them, because no constant holds for every deck.
+    """
+    try:
+        x, y = map(int, coords.split(","))
+    except (ValueError, AttributeError):
+        return ControlResult(False, "bad-coords",
+                             f"Invalid coordinate format '{coords}'. "
+                             f"Expected format: 'x,y' (e.g., '0,0')")
+
+    rows, cols = controller.deck.key_layout()
+    if x < 0 or x >= cols or y < 0 or y >= rows:
+        return ControlResult(False, "coords-out-of-bounds",
+                             f"Coordinates ({x},{y}) are out of bounds for this device. "
+                             f"Valid range: x=0-{cols - 1}, y=0-{rows - 1}")
+
+    c_input = controller.get_input(Input.Key(f"{x}x{y}"))
+    if c_input is None:
+        return ControlResult(False, "no-such-input",
+                             f"Could not find input at coordinates ({x},{y})")
+    return c_input, x, y
+
+
+#: The event words emulate_input_on knows. A press is one that ends before the
+#: deck's hold time; a long press is one that outlasts it, which is what makes
+#: an input's HOLD_START and HOLD_STOP fire. src/backend/cli_forward.py holds a
+#: copy, because it stays importable before globals and this module does not,
+#: and a scenario pins the two lists to each other.
+PRESS = "press"
+LONG_PRESS = "long-press"
+EMULATED_EVENTS = (PRESS, LONG_PRESS)
+
+#: How long an emulated short press holds the input down. A press with no
+#: duration is a shape no finger makes, and an action that reads the gap
+#: between its DOWN and its UP would see one. It is halved against a deck whose
+#: hold time is under twice this, so a short press stays short whatever that
+#: setting says.
+_PRESS_DOWN_S = 0.05
+
+#: How far past the deck's hold time an emulated long press holds the input.
+#: The input arms its own hold timer for hold_time on the same wheel, and that
+#: timer is what fires HOLD_START. The release cancels that timer, so it must
+#: land far enough behind it for it to have fired: a margin under the wheel's
+#: dispatch delay turns a long press into a release with no HOLD_START before
+#: it.
+_LONG_PRESS_EXTRA_S = 0.25
+
+
+def _hold_seconds(controller: DeckController, event: str) -> float | None:
+    """How long event holds the input down on controller, or None for a word
+    this module does not know."""
+    if event == PRESS:
+        return min(_PRESS_DOWN_S, controller.hold_time / 2)
+    if event == LONG_PRESS:
+        return controller.hold_time + _LONG_PRESS_EXTRA_S
+    return None
+
+
+def _press_for(controller: DeckController, identifier: InputIdentifier, hold_s: float) -> None:
+    """Hold identifier down on controller for hold_s seconds.
+
+    Both legs go through DeckController.event_callback, which is where a
+    hardware press arrives once the reader thread has turned a key index into
+    an identifier. Everything past that point is the same code, so the event
+    assigners, the DOWN-time gesture snapshot and the hold timer treat this
+    press exactly as they treat a finger.
+
+    Neither leg runs on the caller's thread. A hardware press arrives on the
+    device's reader thread and never on the main loop, and an action that
+    marshals its own work onto the main thread would wedge against a caller
+    that is the main thread and is inside this call. A zero delay on the wheel
+    buys that context, because the wheel runs every callback on a thread of its
+    own.
+
+    The release is a timer and not a sleep. A parked thread per emulated press
+    is a thread for the length of a long press, and the wheel that already
+    carries the hold timers costs none. It is armed from inside the press
+    callback rather than beside it, so the two legs cannot overlap and the deck
+    sees them in the order a finger makes them.
+    """
+    def release() -> None:
+        controller.event_callback(identifier, False)
+
+    def press() -> None:
+        controller.event_callback(identifier, True)
+        timer_wheel.schedule(hold_s, release, name="EmulatedRelease")
+
+    timer_wheel.schedule(0.0, press, name="EmulatedPress")
 
 
 # The longest change_state_on waits for a page's input rebuild before it reads
@@ -283,23 +386,10 @@ class ControlPlane:
         # it.
         _wait_for_input_load(controller)
 
-        try:
-            x, y = map(int, coords.split(","))
-        except (ValueError, AttributeError):
-            return ControlResult(False, "bad-coords",
-                                 f"Invalid coordinate format '{coords}'. "
-                                 f"Expected format: 'x,y' (e.g., '0,0')")
-
-        rows, cols = controller.deck.key_layout()
-        if x < 0 or x >= cols or y < 0 or y >= rows:
-            return ControlResult(False, "coords-out-of-bounds",
-                                 f"Coordinates ({x},{y}) are out of bounds for this device. "
-                                 f"Valid range: x=0-{cols - 1}, y=0-{rows - 1}")
-
-        c_input = controller.get_input(Input.Key(f"{x}x{y}"))
-        if c_input is None:
-            return ControlResult(False, "no-such-input",
-                                 f"Could not find input at coordinates ({x},{y})")
+        found = _key_at(controller, coords)
+        if isinstance(found, ControlResult):
+            return found
+        c_input, x, y = found
 
         # The state number is an int on the D-Bus method's signature and on
         # the CLI's parked requests, which convert at their own edge. The boot
@@ -328,6 +418,65 @@ class ControlPlane:
                              f"Successfully changed state of ({x},{y}) to state "
                              f"{state_number} on device {controller.serial_number()}")
 
+    def emulate_input_on(self, controller: DeckController, page_ref: str,
+                         coords: str, event: str) -> ControlResult:
+        """Press the input at coords on page_ref of controller as a finger
+        would, and load the page first when it is not the active one.
+
+        event is one of EMULATED_EVENTS. A press comes back to an action as
+        DOWN and then SHORT_UP and UP. A long press outlasts the deck's hold
+        time, which is what turns those into HOLD_START, HOLD_STOP and UP.
+
+        The press is arranged, not awaited. This returns once the deck has been
+        given the press to make, which is before the actions on that input have
+        run and long before the release. Waiting gains a caller nothing: an
+        action's work is its own, and a caller held for the length of a long
+        press is the D-Bus dispatch, on the main thread.
+
+        An event word this module does not know is refused before the page
+        switch. It is judged without a device, and a request that nothing can
+        carry out must not move the deck first. The coordinates are the
+        device's own answer, so they are judged after the switch, exactly as
+        change_state_on judges them.
+
+        A screensaver that is showing swallows the press and wakes the deck,
+        which is what it does to the first press of a finger.
+        """
+        hold_s = _hold_seconds(controller, event)
+        if hold_s is None:
+            return ControlResult(False, "bad-event",
+                                 f"Unknown input event '{event}'. "
+                                 f"Expected one of: {', '.join(EMULATED_EVENTS)}")
+
+        page_result = self.change_page_on(controller, page_ref)
+        if not page_result.ok:
+            return page_result
+
+        # The switch queued the input rebuild on the media thread and returned
+        # before it ran, so a press dispatched now reaches the actions the
+        # outgoing page had on that input. Wait for the rebuild, as a state
+        # change does, and the press lands on the page it names.
+        _wait_for_input_load(controller)
+
+        found = _key_at(controller, coords)
+        if isinstance(found, ControlResult):
+            return found
+        c_input, x, y = found
+
+        if not controller.allow_interaction:
+            # The lock screen turns this off for as long as the session is
+            # locked, and the dispatch entry drops every event while it is off.
+            # A press reported as done and then dropped there is the one
+            # outcome a caller cannot tell from a press that ran.
+            return ControlResult(False, "input-blocked",
+                                 f"Device {controller.serial_number()} is not taking input "
+                                 f"right now, because the session is locked")
+
+        _press_for(controller, c_input.identifier, hold_s)
+        return ControlResult(True, "",
+                             f"Emulated a {event} on ({x},{y}) on device "
+                             f"{controller.serial_number()}")
+
     # The wrappers, which resolve a serial.
 
     def change_page(self, serial_number: str, page_ref: str) -> ControlResult:
@@ -344,6 +493,14 @@ class ControlPlane:
         if controller is None:
             return _no_such_deck(serial_number)
         return self.change_state_on(controller, page_ref, coords, state)
+
+    def emulate_input(self, serial_number: str, page_ref: str, coords: str,
+                      event: str) -> ControlResult:
+        """emulate_input_on for the deck that reports serial_number."""
+        controller = self._find(serial_number)
+        if controller is None:
+            return _no_such_deck(serial_number)
+        return self.emulate_input_on(controller, page_ref, coords, event)
 
     def _find(self, serial_number: str) -> DeckController | None:
         """The first controller that reports serial_number, or None. A serial
