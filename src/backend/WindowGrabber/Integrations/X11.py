@@ -24,7 +24,7 @@ import globals as gl
 
 from Xlib import X
 from Xlib import display as xlib_display
-from Xlib.error import XError
+from Xlib.error import ConnectionClosedError, XError
 
 from src.backend.WindowGrabber.Integration import Integration, WATCHER_STOP_TIMEOUT_S
 from src.backend.WindowGrabber.Window import Window
@@ -37,6 +37,14 @@ if TYPE_CHECKING:
 # returns at once and does not wait this out. This bounds only the case where
 # gl.threads_running goes false during quit with no stop() call.
 WATCH_SELECT_TIMEOUT_S = 1.0
+
+# How many passes in a row of "the X connection is readable but yields no
+# event" mean the connection is dead rather than mid-message. The X server
+# going away leaves its socket at end of file, which select reports as
+# readable forever; without this cap the loop would spin at full CPU. One empty
+# pass can be a partial read that the next pass completes, so the cap is above
+# one.
+_MAX_EMPTY_READABLE_DRAINS = 2
 
 # The root property that names the focused window, and the two properties that
 # carry a window title. _NET_WM_NAME holds the UTF-8 title that modern window
@@ -96,8 +104,13 @@ def _active_window_id(root, active_atom) -> int | None:
 
 
 def _read_window_title(window, title_atoms) -> str | None:
-    """The window title. Prefers the UTF-8 _NET_WM_NAME and falls back to
-    WM_NAME. None when the window carries neither."""
+    """The window title. Prefers the UTF-8 _NET_WM_NAME, which matches the
+    title the window manager shows, and falls back to WM_NAME. None when the
+    window carries neither.
+
+    A trailing NUL is stripped: a non-conformant client can NUL-terminate
+    _NET_WM_NAME, and xprop dropped that byte, so a title-regex rule stays a
+    match."""
     for atom in title_atoms:
         try:
             prop = window.get_full_property(atom, X.AnyPropertyType)
@@ -109,8 +122,8 @@ def _read_window_title(window, title_atoms) -> str | None:
         if value is None or len(value) == 0:
             continue
         if isinstance(value, bytes):
-            return value.decode("utf-8", errors="replace")
-        return str(value)
+            return value.decode("utf-8", errors="replace").rstrip("\x00")
+        return str(value).rstrip("\x00")
     return None
 
 
@@ -187,7 +200,16 @@ class X11(Integration):
         # watcher thread only; a one-shot query opens its own.
         thread = WatchForActiveWindowChange(self)
         self.active_window_change_thread = thread
-        thread.start()
+        try:
+            thread.start()
+        except RuntimeError:
+            # The OS refused a new thread, so run() never runs to free the
+            # wake pipe. Close it here and drop the reference, so a later
+            # stop_watching is a clean no-op and does not join a thread that
+            # never started.
+            log.opt(exception=True).error("Could not start the X11 active window watcher")
+            self.active_window_change_thread = None
+            thread._close_wake_pipe()
 
     @log.catch
     def stop_watching(self) -> None:
@@ -283,9 +305,13 @@ class WatchForActiveWindowChange(threading.Thread):
         # stop returns at once rather than waiting out the select timeout. A
         # lock pairs the write with the close: the write only runs while the
         # pipe is open, so a stop cannot write a file descriptor the teardown
-        # has closed and the kernel has since handed to something else.
+        # has closed and the kernel has since handed to something else. The
+        # write end is non-blocking, so a stop never blocks even if the pipe
+        # somehow fills; a full pipe already holds an unread byte, which is all
+        # a wake needs.
         self._wake_lock = threading.Lock()
         self._wake_read_fd, self._wake_write_fd = os.pipe()
+        os.set_blocking(self._wake_write_fd, False)
         self._wake_closed = False
 
         self._display = None
@@ -307,8 +333,10 @@ class WatchForActiveWindowChange(threading.Thread):
             try:
                 os.write(self._wake_write_fd, b"\x00")
             except OSError:
-                # The pipe is full, which already wakes the select, or it is
-                # gone. Either way the loop reaches its next stop check.
+                # The non-blocking write end raises rather than blocks when the
+                # pipe is full, and a full pipe already holds an unread byte
+                # that wakes the select. Either way the loop reaches its next
+                # stop check.
                 pass
 
     def _close_wake_pipe(self) -> None:
@@ -336,8 +364,9 @@ class WatchForActiveWindowChange(threading.Thread):
             return
 
         self._display = display
+        connection_lost = False
         try:
-            self._watch(display)
+            connection_lost = self._watch(display)
         finally:
             # The connection is closed on the thread that opened it, so a stop
             # leaks neither the connection nor the thread. Closing the
@@ -349,7 +378,16 @@ class WatchForActiveWindowChange(threading.Thread):
             self._display = None
             self._close_wake_pipe()
 
-    def _watch(self, display) -> None:
+        if connection_lost:
+            # The X server went away. This thread is about to end, so ask the
+            # grabber to re-decide the watcher against the rules. A quick
+            # restart of X is picked up when that pass runs; a longer outage is
+            # picked up at the next rule edit.
+            self._request_recovery()
+
+    def _watch(self, display) -> bool:
+        """Runs the event loop. Returns True when it ends because the X
+        connection dropped, and False for a normal stop."""
         root = display.screen().root
         self._root_id = root.id
         self._active_atom = display.intern_atom(_NET_ACTIVE_WINDOW)
@@ -367,6 +405,7 @@ class WatchForActiveWindowChange(threading.Thread):
 
         display_fd = display.fileno()
         wake_fd = self._wake_read_fd
+        empty_readable_drains = 0
 
         while gl.threads_running and not self._stop_event.is_set():
             try:
@@ -383,23 +422,54 @@ class WatchForActiveWindowChange(threading.Thread):
                 if self._stop_event.is_set():
                     break
             if display_fd not in readable:
+                empty_readable_drains = 0
                 continue
 
-            # Catch per drain, like the Hyprland socket listener does. One
-            # failed decode or page switch must not end this thread. An
-            # exception that reaches @log.catch kills window-based page
-            # switching until the next app start.
             try:
-                self._drain_events(display, root)
+                drained = self._drain_events(display, root)
+            except ConnectionClosedError:
+                # python-xlib closed the connection when the server went away
+                # (a server or Xwayland restart, a display-manager restart, an
+                # ssh -X drop) and raised this. Stop, so select does not spin
+                # on the dead socket. The caller asks for a restart.
+                log.warning("The X connection closed; the X11 active window watcher stops")
+                return True
+
+            if drained == 0:
+                # A readable connection that yields no event is at end of file,
+                # for the case where the library reports the drop as a zero read
+                # rather than as an error. select keeps calling the dead socket
+                # readable, so a continue here spins at full CPU. Stop once this
+                # repeats, which tells a dead socket apart from a single partial
+                # read.
+                empty_readable_drains += 1
+                if empty_readable_drains >= _MAX_EMPTY_READABLE_DRAINS:
+                    log.warning("The X connection reached end of file; the X11 active window watcher stops")
+                    return True
+            else:
+                empty_readable_drains = 0
+
+        return False
+
+    def _drain_events(self, display, root) -> int:
+        """Reads every queued event and returns how many were read. A read of
+        zero from a readable connection is how end of file shows.
+
+        pending_events() and next_event() let a ConnectionClosedError out, and
+        the caller acts on it. One event that fails to decode or route must not
+        end the drain, so each is handled inside its own guard, the way the
+        Hyprland socket listener guards its loop."""
+        count = 0
+        while display.pending_events():
+            event = display.next_event()
+            count += 1
+            try:
+                self._handle_event(display, root, event)
             except Exception as e:
                 log.opt(exception=True).error(
                     f"Unexpected error in the X11 active window watcher: {e}"
                 )
-
-    def _drain_events(self, display, root) -> None:
-        while display.pending_events():
-            event = display.next_event()
-            self._handle_event(display, root, event)
+        return count
 
     def _handle_event(self, display, root, event) -> None:
         root_id = self._root_id
@@ -422,6 +492,24 @@ class WatchForActiveWindowChange(threading.Thread):
             return
         self._last_reported = window
         self.x11.window_grabber.on_active_window_changed(window)
+
+    def _request_recovery(self) -> None:
+        """Asks the grabber to re-decide the watcher against the rules, so a
+        dropped X connection restarts the watch on its own.
+
+        The grabber holds no timer; it re-checks on a rule change. Without this
+        a dropped connection leaves window page switching off until the next
+        rule edit or app restart. A restart that still finds no X server opens
+        no watcher and asks for nothing more, so this cannot loop while X stays
+        away."""
+        grabber = getattr(self.x11, "window_grabber", None)
+        refresh = getattr(grabber, "refresh_watch_state", None)
+        if refresh is None:
+            return
+        try:
+            refresh()
+        except Exception:
+            log.debug("Could not request a window watcher re-check after the X connection dropped")
 
     def _track_focused_window(self, display, root) -> None:
         """Moves the title watch onto the focused window, so a title change on

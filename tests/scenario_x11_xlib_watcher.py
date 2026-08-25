@@ -26,6 +26,7 @@ import types
 import globals as gl
 
 from Xlib import X
+from Xlib.error import ConnectionClosedError
 
 from src.backend.WindowGrabber.Window import Window
 from src.backend.WindowGrabber.Integrations.X11 import (
@@ -179,12 +180,14 @@ def _property_event(window_id, atom):
 
 class Recorder:
     """The grabber stand-in. Records each reported window, and can raise on a
-    marked class to model a routing that fails."""
+    marked class to model a routing that fails. It also records the re-check
+    request the watcher makes when the X connection drops."""
 
     def __init__(self, raise_on_class=None):
         self.calls: list[Window] = []
         self._lock = threading.Lock()
         self._raise_on_class = raise_on_class
+        self.recovery_requested = threading.Event()
 
     def on_active_window_changed(self, window: Window) -> None:
         with self._lock:
@@ -192,9 +195,42 @@ class Recorder:
         if self._raise_on_class is not None and window.wm_class == self._raise_on_class:
             raise RuntimeError(f"routing failed for {window.wm_class}")
 
+    def refresh_watch_state(self) -> None:
+        self.recovery_requested.set()
+
     def snapshot(self) -> list[Window]:
         with self._lock:
             return list(self.calls)
+
+
+class EofRaiseDisplay(FakeDisplay):
+    """A display whose connection drops and reports the drop by raising
+    ConnectionClosedError from pending_events, the way python-xlib does. Its fd
+    stays readable, so the watcher's select fires and reaches the drain."""
+
+    def __init__(self):
+        super().__init__(windows={0x10: ("Window", "app")}, active_id=0x10)
+        self.pending_calls = 0
+        os.write(self._write_fd, b"\x00")  # keep the fd readable for select
+
+    def pending_events(self):
+        self.pending_calls += 1
+        raise ConnectionClosedError("server")
+
+
+class EofZeroDisplay(FakeDisplay):
+    """A display whose connection drops but reports the drop as end of file: a
+    readable fd that yields zero events, with no error. The fd is kept readable
+    and never drained, so a watcher that does not stop would spin on it."""
+
+    def __init__(self):
+        super().__init__(windows={0x10: ("Window", "app")}, active_id=0x10)
+        self.pending_calls = 0
+        os.write(self._write_fd, b"\x00")  # keep the fd readable for select
+
+    def pending_events(self):
+        self.pending_calls += 1
+        return 0
 
 
 def _fake_x11(recorder):
@@ -366,6 +402,65 @@ def check_decode_helpers() -> None:
     )
 
 
+# Check 6. A dropped connection that raises stops the watcher and asks for a
+# restart, rather than logging a traceback per pass forever
+
+def check_connection_drop_raises_stops() -> None:
+    display = EofRaiseDisplay()
+    recorder = Recorder()
+    gl.threads_running = True
+    watcher = WatchForActiveWindowChange(_fake_x11(recorder), display_factory=lambda: display)
+    watcher.start()
+    try:
+        assert display.primed.wait(5.0), "the watcher must open the display and prime"
+
+        # No stop() is called; the watcher must stop itself on the drop.
+        exited = _wait_until(lambda: not watcher.is_alive(), timeout=5.0)
+        assert exited, "a raised connection drop must stop the watcher, not loop on it"
+        assert display.pending_calls <= 4, (
+            f"the watcher must stop on the first raised drop, not retry in a tight "
+            f"loop; pending_events was called {display.pending_calls} times"
+        )
+        assert display.closed, "the display must be closed after the connection drops"
+        assert watcher._wake_closed, "the wake pipe must be closed after the connection drops"
+        assert recorder.recovery_requested.wait(3.0), (
+            "the watcher must ask the grabber to re-decide the watch after a drop"
+        )
+    finally:
+        gl.threads_running = False
+        watcher.join(timeout=5.0)
+
+
+# Check 7. A dropped connection seen as end of file (readable, zero events)
+# stops the watcher within a bounded number of passes rather than spinning
+
+def check_connection_drop_eof_stops() -> None:
+    display = EofZeroDisplay()
+    recorder = Recorder()
+    gl.threads_running = True
+    watcher = WatchForActiveWindowChange(_fake_x11(recorder), display_factory=lambda: display)
+    watcher.start()
+    try:
+        assert display.primed.wait(5.0), "the watcher must open the display and prime"
+
+        exited = _wait_until(lambda: not watcher.is_alive(), timeout=5.0)
+        assert exited, "an end-of-file connection must stop the watcher, not spin at full CPU"
+        # A bound well under a spin. The watcher stops after a couple of empty
+        # readable passes; a spin would run this into the thousands.
+        assert display.pending_calls <= 8, (
+            f"the watcher must stop within a few passes, not spin; pending_events "
+            f"was called {display.pending_calls} times"
+        )
+        assert display.closed, "the display must be closed after the connection drops"
+        assert watcher._wake_closed, "the wake pipe must be closed after the connection drops"
+        assert recorder.recovery_requested.wait(3.0), (
+            "the watcher must ask the grabber to re-decide the watch after a drop"
+        )
+    finally:
+        gl.threads_running = False
+        watcher.join(timeout=5.0)
+
+
 def main() -> None:
     fixtures.start_watchdog(90, label="scenario_x11_xlib_watcher")
     check_reports_focus_change()
@@ -373,6 +468,8 @@ def main() -> None:
     check_survives_raising_route()
     check_fallback_no_display()
     check_decode_helpers()
+    check_connection_drop_raises_stops()
+    check_connection_drop_eof_stops()
     print("PASS: scenario_x11_xlib_watcher")
 
 
