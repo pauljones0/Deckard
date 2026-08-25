@@ -253,6 +253,22 @@ class LabelManager:
         self._static_ops.clear()
         self._bbox_cache.clear()
 
+    def _on_label_written(self, position: str, update: bool,
+                          notify_editor: bool = False) -> None:
+        """The bookkeeping a write to either label store owes.
+
+        The epoch moves whenever what a composed label looks like changes, and
+        the static-blit memo is keyed on nothing that would notice a text or
+        style edit, so it is dropped with the move. Both setters run this, so a
+        third writer cannot land one half without the other.
+        """
+        self._bump_label_epoch()
+        self._static_ops.clear()
+        if notify_editor:
+            self.update_label_editor()
+        if update:
+            self.update_label(position)
+
     def set_page_label(self, position: str, label: "KeyLabel | None", update: bool = True) -> None:
         if label is None:
             label = self.page_labels[position]
@@ -260,10 +276,7 @@ class LabelManager:
         else:
             self.page_labels[position] = label
 
-        self._bump_label_epoch()
-        self._static_ops.clear()
-        if update:
-            self.update_label(position)
+        self._on_label_written(position, update)
 
     @staticmethod
     def _label_equals(a: "KeyLabel", b: "KeyLabel") -> bool:
@@ -284,11 +297,7 @@ class LabelManager:
                 return
             self.action_labels[position] = label
 
-        self._bump_label_epoch()
-        self._static_ops.clear()
-        self.update_label_editor()
-        if update:
-            self.update_label(position)
+        self._on_label_written(position, update, notify_editor=True)
 
     def update_label_editor(self) -> None:
         """Kept as the caller-facing name; the widget work belongs to the

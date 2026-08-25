@@ -39,7 +39,7 @@ from PIL import Image, ImageDraw
 from StreamDeck.Devices.StreamDeck import DialEventType, TouchscreenEventType
 from loguru import logger as log
 
-from src.backend.DeckManagement.HelperMethods import is_image, is_svg, is_video, svg_to_pil
+from src.backend.DeckManagement.HelperMethods import SVG_RASTER_WIDTH_PX, centered_paste_offset, is_image, is_svg, is_video, svg_to_pil
 from src.backend.DeckManagement.InputIdentifier import Input, InputEvent, InputIdentifier
 from src.backend.DeckManagement.Media.MediaConfig import MediaConfig
 from src.backend.DeckManagement.Subclasses.KeyImage import InputImage
@@ -90,6 +90,11 @@ if TYPE_CHECKING:
 #: plumbing in the base class stay generic without erasing the subclass's
 #: state type at every get_active_state() call.
 StateT = TypeVar("StateT", bound=ControllerInputState)
+
+#: The share of a key tile an overlay covers. An overlay marks a transient
+#: condition, so it is drawn inside the picture it covers rather than over all
+#: of it, and the margin keeps the key's own content readable behind it.
+OVERLAY_TILE_FRACTION = 0.75
 
 
 class _KeyLayoutLike(Protocol):
@@ -321,6 +326,25 @@ class ControllerInput(Generic[StateT]):
                     if video is not None:
                         video.close()
             return restored
+
+    def _tick_animation_clocks(self) -> "tuple[StateT, bool]":
+        """Advance this input's tick count and its rolling labels, and answer
+        the state that tick read beside whether a scroll offset visibly moved.
+
+        A rolling label advances here, on the tick, whether or not anything
+        else forces a repaint, because rendering is pure. The input then
+        re-renders only when a scroll offset moved, instead of producing thirty
+        frames a second for the hash de-dup to discard.
+
+        The state comes back with the answer so the caller judges the rest of
+        its tick against the object this advanced. A page load that lands
+        mid-tick would otherwise let the two read different states.
+        """
+        self.media_ticks += 1
+        state = self.get_active_state()
+        if state.label_manager.get_has_scroll_labels():
+            return state, state.label_manager.tick_scroll_labels()
+        return state, False
 
     def get_current_image(self) -> "Image.Image":
         """The input's current composition. The key and touchscreen inputs
@@ -648,18 +672,8 @@ class ControllerKey(ControllerInput["ControllerKeyState"]):
         return super().get_active_state()
 
     def on_media_player_tick(self) -> None:
-        self.media_ticks += 1
-
-        state = self.get_active_state()
+        state, scroll_moved = self._tick_animation_clocks()
         needs_update = False
-
-        # A rolling label advances its state here, on the tick, whether or
-        # not anything else forces a repaint, because rendering is pure. The
-        # key re-renders only when a scroll offset visibly moved, instead of
-        # producing 30 frames a second that the hash de-dup discards.
-        scroll_moved = False
-        if state.label_manager.get_has_scroll_labels():
-            scroll_moved = state.label_manager.tick_scroll_labels()
 
         # Decide on an update from the content type.
         if state.key_video is not None:
@@ -817,9 +831,9 @@ class ControllerKey(ControllerInput["ControllerKeyState"]):
             media_prof.add("c_tile", _t1 - _t0)
 
         if state._overlay:
-            height = round(self.deck_controller.get_key_image_size()[1]*0.75)
+            height = round(self.deck_controller.get_key_image_size()[1] * OVERLAY_TILE_FRACTION)
             img = state._overlay.resize((height, height))
-            background.paste(img, (int((self.deck_controller.get_key_image_size()[0] - height) // 2), int((self.deck_controller.get_key_image_size()[1] - height) // 2)), img)
+            background.paste(img, centered_paste_offset(self.deck_controller.get_key_image_size(), img.size), img)
             return background
 
         key_image: Image.Image | None = None
@@ -900,10 +914,10 @@ class ControllerKey(ControllerInput["ControllerKeyState"]):
 
         background = Image.new("RGBA", self.deck_controller.get_key_image_size(), (0, 0, 0, 0))
 
-        if image.has_transparency_data:
-            background.paste(image, (int((self.deck_controller.get_key_image_size()[0] - width) / 2), int((self.deck_controller.get_key_image_size()[1] - height) / 2)), image)
-        else:
-            background.paste(image, (int((self.deck_controller.get_key_image_size()[0] - width) / 2), int((self.deck_controller.get_key_image_size()[1] - height) / 2)))
+        # The mask is the image itself only when it carries alpha. Passing an
+        # image with no alpha as its own mask raises.
+        background.paste(image, centered_paste_offset(background.size, image.size),
+                         image if image.has_transparency_data else None)
 
         image.close()
 
@@ -971,7 +985,7 @@ class ControllerKey(ControllerInput["ControllerKeyState"]):
                             ), update=False)
                             
                     elif is_svg(path):
-                        img = svg_to_pil(path, 192)
+                        img = svg_to_pil(path, SVG_RASTER_WIDTH_PX)
                         state.set_image(InputImage(
                             controller_input=self,
                             image=img
@@ -1374,7 +1388,7 @@ class ControllerDial(ControllerInput["ControllerDialState"]):
                     )
                     state.set_image(image, update=False)
                 elif is_svg(path):
-                    img = svg_to_pil(path, 192)
+                    img = svg_to_pil(path, SVG_RASTER_WIDTH_PX)
                     state.set_image(InputImage(
                         controller_input=self,
                         image=img
@@ -1423,16 +1437,10 @@ class ControllerDial(ControllerInput["ControllerDialState"]):
         return super().get_active_state()
 
     def on_media_player_tick(self) -> bool:
-        # Advance the animation clock and report whether a redraw is needed.
-        # The caller renders the shared touchscreen once per frame.
-        self.media_ticks += 1
-
-        state = self.get_active_state()
-        # A rolling label advances here on the tick, because rendering is
-        # pure. The strip re-renders only when a scroll offset visibly moved.
-        scroll_moved = False
-        if state.label_manager.get_has_scroll_labels():
-            scroll_moved = state.label_manager.tick_scroll_labels()
+        # Report whether a redraw is needed instead of painting. A dial has no
+        # slot of its own, so the caller renders the shared touchscreen once
+        # per frame rather than once per dial.
+        state, scroll_moved = self._tick_animation_clocks()
         return state.video is not None or scroll_moved
 
     def get_image_size(self) -> tuple[int, int]:

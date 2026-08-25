@@ -191,6 +191,19 @@ def is_svg(path: str | None) -> bool:
     return path.startswith("<svg ")
 
 
+def centered_paste_offset(container: "tuple[int, int]", item: "tuple[int, int]") -> "tuple[int, int]":
+    """The paste offset that centres item inside container.
+
+    It serves the paste sites that centre something known to be no larger than
+    what it goes on, which is what every caller does: an overlay drawn at a
+    fraction of the tile, and the shrunken look of a pressed key. An item wider
+    or taller than its container is outside the contract, because the two ways
+    of writing this arithmetic disagree there, floor against truncation, and a
+    caller that needs a crop must say which it wants.
+    """
+    return ((container[0] - item[0]) // 2, (container[1] - item[1]) // 2)
+
+
 def get_image_aspect_ratio(img: Image.Image) -> str:
     width, height = img.size
     gcd = math.gcd(width, height)
@@ -499,6 +512,12 @@ def svg_string_to_pil(svg_string: str, width: int = 96, height: int = 96) -> Ima
     img = Image.open(BytesIO(png_data))
 
     return img
+
+
+#: The width a page or action SVG asset is rasterized at before the layout
+#: manager fits it to its target. It is twice the largest key tile, 96 pixels
+#: on an XL, so the fit is always a downscale and the icon keeps its detail.
+SVG_RASTER_WIDTH_PX = 192
 
 
 def svg_to_pil(svg_path: str, width: int = 96, height: int = 96) -> Image.Image:
