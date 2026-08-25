@@ -149,8 +149,11 @@ def test_three_types_share_their_widgets() -> None:
 # pre-selection until both its pages have built, and it is the one stack that
 # AssetChooser.show_for_path routes to.
 ALLOWED_STACK_METHODS = {
-    "IconPackChooserStack": {"prepare", "show_for_path", "get_is_build_finished",
-                             "on_load_finished"},
+    # _show_pack_asset is the widget half of show_for_path. It stands apart
+    # because show_for_path can run on a build worker, and that half has to
+    # reach the main loop.
+    "IconPackChooserStack": {"prepare", "show_for_path", "_show_pack_asset",
+                             "get_is_build_finished", "on_load_finished"},
     "WallpaperPackChooserStack": set(),
     "SDPlusBarWallpaperPackChooserStack": set(),
 }
