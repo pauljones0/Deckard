@@ -23,6 +23,7 @@ from src.backend.WindowGrabber.WindowGrabber import WindowGrabber
 WM_CLASS = "firefox"
 FIREFOX = Window(wm_class=WM_CLASS, title="Mozilla Firefox")
 OTHER = Window(wm_class="kitty", title="terminal")
+SECOND = Window(wm_class="code", title="editor")
 
 
 class FakePage:
@@ -206,6 +207,66 @@ def check_manual_restore_keeps_the_page(page_manager: FakePageManager) -> None:
         "the deck must keep its page when the manual page does not build")
     print("PASS: the restore to the manually chosen page keeps the deck's "
           "page when that page does not build")
+
+    check_failed_restore_keeps_the_way_back(page_manager, controller,
+                                            auto_page, manual_path)
+
+
+def check_failed_restore_keeps_the_way_back(page_manager: FakePageManager,
+                                            controller: FakeController,
+                                            auto_page: FakePage,
+                                            manual_path: str) -> None:
+    """A restore that does not build must leave the deck able to try again.
+
+    The deck sits on an automatically loaded page it could not leave. Marking
+    it as no longer automatic there strands it: no later window change carries
+    the restore, and the next automatic switch reads the stranded page as the
+    user's own choice and overwrites the remembered path with it.
+    """
+    grabber = WindowGrabber.__new__(WindowGrabber)
+    grabber._dispatch_lock = threading.RLock()
+
+    assert controller.page_auto_loaded is True, (
+        "a restore that did not build must leave the deck marked as "
+        "automatically loaded, so a later window change tries again")
+    assert controller.last_manual_loaded_page_path == manual_path, (
+        f"the failed restore must keep the way back, it holds "
+        f"{controller.last_manual_loaded_page_path}")
+
+    # Focus moves to a second matching window, so the deck switches from one
+    # automatic page to another. A deck wrongly marked as manual here has the
+    # page it could not leave written down as the user's own choice.
+    second_path = page_manager.path_of("auto-second")
+    page_manager.auto_change[second_path] = {
+        "enable": True, "decks": ["REST"], "wm-class": SECOND.wm_class,
+        "title": ".*", "stay-on-page": False,
+    }
+    grabber._apply_auto_change(controller, SECOND)
+    assert controller.active_page.json_path == second_path, (
+        f"the second rule must switch the deck, it shows "
+        f"{controller.active_page.json_path}")
+    assert controller.last_manual_loaded_page_path == manual_path, (
+        f"an automatic page must never be recorded as the manual one, the "
+        f"deck now points back to "
+        f"{controller.last_manual_loaded_page_path}")
+    controller.loaded.clear()
+
+    # The user restores the page file. The next focus change away must take
+    # the deck back, which is only reachable while the flag stands.
+    page_manager.missing.discard(manual_path)
+    grabber._apply_auto_change(controller, OTHER)
+
+    assert len(controller.loaded) == 1, (
+        f"a restore that builds must load the manual page, the controller "
+        f"took {controller.loaded!r}")
+    assert controller.active_page.json_path == manual_path, (
+        f"the deck must sit on the manual page again, it shows "
+        f"{controller.active_page.json_path}")
+    assert controller.page_auto_loaded is False, (
+        "a restore that loaded must mark the deck as no longer automatic")
+    assert auto_page is not controller.active_page
+    print("PASS: a restore that does not build keeps the deck's way back, and "
+          "the restore succeeds once the page file returns")
 
 
 def main() -> int:
