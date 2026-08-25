@@ -11,14 +11,21 @@ if TYPE_CHECKING:
 
 class EventHolder:
     """Holds the event callbacks of one event id."""
-    def __init__(self, plugin_base: "PluginBase",
+    def __init__(self, plugin_base: "PluginBase | None",
                  event_id: str | None = None,
                  event_id_suffix: str | None = None):
         if event_id in ["", None] and event_id_suffix in ["", None]:
             raise ValueError("Please specify a signal id")
 
+        # A holder without a plugin is a valid event source: only the suffix
+        # form needs a plugin, to build the full event id from its id.
         self.plugin_base = plugin_base
-        self.event_id = event_id or f"{self.plugin_base.get_plugin_id()}::{event_id_suffix}"
+        if event_id:
+            self.event_id = event_id
+        elif plugin_base is None:
+            raise ValueError("An event id suffix needs a plugin to build the event id")
+        else:
+            self.event_id = f"{plugin_base.get_plugin_id()}::{event_id_suffix}"
         # A CallbackRegistry (src/Signals/weak_callbacks.py) holds a
         # bound-method observer weakly, so an action or a plugin that omits
         # remove_listener() on teardown stops growing this list. See
@@ -49,18 +56,36 @@ class EventHolder:
         time in registration order, on this holder's lane. An observer that
         blocks stalls this event source alone. The order against another
         holder's events is undefined. See event_dispatch.py.
+
+        An event that nothing listens for goes nowhere. While the plugin's
+        backend connects, that is the normal state, because the actions that
+        listen are often not loaded yet, so the plugin's bounded hold takes
+        such an event and delivers it when the backend registers. See
+        backend_event_hold.py. An event that has an observer dispatches at
+        once, exactly as before, so the hold delays nothing that works today.
         """
         # The contract prepends self.event_id as the observers' first
         # positional argument. AudioControl's on_pulse_device_change reads it
         # as args[0] and the pulsectl event as args[1]. Keep that order.
-        try:
-            self._lane.dispatch(self.observers.snapshot(), (self.event_id, *args), kwargs, label=self.event_id)
-        except event_dispatch.DispatchShutdown:
-            # on_quit stopped the dispatcher, and a plugin event source keeps
-            # running until os._exit. AudioControl's pulse listener is a daemon
-            # thread that loops on pulse.event_listen() and calls this from its
-            # callback. A shutdown error out of this call kills that thread
-            # with an uncaught RuntimeError on every quit that races an event,
-            # and no caller can act on it. Any other RuntimeError still
-            # propagates. See DispatchShutdown.
-            log.debug(f"Event {self.event_id} triggered after dispatch shutdown; dropped")
+        payload = (self.event_id, *args)
+
+        def deliver() -> None:
+            # The observers are read here and not at the trigger, so an action
+            # that subscribes while the hold keeps this event still gets it.
+            try:
+                self._lane.dispatch(self.observers.snapshot(), payload, kwargs, label=self.event_id)
+            except event_dispatch.DispatchShutdown:
+                # on_quit stopped the dispatcher, and a plugin event source keeps
+                # running until os._exit. AudioControl's pulse listener is a daemon
+                # thread that loops on pulse.event_listen() and calls this from its
+                # callback. A shutdown error out of this call kills that thread
+                # with an uncaught RuntimeError on every quit that races an event,
+                # and no caller can act on it. Any other RuntimeError still
+                # propagates. See DispatchShutdown.
+                log.debug(f"Event {self.event_id} triggered after dispatch shutdown; dropped")
+
+        plugin_base = self.plugin_base
+        if not self.observers and plugin_base is not None:
+            if plugin_base.backend_event_hold.submit(self.event_id, deliver):
+                return
+        deliver()

@@ -741,6 +741,7 @@ class ActionCore(rpyc.Service):
         from src.backend.PluginManager.PluginManager import (
             backend_guard_env,
             build_backend_launch_command,
+            ensure_backend_venv,
             inject_backend_guard,
         )
 
@@ -750,6 +751,12 @@ class ActionCore(rpyc.Service):
             # it would launch a backend with no port to register on.
             raise RuntimeError("the rpyc server is not running, so the backend has no port to register on")
         port = self.server.port
+
+        # Before the argv, which reads the venv's interpreter and refuses a
+        # venv that a Python upgrade stranded. The install steps that rebuild
+        # it belong to the plugin that owns this action.
+        if venv_path is not None:
+            ensure_backend_venv(venv_path, self.plugin_base.PATH, self.action_id)
 
         # It validates the paths and returns argv, and not a shell string.
         command = build_backend_launch_command(backend_path, venv_path, port, open_in_terminal)

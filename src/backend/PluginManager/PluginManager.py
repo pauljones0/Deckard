@@ -3,6 +3,7 @@ import os
 import signal
 import importlib
 import shlex
+import shutil
 import socket
 import subprocess
 import sys
@@ -271,6 +272,115 @@ def backend_guard_env() -> dict[str, str]:
     existing = env.get("PYTHONPATH")
     env["PYTHONPATH"] = guard_dir if not existing else guard_dir + os.pathsep + existing
     return env
+
+
+# A backend runs on its own venv's interpreter, and that venv is built for one
+# Python minor version. A system upgrade to the next one strands it: bin/python
+# is a symlink to an interpreter that is gone, and lib/python<old>/site-packages
+# is a directory the new interpreter never puts on sys.path. The rebuild below
+# runs at most once per venv per process, whatever the outcome, so a rebuild
+# that cannot succeed costs one attempt and not one per launch.
+_rebuilt_venvs: set[str] = set()
+_rebuild_lock = threading.Lock()
+
+
+def venv_python_tag(venv_path: str) -> str | None:
+    """The major.minor a venv was built against, or None when nothing says.
+
+    pyvenv.cfg records it, and the site-packages directory name carries the
+    same answer for a venv whose config a plugin wrote by hand.
+    """
+    try:
+        with open(os.path.join(venv_path, "pyvenv.cfg")) as f:
+            for line in f:
+                key, _, value = line.partition("=")
+                if key.strip() in ("version", "version_info"):
+                    parts = value.strip().split(".")
+                    if len(parts) >= 2 and parts[0].isdigit() and parts[1].isdigit():
+                        return f"{parts[0]}.{parts[1]}"
+    except OSError:
+        pass
+    for site_dir in sorted(glob.glob(os.path.join(venv_path, "lib", "python*", "site-packages"))):
+        tag = os.path.basename(os.path.dirname(site_dir)).removeprefix("python")
+        if tag.count(".") == 1:
+            return tag
+    return None
+
+
+def stale_venv_reason(venv_path: str) -> str | None:
+    """Why a backend cannot start from this venv, or None when it can.
+
+    An absent venv is no verdict here: build_backend_launch_command reports
+    that one, with the path the caller passed.
+    """
+    if not os.path.isdir(venv_path):
+        return None
+    # exists() follows the link, so a dangling bin/python reads as absent.
+    if not os.path.exists(os.path.join(venv_path, "bin", "python")):
+        return "its interpreter is gone"
+    tag = venv_python_tag(venv_path)
+    running = f"{sys.version_info.major}.{sys.version_info.minor}"
+    if tag is not None and tag != running:
+        return f"it was built for Python {tag} and this app runs on {running}"
+    return None
+
+
+def ensure_backend_venv(venv_path: str, plugin_dir: str, display_name: str) -> None:
+    """Rebuild a backend venv that the running Python cannot use.
+
+    The rebuild is the plugin's own install steps, run through the same
+    consent gate a store install uses, so one policy decides both, a plugin
+    whose install steps the user declined stays declined, and the gate's
+    confinement, timeout and loopback-guard injection apply to the venv it
+    creates. The gate needs no consent callable here: a backend launch owns no
+    window and must not block on a dialog.
+
+    The stale tree moves aside first and comes back when the steps produce no
+    usable venv, so a wrong verdict cannot destroy a working install.
+    """
+    reason = stale_venv_reason(venv_path)
+    if reason is None:
+        return
+    if not plugin_dir or not os.path.isdir(plugin_dir):
+        log.error(f"{display_name}: the backend venv is unusable because {reason}, and "
+                  f"its plugin directory is unknown, so it cannot be rebuilt")
+        return
+    key = os.path.realpath(venv_path)
+    with _rebuild_lock:
+        if key in _rebuilt_venvs:
+            return
+        _rebuilt_venvs.add(key)
+
+    from src.backend.Store import install_script
+
+    log.warning(f"{display_name}: the backend venv at {venv_path} is unusable because "
+                f"{reason}; rebuilding it from the plugin's install steps")
+    if not install_script.decide_install_scripts(plugin_dir, display_name, None):
+        log.warning(f"{display_name}: the install steps may not run, so the backend venv "
+                    f"stays as it is and the backend will not start")
+        return
+
+    stash = f"{venv_path}.stale"
+    try:
+        shutil.rmtree(stash, ignore_errors=True)
+        os.rename(venv_path, stash)
+    except OSError as e:
+        log.error(f"{display_name}: could not move the stale backend venv aside: {e}")
+        return
+
+    outcome = install_script.run_install_steps(plugin_dir, display_name, run=True)
+    if os.path.isdir(venv_path) and stale_venv_reason(venv_path) is None:
+        shutil.rmtree(stash, ignore_errors=True)
+        log.info(f"{display_name}: rebuilt the backend venv ({outcome.value})")
+        return
+
+    log.error(f"{display_name}: the install steps left no usable backend venv "
+              f"({outcome.value}); putting the previous one back")
+    shutil.rmtree(venv_path, ignore_errors=True)
+    try:
+        os.rename(stash, venv_path)
+    except OSError as e:
+        log.error(f"{display_name}: could not restore the previous backend venv: {e}")
 
 
 class PluginManager:

@@ -128,6 +128,28 @@ bundle as a release asset.
 
 ### Fixed
 
+- A plugin whose backend runs in its own environment keeps working after a
+  system Python upgrade. Such an environment is built for one Python version,
+  and an upgrade left it behind, so the backend never started again and the
+  plugin's actions stayed inert with nothing on screen to say why. The app now
+  notices that at launch and rebuilds the environment from the plugin's own
+  install steps, through the same prompt and the same setting that decide an
+  install. It tries once per run, and it puts the previous environment back if
+  the rebuild does not produce a working one.
+
+- A plugin no longer loses the first thing its backend reports. A backend takes
+  a moment to connect, and an event the plugin raised in that moment reached
+  nothing, so a device or state the backend reported at startup never showed on
+  the keys until something made the plugin report it again. Such an event is
+  now held briefly and delivered once the backend is up. The wait is short and
+  bounded, only the newest value of each event is kept, and a backend that
+  reconnects starts fresh instead of replaying what the failed attempt raised.
+
+- Installing a plugin from the store no longer turns other plugins' actions on
+  your pages into a "no action holder found" placeholder. The install rebuilt
+  the list of available actions in place, and a page that loaded during that
+  rebuild found the list empty; the placeholder it stored then stayed until
+  that page was loaded again.
 - Labels render apostrophes and ampersands as themselves in every language.
   A French deck-settings label showed a code where its apostrophe belongs, and
   a German onboarding line showed a code for its ampersand, because every

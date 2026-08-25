@@ -31,6 +31,7 @@ import globals as gl
 
 from locales.LegacyLocaleManager import LegacyLocaleManager
 from src.backend.PluginManager.ActionHolder import ActionHolder
+from src.backend.PluginManager.backend_event_hold import BackendEventHold
 from src.backend.PluginManager.EventHolder import EventHolder
 from src.backend.settings_store import PluginSettings
 
@@ -67,6 +68,33 @@ class PluginBase(rpyc.Service):
     # load does not fire on_app_ready a second time. Nothing in __init__ sets
     # it, so an instance carries the class default until the warm-up runs.
     _on_app_ready_fired: bool = False
+
+    # The backing slot of backend_event_hold below, and the lock that keeps
+    # two threads from building two holds for one plugin.
+    _backend_event_hold: "BackendEventHold | None" = None
+    _backend_event_hold_lock = threading.Lock()
+
+    @property
+    def backend_event_hold(self) -> "BackendEventHold":
+        """The bounded hold for the events this plugin fires while its backend
+        connects. See backend_event_hold.py.
+
+        Built on first use, and not in __init__, because a plugin may override
+        __init__ without calling super(). The launch, the registration, the
+        teardown and every event holder reach for this, so an attribute a
+        skipped __init__ never wrote would break all four. The plugin folder
+        names it, because register() sets the plugin id later.
+        """
+        hold = self._backend_event_hold
+        if hold is not None:
+            return hold
+        with PluginBase._backend_event_hold_lock:
+            hold = self._backend_event_hold
+            if hold is None:
+                path = getattr(self, "PATH", "") or ""
+                hold = BackendEventHold(label=os.path.basename(path) or type(self).__name__)
+                self._backend_event_hold = hold
+            return hold
 
     def __init__(self, use_legacy_locale: bool = True, legacy_dir: str = "locales"):
         self.backend_connection: "Connection | None" = None
@@ -864,6 +892,11 @@ class PluginBase(rpyc.Service):
         # against. The blocking work runs on a daemon worker, because an rpyc
         # close can wait on a running call and terminate_backend_process waits
         # up to 5 seconds, and the caller is often the GTK main thread.
+        # Whatever else this teardown finds, the event hold must shut: a
+        # backend that stopped before it registered never releases it, and its
+        # events would sit held for the rest of the window.
+        self.backend_event_hold.cancel()
+
         if self.backend_connection is None and self.server is None and self.backend_process is None:
             return
 
@@ -941,6 +974,7 @@ class PluginBase(rpyc.Service):
         from src.backend.PluginManager.PluginManager import (
             backend_guard_env,
             build_backend_launch_command,
+            ensure_backend_venv,
             inject_backend_guard,
         )
 
@@ -950,6 +984,11 @@ class PluginBase(rpyc.Service):
             # it would launch a backend with no port to register on.
             raise RuntimeError("the rpyc server is not running, so the backend has no port to register on")
         port = self.server.port
+
+        # Before the argv, which reads the venv's interpreter and refuses a
+        # venv that a Python upgrade stranded.
+        if venv_path is not None:
+            ensure_backend_venv(venv_path, self.PATH, self.get_plugin_id_from_folder_name())
 
         # It validates the paths and returns argv, and not a shell string.
         command = build_backend_launch_command(backend_path, venv_path, port, open_in_terminal)
@@ -968,8 +1007,10 @@ class PluginBase(rpyc.Service):
         self._backend_via_terminal = open_in_terminal
         # Cleared after the validation and before the spawn, so a relaunch
         # waits for the registration of the new backend instead of a return on
-        # the registration of the previous one.
+        # the registration of the previous one. The event hold opens its window
+        # here for the same reason: it belongs to this launch alone.
         self._backend_ready.clear()
+        self.backend_event_hold.arm()
         self.backend_process = subprocess.Popen(command, start_new_session=True, env=backend_guard_env())
         if gl.plugin_manager is not None:
             gl.plugin_manager.backend_processes.append(self.backend_process)
@@ -1078,8 +1119,10 @@ class PluginBase(rpyc.Service):
 
         # Only after the connection attributes hold their values, because the
         # caller that wait_for_backend wakes reads self.backend at once. Also
-        # before the plugin hook below, which can be slow.
+        # before the plugin hook below, which can be slow. The hold closes here
+        # too, so an event the hook fires goes out the normal way.
         self._backend_ready.set()
+        self.backend_event_hold.release()
 
         # The backend process itself calls register_backend over rpyc, so this
         # isolates the hook. A raising plugin hook must not break the
