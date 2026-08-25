@@ -182,34 +182,136 @@ def check_real_inputvideo_close() -> None:
     print("PASS: real-registry InputVideo close under concurrent ticks")
 
 
-def join_tile_cache_builders(timeout: float = 30.0) -> None:
-    """Wait for every detached tile-cache builder thread to end.
+def live_tile_cache_builders() -> list[threading.Thread]:
+    return [t for t in threading.enumerate() if t.name == "tile-cache-builder" and t.is_alive()]
 
-    acquire() starts one builder per new cache file, and release() only
-    signals its stop event: the thread is a daemon and nobody joins it. A
-    builder still inside cv2 when the interpreter starts to tear down runs
-    C++ code against a runtime that is going away, and the process aborts
-    with "terminate called without an active exception" after every check
-    here has passed. The stop event is already set by the time this runs, so
-    the join is bounded, and a builder that outlasts the timeout is a real
-    defect in the stop path rather than something to wait longer for.
+
+def assert_no_tile_cache_builders(context: str) -> None:
+    """No detached tile-cache builder may outlive the release that signalled it.
+
+    release() sets the stop event and joins the builder, so this needs no wait
+    of its own. A survivor here is a thread still inside cv2 with nothing left
+    to join it: when the release is followed by process exit, the C++ runtime
+    is destroyed under a live decode and the process aborts with "terminate
+    called without an active exception" after every check has passed.
     """
-    for thread in threading.enumerate():
-        if thread.name != "tile-cache-builder":
-            continue
-        thread.join(timeout=timeout)
-        assert not thread.is_alive(), (
-            f"{thread.name} ignored its stop event and is still decoding "
-            f"{timeout}s after release() -- it would be killed mid-cv2 at "
-            f"interpreter exit"
-        )
+    alive = live_tile_cache_builders()
+    assert not alive, (
+        f"{len(alive)} tile-cache-builder thread(s) still decoding after "
+        f"{context} -- release() did not join the builder it signalled, and "
+        f"they would be killed mid-cv2 at interpreter exit"
+    )
+
+
+def _enable_video_cache() -> None:
+    gl.settings_manager.get_app_settings().setdefault("performance", {})["cache-videos"] = True
+
+
+def check_release_joins_builder() -> None:
+    """A release while the builder is mid-build joins it before it returns.
+
+    The source is long enough that the build cannot finish inside the acquire,
+    so the builder is provably still decoding at release time. Without the
+    join in the detach path the thread is still alive the instant release()
+    returns.
+    """
+    _enable_video_cache()
+    from src.backend.DeckManagement.Subclasses import mp4_tile_cache
+
+    # Long enough to still be building at release, small enough to stop within
+    # one frame of the stop event.
+    video_path = os.path.join(gl.DATA_PATH, "builder_join_source.mp4")
+    _make_test_video(video_path, n_frames=900, size=(320, 240))
+
+    reader = mp4_tile_cache.acquire(video_path, (72, 72))
+    key = mp4_tile_cache._registry_key(video_path, (72, 72), 1.0)
+    entry = mp4_tile_cache._registry.get(key)
+    assert entry is not None, "acquire must register an entry"
+    assert entry.builder_thread is not None, (
+        "no builder started -- this check cannot prove anything about the join"
+    )
+    # Give the builder real work in flight, so the release below cannot land
+    # before it started decoding.
+    time.sleep(0.2)
+    assert entry.builder_thread.is_alive(), (
+        "the builder finished before the release -- the source is too short "
+        "for this check"
+    )
+
+    started = time.monotonic()
+    mp4_tile_cache.release(reader)
+    elapsed = time.monotonic() - started
+
+    assert_no_tile_cache_builders("a release taken while the builder was decoding")
+    assert mp4_tile_cache._registry.get(key) is None, (
+        "the last release must drop the registry entry"
+    )
+    assert elapsed < mp4_tile_cache._BUILDER_JOIN_TIMEOUT_S, (
+        f"release() spent {elapsed:.2f}s joining a signalled builder; the stop "
+        f"event is checked once per frame, so this must cost one frame decode"
+    )
+    print(f"PASS: release joins the builder it signalled ({elapsed * 1000:.0f} ms)")
+
+
+def check_acquire_returns_refcount_on_reader_failure() -> None:
+    """A reader constructor that raises must not strand the reference.
+
+    acquire() bumps the refcount and can start a builder before it builds the
+    reader. The constructor stats the source and makes the cache directory, so
+    a source deleted since the hash, or an ENOSPC, raises there. An unbalanced
+    bump leaves the entry pinned above zero forever: nothing ever signals its
+    builder, which then decodes the whole source for a consumer that does not
+    exist.
+    """
+    _enable_video_cache()
+    from src.backend.DeckManagement.Subclasses import mp4_tile_cache
+
+    video_path = os.path.join(gl.DATA_PATH, "reader_failure_source.mp4")
+    _make_test_video(video_path, n_frames=900, size=(320, 240))
+
+    real_cls = mp4_tile_cache.KeyVideoCache
+
+    class FailingReader(real_cls):
+        """Fails exactly like a reader constructor does, and leaves the builder
+        alone. Patching the class outright would break the builder too, and
+        then a dead builder could not tell an unbalanced refcount from a
+        working one."""
+
+        def __init__(self, *args, is_builder: bool = True, **kwargs):
+            if is_builder:
+                super().__init__(*args, is_builder=True, **kwargs)
+                return
+            raise OSError("simulated reader construction failure")
+
+    mp4_tile_cache.KeyVideoCache = FailingReader
+    try:
+        raised = None
+        try:
+            mp4_tile_cache.acquire(video_path, (72, 72))
+        except OSError as e:
+            raised = e
+        assert raised is not None, "acquire must re-raise the constructor failure"
+    finally:
+        mp4_tile_cache.KeyVideoCache = real_cls
+
+    key = mp4_tile_cache._registry_key(video_path, (72, 72), 1.0)
+    entry = mp4_tile_cache._registry.get(key)
+    assert entry is None, (
+        f"the failed acquire left its entry registered with refcount "
+        f"{entry.refcount if entry is not None else '?'} -- the reference it "
+        f"bumped was never returned, so this entry can never reach zero"
+    )
+    assert_no_tile_cache_builders("an acquire whose reader constructor raised")
+    print("PASS: a failed reader construction returns its reference and stops the builder")
 
 
 def main() -> None:
     fixtures.start_watchdog(60, "scenario_keyvideo_close_race")
     check_close_race_hammer()
     check_real_inputvideo_close()
-    join_tile_cache_builders()
+    assert_no_tile_cache_builders("the real-registry InputVideo close")
+    check_release_joins_builder()
+    check_acquire_returns_refcount_on_reader_failure()
     print("PASS: scenario_keyvideo_close_race")
 
 

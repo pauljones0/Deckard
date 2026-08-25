@@ -432,6 +432,14 @@ class App(Adw.Application):
         from src.backend.PluginManager import event_dispatch
         event_dispatch.shutdown()
 
+        # Detached tile-cache builders are daemon threads inside cv2. A decode
+        # that is still running when the interpreter tears the C++ runtime down
+        # aborts the process after a clean shutdown. Releases during the run
+        # join their own builder; this covers the ones whose consumers are
+        # still attached here.
+        from src.backend.DeckManagement.Subclasses import mp4_tile_cache
+        mp4_tile_cache.shutdown_builders()
+
         for thread in threading.enumerate():
             if thread is not threading.current_thread() and not thread.daemon:
                 thread.join(timeout=5)

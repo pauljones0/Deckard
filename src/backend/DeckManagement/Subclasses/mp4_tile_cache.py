@@ -19,6 +19,7 @@ then switches over.
 import hashlib
 import os
 import threading
+import time
 from collections import OrderedDict
 from collections.abc import Iterable
 
@@ -420,7 +421,16 @@ class Mp4FrameCache(Generic[PayloadT]):
         )
         with _registry_lock:
             entry.ready = False
-            entry.builder_thread = None
+            # The builder this handle names may still be decoding. Keep a live
+            # one reachable, so the quit-time join still covers it, rather than
+            # dropping it here and leaving a thread nothing can wait for. A
+            # finished one is not kept: the list is never pruned during a run,
+            # so a dead entry would sit there and cost the quit sweep a join
+            # for nothing.
+            if entry.builder_thread is not None:
+                if entry.builder_thread.is_alive():
+                    _lingering_builders.append(entry.builder_thread)
+                entry.builder_thread = None
         self._registry_entry = None
 
     def _get_cached_frame(self, n: int) -> "PayloadT | None":
@@ -653,6 +663,82 @@ class _TileCacheEntry:
 _registry_lock = threading.Lock()
 _registry: dict[tuple[str, tuple[int, int], float, str], _TileCacheEntry] = {}
 
+# Bound for the inline join of a builder that was just signalled to stop.
+#
+# The join is inline in the detach path, and not deferred to a reaper at
+# shutdown, because the damage is not limited to process exit. A builder whose
+# entry is gone writes a cache file nothing will ever read, holds a source
+# capture and burns a core until it finishes the whole video. A deferred reaper
+# also cannot help the mid-run case at all, which is the common one: pages
+# switch far more often than the app quits.
+#
+# The bound is short because release() can run on the media player thread, the
+# sole device writer, through the stashed-screensaver sweep. Every millisecond
+# spent here is a frozen deck. stop_event is set before the join starts and the
+# builder tests it once per decoded frame, so the wait it has to cover is one
+# frame decode, measured around a millisecond at tile resolution. The lingering
+# list below catches whatever needs longer, so a short bound costs nothing.
+_BUILDER_JOIN_TIMEOUT_S = 0.5
+
+# Total budget for the quit-time sweep, shared across every builder it joins
+# rather than allowed per thread. The quit path runs against a force-quit timer
+# that calls os._exit, which would skip the backend termination, the tray
+# teardown and the log flush that follow. N attached builders must therefore
+# cost this once, not N times.
+_SHUTDOWN_JOIN_BUDGET_S = 2.0
+
+# Builders that outlived their inline join. They are still signalled, so they
+# end on their own shortly after; shutdown_builders() gives them one last,
+# bounded chance to finish before the interpreter tears the C++ runtime down
+# underneath them.
+_lingering_builders: list[threading.Thread] = []
+
+
+def _join_builder(thread: threading.Thread | None, timeout: float = _BUILDER_JOIN_TIMEOUT_S) -> None:
+    """Wait, bounded, for a builder thread that was already signalled to stop.
+
+    A builder that is not joined stays inside cv2. When it is the process exit
+    that follows the release, the C++ runtime is destroyed under a live
+    decode and the process aborts after every Python-level teardown has
+    already succeeded.
+
+    Never joins from the builder thread itself: _run_builder's own failure
+    exits reach the detach path, and a self-join raises.
+    """
+    if thread is None or thread is threading.current_thread():
+        return
+    thread.join(timeout=timeout)
+    if not thread.is_alive():
+        return
+    log.warning(
+        f"Tile cache builder did not stop within {timeout}s of being signalled; "
+        f"leaving it to finish in the background"
+    )
+    with _registry_lock:
+        _lingering_builders.append(thread)
+
+
+def shutdown_builders(timeout: float = _SHUTDOWN_JOIN_BUDGET_S) -> None:
+    """Signal every builder still in flight and join them, bounded.
+
+    Called from the app quit path. Releases during the run already join their
+    own builder; this covers the builders whose consumers are still attached
+    at quit, and the stragglers a bounded inline join gave up on.
+
+    timeout is one deadline for the whole sweep and not a per-thread bound.
+    Several attached builders must not multiply into a wait long enough for
+    the force-quit timer to os._exit through the rest of the shutdown.
+    """
+    with _registry_lock:
+        threads = [entry.builder_thread for entry in _registry.values()]
+        threads.extend(_lingering_builders)
+        _lingering_builders.clear()
+        for entry in _registry.values():
+            entry.stop_event.set()
+    deadline = time.monotonic() + timeout
+    for thread in threads:
+        _join_builder(thread, max(0.0, deadline - time.monotonic()))
+
 
 def _registry_key(source_path: str, out_size: tuple[int, int], saturation: float,
                   variant: str = "") -> tuple[str, tuple[int, int], float, str]:
@@ -710,7 +796,17 @@ def acquire(source_path: str, out_size: tuple[int, int], saturation: float = 1.0
     if start_builder is not None:
         start_builder.start()
 
-    reader = KeyVideoCache(source_path, out_size, saturation, cache_path=path, is_builder=False)
+    # The refcount is already bumped and a builder may already be running. A
+    # constructor raise past this point, e.g. an os.stat of a source deleted
+    # since the key above, or an os.makedirs that hits ENOSPC, must not leave
+    # the reference outstanding: the entry would never reach zero, so its
+    # builder would never be signalled and would decode the whole source for a
+    # consumer that does not exist.
+    try:
+        reader = KeyVideoCache(source_path, out_size, saturation, cache_path=path, is_builder=False)
+    except BaseException:
+        _detach_entry(key, entry)
+        raise
     reader._registry_key = key
     reader._registry_entry = entry
     return reader
@@ -738,6 +834,7 @@ def _detach_entry(key: tuple[str, tuple[int, int], float, str], entry: "_TileCac
     """Drop one reference to entry. release() and the failure exit of the
     build-from-frames path share it, so a consumer that never got a usable
     reader still balances its refcount."""
+    stopped: threading.Thread | None = None
     with _registry_lock:
         # Compare identity. A late release must not evict a newer entry for
         # the same key, e.g. when this entry was already dropped and a fresh
@@ -747,7 +844,12 @@ def _detach_entry(key: tuple[str, tuple[int, int], float, str], entry: "_TileCac
         entry.refcount -= 1
         if entry.refcount <= 0:
             entry.stop_event.set()
+            stopped = entry.builder_thread
+            entry.builder_thread = None
             del _registry[key]
+    # Outside the lock. Under it, one builder finishing its current frame would
+    # stall every other acquire() and release() in the app for that long.
+    _join_builder(stopped)
 
 
 # Externally composited sources (GIF keys).
@@ -854,7 +956,13 @@ def _attach_promoted_reader(source_path: str, out_size: tuple[int, int], saturat
     file is missing or unreadable. That fallback is the FFmpeg demux of a GIF
     these entry points exist to make impossible.
     """
-    reader = KeyVideoCache(source_path, out_size, saturation, cache_path=path, is_builder=False)
+    # Same balance as acquire(): the caller bumped the refcount before this
+    # call, so a constructor raise has to give it back.
+    try:
+        reader = KeyVideoCache(source_path, out_size, saturation, cache_path=path, is_builder=False)
+    except BaseException:
+        _detach_entry(key, entry)
+        raise
     reader._registry_key = key
     reader._registry_entry = entry
     if not reader.is_cache_complete():
