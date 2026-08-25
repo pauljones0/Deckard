@@ -207,20 +207,23 @@ class DeckSettings(SchemaView):
         tell why.
 
         Surrounding space goes, because a name of spaces is an empty label
-        that reads as a broken app. A name longer than the cap is cut, for the
-        reason DECK_NAME_MAX_LENGTH gives.
+        that reads as a broken app. The cap cuts the chosen name only, for the
+        reason DECK_NAME_MAX_LENGTH gives: the user types that one, so the row
+        holds it to a width the switcher can show. The model name and the
+        serial come from the device and reach the switcher whole, because a
+        cut model name reads as a broken read rather than a long choice.
         """
         stored = self.get("name")
-        name = stored.strip() if isinstance(stored, str) else ""
-        if not name:
-            name = model_name.strip() if isinstance(model_name, str) else ""
-        if not name:
-            name = self.serial.strip() if isinstance(self.serial, str) else ""
-        if not name:
-            # Every source was empty. A deck with no name, no model and no
-            # serial is a broken read rather than a state to render blank.
-            name = UNNAMED_DECK
-        return name[:DECK_NAME_MAX_LENGTH]
+        chosen = stored.strip()[:DECK_NAME_MAX_LENGTH] if isinstance(stored, str) else ""
+        if chosen:
+            return chosen
+        if isinstance(model_name, str) and model_name.strip():
+            return model_name.strip()
+        if isinstance(self.serial, str) and self.serial.strip():
+            return self.serial.strip()
+        # Every source was empty. A deck with no name, no model and no serial
+        # is a broken read rather than a state to render blank.
+        return UNNAMED_DECK
 
     def save(self) -> None:
         """Persist what a caller set through this view. This is the write

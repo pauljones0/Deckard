@@ -49,24 +49,38 @@ NAME_KEY = "deck.deck-group.name"
 
 
 class _FakeDeck:
-    """The deck handle, which answers a model name or refuses to."""
+    """The deck handle, which answers a model name and a serial, or refuses to.
 
-    def __init__(self, deck_type, raises: bool = False):
+    device_serial is the serial the device reports now, which the settings key
+    on. It defaults to the controller's memoized serial, so a test that does
+    not care sees one serial everywhere; a test of the boot skew sets it apart.
+    """
+
+    def __init__(self, deck_type, device_serial, raises=False, serial_raises=False):
         self._deck_type = deck_type
+        self._device_serial = device_serial
         self._raises = raises
+        self._serial_raises = serial_raises
 
     def deck_type(self):
         if self._raises:
             raise OSError("the device went away")
         return self._deck_type
 
+    def get_serial_number(self):
+        if self._serial_raises:
+            raise OSError("no device serial")
+        return self._device_serial
+
 
 class _FakeController:
     """A deck controller as the stack reads one: a handle and a serial."""
 
     def __init__(self, serial, deck_type="Stream Deck MK.2", deck_raises=False,
-                 serial_raises=False):
-        self.deck = _FakeDeck(deck_type, raises=deck_raises)
+                 serial_raises=False, device_serial=None, device_serial_raises=False):
+        self.deck = _FakeDeck(
+            deck_type, device_serial if device_serial is not None else serial,
+            raises=deck_raises, serial_raises=device_serial_raises)
         self._serial = serial
         self._serial_raises = serial_raises
 
@@ -94,6 +108,7 @@ class _FakeStack:
     """
 
     base_title = DeckStack.base_title
+    _settings_serial = DeckStack._settings_serial
     unique_title = DeckStack.unique_title
     get_page_attributes = DeckStack.get_page_attributes
     refresh_page_title = DeckStack.refresh_page_title
@@ -184,6 +199,26 @@ def check_display_name_trims_and_caps() -> None:
     print("PASS: the label is trimmed and cut to the cap")
 
 
+def check_cap_cuts_the_chosen_name_only() -> None:
+    """The cap holds the name the user types, not what the device reports.
+
+    A long model name is a value from the device, and a cut one reads as a
+    broken read rather than a long choice, so the fallbacks reach the switcher
+    whole.
+    """
+    long_model = "Fake Deck 1 (Stream Deck Original)"
+    assert len(long_model) > DECK_NAME_MAX_LENGTH, "pick a model name past the cap"
+    got = DeckSettings({}, "S1").display_name(long_model)
+    assert got == long_model, (
+        f"a long model name must reach the switcher whole, got {got!r}"
+    )
+    long_serial = "S" * (DECK_NAME_MAX_LENGTH + 10)
+    assert DeckSettings({}, long_serial).display_name(None) == long_serial, (
+        "a long serial fallback must not be cut either"
+    )
+    print("PASS: the cap cuts the chosen name only, not the model or the serial")
+
+
 def check_reading_the_name_writes_nothing() -> None:
     data: dict = {}
     DeckSettings(data, "S1").display_name("Stream Deck MK.2")
@@ -202,6 +237,36 @@ def check_base_title_reads_the_settings() -> None:
         "a deck with no chosen name must show its model name"
     )
     print("PASS: the base title reads the chosen name and falls back to the model")
+
+
+def check_base_title_keys_on_the_fresh_device_serial() -> None:
+    """The title reads the name under the serial the device reports now.
+
+    The settings pane writes the name under the fresh device serial. The
+    stack-child name keys on the memoized first read, and those two differ at
+    boot under USB contention. base_title must read the name under the fresh
+    serial, the same key the write used, or a saved name reads back empty.
+    """
+    stack = _FakeStack()
+    # The device now reports "fresh-1"; the memoized stack serial is "cached-1".
+    name_deck("fresh-1", "Studio")
+    controller = _FakeController("cached-1", device_serial="fresh-1")
+    got = stack.base_title(controller, "cached-1")
+    assert got == "Studio", (
+        f"base_title must read the name under the fresh device serial, got {got!r}"
+    )
+    # No name under the memoized serial, so a reader keyed on it sees none.
+    assert DeckSettings(gl.settings_manager.get_deck_settings("cached-1"), "cached-1").get("name") == "", (
+        "the memoized serial must hold no name, or this test proves nothing"
+    )
+
+    # When the fresh read fails, the memoized serial is the only key there is.
+    name_deck("cached-2", "Fallback")
+    controller = _FakeController("cached-2", device_serial_raises=True)
+    assert stack.base_title(controller, "cached-2") == "Fallback", (
+        "a failed device-serial read must fall back to the memoized serial key"
+    )
+    print("PASS: the title reads the name under the fresh device serial")
 
 
 def check_base_title_survives_a_dead_device() -> None:
@@ -605,7 +670,70 @@ def check_the_row_holds_no_timeout() -> None:
     assert f'gl.lm.get("{NAME_KEY}")' in row_source, (
         "the name row must look its label up by the locale key"
     )
+    assert 'self.connect("map", self.load_default)' in row_source, (
+        "the name row must reload on map, or a rename made elsewhere never shows"
+    )
     print("PASS: the name row writes on apply and arms no main-loop source")
+
+
+def check_real_name_row_wires_and_saves() -> None:
+    """A real DeckName widget wires its apply handler and saves through it.
+
+    The other row legs drive the apply and load bodies over a stub, so they
+    prove the bodies but not the __init__ that connects them. This builds the
+    real widget, so a construction that skips the max-length, the apply
+    connect or the map reload is caught. It needs libadwaita and a display,
+    which hugo supplies under xvfb.
+    """
+    if not fixtures.has_usable_display():
+        print("SKIP: no usable display; the real name row is not built")
+        return
+
+    import gi
+
+    gi.require_version("Gtk", "4.0")
+    gi.require_version("Adw", "1")
+    from gi.repository import Adw
+
+    Adw.init()
+    gl.lm = LocaleManager(CSV_PATH)
+    from src.windows.mainWindow.elements.DeckSettings.DeckGroup import DeckName
+
+    stack = _FakeStack()
+    controller = _FakeController("real-1")
+    _number, title = stack.get_page_attributes(controller)
+    page = stack.add_child("real-1", title)
+    settings_page = _Bag(deck_controller=controller,
+                         deck_stack_child=_Bag(deck_stack=stack))
+
+    row = DeckName(settings_page, "real-1")
+    try:
+        assert row.get_max_length() == DECK_NAME_MAX_LENGTH, (
+            f"the row must refuse more than the switcher can show, its cap is "
+            f"{row.get_max_length()}"
+        )
+        assert row._apply_handler is not None, (
+            "construction must wire the apply handler, or no name ever saves"
+        )
+        # A second load, as a page re-map runs, must leave the handler wired.
+        row.load_default()
+        assert row._apply_handler is not None, (
+            "a reload must leave the apply handler wired"
+        )
+
+        row.set_text("  Studio  ")
+        row.emit("apply")
+        stored = gl.settings_manager.get_deck_settings("real-1").get("name")
+        assert stored == "Studio", (
+            f"emitting apply on the real row must save the trimmed name, the "
+            f"file holds {stored!r}"
+        )
+        assert page.title == "Studio", (
+            f"emitting apply must retitle the live child, it reads {page.title!r}"
+        )
+    finally:
+        row.disconnect_signal()
+    print("PASS: a real name row wires its apply handler and saves through it")
 
 
 def main() -> None:
@@ -615,9 +743,11 @@ def main() -> None:
     check_display_name_never_answers_none()
     check_display_name_precedence()
     check_display_name_trims_and_caps()
+    check_cap_cuts_the_chosen_name_only()
     check_reading_the_name_writes_nothing()
 
     check_base_title_reads_the_settings()
+    check_base_title_keys_on_the_fresh_device_serial()
     check_base_title_survives_a_dead_device()
     check_suffix_applies_to_a_chosen_name()
     check_suffix_leaves_the_model_digits_alone()
@@ -640,6 +770,7 @@ def main() -> None:
 
     check_locale_key_is_filled()
     check_the_row_holds_no_timeout()
+    check_real_name_row_wires_and_saves()
 
     print("PASS: scenario_deck_display_name")
 

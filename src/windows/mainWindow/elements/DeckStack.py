@@ -123,12 +123,33 @@ class DeckStack(Gtk.Stack):
         try:
             model_name = deck_controller.deck.deck_type()
         except Exception as e:
-            # The model read reaches the device. A deck that went away between
-            # the serial read and this call still gets a title, from whatever
-            # the settings hold and then from its serial.
+            # deck_type reads a model string the handle already holds, so this
+            # takes no device lock. It still raises once the handle is gone: a
+            # deck unplugged between the serial read and this call gets a
+            # title from its settings and then from its serial.
             log.error(e)
             model_name = None
-        return gl.settings_manager.deck(serial_number).display_name(model_name)
+        return gl.settings_manager.deck(
+            self._settings_serial(deck_controller, serial_number)).display_name(model_name)
+
+    def _settings_serial(self, deck_controller: "DeckController", fallback: str) -> str:
+        """The serial this deck's settings are keyed on.
+
+        The deck settings key on the serial the device reports now, which is
+        the key the settings pane writes under (DeckSettingsPage reads
+        deck.get_serial_number()) and the key every other settings reader in
+        the tree uses. The stack-child name keys on the memoized first read
+        instead, so a later device read that differs never renames a live
+        child. Those two can differ at boot under USB contention, and the name
+        the user saved must read back under the same key it was written, so
+        this reads the device afresh and falls back to the memoized serial
+        only when that read fails.
+        """
+        try:
+            return deck_controller.deck.get_serial_number()
+        except Exception as e:
+            log.error(e)
+            return fallback
 
     def unique_title(self, base_title: str) -> str:
         """base_title, with a "(n)" suffix while the stack already shows it.
@@ -175,6 +196,13 @@ class DeckStack(Gtk.Stack):
         The name row of the deck settings calls this after it saves. The old
         title leaves the taken list first, or the deck collides with the title
         it is giving up and takes a "(2)" of its own.
+
+        This renames one deck only. A deck that carried "Studio (2)" because
+        this deck held "Studio" keeps its "(2)" after this deck renames away,
+        until the stack is rebuilt and the titles are assigned in order again.
+        The suffix is cosmetic and self-heals on that rebuild, so a full
+        renumber of every other deck's title on each rename is not worth the
+        churn on the stack.
 
         Main thread only. It touches the stack.
         """

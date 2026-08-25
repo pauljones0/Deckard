@@ -79,6 +79,7 @@ def check_deck_name_dedup() -> None:
     # The title resolution runs through two more methods of the stack, and the
     # base title reads the deck settings for a chosen name.
     stub.base_title = MethodType(DeckStack.base_title, stub)
+    stub._settings_serial = MethodType(DeckStack._settings_serial, stub)
     stub.unique_title = MethodType(DeckStack.unique_title, stub)
 
     def make_controller(serial):
