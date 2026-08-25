@@ -91,6 +91,16 @@ class FakePageManager:
     def get_auto_change_settings(self, page_path: str) -> dict:
         return self.auto_change.get(page_path, {})
 
+    def find_matching_page_path(self, name: str) -> str | None:
+        """A full page path resolves to itself, and nothing else resolves.
+
+        The control plane asks this before it loads. The real one also matches
+        a bare page name, which no check here needs.
+        """
+        if name.startswith(self.page_dir):
+            return name
+        return None
+
 
 class RecordingNotify:
     def __init__(self):
@@ -261,6 +271,129 @@ def check_hand_pick_ends_the_automatic_mark(
     gl.window_grabber = None
     print("PASS: a page picked by hand ends the automatic state and becomes "
           "the page the deck comes back to")
+
+
+def check_a_command_switch_ends_the_automatic_mark(
+        page_manager: FakePageManager) -> None:
+    """A page named by a command must end the deck's automatic state.
+
+    The CLI and D-Bus both reach the deck through the control plane, and the
+    page they name is the user's own choice. A deck left marked after such a
+    switch is taken back to the page it left the next time no rule matches,
+    which is a page the user already walked away from.
+
+    The refusals keep their shape here: a page that does not build and a page
+    already on the deck both leave the mark exactly as they found it.
+    """
+    from src.backend import control_plane
+
+    gl.page_manager = page_manager
+    home = FakePage(page_manager.path_of("home"))
+    auto_path = page_manager.path_of("auto")
+    named_path = page_manager.path_of("named")
+    broken_path = page_manager.path_of("broken")
+    controller = FakeController("CMD", home)
+    page_manager.auto_change = {
+        auto_path: {"enable": True, "decks": ["CMD"],
+                    "wm-class": WM_CLASS, "title": ".*",
+                    "stay-on-page": False},
+    }
+    page_manager.missing = {broken_path}
+
+    grabber = WindowGrabber.__new__(WindowGrabber)
+    grabber._dispatch_lock = threading.RLock()
+    gl.window_grabber = grabber
+
+    plane = control_plane.get()
+
+    grabber._apply_auto_change(controller, FIREFOX)
+    assert controller.active_page.json_path == auto_path
+    assert controller.page_auto_loaded is True, (
+        "an automatic switch marks the deck it moved")
+
+    # A page that does not build is refused, and the deck keeps both its page
+    # and its mark: no load happened, so there is no choice to record.
+    controller.loaded.clear()
+    result = plane.change_page_on(controller, broken_path)
+    assert not result.ok and result.code == "page-build-failed", (
+        f"a page that does not build must be refused, the plane answered "
+        f"{result.code!r}")
+    assert controller.loaded == [], (
+        f"a refused switch must load nothing, the controller took "
+        f"{controller.loaded!r}")
+    assert controller.page_auto_loaded is True, (
+        "a refused switch must leave the deck's mark alone")
+
+    # The page the deck already shows is a no-op, and it too leaves the mark.
+    result = plane.change_page_on(controller, auto_path)
+    assert result.ok and result.code == "already-active", (
+        f"the active page must be a no-op, the plane answered {result.code!r}")
+    assert controller.loaded == [], (
+        f"a no-op switch must load nothing, the controller took "
+        f"{controller.loaded!r}")
+    assert controller.page_auto_loaded is True, (
+        "a no-op switch must leave the deck's mark alone, so the automatic "
+        "page stays undoable")
+
+    result = plane.change_page_on(controller, named_path)
+    assert result.ok, f"the named page must load: {result.message}"
+    assert controller.active_page.json_path == named_path, (
+        f"the command must load its page, the deck shows "
+        f"{controller.active_page.json_path}")
+    assert controller.page_auto_loaded is False, (
+        "a page named by a command must end the deck's automatic state")
+
+    # Focus moves to a window no rule matches. The deck is on the page the
+    # command named, so there is nothing to undo and nothing to load.
+    controller.loaded.clear()
+    grabber._apply_auto_change(controller, OTHER)
+    assert controller.loaded == [], (
+        f"a deck on a page a command named must not be taken anywhere, the "
+        f"controller took {controller.loaded!r}")
+    assert controller.active_page.json_path == named_path, (
+        f"the deck must keep the page the command named, it shows "
+        f"{controller.active_page.json_path}")
+
+    # The next automatic switch comes back to the named page, not to the one
+    # the deck was on before the command.
+    grabber._apply_auto_change(controller, FIREFOX)
+    assert controller.last_manual_loaded_page_path == named_path, (
+        f"the deck must come back to the page the command named, it points "
+        f"at {controller.last_manual_loaded_page_path}")
+
+    # An automatic switch landing while the command's page loads must record
+    # the page the command named, not the one still on the deck. The deck
+    # shows the page it is leaving for the whole load, so a clear of the mark
+    # on its own is not enough: the claim is what tells the switch which page
+    # the deck is on its way to.
+    second_path = page_manager.path_of("auto-second")
+    page_manager.auto_change[second_path] = {
+        "enable": True, "decks": ["CMD"], "wm-class": SECOND.wm_class,
+        "title": ".*", "stay-on-page": False,
+    }
+    commanded_path = page_manager.path_of("commanded")
+    switched: list[bool] = []
+    original_load = controller.load_page
+
+    def load_page(page, allow_reload: bool = True) -> None:
+        if not switched:
+            switched.append(True)
+            grabber._apply_auto_change(controller, SECOND)
+        original_load(page, allow_reload)
+
+    controller.load_page = load_page
+    result = plane.change_page_on(controller, commanded_path)
+    assert result.ok, f"the commanded page must load: {result.message}"
+    assert switched, "the switch must have run inside the command's load"
+    assert controller.last_manual_loaded_page_path == commanded_path, (
+        f"a switch inside a command's load must record the page the command "
+        f"named, the deck points at "
+        f"{controller.last_manual_loaded_page_path}")
+    controller.load_page = original_load
+
+    gl.window_grabber = None
+    print("PASS: a page named by a command ends the automatic state and "
+          "becomes the page the deck comes back to")
 
 
 def check_a_load_that_raises_keeps_the_mark(
@@ -490,6 +623,7 @@ def main() -> int:
     check_auto_switch_keeps_the_page(FakePageManager(page_dir))
     check_manual_restore_keeps_the_page(FakePageManager(page_dir))
     check_hand_pick_ends_the_automatic_mark(FakePageManager(page_dir))
+    check_a_command_switch_ends_the_automatic_mark(FakePageManager(page_dir))
     check_a_load_that_raises_keeps_the_mark(FakePageManager(page_dir))
     check_switch_during_a_restore_keeps_the_way_back(
         FakePageManager(page_dir))
