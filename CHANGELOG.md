@@ -76,6 +76,15 @@ bundle as a release asset.
 
 ### Fixed
 
+- The tray icon shows the app icon instead of a placeholder square. The app
+  pointed the desktop at the icon dir that ships with it, every time and
+  whatever the app was installed from, and a desktop takes such a path over
+  the icon theme you picked. A flatpak copy pointed it inside the sandbox, at
+  a dir the desktop cannot read at all. An installed copy now keeps the icon
+  the desktop already holds, and only a copy run from a source tree points the
+  desktop at the icons that ship with it. Those icons now carry a theme file
+  as well, which a desktop whose icon loader follows the icon theme spec to
+  the letter, as a Qt one does, needs before it reads them.
 - Killing the app during a download no longer leaves a half-written file
   behind. An image or video fetched from a url, and a plugin archive from the
   store, were written straight to their final name, so a kill part way through

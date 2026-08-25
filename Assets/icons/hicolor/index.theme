@@ -1,0 +1,75 @@
+# A desktop shell that gets an icon theme path from a tray item searches that
+# path alone, and a dir with no index.theme holds no theme it can read, so it
+# draws a placeholder instead of the icon. This file makes the icons that ship
+# with the app a theme that resolves. Each group below carries the same sizes
+# and contexts as the system hicolor theme.
+#
+# Directories must name every dir under this one that holds an icon. A dir
+# that is missing here is invisible to a shell that reads this theme.
+
+[Icon Theme]
+Name=Hicolor
+Comment=Fallback icon theme
+Hidden=true
+Directories=48x48/apps,512x512/apps,scalable/actions,scalable/apps,scalable/categories,scalable/devices,scalable/mimetypes,scalable/places,scalable/status
+
+[48x48/apps]
+Size=48
+Context=Applications
+Type=Threshold
+
+[512x512/apps]
+MinSize=64
+Size=512
+MaxSize=512
+Context=Applications
+Type=Scalable
+
+[scalable/actions]
+MinSize=1
+Size=128
+MaxSize=256
+Context=Actions
+Type=Scalable
+
+[scalable/apps]
+MinSize=1
+Size=128
+MaxSize=256
+Context=Applications
+Type=Scalable
+
+[scalable/categories]
+MinSize=1
+Size=128
+MaxSize=256
+Context=Categories
+Type=Scalable
+
+[scalable/devices]
+MinSize=1
+Size=128
+MaxSize=256
+Context=Devices
+Type=Scalable
+
+[scalable/mimetypes]
+MinSize=1
+Size=128
+MaxSize=256
+Context=MimeTypes
+Type=Scalable
+
+[scalable/places]
+MinSize=1
+Size=128
+MaxSize=256
+Context=Places
+Type=Scalable
+
+[scalable/status]
+MinSize=1
+Size=128
+MaxSize=256
+Context=Status
+Type=Scalable
