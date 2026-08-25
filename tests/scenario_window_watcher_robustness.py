@@ -1,20 +1,16 @@
 """
-The window-based auto-page-switch machinery must survive two failures.
+The window-based auto-page-switch machinery must survive edge cases.
 
 WindowGrabber.on_active_window_changed must guard active_page, which is
 legitimately None mid-startup or mid-hotplug, or a window change in that window
-aborts routing for every remaining deck.
+aborts routing for every remaining deck. The GNOME integration must ask for its
+shell extension by a bare uuid string.
 """
 
-# The X11 watch loop must catch per iteration, or the first escaping exception
-# ends the thread.
 import fixtures  # noqa: F401  (must be imported first: isolates DATA_PATH)
-
-import time
 
 import globals as gl
 from src.backend.WindowGrabber.WindowGrabber import WindowGrabber
-from src.backend.WindowGrabber.Integrations.X11 import WatchForActiveWindowChange
 from src.backend.WindowGrabber.Window import Window
 
 
@@ -155,77 +151,6 @@ def check_pageless_guard_is_noop() -> None:
     )
 
 
-# Part 2. The X11 watch loop must survive raising iterations
-
-class ScriptedX11:
-    """Stands in for the X11 integration inside WatchForActiveWindowChange.
-    get_active_window pops the next scripted item. It raises an Exception
-    item, because the real integration can raise out of any of its subprocess
-    plumbing. It returns a Window or None item."""
-
-    def __init__(self, script: list, window_grabber):
-        self._script = list(script)
-        self.window_grabber = window_grabber
-
-    def get_active_window(self):
-        if not self._script:
-            return None
-        item = self._script.pop(0)
-        if isinstance(item, Exception):
-            raise item
-        return item
-
-
-class RecordingGrabber:
-    """Records routed windows; raises on the marked one, like the real
-    WindowGrabber did for a pageless deck."""
-
-    def __init__(self, raise_on_class: str):
-        self.calls: list[Window] = []
-        self._raise_on_class = raise_on_class
-
-    def on_active_window_changed(self, window: Window) -> None:
-        self.calls.append(window)
-        if window.wm_class == self._raise_on_class:
-            raise AttributeError("'NoneType' object has no attribute 'json_path'")
-
-
-def check_x11_watcher_survives() -> None:
-    crasher = Window("crasher", "raises inside routing")
-    survivor = Window("survivor", "must still be routed")
-
-    recorder = RecordingGrabber(raise_on_class="crasher")
-    scripted = ScriptedX11(
-        script=[
-            None,                            # consumed by __init__'s priming call
-            crasher,                         # routing raises here
-            RuntimeError("xprop exploded"),  # poll itself raises
-            survivor,                        # must still be routed to
-        ],
-        window_grabber=recorder,
-    )
-
-    gl.threads_running = True
-    watcher = WatchForActiveWindowChange(scripted)
-    watcher.start()
-
-    deadline = time.time() + 10.0
-    while time.time() < deadline and len(recorder.calls) < 2:
-        time.sleep(0.05)
-
-    try:
-        assert recorder.calls == [crasher, survivor], (
-            f"the watch loop must keep routing after an iteration raised, "
-            f"got {recorder.calls}"
-        )
-        assert watcher.is_alive(), (
-            "the watcher thread must survive raising iterations"
-        )
-    finally:
-        gl.threads_running = False
-        watcher.join(timeout=3.0)
-
-
 def check_gnome_install_extension_uuid() -> None:
     """The GNOME integration must ask for its shell extension by bare uuid.
 
@@ -283,7 +208,6 @@ def main() -> None:
     fixtures.start_watchdog(60, label="scenario_window_watcher_robustness")
     check_pageless_deck_routing()
     check_pageless_guard_is_noop()
-    check_x11_watcher_survives()
     check_gnome_install_extension_uuid()
     print("PASS: scenario_window_watcher_robustness")
 

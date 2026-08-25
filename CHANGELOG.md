@@ -104,6 +104,13 @@ bundle as a release asset.
 
 ### Changed
 
+- On an X11 session, the app now learns of a focused-window change from the X
+  server's event stream, not from five xprop processes started every fifth of a
+  second. It reads the window only when the focused window or its title
+  changes, so a desktop that sits still with a window auto-change rule enabled
+  uses much less CPU and starts no helper processes. Under Flatpak the saving is
+  larger, because each old poll also started flatpak-spawn. Automatic page
+  switching by window works as before.
 - The revert arrow beside the frame-rate spinner in the background editor now
   arrives a moment after the rate settles, instead of at the first step of the
   edit. Spinning the rate down and back up no longer flashes the arrow on and
