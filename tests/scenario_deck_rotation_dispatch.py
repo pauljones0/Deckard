@@ -6,7 +6,7 @@ registry was built from. This drives a real DeckController over a fake deck
 and checks the whole chain at all four rotations:
 
   (a) every key of the grid reaches its own registered key, never another
-      one, and the eight keys together cover the registry exactly once;
+      one, and the keys together cover the registry exactly once;
   (b) turning the deck rebuilds the input set for the new layout and leaves
       no present hash behind, so the corrective repaint is not hash-skipped;
   (c) a dial event reaches the dial that sits under the slot the composite
@@ -24,41 +24,61 @@ and checks the whole chain at all four rotations:
   (i) a turn drops the window's pending dirty markers, which name positions
       the turned deck no longer has.
 
-Deck shape, stated once so a configurable fake deck can adopt it later: a 2
-by 4 key grid, four dials and an 800 by 100 strip, which is the Stream Deck +
-shape the fake deck models. The scenario asserts the shape before it starts,
-so a changed fake fails here and does not quietly weaken the checks.
+The key legs run over three deck shapes, named from the fake deck's model
+presets and never spelled out here: the Stream Deck + (2 by 4), the Mini (2
+by 3) and the XL (4 by 8). A square grid hides a whole class of index
+mistake, because a transposed layout has the same row length as the one it
+came from. The other legs need dials and a strip, so they run on the Stream
+Deck + shape alone.
 """
 import fixtures  # must be first; isolates DATA_PATH before import globals
 
 from StreamDeck.Devices.StreamDeck import DialEventType, TouchscreenEventType
 
 from src.backend.DeckManagement.InputIdentifier import Input
+from src.backend.DeckManagement.Subclasses.FakeDeck import FAKE_DECK_MODELS
 from src.backend.DeckManagement.deck_controller.media_writer import (
     ReleaseStashedInputsMsg,
 )
 
 ROTATIONS = (0, 90, 180, 270)
-KEY_ROWS, KEY_COLS = 2, 4
-KEY_TOTAL = KEY_ROWS * KEY_COLS
-N_DIALS = 4
-STRIP_SIZE = (800, 100)
+# The shapes the key legs cover. The Stream Deck + carries the dials and the
+# strip, so it goes first and the input-specific legs stay on it.
+KEY_SHAPES = ("plus", "mini", "xl")
+STRIP_SHAPE = "plus"
 
 
-def check_deck_shape(controller) -> int:
+def shape_of(model_name: str):
+    """The preset behind a model name. Every literal this scenario reasons
+    about comes off it, so a changed preset changes the checks with it."""
+    return FAKE_DECK_MODELS[model_name]
+
+
+def check_deck_shape(controller, model_name: str) -> int:
+    """The deck the controller was handed has the shape its preset states."""
+    model = shape_of(model_name)
     deck = controller.deck
     deck.set_rotation(0)
-    if tuple(deck.key_layout()) != (KEY_ROWS, KEY_COLS):
-        print(f"FAIL(shape): key grid is {tuple(deck.key_layout())}, this "
-              f"scenario reasons about {(KEY_ROWS, KEY_COLS)}")
+    rows, cols = model.key_layout
+    if tuple(deck.key_layout()) != (rows, cols):
+        print(f"FAIL(shape): {model_name} key grid is "
+              f"{tuple(deck.key_layout())}, its preset states {(rows, cols)}")
         return 1
-    if deck.dial_count() != N_DIALS:
-        print(f"FAIL(shape): {deck.dial_count()} dials, expected {N_DIALS}")
+    if deck.dial_count() != model.dial_count:
+        print(f"FAIL(shape): {model_name} has {deck.dial_count()} dials, its "
+              f"preset states {model.dial_count}")
         return 1
-    if tuple(controller.get_touchscreen_image_size()) != STRIP_SIZE:
-        print(f"FAIL(shape): strip is {controller.get_touchscreen_image_size()}, "
-              f"expected {STRIP_SIZE}")
+    if deck.is_touch() != model.is_touch:
+        print(f"FAIL(shape): {model_name} reports is_touch "
+              f"{deck.is_touch()}, its preset states {model.is_touch}")
         return 1
+    if model.is_touch:
+        strip = tuple(model.touchscreen_image.size)
+        if tuple(controller.get_touchscreen_image_size()) != strip:
+            print(f"FAIL(shape): {model_name} strip is "
+                  f"{controller.get_touchscreen_image_size()}, its preset "
+                  f"states {strip}")
+            return 1
     return 0
 
 
@@ -67,12 +87,15 @@ def registered_key_identifiers(controller) -> "set[str]":
             for key in controller.inputs[Input.Key]}
 
 
-def check_key_dispatch(controller) -> int:
+def check_key_dispatch(controller, model_name: str) -> int:
     """(a) Each physical key reaches its own registered key at every
     rotation. The logical index the wrapper produces is decoded against the
     wrapper's own layout, which is what named the registry. Decoding it
-    against the raw handle's unrotated layout instead misnames six of these
-    eight keys at 90 and at 270."""
+    against the raw handle's unrotated layout instead names a different key
+    wherever the grid is not square."""
+    model = shape_of(model_name)
+    rows, cols = model.key_layout
+    total = rows * cols
     deck = controller.deck
     raw = fixtures.raw_deck(controller)
     seen: "list[str]" = []
@@ -83,45 +106,45 @@ def check_key_dispatch(controller) -> int:
             controller.set_rotation(rotation)
             registry = registered_key_identifiers(controller)
             logical_rows, logical_cols = deck.key_layout()
-            if logical_rows * logical_cols != KEY_TOTAL:
-                print(f"FAIL(a): rotation {rotation} layout "
+            if logical_rows * logical_cols != total:
+                print(f"FAIL(a): {model_name} rotation {rotation} layout "
                       f"{(logical_rows, logical_cols)} holds "
-                      f"{logical_rows * logical_cols} keys, expected "
-                      f"{KEY_TOTAL}")
+                      f"{logical_rows * logical_cols} keys, expected {total}")
                 return 1
 
-            for physical in range(KEY_TOTAL):
+            for physical in range(total):
                 seen.clear()
                 raw.fire_key_event(physical, True)
                 logical = deck.get_logical_index(physical)
                 expected = f"{logical % logical_cols}x{logical // logical_cols}"
                 if seen != [expected]:
-                    print(f"FAIL(a): rotation {rotation}: physical key "
-                          f"{physical} (logical {logical}) reached {seen}, "
-                          f"expected [{expected}]")
+                    print(f"FAIL(a): {model_name} rotation {rotation}: "
+                          f"physical key {physical} (logical {logical}) "
+                          f"reached {seen}, expected [{expected}]")
                     return 1
                 if expected not in registry:
-                    print(f"FAIL(a): rotation {rotation}: physical key "
-                          f"{physical} reached {expected}, which is not a "
-                          f"registered key: {sorted(registry)}")
+                    print(f"FAIL(a): {model_name} rotation {rotation}: "
+                          f"physical key {physical} reached {expected}, which "
+                          f"is not a registered key: {sorted(registry)}")
                     return 1
 
             seen.clear()
-            for physical in range(KEY_TOTAL):
+            for physical in range(total):
                 raw.fire_key_event(physical, True)
             if sorted(seen) != sorted(registry):
-                print(f"FAIL(a): rotation {rotation}: the grid reached "
-                      f"{sorted(seen)}, which does not cover the registry "
-                      f"{sorted(registry)} exactly once")
+                print(f"FAIL(a): {model_name} rotation {rotation}: the grid "
+                      f"reached {sorted(seen)}, which does not cover the "
+                      f"registry {sorted(registry)} exactly once")
                 return 1
     finally:
         del controller.event_callback
 
-    print("PASS: every key reaches its own registered position at 0/90/180/270")
+    print(f"PASS: every key of the {model_name} shape reaches its own "
+          f"registered position at 0/90/180/270")
     return 0
 
 
-def check_rotation_rebuild(controller) -> int:
+def check_rotation_rebuild(controller, model_name: str) -> int:
     """(b) Turning the deck rebuilds the input set and carries no present
     hash over, so the repaint that follows is written and not hash-skipped.
 
@@ -129,6 +152,10 @@ def check_rotation_rebuild(controller) -> int:
     page load the turn ends in paints, which stamps fresh hashes on its own
     schedule, and reading the state after that races the media thread.
     """
+    model = shape_of(model_name)
+    rows, cols = model.key_layout
+    total = rows * cols
+
     controller.set_rotation(0)
     before_ids = {id(key) for key in controller.inputs[Input.Key]}
     before_identifiers = registered_key_identifiers(controller)
@@ -171,43 +198,50 @@ def check_rotation_rebuild(controller) -> int:
         del controller.init_inputs
 
     if not published:
-        print("FAIL(b): turning the deck published no new input set; the old "
-              f"one still names {sorted(before_identifiers)}")
+        print(f"FAIL(b): {model_name}: turning the deck published no new "
+              f"input set; the old one still names "
+              f"{sorted(before_identifiers)}")
         return 1
 
-    expected = {f"{i % KEY_ROWS}x{i // KEY_ROWS}" for i in range(KEY_TOTAL)}
+    # At a quarter turn the grid transposes, so a logical row now holds as
+    # many keys as the deck has physical rows.
+    expected = {f"{i % rows}x{i // rows}" for i in range(total)}
     if published["identifiers"] != expected:
-        print(f"FAIL(b): after turning to 90 the registry is "
+        print(f"FAIL(b): {model_name}: after turning to 90 the registry is "
               f"{sorted(published['identifiers'])}, expected "
               f"{sorted(expected)} for the transposed grid (it was "
               f"{sorted(before_identifiers)})")
         return 1
     if published["ids"] & before_ids:
-        print("FAIL(b): the input set was not rebuilt; inputs from the old "
-              "layout survived the turn")
+        print(f"FAIL(b): {model_name}: the input set was not rebuilt; inputs "
+              f"from the old layout survived the turn")
         return 1
 
     for identifier, presented, enqueued in published["hashes"]:
         if presented is not None or enqueued is not None:
-            print(f"FAIL(b): {identifier} kept a present hash across the turn "
-                  f"({presented}, {enqueued}); its repaint is hash-skipped")
+            print(f"FAIL(b): {model_name}: {identifier} kept a present hash "
+                  f"across the turn ({presented}, {enqueued}); its repaint is "
+                  f"hash-skipped")
             return 1
     if not published["offered"]:
-        print("FAIL(b): the first key hash-skipped the repaint of the image "
-              "it showed before the turn")
+        print(f"FAIL(b): {model_name}: the first key hash-skipped the repaint "
+              f"of the image it showed before the turn")
         return 1
 
     if registered_key_identifiers(controller) != expected:
-        print(f"FAIL(b): the published set was replaced again before the turn "
-              f"finished: {sorted(registered_key_identifiers(controller))}")
+        print(f"FAIL(b): {model_name}: the published set was replaced again "
+              f"before the turn finished: "
+              f"{sorted(registered_key_identifiers(controller))}")
         return 1
 
-    print("PASS: turning the deck rebuilds the inputs and repaints them")
+    print(f"PASS: turning the {model_name} shape rebuilds the inputs and "
+          f"repaints them")
     return 0
 
 
-def check_dial_dispatch(controller) -> int:
+def check_dial_dispatch(controller, model_name: str) -> int:
     """(c) A dial event reaches the dial whose slot sits on that knob."""
+    n_dials = shape_of(model_name).dial_count
     raw = fixtures.raw_deck(controller)
     seen: "list[str]" = []
     controller.event_callback = lambda ident, *a, **k: seen.append(
@@ -215,7 +249,7 @@ def check_dial_dispatch(controller) -> int:
     try:
         for rotation in ROTATIONS:
             controller.set_rotation(rotation)
-            for physical in range(N_DIALS):
+            for physical in range(n_dials):
                 seen.clear()
                 raw.fire_dial_event(physical, DialEventType.TURN, 1)
                 expected = str(controller.deck.get_logical_dial_index(physical))
@@ -225,11 +259,11 @@ def check_dial_dispatch(controller) -> int:
                           f"[{expected}]")
                     return 1
             reached = []
-            for physical in range(N_DIALS):
+            for physical in range(n_dials):
                 seen.clear()
                 raw.fire_dial_event(physical, DialEventType.TURN, 1)
                 reached.extend(seen)
-            if sorted(reached) != sorted(str(i) for i in range(N_DIALS)):
+            if sorted(reached) != sorted(str(i) for i in range(n_dials)):
                 print(f"FAIL(c): rotation {rotation}: the dials reached "
                       f"{reached}, which is not each dial once")
                 return 1
@@ -252,13 +286,15 @@ def patch_dial_recorders(controller, events: "list[tuple[str, str]]") -> None:
         state.own_actions_event_callback_threaded = record
 
 
-def check_touch_dispatch(controller) -> int:
+def check_touch_dispatch(controller, model_name: str) -> int:
     """(d) A touch reaches the slot under the finger, and a drag keeps the
     direction the user drew it in."""
+    model = shape_of(model_name)
+    n_dials = model.dial_count
+    width, _height = model.touchscreen_image.size
     raw = fixtures.raw_deck(controller)
-    width, _height = STRIP_SIZE
     # A touch in the middle of the first slot of the device's own strip.
-    slot_width = width // N_DIALS
+    slot_width = width // n_dials
     device_x = slot_width // 2
 
     for rotation in ROTATIONS:
@@ -266,7 +302,7 @@ def check_touch_dispatch(controller) -> int:
         # The turn ends in a page load, which rebuilds every input's states on
         # the media thread. Wait for it, or the recorders below are installed
         # on state objects the load then replaces.
-        if not fixtures.wait_until(controller._input_load_done.is_set, timeout=10.0):
+        if not controller._input_load_done.wait(10.0):
             print(f"FAIL(d): rotation {rotation}: the input load did not "
                   f"finish")
             return 1
@@ -320,13 +356,15 @@ def check_touch_dispatch(controller) -> int:
     return 0
 
 
-def live_set_is_complete(controller) -> "str | None":
+def live_set_is_complete(controller, model_name: str) -> "str | None":
     """None when the live input set holds every input the deck offers, or a
     description of what is missing."""
+    model = shape_of(model_name)
+    rows, cols = model.key_layout
     expected = {
-        Input.Key: KEY_TOTAL,
-        Input.Dial: N_DIALS,
-        Input.Touchscreen: 1,
+        Input.Key: rows * cols,
+        Input.Dial: model.dial_count,
+        Input.Touchscreen: 1 if model.is_touch else 0,
     }
     for input_type, count in expected.items():
         got = len(controller.inputs.get(input_type, []))
@@ -341,7 +379,7 @@ def live_set_is_complete(controller) -> "str | None":
     return None
 
 
-def check_load_outside_lock(controller) -> int:
+def check_load_outside_lock(controller, model_name: str) -> int:
     """(e) The page load that ends a turn runs with the page lock released.
 
     load_page takes that lock itself, and its tail marshals a plugin-facing
@@ -375,7 +413,7 @@ def check_load_outside_lock(controller) -> int:
     return 0
 
 
-def check_retire_release(controller) -> int:
+def check_retire_release(controller, model_name: str) -> int:
     """(f) The turn hands the media thread the retired set, not the live one.
 
     The release is held back at the queue, which is the state a media thread
@@ -417,7 +455,7 @@ def check_retire_release(controller) -> int:
         print("FAIL(f): the retired set was already emptied before the media "
               "thread saw the release")
         return 1
-    missing = live_set_is_complete(controller)
+    missing = live_set_is_complete(controller, model_name)
     if missing is not None:
         print(f"FAIL(f): the live input set is not intact after the turn "
               f"({missing})")
@@ -427,7 +465,7 @@ def check_retire_release(controller) -> int:
     if not fixtures.wait_until(lambda: not message.stashed_inputs, timeout=10.0):
         print("FAIL(f): the media thread did not release the retired set")
         return 1
-    missing = live_set_is_complete(controller)
+    missing = live_set_is_complete(controller, model_name)
     if missing is not None:
         print(f"FAIL(f): the release closed the live input set ({missing})")
         return 1
@@ -436,7 +474,7 @@ def check_retire_release(controller) -> int:
     return 0
 
 
-def check_back_to_back_turns(controller) -> int:
+def check_back_to_back_turns(controller, model_name: str) -> int:
     """(g) Two turns in a row retire two sets and empty both."""
     controller.set_rotation(0)
     player = controller.media_player
@@ -465,7 +503,7 @@ def check_back_to_back_turns(controller) -> int:
         still_held = [i for i, s in enumerate(retired) if s]
         print(f"FAIL(g): retired set(s) {still_held} were never released")
         return 1
-    missing = live_set_is_complete(controller)
+    missing = live_set_is_complete(controller, model_name)
     if missing is not None:
         print(f"FAIL(g): the live input set did not survive two turns "
               f"({missing})")
@@ -475,7 +513,7 @@ def check_back_to_back_turns(controller) -> int:
     return 0
 
 
-def check_held_key_across_turn(controller) -> int:
+def check_held_key_across_turn(controller, model_name: str) -> int:
     """(h) A key held across a turn loses its gesture on the retired input,
     and the physical release lands on the replacement with no clock to
     dispatch against.
@@ -485,15 +523,15 @@ def check_held_key_across_turn(controller) -> int:
     pins that page's action objects for good.
     """
     controller.set_rotation(0)
-    if not fixtures.wait_until(controller._input_load_done.is_set, timeout=10.0):
+    if not controller._input_load_done.wait(10.0):
         print("FAIL(h): the input load did not finish before the press")
         return 1
+    deck = controller.deck
     raw = fixtures.raw_deck(controller)
 
-    # Physical key 0 is logical 0 at rotation 0, and logical 1 at 90.
     pressed = controller.get_input(Input.Key("0x0"))
     if pressed is None:
-        print("FAIL(h): the deck offers no key at 0x0")
+        print(f"FAIL(h): the {model_name} shape offers no key at 0x0")
         return 1
     raw.fire_key_event(0, True)
     if pressed.down_start_time is None or pressed._gesture is None:
@@ -509,12 +547,16 @@ def check_held_key_across_turn(controller) -> int:
               f"its hold timer fires into a page that left the deck")
         return 1
 
-    if not fixtures.wait_until(controller._input_load_done.is_set, timeout=10.0):
+    if not controller._input_load_done.wait(10.0):
         print("FAIL(h): the input load did not finish before the release")
         return 1
-    landing = controller.get_input(Input.Key("1x0"))
+    # Where the release of physical key 0 lands now that the grid turned.
+    logical = deck.get_logical_index(0)
+    _logical_rows, logical_cols = deck.key_layout()
+    landing_name = f"{logical % logical_cols}x{logical // logical_cols}"
+    landing = controller.get_input(Input.Key(landing_name))
     if landing is None:
-        print("FAIL(h): the turned deck offers no key at 1x0")
+        print(f"FAIL(h): the turned deck offers no key at {landing_name}")
         return 1
     dispatched: "list[str]" = []
     landing.get_active_state().own_actions_event_callback_threaded = (
@@ -532,12 +574,12 @@ def check_held_key_across_turn(controller) -> int:
               f"{landing._gesture})")
         return 1
 
-    print("PASS: a key held across a turn ends its gesture on the retired "
-          "input")
+    print(f"PASS: a key held across a turn of the {model_name} shape ends its "
+          f"gesture on the retired input")
     return 0
 
 
-def check_window_markers_cleared(controller) -> int:
+def check_window_markers_cleared(controller, model_name: str) -> int:
     """(i) A turn drops the window's pending dirty markers.
 
     Each marker names a position of the grid that was, and the window's key
@@ -552,7 +594,7 @@ def check_window_markers_cleared(controller) -> int:
     for key in controller.inputs[Input.Key]:
         markers[key.identifier] = True
     if not markers:
-        print("FAIL(i): the deck offered no key to mark dirty")
+        print(f"FAIL(i): the {model_name} shape offered no key to mark dirty")
         return 1
 
     controller.set_rotation(90)
@@ -568,35 +610,58 @@ def check_window_markers_cleared(controller) -> int:
         try:
             buttons[x][y]
         except IndexError:
-            print(f"FAIL(i): the turn left {identifier.json_identifier} "
-                  f"marked dirty, which is off the new {rows} by {cols} "
-                  f"grid; the window raises IndexError there and loses its "
-                  f"key grid")
+            print(f"FAIL(i): {model_name}: the turn left "
+                  f"{identifier.json_identifier} marked dirty, which is off "
+                  f"the new {rows} by {cols} grid; the window raises "
+                  f"IndexError there and loses its key grid")
             return 1
 
-    print("PASS: a turn drops the window's pending dirty markers")
+    print(f"PASS: a turn of the {model_name} shape drops the window's pending "
+          f"dirty markers")
     return 0
+
+
+def run_key_legs(model_name: str) -> int:
+    """The legs that need only a key grid, over one deck shape."""
+    controller = fixtures.make_headless_controller(
+        f"rot-{model_name}", model=model_name)
+    try:
+        rc = check_deck_shape(controller, model_name)
+        if rc:
+            return rc
+        rc |= check_key_dispatch(controller, model_name)
+        rc |= check_rotation_rebuild(controller, model_name)
+        rc |= check_held_key_across_turn(controller, model_name)
+        rc |= check_window_markers_cleared(controller, model_name)
+    finally:
+        fixtures.teardown(controller)
+    return rc
+
+
+def run_strip_legs() -> int:
+    """The legs that need dials, a strip and the turn's own bookkeeping."""
+    controller = fixtures.make_headless_controller(
+        f"rot-{STRIP_SHAPE}-strip", model=STRIP_SHAPE)
+    try:
+        rc = check_deck_shape(controller, STRIP_SHAPE)
+        if rc:
+            return rc
+        rc |= check_dial_dispatch(controller, STRIP_SHAPE)
+        rc |= check_touch_dispatch(controller, STRIP_SHAPE)
+        rc |= check_load_outside_lock(controller, STRIP_SHAPE)
+        rc |= check_retire_release(controller, STRIP_SHAPE)
+        rc |= check_back_to_back_turns(controller, STRIP_SHAPE)
+    finally:
+        fixtures.teardown(controller)
+    return rc
 
 
 def main() -> int:
     fixtures.start_watchdog(60, label="deck_rotation_dispatch")
-    controller = fixtures.make_headless_controller(
-        "rot-dispatch", key_layout=[KEY_ROWS, KEY_COLS])
-    try:
-        rc = check_deck_shape(controller)
-        if rc:
-            return rc
-        rc |= check_key_dispatch(controller)
-        rc |= check_rotation_rebuild(controller)
-        rc |= check_dial_dispatch(controller)
-        rc |= check_touch_dispatch(controller)
-        rc |= check_load_outside_lock(controller)
-        rc |= check_retire_release(controller)
-        rc |= check_back_to_back_turns(controller)
-        rc |= check_held_key_across_turn(controller)
-        rc |= check_window_markers_cleared(controller)
-    finally:
-        fixtures.teardown(controller)
+    rc = 0
+    for model_name in KEY_SHAPES:
+        rc |= run_key_legs(model_name)
+    rc |= run_strip_legs()
     if rc == 0:
         print("PASS: scenario_deck_rotation_dispatch")
     return rc

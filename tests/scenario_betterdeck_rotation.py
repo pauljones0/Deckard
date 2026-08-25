@@ -7,9 +7,9 @@ The wrapper is the one place that knows what a rotation means, so the rest
 pins the maps it hands out: the strip turn, the touch positions, the dial
 order, and the two callbacks that carry those from the reader thread.
 
-Deck shape, stated once so a configurable fake deck can adopt it later: four
-dials and an 800 by 100 strip, which is the Stream Deck + shape the fake deck
-models. The key legs force their own grid.
+Every deck shape here comes from the fake deck's model presets, so a changed
+preset changes these checks with it: the Stream Deck + for the strip and the
+dials, and the Original's 3 by 5 grid for the key map.
 """
 import fixtures  # noqa: F401  (import first: sets up the isolated data dir)
 
@@ -17,10 +17,13 @@ import fixtures  # noqa: F401  (import first: sets up the isolated data dir)
 from fixtures import FaultyFakeDeck, start_watchdog
 
 from src.backend.DeckManagement.BetterDeck import BetterDeck
+from src.backend.DeckManagement.Subclasses.FakeDeck import FAKE_DECK_MODELS
 
 ROTATIONS = (0, 90, 180, 270)
-N_DIALS = 4
-STRIP_SIZE = (800, 100)
+PLUS = FAKE_DECK_MODELS["plus"]
+ORIGINAL = FAKE_DECK_MODELS["original"]
+N_DIALS = PLUS.dial_count
+STRIP_SIZE = PLUS.touchscreen_image.size
 
 # Which logical key each physical key of a 2 by 4 grid becomes, read off a
 # turned device and not off the mapping formula, so a map that is
@@ -44,12 +47,17 @@ DIRECTION_TABLE = {
 
 
 def check_rotation() -> int:
-    deck = FaultyFakeDeck(serial_number="rot-1")
-    # Force a 3x5 layout, so the literals below hold.
-    deck.key_layout = lambda: (3, 5)
+    # The Original's 3 by 5 grid, so the literals below hold and a
+    # non-square grid is what the permutation is checked over.
+    deck = FaultyFakeDeck(serial_number="rot-1", model="original")
     better = BetterDeck(deck)
+    rows, cols = ORIGINAL.key_layout
+    if (rows, cols) != (3, 5):
+        print(f"FAIL(a): the Original preset is now {(rows, cols)}; the "
+              f"literals in this check assume 3 by 5")
+        return 1
 
-    total = 15
+    total = rows * cols
     physical = list(range(total))  # value == its physical index
 
     for rotation in (0, 90, 180, 270):
@@ -73,8 +81,12 @@ def check_rotation() -> int:
                       f"{p} -- the map is applied in the wrong direction")
                 return 1
 
-    # Hand-computed literal for 3 rows by 5 cols at rotation 90.
-    # get_logical_index(0) = (0%5)*3 + (3-1-0//5) = 2, so orig[0] lands at out[2].
+    # One literal for 3 rows by 5 cols at rotation 90, which fixes where the
+    # reorder puts a value rather than only that it puts it somewhere:
+    # get_logical_index(0) = (0%5)*3 + (3-1-0//5) = 2, so orig[0] lands at
+    # out[2]. It restates the formula, so it cannot judge the direction of
+    # the turn; check_rotation_direction does that against a table read off
+    # a turned deck.
     better.set_rotation(90)
     out = better.reorder_physical_for_rotation(physical)
     if out[2] != 0:
@@ -120,9 +132,13 @@ def check_rotation_direction() -> int:
     one of them against a table read off the turned device, which nothing in
     the implementation can agree with by construction.
     """
-    deck = FaultyFakeDeck(serial_number="rot-direction")
-    deck.key_layout = lambda: (DIRECTION_ROWS, DIRECTION_COLS)
+    deck = FaultyFakeDeck(serial_number="rot-direction", model="plus")
     better = BetterDeck(deck)
+    if tuple(PLUS.key_layout) != (DIRECTION_ROWS, DIRECTION_COLS):
+        print(f"FAIL(g): the Stream Deck + preset is now {PLUS.key_layout}; "
+              f"the table below was read off a "
+              f"{DIRECTION_ROWS} by {DIRECTION_COLS} deck")
+        return 1
     total = DIRECTION_ROWS * DIRECTION_COLS
 
     for rotation, table in DIRECTION_TABLE.items():
@@ -151,7 +167,7 @@ def check_strip_turn() -> int:
     its shape, so there is nothing to turn an upright composite into. Pinning
     the zero there stops a well-meant rotate() that would squash the strip.
     """
-    deck = FaultyFakeDeck(serial_number="rot-strip")
+    deck = FaultyFakeDeck(serial_number="rot-strip", model="plus")
     better = BetterDeck(deck)
 
     expected = {0: 0, 90: 0, 180: 180, 270: 0}
@@ -169,7 +185,7 @@ def check_strip_turn() -> int:
 
 def check_touch_value() -> int:
     """A touch position is mapped to where the strip was composed."""
-    deck = FaultyFakeDeck(serial_number="rot-touch")
+    deck = FaultyFakeDeck(serial_number="rot-touch", model="plus")
     better = BetterDeck(deck)
     width, height = STRIP_SIZE
     if tuple(deck.touchscreen_image_format()["size"]) != STRIP_SIZE:
@@ -236,7 +252,7 @@ def check_touch_value() -> int:
 
 def check_dial_order() -> int:
     """Dial order follows the strip: reversed at 180, one for one elsewhere."""
-    deck = FaultyFakeDeck(serial_number="rot-dial")
+    deck = FaultyFakeDeck(serial_number="rot-dial", model="plus")
     better = BetterDeck(deck)
     if better.dial_count() != N_DIALS:
         print(f"FAIL(e): the fake deck has {better.dial_count()} dials; the "
@@ -281,7 +297,7 @@ def check_dial_order() -> int:
 
 def check_event_remap() -> int:
     """The dial and touchscreen callbacks carry logical values."""
-    deck = FaultyFakeDeck(serial_number="rot-events")
+    deck = FaultyFakeDeck(serial_number="rot-events", model="plus")
     better = BetterDeck(deck)
 
     dials: "list[int]" = []

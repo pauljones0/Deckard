@@ -81,7 +81,7 @@ def corner_means(image: Image.Image) -> "dict[str, float]":
 
 
 def check_strip_pixels(mode: str) -> int:
-    deck = FaultyFakeDeck(serial_number=f"strip-{mode}")
+    deck = FaultyFakeDeck(serial_number=f"strip-{mode}", model="plus")
     better = BetterDeck(deck)
     touchscreen = _StubTouchScreen(better)
 
