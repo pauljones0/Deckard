@@ -838,9 +838,9 @@ def check_control_use_saves_sparsely() -> None:
 def check_reopened_row_one_handler() -> None:
     """A row that reloads must end with the handler count it started with.
 
-    better_disconnect swallows what it cannot disconnect, so a wrong argument
-    is silent. Every reload then adds another handler, until one load fires
-    the saving handler as many times as the row has ever been loaded.
+    A disconnect that misses the live handler is silent. Every reload then
+    adds another handler, until one load fires the saving handler as many
+    times as the row has ever been loaded.
     """
     serial = "deck-defaults-reopen"
     seed_deck_settings(serial, {"rotation": 90})
@@ -903,6 +903,9 @@ class PageScreensaverGroup:
         self.brightness_scale = _ScaleRow(0)
         self.media_selector_button = _Widget()
         self.updates = 0
+        # The tracked handler ids the real connect and disconnect keep.
+        self._handlers = {}
+        self._signal_bindings = MethodType(ScreensaverGroup._signal_bindings, self)
         for name in _PAGE_SCREENSAVER_HANDLERS:
             setattr(self, name, MethodType(getattr(ScreensaverGroup, name), self))
 

@@ -5,7 +5,7 @@ from gi.repository import Gtk
 
 from collections.abc import Callable
 from typing import cast, TYPE_CHECKING, Any
-from GtkHelper.GtkHelper import better_disconnect, on_main
+from GtkHelper.GtkHelper import on_main
 
 if TYPE_CHECKING:
     from src.backend.PluginManager.ActionCore import ActionCore
@@ -74,7 +74,7 @@ class ExpanderRow(GenerativeUI[bool]):
 
         This ensures that when the expander's enabled state changes, the value is handled accordingly.
         """
-        self.widget.connect("notify::enable-expansion", self._value_changed)
+        self._track_connect("enable-expansion", self.widget, "notify::enable-expansion", self._value_changed)
 
     def disconnect_signals(self) -> None:
         """
@@ -83,7 +83,7 @@ class ExpanderRow(GenerativeUI[bool]):
         The widget then handles no further expansion state change.
         or when the signals should be stopped.
         """
-        better_disconnect(self.widget, self._value_changed)
+        self._track_disconnect("enable-expansion", self.widget)
 
     def set_enable_expansion(self, enable_expansion: bool, update_setting: bool = False) -> None:
         """

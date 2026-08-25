@@ -7,7 +7,7 @@ from typing import cast, TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from src.backend.PluginManager.ActionCore import ActionCore
 
-from GtkHelper.GtkHelper import better_disconnect, on_main
+from GtkHelper.GtkHelper import on_main
 
 
 class ComboRow(GenerativeUI[BaseComboRowItem | str | None]):
@@ -71,11 +71,11 @@ class ComboRow(GenerativeUI[BaseComboRowItem | str | None]):
 
     def connect_signals(self) -> None:
         """Connects the signal to detect selection changes in the combo box."""
-        self.widget.connect("notify::selected", self._value_changed)
+        self._track_connect("selected", self.widget, "notify::selected", self._value_changed)
 
     def disconnect_signals(self) -> None:
         """Disconnects the signal for selection changes."""
-        better_disconnect(self.widget, self._value_changed)
+        self._track_disconnect("selected", self.widget)
 
     def _value_changed(self, combo_row: Combo, _: Any) -> None:
         """Handles the event when a new item is selected."""

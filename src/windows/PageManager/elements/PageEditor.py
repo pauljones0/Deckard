@@ -22,9 +22,10 @@ from src.backend.DeckManagement.ImageHelpers import image2pixbuf
 from src.windows.MultiDeckSelector.MultiDeckSelectorRow import MultiDeckSelectorRow
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Gtk, Adw, GLib
+from gi.repository import GObject, Gtk, Adw, GLib
 
 # Import typing
+from collections.abc import Callable
 from typing import Any, TYPE_CHECKING
 if TYPE_CHECKING:
     from src.windows.PageManager.PageManager import PageManager
@@ -36,7 +37,7 @@ import globals as gl
 import os
 
 # Import own modules
-from GtkHelper.GtkHelper import BetterExpander, better_disconnect
+from GtkHelper.GtkHelper import BetterExpander
 from src.backend.main_loop import run_in_background
 from src.backend.WindowGrabber.Window import Window
 from src.windows.PageManager.elements.MenuButton import MenuButton
@@ -190,24 +191,47 @@ class PageEditorGroup(Adw.PreferencesGroup):
     def __init__(self, page_editor: PageEditor, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self.page_editor = page_editor
+        # The handler id per binding key, absent while that binding is
+        # disconnected. Tracked ids keep connect and disconnect idempotent: a
+        # disconnect while already off cannot raise, and a reconnect cannot
+        # stack a second handler that writes the loaded value back to the page.
+        self._handlers: dict[str, int] = {}
         self.build()
 
     def build(self) -> None:
         pass
 
+    def _signal_bindings(self) -> list[tuple[str, GObject.Object, str, Callable[..., Any]]]:
+        """The rows this group wires, as (key, widget, signal, callback).
+
+        Each entry names the widget that carries the handler. A row wrapper
+        that holds the real widget, such as ScaleRow, must give the inner
+        widget here, or the handler goes on one object and comes off another.
+        """
+        return []
+
     def connect_events(self) -> None:
-        pass
+        for key, widget, signal, callback in self._signal_bindings():
+            if self._handlers.get(key) is None:
+                self._handlers[key] = widget.connect(signal, callback)
 
     def disconnect_events(self) -> None:
-        pass
+        for key, widget, _signal, _callback in self._signal_bindings():
+            handler = self._handlers.pop(key, None)
+            if handler is not None:
+                widget.disconnect(handler)
 
     def load_config_settings(self, page_path: str) -> None:
         pass
 
     def load_for_page(self, page_path: str) -> None:
         self.disconnect_events()
-        self.load_config_settings(page_path)
-        self.connect_events()
+        try:
+            self.load_config_settings(page_path)
+        finally:
+            # A load that returns early or raises must still leave the rows
+            # wired, or every later edit in this group is dropped silently.
+            self.connect_events()
 
 class NameGroup(PageEditorGroup):
     def __init__(self, page_editor: PageEditor):
@@ -217,13 +241,11 @@ class NameGroup(PageEditorGroup):
         self.name_entry = Adw.EntryRow(title=gl.lm.get("page-manager.page-editor.name-group.name"), show_apply_button=True)
         self.add(self.name_entry)
 
-    def connect_events(self) -> None:
-        self.name_entry.connect("changed", self.on_name_changed)
-        self.name_entry.connect("apply", self.on_name_change_applied)
-
-    def disconnect_events(self) -> None:
-        better_disconnect(self.name_entry, self.on_name_changed)
-        better_disconnect(self.name_entry, self.on_name_change_applied)
+    def _signal_bindings(self) -> list[tuple[str, GObject.Object, str, Callable[..., Any]]]:
+        return [
+            ("name-changed", self.name_entry, "changed", self.on_name_changed),
+            ("name-apply", self.name_entry, "apply", self.on_name_change_applied),
+        ]
 
     def load_config_settings(self, page_path: str | None) -> None:
         if page_path is None:
@@ -340,21 +362,15 @@ class AutoChangeGroup(PageEditorGroup):
         self.matching_window_expander = MatchingWindowExpander(auto_change_group=self)
         self.add(self.matching_window_expander)
 
-    def connect_events(self) -> None:
-        self.enable_toggle.connect("notify::active", self.on_enable_changed)
-        self.stay_on_page_toggle.connect("notify::active", self.on_stay_on_page_changed)
-        self.title_entry.connect("apply", self.on_title_entry_applied)
-        self.wm_class_entry.connect("apply", self.on_wm_class_entry_applied)
-        self.title_focus.connect("leave", self.on_title_focus_left)
-        self.wm_class_focus.connect("leave", self.on_wm_class_focus_left)
-
-    def disconnect_events(self) -> None:
-        better_disconnect(self.enable_toggle, self.on_enable_changed)
-        better_disconnect(self.stay_on_page_toggle, self.on_stay_on_page_changed)
-        better_disconnect(self.title_entry, self.on_title_entry_applied)
-        better_disconnect(self.wm_class_entry, self.on_wm_class_entry_applied)
-        better_disconnect(self.title_focus, self.on_title_focus_left)
-        better_disconnect(self.wm_class_focus, self.on_wm_class_focus_left)
+    def _signal_bindings(self) -> list[tuple[str, GObject.Object, str, Callable[..., Any]]]:
+        return [
+            ("enable", self.enable_toggle, "notify::active", self.on_enable_changed),
+            ("stay-on-page", self.stay_on_page_toggle, "notify::active", self.on_stay_on_page_changed),
+            ("title-apply", self.title_entry, "apply", self.on_title_entry_applied),
+            ("wm-class-apply", self.wm_class_entry, "apply", self.on_wm_class_entry_applied),
+            ("title-leave", self.title_focus, "leave", self.on_title_focus_left),
+            ("wm-class-leave", self.wm_class_focus, "leave", self.on_wm_class_focus_left),
+        ]
 
     def load_config_settings(self, page_path: str) -> None:
         active_page_path = self.page_editor.active_page_path
@@ -506,13 +522,11 @@ class BrightnessGroup(PageEditorGroup):
         self.brightness_scale = ScaleRow(0, 0, 100, digits=0, draw_value=True, draw_side_values=False, title="Brightness")
         self.enable_expander.add_row(self.brightness_scale)
 
-    def connect_events(self) -> None:
-        self.enable_expander.connect("notify::enable-expansion", self.on_enable_changed)
-        self.brightness_scale.scale.connect("value-changed", self.on_brightness_changed)
-
-    def disconnect_events(self) -> None:
-        better_disconnect(self.enable_expander, self.on_enable_changed)
-        better_disconnect(self.brightness_scale.scale, self.on_brightness_changed)
+    def _signal_bindings(self) -> list[tuple[str, GObject.Object, str, Callable[..., Any]]]:
+        return [
+            ("enable", self.enable_expander, "notify::enable-expansion", self.on_enable_changed),
+            ("brightness", self.brightness_scale.scale, "value-changed", self.on_brightness_changed),
+        ]
 
     def load_config_settings(self, page_path: str) -> None:
         if gl.page_manager is None:
@@ -598,21 +612,15 @@ class BackgroundGroup(PageEditorGroup):
 
         self.media_selector_image = Gtk.Image()
 
-    def connect_events(self) -> None:
-        self.enable_expander.connect("notify::enable-expansion", self.on_enable_changed)
-        self.show_background_toggle.connect("notify::active", self.on_show_background_changed)
-        self.loop_toggle.connect("notify::active", self.on_loop_changed)
-        self.fps_spin.connect("changed", self.on_fps_changed)
-        self.extend_touchscreen_toggle.connect("notify::active", self.on_extend_touchscreen_changed)
-        self.media_selector_button.connect("clicked", self.on_media_selector_click)
-
-    def disconnect_events(self) -> None:
-        better_disconnect(self.enable_expander, self.on_enable_changed)
-        better_disconnect(self.show_background_toggle, self.on_show_background_changed)
-        better_disconnect(self.loop_toggle, self.on_loop_changed)
-        better_disconnect(self.fps_spin, self.on_fps_changed)
-        better_disconnect(self.extend_touchscreen_toggle, self.on_extend_touchscreen_changed)
-        better_disconnect(self.media_selector_button, self.on_media_selector_click)
+    def _signal_bindings(self) -> list[tuple[str, GObject.Object, str, Callable[..., Any]]]:
+        return [
+            ("enable", self.enable_expander, "notify::enable-expansion", self.on_enable_changed),
+            ("show", self.show_background_toggle, "notify::active", self.on_show_background_changed),
+            ("loop", self.loop_toggle, "notify::active", self.on_loop_changed),
+            ("fps", self.fps_spin, "changed", self.on_fps_changed),
+            ("extend-touchscreen", self.extend_touchscreen_toggle, "notify::active", self.on_extend_touchscreen_changed),
+            ("media-selector", self.media_selector_button, "clicked", self.on_media_selector_click),
+        ]
 
     def load_config_settings(self, page_path: str) -> None:
         if gl.page_manager is None:
@@ -754,29 +762,16 @@ class ScreensaverGroup(PageEditorGroup):
 
         self.media_selector_image = Gtk.Image()
 
-    def connect_events(self) -> None:
-        self.overwrite_expander.connect("notify::enable-expansion", self.on_overwrite_changed)
-        self.enable_screensaver_toggle.connect("notify::active", self.on_enable_changed)
-        self.delay_spin.connect("changed", self.on_delay_changed)
-        self.loop_toggle.connect("notify::active", self.on_loop_changed)
-        self.fps_spin.connect("changed", self.on_fps_changed)
-        self.brightness_scale.scale.connect("value-changed", self.on_brightness_changed)
-        self.media_selector_button.connect("clicked", self.on_media_selector_click)
-
-    def disconnect_events(self) -> None:
-        better_disconnect(self.overwrite_expander, self.on_overwrite_changed)
-        better_disconnect(self.enable_screensaver_toggle, self.on_enable_changed)
-        better_disconnect(self.delay_spin, self.on_delay_changed)
-        better_disconnect(self.loop_toggle, self.on_loop_changed)
-        better_disconnect(self.fps_spin, self.on_fps_changed)
-        # Pass .scale, not the row. The handler connects to the inner scale,
-        # and better_disconnect accepts a miss without a word, so the row name
-        # here leaves the handler attached and each new page selection adds
-        # another. Every load of the row then writes the brightness it just
-        # showed back to the page, and applies it to the deck again, once per
-        # selected page.
-        better_disconnect(self.brightness_scale.scale, self.on_brightness_changed)
-        better_disconnect(self.media_selector_button, self.on_media_selector_click)
+    def _signal_bindings(self) -> list[tuple[str, GObject.Object, str, Callable[..., Any]]]:
+        return [
+            ("overwrite", self.overwrite_expander, "notify::enable-expansion", self.on_overwrite_changed),
+            ("enable", self.enable_screensaver_toggle, "notify::active", self.on_enable_changed),
+            ("delay", self.delay_spin, "changed", self.on_delay_changed),
+            ("loop", self.loop_toggle, "notify::active", self.on_loop_changed),
+            ("fps", self.fps_spin, "changed", self.on_fps_changed),
+            ("brightness", self.brightness_scale.scale, "value-changed", self.on_brightness_changed),
+            ("media-selector", self.media_selector_button, "clicked", self.on_media_selector_click),
+        ]
 
     def load_config_settings(self, page_path: str) -> None:
         if gl.page_manager is None:

@@ -5,7 +5,6 @@ from gi.repository import Adw, Gtk
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, cast
 
-from GtkHelper.GtkHelper import better_disconnect
 
 from GtkHelper.ToggleRow import ToggleRow as Toggle
 
@@ -68,10 +67,10 @@ class ToggleRow(GenerativeUI[int]):
             on_change(toggle_row, new_toggle, old_toggle)
 
     def connect_signals(self) -> None:
-        self.widget.toggle_group.connect("notify::active", self._value_changed)
+        self._track_connect("active", self.widget.toggle_group, "notify::active", self._value_changed)
 
     def disconnect_signals(self) -> None:
-        better_disconnect(self.widget.toggle_group, self._value_changed)
+        self._track_disconnect("active", self.widget.toggle_group)
 
     def _value_changed(self, toggle_group: Adw.ToggleGroup, _: Any) -> None:
         index = self.widget.get_active_index()

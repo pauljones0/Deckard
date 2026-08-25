@@ -6,7 +6,6 @@ from gi.repository import Adw
 from collections.abc import Callable
 from typing import cast, TYPE_CHECKING, Any
 
-from GtkHelper.GtkHelper import better_disconnect
 
 if TYPE_CHECKING:
     from src.backend.PluginManager.ActionCore import ActionCore
@@ -60,7 +59,7 @@ class PasswordEntryRow(GenerativeUI[str]):
 
         This ensures that when the password input changes, the value is handled accordingly.
         """
-        self.widget.connect("changed", self._value_changed)
+        self._track_connect("changed", self.widget, "changed", self._value_changed)
 
     def disconnect_signals(self) -> None:
         """
@@ -69,7 +68,7 @@ class PasswordEntryRow(GenerativeUI[str]):
         The widget then handles no further password change.
         or when the signals should be stopped.
         """
-        better_disconnect(self.widget, self._value_changed)
+        self._track_disconnect("changed", self.widget)
 
     def set_password(self, password: str, update_setting: bool = False) -> None:
         """

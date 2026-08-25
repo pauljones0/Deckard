@@ -15,7 +15,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 from gi.repository import Gtk, Adw, Gio
 
-from GtkHelper.GtkHelper import better_disconnect
 from src.backend.DeckManagement.ImageHelpers import image2pixbuf
 from src.backend.DeckManagement.Media.Media import Media
 from src.backend.PluginManager.PluginBase import PluginBase
@@ -47,6 +46,12 @@ class PluginSettingsPage(Adw.PreferencesPage):
         self.settings_window = settings_window
         self.plugin_base = plugin_base
 
+        # The tile-click handler id, or None while it is disconnected. A
+        # tracked id keeps connect and disconnect idempotent: a disconnect
+        # while already off cannot raise, and a reconnect cannot stack a
+        # second handler.
+        self._flow_box_handler: int | None = None
+
         self.build()
 
     def build(self) -> None:
@@ -72,10 +77,19 @@ class PluginSettingsPage(Adw.PreferencesPage):
         scrolled_window.set_child(self.flow_box)
 
     def connect_flow_box(self, callback: Callable[..., Any]) -> None:
-        self.flow_box.connect("child-activated", callback)
+        """Wire callback to a click on a tile, once.
 
-    def disconnect_flow_box(self,callback: Callable[..., Any]) -> None:
-        better_disconnect(self.flow_box, callback)
+        A second call while the handler is on does nothing, so a repeated
+        wire cannot make one click open two dialogs.
+        """
+        if self._flow_box_handler is None:
+            self._flow_box_handler = self.flow_box.connect("child-activated", callback)
+
+    def disconnect_flow_box(self) -> None:
+        """Drop the click handler. A call while it is already off does nothing."""
+        if self._flow_box_handler is not None:
+            self.flow_box.disconnect(self._flow_box_handler)
+            self._flow_box_handler = None
 
     def reset_button_clicked(self, *args: Any) -> None:
         pass

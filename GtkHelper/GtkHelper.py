@@ -23,7 +23,7 @@ from src.backend.DeckManagement.HelperMethods import open_web
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Gtk, Adw, GLib, GObject
+from gi.repository import Gtk, Adw, GLib
 
 from loguru import logger as log
 
@@ -63,12 +63,6 @@ def get_deepest_focused_widget_with_attr(start: Gtk.Widget, attr:str) -> Gtk.Wid
         if hasattr(widget, attr):
             return widget
     return None
-
-def better_disconnect(widget: GObject.Object, handler: Callable[..., Any]) -> None:
-    try:
-        widget.disconnect_by_func(handler)
-    except Exception:
-        pass
 
 def better_unparent(widget: Gtk.Widget) -> None:
     if widget.get_parent() is not None:

@@ -5,7 +5,7 @@ from gi.repository import Gtk, Adw
 from collections.abc import Callable
 from typing import cast, TYPE_CHECKING, Any
 
-from GtkHelper.GtkHelper import better_disconnect, on_main
+from GtkHelper.GtkHelper import on_main
 
 if TYPE_CHECKING:
     from src.backend.PluginManager.ActionCore import ActionCore
@@ -80,8 +80,8 @@ class SpinRow(GenerativeUI[float]):
         """
         Connects the signal handlers for the spin row widget to track changes in its value.
         """
-        self._adjustment.connect("value-changed", self._correct_step_amount)
-        self.widget.connect("changed", self._value_changed)
+        self._track_connect("step", self._adjustment, "value-changed", self._correct_step_amount)
+        self._track_connect("changed", self.widget, "changed", self._value_changed)
 
     def disconnect_signals(self) -> None:
         """
@@ -90,8 +90,8 @@ class SpinRow(GenerativeUI[float]):
         # Read .widget first, because it builds when needed and build() sets
         # both _widget and _adjustment. An unbuilt row has no _adjustment.
         widget = self.widget
-        better_disconnect(self._adjustment, self._correct_step_amount)
-        better_disconnect(widget, self._value_changed)
+        self._track_disconnect("step", self._adjustment)
+        self._track_disconnect("changed", widget)
 
     def set_number(self, number: float, update_setting: bool = False) -> None:
         """

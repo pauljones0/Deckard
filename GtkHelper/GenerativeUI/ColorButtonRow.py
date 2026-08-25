@@ -6,7 +6,6 @@ from gi.repository import Gdk, Gtk
 
 from typing import cast, TYPE_CHECKING, Callable
 
-from GtkHelper.GtkHelper import better_disconnect
 
 if TYPE_CHECKING:
     from src.backend.PluginManager.ActionCore import ActionCore
@@ -59,13 +58,13 @@ class ColorButtonRow(GenerativeUI[tuple[int, int, int, int]]):
         """
         Connects the necessary signals for detecting color changes.
         """
-        self.widget.color_button.connect("color-set", self._value_changed)
+        self._track_connect("color-set", self.widget.color_button, "color-set", self._value_changed)
 
     def disconnect_signals(self) -> None:
         """
         Disconnects signals to prevent unwanted behavior.
         """
-        better_disconnect(self.widget.color_button, self._value_changed)
+        self._track_disconnect("color-set", self.widget.color_button)
 
     def set_color(self, color: tuple[int, int, int, int], update_setting: bool) -> None:
         """
