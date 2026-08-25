@@ -43,13 +43,16 @@ def _fake_window(visible_child, sidebar_update, subview_active=False):
     main_stack = SimpleNamespace(
         get_visible_child=lambda: subview if subview_active else configurator_stack
     )
+    sidebar = SimpleNamespace(
+        update=sidebar_update,
+        main_stack=main_stack,
+        configurator_stack=configurator_stack,
+    )
+    # The adapter reaches the stack and the sidebar through the window's typed
+    # accessors, so the fake exposes those methods rather than raw attributes.
     return SimpleNamespace(
-        leftArea=SimpleNamespace(deck_stack=deck_stack),
-        sidebar=SimpleNamespace(
-            update=sidebar_update,
-            main_stack=main_stack,
-            configurator_stack=configurator_stack,
-        ),
+        get_deck_stack=lambda: deck_stack,
+        get_sidebar=lambda: sidebar,
     )
 
 
