@@ -1,14 +1,21 @@
 """
-Regression test for the store info page overriding inherited widget setters.
+Regression test for the info rows overriding inherited widget members.
 
 InfoPage defined set_name, which GTK already defines on every widget, and
-DescriptionRow defined set_title, which Adw.PreferencesRow already defines.
-Either override silently changes what the inherited call does.
+DescriptionRow and AttributeRow defined set_title, which Adw.PreferencesRow
+already defines. Either override silently changes what the inherited call does.
+
+The rows also held their caption in self.title, one name away from the title
+the row inherits. PyGObject keeps GObject properties behind .props, so that
+attribute never wrote the property, but the two names read as one thing and
+mean two. The rows now hold the caption in title_str, and the checks below
+hold that name so the collision cannot come back.
 """
 
-# The two setters now carry intention-revealing names, so the inherited GTK
-# methods stay reachable. The checks read the class dictionaries, so no window
-# is realized and no store data is fetched.
+# The setters now carry intention-revealing names, so the inherited GTK methods
+# stay reachable. The class-dictionary checks read no widget state, and the
+# label checks build single rows, so no window is realized and no store data is
+# fetched.
 import fixtures  # noqa: F401  (isolated --data tempdir; import first)
 
 import gi
@@ -17,6 +24,7 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Adw, Gtk  # noqa: E402
 
+from GtkHelper.GtkHelper import AttributeRow  # noqa: E402
 from src.windows.Store.InfoPage import DescriptionRow, InfoPage  # noqa: E402
 
 
@@ -27,10 +35,16 @@ def test_inherited_setters_are_not_shadowed() -> None:
     assert "set_title" not in vars(DescriptionRow), (
         "DescriptionRow must not define set_title; it shadows the row setter"
     )
+    assert "set_title" not in vars(AttributeRow), (
+        "AttributeRow must not define set_title; it shadows the row setter"
+    )
     assert InfoPage.set_name is Gtk.Widget.set_name, (
         "the inherited widget name setter must stay reachable"
     )
     assert DescriptionRow.set_title is Adw.PreferencesRow.set_title, (
+        "the inherited row title setter must stay reachable"
+    )
+    assert AttributeRow.set_title is Adw.PreferencesRow.set_title, (
         "the inherited row title setter must stay reachable"
     )
 
@@ -42,12 +56,75 @@ def test_renamed_setters_exist() -> None:
     assert callable(vars(DescriptionRow).get("set_description_title")), (
         "DescriptionRow must expose the renamed title setter"
     )
+    assert callable(vars(AttributeRow).get("set_attribute_title")), (
+        "AttributeRow must expose the renamed title setter"
+    )
+    assert callable(vars(AttributeRow).get("set_attribute")), (
+        "AttributeRow must expose the renamed value setter"
+    )
+
+
+def test_rows_hold_their_caption_under_a_name_of_their_own() -> None:
+    attribute_row = AttributeRow(title="Name:", attr="Error")
+    assert attribute_row.title_label.get_label() == "Name:"
+    assert attribute_row.attribute_label.get_label() == "Error"
+    assert "title" not in vars(attribute_row), (
+        "AttributeRow must not hold its caption in title; the row inherits that name"
+    )
+    assert vars(attribute_row).get("title_str") == "Name:"
+    assert attribute_row.get_title() == "", (
+        "the inherited title must stay empty until a caller sets it"
+    )
+
+    description_row = DescriptionRow(title="Description:", desc="N/A")
+    assert description_row.title_label.get_label() == "Description:"
+    assert description_row.description_label.get_label() == "N/A"
+    assert "title" not in vars(description_row), (
+        "DescriptionRow must not hold its caption in title; the row inherits that name"
+    )
+    assert vars(description_row).get("title_str") == "Description:"
+    assert "desc" not in vars(description_row), (
+        "DescriptionRow must hold its body text in desc_str"
+    )
+    assert description_row.get_title() == "", (
+        "the inherited title must stay empty until a caller sets it"
+    )
+
+
+def test_renamed_setters_drive_the_same_labels() -> None:
+    attribute_row = AttributeRow(title="Name:", attr="Error")
+    attribute_row.set_attribute_title("Author:")
+    attribute_row.set_attribute("core447")
+    assert attribute_row.title_label.get_label() == "Author:"
+    assert attribute_row.attribute_label.get_label() == "core447"
+    attribute_row.set_attribute(None)
+    assert attribute_row.attribute_label.get_label() == "N/A"
+
+    # The inherited setter must reach the GObject property again, and must
+    # leave the drawn labels alone.
+    attribute_row.set_title("inherited")
+    assert attribute_row.get_title() == "inherited"
+    assert attribute_row.title_label.get_label() == "Author:"
+
+    description_row = DescriptionRow(title="Description:", desc="N/A")
+    description_row.set_description_title("License Description:")
+    description_row.set_description("GPL-3.0")
+    assert description_row.title_label.get_label() == "License Description:"
+    assert description_row.description_label.get_label() == "GPL-3.0"
+    description_row.set_description(None)
+    assert description_row.description_label.get_label() == "N/A"
+
+    description_row.set_title("inherited")
+    assert description_row.get_title() == "inherited"
+    assert description_row.title_label.get_label() == "License Description:"
 
 
 def main() -> None:
     fixtures.start_watchdog(30, label="scenario_store_info_page_shadowing")
     test_inherited_setters_are_not_shadowed()
     test_renamed_setters_exist()
+    test_rows_hold_their_caption_under_a_name_of_their_own()
+    test_renamed_setters_drive_the_same_labels()
     print("scenario_store_info_page_shadowing: PASS")
 
 
