@@ -15,12 +15,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 # Import gi
 import json
 import os
-import threading
 import gi
 
 from collections.abc import Callable
 from typing import Any
 
+from src.backend.main_loop import run_in_background
 from src.windows.PageManager.Importer.StreamDeckUI.StreamDeckUI import StreamDeckUIImporter
 from src.windows.PageManager.Importer.StreamController.StreamController import StreamControllerImporter
 
@@ -61,12 +61,10 @@ class Importer(Adw.ApplicationWindow):
         self.progess_bar.set_fraction(0)
 
         if app == "streamdeck-ui":
-            thread = threading.Thread(target=self.import_from_streamdeck_ui, args=(path, on_finished), name="import_from_streamdeck_ui")
-            thread.start()
+            run_in_background(self.import_from_streamdeck_ui, path, on_finished)
 
         if app == "streamcontroller":
-            thread = threading.Thread(target=self.import_from_streamcontroller, args=(path, on_finished), name="import_from_streamcontroller")
-            thread.start()
+            run_in_background(self.import_from_streamcontroller, path, on_finished)
         
 
     @log.catch

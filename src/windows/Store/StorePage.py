@@ -21,10 +21,10 @@ gi.require_version("Adw", "1")
 from gi.repository import Gtk, GLib
 
 # Import python modules
-import threading
 from loguru import logger as log
 
 # Import own modules
+from src.backend.main_loop import run_in_background
 from src.windows.Store.InfoPage import InfoPage
 from src.windows.Store.NoConnectionError import NoConnectionError
 
@@ -66,12 +66,13 @@ class StorePage(Gtk.Stack):
         if self._loaded:
             return
         self._loaded = True
-        threading.Thread(target=self._load_guarded, name=f"load_{type(self).__name__}").start()
+        run_in_background(self._load_guarded)
 
     def load(self) -> None:
         """Subclass hook. Fetch the catalog of this tab and append the previews.
 
-        It runs on the loader thread that ensure_loaded starts.
+        It runs off the main thread, on the background worker that
+        ensure_loaded submits it to.
         """
         raise NotImplementedError
 

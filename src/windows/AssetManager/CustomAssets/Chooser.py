@@ -24,7 +24,7 @@ from gi.repository import Gtk, Gdk, GLib, Gio
 from loguru import logger as log
 
 # Import own modules
-from GtkHelper.GtkHelper import run_on_main
+from GtkHelper.GtkHelper import run_in_background, run_on_main
 from src.backend import settings_store
 from src.windows.AssetManager.ChooserPage import ChooserPage
 from src.windows.AssetManager.CustomAssets.FlowBox import CustomAssetChooserFlowBox
@@ -52,7 +52,7 @@ class CustomAssetChooser(ChooserPage):
         # _finish_build and show_for_path.
         self._build_tasks_lock = threading.Lock()
 
-        threading.Thread(target=self.build).start()
+        run_in_background(self.build)
 
     @log.catch
     def build(self) -> None:
