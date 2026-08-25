@@ -1,7 +1,7 @@
 # Deckard CI — flatpak bundle releases (design in
 # docs/ci-flatpak-releases-plan.md).
 #
-# Shape (same skeleton as the other nb-labs repos):
+# Shape (the same skeleton the sibling projects share):
 #   test     — byte-compile smoke over the tree (cheap syntax gate; the real
 #              gate is the flatpak build itself) + advisory changelog nudge.
 #   build    — flatpak-builder produces a single-file x86_64 .flatpak bundle
@@ -10,7 +10,7 @@
 #              so the job derives a CI manifest whose app module points at a
 #              clean `git archive` export of $CI_COMMIT_SHA — the same rewrite
 #              flatpak/install.sh does interactively with yq.
-#   release  — nb-labs/ci-automation bump-labeled-MR bot (auto-release +
+#   release  — the shared bump-labeled-MR bot (auto-release +
 #              tag-release) stamping VERSION + CHANGELOG.md, a GitLab Release
 #              with the bundle attached on vX.Y.Z tags, then a mirror of that
 #              release (object + bundle) to the GitHub fork.
@@ -44,7 +44,7 @@ stages: [test, build, release]
 
 variables:
   APP_ID: io.github.nazbert.Deckard
-  # Pinned nb-labs/ci-automation release tooling (the bump-labeled-MR bot).
+  # Pinned release tooling (the bump-labeled-MR bot).
   CI_AUTOMATION_REF: v0.3.0
 
 # ── test ─────────────────────────────────────────────────────────────────────
@@ -446,7 +446,7 @@ release:github:
         "https://uploads.github.com/repos/${GITHUB_REPO}/releases/$rid/assets?name=$asset"
       echo "Mirrored $asset to GitHub release $CI_COMMIT_TAG"
 
-# ── release automation (nb-labs/ci-automation) ───────────────────────────────
+# ── release automation (pinned shared tooling) ───────────────────────────────
 # A bump:*-labeled MR merged to main IS the release: auto-release stamps
 # VERSION + CHANGELOG.md, commits `release: vX.Y.Z` (no skip-ci marker, so the
 # tag pipeline runs), pushes with -o ci.skip, and tags vX.Y.Z. The tag then
@@ -457,6 +457,16 @@ release:github:
 .release:
   image: node:22
   cache: []
+  # The release commit reaches the public mirror, so this pins the identity it
+  # carries. The release tooling writes a name and an address of its own into
+  # the repo config; git reads the identity environment ahead of the config, so
+  # these values win. Set the same four names as project CI variables to change
+  # what a release commit publishes.
+  variables:
+    GIT_AUTHOR_NAME: "Deckard release bot"
+    GIT_AUTHOR_EMAIL: "noreply@github.com"
+    GIT_COMMITTER_NAME: "Deckard release bot"
+    GIT_COMMITTER_EMAIL: "noreply@github.com"
   before_script:
     - git clone --depth 1 --branch "$CI_AUTOMATION_REF"
         "https://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_SERVER_HOST}/nb-labs/ci-automation.git" .ci-automation

@@ -1,5 +1,5 @@
-// nb-labs/ci-automation release config (the bump-labeled-MR bot; see the
-// `.release` jobs in .gitlab-ci.yml). The fork's release version is the root
+// Release config for the bump-labeled-MR release bot (see the `.release` jobs
+// in .gitlab-ci.yml). The fork's release version is the root
 // VERSION file — deliberately NOT globals.py's app_version, which stays
 // aligned to upstream because plugins gate on it for compatibility checks.
 // VERSION is unused by the app itself (the StoreBackend VERSION lookups read
