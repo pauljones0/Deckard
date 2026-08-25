@@ -661,6 +661,11 @@ class App(Adw.Application):
         if isinstance(result, Err):
             self.send_notification("dialog-information-symbolic", "Failed to install plugin",
                                    f"The plugin {plugin_id} could not be installed")
+        elif gl.plugin_manager is not None and gl.plugin_manager.get_plugin_by_id(plugin_id) is None:
+            # The files installed but the plugin did not come up. The reload
+            # already told the user why; a success line on top of that error
+            # would contradict it.
+            pass
         else:
             self.send_notification("dialog-information-symbolic", "Plugin installed",
                                    f"The plugin {plugin_id} was successfully installed")

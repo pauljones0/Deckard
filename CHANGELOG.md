@@ -165,6 +165,14 @@ bundle as a release asset.
   the list of available actions in place, and a page that loaded during that
   rebuild found the list empty; the placeholder it stored then stayed until
   that page was loaded again.
+
+- A plugin installed from the store is usable right away when its install
+  brought its own requirements. The freshly installed requirement was
+  invisible to the running app, so the plugin failed to load until a restart
+  while the store reported a successful install. The reload now sees what the
+  install put in place, and a plugin that still cannot load says so in an
+  error message instead of reporting success.
+
 - Labels render apostrophes and ampersands as themselves in every language.
   A French deck-settings label showed a code where its apostrophe belongs, and
   a German onboarding line showed a code for its ampersand, because every
