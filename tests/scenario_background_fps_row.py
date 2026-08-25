@@ -6,14 +6,23 @@ key when clicked, and leaves the row showing the rate the media itself runs
 at. The row must stay wired across all of that, or a later edit is dropped
 silently.
 
+The arrow arrives late. A spin button steps its value many times a second, so
+an arrow that came at once would appear and go again through a burst of steps.
+The row therefore arms a timeout and reveals the arrow when the rate settles.
+A reveal armed that way outlives the binding that armed it, because the
+expander hides this row without loading it when the next input carries no
+video. The reveal must therefore read the page again when it runs, and both
+ends of it must leave no source id behind.
+
 This harness builds no real GTK widget. It drives the real row and expander
 methods on duck-typed stand-ins, the same pattern scenario_editor_reconnect
-uses.
+uses. The main loop is a stand-in too, so a delay passes on demand.
 """
 
 import fixtures  # noqa: F401  (must be first: isolates DATA_PATH before globals)
 
 import os
+import sys
 
 import globals as gl
 
@@ -27,6 +36,79 @@ from src.windows.mainWindow.elements.Sidebar.elements.BackgroundEditor import (
 KEY = Input.Key("0x0")
 DIAL = Input.Dial("0")
 TOUCHSCREEN = Input.Touchscreen("0")
+
+# The row reads GLib out of its own module at call time, so a stand-in put
+# here reaches every method the checks below borrow.
+ROW_MODULE = sys.modules[VideoFpsRow.__module__]
+
+
+class FakeGLib:
+    """The main loop the row arms its reveal on.
+
+    It holds each armed timeout until a check asks for the delay to pass, so
+    the reveal runs at a point the check chooses. It also refuses a removal of
+    a source that is not armed, which is the shape of a bug GLib answers with a
+    warning and a dead timer.
+    """
+
+    SOURCE_REMOVE = False
+    SOURCE_CONTINUE = True
+
+    def __init__(self) -> None:
+        self.armed: dict[int, tuple[int, object]] = {}
+        self.fires = 0
+        self.idles: list[object] = []
+        self._next = 100
+
+    def timeout_add(self, delay_ms, callback, *args):
+        source_id = self._next
+        self._next += 1
+        self.armed[source_id] = (delay_ms, callback)
+        return source_id
+
+    def idle_add(self, callback, *args):
+        """Run the callback at once, and keep it for a check to read.
+
+        The image row hands work to the main loop this way. Nothing in this
+        file reaches that yet, so this stands in front of the AttributeError a
+        check that does would otherwise die on.
+        """
+        source_id = self._next
+        self._next += 1
+        self.idles.append(callback)
+        callback(*args)
+        return source_id
+
+    def source_remove(self, source_id):
+        if source_id not in self.armed:
+            raise AssertionError(
+                f"source_remove({source_id!r}) hit a source that is not armed; "
+                f"armed: {sorted(self.armed)}")
+        del self.armed[source_id]
+
+    def elapse(self) -> None:
+        """Let every armed delay pass, as the main loop would."""
+        for source_id, (_delay, callback) in list(self.armed.items()):
+            del self.armed[source_id]
+            self.fires += 1
+            callback()
+
+    def only_delay(self) -> int:
+        """The delay of the single armed timeout."""
+        delays = [delay for delay, _callback in self.armed.values()]
+        if len(delays) != 1:
+            raise AssertionError(f"expected one armed timeout, got {len(delays)}")
+        return delays[0]
+
+
+def install_glib() -> FakeGLib:
+    """Give the row a fresh main loop stand-in and hand it to the check."""
+    glib = FakeGLib()
+    ROW_MODULE.GLib = glib
+    return glib
+
+
+install_glib()
 
 
 def media_file(name: str) -> str:
@@ -72,11 +154,16 @@ class FakeSpinner:
 
 
 class FakeRevert:
+    """The revert arrow, which build() starts hidden."""
+
     def __init__(self) -> None:
-        self.visible = None
+        self.visible = False
 
     def set_visible(self, value):
         self.visible = value
+
+    def get_visible(self):
+        return self.visible
 
 
 class FakePage:
@@ -135,11 +222,15 @@ class FakeFpsRow:
 
     MIN_FPS = VideoFpsRow.MIN_FPS
     MAX_FPS = VideoFpsRow.MAX_FPS
+    REVEAL_DELAY_MS = VideoFpsRow.REVEAL_DELAY_MS
     load_for_identifier = VideoFpsRow.load_for_identifier
     on_change = VideoFpsRow.on_change
     on_revert = VideoFpsRow.on_revert
+    cancel_reveal = VideoFpsRow.cancel_reveal
     connect_signals = VideoFpsRow.connect_signals
     disconnect_signals = VideoFpsRow.disconnect_signals
+    _reveal_revert = VideoFpsRow._reveal_revert
+    _request_revert = VideoFpsRow._request_revert
     _uses_media_fps = VideoFpsRow._uses_media_fps
     _write_fps = VideoFpsRow._write_fps
     _stored_fps = VideoFpsRow._stored_fps
@@ -152,6 +243,7 @@ class FakeFpsRow:
         self.active_identifier = None
         self.active_state = None
         self._change_handler = None
+        self._reveal_source = None
         self.visible = None
         self.connect_signals()
 
@@ -283,6 +375,7 @@ def check_native_rate_is_clamped_into_range() -> int:
 
 def check_change_then_revert_round_trip() -> int:
     """An edit stores a rate; a revert clears it and shows the media's own."""
+    glib = install_glib()
     page = FakePage(media_path=media_file("clip.gif"), native=9.6)
     install(page)
     row = FakeFpsRow()
@@ -294,6 +387,7 @@ def check_change_then_revert_round_trip() -> int:
         print(f"FAIL(edit): the spinner change did not reach the page: "
               f"{page.writes}")
         return 1
+    glib.elapse()
     if row.revert_button.visible is not True:
         print("FAIL(edit): setting a rate must reveal the revert arrow")
         return 1
@@ -314,6 +408,257 @@ def check_change_then_revert_round_trip() -> int:
               f"rate (9.6 rounds to 10), got {row.spinner.get_value()!r}")
         return 1
     print("PASS: an edit stores a rate and a revert clears it back to native")
+    return 0
+
+
+def check_the_arrow_waits_for_the_delay() -> int:
+    """An edit must not put the arrow on screen in the same frame.
+
+    The arrow shares a linked box with the spinner, so it moves the spinner
+    sideways the moment it appears. It waits instead, and arrives once the
+    rate has held.
+    """
+    glib = install_glib()
+    page = FakePage(media_path=media_file("clip.gif"), native=9.6)
+    install(page)
+    row = FakeFpsRow()
+    row.load_for_identifier(KEY, 0)
+
+    row.spinner.set_value(6)
+    row.spinner.fire()
+    if row.revert_button.visible is not False:
+        print("FAIL(delay): the revert arrow appeared in the same frame as the "
+              "edit; it must wait, or a spin through the range flashes it")
+        return 1
+    if glib.only_delay() != FakeFpsRow.REVEAL_DELAY_MS:
+        print(f"FAIL(delay): the reveal was armed for {glib.only_delay()!r} ms, "
+              f"not the row's {FakeFpsRow.REVEAL_DELAY_MS} ms")
+        return 1
+    glib.elapse()
+    if row.revert_button.visible is not True:
+        print("FAIL(delay): the revert arrow never arrived once the delay "
+              "passed")
+        return 1
+    print("PASS: the revert arrow arrives a delay after the edit, not with it")
+    return 0
+
+
+def check_the_delay_outlasts_a_burst_of_steps() -> int:
+    """The delay is a number the flash depends on, so it takes a floor.
+
+    A held spinner arrow repeats about every 50 ms, and a hand that flicks the
+    scroll wheel back reaches the top of the range inside about 150 ms. A
+    shorter delay reveals the arrow inside such a pass, which is the flash.
+    A much longer one stops reading as the answer to the edit at all.
+    """
+    if not 150 <= VideoFpsRow.REVEAL_DELAY_MS <= 500:
+        print(f"FAIL(delay-value): the reveal delay is "
+              f"{VideoFpsRow.REVEAL_DELAY_MS} ms; under 150 ms it fires inside "
+              f"a burst of spinner steps and flashes the arrow, over 500 ms it "
+              f"stops reading as the answer to the edit")
+        return 1
+    print(f"PASS: the reveal delay of {VideoFpsRow.REVEAL_DELAY_MS} ms outlasts "
+          f"a burst of spinner steps")
+    return 0
+
+
+def check_a_quick_pass_reveals_nothing() -> int:
+    """A rate that comes and goes inside the delay must show no arrow at all.
+
+    This is the flash: a spin off the ceiling and back, which every pass down
+    the range starts with.
+    """
+    glib = install_glib()
+    page = FakePage(media_path=media_file("clip.gif"), native=9.6)
+    install(page)
+    row = FakeFpsRow()
+    row.load_for_identifier(KEY, 0)
+
+    for value in (29, 28, 27, 28, 29, FakeFpsRow.MAX_FPS):
+        row.spinner.set_value(value)
+        # Each step drops the reveal the step before it armed. A step that
+        # drops some other source leaves its own reveal running, and the main
+        # loop answers a stale id with a warning and nothing else.
+        try:
+            row.spinner.fire()
+        except AssertionError as e:
+            print(f"FAIL(flash): a spinner step removed the wrong source: {e}")
+            return 1
+        if row.revert_button.visible is not False:
+            print(f"FAIL(flash): the revert arrow appeared at {value} fps, "
+                  f"partway through a pass that ends back at the ceiling")
+            return 1
+    glib.elapse()
+    if glib.fires:
+        print(f"FAIL(flash): {glib.fires} reveal(s) ran after a pass that ended "
+              f"back at the ceiling; the pass left nothing to revert")
+        return 1
+    if row.revert_button.visible is not False:
+        print("FAIL(flash): the arrow is on screen after a pass that ended back "
+              "at the ceiling")
+        return 1
+    print("PASS: a pass down the range and back reveals no arrow")
+    return 0
+
+
+def hidden_row_after_an_edit(rate_survives):
+    """Arm a reveal, then hide the row the way the expander hides it.
+
+    The expander hides this row when the input it shows carries no video, and
+    it does not load the row for that input, so the row stays bound to the one
+    before and the reveal armed for it stays armed. rate_survives says whether
+    that binding still carries a rate by the time the reveal runs.
+    """
+    glib = install_glib()
+    page = FakePage(media_path=media_file("clip.gif"), native=9.6)
+    install(page)
+    row = FakeFpsRow()
+    expander = FakeExpander(row, FakeLoopRow())
+    expander.active_identifier = KEY
+    expander.active_state = 0
+    row.load_for_identifier(KEY, 0)
+
+    row.spinner.set_value(6)
+    row.spinner.fire()
+
+    # The media goes, so the expander hides the row with no load behind it.
+    page.media_path = None
+    expander.update_video_rows()
+    if not rate_survives:
+        page.media_fps = None
+    return glib, row
+
+
+def check_a_hidden_row_reveals_for_its_own_binding() -> int:
+    """A reveal must read the page when it runs, not trust the edit that
+    armed it.
+
+    A hide leaves the row bound to the input before it, and the rate that
+    input carries can be gone by the time the reveal runs. An arrow put up
+    blind then states a rate that is not there.
+    """
+    glib, row = hidden_row_after_an_edit(rate_survives=False)
+    if row.visible is not False:
+        print("FAIL(hidden): the row stayed on screen with no video to rate")
+        return 1
+    if not glib.armed:
+        print("FAIL(hidden): the hide dropped the reveal; this check needs it "
+              "to survive, because surviving is the state it must handle")
+        return 1
+    glib.elapse()
+    if row.revert_button.visible is not False:
+        print("FAIL(hidden): the reveal put up the arrow for an input that "
+              "carries no rate; it trusted the edit that armed it instead of "
+              "reading the page")
+        return 1
+
+    glib, row = hidden_row_after_an_edit(rate_survives=True)
+    glib.elapse()
+    if row.revert_button.visible is not True:
+        print("FAIL(hidden): the reveal dropped an arrow the input still "
+              "earns")
+        return 1
+    if glib.fires != 1 or glib.armed:
+        print(f"FAIL(hidden): {glib.fires} reveal(s) ran and "
+              f"{len(glib.armed)} stayed armed; one must run and none stay")
+        return 1
+    print("PASS: a reveal on a hidden row states what its input carries now")
+    return 0
+
+
+def check_a_spent_or_cancelled_reveal_leaves_no_id() -> int:
+    """Both ends of a reveal must clear the source id.
+
+    A kept id makes the next cancel remove a source the main loop has already
+    dropped. The loop answers that with a warning and nothing else, so the
+    reveal that cancel was meant to drop keeps running.
+    """
+    glib = install_glib()
+    page = FakePage(media_path=media_file("clip.gif"), native=9.6)
+    install(page)
+    row = FakeFpsRow()
+    row.load_for_identifier(KEY, 0)
+    row.spinner.set_value(6)
+    row.spinner.fire()
+    row.load_for_identifier(KEY, 0)
+    try:
+        row.load_for_identifier(KEY, 1)
+    except AssertionError as e:
+        print(f"FAIL(stale-id): a cancel kept the id of a source it had "
+              f"already dropped: {e}")
+        return 1
+
+    glib = install_glib()
+    page = FakePage(media_path=media_file("clip.gif"), native=9.6)
+    install(page)
+    row = FakeFpsRow()
+    row.load_for_identifier(KEY, 0)
+    row.spinner.set_value(6)
+    row.spinner.fire()
+    glib.elapse()
+    try:
+        row.load_for_identifier(KEY, 0)
+    except AssertionError as e:
+        print(f"FAIL(stale-id): a reveal that ran kept its id: {e}")
+        return 1
+    print("PASS: a cancelled and a spent reveal both leave no id behind")
+    return 0
+
+
+def check_a_load_drops_a_pending_reveal() -> int:
+    """A reveal armed for one input must not land on the next one.
+
+    A load binds the row to another input, and the row may be showing that
+    one's rate, which needs no arrow at all.
+    """
+    glib = install_glib()
+    page = FakePage(media_path=media_file("clip.gif"), native=9.6)
+    install(page)
+    row = FakeFpsRow()
+    row.load_for_identifier(KEY, 0)
+
+    row.spinner.set_value(6)
+    row.spinner.fire()
+    page.media_fps = None
+    row.load_for_identifier(KEY, 1)
+    if glib.armed:
+        print(f"FAIL(rebind): {len(glib.armed)} reveal(s) armed for the input "
+              f"before survived the load")
+        return 1
+    glib.elapse()
+    if row.revert_button.visible is not False:
+        print("FAIL(rebind): the arrow is on screen for an input whose page "
+              "carries no rate")
+        return 1
+    print("PASS: a load drops a reveal armed for the input before it")
+    return 0
+
+
+def check_a_shown_arrow_is_not_re_armed() -> int:
+    """An arrow already on screen must not be taken away and delayed again.
+
+    Every step of an edit that starts from a stored rate would otherwise
+    restart the wait and hide the arrow it already earned.
+    """
+    glib = install_glib()
+    page = FakePage(media_path=media_file("clip.gif"), media_fps=12, native=9.6)
+    install(page)
+    row = FakeFpsRow()
+    row.load_for_identifier(KEY, 0)
+    if row.revert_button.visible is not True:
+        print("FAIL(shown): a stored rate must show the arrow on load")
+        return 1
+
+    row.spinner.set_value(11)
+    row.spinner.fire()
+    if row.revert_button.visible is not True:
+        print("FAIL(shown): a further edit took the arrow away again")
+        return 1
+    if glib.armed:
+        print(f"FAIL(shown): {len(glib.armed)} reveal(s) armed for an arrow "
+              f"that is already on screen")
+        return 1
+    print("PASS: an arrow already on screen stays through further edits")
     return 0
 
 
@@ -432,6 +777,13 @@ def main() -> int:
     rc |= check_revert_hidden_until_a_rate_is_set()
     rc |= check_native_rate_is_clamped_into_range()
     rc |= check_change_then_revert_round_trip()
+    rc |= check_the_arrow_waits_for_the_delay()
+    rc |= check_the_delay_outlasts_a_burst_of_steps()
+    rc |= check_a_quick_pass_reveals_nothing()
+    rc |= check_a_hidden_row_reveals_for_its_own_binding()
+    rc |= check_a_spent_or_cancelled_reveal_leaves_no_id()
+    rc |= check_a_load_drops_a_pending_reveal()
+    rc |= check_a_shown_arrow_is_not_re_armed()
     rc |= check_top_of_range_stores_no_rate()
     rc |= check_stored_top_reads_as_no_rate()
     rc |= check_revert_leaves_the_row_wired()
