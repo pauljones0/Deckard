@@ -16,6 +16,7 @@ SMOKE_SCENARIOS = [
     "scenario_input_pipeline.py",
     "scenario_page_save_mutation.py",
     "scenario_shutdown.py",
+    "scenario_background_wait_yield.py",
     "scenario_writer_survival.py",
     "scenario_runner_timeout_descendants.py",
     "scenario_scenario_list.py",

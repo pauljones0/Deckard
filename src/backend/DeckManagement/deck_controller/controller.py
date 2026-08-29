@@ -38,8 +38,8 @@ import math
 import os
 import threading
 import time
+from contextlib import nullcontext
 from concurrent.futures import Future
-from concurrent.futures import TimeoutError as FutureTimeoutError
 from functools import partial
 from threading import Thread
 
@@ -59,6 +59,7 @@ from src.backend.DeckManagement.Subclasses.native_tile_cache import NativeTileCa
 from src.backend.DeckManagement.deck_controller.background_media import Background, BackgroundVideo
 from src.backend.DeckManagement.deck_controller.inputs import ControllerDial, ControllerKey, ControllerTouchScreen
 from src.backend.DeckManagement.deck_controller.input_latency import InputLatencyRun, dispatch_dial_callback, dispatch_key_callback, dispatch_touchscreen_callback, make_input_latency_tracker, write_input_latency_report
+from src.backend.DeckManagement.deck_controller.page_completion import PageLoadCompletion
 from src.backend.DeckManagement.deck_controller.media_writer import (
     ClearAndCloseMsg,
     ClearMsg,
@@ -214,6 +215,7 @@ class DeckController:
         # overwrite a newer page's background.
         self._background_load_lock = threading.Lock()
         self._bg_future: "Future[None] | None" = None
+        self._page_completion: PageLoadCompletion | None = None
         self._input_load_done = control_plane.InputLoadBarrier()
 
         # Native encoded key image caches. Build them before the inputs and
@@ -499,37 +501,6 @@ class DeckController:
             for i in self.inputs[t]:
                 i.update()
         log.debug(f"Updating all inputs took {time.time() - start} seconds")
-
-    def _update_all_inputs_awaiting_background(self, bg_future: "Future[None] | None", gen: "int | None" = None) -> None:
-        # This runs on the media thread. Skip at once when superseded, then
-        # wait out the background decode under a bound, so the keys composite
-        # over the new background. The wait blocks the sole writer, and it
-        # runs in slices, so a page switch that supersedes this one mid-decode
-        # abandons it at the next slice instead of sitting out the rest of a
-        # 10s decode for a page the deck already left.
-        if not self._page_is_current(gen):
-            return
-        if bg_future is not None:
-            deadline = time.time() + 10
-            while True:
-                try:
-                    bg_future.result(timeout=0.5)
-                    break
-                except FutureTimeoutError:
-                    if not self._page_is_current(gen):
-                        return
-                    if time.time() >= deadline:
-                        log.warning("Background not ready before update_all_inputs; painting anyway")
-                        break
-                except Exception:
-                    log.warning("Background not ready before update_all_inputs; painting anyway")
-                    break
-        self.update_all_inputs(gen=gen)
-        # The inputs are loaded and painted. Media tasks are FIFO, so
-        # load_all_inputs finished before this task ran, and the sidebar can
-        # render the new page's state objects.
-        if self._page_is_current(gen):
-            ui_port.get().on_page_changed(self)
 
     def animations_gated(self) -> bool:
         """Whether this deck's media loop skips its animation section this
@@ -1004,6 +975,8 @@ class DeckController:
         # plugin-facing tail, the ChangePage signal and DBus, stays outside,
         # so a slow handler cannot block other callers on this lock.
         with self._load_page_lock:
+            if self._closing:
+                return
             if not allow_reload:
                 if self.active_page is page:
                     return
@@ -1077,6 +1050,9 @@ class DeckController:
                     for controller_input in self.inputs[input_type]:
                         controller_input.config_gen = gen
 
+            if self._page_completion is not None:
+                self._page_completion.cancel()
+
             # active_page protects the page now, so the fetch pin can
             # release. The screensaver branch skips this, because its page
             # reaches no deck yet and the reservation carries it to hide().
@@ -1101,18 +1077,23 @@ class DeckController:
             bg_future = None
             if load_background:
                 # Decode the background off the media thread so it overlaps the
-                # input load. The update task below awaits it before compositing.
+                # input load. The completion callback queues compositing only
+                # after the background and input marker are ready.
                 from src.backend.main_loop import run_in_background
                 if self._bg_future is not None:
                     self._bg_future.cancel()
                 bg_future = run_in_background(self.load_background, page, update=False, gen=gen)
                 self._bg_future = bg_future
+            completion = PageLoadCompletion(self, gen, wait_for_inputs=load_inputs)
+            self._page_completion = completion
+            completion.watch_background(bg_future)
             if load_brightness:
                 self.load_brightness(page)
             if load_screensaver:
                 self.load_screensaver(page)
             if load_inputs:
                 self.media_player.add_task(self.load_all_inputs, page, update=False, gen=gen)
+                self.media_player.add_task(completion.inputs_finished)
             else:
                 # No content reloads, but the generation bumped. Advance each
                 # input's config_gen so its unchanged content is not dropped
@@ -1120,8 +1101,6 @@ class DeckController:
                 for input_type in self.inputs:
                     for controller_input in self.inputs[input_type]:
                         controller_input.config_gen = gen
-
-            self.media_player.add_task(self._update_all_inputs_awaiting_background, bg_future, gen)
 
         # This must stay outside _load_page_lock. initialize_actions can block
         # on a run_on_main marshal and deadlock against a main-thread
@@ -1446,31 +1425,28 @@ class DeckController:
         input media and the caches. The device, thread and registration
         teardown always runs.
         """
-        # Locked compare-and-set. Two teardown callers, the USB unplug thread
-        # and the app-quit main thread, both pass an unlocked check-then-set
-        # and run the whole sweep at once, which duplicates the plugin
-        # on_removed hooks and closes the device twice. Only the transition
-        # takes the lock; the sweep stays unlocked, because it can block on
-        # plugin hooks.
-        with self._close_lock:
-            if self._closing:
-                return
-            self._closing = True
+        # Serialize the close transition with page-load installation. Either
+        # load_page completes its switch body first and this cancels all state
+        # it installed, or it enters later and sees _closing. The slow sweep
+        # stays outside both locks because plugin hooks can block.
+        load_page_lock = getattr(self, "_load_page_lock", None)
+        with load_page_lock if load_page_lock is not None else nullcontext():
+            with self._close_lock:
+                if self._closing:
+                    return
+                self._closing = True
 
-        # Invalidate any in-flight page load now. A load_page that already
-        # passed the _closing gate can otherwise attach a fresh
-        # BackgroundVideo, with its cv2 capture, its registry reference and a
-        # builder thread, after the resource sweep, and it leaks until process
-        # exit. The generation bump aborts load_background, load_all_inputs
-        # and the awaiting-update task at their generation checks, and the
-        # cancel covers a decode that has not started.
-        page_gen_lock = getattr(self, "_page_gen_lock", None)
-        if page_gen_lock is not None:
-            with page_gen_lock:
-                self._page_load_generation += 1
-        bg_future = getattr(self, "_bg_future", None)
-        if bg_future is not None:
-            bg_future.cancel()
+            page_gen_lock = getattr(self, "_page_gen_lock", None)
+            if page_gen_lock is not None:
+                with page_gen_lock:
+                    self._page_load_generation += 1
+            page_completion = getattr(self, "_page_completion", None)
+            if page_completion is not None:
+                page_completion.cancel()
+                self._page_completion = None
+            bg_future = getattr(self, "_bg_future", None)
+            if bg_future is not None:
+                bg_future.cancel()
 
         if not app_quit and threading.current_thread() is threading.main_thread():
             # A soft guard, not a hard failure. The test harness teardown()
