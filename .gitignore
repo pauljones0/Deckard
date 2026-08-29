@@ -214,3 +214,5 @@ uv.lock
 
 
 .DS_Store
+# Historical one-off hardware verifiers: machine-specific, kept locally only.
+tests/hardware/manual/archive/
