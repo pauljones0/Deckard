@@ -44,6 +44,7 @@ a closed one. No installed plugin does that, and AudioControl is the only
 producer of async observers.
 """
 import asyncio
+import inspect
 import threading
 import time
 from collections import deque
@@ -99,6 +100,14 @@ _WEDGE_REWARN_S = 30.0
 _MONITOR_INTERVAL_S = 5.0
 _BACKLOG_WARN_THRESHOLD = 100
 
+# Hard cap on a lane's queued batches. A wedged observer holds its lane's
+# runner, and every later dispatch appends another batch that retains its
+# observer list, args and kwargs, so without a cap the queue and the graph it
+# reaches grow without bound. Past this cap the lane drops its oldest queued
+# batch (latest-wins) and counts the drop. Set far above the warn threshold,
+# so an ordinary burst never drops and only a genuine stall reaches it.
+_QUEUE_MAX = 1000
+
 # A runner with nothing to do for this long exits and closes its loop. The next
 # dispatch on that lane spawns a new runner, so many idle holders cost no
 # thread, and the runner of a hot lane never reaches the timeout.
@@ -118,8 +127,21 @@ _shutdown = False
 
 
 def _observer_name(observer: object) -> str:
-    return cast(str, getattr(observer, "__qualname__",
-                             getattr(observer, "__name__", repr(observer))))
+    # Do not evaluate repr(observer) unless it is needed: the two-arg getattr
+    # default is eager, so the old inner default ran the observer's __repr__
+    # for every observer, and the caller ran this under _watch_lock. A
+    # plugin's custom __repr__ then executed under the coordination lock, and
+    # a raising one broke dispatch. Read the cheap names first, fall back to a
+    # guarded repr, and let the caller name observers off the lock.
+    name = getattr(observer, "__qualname__", None)
+    if name is None:
+        name = getattr(observer, "__name__", None)
+    if name is None:
+        try:
+            name = repr(observer)
+        except Exception:
+            name = "<unrepresentable observer>"
+    return cast(str, name)
 
 
 def _ensure_monitor() -> None:
@@ -212,6 +234,10 @@ class Lane:
         self.current: _CurrentObserver = {"name": None, "label": None, "started": 0.0, "next_warn": 0.0}
         self.backlog = 0
         self.backlog_warned = False
+        # Batches dropped over this lane's lifetime because the queue was at
+        # its cap. Nonzero means a wedged observer shed work; the monitor
+        # surfaces it.
+        self.dropped = 0
         with _watch_lock:
             _lanes.add(self)
 
@@ -261,6 +287,7 @@ class Lane:
             raise
 
     def _enqueue(self, batch: tuple[Any, ...]) -> None:
+        dropped = 0
         with self._cond:
             if _shutdown:
                 # Re-checked under the lock the runner exits on. shutdown()
@@ -268,14 +295,40 @@ class Lane:
                 # a new runner behind it during teardown.
                 raise DispatchShutdown("event dispatch is shut down")
             self._pending.append(batch)
+            # Bound the queue. A runner wedged in one observer cannot drain,
+            # so drop the oldest queued batches until the queue is back under
+            # the cap. Dropping the oldest keeps the freshest state a stalled
+            # observer will eventually see, and releases the observer lists and
+            # arguments the dropped batches retained.
+            while len(self._pending) > _QUEUE_MAX:
+                self._pending.popleft()
+                dropped += 1
             if self._runner is not None:
                 self._cond.notify()
-                return
-            try:
-                self._spawn_locked()
-            except BaseException:
-                self._pending.pop()
-                raise
+            else:
+                try:
+                    self._spawn_locked()
+                except BaseException:
+                    self._pending.pop()
+                    raise
+        if dropped:
+            self._account_dropped(dropped)
+
+    def _account_dropped(self, dropped: int) -> None:
+        """Retire the backlog counts of dropped batches and record them.
+
+        Runs off self._cond. The dropped batches never reach _run_batch, which
+        owns the backlog decrement, so it happens here instead."""
+        global _backlog
+        with _watch_lock:
+            _backlog -= dropped
+            self.backlog -= dropped
+            self.dropped += dropped
+            total = self.dropped
+        log.error(
+            f"event dispatch lane {self.name} dropped {dropped} queued "
+            f"batch(es) at the {_QUEUE_MAX}-batch cap ({total} dropped in "
+            f"all); a wedged observer is shedding events")
 
     def _spawn_locked(self) -> None:
         """Start this lane's runner. The caller holds self._cond."""
@@ -364,16 +417,24 @@ class Lane:
             loop = _get_loop()
             asyncio.set_event_loop(loop)
             for observer in observers:
+                # Compute the display name off the lock: it may run a plugin's
+                # __repr__, which must not execute under _watch_lock.
+                observer_name = _observer_name(observer)
                 with _watch_lock:
-                    self.current["name"] = _observer_name(observer)
+                    self.current["name"] = observer_name
                     self.current["label"] = label
                     self.current["started"] = time.monotonic()
                     self.current["next_warn"] = _WEDGE_WARN_S
                 try:
-                    if asyncio.iscoroutinefunction(observer):
-                        loop.run_until_complete(observer(*args, **kwargs))
-                    else:
-                        observer(*args, **kwargs)
+                    # Invoke once, then await the result if it is awaitable.
+                    # iscoroutinefunction is False for a callable instance whose
+                    # __call__ is async and for a decorated wrapper that returns
+                    # a coroutine, so the old branch discarded their awaitables
+                    # unrun. A plain function returns a non-awaitable and needs
+                    # no loop.
+                    result = observer(*args, **kwargs)
+                    if inspect.isawaitable(result):
+                        loop.run_until_complete(result)
                 except Exception:
                     name = getattr(observer, "__name__", repr(observer))
                     where = f" in {label}" if label else ""

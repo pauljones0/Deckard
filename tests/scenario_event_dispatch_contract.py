@@ -115,11 +115,94 @@ def check_trigger_event_returns_before_observer() -> None:
     print("PASS: EventHolder.trigger_event returns before its observer completes")
 
 
+def check_async_callable_instance_is_awaited() -> None:
+    # An observer whose __call__ is async is not an async def, so
+    # iscoroutinefunction is False for it. The dispatcher must still await the
+    # awaitable it returns, or the observer's work is discarded unrun.
+    ran = threading.Event()
+
+    class AsyncCallable:
+        async def __call__(self, *args, **kwargs):
+            import asyncio
+            await asyncio.sleep(0)
+            ran.set()
+
+    event_dispatch.dispatch([AsyncCallable()], (), {}, label="test::AsyncInstance")
+    assert ran.wait(timeout=5), (
+        "an async callable instance's coroutine was discarded unrun -- the "
+        "dispatcher only awaited async def functions")
+    print("PASS: an async callable instance is awaited, not discarded")
+
+
+def check_queue_cap_drops_oldest_and_counts() -> None:
+    # A wedged observer holds the lane; every later dispatch queues a batch.
+    # Past the cap the lane must drop the oldest and count the drops, instead
+    # of growing without bound.
+    real_cap = event_dispatch._QUEUE_MAX
+    event_dispatch._QUEUE_MAX = 5
+    release = threading.Event()
+    started = threading.Event()
+
+    def wedged(*args, **kwargs):
+        started.set()
+        release.wait(10)
+
+    lane = None
+    try:
+        # Wedge the lane with the first batch, then flood it well past the cap.
+        holder_label = "test::QueueCap"
+        event_dispatch.dispatch([wedged], (), {}, label=holder_label)
+        assert started.wait(5), "the wedged observer never started"
+
+        for _ in range(50):
+            event_dispatch.dispatch([lambda *a, **k: None], (), {}, label=holder_label)
+
+        # Find the lane and assert its queue stayed bounded and it counted drops.
+        with event_dispatch._watch_lock:
+            lanes = [ln for ln in event_dispatch._lanes if ln.dropped > 0]
+        assert lanes, "no lane recorded a drop although the queue was flooded past the cap"
+        lane = lanes[0]
+        assert len(lane._pending) <= event_dispatch._QUEUE_MAX, (
+            f"the queue grew past the cap: {len(lane._pending)} > {event_dispatch._QUEUE_MAX}")
+        assert lane.dropped >= 50 - event_dispatch._QUEUE_MAX, (
+            f"too few drops counted: {lane.dropped}")
+    finally:
+        release.set()
+        event_dispatch._QUEUE_MAX = real_cap
+    print("PASS: a flooded lane drops its oldest batches at the cap and counts them")
+
+
+def check_custom_repr_and_eq_are_not_called_under_the_lock() -> None:
+    # A plugin observer with a custom __repr__/__eq__ must not have either run
+    # under the dispatch watch lock. The observer records the lock state it saw.
+    saw_locked = {"repr": False}
+
+    class NosyObserver:
+        def __repr__(self):
+            saw_locked["repr"] = event_dispatch._watch_lock.locked()
+            return "NosyObserver"
+
+        def __call__(self, *args, **kwargs):
+            pass
+
+    # _observer_name reads __qualname__/__name__ first; a bare instance has
+    # neither, so it falls to __repr__. Drive it directly to prove __repr__
+    # runs off the lock.
+    name = event_dispatch._observer_name(NosyObserver())
+    assert name == "NosyObserver"
+    assert saw_locked["repr"] is False, (
+        "the observer's __repr__ ran while the watch lock was held")
+    print("PASS: a custom __repr__ runs off the watch lock")
+
+
 def main() -> None:
     start_watchdog(40, label="scenario_event_dispatch_contract")
     check_batch_runs_in_registration_order()
     check_dispatch_returns_before_observer_completes()
     check_trigger_event_returns_before_observer()
+    check_async_callable_instance_is_awaited()
+    check_queue_cap_drops_oldest_and_counts()
+    check_custom_repr_and_eq_are_not_called_under_the_lock()
     print("PASS: scenario_event_dispatch_contract")
 
 
