@@ -77,7 +77,7 @@ import globals as gl
 
 from typing import Any, TYPE_CHECKING, Generic, TypeVar
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Sequence
+    from collections.abc import Callable, Iterable, Sequence
 
     from src.backend.DeckManagement.BetterDeck import BetterDeck
     from threading import Timer
@@ -365,7 +365,13 @@ class ControllerInput(Generic[StateT]):
         image of its own. The UI mirror reads it on map."""
         raise NotImplementedError
 
-    def load_from_input_dict(self, input_dict: "dict[str, Any]", update: bool = True, page: "Page | None" = None) -> None:
+    def load_from_input_dict(self, input_dict: "dict[str, Any]", update: bool = True, page: "Page | None" = None, *,
+                             still_current: "Callable[[], bool] | None" = None) -> None:
+        """still_current, when given, is re-asked at every mutation boundary.
+        A load whose page was superseded mid-flight must stop mutating this
+        shared input: the pool's deadline abandons the wait, not the task, so
+        a plugin callback that blocked past it resumes on an input the next
+        page has already re-stamped."""
         pass
 
     def add_new_state(self, switch: bool = True) -> None:
@@ -939,7 +945,8 @@ class ControllerKey(ControllerInput["ControllerKeyState"]):
 
         return background
     
-    def load_from_input_dict(self, input_dict: "dict[str, Any]", update: bool = True, page: "Page | None" = None, load_labels: bool = True, load_media: bool = True, load_background_color: bool = True) -> None:
+    def load_from_input_dict(self, input_dict: "dict[str, Any]", update: bool = True, page: "Page | None" = None, load_labels: bool = True, load_media: bool = True, load_background_color: bool = True, *,
+                             still_current: "Callable[[], bool] | None" = None) -> None:
         """
         Disabling load_media can also disable custom user assets.
         """
@@ -951,6 +958,15 @@ class ControllerKey(ControllerInput["ControllerKeyState"]):
 
         #TODO: Reset states
         for state_key in input_dict.get("states", {}):
+            # Re-check the load's currency at every mutation boundary. The
+            # loader pool's deadline abandons the wait, not the task, so a
+            # plugin callback in own_actions_update below can block past a
+            # page switch and resume here after the next page re-stamped this
+            # same object. Stopping mid-load leaves partially loaded states,
+            # which the superseding load rewrites; continuing would mutate the
+            # new page's live input.
+            if still_current is not None and not still_current():
+                return
             state = self.states.get(int(state_key))
             if state is None:
                 continue
@@ -969,6 +985,12 @@ class ControllerKey(ControllerInput["ControllerKeyState"]):
                 state.layout_manager.set_action_layout(layout, update=False)
 
             state.own_actions_update() # Why not threaded? Because this would mean that some image changing calls might get executed after the next lines which blocks custom assets
+
+            # The call above is the one that runs plugin code inline and can
+            # block for the whole superseding window; ask again before the
+            # label and media writes below land on a re-stamped input.
+            if still_current is not None and not still_current():
+                return
 
             ## Load labels
             if load_labels:
@@ -1318,7 +1340,8 @@ class ControllerDial(ControllerInput["ControllerDialState"]):
                     actions=turn_actions
                 )
 
-    def load_from_input_dict(self, input_dict: "dict[str, Any]", update: bool = True, page: "Page | None" = None) -> None:
+    def load_from_input_dict(self, input_dict: "dict[str, Any]", update: bool = True, page: "Page | None" = None, *,
+                             still_current: "Callable[[], bool] | None" = None) -> None:
         n_states = len(input_dict.get("states", {}))
 
         restored = self._recreate_states_keeping_action_media(n_states)
@@ -1326,6 +1349,10 @@ class ControllerDial(ControllerInput["ControllerDialState"]):
         self.state = self.persisted_state.on_load(self, input_dict, page)
 
         for state_key in input_dict.get("states", {}):
+            # As on the key loader: a load superseded mid-flight stops
+            # mutating this shared input at the next boundary.
+            if still_current is not None and not still_current():
+                return
             state = self.states.get(int(state_key))
             if state is None:
                 continue
@@ -1341,6 +1368,10 @@ class ControllerDial(ControllerInput["ControllerDialState"]):
                 state.layout_manager.set_action_layout(layout, update=False)
 
             state.own_actions_update() # Why not threaded? Because this would mean that some image changing calls might get executed after the next lines which blocks custom assets
+
+            # The plugin-blocking call; ask again before the writes below.
+            if still_current is not None and not still_current():
+                return
 
             ## Load labels
             for label in state_dict.get("labels", []):

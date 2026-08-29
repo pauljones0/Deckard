@@ -1,0 +1,118 @@
+"""A page load superseded mid-flight stops mutating the shared input.
+
+The loader pool's deadline abandons the wait, not the task: a plugin callback
+inside own_actions_update can block past a page switch and resume against an
+input the next page has re-stamped. load_from_input_dict now takes a
+still_current probe and re-asks it at every mutation boundary, so the
+resumed load stops instead of writing the old page's labels and media over
+the new page's live state. This flips the probe inside the blocking call and
+asserts nothing lands after it, then proves a current load still applies
+everything, and that the controller wires the probe to its generation check.
+"""
+import fixtures  # noqa: F401  (must be first: isolates DATA_PATH before globals)
+
+import globals as gl  # noqa: F401, E402
+from fixtures import start_watchdog  # noqa: E402
+
+from src.backend.DeckManagement.InputIdentifier import Input  # noqa: E402
+from src.backend.DeckManagement.deck_controller import input_state_classes  # noqa: E402
+
+
+CONFIG = {
+    "states": {
+        "0": {
+            "labels": {"bottom": {"text": "OLD-PAGE"}},
+            "media": {},
+        }
+    }
+}
+
+
+def main() -> int:
+    start_watchdog(60, "page_load_supersede")
+    controller = fixtures.make_headless_controller(serial="load-supersede-1")
+    failures: list[str] = []
+    try:
+        key = controller.get_input(Input.Key("0x0"))
+
+        # --- A superseded load stops at the boundary after the blocking call.
+        # The supersession happens inside own_actions_update, which is where a
+        # blocked plugin callback resumes after the page switched.
+        current = {"value": True}
+        real_update = input_state_classes.ControllerKeyState.own_actions_update
+
+        def superseding_update(self):
+            current["value"] = False
+            return real_update(self)
+
+        input_state_classes.ControllerKeyState.own_actions_update = superseding_update
+        try:
+            key.load_from_input_dict(CONFIG, update=False,
+                                     still_current=lambda: current["value"])
+        finally:
+            input_state_classes.ControllerKeyState.own_actions_update = real_update
+
+        state = key.get_active_state()
+        landed = state.label_manager.page_labels.get("bottom")
+        if landed is not None and landed.text == "OLD-PAGE":
+            failures.append("a superseded load still wrote the old page's label")
+
+        # --- A current load applies everything.
+        current["value"] = True
+        key.load_from_input_dict(CONFIG, update=False,
+                                 still_current=lambda: current["value"])
+        state = key.get_active_state()
+        landed = state.label_manager.page_labels.get("bottom")
+        if landed is None or landed.text != "OLD-PAGE":
+            failures.append(f"a current load did not apply the label: {landed}")
+
+        # --- The controller wires the probe through: a stale generation never
+        # enters the load, and a current one passes a live still_current that
+        # answers the generation check.
+        page = controller.active_page
+        if page is None:
+            failures.append("no active page; the wiring leg would prove nothing")
+        else:
+            calls: list = []
+
+            def recording_load(config, update=True, page=None, *, still_current=None):
+                calls.append(still_current)
+
+            real_load = key.load_from_input_dict
+            key.load_from_input_dict = recording_load  # type: ignore[method-assign]
+            try:
+                stale_gen = controller._page_load_generation - 1
+                controller._load_input_if_current(key, page, update=False, gen=stale_gen)
+                if calls:
+                    failures.append("a stale-generation load reached the input")
+
+                live_gen = controller._page_load_generation
+                controller._load_input_if_current(key, page, update=False, gen=live_gen)
+                if len(calls) != 1 or calls[0] is None:
+                    failures.append("the current load did not carry a still_current probe")
+                elif not calls[0]():
+                    failures.append("the probe answers False for the live generation")
+                else:
+                    # The probe tracks the generation: a bump flips it.
+                    with controller._page_gen_lock:
+                        controller._page_load_generation += 1
+                    if calls[0]():
+                        failures.append("the probe missed a generation bump")
+                    with controller._page_gen_lock:
+                        controller._page_load_generation -= 1
+            finally:
+                key.load_from_input_dict = real_load  # type: ignore[method-assign]
+    finally:
+        fixtures.teardown(controller)
+
+    if failures:
+        for f in failures:
+            print(f"FAIL: {f}")
+        return 1
+    print("PASS: a superseded load stops at the mutation boundary; a current "
+          "load applies everything")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

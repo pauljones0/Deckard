@@ -137,7 +137,7 @@ class FakeLoader:
         self.started: list[str] = []
         self.finished: list[str] = []
 
-    def __call__(self, controller_input, page, update=True) -> None:
+    def __call__(self, controller_input, page, update=True, *, still_current=None) -> None:
         identifier = str(controller_input.identifier)
         self.started.append(identifier)
         if self.armed.is_set() and identifier == self.hang_on:
