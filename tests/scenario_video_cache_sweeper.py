@@ -300,6 +300,36 @@ def check_entry_name_parsing() -> None:
     print("PASS: entry-name parse dispatches each branch and matches the hash, not the filename")
 
 
+def check_late_acquire_survives_a_stale_snapshot() -> None:
+    # The sweeper's snapshot of protected paths goes stale during its walk. A
+    # reader that acquires a file after the snapshot but before the unlink must
+    # still be protected, because the final remove re-checks the live registry
+    # under its lock. Model the miss by forcing the snapshot to return empty.
+    video_path = os.path.join(gl.DATA_PATH, "late_acquire_video.mp4")
+    _make_test_video(video_path, n_frames=15)
+
+    reader = mp4_tile_cache.acquire(video_path, (48, 48), 1.0)
+    try:
+        entry = reader._registry_entry
+        assert fixtures.wait_until(lambda: entry.ready, timeout=10.0), "builder never promoted"
+        assert os.path.isfile(entry.path)
+
+        real_snapshot = video_cache_sweeper.registry_cache_paths
+        video_cache_sweeper.registry_cache_paths = lambda: set()
+        try:
+            video_cache_sweeper.sweep_stale_video_caches()
+        finally:
+            video_cache_sweeper.registry_cache_paths = real_snapshot
+
+        assert os.path.isfile(entry.path), (
+            "the sweep deleted a cache file whose reader acquired it after the "
+            "protected-paths snapshot -- the live check at the unlink is missing"
+        )
+    finally:
+        mp4_tile_cache.release(reader)
+    print("PASS: a late acquire survives a stale protected-paths snapshot")
+
+
 def main() -> None:
     fixtures.start_watchdog(WATCHDOG_SECONDS, label="scenario_video_cache_sweeper")
     fixtures._install_integration_globals()  # real SettingsManager + PageManagerBackend
@@ -307,6 +337,7 @@ def main() -> None:
 
     check_plugin_settings_reference_protects_cache()
     check_live_registry_entry_protects_cache()
+    check_late_acquire_survives_a_stale_snapshot()
     check_stale_sat_variants_swept()
     check_out_of_range_saturation_protects_variant()
     check_tmp_age_gate()

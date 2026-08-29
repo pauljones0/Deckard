@@ -18,7 +18,11 @@ from loguru import logger as log
 
 import globals as gl
 from src.backend.DeckManagement.HelperMethods import is_video
-from src.backend.DeckManagement.Subclasses.mp4_tile_cache import registry_cache_paths, sat_suffix
+from src.backend.DeckManagement.Subclasses.mp4_tile_cache import (
+    registry_cache_paths,
+    remove_cache_file_if_unreferenced,
+    sat_suffix,
+)
 from src.backend.PageManagement import page_flush
 
 VID_CACHE = os.path.join(gl.DATA_PATH, "cache", "videos")
@@ -282,6 +286,9 @@ def sweep_stale_video_caches(startup_delay: float = 0.0) -> None:
                     size = os.path.getsize(entry_path)
                     os.remove(entry_path)
                 elif entry.endswith(".mp4"):
+                    # A cheap early skip against the snapshot. The authoritative
+                    # guard is the live check-and-remove below, which closes the
+                    # window where a consumer attaches after the snapshot.
                     if entry_path in protected_paths:
                         continue
                     if entry_hash in referenced:
@@ -293,7 +300,9 @@ def sweep_stale_video_caches(startup_delay: float = 0.0) -> None:
                         # factor produces this saturation variant. Fall
                         # through and sweep it.
                     size = os.path.getsize(entry_path)
-                    os.remove(entry_path)
+                    if not remove_cache_file_if_unreferenced(entry_path):
+                        # A reader or builder attached to it since the snapshot.
+                        continue
                 else:
                     continue
             except OSError:
