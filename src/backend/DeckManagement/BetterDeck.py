@@ -254,10 +254,21 @@ class BetterDeck():
         resume loop takes back what the close released. The close takes the
         device lock, so it cannot land inside another thread's multi-chunk
         write.
+
+        The whole transition runs under self._lock, so it cannot interleave
+        with open_handle, which holds the same lock across its own decision and
+        open. Without it a reopen could slip between the reader stop and the
+        close here: it would pass open_handle's reader-alive check, because the
+        stop just joined the reader, lift the shadow and open, and then the
+        close below would close the handle it had just opened. self._lock is an
+        RLock, so the self.close() call re-enters it. The join inside
+        stop_device_read_thread runs under the lock, as the library's own join
+        inside open_handle already does.
         """
-        _install_release_shadow(self.deck)
-        stop_device_read_thread(self.deck, timeout)
-        self.close()
+        with self._lock:
+            _install_release_shadow(self.deck)
+            stop_device_read_thread(self.deck, timeout)
+            self.close()
 
     def open_handle(self, resume_from_suspend: bool = True,
                     guard: "Callable[[], bool] | None" = None) -> bool:
