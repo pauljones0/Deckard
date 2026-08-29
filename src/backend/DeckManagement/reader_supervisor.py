@@ -192,6 +192,13 @@ class DeckReaderSupervisor:
         with self._lock:
             return self._in_flight
 
+    def has_pending_hold(self) -> bool:
+        """Whether a reopen's hold window is armed and not yet settled. A
+        reopen arms it, and note_reader_alive clears it once the reader has
+        held long enough."""
+        with self._lock:
+            return self._hold_deadline is not None
+
     def request_reopen(self) -> bool:
         """Submit one reopen attempt to the media thread, and report whether
         it was submitted. Watchdog thread only.
@@ -217,7 +224,18 @@ class DeckReaderSupervisor:
                 self._last_give_up_log = now
                 latch_now = True
             else:
+                # Reserve the attempt and clear the previous hold here, before
+                # the message is submitted. submit_control is a deque append
+                # the media thread drains, and it can run the whole reopen and
+                # arm a fresh hold before this method returns. Clearing the
+                # hold after submission, as this once did, would erase the hold
+                # the successful reopen just armed, so the reader would never
+                # settle its recovery count. The rollback below undoes this
+                # when the submission is refused.
                 self._in_flight = True
+                self.consecutive_attempts += 1
+                self.attempts_started += 1
+                self._hold_deadline = None
         if latch_now:
             # Outside the lock: the handle mirror reaches into the writer, the
             # log line reaches a sink, and the hook is third-party code.
@@ -235,12 +253,9 @@ class DeckReaderSupervisor:
             # count no attempt: no reopen was tried.
             with self._lock:
                 self._in_flight = False
+                self.consecutive_attempts -= 1
+                self.attempts_started -= 1
             return False
-        with self._lock:
-            self.consecutive_attempts += 1
-            self.attempts_started += 1
-            # A new attempt supersedes the hold the previous one was serving.
-            self._hold_deadline = None
         return True
 
     def note_reader_alive(self) -> None:

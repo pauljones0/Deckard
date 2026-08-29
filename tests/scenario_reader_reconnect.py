@@ -747,6 +747,52 @@ def test_a_reopen_that_holds_clears_the_count() -> None:
     print("PASS: a reopen that holds clears the attempt count")
 
 
+def test_a_synchronous_reopen_keeps_its_hold() -> None:
+    """A writer that runs the reopen inside submit_control must not have its
+    hold erased.
+
+    submit_control is a deque append the media thread drains, so run_attempt
+    can arm a fresh hold before request_reopen returns. request_reopen must
+    clear the previous hold before it submits, not after, or a synchronously
+    completed reopen loses the exact hold it just armed and never settles its
+    recovery count.
+    """
+    controller, deck = make_controller("reader-sync-hold")
+    watchdog = DeckReaderWatchdog(gl.deck_manager)
+    try:
+        boot_paint(deck, "sync")
+        kill_the_reader(deck, "open", "sync")
+        supervisor = watchdog.supervisor_for(controller)
+
+        # A writer that drains the reopen inline, the worst case for the race.
+        real_writer = controller.media_player
+
+        class _SynchronousWriter:
+            running = True
+
+            def submit_control(self, msg) -> bool:
+                # Run the attempt before returning, as a media thread that
+                # drained the queue immediately would.
+                msg.supervisor.run_attempt(stopping=lambda: False)
+                return True
+
+        controller.media_player = _SynchronousWriter()
+        try:
+            assert supervisor.request_reopen() is True, "the synchronous reopen was not submitted"
+        finally:
+            controller.media_player = real_writer
+
+        # The reopen armed a hold. request_reopen must not have cleared it: the
+        # deadline is still set, so the reader can settle its count.
+        assert supervisor.reopens == 1, "the synchronous reopen did not run"
+        assert supervisor.has_pending_hold(), (
+            "request_reopen cleared the hold the synchronous reopen just armed, "
+            "so the reader can never settle its recovery count")
+    finally:
+        fixtures.teardown(controller)
+    print("PASS: a synchronous reopen keeps the hold it armed")
+
+
 def main() -> None:
     # A reopen that waits on a handle it cannot take parks here, and must fail
     # loud rather than sit until the per-scenario timeout of run_all.py.
@@ -767,6 +813,7 @@ def main() -> None:
     test_a_reopen_that_never_holds_is_capped()
     test_a_message_the_writer_refuses_counts_no_attempt()
     test_a_reopen_that_holds_clears_the_count()
+    test_a_synchronous_reopen_keeps_its_hold()
     print("ALL PASS: scenario_reader_reconnect")
 
 
