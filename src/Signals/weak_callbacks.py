@@ -44,6 +44,25 @@ def _is_bound_method(cb: Callable[..., Any]) -> bool:
     return hasattr(cb, "__self__") and hasattr(cb, "__func__")
 
 
+def _same_callback(a: Callable[..., Any], b: Callable[..., Any]) -> bool:
+    """Whether two callbacks name the same subscription, by identity only.
+
+    A bound method builds a fresh object on every attribute access, so
+    obj.method is obj.method is False while the two are the same subscription;
+    they are matched by the identity of their __self__ and __func__. Every
+    other callable is matched by object identity. This never calls a
+    callback's __eq__, so a plugin's custom equality cannot run under the
+    registry lock (or re-enter the coordination it guards).
+    """
+    if a is b:
+        return True
+    a_self = getattr(a, "__self__", None)
+    a_func = getattr(a, "__func__", None)
+    if a_self is None or a_func is None:
+        return False
+    return a_self is getattr(b, "__self__", None) and a_func is getattr(b, "__func__", None)
+
+
 def describe_callback(cb: Callable[..., Any]) -> str:
     """Give a printable identity for a live callback.
 
@@ -111,7 +130,7 @@ class CallbackRegistry:
                 if live is None:
                     continue  # the owner is gone, so prune it
                 kept.append(entry)
-                if live is cb or live == cb:
+                if _same_callback(live, cb):
                     already_present = True
             self._entries = kept
             if already_present:
@@ -138,7 +157,7 @@ class CallbackRegistry:
                 live = _resolve_entry(entry)
                 if live is None:
                     continue  # the owner is gone, so prune it
-                if live is cb or live == cb:
+                if _same_callback(live, cb):
                     continue  # the entry to remove
                 kept.append(entry)
             self._entries = kept
