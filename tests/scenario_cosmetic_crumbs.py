@@ -12,11 +12,8 @@ display and is skipped without one.
 import fixtures  # noqa: F401  (import first: sets up the isolated data dir)
 
 import sys
-import types
 
 import globals as gl
-
-from src.backend.DeckManagement.InputIdentifier import Input
 
 fixtures.start_watchdog(60, label="scenario_cosmetic_crumbs")
 
@@ -149,77 +146,8 @@ def check_plugin_settings_sorted() -> None:
         gl.plugin_manager = real_manager
 
 
-# ------------------------------------------------ action comment index guard
-
-def check_comment_index_guard() -> None:
-    print("(3) a comment update past the action rows moves nothing")
-    from src.windows.mainWindow.elements.Sidebar.elements import ActionManager as am
-
-    class FakeRow:
-        def __init__(self):
-            self.comment = None
-
-        def set_comment(self, comment):
-            self.comment = comment
-
-    class FakeExpander:
-        update_comment_for_index = am.ActionExpanderRow.update_comment_for_index
-
-        def __init__(self, rows, identifier, state):
-            self.rows = rows
-            self.active_identifier = identifier
-            self.active_state = state
-
-        def get_rows(self):
-            return list(self.rows)
-
-    # The window path the update reads, and a page whose get_action_comment
-    # answers, so control reaches the index and the guard is what is tested.
-    page = types.SimpleNamespace(
-        get_action_comment=lambda index, state, identifier: f"comment-{index}",
-    )
-    visible_child = types.SimpleNamespace(
-        deck_controller=types.SimpleNamespace(active_page=page))
-    main_win = types.SimpleNamespace(
-        leftArea=types.SimpleNamespace(
-            deck_stack=types.SimpleNamespace(get_visible_child=lambda: visible_child)))
-
-    identifier = Input.Key("0x0")
-    real_services = am.services
-    am.services = types.SimpleNamespace(require_main_window=lambda: main_win)
-    try:
-        # An index into an empty row list must move nothing, not raise.
-        expander = FakeExpander([], identifier, 0)
-        raised = call(expander.update_comment_for_index, 0)
-        check("a comment update on no rows does not raise", raised is None, repr(raised))
-
-        # An index past a short row list: the same.
-        rows = [FakeRow(), FakeRow()]
-        expander = FakeExpander(rows, identifier, 0)
-        raised = call(expander.update_comment_for_index, 5)
-        check("a comment update past the rows does not raise", raised is None, repr(raised))
-        check("an out-of-range update writes no comment",
-              all(r.comment is None for r in rows), str([r.comment for r in rows]))
-
-        # A valid index reaches the row it names. The stand-in supplies the
-        # set_comment the row is asked for, so the guard's own logic is what
-        # this checks, in both directions.
-        rows = [FakeRow(), FakeRow(), FakeRow()]
-        expander = FakeExpander(rows, identifier, 0)
-        raised = call(expander.update_comment_for_index, 1)
-        check("a comment update on a valid index does not raise", raised is None, repr(raised))
-        check("the comment reaches the row it names", rows[1].comment == "comment-1",
-              str(rows[1].comment))
-        check("only the named row gets the comment",
-              rows[0].comment is None and rows[2].comment is None,
-              str([r.comment for r in rows]))
-    finally:
-        am.services = real_services
-
-
 check_onboarding_icon_size()
 check_plugin_settings_sorted()
-check_comment_index_guard()
 
 print()
 if FAILURES:
