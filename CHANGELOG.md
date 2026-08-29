@@ -52,11 +52,6 @@ bundle as a release asset.
   that holds them, including on a key whose actions did not all load. The up
   and down buttons on each row make the same move, so a reorder needs no
   pointer.
-  there, the key runs its actions in the new order straight away, and the page
-  keeps the order. Each action takes its own settings, its comment and its
-  event assignments with it, and the media, background and label permissions
-  stay with the action that holds them. The up and down buttons on each row
-  make the same move, so a reorder needs no pointer.
 - Keys can hold their size while they are pressed. The general settings carry
   a "Shrink keys while pressed" switch, and turning it off leaves a held key
   drawing exactly the picture it draws at rest, which suits a page whose keys
@@ -71,7 +66,8 @@ bundle as a release asset.
   `--change-state` uses. The page is switched to first when it is not the one
   showing, and the press is dropped with a reason rather than made if the deck
   leaves that page before it lands, if the key is already held, if the session
-  locks in the meantime, or if the press cannot reach the deck in time. It needs Deckard to be running already, and says so
+  locks in the meantime, or if the press cannot reach the deck in time. It
+  needs Deckard to be running already, and says so
   instead of starting it: a press happens at a moment, so it cannot be held
   for a deck that is not plugged in yet. The same press is on the session bus
   as `EmulateInput`, beside `ChangePage` and `ChangeState`.
