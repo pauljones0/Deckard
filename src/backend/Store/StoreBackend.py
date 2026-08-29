@@ -59,7 +59,7 @@ from src.backend.Store.asset_types import (
     SD_PLUS_BAR,
     WALLPAPER,
 )
-from src.backend.Store import install_reload, install_script, json_root
+from src.backend.Store import install_recovery, install_reload, install_script, json_root
 from src.backend.Store.prepare_pool import PreparePool
 from src.backend.Store.catalog_entry import COMMIT_SHA_RE, resolve_pinned_revision
 from src.backend.Store.data_type import DataType
@@ -826,7 +826,7 @@ class StoreBackend:
         than an install this app owns.
 
         This skips an unsafe name, which also skips a dot-prefixed leftover
-        from _swap_into_place.
+        from install_recovery.swap_into_place.
         """
         index: dict[str, InstalledAsset] = {}
         try:
@@ -1271,6 +1271,7 @@ class StoreBackend:
             with contextlib.suppress(OSError):
                 os.remove(path)
 
+
     def _staged_tree_acceptable(self, staging_tree: str, expected_id: str | None,
                                 gate_app_version: bool = True) -> bool:
         """The one staged-manifest gate, before a staged tree can swap over
@@ -1322,39 +1323,15 @@ class StoreBackend:
                 return False
         return True
 
-    def _swap_into_place(self, staging_tree: str, directory: str) -> None:
-        """Replace directory with the fully staged tree, and delete the old
-        install only after the new one is in place.
+    def recover_interrupted_installs(self) -> None:
+        """Repair install destinations left half-swapped by a crash.
 
-        This first moves the staged tree next to the destination. That move is
-        the one step that can cross a filesystem, because an environment
-        variable can put PLUGIN_DIR on another device. It runs while the old
-        install stays intact. The two renames that follow share a parent
-        and are atomic. The transient siblings carry a dot prefix, so the
-        plugin and pack directory scanners never read a crash leftover as a
-        real install. The next install of the same asset sweeps a leftover."""
-        parent = os.path.dirname(os.path.abspath(directory))
-        name = os.path.basename(os.path.normpath(directory))
-        os.makedirs(parent, exist_ok=True)
-        new_tree = os.path.join(parent, f".{name}.deckard-new")
-        old_tree = os.path.join(parent, f".{name}.deckard-old")
-        self._remove_leftover(new_tree)
-        self._remove_leftover(old_tree)
-
-        shutil.move(staging_tree, new_tree)
-        moved_old_aside = False
-        try:
-            if os.path.lexists(directory):
-                os.replace(directory, old_tree)
-                moved_old_aside = True
-            os.replace(new_tree, directory)
-        except Exception:
-            # Put the old install back, then report the failure.
-            if moved_old_aside and not os.path.lexists(directory):
-                os.replace(old_tree, directory)
-            shutil.rmtree(new_tree, ignore_errors=True)
-            raise
-        self._remove_leftover(old_tree)
+        Runs at startup, before the plugin and pack scanners read the install
+        directories. See install_recovery for the per-destination logic.
+        """
+        install_recovery.recover_interrupted_installs(
+            [self.plugins_dir(), self.icons_dir(),
+             self.wallpapers_dir(), self.sd_plus_bar_wallpapers_dir()])
 
     def download_repo(self, repo_url:str, directory:str, commit_sha:str | None = None, branch_name:str | None = None, expected_id:str | None = None,
                       gate_app_version: bool = True) -> StoreResult[None]:
@@ -1366,7 +1343,7 @@ class StoreBackend:
         install_* methods alone call it, and they hand the Err to the UI.
 
         The install is transactional. It downloads, extracts, validates and
-        VERSION-stamps the new tree in a staging area, and then _swap_into_place
+        VERSION-stamps the new tree in a staging area, and then install_recovery.swap_into_place
         moves it into directory. The delete of the previous tree happens only
         after the new one lands, so any failure leaves the old install
         untouched."""
@@ -1445,7 +1422,7 @@ class StoreBackend:
             # publishes the install and its origin together.
             self.stamp_origin(extracted_folder, repo_url)
 
-            self._swap_into_place(extracted_folder, directory)
+            install_recovery.swap_into_place(extracted_folder, directory)
         except Exception as e:
             log.error(f"Failed to extract/install {projectname}: {e}")
             return Err(ErrReason.NO_CONNECTION, f"failed to extract/install {projectname}: {e}")
@@ -1557,7 +1534,7 @@ class StoreBackend:
                 f.write(version_stamp)
             self.stamp_origin(staging, repo_url)
 
-            self._swap_into_place(staging, local_path)
+            install_recovery.swap_into_place(staging, local_path)
         except Exception as e:
             log.error(f"Failed to stage devel clone of {repo_url}: {e}")
             return Err(ErrReason.NO_CONNECTION, f"failed to stage devel clone of {repo_url}: {e}")

@@ -458,7 +458,8 @@ def test_update_replaces_pack_and_stamps() -> None:
     dest = os.path.join(gl.DATA_PATH, "plugins", "com_test_Replace")
     sentinel = _seed_install(dest, content="old version file")
 
-    real_swap = sb._swap_into_place
+    from src.backend.Store import install_recovery
+    real_swap = install_recovery.swap_into_place
     staged_version: list[str] = []
 
     def spying_swap(staging_tree, directory):
@@ -470,16 +471,16 @@ def test_update_replaces_pack_and_stamps() -> None:
             staged_version.append(f.read())
         return real_swap(staging_tree, directory)
 
-    sb._swap_into_place = spying_swap
-
     zip_bytes = _good_zip_bytes(files={"manifest.json": b'{"id": "com_test_Replace"}',
                                        "new.txt": b"new content"})
     prev = _install_fake_get(_chunk(zip_bytes))
+    install_recovery.swap_into_place = spying_swap
     try:
         result = sb.download_repo(
             repo_url=REPO_URL, directory=dest, commit_sha=SHA,
             expected_id="com_test_Replace")
     finally:
+        install_recovery.swap_into_place = real_swap
         _restore_get(prev)
 
     assert isinstance(result, Ok), f"a well-formed update must succeed, got {result!r}"

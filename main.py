@@ -229,6 +229,9 @@ def create_global_objects():
     gl.sd_plus_bar_wallpaper_pack_manager = SDPlusBarWallpaperPackManager()
 
     gl.store_backend = StoreBackend()
+    # Repair any install left half-swapped by a previous crash before the
+    # plugin and pack scanners read the install directories.
+    gl.store_backend.recover_interrupted_installs()
 
     gl.plugin_manager = PluginManager()
     gl.plugin_manager.load_plugins(show_notification=True)
