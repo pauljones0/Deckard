@@ -21,9 +21,8 @@ select = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-# This module sits at its grandfathered module-size cap. Its one suppressible
-# swallow is left for a separate change that nets no new line here. Drop this
-# entry once that swallow reads as contextlib.suppress.
+# This module's one suppressible swallow is left for a separate change that
+# rewrites it as contextlib.suppress. Drop this entry with that change.
 "src/backend/DeckManagement/deck_controller/media_writer.py" = ["SIM105"]
 
 [tool.pyright]
