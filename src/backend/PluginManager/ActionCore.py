@@ -205,8 +205,13 @@ class ActionCore(rpyc.Service):
     def set_media(self, image: "Image.Image | None" = None, media_path: "str | None" = None, size: float | None = None, valign: float | None = None, halign: float | None = None, fps: int = 30, loop: bool = True, update: bool = True) -> None:
         self.raise_error_if_not_ready()
 
-        if type(self.input_ident) not in [Input.Key, Input.Dial]:
+        if type(self.input_ident) not in [Input.Key, Input.Dial, Input.Touchscreen]:
             return
+        # Touchscreen media reaches the state through the same write path as a
+        # key or dial: ControllerTouchScreenState implements set_image and
+        # set_video, and the layout and permission managers the write below
+        # uses live on the shared state base. A touchscreen GIF takes the cv2
+        # path, because the KeyGIF guard tests for a ControllerKey.
 
         if not self.get_is_present(): return
         if self.has_custom_user_asset(): return

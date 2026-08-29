@@ -97,6 +97,26 @@ StateT = TypeVar("StateT", bound=ControllerInputState)
 OVERLAY_TILE_FRACTION = 0.75
 
 
+def _build_page_video_media(controller_input: "ControllerInput[Any]", path: str,
+                            media: MediaConfig) -> "InputVideo | KeyGIF":
+    """The video media a page load builds for a path, shared by the key and
+    dial loaders. A .gif goes to KeyGIF, which keeps the RGBA alpha the cv2
+    demuxer drops and honors the per-frame delays and the fps render cap; a
+    decode failure falls back to the opaque cv2 path so one bad asset does not
+    take the page load down. Page media plays at natural speed, and the dict
+    fps is a render cap, not a playback rate."""
+    if os.path.splitext(path)[1].lower() == ".gif":
+        try:
+            return KeyGIF(controller_key=controller_input, gif_path=path,
+                          loop=media.loop, fps=media.fps)
+        except Exception:
+            log.opt(exception=True).warning(
+                f"GIF decode failed during page load, falling back to the "
+                f"opaque cv2 path: {path}")
+    return InputVideo(controller_input=controller_input, video_path=path,
+                      loop=media.loop, fps=media.fps, natural_speed=True)
+
+
 class ControllerInput(Generic[StateT]):
     # What this input's device slot shows, and what is on its way to it. A
     # key and the touchscreen own a slot and assign one in their own
@@ -988,47 +1008,11 @@ class ControllerKey(ControllerInput["ControllerKeyState"]):
                         ), update=False)
 
                     elif is_video(path):
-                        key_gif = None
-                        if os.path.splitext(path)[1].lower() == ".gif":
-                            # KeyGIF parses eagerly and raises on a corrupt or
-                            # truncated GIF, where the detached cv2 builder of
-                            # InputVideo fails soft. Without this guard, one
-                            # bad asset in a page's config takes the whole
-                            # page load down. The fallback is the opaque cv2
-                            # path, as on the set_media route.
-                            #
-                            # This contains the GIF-specific parse and decode
-                            # failures only. It does not make the page load
-                            # total. The InputVideo constructor stats and
-                            # hashes the file, so an EACCES, EIO or ENOENT
-                            # still escapes from the fallback itself, as it
-                            # does for every non-GIF video on this route.
-                            try:
-                                key_gif = KeyGIF(
-                                    controller_key=self,
-                                    gif_path=path,
-                                    loop=media.loop,
-                                    fps=media.fps
-                                )
-                            except Exception:
-                                log.opt(exception=True).warning(
-                                    f"GIF decode failed during page load, falling "
-                                    f"back to the opaque cv2 path: {path}")
-                        if key_gif is not None:
-                            state.set_video(key_gif) # GIFs always update
-                        else:
-                            state.set_video(InputVideo(
-                                controller_input=self,
-                                video_path=path,
-                                loop=media.loop,
-                                fps=media.fps,
-                                # User-assigned media plays at the source's
-                                # speed, and the dict fps from the sidebar FPS
-                                # row is a render cap. Plugin media through
-                                # set_media keeps fps as the playback rate, an
-                                # explicit API argument.
-                                natural_speed=True,
-                            )) # Videos always update
+                        # A GIF builds a KeyGIF with the fps render cap, falling
+                        # back to the opaque cv2 path on a decode failure so one
+                        # bad asset does not take the page load down. Shared with
+                        # the dial loader; see _build_page_video_media.
+                        state.set_video(_build_page_video_media(self, path, media))
                     # This chain ends here. Do not add an elif that calls
                     # self.set_key_image(), which ControllerKey does not
                     # define. Such a branch fires on the normal
@@ -1391,23 +1375,9 @@ class ControllerDial(ControllerInput["ControllerDialState"]):
                     ), update=False)
 
                 elif is_video(path):
-                    if os.path.splitext(path)[1].lower() == ".gif":
-                        # A KeyGIF built here with the media's loop and fps is
-                        # the intended implementation.
-                        raise NotImplementedError("TODO") #TODO
-                    else:
-                        state.set_video(InputVideo(
-                            controller_input=self,
-                            video_path=path,
-                            loop=media.loop,
-                            fps=media.fps,
-                            # User-assigned media plays at the source's
-                            # speed, and the dict fps from the sidebar FPS row
-                            # is a render cap. Plugin media through set_media
-                            # keeps fps as the playback rate, an explicit API
-                            # argument.
-                            natural_speed=True,
-                        )) # Videos always update
+                    # KeyGIF sizes its frames to the key tile, which is the
+                    # size a dial composites onto the strip too.
+                    state.set_video(_build_page_video_media(self, path, media))
 
             layout = ImageLayout(
                 fill_mode=media.fill_mode,

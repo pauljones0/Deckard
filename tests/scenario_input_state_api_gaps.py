@@ -16,7 +16,7 @@ import fixtures  # noqa: F401  (import first: sets up the isolated data dir)
 import globals as gl
 from fixtures import make_test_mp4, make_test_png, start_watchdog, teardown, wait_until
 
-from PIL import Image
+from PIL import Image, ImageDraw
 
 from src.backend.DeckManagement.InputIdentifier import Input
 from src.backend.DeckManagement.Subclasses.KeyImage import InputImage
@@ -69,6 +69,51 @@ def check_dial_clear(controller) -> None:
     dial.clear(update=False)
     check("dial clear() released the media", state.image is None and state.video is None)
     check("dial clear() reset the media owner", state.media_owner_action is None)
+
+
+def check_dial_video_to_still(controller) -> None:
+    # A dial that switches from a video to a still must close and clear the
+    # video. The render path draws state.video before state.image, so a
+    # leftover video kept playing over the new still and leaked its capture.
+    dial = controller.inputs[Input.Dial][0]
+    state = dial.get_active_state()
+
+    video_path = make_test_mp4(os.path.join(gl.DATA_PATH, "media", "dial_switch.mp4"))
+    video = InputVideo(controller_input=dial, video_path=video_path, natural_speed=True)
+    state.set_video(video)
+    check("dial set_video stored the video", state.video is video)
+
+    green = make_test_png(os.path.join(gl.DATA_PATH, "media", "dial_still.png"), color=(0, 200, 0))
+    with Image.open(green) as img:
+        state.set_image(InputImage(controller_input=dial, image=img.copy(), path=green), update=False)
+    check("dial set_image cleared the previous video", state.video is None)
+    check("dial set_image closed the previous video", getattr(video, "closed", True))
+    check("dial set_image stored the still", state.image is not None)
+
+
+def check_dial_gif_loads(controller) -> None:
+    # #390: a GIF assigned to a dial through the page loader raised
+    # NotImplementedError. It must build a KeyGIF instead, like a key.
+    from src.backend.DeckManagement.deck_controller.gif_pipeline import KeyGIF
+
+    dial = controller.inputs[Input.Dial][0]
+    gif_path = os.path.join(gl.DATA_PATH, "media", "dial.gif")
+    frames = [Image.new("RGBA", (48, 48), (0, 0, 0, 0)) for _ in range(3)]
+    for i, fr in enumerate(frames):
+        ImageDraw.Draw(fr).ellipse([2 + i * 3, 8, 22 + i * 3, 28], fill=(220, 30, 30, 255))
+    os.makedirs(os.path.dirname(gif_path), exist_ok=True)
+    frames[0].save(gif_path, format="GIF", save_all=True, append_images=frames[1:],
+                   duration=[100] * 3, loop=0, disposal=2)
+
+    config = {"states": {"0": {"media": {"path": gif_path, "fps": 10, "loop": True}}}}
+    try:
+        dial.load_from_input_dict(config, update=False)
+    except NotImplementedError:
+        check("a GIF on a dial no longer raises NotImplementedError", False)
+        return
+    state = dial.get_active_state()
+    check("a dial GIF loaded as a KeyGIF", isinstance(state.video, KeyGIF))
+    check("the dial GIF carried its fps cap", getattr(state.video, "fps", None) == 10)
 
 
 def check_touchscreen_media(controller) -> None:
@@ -180,6 +225,8 @@ def main() -> None:
         # Let the controller settle its first page load before touching state.
         settle_inputs(controller)
         check_dial_clear(controller)
+        check_dial_video_to_still(controller)
+        check_dial_gif_loads(controller)
         check_touchscreen_media(controller)
         check_action_media_stash_protocol(controller)
     finally:

@@ -36,10 +36,10 @@ from src.backend.DeckManagement.Subclasses.mp4_tile_cache import get_video_md5
 from src.backend.DeckManagement.deck_controller.strip_band import band_layout
 
 from collections.abc import Generator
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 if TYPE_CHECKING:
     from src.backend.DeckManagement.deck_controller.controller import DeckController
-    from src.backend.DeckManagement.deck_controller.inputs import ControllerKey
+    from src.backend.DeckManagement.deck_controller.inputs import ControllerInput
     from src.backend.PageManagement.Page import Page
 
 
@@ -438,7 +438,26 @@ class GifBackground:
         self._last_frame_tick = now
 
         elapsed = now - self._play_start
-        t = elapsed % total if self.loop else min(elapsed, total)
+        # fps is a render cap, matching KeyGIF.get_next_frame: the GIF's own
+        # delay timeline still decides where the wall clock lands, and the cap
+        # only coarsens how finely that position is read, so the picked frame
+        # advances at most fps times per second and the owner's hash dedup
+        # drops the redundant recomposite inside one cap window. A cap at or
+        # above the loop ceiling is left out entirely, so an uncapped GIF keeps
+        # its exact picks. Read fps once: set_playback rewrites it from the GTK
+        # thread while this tick runs.
+        cap = max(1.0, float(self.fps or MEDIA_LOOP_FPS))
+        # Read every pass at least twice, or a cap whose period is the whole
+        # animation freezes it on one frame instead of running slowly.
+        cap = max(cap, 2.0 / total)
+        if self.loop:
+            t = elapsed % total
+            if cap < MEDIA_LOOP_FPS:
+                t = int(t * cap) / cap
+        else:
+            if cap < MEDIA_LOOP_FPS:
+                elapsed = int(elapsed * cap) / cap
+            t = min(elapsed, total)
 
         frame = bisect.bisect_right(cum, t)
         if frame >= n:
@@ -549,7 +568,10 @@ class KeyGIF(SingleKeyAsset):
     # never take the video route.
     video_cache: "mp4_tile_cache.KeyVideoCache | None" = None
 
-    def __init__(self, controller_key: "ControllerKey", gif_path: str, fps: int = 30, loop: bool = True):
+    def __init__(self, controller_key: "ControllerInput[Any]", gif_path: str, fps: int = 30, loop: bool = True):
+        # Typed as the shared input, not ControllerKey: a dial hosts a KeyGIF
+        # too (its page-media loader builds one), and SingleKeyAsset only reads
+        # deck_controller off it. The name stays for the key call sites.
         super().__init__(controller_key)
         self.gif_path = gif_path
         self.fps = fps
