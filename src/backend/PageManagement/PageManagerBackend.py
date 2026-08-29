@@ -928,12 +928,15 @@ class PageManagerBackend:
 
         sorted_backups = sorted(backup_files, key=extract_timestamp, reverse=True)
 
-        # Delete nothing while the count stays under the keep count.
-        if len(sorted_backups) < self.MAX_BACKUPS:
+        # Keep the newest MAX_BACKUPS and delete the rest. Return while the
+        # count is at or below the keep count, and delete from index
+        # MAX_BACKUPS onward, so exactly MAX_BACKUPS survive rather than one
+        # fewer.
+        if len(sorted_backups) <= self.MAX_BACKUPS:
             return
 
         # Delete the oldest backups past the number to keep.
-        for old_backup in sorted_backups[self.MAX_BACKUPS-1:]:
+        for old_backup in sorted_backups[self.MAX_BACKUPS:]:
             backup_path = os.path.join(backup_dir, old_backup)
             try:
                 os.remove(backup_path)
