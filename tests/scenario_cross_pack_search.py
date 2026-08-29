@@ -930,7 +930,12 @@ def test_a_request_that_arrives_as_the_worker_dies_is_taken_up() -> None:
     pack_page._search_pending = ("volume", pack_page, pack_page._search_generation)
     pack_page._release_search_worker()
 
-    pump_until(lambda: leaf.asset_flow.items is not None, 10,
+    # Wait for the render AND the worker to finish. The render is posted with
+    # GLib.idle_add from the worker before it clears _search_running on its own
+    # thread, so items can be non-None while the flag is still set; under load
+    # that window is wide enough to fail the flag assertion below. Keying on
+    # both closes it.
+    pump_until(lambda: leaf.asset_flow.items is not None and not pack_page._search_running, 10,
                "the request that arrived as the worker died was dropped")
     assert gathered == ["volume"], gathered
     assert pack_page._search_running is False
