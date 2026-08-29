@@ -14,7 +14,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 """
 
 import threading
-from src.backend.WindowGrabber.Integration import Integration, WATCHER_STOP_TIMEOUT_S
+from src.backend.WindowGrabber.Integration import Integration, WATCHER_STOP_TIMEOUT_S, QUERY_TIMEOUT_S
 from src.backend.WindowGrabber.Window import Window
 
 import subprocess
@@ -110,14 +110,14 @@ class Sway(Integration):
     def _get_windows(self) -> list[dict[str, Any]]:
         windows: list[dict[str, Any]] = []
         try:
-            output = subprocess.check_output([*self.command_prefix, "swaymsg", "-t", "get_tree"], text=True, cwd="/").strip()
+            output = subprocess.check_output([*self.command_prefix, "swaymsg", "-t", "get_tree"], text=True, cwd="/", timeout=QUERY_TIMEOUT_S).strip()
             clients = json.loads(output)
 
             for output in clients.get("nodes", []):
                 for workspace in output.get("nodes", []):
                     self._walk_tree(workspace, windows)
 
-        except (subprocess.CalledProcessError, OSError) as e:
+        except (subprocess.CalledProcessError, OSError, subprocess.TimeoutExpired) as e:
             # OSError covers a missing binary. The argv list runs no shell,
             # which would turn that into a 127 CalledProcessError.
             log.error(f"An error occurred while running swaymsg: {e}")

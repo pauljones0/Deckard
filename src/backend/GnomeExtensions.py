@@ -16,6 +16,8 @@ from gi.repository import Gio, GLib
 
 from loguru import logger as log
 
+from src.backend.WindowGrabber.Integration import QUERY_TIMEOUT_MS
+
 class GnomeExtensions:
     def __init__(self) -> None:
         self.proxy: Gio.DBusProxy | None = None
@@ -53,7 +55,11 @@ class GnomeExtensions:
         proxy = self.proxy
         if proxy is None:
             return extensions
-        reply = proxy.call_sync("ListExtensions", None, Gio.DBusCallFlags.NONE, -1, None)
+        # A finite deadline: listing extensions is a plain read, and a Shell
+        # that stops answering must not park this call for good. The
+        # InstallRemoteExtension call below keeps -1 on purpose, because it
+        # answers only after the user dismisses a dialog.
+        reply = proxy.call_sync("ListExtensions", None, Gio.DBusCallFlags.NONE, QUERY_TIMEOUT_MS, None)
         extensions.extend(reply.unpack()[0])
         return extensions
 

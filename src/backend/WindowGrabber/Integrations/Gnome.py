@@ -13,7 +13,7 @@ You should have received a copy of the GNU General Public License
 along with this program. If not, see <https://www.gnu.org/licenses/>.
 """
 
-from src.backend.WindowGrabber.Integration import Integration
+from src.backend.WindowGrabber.Integration import Integration, QUERY_TIMEOUT_MS
 from src.backend.WindowGrabber.Window import Window
 
 import json
@@ -164,7 +164,10 @@ class Gnome(Integration):
             # callers read as "the call failed". An AttributeError on None
             # would escape their except clause.
             raise GLib.Error("no D-Bus proxy for the GNOME extension")
-        return cast(str, proxy.call_sync(method_name, None, Gio.DBusCallFlags.NONE, -1, None).unpack()[0])
+        # A finite deadline, not -1: a Shell that stops answering the call must
+        # not park the caller (the autoswitch poll or the GTK main thread) for
+        # good. A timed-out call raises GLib.Error, which both callers handle.
+        return cast(str, proxy.call_sync(method_name, None, Gio.DBusCallFlags.NONE, QUERY_TIMEOUT_MS, None).unpack()[0])
 
     def get_is_connected(self) -> bool:
         # Check the live owner, not only that a proxy exists. GDBusProxy

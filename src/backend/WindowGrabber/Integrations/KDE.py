@@ -14,7 +14,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 """
 
 import threading
-from src.backend.WindowGrabber.Integration import Integration, WATCHER_STOP_TIMEOUT_S
+from src.backend.WindowGrabber.Integration import Integration, WATCHER_STOP_TIMEOUT_S, communicate_bounded
 from src.backend.WindowGrabber.Window import Window
 
 from subprocess import Popen, CalledProcessError, PIPE
@@ -59,7 +59,10 @@ class KDE(Integration):
             kdotool = self._run_command(["kdotool", "--version"])
             if kdotool is None:
                 return False
-            out = kdotool.communicate()[0].decode("utf-8")
+            out_bytes = communicate_bounded(kdotool, "kdotool --version")
+            if out_bytes is None:
+                return False
+            out = out_bytes.decode("utf-8")
             return out not in ("", None)
         except Exception as e:
             log.error(f"An error occurred while running kdotool: {e}")
@@ -115,7 +118,9 @@ class KDE(Integration):
             root = self._run_command(["kdotool", "search", "."])
             if root is None:
                 return []
-            stdout, _ = root.communicate()
+            stdout = communicate_bounded(root, "kdotool search")
+            if stdout is None:
+                return windows
 
             window_ids = stdout.decode().strip().split("\n")
             if len(window_ids) < 2:
@@ -137,7 +142,9 @@ class KDE(Integration):
             kdotool = self._run_command(["kdotool", "getactivewindow"])
             if kdotool is None:
                 return None
-            stdout, _ = kdotool.communicate()
+            stdout = communicate_bounded(kdotool, "kdotool getactivewindow")
+            if stdout is None:
+                return None
             window_id = stdout.decode().strip()
             if len(window_id) == 0:
                 return None
@@ -168,7 +175,10 @@ class KDE(Integration):
             kdotool = self._run_command(["kdotool", "getwindowname", window_id])
             if kdotool is None:
                 return None
-            title = kdotool.communicate()[0].decode().strip()
+            out_bytes = communicate_bounded(kdotool, "kdotool getwindowname")
+            if out_bytes is None:
+                return None
+            title = out_bytes.decode().strip()
             if title is None or len(title) < 2:
                 return None
             return cast("str | None", title)
@@ -182,7 +192,10 @@ class KDE(Integration):
             kdotool = self._run_command(["kdotool", "getwindowclassname", window_id])
             if kdotool is None:
                 return None
-            window_class = kdotool.communicate()[0].decode().strip()
+            out_bytes = communicate_bounded(kdotool, "kdotool getwindowclassname")
+            if out_bytes is None:
+                return None
+            window_class = out_bytes.decode().strip()
             if window_class is None or len(window_class) < 4:
                 return None
             return cast("str | None", window_class)
