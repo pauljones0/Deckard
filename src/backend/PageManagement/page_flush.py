@@ -84,6 +84,10 @@ class PageContent(Protocol):
 # without end.
 DEBOUNCE_S = 1.0
 MAX_DIRTY_AGE_S = 5.0
+# Re-arm delay after a transient write failure. Long enough not to spin on a
+# stuck filesystem, short enough that a brief outage recovers within a couple
+# of debounce windows. Quit flush is the final retry.
+RETRY_S = 2.0
 
 
 def canonical_path(path: str) -> str:
@@ -280,8 +284,12 @@ class PageFlush:
         """Put the pending edits of path on disk now. A no-op when it has none.
 
         The clean case is one dict lookup and a return, which is cheap enough
-        to sit in front of every read of a page file. It raises what the write
-        raises, and it retires the record either way.
+        to sit in front of every read of a page file. It does not raise: a
+        transient filesystem failure keeps the edit pending and re-arms a
+        retry timer, and a permanent serialization failure is logged and
+        retired. Either way a reader's barrier returns and reads the current
+        on-disk file, and a retained edit survives to a later flush or the
+        quit flush.
         """
         # The write comes first and the retire second, both under the per-path
         # save lock. An entry claimed up front leaves the map empty while the
@@ -319,19 +327,53 @@ class PageFlush:
                 # Atomic replace, so an interrupted write leaves no truncated
                 # page.
                 atomic_write_json(entry.path, without_objects)
-            finally:
-                with self._pending_guard:
-                    # Retire only the entry this call wrote. A save that landed
-                    # mid-write replaced it with a newer entry, which is ahead
-                    # of these bytes and keeps its own timer. The finally keeps
-                    # a failed write from leaving a mark that re-raises at the
-                    # next reader. An unserializable edit is not retried.
-                    if self._pending.get(key) is entry:
-                        del self._pending[key]
-                        if entry.handle is not None:
-                            # The write is done, so the armed timer has nothing
-                            # left to find.
-                            self._scheduler.cancel(entry.handle)
+            except OSError as e:
+                # Transient filesystem failure: a full disk, a read-only mount,
+                # a lost network share. The bytes never reached the file, so
+                # keep the edit pending and re-arm a retry rather than drop it.
+                # The edit is still in the source's dict, so a later flush, or
+                # the quit flush, writes it once the filesystem recovers.
+                self._retain_for_retry(key, entry, e)
+                return
+            except Exception:
+                # Permanent serialization failure: the page dict cannot be
+                # encoded at all. Retrying it forever would pin the entry and
+                # re-fail every reader's barrier, so log it with the traceback
+                # and retire it.
+                log.opt(exception=True).error(
+                    f"Discarding an unserializable pending edit of page {key}")
+                self._retire(key, entry)
+                return
+            self._retire(key, entry)
+
+    def _retire(self, key: str, entry: "_Pending") -> None:
+        """Drop a written or unrecoverable entry and cancel its timer.
+
+        Retires only the passed entry. A save that landed mid-write replaced
+        it with a newer one, which is ahead of these bytes and keeps its own
+        timer.
+        """
+        with self._pending_guard:
+            if self._pending.get(key) is entry:
+                del self._pending[key]
+                if entry.handle is not None:
+                    self._scheduler.cancel(entry.handle)
+
+    def _retain_for_retry(self, key: str, entry: "_Pending", error: OSError) -> None:
+        """Keep a transiently-failed entry pending and re-arm its timer.
+
+        A newer save may have superseded this entry while its write ran; then
+        that entry owns the retry and this one is already gone.
+        """
+        with self._pending_guard:
+            if self._pending.get(key) is not entry:
+                return
+            log.warning(
+                f"Deferred write of page {key} failed transiently ({error}); "
+                f"keeping the edit and retrying in {RETRY_S}s")
+            if entry.handle is not None:
+                self._scheduler.cancel(entry.handle)
+            entry.handle = self._scheduler.schedule(RETRY_S, lambda: self._fire(key))
 
     def _back_up_once(self, key: str, path: str, source: PageContent) -> None:
         """Copy path into pages/backups/ unless this session did it already.

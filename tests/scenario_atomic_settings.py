@@ -106,24 +106,23 @@ def check_page_save(controller) -> None:
     # A top-level key that get_without_action_objects does not traverse, but
     # json.dump chokes on mid-serialization.
     page.dict["poison"] = Unserializable()
-    try:
-        # save() only marks the page, so the serialization and the TypeError
-        # belong to the flush. Every synchronous flush site does this: page
-        # switch, deck close, quit, or any read of the file. The assertion
-        # pins the file, not the timing.
-        page.save()
-        page_flush.get().flush_path(page.json_path)
-    except TypeError:
-        pass
-    else:
-        raise AssertionError("expected TypeError from unserializable payload")
-    finally:
-        page.dict.pop("poison", None)
+    # save() only marks the page; the serialization happens in the flush. The
+    # flush no longer propagates the write's exception: a permanent
+    # serialization failure is logged and the pending edit is retired, so the
+    # file is left whole and the edit is not retried forever. Every
+    # synchronous flush site relies on this not raising: page switch, deck
+    # close, quit, or any read of the file.
+    page.save()
+    page_flush.get().flush_path(page.json_path)
+    page.dict.pop("poison", None)
 
     assert read_json(page.json_path) == before, (
         "page json was corrupted by an interrupted Page.save()"
     )
     assert not tmp_litter(os.path.dirname(page.json_path))
+    assert page_flush.get().pending_source(page.json_path) is None, (
+        "an unserializable edit was retained instead of retired"
+    )
     print("PASS: Page.save() survives a mid-write fault")
 
 
