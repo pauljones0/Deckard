@@ -222,6 +222,38 @@ def check_prune_logs_debug():
         log.remove(handle2)
 
 
+def check_custom_eq_is_never_called() -> None:
+    # add/remove must match by identity, never a callback's own __eq__, so a
+    # plugin's custom equality cannot run under the registry lock. Two distinct
+    # instances that compare equal by __eq__ must be treated as distinct
+    # subscriptions, and __eq__ must never be called.
+    calls = {"eq": 0}
+
+    class NosyCallable:
+        def __eq__(self, other):
+            calls["eq"] += 1
+            return True
+
+        __hash__ = None  # unhashable, like many callables
+
+        def __call__(self, *args, **kwargs):
+            pass
+
+    registry = CallbackRegistry()
+    a = NosyCallable()
+    b = NosyCallable()
+    assert registry.add(a) is True
+    # b compares == a, but is a different object; identity matching keeps both.
+    assert registry.add(b) is True, "a distinct instance was deduped by __eq__"
+    assert len(registry.snapshot()) == 2
+    registry.remove(a)
+    assert registry.snapshot() == [b], "remove matched the wrong instance"
+    assert calls["eq"] == 0, (
+        f"the callback's __eq__ was called {calls['eq']} times; add/remove must "
+        f"match by identity only")
+    print("PASS: add/remove match by identity, never a callback's __eq__")
+
+
 def main() -> None:
     fixtures.start_watchdog(60, label="scenario_weak_registry")
     check_bound_method_dies_with_owner()
@@ -230,6 +262,7 @@ def main() -> None:
     check_concurrent_add_remove_snapshot()
     check_strong_callbacks_env_escape_hatch()
     check_prune_logs_debug()
+    check_custom_eq_is_never_called()
     print("PASS: scenario_weak_registry")
 
 

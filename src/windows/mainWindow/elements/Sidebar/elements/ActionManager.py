@@ -503,6 +503,26 @@ class ActionRow(Adw.ActionRow):
         self.allow_box.set_visible(True) #TODO
         return
 
+    def _control_index_for_toggle(self, active: bool) -> "tuple[bool, int | None]":
+        """(write, value) for a control-permission write.
+
+        Turning a control off writes None. Turning it on writes this action's
+        own index in the filtered action list, not self.index, which
+        load_for_actions set from an enumerate that counts a None (failed or
+        missing) action, so a key with a failed-to-load action stored an index
+        one too high and the toggle did not stick. get_own_action_index answers
+        the filtered position, and it answers -1 while the screensaver shows
+        the deck and None while the action is absent; either would store a slot
+        the readers never match, so the write is skipped and the stored index
+        kept.
+        """
+        if not active:
+            return True, None
+        own = self.action_object.get_own_action_index()
+        if own is None or own < 0:
+            return False, None
+        return True, own
+
     def on_allow_image_toggled(self, button: Gtk.ToggleButton) -> None:
         for child in self.expander.get_rows():
             if child is self:
@@ -527,7 +547,9 @@ class ActionRow(Adw.ActionRow):
             log.error("Input state not found")
             return
         
-        new_value = self.index if button.get_active() else None
+        write, new_value = self._control_index_for_toggle(button.get_active())
+        if not write:
+            return
         input_state.action_permission_manager.set_image_control_index(new_value, True, True)
 
         if page is not None:
@@ -556,7 +578,9 @@ class ActionRow(Adw.ActionRow):
             log.error("Input state not found")
             return
         
-        new_value = self.index if button.get_active() else None
+        write, new_value = self._control_index_for_toggle(button.get_active())
+        if not write:
+            return
         input_state.action_permission_manager.set_background_control_index(new_value, True, True)
 
         if page is not None:
@@ -586,8 +610,11 @@ class ActionRow(Adw.ActionRow):
             log.error("Input state not found")
             return
         
-        index_value = self.action_object.get_own_action_index() if value else None
-
+        # Same guard as the image and background toggles: a -1 or None own
+        # index (screensaver showing, or the action absent) must not be stored.
+        write, index_value = self._control_index_for_toggle(value)
+        if not write:
+            return
         input_state.action_permission_manager.set_label_control_index(i, index_value, True, True)
 
     def connect_image_signal(self) -> None:

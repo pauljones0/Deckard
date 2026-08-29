@@ -53,7 +53,11 @@ class Logger:
             color=f"{log_level.color}")
 
         def log_method(self: Any, message: str, *args: Any, **kwargs: Any) -> None:
-            _CALLER_LOGGER.log(level_name, message)
+            # Forward the formatting arguments. loguru applies brace formatting
+            # only when args or kwargs are present, so a plain message keeps
+            # its literal braces as before, while log.info("x={}", x) now
+            # formats instead of dropping x silently.
+            _CALLER_LOGGER.log(level_name, message, *args, **kwargs)
 
         setattr(self, log_level.method_name, log_method.__get__(self))
 
