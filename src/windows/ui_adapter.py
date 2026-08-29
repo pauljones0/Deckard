@@ -604,3 +604,10 @@ class GtkUIAdapter(ui_port.UIPort):
             app.send_missing_plugin_notification(plugin_id)
         else:
             log.warning(f"Unknown plugin problem kind {kind!r}")
+
+    @override
+    def notify_user(self, body: str, title: str) -> None:
+        notify = getattr(gl, "notify", None)
+        if notify is None:
+            return
+        notify.error(body, title=title)

@@ -246,8 +246,11 @@ class DeckManager:
 
 
     def load_remote_decks(self) -> None:
-        print(" load remote decks")
-        self.remote_deck_manager.start()
+        log.info("Loading remote decks")
+        if not self.remote_deck_manager.start():
+            # start() reported and cleaned up. Registering nothing keeps an
+            # occupied port from aborting startup or the settings toggle.
+            return
         for controller in self.remote_deck_manager.deck_controllers:
             if controller in self.deck_controller:
                 continue

@@ -139,6 +139,11 @@ class UIPort:
         """Show a plugin problem to the user. kind is "outdated" or
         "missing"."""
 
+    def notify_user(self, body: str, title: str) -> None:
+        """Show a user-facing notice. The engine reports through this hook
+        instead of the notification backend, so headless runs and the null
+        port drop it silently."""
+
 
 # The process-wide null port. install(None) restores this one instance, so a
 # test can assert identity.
