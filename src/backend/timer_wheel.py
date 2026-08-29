@@ -42,6 +42,11 @@ from collections.abc import Callable
 from loguru import logger as log
 
 
+def _NOOP() -> None:
+    """The callback a cancelled handle carries, so cancel() can drop the real
+    closure without leaving _callback None for a probe to trip on."""
+
+
 class TimerHandle:
     """Returned by TimerWheel.schedule(). Not constructed directly."""
 
@@ -72,10 +77,18 @@ class TimerWheel:
     Any thread can share it, because schedule() and cancel() hold the wheel's
     own lock for a short time only."""
 
+    # Do not compact a small heap, and compact only once the cancelled share
+    # of it is large. A long-lived early timer keeps every later cancelled
+    # handle at the front's back until it fires, so without this the heap, and
+    # the closures the cancelled handles hold, grow with the cancel rate.
+    _COMPACT_MIN_HEAP = 64
+
     def __init__(self, name: str = "TimerWheel"):
         self._cond = threading.Condition()
         self._heap: list[tuple[float, int, TimerHandle]] = []
         self._seq_counter = itertools.count()
+        # Cancelled handles still in the heap since the last compaction.
+        self._cancelled_pending = 0
         self._thread = threading.Thread(target=self._run, name=name, daemon=True)
         self._thread.start()
 
@@ -92,19 +105,37 @@ class TimerWheel:
 
     def _cancel(self, handle: TimerHandle) -> None:
         with self._cond:
-            if handle._fired:
+            if handle._fired or handle._cancelled:
                 return
             handle._cancelled = True
+            # Drop the closure now, so a cancelled handle that lingers in the
+            # heap behind a long-lived timer holds nothing but its own small
+            # record until compaction or the front drop reclaims it.
+            handle._callback = _NOOP
             # _run drops the handle once it reaches the front of the heap. A
             # scan-and-remove per cancel() costs more, and a late removal
-            # changes nothing.
+            # changes nothing. When the cancelled share of the heap grows
+            # large, compact in one pass rather than wait out an early timer.
+            self._cancelled_pending += 1
+            if (len(self._heap) >= self._COMPACT_MIN_HEAP
+                    and self._cancelled_pending * 2 >= len(self._heap)):
+                self._compact()
             self._cond.notify_all()
+
+    def _compact(self) -> None:
+        """Rebuild the heap without its cancelled handles. Caller holds the
+        condition lock."""
+        self._heap = [item for item in self._heap if not item[2]._cancelled]
+        heapq.heapify(self._heap)
+        self._cancelled_pending = 0
 
     def _run(self) -> None:
         with self._cond:
             while True:
                 while self._heap and self._heap[0][2]._cancelled:
                     heapq.heappop(self._heap)
+                    if self._cancelled_pending > 0:
+                        self._cancelled_pending -= 1
 
                 if not self._heap:
                     self._cond.wait()

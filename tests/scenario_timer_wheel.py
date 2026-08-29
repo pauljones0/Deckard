@@ -176,6 +176,58 @@ def check_module_level_default_wheel_smoke() -> None:
     print("PASS: module-level timer_wheel.schedule() smoke check")
 
 
+def check_cancel_compacts_the_heap_behind_a_long_timer() -> None:
+    """Cancelled handles must not pile up behind a long-lived early timer.
+
+    A far-future timer sits at the heap front, so nothing at the back is
+    dropped by _run. Cancelling most of the later timers must compact the
+    heap and free their closures, instead of retaining them until the front
+    timer fires.
+    """
+    import weakref
+
+    wheel = timer_wheel.TimerWheel(name="CompactWheel")
+    # A long-lived timer far in the future, at the front of the heap.
+    front = wheel.schedule(3600.0, lambda: None, name="front")
+
+    # A batch of later timers whose callbacks close over a tracked object, so
+    # a retained handle keeps its closure and its object alive.
+    class _Tracked:
+        pass
+
+    handles = []
+    refs = []
+    for _ in range(200):
+        obj = _Tracked()
+        refs.append(weakref.ref(obj))
+        handles.append(wheel.schedule(1800.0, lambda o=obj: o, name="later"))
+
+    heap_before = len(wheel._heap)
+    for handle in handles:
+        handle.cancel()
+
+    # The compaction fired during the cancels: the heap dropped the cancelled
+    # entries, keeping the still-live front timer.
+    assert len(wheel._heap) < heap_before, (
+        f"the heap did not compact: {len(wheel._heap)} entries after cancelling "
+        f"200 of {heap_before}")
+    assert any(item[2] is front for item in wheel._heap), (
+        "compaction dropped the live front timer")
+
+    # The cancelled handles' closures are gone, so their tracked objects are
+    # collectable. Drop the local strong refs and collect.
+    del handles, obj
+    import gc
+    gc.collect()
+    alive = sum(1 for ref in refs if ref() is not None)
+    assert alive == 0, (
+        f"{alive} cancelled-timer closures are still retained after compaction")
+
+    front.cancel()
+    print("PASS: cancelling behind a long-lived timer compacts the heap and "
+          "frees the closures")
+
+
 def main() -> None:
     fixtures.start_watchdog(WATCHDOG_SECONDS, label="scenario_timer_wheel")
 
@@ -184,6 +236,7 @@ def main() -> None:
     check_cancel_after_fire_is_noop()
     check_one_thread_for_many_schedules()
     check_slow_callback_delays_no_other_timer()
+    check_cancel_compacts_the_heap_behind_a_long_timer()
     check_module_level_default_wheel_smoke()
 
     print("PASS: scenario_timer_wheel")
