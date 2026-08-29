@@ -238,11 +238,15 @@ def check_envelope_round_trip() -> None:
     )
     assert len(sidecars(path)) == 1
 
-    # Valid JSON that is not an object reads as empty and stays where it is.
-    # It decoded, so a save has nothing to preserve.
-    body = write_raw(path, '["not", "an", "object"]')
+    # Valid JSON that is not an object is the wrong root type, so it heals the
+    # same way corrupt bytes do: it reads as empty and is quarantined aside,
+    # rather than left in place to reach the schema accessors where it raises.
+    write_raw(path, '["not", "an", "object"]')
     assert plugin.get_settings() == {}
-    assert read_raw(path) == body and len(sidecars(path)) == 1
+    assert not os.path.exists(path), (
+        "a wrong-root settings file was left in place instead of quarantined"
+    )
+    assert len(sidecars(path)) == 2
     print("PASS(3): the file-version envelope round-trips, migrations included")
 
 
