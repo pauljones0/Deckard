@@ -233,6 +233,44 @@ def check_quarantine_no_clobber() -> int:
     return 0
 
 
+def check_wrong_root_type_heals() -> int:
+    # A file that parses cleanly but holds the wrong root type -- a list or a
+    # scalar where an object is expected -- must be treated as corrupt, not
+    # passed through to the schema accessors where it raises and can abort
+    # startup.
+    from src.backend import settings_store
+
+    store = settings_store.get()
+    failures = 0
+    for label, payload in (("list-root", "[1, 2, 3]"),
+                           ("scalar-root", "42"),
+                           ("null-root", "null")):
+        path = os.path.join(gl.DATA_PATH, f"wrongroot_{label}.json")
+        with open(path, "w") as f:
+            f.write(payload)
+        data, corrupt = store.load_file(path, root=dict)
+        if data != {} or not corrupt:
+            print(f"FAIL(8): {label} not treated as corrupt: data={data!r} corrupt={corrupt}")
+            failures = 1
+        if os.path.exists(path) or not os.path.exists(path + ".corrupt"):
+            print(f"FAIL(8): {label} was not quarantined aside")
+            failures = 1
+
+    # A correctly-rooted list surface must still load unchanged.
+    list_path = os.path.join(gl.DATA_PATH, "goodlist.json")
+    with open(list_path, "w") as f:
+        f.write("[1, 2, 3]")
+    data, corrupt = store.load_file(list_path, root=list)
+    if data != [1, 2, 3] or corrupt:
+        print(f"FAIL(8): a valid list-rooted file was rejected: data={data!r} corrupt={corrupt}")
+        failures = 1
+
+    if failures:
+        return 1
+    print("PASS: wrong-root JSON heals to an empty root; a valid list root still loads")
+    return 0
+
+
 def main() -> int:
     start_watchdog(30, "corrupt_json_fallback")
     fixtures._install_integration_globals()
@@ -246,6 +284,7 @@ def main() -> int:
         check_get_page_settings_heals,
         check_heal_when_quarantine_fails,
         check_quarantine_no_clobber,
+        check_wrong_root_type_heals,
     ):
         try:
             rc |= check()

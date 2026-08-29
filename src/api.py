@@ -5,6 +5,7 @@ control Deckard. The top-level object is /io/github/nazbert/Deckard, and each
 controller gets /io/github/nazbert/Deckard/controllers/<serial>.
 """
 
+import contextlib
 import json
 import os
 import re
@@ -516,22 +517,35 @@ _controller_instances: dict[str, ControllerInstanceAPI] = {}
 def start_dbus_service() -> None:
     """Publish the Deckard API on the session bus."""
     global _bus, _api_instance
+    # Build locally and commit the globals only after publish succeeds. A
+    # half-open bus left in _bus reads as usable to publish_controller and the
+    # Controllers getter, so a failed publish must leave both globals None.
+    bus = None
     try:
-        _bus = SessionMessageBus()
-        _api_instance = DeckardAPI()
-        _bus.publish_object(DBUS_OBJECT_PATH, _api_instance)
-
-        # Sweep the decks that registered before the service existed. Every
-        # later arrival publishes itself from the deck lifecycle. This code
-        # runs on the main context, so it calls the same worker directly, and
-        # one deck that fails to publish does not stop the others.
-        if gl.deck_manager is not None:
-            for controller in list(gl.deck_manager.deck_controller):
-                _publish_on_main(controller)
-
-        log.success(f"DBus API published at {DBUS_OBJECT_PATH}")
+        bus = SessionMessageBus()
+        api_instance = DeckardAPI()
+        bus.publish_object(DBUS_OBJECT_PATH, api_instance)
     except Exception as e:
         log.error(f"Failed to start DBus API service: {e}")
+        if bus is not None:
+            with contextlib.suppress(Exception):
+                bus.disconnect()
+        _bus = None
+        _api_instance = None
+        return
+
+    _bus = bus
+    _api_instance = api_instance
+
+    # Sweep the decks that registered before the service existed. Every later
+    # arrival publishes itself from the deck lifecycle. This code runs on the
+    # main context, so it calls the same worker directly, and one deck that
+    # fails to publish does not stop the others.
+    if gl.deck_manager is not None:
+        for controller in list(gl.deck_manager.deck_controller):
+            _publish_on_main(controller)
+
+    log.success(f"DBus API published at {DBUS_OBJECT_PATH}")
 
 
 def publish_controller(controller: "DeckController") -> None:
@@ -700,16 +714,21 @@ def _emit_controllers_changed() -> None:
 
 
 def stop_dbus_service() -> None:
-    """Disconnect from the session bus."""
-    global _bus
+    """Disconnect from the session bus and clear all related state."""
+    global _bus, _api_instance
     try:
         if _bus is not None:
             _bus.disconnect()
-            _bus = None
-            _controller_instances.clear()
             log.info("DBus API service stopped")
     except Exception as e:
         log.error(f"Failed to stop DBus API service: {e}")
+    finally:
+        # Clear every global the service set, so a later get_api_instance()
+        # cannot hand back a stale object after the bus is gone. This runs
+        # even when disconnect raises.
+        _bus = None
+        _api_instance = None
+        _controller_instances.clear()
 
 
 def get_api_instance() -> DeckardAPI | None:

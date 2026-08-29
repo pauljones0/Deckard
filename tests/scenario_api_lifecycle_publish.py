@@ -699,8 +699,12 @@ def leg_stop_service(manager, observer: Observer) -> None:
     # the worker must find the bus gone and return quietly.
     survivor = controller_for(manager, SERIAL_BOOT)
     api.unpublish_controller(survivor)
+    assert api.get_api_instance() is not None, \
+        "the top-level API instance was missing before stop -- this leg would prove nothing"
     api.stop_dbus_service()
     assert api._bus is None, "stop_dbus_service left the bus in place"
+    assert api.get_api_instance() is None, \
+        "stop_dbus_service left a stale top-level API instance behind"
     pump(0.2)
 
     expect_gone(observer, PATH_BOOT)
@@ -727,6 +731,33 @@ def leg_stop_service(manager, observer: Observer) -> None:
     print("  PASS: stopping unpublishes everything; later calls are no-ops")
 
 
+def leg_failed_publish_commits_nothing() -> None:
+    """A publish that raises leaves both globals None.
+
+    A half-open bus left in api._bus reads as usable to publish_controller and
+    the Controllers getter, so the start path must commit neither global on
+    failure. The service is already stopped here, so both start None.
+    """
+    assert api._bus is None and api.get_api_instance() is None
+
+    real_bus = api.SessionMessageBus
+    real_publish_object = real_bus.publish_object
+
+    def exploding_publish(self, *args, **kwargs):
+        raise RuntimeError("simulated publish failure")
+
+    real_bus.publish_object = exploding_publish
+    try:
+        api.start_dbus_service()
+    finally:
+        real_bus.publish_object = real_publish_object
+
+    assert api._bus is None, "a failed publish left a half-open bus in _bus"
+    assert api.get_api_instance() is None, \
+        "a failed publish left a stale top-level API instance behind"
+    print("  PASS: a failed publish commits neither global")
+
+
 def run_legs(bus_address: str) -> None:
     gl.deck_manager = manager = make_deck_manager()
     observer = None
@@ -744,6 +775,7 @@ def run_legs(bus_address: str) -> None:
         assert_agreement(observer, "after a publish and unpublish crossed")
         leg_publish_lag_direction(manager, observer)
         leg_stop_service(manager, observer)
+        leg_failed_publish_commits_nothing()
     finally:
         api.stop_dbus_service()
         for controller in list(manager.deck_controller):

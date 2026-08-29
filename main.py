@@ -155,13 +155,22 @@ def write_logs(record):
 @log.catch
 def config_logger():
     log.remove()
+    # Install stderr first, so a failure adding the file sink below cannot
+    # leave the process with no sink at all. Without a stderr sink already in
+    # place, the @log.catch that would report such a failure logs through a
+    # handler-less logger and the diagnostic is lost.
+    log.add(sys.stderr, level=CONSOLE_LOG_LEVEL)
+    log.add(write_logs, level=FILE_LOG_LEVEL)
     # Create the log files. Omit backtrace= and diagnose=. The redaction
     # patcher clears record["exception"] and folds a scrubbed traceback into
     # the message before any sink reads the record, so both flags stay inert.
-    log.add(os.path.join(gl.DATA_PATH, "logs/logs.log"), rotation="3 days",
-            retention=LOG_RETENTION_FILES, level=FILE_LOG_LEVEL)
-    log.add(sys.stderr, level=CONSOLE_LOG_LEVEL)
-    log.add(write_logs, level=FILE_LOG_LEVEL)
+    # Isolate this sink: an unwritable logs path must not discard the stderr
+    # and ring sinks already installed above.
+    try:
+        log.add(os.path.join(gl.DATA_PATH, "logs/logs.log"), rotation="3 days",
+                retention=LOG_RETENTION_FILES, level=FILE_LOG_LEVEL)
+    except OSError as e:
+        log.error(f"Could not open the log file; continuing with stderr and ring sinks only: {e}")
 
     plugin_logger = Logger(
         LoggerConfig(
@@ -449,7 +458,6 @@ def make_api_calls():
     return verdict.handled
 
 
-@log.catch
 def main():
     # Install first. From here on, uncaught exceptions on the main thread, in
     # GLib callbacks, in plain threads and in finalizers all route through
@@ -555,7 +563,18 @@ def main():
     app.run(gl.argparser.parse_args().app_args)
 
 if __name__ == "__main__":
-    main()
+    # The startup body must not fail silently. main() used to swallow every
+    # exception through a bare log.catch and then return, so the process
+    # logged the failure but exited 0, and a supervisor read that as success.
+    # An unexpected error now logs once and exits nonzero. SystemExit carries
+    # the intended code for the known abort paths and passes straight through.
+    try:
+        main()
+    except SystemExit:
+        raise
+    except BaseException:
+        log.opt(exception=True).critical("Deckard exited on an unhandled startup error")
+        sys.exit(1)
 
 
 log.trace("Reached end of main.py")

@@ -561,7 +561,17 @@ class SettingsStore:
             return empty, False
         try:
             with open(file_path) as f:
-                return json.load(f), False
+                parsed = json.load(f)
+            # A file that parses but holds the wrong root type -- a scalar,
+            # null, or a list where an object is expected -- would otherwise
+            # reach the schema accessors and raise there, which can abort
+            # startup. Treat it as corrupt input and heal it the same way as
+            # garbage bytes. isinstance covers bool as an int, which no root
+            # here uses, so it does not matter.
+            if not isinstance(parsed, root):
+                raise ValueError(
+                    f"root is {type(parsed).__name__}, expected {root.__name__}")
+            return parsed, False
         except FileNotFoundError:
             # A concurrent quarantine moved the file between the exists()
             # check and the open.
@@ -569,8 +579,8 @@ class SettingsStore:
         except ValueError as e:
             # Catch ValueError. A file of garbage bytes raises
             # UnicodeDecodeError while the reader decodes it, and json raises
-            # JSONDecodeError. Both derive from ValueError, so one clause
-            # covers both.
+            # JSONDecodeError, and a wrong-root file raises the ValueError
+            # above. All derive from ValueError, so one clause covers them.
             #
             # Quarantine the file rather than leave it in place. The caller
             # gets an empty root either way, and the next save overwrites the

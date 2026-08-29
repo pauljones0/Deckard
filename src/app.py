@@ -317,6 +317,14 @@ class App(Adw.Application):
 
         log.info("Quitting...")
 
+        # Force the quit when the normal quit cannot finish. Arm the watchdog
+        # first, before any teardown step, so every step below runs on the
+        # watchdog clock. A step that blocks -- a UI detach, a DBus disconnect,
+        # the window destroy, or a third-party AppQuit hook that waits on a
+        # dead socket -- then costs 6 s and a force_quit rather than parking the
+        # quit with no escape timer.
+        timer_wheel.schedule(6, self.force_quit, name="force_quit_timer")
+
         # Detach the UI first. The media and tick threads keep running, and a
         # push into a window under destruction crashes. The null port makes
         # those threads dirty-mark instead.
@@ -340,15 +348,6 @@ class App(Adw.Application):
         # main() installs the signal handlers only after it publishes every
         # global that this method reads, so this stays the only guard needed.
         self._destroy_main_window()
-
-        # Force the quit when the normal quit cannot finish. Arm the watchdog
-        # before the AppQuit fan-out below. That fan-out runs third-party quit
-        # hooks inline, and nothing bounds a hook. A hook that blocks, such as
-        # a plugin that waits on a dead socket, parks the quit while no
-        # watchdog runs. With the watchdog the block costs 6 s and a
-        # force_quit. Everything between here and the deck teardown runs on the
-        # watchdog clock.
-        timer_wheel.schedule(6, self.force_quit, name="force_quit_timer")
 
         # Call synchronously, because this process ends in os._exit a few
         # statements below, so an AppQuit handler on the main loop never runs.
@@ -561,6 +560,10 @@ class App(Adw.Application):
             # wedged loop never arrives. TERM and HUP are loop sources too, so
             # only SIGKILL ends such a process, and SIGKILL orphans the plugin
             # backends and skips the force_quit watchdog that on_quit arms.
+            # This does not fire once the teardown has latched: on_quit arms
+            # that watchdog before its first step now, so a teardown that
+            # blocks is bounded there, and forcing on top of it would cut the
+            # ordered shutdown short with os._exit and leave a deck open.
             log.warning(
                 f"Interrupt requested {now - self._sigint_first_at:.1f}s ago and "
                 f"the teardown never started (the main loop is not dispatching); "
