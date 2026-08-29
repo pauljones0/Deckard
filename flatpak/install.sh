@@ -3,6 +3,12 @@
 # Create a flatpak of Deckard and optionally a flatpak bundle
 #
 
+# Fail on the first error and on a failure anywhere in a pipe, so an
+# unchecked download, copy or runtime install stops the script instead of
+# turning into a confusing later failure. -u is left off on purpose: the
+# argument parser reads $1 and the repo/branch vars before they are set.
+set -eo pipefail
+
 # Function to check if a command exists
 command_exists() {
     command -v "$1" >/dev/null 2>&1
@@ -41,8 +47,7 @@ askyesno() {
 }
 
 # Handle command line arguments
-args=$(getopt -o h --long help,repo:,branch:,make-bundle,yes -n $(basename $0) -- "$@")
-if (( $? != 0 )); then
+if ! args=$(getopt -o h --long help,repo:,branch:,make-bundle,yes -n $(basename $0) -- "$@"); then
     exit 1
 fi
 
@@ -193,16 +198,22 @@ else
     git clone https://github.com/flathub/shared-modules/ shared-modules
 fi
 
-# Install necessary Flatpak runtimes
-echo "Installing flathub runtimes"
-flatpak install runtime/org.gnome.Sdk//46 --system -y
-flatpak install runtime/org.gnome.Platform//46 --system -y
+# Install necessary Flatpak runtimes. The version comes from the manifest,
+# so it can never drift from the runtime the build actually pulls.
+runtime_version=$(grep -oE "runtime-version: *'?[0-9]+'?" io.github.nazbert.Deckard.yml | grep -oE '[0-9]+' | head -1)
+if [[ -z "$runtime_version" ]]; then
+    echo "Error: could not read runtime-version from io.github.nazbert.Deckard.yml"
+    exit 1
+fi
+echo "Installing flathub runtimes (version $runtime_version, from the manifest)"
+flatpak install "runtime/org.gnome.Sdk//${runtime_version}" --system -y
+flatpak install "runtime/org.gnome.Platform//${runtime_version}" --system -y
 
-# Build and install Deckard
+# Build and install Deckard. Guard it explicitly, so its exit code drives the
+# script's rather than set -e exiting before this line's own handling.
 echo "Building flatpak (this will take a while)"
-flatpak-builder --repo=repo --force-clean --install --user build-dir io.github.nazbert.Deckard.yml
-rc=$?
-if (( $rc != 0 )); then
+if ! flatpak-builder --repo=repo --force-clean --install --user build-dir io.github.nazbert.Deckard.yml; then
+    rc=$?
     exit $rc
 fi
 
