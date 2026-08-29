@@ -18,6 +18,8 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Adw
 
+from loguru import logger as log
+
 # Import own modules
 from src.windows.PageManager.elements.PageSelector import PageSelector
 from src.windows.PageManager.elements.PageEditor import PageEditor
@@ -119,9 +121,17 @@ class PageManager(Adw.ApplicationWindow):
         page_manager = gl.page_manager
         if page_manager is None:
             return
-        self.page_selector.rename_page_row(old_path=old_path, new_path=new_path)
+        # Move first, update the row second. move_page refuses a destination
+        # outside the pages folder or one that already exists, so a rejected
+        # rename must leave the row on its original name rather than show a new
+        # name for a page that did not move.
+        try:
+            page_manager.move_page(old_path, new_path)
+        except (ValueError, OSError):
+            log.warning(f"Refused to rename {old_path!r} to {new_path!r}")
+            return
 
-        page_manager.move_page(old_path, new_path)
+        self.page_selector.rename_page_row(old_path=old_path, new_path=new_path)
 
         # Emit signal
         gl.signal_manager.trigger_signal(Signals.PageRename, old_path, new_path)

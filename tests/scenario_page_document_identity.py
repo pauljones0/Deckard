@@ -406,11 +406,12 @@ def check_rename_preserves_live_page() -> int:
 
 
 def check_rename_over_live_page() -> int:
-    """A rename onto a page name a deck already shows.
+    """A rename onto a page name that already exists is refused.
 
-    The renamed page was never opened, so no document moves onto the
-    destination. The document standing there must be corrected, or the deck
-    keeps the overwritten page and writes it back at its next save.
+    move_page rejects an existing destination rather than overwrite it, so a
+    live page a deck shows keeps its content and its file. Both real callers
+    already guard this name-in-use case; the seam now enforces it too, which
+    closes the overwrite path the containment fix removed.
     """
     source_path = seed_page("StandingSource")
     write_file(source_path, {"keys": {}, "which-page": "the-source"})
@@ -426,19 +427,27 @@ def check_rename_over_live_page() -> int:
         print(f"FAIL: the destination page did not load: {target_page.dict}")
         return 1
 
-    gl.page_manager.move_page(source_path, target_path)
-
-    if read_file(target_path).get("which-page") != "the-source":
-        print("FAIL: the move did not put the source page at the target name "
-              "-- check vacuous")
-        return 1
-    if target_page.dict.get("which-page") != "the-source":
-        print("FAIL: the deck showing the renamed-over page kept the content "
-              f"the move replaced: {target_page.dict}")
+    try:
+        gl.page_manager.move_page(source_path, target_path)
+    except ValueError:
+        pass
+    else:
+        print("FAIL: a rename onto an existing page was not refused")
         return 1
 
-    print("PASS: a rename onto an open page corrects the document standing "
-          "at that name")
+    if read_file(target_path).get("which-page") != "the-target":
+        print("FAIL: a refused rename overwrote the standing page's file")
+        return 1
+    if target_page.dict.get("which-page") != "the-target":
+        print("FAIL: a refused rename changed the live page's content: "
+              f"{target_page.dict}")
+        return 1
+    if not os.path.exists(source_path):
+        print("FAIL: a refused rename still deleted the source page")
+        return 1
+
+    print("PASS: a rename onto an existing page is refused and both pages "
+          "keep their content")
     return 0
 
 
