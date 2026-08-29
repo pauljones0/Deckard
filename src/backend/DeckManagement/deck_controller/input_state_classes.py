@@ -776,8 +776,15 @@ class ControllerDialState(ControllerInputState):
     def set_image(self, image: "InputImage | None", update: bool = True) -> None:
         if self.image is not None:
             self.image.close()
+        if self.video is not None:
+            # The render path draws self.video ahead of self.image, so a
+            # still that replaces a video must close and clear it, as the key
+            # and touchscreen setters do. Without this the dial kept playing
+            # the old video and leaked its capture.
+            self.video.close()
 
         self.image = image
+        self.video = None
         self.media_owner_action = None
 
         if update:
@@ -787,8 +794,13 @@ class ControllerDialState(ControllerInputState):
     def set_video(self, video: "InputVideo | KeyGIF") -> None:
         if self.video is not None:
             self.video.close()
+        if self.image is not None:
+            # The mirror of set_image: a video that replaces a still releases
+            # it, matching the key and touchscreen setters.
+            self.image.close()
 
         self.video = video
+        self.image = None
         self.media_owner_action = None
 
     @override
