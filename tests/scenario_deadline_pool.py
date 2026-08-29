@@ -269,6 +269,61 @@ def case_the_replacement_takes_work_at_once() -> None:
         pool.shutdown()
 
 
+def case_the_replacement_budget_quarantines_the_pool() -> None:
+    """A replacing pool stops swapping executors after its budget, so a deck
+    that wedges over and over cannot leak a worker per wedge for the life of
+    the process. Past the budget the pool quarantines: it keeps the stuck task
+    on the current executor and replaces no more, and it says so.
+    """
+    budget = 3
+    pool = DeadlinePool(
+        max_workers=1,
+        thread_name_prefix="dp_budget",
+        replace_on_wedge=True,
+        max_replacements=budget,
+        wording=WORDING,
+    )
+    hung: list[Task] = []
+    try:
+        # Wedge it exactly budget times; each replaces and strands one worker.
+        for i in range(budget):
+            task = Task(f"hung-{i}", hang=True)
+            hung.append(task)
+            outcome = pool.run_batch(batch(task), deadline=DEADLINE)
+            assert outcome.replaced is True, f"wedge {i} within budget must replace"
+        assert pool.replacements == budget, (
+            f"the pool must replace exactly {budget} times, got {pool.replacements}")
+        assert pool.leaked_workers == budget, (
+            f"each replacement strands one worker, got {pool.leaked_workers}")
+        assert not pool.is_quarantined, "the pool must not quarantine until the budget is spent"
+
+        # One more wedge is past the budget: no replacement, quarantine set,
+        # and the leaked-worker count does not grow.
+        over = Task("hung-over", hang=True)
+        hung.append(over)
+        with LogCapture() as capture:
+            outcome = pool.run_batch(batch(over), deadline=DEADLINE)
+        assert outcome.replaced is False, "a wedge past the budget must not replace"
+        assert pool.is_quarantined, "the pool must quarantine once the budget is spent"
+        # replacements is the real bound: no more executors are abandoned, so
+        # the abandoned-executor thread count is capped at budget worth. The
+        # over-budget stuck task still pins a worker on the current executor,
+        # and leaked_workers counts every stuck task seen, so it reads one more.
+        assert pool.replacements == budget, (
+            f"a quarantined pool abandons no more executors, got {pool.replacements}")
+        assert pool.leaked_workers == budget + 1, (
+            f"the over-budget stuck task is still counted, got {pool.leaked_workers}")
+        warning = capture.line("did not finish within")
+        assert "stops" in warning and "give up on it" in warning, (
+            f"the report must name the quarantine, got: {warning}")
+
+        print("PASS: the replacement budget quarantines the pool and bounds the leak")
+    finally:
+        for task in hung:
+            task.release.set()
+        pool.shutdown()
+
+
 def case_a_pool_that_does_not_replace_cancels_nothing() -> None:
     """The action pool's shape. It reports the wedge and keeps its executor,
     and above all it never cancels the queued task: a ready callback that is
@@ -495,6 +550,7 @@ def main() -> None:
     start_watchdog(60, label="scenario_deadline_pool")
     case_the_deadline_tells_a_stuck_task_from_a_late_one()
     case_the_replacement_takes_work_at_once()
+    case_the_replacement_budget_quarantines_the_pool()
     case_a_pool_that_does_not_replace_cancels_nothing()
     case_a_shut_down_pool_refuses_without_raising()
     case_a_close_during_the_sweep_cancels_the_queue_quietly()

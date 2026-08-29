@@ -58,6 +58,14 @@ from loguru import logger as log
 _Params = ParamSpec("_Params")
 _Return = TypeVar("_Return")
 
+# How many times a replacing pool swaps in a fresh executor before it stops.
+# Each swap abandons an executor whose stuck workers never return, so an
+# unbounded count would pin a worker per wedge for the life of the process and
+# stretch quit, which joins every non-daemon thread. After this many, the pool
+# quarantines: it keeps the stuck tasks on the current executor and replaces no
+# more, so the leak is bounded at this many executors' worth of workers.
+DEFAULT_MAX_REPLACEMENTS = 5
+
 # Builds the workers. It takes the width and the thread-name prefix, so a
 # replacement rebuilds what the constructor built, from one definition. An
 # owner that needs another executor kind passes its own.
@@ -122,12 +130,14 @@ class DeadlinePool:
         max_workers: int,
         thread_name_prefix: str,
         replace_on_wedge: bool = False,
+        max_replacements: int = DEFAULT_MAX_REPLACEMENTS,
         wording: BatchWording | None = None,
         executor_factory: ExecutorFactory | None = None,
     ) -> None:
         self._max_workers = max_workers
         self._thread_name_prefix = thread_name_prefix
         self._replace_on_wedge = replace_on_wedge
+        self._max_replacements = max_replacements
         self._wording = BatchWording() if wording is None else wording
         self._new_executor: ExecutorFactory = _new_thread_pool if executor_factory is None else executor_factory
         # Held across every submit, every swap and the shutdown flag, so a
@@ -138,6 +148,7 @@ class DeadlinePool:
         self._shutdown = False
         self._leaked_workers = 0
         self._replacements = 0
+        self._quarantined = False
         self._executor: Executor = self._new_executor(max_workers, thread_name_prefix)
 
     @property
@@ -152,6 +163,16 @@ class DeadlinePool:
     def replacements(self) -> int:
         """How often a wedge cost this pool its executor."""
         return self._replacements
+
+    @property
+    def is_quarantined(self) -> bool:
+        """Whether the replacement budget is spent and the pool has stopped
+        swapping in fresh executors. A quarantined pool still runs work on its
+        current executor, but a task that wedges it now stays wedged: the owner
+        should stop feeding this pool and surface a broken deck rather than
+        leak more threads behind a task that never returns."""
+        with self._lock:
+            return self._quarantined
 
     @property
     def is_shutdown(self) -> bool:
@@ -317,14 +338,21 @@ class DeadlinePool:
                 f"task holds its thread until it returns and the close took "
                 f"whatever was still queued. {tail}")
             return False
-        aftermath = (
-            f"Replacing the {words.pool_name}, so the stuck task(s) leak their "
-            f"executor's thread(s) once instead of wedging every later batch "
-            f"behind them."
-            if replaced else
-            f"The {words.pool_name} keeps the stuck task(s), so later work "
-            f"queues behind them."
-        )
+        if replaced:
+            aftermath = (
+                f"Replacing the {words.pool_name}, so the stuck task(s) leak their "
+                f"executor's thread(s) once instead of wedging every later batch "
+                f"behind them.")
+        elif self.is_quarantined:
+            aftermath = (
+                f"The {words.pool_name} has replaced its executor "
+                f"{self._max_replacements} times and now stops, so it leaks no "
+                f"more threads. Later work queues behind the stuck task(s), and "
+                f"this pool needs its owner to give up on it.")
+        else:
+            aftermath = (
+                f"The {words.pool_name} keeps the stuck task(s), so later work "
+                f"queues behind them.")
         log.warning(
             f"{head}; continuing without them ({words.stuck_hint}). "
             f"{aftermath} {tail}")
@@ -355,10 +383,17 @@ class DeadlinePool:
         old: Executor | None = None
         with self._lock:
             self._leaked_workers += stuck_count
-            if self._replace_on_wedge and not self._shutdown:
+            # Replace only while the budget has room. Past it, quarantine: keep
+            # the stuck tasks on the current executor and swap no more, so the
+            # leaked-worker count cannot grow without bound behind tasks that
+            # never return.
+            if (self._replace_on_wedge and not self._shutdown
+                    and self._replacements < self._max_replacements):
                 old = self._executor
                 self._executor = self._new_executor(self._max_workers, self._thread_name_prefix)
                 self._replacements += 1
+            elif self._replace_on_wedge and not self._shutdown:
+                self._quarantined = True
         if old is None:
             return False
         old.shutdown(wait=False)
