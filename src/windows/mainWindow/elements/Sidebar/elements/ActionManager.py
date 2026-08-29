@@ -289,26 +289,6 @@ class ActionExpanderRow(BetterExpander):
         controller.load_page(page)
         return True
 
-    def update_comment_for_index(self, action_index: int) -> None:
-        visible_child = services.require_main_window().leftArea.deck_stack.get_visible_child()
-        if visible_child is None:
-            return
-        controller = visible_child.deck_controller
-        page = controller.active_page
-        identifier = self.active_identifier
-        state = self.active_state
-        if page is None or identifier is None or state is None:
-            return
-        comment = page.get_action_comment(index=action_index, state=state, identifier=identifier)
-        rows = self.get_rows()
-        if not 0 <= action_index < len(rows):
-            # The sidebar rebuild runs at idle priority, so a comment update can
-            # name a row a later rebuild already dropped. An index past the rows
-            # then names nothing, and must move nothing rather than raise.
-            return
-        rows[action_index].set_comment(comment)
-
-
 class ActionRowLabelToggle(Gtk.Button):
     def __init__(self, action_row: "ActionRow"):
         self.action_row = action_row
