@@ -11,6 +11,7 @@ import fixtures  # noqa: F401  (import first: sets up the isolated data dir)
 
 import os
 import threading
+import time
 
 import cv2
 import numpy as np
@@ -34,9 +35,9 @@ def make_mp4(path: str, n_frames: int = 10, size=(64, 64)) -> str:
 
 
 def make_entry(cache_path: str):
-    entry = type("Entry", (), {})()
-    entry.path = cache_path
-    entry.stop_event = threading.Event()
+    # A real _TileCacheEntry, so the builder's finally that clears the handle
+    # and stamps a failure cooldown finds the fields it expects.
+    entry = mtc._TileCacheEntry(cache_path)
     entry.ready = False
     entry.refcount = 1
     return entry
@@ -210,6 +211,105 @@ def leg_truncated_source() -> int:
     return 0
 
 
+def leg_failed_builder_is_retryable() -> int:
+    # A builder whose KeyVideoCache constructor raises must clear the entry's
+    # builder handle, so a later acquire() can start another one instead of
+    # leaving the key uncached for every remaining consumer. The failure also
+    # paces the retry with a cooldown.
+    source = make_mp4(os.path.join(gl.DATA_PATH, "source_retry.mp4"))
+    out_size = (72, 72)
+    real_ctor = mtc.KeyVideoCache
+    calls = {"n": 0}
+
+    def failing_ctor(*a, **k):
+        # Fail only the builder construction; the reader construction (the
+        # acquire return) must still work, so gate on is_builder.
+        if k.get("is_builder"):
+            calls["n"] += 1
+            raise RuntimeError("injected builder construction failure")
+        return real_ctor(*a, **k)
+
+    # Shrink the retry cooldown so the retry lands inside the scenario.
+    real_cooldown = mtc._BUILD_RETRY_COOLDOWN_S
+    mtc._BUILD_RETRY_COOLDOWN_S = 0.3
+    mtc.KeyVideoCache = failing_ctor
+    # acquire() gates on the cache-videos setting, which reads a settings
+    # manager this scenario does not install. Force it on for the leg.
+    real_enabled = mtc.cache_videos_enabled
+    mtc.cache_videos_enabled = lambda: True
+    readers = []
+    try:
+        readers.append(mtc.acquire(source, out_size))
+        # The builder ran and failed; wait for it to clear its handle.
+        key = mtc._registry_key(source, out_size, 1.0)
+        entry = mtc._registry[key]
+        for _ in range(200):
+            if entry.builder_thread is None and calls["n"] >= 1:
+                break
+            time.sleep(0.01)
+        if entry.builder_thread is not None:
+            print("FAIL(retry): a failed builder left its handle set, so no "
+                  "acquire can restart it")
+            return 1
+        if entry.last_build_failure == 0.0:
+            print("FAIL(retry): a failed build did not stamp the cooldown")
+            return 1
+
+        # Within the cooldown, a second acquire does not restart the builder.
+        before = calls["n"]
+        readers.append(mtc.acquire(source, out_size))
+        if calls["n"] != before:
+            print("FAIL(retry): the cooldown did not hold off the retry")
+            return 1
+
+        # After the cooldown, a fresh acquire retries the build.
+        time.sleep(0.35)
+        readers.append(mtc.acquire(source, out_size))
+        for _ in range(200):
+            if calls["n"] > before:
+                break
+            time.sleep(0.01)
+        if calls["n"] <= before:
+            print("FAIL(retry): the builder never retried after the cooldown")
+            return 1
+    finally:
+        mtc.KeyVideoCache = real_ctor
+        mtc._BUILD_RETRY_COOLDOWN_S = real_cooldown
+        mtc.cache_videos_enabled = real_enabled
+        for reader in readers:
+            mtc.release(reader)
+    print("PASS(retry): a failed builder clears its handle and retries after a cooldown")
+    return 0
+
+
+def leg_lingering_list_prunes() -> int:
+    # A finished builder thread must not sit in the lingering list until quit.
+    mtc._lingering_builders.clear()
+    dead = threading.Thread(target=lambda: None)
+    dead.start()
+    dead.join()
+    mtc._lingering_builders.append(dead)
+
+    # A live builder that outlives its join triggers the prune on append.
+    hold = threading.Event()
+    live = threading.Thread(target=lambda: hold.wait(5))
+    live.start()
+    try:
+        mtc._join_builder(live, timeout=0.05)  # outlives the join -> appended, prunes dead
+        if dead in mtc._lingering_builders:
+            print("FAIL(prune): a finished builder was not pruned on append")
+            return 1
+        if live not in mtc._lingering_builders:
+            print("FAIL(prune): the live builder was not recorded")
+            return 1
+    finally:
+        hold.set()
+        live.join(timeout=5)
+        mtc._lingering_builders.clear()
+    print("PASS(prune): the lingering list prunes finished builders on append")
+    return 0
+
+
 def main() -> int:
     start_watchdog(40, "tile_builder_terminal")
 
@@ -217,6 +317,8 @@ def main() -> int:
     rc |= leg_promote_failure()
     rc |= leg_writer_open_fail()
     rc |= leg_truncated_source()
+    rc |= leg_failed_builder_is_retryable()
+    rc |= leg_lingering_list_prunes()
     if rc == 0:
         print("PASS: scenario_tile_builder_terminal")
     return rc

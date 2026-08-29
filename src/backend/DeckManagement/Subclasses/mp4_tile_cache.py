@@ -46,40 +46,67 @@ _md5_memo_lock = threading.Lock()
 # 256 keys is far beyond any realistic working set of distinct videos, and an
 # eviction only costs a re-hash.
 _MD5_MEMO_MAX = 256
-_md5_memo: "OrderedDict[tuple[str, int, float], str]" = OrderedDict()
+# Key: (path, st_dev, st_ino, st_size, st_mtime_ns). See _video_identity.
+_md5_memo: "OrderedDict[tuple[str, int, int, int, int], str]" = OrderedDict()
 
 
-def get_video_md5(path: str) -> str:
-    """Maps (path, size, mtime) to an md5, memoized in a bounded LRU.
+def _video_identity(st: "os.stat_result") -> tuple[int, int, int, int]:
+    """The identity a digest is memoized under. Device and inode tell a
+    same-size, same-mtime replacement apart from the original, because a new
+    file lands on a new inode, and nanosecond mtime catches a sub-second
+    rewrite in place that a float second-resolution mtime rounds away."""
+    return (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns)
+
+
+def get_video_md5(path: str, attempts: int = 3) -> str:
+    """Maps a file's identity to an md5, memoized in a bounded LRU.
 
     Both cache classes hash the whole source file in their constructor, once
     per page switch and per InputVideo construction. That is cheap once and
     expensive when repeated. The registry key below hashes on every acquire(),
     which without the memo multiplies the cost across every consumer of a
     shared video.
+
+    The file is stat-ed before and after the hash. A write that lands during
+    the hash changes the identity, so the digest names bytes no later reader
+    opens; that pass is retried, and a digest is memoized only under an
+    identity that held steady across the read.
     """
-    st = os.stat(path)
-    key = (path, st.st_size, st.st_mtime)
-    with _md5_memo_lock:
-        cached = _md5_memo.get(key)
+    digest = ""
+    for _ in range(max(1, attempts)):
+        st_before = os.stat(path)
+        key = (path, *_video_identity(st_before))
+        with _md5_memo_lock:
+            cached = _md5_memo.get(key)
+            if cached is not None:
+                _md5_memo.move_to_end(key)
         if cached is not None:
-            _md5_memo.move_to_end(key)
-    if cached is not None:
-        return cached
+            return cached
 
-    md5 = hashlib.md5()
-    with open(path, "rb") as f:
-        block = f.read(2 ** 16)
-        while len(block) != 0:
-            md5.update(block)
+        md5 = hashlib.md5()
+        with open(path, "rb") as f:
             block = f.read(2 ** 16)
-    digest = md5.hexdigest()
+            while len(block) != 0:
+                md5.update(block)
+                block = f.read(2 ** 16)
+        digest = md5.hexdigest()
 
-    with _md5_memo_lock:
-        _md5_memo[key] = digest
-        _md5_memo.move_to_end(key)
-        while len(_md5_memo) > _MD5_MEMO_MAX:
-            _md5_memo.popitem(last=False)
+        st_after = os.stat(path)
+        if _video_identity(st_after) != _video_identity(st_before):
+            # The file changed under the hash. This digest may name a torn mix
+            # of old and new bytes, so do not memoize it, and read again.
+            continue
+
+        with _md5_memo_lock:
+            _md5_memo[key] = digest
+            _md5_memo.move_to_end(key)
+            while len(_md5_memo) > _MD5_MEMO_MAX:
+                _md5_memo.popitem(last=False)
+        return digest
+
+    # The file kept changing across every attempt. Return the last digest
+    # without memoizing it, so a settled read later can still cache a stable
+    # one under its own identity.
     return digest
 
 
@@ -691,7 +718,8 @@ def cache_videos_enabled() -> bool:
 
 
 class _TileCacheEntry:
-    __slots__ = ("path", "refcount", "ready", "builder_thread", "stop_event")
+    __slots__ = ("path", "refcount", "ready", "builder_thread", "stop_event",
+                 "last_build_failure")
 
     def __init__(self, path: str):
         self.path = path
@@ -701,6 +729,10 @@ class _TileCacheEntry:
         self.ready = os.path.isfile(path)
         self.builder_thread: threading.Thread | None = None
         self.stop_event = threading.Event()
+        # monotonic time of the last failed build, or 0.0. acquire() waits a
+        # cooldown after a failure before it restarts a builder, so a source
+        # that cannot build does not rebuild on every acquire.
+        self.last_build_failure = 0.0
 
 
 _registry_lock = threading.Lock()
@@ -722,6 +754,12 @@ _registry: dict[tuple[str, tuple[int, int], float, str], _TileCacheEntry] = {}
 # frame decode, measured around a millisecond at tile resolution. The lingering
 # list below catches whatever needs longer, so a short bound costs nothing.
 _BUILDER_JOIN_TIMEOUT_S = 0.5
+
+# Minimum gap between builder restarts for one entry after a failed build. A
+# build that raises clears its handle so a later acquire can retry, but a
+# permanently broken source must not rebuild on every acquire; it waits this
+# long between attempts.
+_BUILD_RETRY_COOLDOWN_S = 30.0
 
 # Total budget for the quit-time sweep, shared across every builder it joins
 # rather than allowed per thread. The quit path runs against a force-quit timer
@@ -758,6 +796,10 @@ def _join_builder(thread: threading.Thread | None, timeout: float = _BUILDER_JOI
         f"leaving it to finish in the background"
     )
     with _registry_lock:
+        # Prune the ones that have since finished, so the list holds only
+        # builders still running rather than growing a session-long tail of
+        # dead Thread objects that only shutdown clears.
+        _lingering_builders[:] = [t for t in _lingering_builders if t.is_alive()]
         _lingering_builders.append(thread)
 
 
@@ -826,8 +868,11 @@ def acquire(source_path: str, out_size: tuple[int, int], saturation: float = 1.0
         entry.refcount += 1
         # Start exactly one detached builder the first time a key has no
         # promoted cache on disk, and only while performance.cache-videos is
-        # enabled.
-        if not entry.ready and entry.builder_thread is None and cache_videos_enabled():
+        # enabled. A recent build failure holds the retry off for a cooldown,
+        # so a source that cannot build does not rebuild on every acquire.
+        cooling = (entry.last_build_failure != 0.0
+                   and time.monotonic() - entry.last_build_failure < _BUILD_RETRY_COOLDOWN_S)
+        if not entry.ready and entry.builder_thread is None and not cooling and cache_videos_enabled():
             entry.builder_thread = threading.Thread(
                 target=_run_builder,
                 args=(entry, source_path, out_size, saturation),
@@ -1071,9 +1116,39 @@ def registry_cache_paths() -> set[str]:
         return {entry.path for entry in _registry.values()}
 
 
+def remove_cache_file_if_unreferenced(path: str) -> bool:
+    """Remove a cache file only when no live registry entry points at it, with
+    the membership test and the unlink under one hold of the registry lock.
+
+    The sweeper's snapshot of registry_cache_paths() goes stale during its
+    walk: a reader or builder that acquire()s a file after the snapshot but
+    before the unlink would lose it. acquire() adds its entry under this same
+    lock, so a check-and-remove here is atomic against it: either the entry is
+    present and the file is kept, or it is absent and no consumer is attached.
+    Returns True when the file was removed (or was already gone), False when a
+    live entry protected it. Raises OSError for a real removal failure, which
+    the sweeper already handles.
+    """
+    with _registry_lock:
+        if any(entry.path == path for entry in _registry.values()):
+            return False
+        try:
+            os.remove(path)
+        except FileNotFoundError:
+            return True
+        return True
+
+
 def _run_builder(entry: _TileCacheEntry, source_path: str, out_size: tuple[int, int], saturation: float) -> None:
-    builder = KeyVideoCache(source_path, out_size, saturation, cache_path=entry.path, is_builder=True)
+    # Construct inside the try. A KeyVideoCache constructor that raises would
+    # otherwise leave entry.builder_thread set to this now-dead thread, and
+    # acquire() starts a builder only when that field is None, so the key
+    # would stay uncached for every remaining consumer. The finally clears the
+    # handle whatever happened, so a later acquire can retry.
+    builder: "KeyVideoCache | None" = None
+    failed = False
     try:
+        builder = KeyVideoCache(source_path, out_size, saturation, cache_path=entry.path, is_builder=True)
         while not builder.is_cache_complete():
             if entry.stop_event.is_set():
                 return
@@ -1099,6 +1174,17 @@ def _run_builder(entry: _TileCacheEntry, source_path: str, out_size: tuple[int, 
                 return
         entry.ready = True
     except Exception:
+        failed = True
         log.opt(exception=True).error(f"Tile cache builder failed for {source_path}")
     finally:
-        builder.close()
+        if builder is not None:
+            builder.close()
+        # Release this entry's builder slot, but only if it still points at
+        # this thread: an invalidation or a detach may already have cleared or
+        # replaced it. On a failure, stamp the cooldown so acquire() paces the
+        # retry instead of rebuilding on the next paint.
+        with _registry_lock:
+            if entry.builder_thread is threading.current_thread():
+                entry.builder_thread = None
+            if failed and not entry.ready:
+                entry.last_build_failure = time.monotonic()
