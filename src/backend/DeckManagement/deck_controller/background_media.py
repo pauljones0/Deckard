@@ -53,6 +53,14 @@ class Background:
         # publishes under this lock beside its siblings.
         self._render_state_lock = threading.RLock()
 
+        # Bumped under the lock by every source swap. update_tiles snapshots
+        # it with the source and publishes only while it still matches, so a
+        # render of the old source that finishes after a newer set_image or
+        # set_video discards its result instead of overwriting the newer
+        # tiles. A still image has no later tick to repair such an overwrite,
+        # which is why a lock around the publish alone is not enough.
+        self._source_epoch = 0
+
         self.image: "BackgroundImage | None" = None
         # Either video provider: the cv2-backed one, or the PIL GIF one,
         # which carries the same playback surface without subclassing it.
@@ -95,6 +103,7 @@ class Background:
             old_video = self.video
             self.image = image
             self.video = None
+            self._source_epoch += 1
             if not _keep_slideshow:
                 self.slideshow = None
             self._touchscreen_slice = None
@@ -126,6 +135,7 @@ class Background:
             old_video = self.video
             self.image = None
             self.video = video
+            self._source_epoch += 1
             # A video and a slideshow are mutually exclusive. Setting a video
             # ends any rotation, so slideshow_tick() stops advancing.
             self.slideshow = None
@@ -416,6 +426,7 @@ class Background:
             with self._render_state_lock:
                 image = self.image
                 video = self.video
+                epoch = self._source_epoch
             identity = None
             # Compose the new frame outside the lock (get_tiles and
             # get_next_tiles do the heavy work and touch other caches), then
@@ -440,6 +451,12 @@ class Background:
             else:
                 new_tiles = [self.deck_controller.generate_alpha_key() for _ in range(self.deck_controller.deck.key_count())]
             with self._render_state_lock:
+                if self._source_epoch != epoch:
+                    # A set_image or set_video swapped the source while this
+                    # frame rendered. Its own update_tiles published the newer
+                    # content; publishing this frame would put the old source
+                    # back over it, and a still image would never repair that.
+                    return
                 self.tiles = new_tiles
                 if wrote_strip:
                     self._video_strip = new_video_strip
