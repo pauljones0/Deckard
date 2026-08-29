@@ -262,12 +262,27 @@ def shutdown_engine(env: dict, timeout: float = 15.0) -> float:
     handle stays open."""
     controller = env["controller"]
     began = time.monotonic()
+    env["gl"].threads_running = False
     env["gl"].deck_manager.close_all()
     media = controller.media_player
     if media is not None and media.is_alive():
         media.join(timeout)
         if media.is_alive():
             raise RuntimeError(f"the media writer outlived the {timeout:g}s teardown bound")
+    # close_all drives the terminal clear-and-close but not the controller's
+    # own tick-stop sweep; the app's quit path ends in os._exit, so it never
+    # needed the tick thread to exit. This process does: the interpreter waits
+    # for non-daemon threads, so a live tick thread hangs the script after its
+    # own PASS (the first hardware run found exactly that).
+    controller.keep_actions_ticking = False
+    stop_event = getattr(controller, "_tick_stop_event", None)
+    if stop_event is not None:
+        stop_event.set()
+    tick = getattr(controller, "tick_thread", None)
+    if tick is not None and tick.is_alive():
+        tick.join(5.0)
+        if tick.is_alive():
+            raise RuntimeError("the tick thread outlived the teardown")
     took = time.monotonic() - began
     if controller.deck.is_open():
         raise RuntimeError("the device handle is still open after close_all")
