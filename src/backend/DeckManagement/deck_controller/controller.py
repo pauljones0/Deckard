@@ -75,7 +75,7 @@ from src.Signals import Signals
 
 import globals as gl
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import cast, TYPE_CHECKING, Any, overload
 if TYPE_CHECKING:
     from src.backend.DeckManagement.DeckManager import DeckManager
@@ -939,7 +939,10 @@ class DeckController:
         # to an older generation.
         if not self._page_is_current(gen):
             return
-        self.load_input(controller_input, page, update)
+        # The probe re-asks the generation inside the load, which the precheck
+        # above stops covering once a plugin callback blocks and resumes.
+        self.load_input(controller_input, page, update,
+                        still_current=lambda: self._page_is_current(gen))
 
     def take_pending_screensaver_page(self) -> "Page | None":
         """Pop the page that load_page's screensaver guard recorded. None
@@ -953,9 +956,11 @@ class DeckController:
         if controller_input is not None:
             self.load_input(controller_input, page, update)
 
-    def load_input(self, controller_input: "ControllerInput[Any]", page: Page, update: bool = True) -> None:
+    def load_input(self, controller_input: "ControllerInput[Any]", page: Page, update: bool = True, *,
+                   still_current: "Callable[[], bool] | None" = None) -> None:
         config = controller_input.identifier.get_config(page)
-        controller_input.load_from_input_dict(config, update, page=page)
+        controller_input.load_from_input_dict(config, update, page=page,
+                                              still_current=still_current)
 
     def close_image_ressources(self) -> None:
         """Release every input's media, the key and dial images and videos,
