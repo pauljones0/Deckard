@@ -467,7 +467,8 @@ def leg_worker_thread_arrival(manager, observer: Observer) -> None:
     remote_controller = manager._init_deck_controller_with_retry(remote_deck)
     assert remote_controller is not None, "the remote controller failed to build"
     manager.remote_deck_manager = types.SimpleNamespace(
-        start=lambda: None,
+        # start() answers whether the server bound; False registers nothing.
+        start=lambda: True,
         deck_controllers=[remote_controller],
         stop=lambda: None,
     )

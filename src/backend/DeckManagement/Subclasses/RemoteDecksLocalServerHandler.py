@@ -1,9 +1,12 @@
 from http.server import BaseHTTPRequestHandler
+import hmac
 import json
 import time
 from datetime import datetime
 import base64
 from io import BytesIO
+
+from loguru import logger as log
 
 from typing import TYPE_CHECKING, Any, override
 
@@ -11,13 +14,25 @@ if TYPE_CHECKING:
     from src.backend.DeckManagement.Subclasses.RemoteDeckManager import RemoteDeckManager
     from PIL import Image
 
-def create_handler(remote_deck_manager: "RemoteDeckManager") -> "type[BaseHTTPRequestHandler]":
-    """Factory function to create a handler class with access to RemoteDeckManager."""
-    
+# One button image is a small JPEG data URI; a control payload is a few keys.
+# Anything larger is not this protocol, so refuse it before reading the body.
+MAX_BODY_BYTES = 64 * 1024
+
+def create_handler(remote_deck_manager: "RemoteDeckManager", token: str) -> "type[BaseHTTPRequestHandler]":
+    """Factory function to create a handler class bound to one manager and
+    one access token. Every endpoint except the CORS preflight requires the
+    token, checked before any body byte is read."""
+
+    expected_token = token.encode("utf-8")
+
     class RemoteDecksLocalServerHandler(BaseHTTPRequestHandler):
-        """Handle HTTP requests from the Next.js client."""
-        
+        """Handle HTTP requests from the web client."""
+
         manager = remote_deck_manager
+
+        # A held or trickled connection releases its thread after this many
+        # seconds instead of occupying it for the session.
+        timeout = 10
 
         # {button_id: {"data": <data: URI>, "timestamp": <epoch seconds>}}
         button_images: dict[int, dict[str, str | int]] = {}
@@ -26,7 +41,7 @@ def create_handler(remote_deck_manager: "RemoteDeckManager") -> "type[BaseHTTPRe
             """Set CORS headers to allow cross-origin requests."""
             self.send_header('Access-Control-Allow-Origin', '*')
             self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
-            self.send_header('Access-Control-Allow-Headers', 'Content-Type')
+            self.send_header('Access-Control-Allow-Headers', 'Content-Type, X-Deckard-Token, Authorization')
 
         def _send_json_response(self, status_code: int, data: Any) -> None:
             """Send a JSON response."""
@@ -35,12 +50,42 @@ def create_handler(remote_deck_manager: "RemoteDeckManager") -> "type[BaseHTTPRe
             self.send_header('Content-Type', 'application/json')
             self.end_headers()
             self.wfile.write(json.dumps(data).encode('utf-8'))
-        
+
+        def _authorized(self) -> bool:
+            """Whether this request carries the token, compared in constant
+            time. On failure the 401 goes out before the body is read, so an
+            unauthenticated caller feeds no byte into any parser."""
+            supplied = self.headers.get('X-Deckard-Token')
+            if supplied is None:
+                bearer = self.headers.get('Authorization', '')
+                if bearer.startswith('Bearer '):
+                    supplied = bearer[len('Bearer '):]
+            if supplied is None:
+                self._send_json_response(401, {'error': 'Missing token'})
+                return False
+            if not hmac.compare_digest(supplied.encode('utf-8'), expected_token):
+                self._send_json_response(401, {'error': 'Invalid token'})
+                return False
+            return True
+
+        def _read_body(self) -> bytes | None:
+            """The request body, or None after a 413/400 for one that is
+            oversized or unparseable in length."""
+            try:
+                content_length = int(self.headers.get('Content-Length', '0'))
+            except ValueError:
+                self._send_json_response(400, {'error': 'Invalid Content-Length'})
+                return None
+            if content_length > MAX_BODY_BYTES:
+                self._send_json_response(413, {'error': 'Body too large'})
+                return None
+            return self.rfile.read(content_length)
+
         @classmethod
         def send_button_image(cls, button_id: int, image: "Image.Image") -> None:
             """
             Store a PIL image for a specific button to be sent to the browser.
-            
+
             Args:
                 button_id: The button identifier (e.g., row * 5 + col)
                 image: PIL Image object
@@ -50,29 +95,32 @@ def create_handler(remote_deck_manager: "RemoteDeckManager") -> "type[BaseHTTPRe
             image.save(buffered, format="JPEG")
             img_bytes = buffered.getvalue()
             img_base64 = base64.b64encode(img_bytes).decode('utf-8')
-            
+
             cls.button_images[button_id] = {
                 'data': f"data:image/jpeg;base64,{img_base64}",
                 'timestamp': int(time.time())
             }
 
         def do_OPTIONS(self) -> None:
-            """Handle preflight OPTIONS request."""
+            """Handle preflight OPTIONS request. A preflight carries no
+            custom header, so it is the one unauthenticated verb, and it
+            reveals nothing beyond the CORS policy."""
             self.send_response(200)
             self._set_cors_headers()
             self.end_headers()
 
         def do_GET(self) -> None:
             """Handle GET requests."""
+            if not self._authorized():
+                return
             if self.path == '/status':
                 response_data = {
                     'status': 'online',
-                    'message': 'Python server is running',
+                    'message': 'Deckard Remote Decks server is running',
                     'timestamp': int(time.time()),
                     'datetime': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                 }
                 self._send_json_response(200, response_data)
-                print(f"[{datetime.now().strftime('%H:%M:%S')}] Status check received")
             elif self.path == '/images':
                 response_data = {
                     'status': 'ok',
@@ -81,7 +129,6 @@ def create_handler(remote_deck_manager: "RemoteDeckManager") -> "type[BaseHTTPRe
                 }
                 self._send_json_response(200, response_data)
             elif self.path.startswith('/images/'):
-                print("/images/")
                 try:
                     button_id = int(self.path.split('/')[-1])
                     if button_id in self.button_images:
@@ -101,15 +148,16 @@ def create_handler(remote_deck_manager: "RemoteDeckManager") -> "type[BaseHTTPRe
 
         def do_POST(self) -> None:
             """Handle POST requests."""
+            if not self._authorized():
+                return
             if self.path == '/message':
-                content_length = int(self.headers['Content-Length'])
-                post_data = self.rfile.read(content_length)
+                post_data = self._read_body()
+                if post_data is None:
+                    return
 
                 try:
                     data = json.loads(post_data.decode('utf-8'))
                     received_message = data.get('message', '')
-
-                    print(f"\n[{datetime.now().strftime('%H:%M:%S')}] Received message: {received_message}")
 
                     response_text = f"Echo: {received_message} | Received at {datetime.now().strftime('%H:%M:%S')}"
 
@@ -127,8 +175,9 @@ def create_handler(remote_deck_manager: "RemoteDeckManager") -> "type[BaseHTTPRe
                     self._send_json_response(500, {'error': str(e)})
             elif self.path == '/button':
                 # Handle button press/release events from the client UI
-                content_length = int(self.headers.get('Content-Length', '0'))
-                post_data = self.rfile.read(content_length)
+                post_data = self._read_body()
+                if post_data is None:
+                    return
 
                 try:
                     data = json.loads(post_data.decode('utf-8'))
@@ -148,7 +197,7 @@ def create_handler(remote_deck_manager: "RemoteDeckManager") -> "type[BaseHTTPRe
                     # Stable button id. The layout has 5 columns.
                     button_id = row * 5 + col
 
-                    print(f"\n[{datetime.now().strftime('%H:%M:%S')}] Button event: type={event_type} row={row} col={col} id={button_id}")
+                    log.debug(f"Remote deck button event: type={event_type} row={row} col={col} id={button_id}")
 
                     self.manager.on_key_event(button_id, event_type == "down")
 
@@ -174,7 +223,7 @@ def create_handler(remote_deck_manager: "RemoteDeckManager") -> "type[BaseHTTPRe
 
         @override
         def log_message(self, format: str, *args: Any) -> None:
-            """Override to customize logging."""
+            """Override to keep request lines out of stderr."""
             pass
-    
+
     return RemoteDecksLocalServerHandler
