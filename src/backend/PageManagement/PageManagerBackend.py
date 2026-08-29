@@ -377,6 +377,25 @@ class PageManagerBackend:
             self.clear_old_cached_pages()
 
     def move_page(self, old_path: str, new_path: str) -> None:
+        # Containment is enforced here, at the mutation seam, not only at the
+        # callers. Both names resolve inside the pages folder or this refuses,
+        # so a crafted destination like "../settings/settings" cannot make the
+        # copy below overwrite a file outside the folder and the removal delete
+        # the real page. A caller may re-check for a nicer message; this is the
+        # guarantee.
+        require_containment(self.PAGE_PATH, old_path)
+        require_containment(self.PAGE_PATH, new_path)
+
+        # Claim the destination atomically and refuse an existing one, so the
+        # copy never overwrites another page even if a second writer wins the
+        # gap after a caller's own existence check. O_EXCL is the reservation;
+        # copy2 then fills the reserved file.
+        try:
+            fd = os.open(new_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        except FileExistsError as error:
+            raise ValueError(f"{new_path!r} already exists") from error
+        os.close(fd)
+
         # Read barrier. The copy below reads the old file, so its pending
         # edits go to disk first, or the renamed page arrives without them.
         page_flush.get().flush_path(old_path)
