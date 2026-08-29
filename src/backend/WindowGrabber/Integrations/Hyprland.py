@@ -17,7 +17,7 @@ import contextlib
 import os
 import socket
 import threading
-from src.backend.WindowGrabber.Integration import Integration, WATCHER_STOP_TIMEOUT_S
+from src.backend.WindowGrabber.Integration import Integration, WATCHER_STOP_TIMEOUT_S, QUERY_TIMEOUT_S
 from src.backend.WindowGrabber.Window import Window
 
 import subprocess
@@ -110,14 +110,14 @@ class Hyprland(Integration):
     def get_all_windows(self) -> list[Window]:
         windows: list[Window] = []
         try:
-            output = subprocess.check_output([*self.command_prefix, "hyprctl", "clients", "-j"], text=True, cwd="/").strip()
+            output = subprocess.check_output([*self.command_prefix, "hyprctl", "clients", "-j"], text=True, cwd="/", timeout=QUERY_TIMEOUT_S).strip()
             clients = json.loads(output)
 
             for client in clients:
                 if "class" in client and "title" in client:
                     windows.append(Window(client["class"], client["title"]))
 
-        except (subprocess.CalledProcessError, OSError) as e:
+        except (subprocess.CalledProcessError, OSError, subprocess.TimeoutExpired) as e:
             # OSError covers a missing binary. The argv list runs no shell,
             # which would turn that into a 127 CalledProcessError.
             log.error(f"An error occurred while running hyprctl: {e}")
@@ -129,12 +129,12 @@ class Hyprland(Integration):
     @override
     def get_active_window(self) -> Window | None:
         try:
-            output = subprocess.check_output([*self.command_prefix, "hyprctl", "activewindow", "-j"], text=True, cwd="/").strip()
+            output = subprocess.check_output([*self.command_prefix, "hyprctl", "activewindow", "-j"], text=True, cwd="/", timeout=QUERY_TIMEOUT_S).strip()
             client = json.loads(output)
 
             if "class" in client and "title" in client:
                 return Window(client["class"], client["title"])
-        except (subprocess.CalledProcessError, OSError) as e:
+        except (subprocess.CalledProcessError, OSError, subprocess.TimeoutExpired) as e:
             # OSError covers a missing binary. The argv list runs no shell,
             # which would turn that into a 127 CalledProcessError.
             log.error(f"An error occurred while running hyprctl: {e}")
