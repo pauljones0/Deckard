@@ -939,10 +939,8 @@ class DeckController:
         # to an older generation.
         if not self._page_is_current(gen):
             return
-        # The probe travels into the load, which re-asks it at every mutation
-        # boundary. The precheck above alone leaves the whole load unguarded
-        # once entered: a plugin callback inside it can block past the pool's
-        # deadline and resume against an input the next page re-stamped.
+        # The probe re-asks the generation inside the load, which the precheck
+        # above stops covering once a plugin callback blocks and resumes.
         self.load_input(controller_input, page, update,
                         still_current=lambda: self._page_is_current(gen))
 
