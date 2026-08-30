@@ -11,20 +11,7 @@ if TYPE_CHECKING:
     from src.backend.PluginManager.ActionCore import ActionCore
 
 class SpinRow(GenerativeUI[float]):
-    """
-    A class that represents a spin row widget, allowing the user to increment or decrement a numeric value
-    using spin buttons. The widget can be customized with properties such as minimum, maximum, step size, and
-    the number of digits displayed.
-
-    Inherits from GenerativeUI to manage the UI and provide common functionality for interactive elements.
-
-    Attributes:
-        value (float): The current value of the spin row.
-        min (float): The minimum allowed value for the spin row.
-        max (float): The maximum allowed value for the spin row.
-        step (float): The step size for incrementing/decrementing the value.
-        digits (int): The number of digits to display for the value.
-    """
+    """Spin row with configurable range, step, and precision."""
 
     # build() creates it beside the widget.
     _adjustment: Gtk.Adjustment
@@ -109,14 +96,7 @@ class SpinRow(GenerativeUI[float]):
             self.set_value(number)
 
     def get_number(self) -> float:
-        """
-        Retrieves the current value of the spin row. It falls back to the
-        settings value layer while the widget is unbuilt, because a read is a
-        value query and must not force a build.
-
-        Returns:
-            float: The current value of the spin row.
-        """
+        """Return the spin or settings value without forcing a build."""
         if self._widget is None:
             return self.get_value()
         return cast(float, self.widget.get_value())
@@ -159,11 +139,8 @@ class SpinRow(GenerativeUI[float]):
         adjustment.set_value(rounded_value)
 
     def _get_adjustment(self) -> Gtk.Adjustment:
-        """The adjustment, which build() creates beside the widget.
-
-        The min, max and step values are widget-construction config, and the
-        settings layer holds no equivalent, so a read of them forces a build.
-        """
+        """Return the adjustment that build creates beside the widget.
+        Reading min, max, or step forces a build because settings hold no equivalent."""
         if self._widget is None:
             _ = self.widget
         return self._adjustment

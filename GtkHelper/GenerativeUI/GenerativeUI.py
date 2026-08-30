@@ -23,25 +23,12 @@ _Params = ParamSpec("_Params")
 _Return = TypeVar("_Return")
 
 class GenerativeUI[T](ABC):
-    """
-       Abstract base class for creating dynamic UI elements linked to an ActionCore instance.
-
-       Attributes:
-           _action_core (ActionCore): The action this UI element is associated with.
-           _var_name (str): The key used to store the value in the action's settings.
-           _default_value (T): The default value for this UI element.
-           on_change (Callable[[Gtk.Widget, T, T], None]): Function called when the value changes.
-           _widget (Gtk.Widget): The GTK widget representing the UI element.
-           _can_reset (bool): Whether the UI element can be reset to its default value.
-           _auto_add (bool): Whether the UI element is automatically added to the action.
-       """
+    """Base class for lazily built UI elements linked to an ActionCore."""
     _action_core: "ActionCore"
     _var_name: str # name of the key in the actions settings
     _default_value: T # default value of the key
-    # Runs when the value changes. The first argument is the row widget that
-    # the subclass built, which is a concrete Adw row type, or None while the
-    # widget is unbuilt. See _handle_value_changed. The type is therefore Any
-    # and not Gtk.Widget.
+    # The first callback argument is the concrete row, or None while unbuilt.
+    # It is Any because subclasses build specific Adw row types, not Gtk.Widget.
     on_change: Callable[[Any, T, T], None] | None
     _widget: Gtk.Widget | None # The actual widget of the UI Element; None until built and after destroy()
     _can_reset: bool
@@ -56,23 +43,8 @@ class GenerativeUI[T](ABC):
                  auto_add: bool = True, complex_var_name: bool = False,
                  on_change: Callable[[Any, T, T], None] | None = None,
                  build: Callable[[], None] | None = None):
-        """
-        Initializes the UI element. This does not build the widget. The
-        first .widget access builds it, which usually happens when the config
-        sidebar opens for this action. An action whose config sidebar never
-        opens therefore pays for no Adw row tree. See _ensure_built for the
-        build trigger and its off-main handling.
-
-        Args:
-            action_core (ActionCore): The action this UI element is associated with.
-            var_name (str): The key used to store the value in the action's settings.
-            default_value (T): The default value for this UI element.
-            can_reset (bool, optional): Whether the UI element can be reset. Defaults to True.
-            auto_add (bool, optional): Whether the UI element is automatically added to the action. Defaults to True.
-            on_change (Callable[[Gtk.Widget, T, T], None], optional): Function called when the value changes. Defaults to None.
-            build (Callable[[], None], optional): Builds self._widget (and any widget-only
-                state the subclass needs). Called at most once, on first .widget access.
-        """
+        """Initialize the value layer without building the widget.
+        The first .widget access runs build, failed builds can retry, and unopened config sidebars allocate no Adw row tree."""
         self._action_core = action_core
         self._var_name = var_name
         self._default_value = default_value
@@ -81,39 +53,21 @@ class GenerativeUI[T](ABC):
         self._auto_add = auto_add
         self._complex_var_name = complex_var_name
         self._widget = None
-        # The handler id per binding key, absent while that binding is
-        # disconnected. Tracked ids keep connect and disconnect idempotent: a
-        # disconnect while already off cannot raise, and a reconnect cannot
-        # stack a second handler.
+        # Store one handler id per connected key to make disconnect idempotent.
+        # A reconnect cannot stack a second handler.
         self._signal_handlers: dict[str, int] = {}
         self._built = False
         self._build_flag_lock = threading.Lock()
         self._build_fn = build
 
-        # Register at once. load_initial_generative_ui and the teardown both
-        # accept an object that has not built its widget, through is_built and
-        # through the _widget is None skip in _destroy_gen_ui_batch.
+        # Register before building; initialization and teardown both accept an unbuilt object.
         self._action_core.add_generative_ui_object(self)
 
     def _ensure_built(self) -> None:
-        """Build the widget on the first access. Every .widget read may call it.
-
-        An off-main access marshals through run_on_main, under its 30 s bound,
-        and logs one note per class. A .widget read before the config opens
-        forces an eager build and loses the laziness.
-        """
-        # Lock the flag transition only, never the build. run_on_main runs
-        # build_fn on the main thread, so a worker that holds a lock across it
-        # deadlocks as soon as build_fn re-enters .widget. The early flag also
-        # stops that re-entrant access from recursing, because it sees _built
-        # and falls through to self._widget.
-        #
-        # One known limitation stays. Between the flag flip here and the
-        # marshalled build reaching the main loop, another main-thread reader
-        # sees _built=True with self._widget still None, and gets None. A fix
-        # needs a main-thread inline-build path and a build-executed latch.
-        # Every reader in the tree either runs after the config opens, or
-        # guards against None.
+        """Build on first access; off-main access uses the 30-second main-loop bound.
+        Access before the config opens forces an eager build and logs once per class."""
+        # Flip the flag under the lock but run build_fn outside it on the main thread; this prevents recursive .widget access without deadlocking re-entry.
+        # Before a marshalled build starts, another main-thread reader can see _built with no widget; current readers run later or guard None.
         with self._build_flag_lock:
             if self._built:
                 return
@@ -150,20 +104,12 @@ class GenerativeUI[T](ABC):
 
     def _track_connect(self, key: str, widget: GObject.Object, signal: str,
                        callback: Callable[..., Any]) -> None:
-        """Connect callback to signal on widget once, under key.
-
-        A second call while the handler is already on does nothing, so a
-        reconnect cannot stack a second handler on the same widget.
-        """
+        """Connect the callback once under key; repeated calls do not stack handlers."""
         if self._signal_handlers.get(key) is None:
             self._signal_handlers[key] = widget.connect(signal, callback)
 
     def _track_disconnect(self, key: str, widget: GObject.Object) -> None:
-        """Disconnect the handler stored under key, if one is on.
-
-        A call while the handler is already off does nothing, so a repeated
-        teardown cannot raise.
-        """
+        """Disconnect the handler under key; repeated calls do nothing."""
         handler = self._signal_handlers.pop(key, None)
         if handler is not None:
             widget.disconnect(handler)
@@ -185,8 +131,7 @@ class GenerativeUI[T](ABC):
 
     @property
     def widget(self) -> Any:
-        """Returns the GTK widget representing the UI element, building it on
-        first access (see _ensure_built)."""
+        """Return the GTK widget, building it on first access."""
         self._ensure_built()
         # Back-reference so a container can recover the owning GenerativeUI object.
         if self._widget is not None:
@@ -196,10 +141,8 @@ class GenerativeUI[T](ABC):
 
     @property
     def is_built(self) -> bool:
-        """True once the widget has actually been constructed. Value-layer
-        operations (get_value/set_value/settings sync) never need this.
-        Widget-sync code paths use it to skip work when no widget exists yet,
-        instead of forcing a build to find that out."""
+        """True after widget construction.
+        Value-layer operations do not need this; widget sync uses it to avoid forcing a build."""
         return self._widget is not None
 
     @property
@@ -270,9 +213,8 @@ class GenerativeUI[T](ABC):
             self.set_value(new_value)
 
         if trigger_callback and self.on_change:
-            # Pass the raw widget reference, which is None while unbuilt.
-            # This is a value-layer operation, and it must not force a build
-            # for a widget that the callback may never read.
+            # Pass the raw widget, which is None while unbuilt.
+            # A value-layer callback must not force a widget build.
             self.on_change(self._widget, new_value, old_value)
 
     def update_value_in_ui(self) -> None:
@@ -282,9 +224,7 @@ class GenerativeUI[T](ABC):
 
     def reset_value(self) -> None:
         """Reset the value to its default.
-
-        It syncs the widget only when the widget exists. An unbuilt row has
-        nothing to sync, so a reset must not force a build.
+        Sync only an existing widget so reset does not force a build.
         """
         self._handle_value_changed(self._default_value)
         if self._widget is not None:
@@ -342,11 +282,8 @@ class GenerativeUI[T](ABC):
                 return fallback if fallback is not None else self._default_value
             d = d[key]
 
-        # The widest assertion in the tree, and a deliberate boundary. The walk
-        # above proves only that every intermediate node is a dict; the leaf is
-        # whatever JSON the plugin last wrote. A leaf of the wrong type reaches
-        # set_ui_value unchecked, because T is erased at runtime and there is
-        # no per-row validator to test it against.
+        # The dict walk validates only intermediate nodes; plugin JSON can leave a wrong-typed leaf.
+        # T is erased and rows have no validator, so set_ui_value receives the leaf unchecked.
         return cast("T", d)
 
     def load_initial_ui(self) -> None:
@@ -361,22 +298,12 @@ class GenerativeUI[T](ABC):
         self.set_ui_value(value)
 
     def get_translation(self, key: str | None, fallback: str | None = None) -> str:
-        """
-        Retrieves a translated string for the given key.
-
-        Args:
-            key (str | None): The translation key. A falsy key answers "".
-            fallback (str, optional): The fallback text if translation is not found.
-
-        Returns:
-            str: The translated string.
-        """
+        """Return the translated key, its fallback, or "" for a falsy key."""
         return self._action_core.get_translation(key, fallback) if key else ""
 
     def unparent(self) -> None:
-        """Removes the UI element from its parent widget if it has one. A
-        never-built widget has no parent to remove, so this is a no-op that
-        does not force a build."""
+        """Remove an existing widget from its parent.
+        An unbuilt widget makes this a no-op without forcing a build."""
         from GtkHelper.GtkHelper import run_on_main
 
         def _do() -> None:
@@ -387,17 +314,13 @@ class GenerativeUI[T](ABC):
 
     def destroy(self) -> None:
         """Disconnect the signals, unparent the widget, and unregister.
-
-        A second call does nothing. Never call run_dispose() on the widget,
-        because a dispose of a live Adw composite, such as a ComboRow or an
-        ExpanderRow, logs Gtk-CRITICAL messages.
+        Repeated calls do nothing; do not dispose live Adw composites because GTK logs critical errors.
         """
         from GtkHelper.GtkHelper import run_on_main
 
         def _do() -> None:
-            # A widget that never built has nothing to disconnect and nothing
-            # to unparent, and a .widget read here forces the build that this
-            # class avoids.
+            # An unbuilt widget has nothing to disconnect or unparent.
+            # Use the raw field so teardown does not force a build.
             if self._widget is not None:
                 with contextlib.suppress(Exception):
                     self.disconnect_signals()

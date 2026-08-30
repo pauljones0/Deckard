@@ -32,15 +32,10 @@ from gi.repository import Gtk, Adw, GLib
 
 from loguru import logger as log
 
-# Import the translation accessor
 from src.backend.services import tr
 
-# The thread kit lives in the toolkit-free src/backend/main_loop.py, so engine
-# code marshals to the main loop without an import of the widget stack. These
-# names re-export here unchanged, because every plugin imports them from
-# GtkHelper. RUN_ON_MAIN_TIMEOUT_S does not re-bind here. run_on_main reads it
-# from main_loop at call time, so a copy in this namespace is a dead write.
-# Patch src.backend.main_loop.RUN_ON_MAIN_TIMEOUT_S instead.
+# Re-export the toolkit-free main-loop helpers from the plugin import surface.
+# run_on_main reads RUN_ON_MAIN_TIMEOUT_S from main_loop at call time, so patch it there.
 from src.backend.main_loop import (  # noqa: F401  (re-export for plugins)
     background as background,
     on_main as on_main,
@@ -75,14 +70,12 @@ def better_unparent(widget: Gtk.Widget) -> None:
 
 # Helper Classes
 class BetterExpander(Adw.ExpanderRow):
-    # A facade over the shared list-container adapter, which owns the
-    # private-tree walk and the operations. The expander uses the skip
-    # policy: a mismatched Adw layout no-ops here (clear still warns).
+    # The shared adapter owns the private-tree walk and operations.
+    # A mismatched Adw layout skips operations, but clear still warns.
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
-        # Subclasses that track their rows replace this. Empty here, so
-        # get_index_of_child raises the ValueError it documents rather than
-        # an AttributeError on a subclass that never set it.
+        # Subclasses that track rows replace this empty list.
+        # The default lets get_index_of_child raise ValueError instead of AttributeError.
         self.actions: list[Any] = []
         self._list_container = ListContainerAdapter(
             self.get_list_box, missing="skip", owner_label="Expander")
@@ -100,9 +93,8 @@ class BetterExpander(Adw.ExpanderRow):
         self._list_container.invalidate_sort()
 
     def get_rows(self) -> Any:
-        # The rows are per-subclass widgets that callers read duck-typed
-        # attributes off, so the checker sees dynamic here, as with
-        # BetterPreferencesGroup.get_list_box.
+        # Callers read subclass-specific row attributes by duck typing.
+        # The return stays dynamic for that interface.
         return self._list_container.rows()
 
     def get_list_box(self) -> Gtk.ListBox | None:
@@ -167,11 +159,8 @@ class BetterExpander(Adw.ExpanderRow):
         return image if isinstance(image, Gtk.Image) else None
 
 class BetterPreferencesGroup(Adw.PreferencesGroup):
-    # A facade over the shared list-container adapter, on the raise policy:
-    # a mismatched Adw layout raises a LookupError that names the walk, so
-    # a toolkit change surfaces at the call site instead of hiding, and a
-    # clear can never silently skip while add_row still appends. Row
-    # listing answers None on a mismatched tree under both policies.
+    # A mismatched Adw layout raises LookupError for mutations so toolkit changes fail visibly.
+    # Row listing returns None under both adapter policies.
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self._list_container = ListContainerAdapter(
@@ -202,10 +191,8 @@ class BetterPreferencesGroup(Adw.PreferencesGroup):
         return resolve_preferences_group_list_box(self)
 
 class AttributeRow(Adw.PreferencesRow):
-    # The row draws its own two labels, so the caption and the value live in
-    # plain attributes and setters with names of their own. A name that the row
-    # inherits (title, set_title) would write the GObject property instead, and
-    # the property drives nothing here.
+    # The row draws its own caption and value labels through dedicated attributes.
+    # Inherited title names write an unused GObject property instead.
     def __init__(self, title:str, attr:str, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self.title_str = title
@@ -297,12 +284,7 @@ class EntryDialog(Gtk.ApplicationWindow):
             self.set_dialog_status(1)
 
     def set_dialog_status(self, status: int) -> None:
-        """
-        Sets the status of the dialog
-
-        Args:
-            status (int): 0 for no name, 1 for already in use, 2 for ok
-        """
+        """Set status: 0 for empty, 1 for already used, or 2 for valid."""
         if status == 0:
             # Label
             if self.main_box.get_last_child() is not self.warning_label:
@@ -415,9 +397,8 @@ class EntryRowWithoutTitle(Adw.EntryRow):
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
 
-        # Make title invisible
-        # Walks Adw's internal tree to hide the title; any step can answer
-        # None, and a layout that does not match leaves the title as it is.
+        # Walk Adw's internal tree to hide the title.
+        # A missing step leaves the title unchanged.
         child = self.get_child()
         prefix_box = child.get_first_child() if child is not None else None
         gizmo = prefix_box.get_next_sibling() if prefix_box is not None else None

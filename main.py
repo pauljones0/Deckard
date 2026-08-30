@@ -15,12 +15,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 import os
 import sys
 
-# Cap the glibc per-thread arenas before the allocation-heavy imports run.
-# glibc reads these variables at libc init, so the process must re-exec to
-# apply them. SC_REEXEC stops a loop, and a set MALLOC_ARENA_MAX lets a
-# packaged launcher skip the re-exec. sys.orig_argv keeps interpreter flags
-# such as -X. execve replaces this process, so this must precede the DBus
-# calls in main().
+# Set glibc arena limits before heavy imports; libc reads them at startup, so an unset launcher value requires re-exec.
+# SC_REEXEC prevents a loop, sys.orig_argv preserves interpreter flags, and this must precede D-Bus calls because execve replaces the process.
 if "MALLOC_ARENA_MAX" not in os.environ and "SC_REEXEC" not in os.environ:
     os.environ["MALLOC_ARENA_MAX"] = "2"
     os.environ["MALLOC_TRIM_THRESHOLD_"] = "131072"
@@ -31,9 +27,8 @@ import setproctitle
 
 setproctitle.setproctitle("Deckard")
 
-# Dump all-thread tracebacks on a fatal signal, or on demand via SIGQUIT.
-# Output goes to stderr here. main() re-points it at logs/faulthandler.log
-# after it resolves gl.DATA_PATH, which --data or the settings file can set.
+# Dump all-thread tracebacks on fatal signals or SIGQUIT to stderr.
+# main() redirects output after --data or settings resolve gl.DATA_PATH.
 import faulthandler, signal
 try:
     faulthandler.enable()
@@ -41,10 +36,8 @@ try:
 except (AttributeError, ValueError, OSError):
     pass
 
-# One-time rename migration from StreamController to Deckard. It moves the
-# ~/.var/app tree to the new id and leaves a symlink at the old path. It must
-# run before the globals import, because globals.py makes the data directory
-# at import time, which breaks the migration's existence checks.
+# Move the old var-app tree and leave a compatibility symlink before importing globals.
+# globals creates the data directory at import time and would invalidate migration checks.
 import appinfo
 from rebrand_migration import migrate as _rebrand_migrate, migrate_native_var_app_to_xdg as _xdg_migrate
 _rebrand_migrate()
@@ -52,26 +45,14 @@ _rebrand_migrate()
 # the XDG data dir, after the rename, so the renamed tree lands first.
 _xdg_migrate()
 
-# The CLI fast path, and the last step before the expensive ones. An
-# invocation that only asks the running Deckard to change a page or a state
-# needs one message on the session bus, and every import below answers none of
-# it. This call finishes such an invocation here. It hands every other one
-# back untouched, and those run the same steps in the same order as before.
-# The parser comes from cli_args rather than gl.argparser, because globals is
-# what this call exists to skip; both names are the one parser object.
-#
-# This runs in a module body, which no exception hook covers: the hooks are
-# installed by the first line of main(), and loguru has no sink yet either. So
-# anything unforeseen becomes one sentence here, rather than a traceback with
-# an exit code of zero behind it. SystemExit passes through untouched, which is
-# how argparse still reports its own usage errors.
+# Handle running-instance CLI requests before globals and expensive imports with the shared cli_args parser; other invocations continue unchanged.
+# This module-level path has no exception hooks or log sink, so report unexpected errors here while SystemExit preserves argparse exits.
 from cli_args import argparser as _cli_argparser
 from src.backend import cli_fast_path as _cli_fast_path
 
 try:
     _cli_outcome = _cli_fast_path.answer_from_running_instance(_cli_argparser.parse_args())
 except Exception as _error:
-    # One reporting site below, so a caught failure reads like every other one.
     _cli_outcome = _cli_fast_path.Outcome(
         exit_code=1,
         failures=(f"Deckard could not carry out that command: {_error}",))
@@ -88,10 +69,8 @@ import os
 import time
 import threading
 
-# Cap the OpenCV parallel_for_ pool before the first cv2 call. OpenCV builds
-# the pool lazily and sizes it to nproc, which starts one background thread
-# per core. cvtColor is the only parallel_for_ user here. PIL does the
-# resizing, and FFmpeg owns the video threads, so this knob leaves both alone.
+# Cap OpenCV's lazy parallel_for_ pool before its first call instead of using one thread per core.
+# Only cvtColor uses this pool; PIL resizing and FFmpeg video threads are unaffected.
 import cv2
 cv2.setNumThreads(2)
 
@@ -136,11 +115,8 @@ DEFAULT_DATA_PATH = os.path.expanduser(f"~/.var/app/{appinfo.APP_ID}/data")
 # Rotated files kept per log sink, oldest deleted first. loguru keeps every
 # rotation without this bound, so the log directory grows without limit.
 LOG_RETENTION_FILES = 10
-# By default the files and the in-app ring take DEBUG and up, and the console
-# takes INFO and up. TRACE fills the files fast. SC_LOG_TRACE=1 puts every
-# sink back to TRACE; the value must be exactly "1", so SC_LOG_TRACE=off
-# cannot read as on. config_logger() runs once at boot, so this reads at
-# import time.
+# Files and the ring default to DEBUG; the console defaults to INFO because TRACE grows files quickly.
+# Exact SC_LOG_TRACE=1 enables TRACE for all sinks, and this boot-only setting is read at import.
 LOG_TRACE = os.environ.get("SC_LOG_TRACE") == "1"
 FILE_LOG_LEVEL = "TRACE" if LOG_TRACE else "DEBUG"
 CONSOLE_LOG_LEVEL = "TRACE" if LOG_TRACE else "INFO"
@@ -155,17 +131,12 @@ def write_logs(record):
 @log.catch
 def config_logger():
     log.remove()
-    # Install stderr first, so a failure adding the file sink below cannot
-    # leave the process with no sink at all. Without a stderr sink already in
-    # place, the @log.catch that would report such a failure logs through a
-    # handler-less logger and the diagnostic is lost.
+    # Install stderr first so file-sink failure cannot leave the process without a sink.
+    # The surrounding log.catch then has a handler for its diagnostic.
     log.add(sys.stderr, level=CONSOLE_LOG_LEVEL)
     log.add(write_logs, level=FILE_LOG_LEVEL)
-    # Create the log files. Omit backtrace= and diagnose=. The redaction
-    # patcher clears record["exception"] and folds a scrubbed traceback into
-    # the message before any sink reads the record, so both flags stay inert.
-    # Isolate this sink: an unwritable logs path must not discard the stderr
-    # and ring sinks already installed above.
+    # Omit inert backtrace and diagnose flags because redaction clears the exception and embeds a scrubbed traceback.
+    # Isolate the file sink so an unwritable path does not discard stderr and ring sinks.
     try:
         log.add(os.path.join(gl.DATA_PATH, "logs/logs.log"), rotation="3 days",
                 retention=LOG_RETENTION_FILES, level=FILE_LOG_LEVEL)
@@ -212,9 +183,8 @@ def create_global_objects():
 
     gl.settings_manager = SettingsManager()
 
-    # Construct before anything that reports to the user. The plugin load
-    # below is the first caller, and the desktop-notification fallback reads
-    # the app settings.
+    # Construct before plugin loading first reports to the user.
+    # The desktop-notification fallback reads app settings.
     gl.notify = Notify()
 
     gl.signal_manager = SignalManager()
@@ -242,9 +212,8 @@ def create_global_objects():
     if os.getenv("WAYLAND_DISPLAY", False):
         gl.wayland = Wayland()
 
-    # Construct before LockScreenManager, whose __init__ starts setup() on a
-    # daemon thread at once. A lock event in the gap finds gl.presence_monitor
-    # still None, and the event is lost.
+    # Construct before LockScreenManager starts its setup thread.
+    # Otherwise a lock event can find no presence monitor and be lost.
     gl.presence_monitor = PresenceMonitor()
 
     gl.lock_screen_detector = LockScreenManager()
@@ -263,10 +232,8 @@ def update_assets():
         log.info("Skipping store asset update")
         return
 
-    # create_global_objects() builds the store backend before this runs, so the
-    # slot is populated in the normal boot order. Nothing enforces that order,
-    # and this function is @log.catch, so a reordering would swallow an
-    # AttributeError and skip the update with no reason recorded.
+    # Normal boot builds the store backend first, but the order is not enforced.
+    # Guard it because log.catch would otherwise swallow AttributeError and skip the update.
     if gl.store_backend is None:
         log.warning("Skipping store asset update: the store backend is not built yet")
         return
@@ -317,7 +284,6 @@ def handle_listing_commands():
             for i, device in enumerate(devices):
                 print(f"Device {i+1}:")
                 try:
-                    # Read the basic info without opening the device
                     device_id = getattr(device, 'id', lambda: 'Unknown')()
                     print(f"  Device ID: {device_id}")
                     
@@ -329,7 +295,6 @@ def handle_listing_commands():
                         # process has no permission for the device.
                         print("  Product Name: Unknown (permission issue)")
                     
-                    # Open the device to read the detailed info
                     device_opened = False
                     try:
                         if not device.is_open():
@@ -382,7 +347,6 @@ def handle_listing_commands():
         print()
         
         try:
-            # Read the pages from the file system
             import os
             data_path = gl.DATA_PATH if hasattr(gl, 'DATA_PATH') else DEFAULT_DATA_PATH
             pages_dir = os.path.join(data_path, "pages")
@@ -407,7 +371,6 @@ def handle_listing_commands():
                 page_path = os.path.join(pages_dir, page_file)
                 
                 try:
-                    # Read the basic info from the page file
                     import json
                     with open(page_path, 'r') as f:
                         page_data = json.load(f)
@@ -441,16 +404,8 @@ def handle_listing_commands():
     return False
 
 def make_api_calls():
-    """Apply the --change-page, --change-state and --emulate-input requests
-    from argv.
-
-    True means a running instance took them and this process stops.
-    False means the requests are parked, or absent, and this process boots.
-    A request no boot can carry out, which is a press with nothing running,
-    ends the invocation here with the reason instead.
-    Everything but reading argv and leaving the process lives in cli_forward,
-    where a test can reach it, because this module re-execs itself on import.
-    """
+    """Forward change-page, change-state, and input requests from argv.
+    Return whether a running instance handled them; absent or parked requests boot, but an unserviceable press exits with its reason."""
     verdict = cli_forward.forward_cli_requests(gl.argparser.parse_args())
     for line in verdict.output:
         print(line)
@@ -462,10 +417,8 @@ def make_api_calls():
 
 
 def main():
-    # Install first. From here on, uncaught exceptions on the main thread, in
-    # GLib callbacks, in plain threads and in finalizers all route through
-    # loguru. They go to stderr until config_logger() adds the file and ring
-    # sinks. The same hooks then feed all three sinks, with no re-install.
+    # Install once before main-thread, GLib, worker-thread, or finalizer failures can occur.
+    # Exceptions use stderr until config_logger adds the file and ring sinks.
     install_exception_hooks()
 
     # Run the listing commands first; they need no full initialization
@@ -475,10 +428,8 @@ def main():
     if make_api_calls():
         return
 
-    # Add the sinks before the instance gate and the migrations, so the
-    # earliest startup phase reaches logs.log and the ring. Keep this after
-    # the two early returns, because a short-lived CLI call must not open, or
-    # rotate, the running app's log files.
+    # Add sinks before the instance gate and migrations so early startup reaches files and the ring.
+    # Keep them after early CLI returns so short-lived calls do not open or rotate app logs.
     config_logger()
     redirect_faulthandler(os.path.join(gl.DATA_PATH, "logs"))
 
@@ -487,9 +438,8 @@ def main():
         log.warning('Should you get an Gtk X11 error preventing the app from starting please add '
                     'GSK_RENDERER=ngl to your "/etc/environment" file')
 
-    # Create the application object before anything it owns. Registration
-    # decides whether this launch is the primary instance, and that decision
-    # must come before the first expensive or exclusive step.
+    # Create the application before its owned objects.
+    # Registration must select the primary instance before expensive or exclusive work.
     app = App(application_id=appinfo.APP_ID)
 
     try:
@@ -503,9 +453,8 @@ def main():
         sys.exit(1)
 
     if decision is instance_gate.Decision.REMOTE:
-        # The requests that make_api_calls() parked belong to the instance
-        # that owns the name. This process parked them while nothing owned the
-        # name, and it now exits without opening a deck.
+        # Hand parked requests to the instance that now owns the name.
+        # This process exits without opening a deck.
         try:
             failures = cli_forward.forward_parked_requests()
         except Exception as e:
@@ -515,10 +464,8 @@ def main():
         for failure in failures:
             print(failure, file=sys.stderr)
 
-        # GApplication forwards this activation to the running instance, and
-        # its activate handler presents the window. If the primary instance
-        # dies between the two calls, the forward fails and this process only
-        # exits.
+        # Forward activation so the running instance presents its window.
+        # If it dies first, the forward fails and this process exits.
         try:
             app.activate()
         except Exception as e:
@@ -550,27 +497,18 @@ def main():
     gl.deck_manager = DeckManager()
     gl.deck_manager.load_decks()
 
-    # Install here. on_quit reads gl.deck_manager without a guard, and the
-    # deck manager is the last global to exist. An earlier install lets a TERM
-    # in the gap raise AttributeError, which aborts the teardown before the
-    # plugin backends stop, and the re-entry latch then sends every later quit
-    # route to its early return. Keep this before run(), so PyGObject's
-    # register_sigint_fallback finds the custom SIGINT handler and stays inert.
+    # Install after deck_manager exists because on_quit reads it unguarded; an earlier TERM would abort and latch teardown.
+    # Install before run() so PyGObject sees the custom SIGINT handler and does not register its fallback.
     app.register_signal_handlers()
 
-    # Publish the slot just before the loop starts. Boot-time user reports,
-    # such as plugin load notifications, read this slot and defer onto the
-    # startup queue while it is None. An earlier assignment routes that traffic
-    # through an application that has no window yet.
+    # Publish just before the loop so boot-time reports queue while the slot is None.
+    # Earlier publication would route them through an application with no window.
     gl.app = app
     app.run(gl.argparser.parse_args().app_args)
 
 if __name__ == "__main__":
-    # The startup body must not fail silently. main() used to swallow every
-    # exception through a bare log.catch and then return, so the process
-    # logged the failure but exited 0, and a supervisor read that as success.
-    # An unexpected error now logs once and exits nonzero. SystemExit carries
-    # the intended code for the known abort paths and passes straight through.
+    # Log unexpected startup errors once and exit nonzero so supervisors cannot treat failure as success.
+    # Preserve SystemExit codes for known abort paths.
     try:
         main()
     except SystemExit:

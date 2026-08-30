@@ -11,16 +11,8 @@ from GtkHelper.GtkHelper import on_main
 
 
 class ComboRow(GenerativeUI[BaseComboRowItem | str | None]):
-    """
-    A UI element representing a combo box (drop-down menu) with selectable items,
-    linked to an ActionCore instance. Values cross this class as either a
-    BaseComboRowItem (what the widget deals in), the plain str the value
-    layer persists, or None when nothing is selected. The type parameter is
-    therefore a union.
-
-    Attributes:
-        _widget (Combo): The ComboRow widget instance.
-    """
+    """Combo row whose widget uses items and value layer stores strings.
+    None represents no selection."""
 
     def __init__(self,
                  action_core: "ActionCore",
@@ -95,17 +87,13 @@ class ComboRow(GenerativeUI[BaseComboRowItem | str | None]):
         if trigger_callback and self.on_change:
             old_value = self.get_item(old_value)
 
-            # The raw widget reference, which can be None. The base class
-            # _handle_value_changed says why this must not force a build.
+            # Pass the raw widget reference so value changes do not force a build.
             self.on_change(self._widget, new_value, old_value)
 
     @override
     def reset_value(self) -> None:
         """Reset the selection to its default.
-
-        An unbuilt row has no item list to resolve the old and new
-        BaseComboRowItem values against. It persists the default and skips
-        the on_change callback. A reset must not force a build.
+        An unbuilt row stores the default and skips the callback because it cannot resolve items.
         """
         if self._widget is None:
             self.set_value(self._default_value)

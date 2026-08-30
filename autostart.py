@@ -21,10 +21,8 @@ import sys
 
 import appinfo
 
-# Autostart entries from the pre-rename identity. StreamController.desktop
-# relaunches an old-identity build at each login. The id-named one is a flatpak
-# portal remnant that no native code path removes. The app deletes both at
-# every launch, because an installed old build can write them again.
+# Remove the old desktop entry that relaunches the old build and the old portal remnant.
+# Check every launch because an installed old build can recreate either entry.
 LEGACY_AUTOSTART_NAMES = ("StreamController.desktop", appinfo.OLD_APP_ID + ".desktop")
 
 import gi
@@ -38,13 +36,8 @@ from loguru import logger as log
 def is_flatpak() -> bool:
     return os.path.isfile('/.flatpak-info')
 
-# Orders the setup_autostart() calls against the async portal callback. The
-# callback can land after a newer setup_autostart() call changed the on-disk
-# state, and the stale callback must not overwrite it. For example, disable
-# removes the entry, the portal request then fails, and the fallback writes a
-# flatpak-style entry that a native install cannot run.
-# The counter needs no lock. The GTK main loop runs both setup_autostart() and
-# request_background_callback, so one thread touches the counter.
+# The generation prevents a stale portal callback from overwriting a newer on-disk state.
+# GTK runs setup and callbacks on the main thread, so the counter needs no lock.
 _autostart_generation = 0
 
 
@@ -54,9 +47,7 @@ def _current_autostart_generation() -> int:
 
 def remove_legacy_autostart_entries() -> None:
     """Delete the pre-rename autostart entries.
-
-    This runs at every launch, so a failed delete, or an old build that writes
-    an entry again, does not persist.
+    Run every launch so failed deletes or entries recreated by an old build do not persist.
     """
     autostart_dir = os.path.join(os.environ.get("HOME") or os.path.expanduser("~"),
                                  ".config", "autostart")
@@ -85,19 +76,13 @@ def setup_autostart(enable: bool = True) -> None:
             # request left behind.
             setup_autostart_desktop_entry(False)
     else:
-        # A native install does not use the portal. Its async callback races
-        # the removal and writes a flatpak-style entry. The native desktop file
-        # is the only correct entry here, for enable and for disable.
+        # Native installs do not use the portal, whose callback can race removal.
+        # Use only the native desktop file for enable and disable.
         setup_autostart_desktop_entry(enable, native=True)
 
 
 def setup_autostart_flatpak(enable: bool = True, generation: int | None = None) -> None:
-    """Set the flatpak autostart through the background portal.
-
-    https://libportal.org/method.Portal.request_background.html
-    https://libportal.org/method.Portal.request_background_finish.html
-    https://docs.flatpak.org/de/latest/portal-api-reference.html#gdbus-org.freedesktop.portal.Background
-    """
+    """Set Flatpak autostart through the background portal."""
     def request_background_callback(portal: Xdp.Portal, result: Gio.AsyncResult, user_data: Any) -> None:
         try:
             success = portal.request_background_finish(result)
@@ -122,7 +107,7 @@ def setup_autostart_flatpak(enable: bool = True, generation: int | None = None) 
 
         xdp.request_background(
             None,  # parent
-            "Autostart Deckard",  # reason
+            "Autostart Deckard",
             ["/app/bin/launch.sh", "-b"],  # commandline
             flag,
             None,  # cancellable
@@ -162,9 +147,7 @@ def setup_autostart_desktop_entry(enable: bool = True, native: bool = False) -> 
 
 def ensure_app_desktop_entry() -> None:
     """Install or refresh ~/.local/share/applications/<app id>.desktop.
-
-    A Wayland compositor maps the window app_id to a desktop file of the same
-    name to find the taskbar icon. A source install has no other source.
+    Source installs need it so Wayland can map the app_id to a taskbar icon.
     """
     if is_flatpak():
         return
@@ -175,10 +158,7 @@ def ensure_app_desktop_entry() -> None:
 
 def _launcher_exec(extra_args: str = "") -> str:
     """Absolute launch command for the generated native desktop entries.
-
-    An absolute command works without the optional ~/.local/bin/deckard
-    symlink. The wrapper on PATH comes first, because it exports the MALLOC_
-    variables that let main.py skip its re-exec. Otherwise use this interpreter.
+    Prefer the PATH wrapper for its allocator environment; otherwise use this interpreter.
     """
     import globals as gl
     wrapper = shutil.which("deckard")
@@ -193,10 +173,7 @@ def _launcher_exec(extra_args: str = "") -> str:
 
 def _install_desktop_file(template_name: str, target: str, exec_args: str = "") -> None:
     """Write a native desktop entry from a flatpak template.
-
-    Icon= becomes an absolute repo path, and Exec= becomes an absolute launch
-    command. An identical target skips the write, because a new mtime makes the
-    desktop environment re-scan its application cache at every launch.
+    Use absolute Icon and Exec paths, and preserve identical targets to avoid cache rescans.
     """
     import globals as gl
     source = os.path.join(gl.MAIN_PATH, "flatpak", template_name)
@@ -213,7 +190,7 @@ def _install_desktop_file(template_name: str, target: str, exec_args: str = "") 
     try:
         with open(target) as f:
             if f.read() == content:
-                return  # unchanged, so skip the write and the cache re-scan
+                return  # preserve mtime to avoid a desktop cache rescan
     except OSError:
         pass
     try:

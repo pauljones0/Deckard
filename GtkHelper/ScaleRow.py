@@ -10,27 +10,8 @@ from typing import Any
 
 
 class ScaleRow(Adw.ActionRow):
-    """
-        Initializes a new instance of the ScaleRow widget.
-
-        Parameters:
-            value (float): The initial value of the scale.
-            min (float): The minimum value of the scale.
-            max (float): The maximum value of the scale.
-            add_text_entry (bool): Whether to include a text entry field alongside the scale.
-            title (str, optional): The title of the row (displayed on the left).
-            subtitle (str, optional): The subtitle of the row (displayed below the title).
-            step (float, optional): The step increment for the scale (default is 0.1).
-            digits (int, optional): The number of decimal places to display for the scale value (default is 2).
-            draw_value (bool, optional): Whether to display the current value of the scale on the scale itself (default is False).
-            round_digits (int, optional): Decimal places to round the slider value to; -1 disables rounding (default is 1).
-
-        Description:
-            This constructor creates a row containing a horizontal scale widget with optional labels for the minimum
-            and maximum values. If add_text_entry is set to True, a text entry field is included that allows the user
-            to enter a value directly. The value entered will be synchronized with the scale. The constructor also sets up
-            necessary signal handlers to ensure that changes to the scale or text entry are appropriately handled.
-    """
+    """Scale row with optional side values and synchronized text entry.
+    round_digits sets decimal places; -1 disables rounding."""
     def __init__(self,
                  value: float,
                  min: float,
@@ -52,10 +33,8 @@ class ScaleRow(Adw.ActionRow):
         self._add_text_entry = add_text_entry
         self._draw_side_values = draw_side_values
 
-        # The handler id per binding key, absent while that binding is
-        # disconnected. Tracked ids keep connect and disconnect idempotent: a
-        # disconnect while already off cannot raise, and a reconnect cannot
-        # stack a second handler.
+        # Store one handler id per connected key to make disconnect idempotent.
+        # A reconnect cannot stack a second handler.
         self._handlers: dict[str, int] = {}
 
         self.left = Gtk.Label(label=str(min), hexpand=False, halign=Gtk.Align.END)
@@ -228,7 +207,7 @@ class ScaleRow(Adw.ActionRow):
             current_value = self.entry_row.get_text()
             expected_value = str(self._adjustment.get_value())
 
-            if current_value != expected_value:  # Avoid unnecessary updates
+            if current_value != expected_value:
                 self.entry_row.set_text(expected_value)
         finally:
             # An update that raises must still leave the row wired, or every

@@ -1,12 +1,6 @@
 #!/usr/bin/env python3
-"""Derive the CI flatpak manifest from the committed one.
-
-Usage: make_ci_manifest.py <manifest.yml> <src-dir-relative-to-manifest>
-
-The committed manifest builds the app module from the GitHub repo of the fork,
-which is right for flathub and wrong for CI. This script rewrites the manifest
-in place, and the output is a throwaway build input that nobody commits.
-"""
+"""Derive a throwaway CI Flatpak manifest in place.
+Usage: make_ci_manifest.py <manifest.yml> <src-dir-relative-to-manifest>."""
 import sys
 
 import yaml
@@ -17,10 +11,7 @@ def main() -> int:
     with open(manifest_path) as f:
         manifest = yaml.safe_load(f)
 
-    # Swap the sources of the Deckard module for a local directory, the clean
-    # git archive export that .gitlab-ci.yml stages beside the manifest, and
-    # leave every other module alone. flatpak/install.sh makes the same rewrite
-    # with yq for a local build.
+    # Replace only Deckard's sources with the staged clean Git archive directory.
     for module in manifest["modules"]:
         if isinstance(module, dict) and module.get("name") == "Deckard":
             module["sources"] = [{"type": "dir", "path": src_dir}]

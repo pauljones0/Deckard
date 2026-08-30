@@ -15,8 +15,7 @@ class BaseComboRowItem(GObject.GObject):
     @override
     def __str__(self) -> str:
         """Used to display values in the ComboRow"""
-        # The subclasses override this. An empty string keeps str() valid
-        # on a bare item, where the old bare stub answered None.
+        # Keep str() valid when a subclass does not override it.
         return ""
 
     def get_value(self) -> str:
@@ -178,8 +177,7 @@ class ComboRow(Adw.ComboRow):
     def get_selected_item(self) -> BaseComboRowItem | None:
         selected_index = self.get_selected()
 
-        # GTK4 reports "nothing selected" as Gtk.INVALID_LIST_POSITION
-        # (an unsigned sentinel), never -1, so an == -1 test never fires.
+        # GTK4 uses the unsigned Gtk.INVALID_LIST_POSITION sentinel for no selection.
         if selected_index == Gtk.INVALID_LIST_POSITION:
             return None
 

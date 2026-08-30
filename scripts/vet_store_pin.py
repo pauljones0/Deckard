@@ -1,33 +1,5 @@
-"""Diff the official store catalog between two pinned commits.
-
-Usage: vet_store_pin.py OLD_SHA NEW_SHA [--manifests] [--app-version X]
-
-Support tool for bumping StoreBackend.STORE_PIN. For each catalog family
-it prints the entries added, removed and repinned between the two refs,
-with per-shape counts, and flags entries whose repository owner is not
-in OfficialAuthors.json at the new ref. With --manifests it fetches the
-manifest of EVERY pinned entry at the new ref, not only the changed
-ones, and compares its minimum-app-version against the app version,
-because a hash-shape entry auto-updates to whatever the catalog pins:
-the update path trusts the pin, so the vet must confirm the app
-satisfies every pinned plugin's requirement. The app version comes from
-globals.py beside this repository, or from --app-version.
-
-The exit code is the verdict: 0 only when the candidate ref pins every
-entry to an immutable sha and every checked manifest passes the gate. A
-plugin entry that names a branch fails the run, because the app follows
-a branch tip in preference to any pin and a tip defeats the immutability
-the pin exists to create. A value the tool cannot judge, a manifest it
-cannot fetch, or a family missing at the new ref fails the run rather
-than passing silently.
-
-The pin decision mirrors the app's resolver: branch first for a plugin
-entry, then a valid flat "hash", then the "commits" map at its newest
-key, pre-releases ranking below their release the way the app's version
-parse ranks them. No compatibility filter, because the diff must show
-what the catalog pins, not what one machine would install. Stdlib only,
-so it runs without the app's environment.
-"""
+"""Usage: vet_store_pin.py OLD_SHA NEW_SHA [--manifests] [--app-version X]; report catalog additions, removals, repins, unlisted owners, and require immutable SHAs by plugin-branch, flat-hash, then newest commits-map precedence.
+With --manifests, check every manifest pinned at NEW_SHA against globals.py or --app-version; missing, unparseable, unfetchable, movable, or incompatible data fails instead of passing silently."""
 
 import json
 import re
@@ -52,9 +24,8 @@ def _suffix_tokens(s: str) -> tuple:
 
 
 def parse_version(v: str) -> tuple:
-    """A sort key that ranks versions the way the app's parse does: by the
-    numeric release first, and a pre-release below its own release, so
-    "1.5.0" outranks "1.5.0-beta.15". Unparseable sorts below everything."""
+    """Sort by numeric release, then put prereleases below their release.
+    Unparseable versions sort below all parsed versions."""
     m = re.match(r"v?(\d+(?:\.\d+)*)", v)
     if m is None:
         return ((), (0, ()))
@@ -66,10 +37,8 @@ def parse_version(v: str) -> tuple:
 
 
 def base_version(v: str) -> "tuple | None":
-    """The leading numeric part, so "1.5.0-beta.15" compares as (1, 5, 0).
-    The app's own gate strips pre-release segments the same way. None when
-    nothing numeric leads, and the caller must fail the entry rather than
-    treat it as satisfied."""
+    """Return the leading numeric version without prerelease segments.
+    Return None when no numeric prefix exists so callers fail the entry."""
     m = re.match(r"v?(\d+(?:\.\d+)*)", v)
     if m is None:
         return None

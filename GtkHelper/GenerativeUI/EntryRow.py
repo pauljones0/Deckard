@@ -9,15 +9,7 @@ if TYPE_CHECKING:
     from src.backend.PluginManager.ActionCore import ActionCore
 
 class EntryRow(GenerativeUI[str]):
-    """
-    A class that represents a UI entry row widget with additional functionality
-    for handling text input and providing filters or transformations on the input.
-
-    Inherits from GenerativeUI to provide generic UI management and functionality.
-
-    Attributes:
-        filter_func (Callable[[str], str]): Optional function to filter or transform the input text.
-    """
+    """Entry row with optional input filtering or transformation."""
 
     # build() assigns it. None passes the text through unfiltered.
     filter_func: Callable[[str], str] | None = None
@@ -68,11 +60,6 @@ class EntryRow(GenerativeUI[str]):
 
     @override
     def disconnect_signals(self) -> None:
-        """
-        Disconnects the signal handlers to prevent further handling of the 'changed' signal.
-
-        Call it when the widget stops handling changes.
-        """
         self._track_disconnect("changed", self.widget)
 
     def set_text(self, text: str, update_setting: bool = False) -> None:
@@ -89,14 +76,7 @@ class EntryRow(GenerativeUI[str]):
             self.set_value(text)
 
     def get_text(self) -> str:
-        """
-        Retrieves the current text from the entry row widget. It falls back
-        to the settings value layer while the widget is unbuilt, because a
-        read is a value query and must not force a build.
-
-        Returns:
-            str: The current text in the entry row.
-        """
+        """Return text from the widget or settings without forcing a build."""
         if self._widget is None:
             return self.get_value()
         return cast(str, self.widget.get_text())
