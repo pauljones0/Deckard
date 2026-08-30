@@ -39,12 +39,8 @@ from src.backend.settings_store import PluginSettings
 
 
 class PluginRegistration(TypedDict):
-    """One registered plugin's registry entry. register() is the sole writer.
-
-    register() always writes object, and a reader still tolerates an entry
-    without it. The warm-up skip over a malformed entry is a tested
-    contract, so the key stays NotRequired.
-    """
+    """Registry entry; register() is the sole writer and always sets object.
+    Warm-up tolerates malformed entries without it, so the key stays optional."""
 
     object: NotRequired["PluginBase"]
     plugin_version: "str | None"
@@ -66,9 +62,8 @@ class PluginBase(rpyc.Service):
     # {plugin_id: registration}. See register().
     plugins: "dict[str, PluginRegistration]" = {}
     disabled_plugins: "dict[str, DisabledPluginRegistration]" = {}
-    # The app-ready warm-up sets this once per instance, so a later plugin
-    # load does not fire on_app_ready a second time. Nothing in __init__ sets
-    # it, so an instance carries the class default until the warm-up runs.
+    # The app-ready warm-up sets this per instance so later plugin loads do not
+    # fire on_app_ready again; instances use the class default before warm-up.
     _on_app_ready_fired: bool = False
 
     # The backing slot of backend_event_hold below, and the lock that keeps
@@ -78,15 +73,8 @@ class PluginBase(rpyc.Service):
 
     @property
     def backend_event_hold(self) -> "BackendEventHold":
-        """The bounded hold for the events this plugin fires while its backend
-        connects. See backend_event_hold.py.
-
-        Built on first use, and not in __init__, because a plugin may override
-        __init__ without calling super(). The launch, the registration, the
-        teardown and every event holder reach for this, so an attribute a
-        skipped __init__ never wrote would break all four. The plugin folder
-        names it, because register() sets the plugin id later.
-        """
+        """Bounded buffer for observerless EventHolder events, only while backend connects.
+        Lazy if no super(); launch/register/teardown use it; class name fallback without PATH."""
         hold = self._backend_event_hold
         if hold is not None:
             return hold
@@ -100,44 +88,28 @@ class PluginBase(rpyc.Service):
 
     def __init__(self, use_legacy_locale: bool = True, legacy_dir: str = "locales"):
         self.backend_connection: "Connection | None" = None
-        # launch_backend() puts an rpyc netref proxy here, but a plugin is free
-        # to assign an in-process object instead and skip the backend process
-        # altogether, so the attribute holds either shape. ActionCore declares
-        # the same name as a netref, because only launch_backend writes it
-        # there.
+        # A plugin can store an in-process backend or the rpyc netref created by
+        # launch_backend(), so this attribute must accept both shapes.
         self.backend: Any = None
         self.server: "ThreadedServer | None" = None
         self.backend_process: subprocess.Popen[bytes] | None = None
-        # Bookkeeping for the registration watchdog in
-        # _watch_backend_registration. The generation counter disarms a stale
-        # watchdog after a fast relaunch, which would otherwise attribute the
-        # registration of the new backend, or the exit of the old process, to
-        # the launch it was armed for. The stop flag suppresses the error for
-        # an exit before the registration when a caller asked for that exit,
-        # through a plugin deactivation or an unload with on_disconnect.
+        # The generation disarms watchdogs superseded by relaunch; the stop flag
+        # suppresses errors when deactivation or unload requested the exit.
         self._backend_launch_gen: int = 0
         self._backend_stop_requested: bool = False
         # register_backend relaxes its port-ownership check for a terminal
         # launch, where the backend is not a child of the Popen handle.
         self._backend_via_terminal: bool = False
-        # register_backend sets this on an rpyc service thread, which the
-        # backend process drives, and it wakes wait_for_backend on the
-        # launching thread.
+        # The backend's rpyc service thread sets this and wakes
+        # wait_for_backend on the launching thread.
         self._backend_ready = threading.Event()
 
         self.logger = gl.loggers.get("plugins", None)
 
         self.PATH = os.path.dirname(inspect.getfile(self.__class__))
         self.settings_path: str = self._resolve_settings_path()
-        # Serializes get_settings and set_settings. The actions of one plugin
-        # run on_ready in parallel on the page-load pool, so a concurrent
-        # read-modify-write cycle loses an update, and the atomic write only
-        # stops a torn file. A plain Lock suffices, because each accessor takes
-        # it once, re-acquires nothing and calls no other accessor under it.
-        # Underneath run filesystem I/O and the leaf cache lock of the settings
-        # store, and no callback re-enters locked code. That is the one lock
-        # order of this file. This lock goes outside and the store's inside,
-        # never the reverse.
+        # Serialize settings read-modify-write cycles that concurrent on_ready calls can lose.
+        # Use a plain outer lock; accessors do not re-enter, and the store cache lock is inner.
         self._settings_lock = threading.Lock()
 
         # The two storage adapters share the Translator surface, which is
@@ -184,18 +156,10 @@ class PluginBase(rpyc.Service):
         return cast(str, self._plugin_id_cache)
 
     def _resolve_settings_path(self) -> str:
-        """Give the settings path of this plugin, under the manifest id.
-
-        The manifest id is the identity that registration and the store use. A
-        plugin whose folder name differs from its id would lose its settings on
-        every reinstall under a folder-name path.
-        """
-        # Settings that an earlier version wrote under the folder-name path
-        # migrate once, at the first construction with a folder name that
-        # differs from the id. The decision reads the settings file at the id
-        # path, and not the id directory alone. An id directory without a
-        # settings.json, left by an aborted first setup or another tool, must
-        # not win, because a win there orphans the real folder-name settings.
+        """Return the manifest-id settings path.
+        Migrate folder-name settings so reinstalling a differently named plugin keeps its data."""
+        # Decide from settings.json, not the directory alone; an incomplete id
+        # directory must not hide valid folder-name settings.
         plugins_root = os.path.join(gl.DATA_PATH, "settings", "plugins")
         folder_name = self.get_plugin_id_from_folder_name()
         plugin_id = self.get_plugin_id()
@@ -207,22 +171,16 @@ class PluginBase(rpyc.Service):
             folder_settings = os.path.join(folder_dir, "settings.json")
 
             if os.path.isfile(id_settings):
-                # The id path holds settings already, so it wins. A legacy
-                # folder-name path with settings stays untouched, because the
-                # user's other copy must survive, and this warns instead.
+                # Prefer existing id-path settings, but preserve and report a
+                # second folder-name copy.
                 if os.path.isfile(folder_settings):
                     log.warning(
                         f"Plugin {plugin_id}: settings exist under both {id_dir} "
                         f"(used) and {folder_dir} (ignored, left in place)"
                     )
             elif os.path.isfile(folder_settings):
-                # This makes the quarantine and legacy interplay visible. A
-                # quarantine removes the id-path settings file, which brings
-                # this branch in and migrates the old folder-name settings.
-                # A corruption then restores the pre-rename configuration
-                # instead of an empty start. That outcome is an open design
-                # question, and this warning keeps it from happening
-                # unseen.
+                # Quarantine exposes legacy settings to migration and can
+                # restore older data, so warn before that fallback becomes active.
                 try:
                     quarantined = sorted(
                         e for e in os.listdir(id_dir)
@@ -247,17 +205,15 @@ class PluginBase(rpyc.Service):
                         os.makedirs(plugins_root, exist_ok=True)
                         os.rename(folder_dir, id_dir)
                     else:
-                        # The id directory exists without a settings.json.
-                        # Move the file and its siblings into it, then drop the
-                        # empty legacy directory.
+                        # Complete an existing id directory with the legacy
+                        # files, then remove the legacy directory if empty.
                         os.makedirs(id_dir, exist_ok=True)
                         for entry in os.listdir(folder_dir):
                             dest = os.path.join(id_dir, entry)
                             if not os.path.exists(dest):
                                 os.rename(os.path.join(folder_dir, entry), dest)
-                        # The directory is not empty, because a name collided
-                        # and stayed in the source, or it resists removal. Both
-                        # are harmless.
+                        # Ignore a remaining name collision or directory-removal
+                        # failure; both leave the selected settings intact.
                         with contextlib.suppress(OSError):
                             os.rmdir(folder_dir)
                     log.info(
@@ -323,11 +279,8 @@ class PluginBase(rpyc.Service):
                 log.error(f"Plugin: {self.plugin_name}: Plugin already exists")
                 return
             
-        # A version check can raise over an unparseable version string or a
-        # missing minimum-app-version. It must not unwind the plugin's
-        # __init__, which makes the plugin vanish, neither registered nor
-        # disabled, behind one log line without a traceback. Treat it like an
-        # incompatible version and disable the plugin visibly.
+        # Compatibility-check exceptions visibly disable the plugin; they do not unwind __init__.
+        # This keeps it in disabled_plugins instead of absent from both registries.
         version_check_failed = False
         try:
             app_version_matching = self.is_app_version_matching()
@@ -422,9 +375,8 @@ class PluginBase(rpyc.Service):
         module = importlib.import_module(self.__module__)
         subclass_file = module.__file__
         if subclass_file is None:
-            # Only a namespace package and a built-in have no __file__, and a
-            # plugin always loads from a folder. Without this guard the call
-            # reaches os.path.abspath(None) and raises a bare TypeError.
+            # Plugins must load from a file-backed folder; reject namespace or
+            # built-in modules before os.path.abspath receives None.
             raise RuntimeError(f"Plugin module {self.__module__} has no file location")
         return os.path.basename(os.path.dirname(os.path.abspath(subclass_file)))
     
@@ -440,9 +392,8 @@ class PluginBase(rpyc.Service):
         app_version = self._get_parsed_base_version(gl.app_version)
         min_app_version = self._get_parsed_base_version(self.min_app_version)
         if app_version is None or min_app_version is None:
-            # Neither is None here: gl.app_version is a constant and a None
-            # pin returned True above. The guard covers the parser's widened
-            # return and keeps the None-pin semantics.
+            # The parser type permits None, but the constant and early return
+            # make it unreachable here; preserve the no-pin result.
             return True
 
         return bool(app_version >= min_app_version)
@@ -463,7 +414,6 @@ class PluginBase(rpyc.Service):
 
         return bool(app_version.major == current_app_version.major)
 
-    #TODO: Better error handling for are_major_versions_matching and is_minimum_version_ok
     def is_app_version_matching(self) -> bool:
         """Check that the app version fits this plugin.
 
@@ -574,8 +524,6 @@ class PluginBase(rpyc.Service):
         full_id = event_id or f"{self.get_plugin_id()}::{event_id_suffix}"
 
         if full_id in self.event_holders:
-            # A None callback matched nothing in the registry before; the
-            # guard keeps that no-op without the call.
             if callback is not None:
                 self.event_holders[full_id].remove_listener(callback)
         else:
@@ -598,9 +546,8 @@ class PluginBase(rpyc.Service):
         else:
             plugin.disconnect_from_event(event_id=event_id, callback=callback)
 
-    # Guards the lazy creation of a per-instance settings lock. An instance
-    # built through __new__, by the rpyc service plumbing or a harness stub,
-    # runs no __init__.
+    # Guard lazy per-instance lock creation for rpyc or harness instances built
+    # through __new__ without __init__.
     _settings_lock_guard = threading.Lock()
 
     def _get_settings_lock(self) -> threading.Lock:
@@ -619,9 +566,8 @@ class PluginBase(rpyc.Service):
         Returns:
             dict: The stored settings, or an empty dict without a file.
         """
-        # The settings store owns the file layout, the policy for a corrupt or
-        # unreadable file, and the migration off the pre-envelope format, with
-        # every other settings file of the app. This method owns the lock.
+        # The store owns layout, corrupt-file policy, and format migration;
+        # this API owns the outer lock.
         with self._get_settings_lock():
             return PluginSettings(self.settings_path).read()
 
@@ -633,26 +579,14 @@ class PluginBase(rpyc.Service):
         """
         manifest_path = os.path.join(self.PATH, "manifest.json")
         if os.path.exists(manifest_path):
-            # A corrupt manifest must not raise. get_plugin_id() and
-            # register() call this inside plugin __init__, where an exception
-            # makes the plugin vanish without a trace.
+            # Invalid manifests must not escape plugin __init__ and make the
+            # plugin disappear without a load error.
             try:
                 with open(manifest_path, "r") as f:
                     manifest = json.load(f)
             except ValueError as e:
-                # This file gets no quarantine. manifest.json lives in the
-                # plugin's source tree, which the app never writes, so no later
-                # save overwrites it and a move aside protects nothing. A move
-                # would rename a file out of the developer's git working tree,
-                # because a dev plugin here is a symlink into a source
-                # checkout, and it would turn a manifest under a rebase into a
-                # deleted file. Log it and leave the file where it is.
-                #
-                # The degradation matches a missing manifest. get_plugin_id()
-                # falls back to the folder name, and register() stops at
-                # "Please specify a plugin name", which
-                # PluginManager.init_plugins() records in load_errors. The scan
-                # continues, and a neighboring plugin still loads.
+                # Keep source JSON in place; dev plugins can point into Git.
+                # The app never writes it; treat invalid data as missing and continue scanning.
                 log.error(
                     f"Plugin manifest {manifest_path} contains invalid JSON: {e} -- treating "
                     f"it as empty and leaving it in place (the app never writes plugin "
@@ -687,11 +621,8 @@ class PluginBase(rpyc.Service):
                 with open(about_path, "r") as f:
                     about = json.load(f)
             except ValueError as e:
-                # Degrade to the missing-file result instead of a raise into
-                # the about window. This file gets no quarantine. about.json is
-                # a plugin source file the app never writes, so no save
-                # destroys a corrupt one, and a move aside would rename a file
-                # out of the developer's working tree.
+                # Treat invalid plugin-source JSON as missing; do not quarantine
+                # a file that the app never writes and a Git checkout can own.
                 log.error(
                     f"Plugin about file {about_path} contains invalid JSON: {e} -- treating "
                     f"it as empty and leaving it in place (the app never writes plugin "
@@ -700,8 +631,7 @@ class PluginBase(rpyc.Service):
                 return {}
             if isinstance(about, dict):
                 return about
-            # A valid about.json that holds a list or a bare string reaches
-            # PluginAbout unchanged and raises AttributeError on .get().
+            # Reject non-object JSON before PluginAbout calls .get().
             log.error(
                 f"Plugin about file {about_path} does not contain a JSON object "
                 f"-- treating it as empty"
@@ -717,9 +647,8 @@ class PluginBase(rpyc.Service):
         Returns:
             None
         """
-        # A read-modify-write of one file, under the lock the read side takes.
-        # The store wraps this argument in the envelope, keeps the rest of the
-        # file, and writes it atomically.
+        # Use the read-side lock; the store preserves the envelope and writes
+        # the file atomically.
         with self._get_settings_lock():
             PluginSettings(self.settings_path).write(settings)
 
@@ -840,8 +769,6 @@ class PluginBase(rpyc.Service):
     def get_settings_area(self) -> "Adw.PreferencesGroup | None":
         pass
 
-    # Rpyc
-
     def start_server(self) -> None:
         """Start the rpyc server of the plugin.
 
@@ -877,27 +804,16 @@ class PluginBase(rpyc.Service):
         Returns:
             None
         """
-        # The caller asked for this stop. A deactivation and an unload route
-        # here, and an rpyc drop lands here too. Disarm an armed registration
-        # watchdog, so it does not report the terminate below as a backend that
-        # exited before it registered.
+        # Mark deactivation, unload, or disconnect as requested so the
+        # registration watchdog does not report the resulting termination.
         self._backend_stop_requested = True
         self._release_backend_resources()
 
     def _release_backend_resources(self) -> None:
-        """Detach and tear down the rpyc server, connection and process.
-
-        It mirrors ActionCore._release_backend_resources. It is idempotent, and
-        concurrent callers tolerate a lost race.
-        """
-        # It clears the references here, so a later launch_backend() or
-        # start_server() finds a clean slate instead of a dead server to skip
-        # against. The blocking work runs on a daemon worker, because an rpyc
-        # close can wait on a running call and terminate_backend_process waits
-        # up to 5 seconds, and the caller is often the GTK main thread.
-        # Whatever else this teardown finds, the event hold must shut: a
-        # backend that stopped before it registered never releases it, and its
-        # events would sit held for the rest of the window.
+        """Detach and tear down the rpyc server, connection, and process.
+        Concurrent callers are safe and idempotent, as in ActionCore."""
+        # Detach first: rpyc close can wait; process termination can take 5 seconds.
+        # Keep GTK and relaunch free; cancel holds that unregistered backends cannot release.
         self.backend_event_hold.cancel()
 
         if self.backend_connection is None and self.server is None and self.backend_process is None:
@@ -911,7 +827,6 @@ class PluginBase(rpyc.Service):
         self.backend_process = None
         self.backend = None
 
-        # Drop these from the global registries. Both are list removals.
         if connection is not None and gl.plugin_manager is not None:
             with contextlib.suppress(ValueError):
                 gl.plugin_manager.backends.remove(connection)
@@ -928,9 +843,8 @@ class PluginBase(rpyc.Service):
 
     @staticmethod
     def _teardown_backend_resources(server: "ThreadedServer | None", connection: "Connection | None", process: "subprocess.Popen[bytes] | None") -> None:
-        # This runs on a worker thread. See _release_backend_resources. Each
-        # close and terminate tolerates a failure, because a hung backend must
-        # not stop the app.
+        # Worker teardown tolerates each close or terminate failure so a hung
+        # backend cannot stop the app.
         if connection is not None:
             try:
                 connection.close()
@@ -989,12 +903,10 @@ class PluginBase(rpyc.Service):
         if venv_path is not None:
             ensure_backend_venv(venv_path, self.PATH, self.get_plugin_id_from_folder_name())
 
-        # It validates the paths and returns argv, and not a shell string.
         command = build_backend_launch_command(backend_path, venv_path, port, open_in_terminal)
 
-        # The guard rebinds the backend's own rpyc server to loopback. The
-        # .pth copy in the venv survives a terminal launch, which loses the
-        # environment; the PYTHONPATH below covers a venv-less backend.
+        # The guard binds the child server to loopback; the venv copy survives
+        # terminal launch, while PYTHONPATH covers a venv-less child.
         if venv_path is not None:
             inject_backend_guard(venv_path)
         elif open_in_terminal:
@@ -1004,10 +916,8 @@ class PluginBase(rpyc.Service):
         self._backend_stop_requested = False
         self._backend_launch_gen += 1
         self._backend_via_terminal = open_in_terminal
-        # Cleared after the validation and before the spawn, so a relaunch
-        # waits for the registration of the new backend instead of a return on
-        # the registration of the previous one. The event hold opens its window
-        # here for the same reason: it belongs to this launch alone.
+        # Clear readiness and arm the event hold after validation but before
+        # spawn so both belong only to this launch.
         self._backend_ready.clear()
         self.backend_event_hold.arm()
         self.backend_process = subprocess.Popen(command, start_new_session=True, env=backend_guard_env())
@@ -1016,23 +926,14 @@ class PluginBase(rpyc.Service):
 
         self.wait_for_backend()
         if self.backend_connection is None:
-            # The registration is asynchronous. The subprocess must start
-            # python, connect back over rpyc and call register_backend, and the
-            # bounded wait above gives up after about 0.3 seconds. A boot misses
-            # that window often, so this keeps watching and makes the gap
-            # visible instead of a silent None in self.backend.
+            # Registration often exceeds the 0.3-second wait during boot;
+            # continue watching so a late, failed, or timed-out start is visible.
             self._watch_backend_registration(self.backend_process, self._backend_launch_gen)
 
     def _watch_backend_registration(self, process: subprocess.Popen[bytes], launch_gen: int, timeout: float = 30.0) -> None:
-        """Observe a launched backend that has not registered yet.
-
-        This manages nothing. On a bounded daemon thread it logs the
-        registration latency, and an error when the process dies or the timeout
-        expires. launch_backend, on_disconnect and terminate_backend_process
-        own the process lifecycle."""
-        # The watch disarms in silence when a relaunch supersedes it, which a
-        # launch_gen mismatch shows, when a caller asked for the stop through
-        # _backend_stop_requested, or when the app quits.
+        """Report registration latency, process exit, or timeout on a bounded daemon thread.
+        Process lifecycle remains owned by launch, disconnect, and termination paths."""
+        # Disarm silently after relaunch, a requested stop, or app shutdown.
         plugin_id = self.get_plugin_id_from_folder_name()
 
         def _watch() -> None:
@@ -1040,10 +941,8 @@ class PluginBase(rpyc.Service):
             deadline = start + timeout
             while time.time() < deadline:
                 if self._backend_launch_gen != launch_gen:
-                    # A relaunch superseded this watchdog, and the new launch
-                    # has its own. Without this check the watchdog attributes
-                    # the registration of the new backend, or the reaped exit
-                    # of the old process, to the launch it was armed for.
+                    # A relaunch has its own watchdog; do not attribute its
+                    # registration or the old process exit to this generation.
                     return
                 if self._backend_stop_requested:
                     log.debug(f"Plugin {plugin_id}: backend stop requested before registration; watchdog disarmed")
@@ -1098,10 +997,8 @@ class PluginBase(rpyc.Service):
         """
         from src.backend.PluginManager.PluginManager import terminate_refused_backend, verify_backend_port
 
-        # Connecting hands the netref surface of this process to whoever
-        # listens on the port, so the port must belong to the launched child.
-        # The check returns the loopback address it verified; connect to that,
-        # not to a name that could resolve to a squatter in another family.
+        # Verify that the launched child owns a loopback port before exposing
+        # this process through netref, then connect to the verified address.
         plugin_id = self.get_plugin_id_from_folder_name()
         try:
             host = verify_backend_port(port, self.backend_process, self._backend_via_terminal, plugin_id)
@@ -1116,38 +1013,26 @@ class PluginBase(rpyc.Service):
         if gl.plugin_manager is not None:
             gl.plugin_manager.backends.append(self.backend_connection)
 
-        # Only after the connection attributes hold their values, because the
-        # caller that wait_for_backend wakes reads self.backend at once. Also
-        # before the plugin hook below, which can be slow. The hold closes here
-        # too, so an event the hook fires goes out the normal way.
+        # Publish the connection before waking waiters; release held events
+        # before the slow hook so events from it use the normal path.
         self._backend_ready.set()
         self.backend_event_hold.release()
 
-        # The backend process itself calls register_backend over rpyc, so this
-        # isolates the hook. A raising plugin hook must not break the
-        # registration call of the backend.
+        # Isolate the plugin hook so it cannot fail the backend's rpyc
+        # registration call.
         try:
             self.on_backend_ready()
         except Exception as e:
             log.error(f"Plugin {self.get_plugin_id_from_folder_name()}: on_backend_ready failed: {e}")
 
     def on_backend_ready(self) -> None:
-        """The app calls this after the backend connected and registered.
-
-        It mirrors ActionCore.on_backend_ready. A backend can register late on
-        a busy boot, so sync the state that depends on the backend here instead
-        of at launch_backend() time. It runs on the rpyc service thread, so do
-        not touch GTK from it. It does nothing by default.
-        """
+        """Synchronize backend-dependent state after registration, which can complete late.
+        This runs on the rpyc service thread; do not access GTK from it."""
         pass
 
     def on_app_ready(self) -> None:
-        """The app calls this once after it finished starting.
-
-        Launch a plugin backend or start long-lived work here. __init__ blocks
-        startup, and the on_ready of an action never fires while no deck is
-        connected. It runs on a background thread, so do not touch GTK from it.
-        """
+        """Start backend or long work once per plugin instance after startup.
+        This runs off-main; do not access GTK. __init__ blocks, and on_ready needs a deck."""
         pass
 
     def ping(self) -> bool:
