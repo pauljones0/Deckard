@@ -62,6 +62,15 @@ def is_default_view(view: tuple[float, float, float]) -> bool:
             and abs(view[2] - DEFAULT_VIEW[2]) < _EPSILON)
 
 
+def view_as_setting(view: tuple[float, float, float]) -> "dict[str, float] | None":
+    """The stored shape of a view: the settings dict, or None for the default
+    view, so an untouched background keeps its pre-view settings file. The
+    inverse of normalize_view."""
+    if is_default_view(view):
+        return None
+    return {"x": view[0], "y": view[1], "scale": view[2]}
+
+
 def view_suffix(view: tuple[float, float, float]) -> str:
     """A filename component naming this view, empty for the default.
 

@@ -19,6 +19,9 @@ import gi
 from GtkHelper.ScaleRow import ScaleRow
 from src.backend import services
 from src.backend.DeckManagement.ImageHelpers import image2pixbuf
+from src.backend.DeckManagement.deck_controller.background_media import background_canvas_size
+from src.backend.DeckManagement.deck_controller.viewport import normalize_view, view_as_setting
+from src.windows.mainWindow.elements.ViewportDialog import ViewportDialog
 from src.windows.MultiDeckSelector.MultiDeckSelectorRow import MultiDeckSelectorRow
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
@@ -624,6 +627,13 @@ class BackgroundGroup(PageEditorGroup):
 
         self.media_selector_image = Gtk.Image()
 
+        # Pan and zoom the visible region of the page's own background media.
+        self.adjust_view_button = Gtk.Button(
+            label=gl.lm.get("deck.background-group.adjust-view"),
+            halign=Gtk.Align.CENTER, margin_top=10,
+        )
+        self.button_box.append(self.adjust_view_button)
+
     @override
     def _signal_bindings(self) -> list[tuple[str, GObject.Object, str, Callable[..., Any]]]:
         return [
@@ -633,7 +643,56 @@ class BackgroundGroup(PageEditorGroup):
             ("fps", self.fps_spin, "changed", self.on_fps_changed),
             ("extend-touchscreen", self.extend_touchscreen_toggle, "notify::active", self.on_extend_touchscreen_changed),
             ("media-selector", self.media_selector_button, "clicked", self.on_media_selector_click),
+            ("adjust-view", self.adjust_view_button, "clicked", self.on_adjust_view),
         ]
+
+    def _controllers_showing_page(self) -> "list[Any]":
+        """Every deck controller whose active page is the one being edited."""
+        page_path = self.page_editor.active_page_path
+        return [
+            controller for controller in services.require_deck_manager().deck_controller
+            if controller.active_page is not None
+            and controller.active_page.json_path == page_path
+        ]
+
+    def on_adjust_view(self, *args: object) -> None:
+        background_settings = services.require_page_manager().get_background_settings(
+            self.page_editor.active_page_path)
+        media_path = background_settings.get("media-path")
+        if not media_path:
+            return
+        showing = self._controllers_showing_page()
+        # The box needs a deck canvas for its aspect. A deck showing this page
+        # is the natural one; with none showing, any connected deck gives the
+        # geometry, and with no deck at all there is nothing to aim at.
+        controllers = showing or list(services.require_deck_manager().deck_controller)
+        if not controllers:
+            return
+        geometry = controllers[0]
+        dialog = ViewportDialog(
+            [(media_path, normalize_view(background_settings.get("view")))],
+            canvas_size=lambda: background_canvas_size(
+                geometry, geometry.background.extend_to_touchscreen),
+            on_live=self.on_view_live,
+            on_commit=self.on_view_commit,
+        )
+        dialog.connect("closed", lambda d: d.close_cleanly())
+        dialog.present(self)
+
+    def on_view_live(self, path: str, view: "tuple[float, float, float]") -> None:
+        """The drag preview, on every deck showing this page whose current
+        image is the page's media; a video waits for the commit's reload."""
+        for controller in self._controllers_showing_page():
+            image = controller.background.image
+            if image is not None and image.path == path:
+                controller.background.update_view(view)
+
+    def on_view_commit(self, path: str, view: "tuple[float, float, float]") -> None:
+        services.require_page_manager().overwrite_background_settings(
+            path=self.page_editor.require_active_page_path(),
+            view=view_as_setting(view),
+        )
+        self.update_background()
 
     @override
     def load_config_settings(self, page_path: str) -> None:
@@ -706,9 +765,12 @@ class BackgroundGroup(PageEditorGroup):
     def update_image(self, file_path: str | None) -> None:
         self.set_thumbnail(file_path)
 
+        # A view belongs to the image it was framed on; a new file starts
+        # from the default crop instead of inheriting the previous zoom.
         services.require_page_manager().overwrite_background_settings(
             path=self.page_editor.require_active_page_path(),
-            media_path=file_path
+            media_path=file_path,
+            view=None,
         )
 
         self.update_background()

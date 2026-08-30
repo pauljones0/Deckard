@@ -17,6 +17,9 @@ bundle as a release asset.
   slideshow image keeps its own view, picked in the same dialog, and a page
   background with a stored view renders through it too. Backgrounds without
   a stored view render exactly as before.
+- The page background override in the page manager has the same "Adjust
+  View" button, so a page that overrides the deck wallpaper can pan and zoom
+  its own media; every deck showing that page follows.
 
 - Read and steer a running Deckard from the command line. `--json` prints the
   state of the running app as one JSON object: every deck with its serial,
