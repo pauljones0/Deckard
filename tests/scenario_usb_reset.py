@@ -152,7 +152,8 @@ class FakeBus:
 
     def write_descriptor(self, busnum: int, devnum: int,
                          vendor_id: int, product_id: int) -> None:
-        """Replace a node identity while its sysfs listing remains unchanged."""
+        """Put another identity behind the same bus/device pair and node while
+        its sysfs listing remains unchanged."""
         _write_bytes(self.node(busnum, devnum), device_descriptor(vendor_id, product_id))
 
     def restore(self) -> None:

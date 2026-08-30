@@ -1,5 +1,5 @@
-"""Verify pooled LIFO decoding; weak targets cancel without decode, delivery,
-or raises; page flips drop stale work; cache hits skip decode; delivery batches."""
+"""Verify pooled LIFO decoding; targets removed before decode cancel decoding
+and delivery, while targets removed after decode cancel only delivery."""
 import fixtures  # noqa: F401  (import first: isolated --data tempdir)
 
 import gc

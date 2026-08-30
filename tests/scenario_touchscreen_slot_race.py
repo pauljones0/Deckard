@@ -1,5 +1,5 @@
-"""Verify that touchscreen drain, clear, write-cap putback, and slot wipes do
-not lose frames when producers race them."""
+"""Verify coherent slots when producers race drain, Clear, and write-cap
+putback; verify both slot wipes and page-generation-before-slot lock ordering."""
 
 # A hooked touchscreen_task property fires a real producer inside each window,
 # so every interleave is deterministic rather than left to the scheduler.
@@ -241,7 +241,8 @@ def check_writecap_putback() -> int:
 
 
 def check_slot_wipes() -> int:
-    """Both slot-wipe paths run under the slot lock without deadlock."""
+    """Directly clear through both slot-wipe paths and exercise the one nested
+    page-generation-before-slot lock order."""
     from src.backend.DeckManagement.InputIdentifier import Input
     from src.backend.DeckManagement.DeckController import DeckController
 

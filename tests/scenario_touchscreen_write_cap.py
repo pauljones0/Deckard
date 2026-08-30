@@ -9,7 +9,8 @@ from faulty_fake_deck import _hash_bytes
 
 
 def flood(media_player, controller, touch, n_frames: int, spacing_s: float) -> float:
-    """Enqueue distinct frames with a drain and delay after each one."""
+    """Enqueue distinct frames, drain after each with approximately spacing_s
+    delay, and return the elapsed time."""
     start = time.time()
     for i in range(n_frames):
         payload = bytes([i % 256]) * 64

@@ -1,5 +1,5 @@
-"""Verify that video digests use stable device, inode, size, and nanosecond
-mtime identity and reject changes during hashing."""
+"""Verify stable file identity for video digests; identity changes retry, and
+an exhausted attempt returns its last digest without memoizing it."""
 import fixtures  # noqa: F401  (must be first: isolates DATA_PATH before globals)
 
 import os  # noqa: E402
@@ -59,8 +59,7 @@ def main() -> int:
 
     mtc.os.stat = shifting_stat
     try:
-        # attempts=1 so it does not loop; the after-hash mismatch must prevent
-        # memoization and return the digest unmemoized.
+        # One attempt prevents a retry and returns the last digest without memoizing it.
         digest_c = mtc.get_video_md5(path, attempts=1)
     finally:
         mtc.os.stat = real_stat

@@ -105,7 +105,8 @@ def actions_for(controller, identifier) -> list:
 
 
 def set_page_actions(controller, identifier, action_ids) -> None:
-    """Rewrite one input's actions and re-read the state dict after each reload."""
+    """Rewrite one input's actions, getting its state dict on each call because
+    the preceding call's page reload replaced the dict."""
     page = controller.active_page
     state_dict = identifier.ensure_state_dict(page, 0)
     state_dict["actions"] = [{"id": action_id, "settings": {}}
