@@ -42,7 +42,7 @@ class AssetManagerBackend(list[Any]):
         self.remove_invalid_data()
 
     def load_json(self) -> None:
-        # The store quarantines a corrupt index and returns an empty library so startup continues.
+        # The store attempts to quarantine a corrupt index, then returns an empty library.
         # A missing index also starts empty.
         self.clear()
         self.extend(settings_store.get().read(settings_store.ASSET_LIBRARY))

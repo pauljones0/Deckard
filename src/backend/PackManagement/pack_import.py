@@ -22,7 +22,7 @@ from src.backend.IconPackManagement.IconPack import IconPack
 from src.backend.IconPackManagement.IconPackManager import IconPackManager
 from src.backend.atomic_json import atomic_write_json
 
-#: Hidden staging-directory suffix that pack discovery skips.
+#: The suffix identifies import staging trees; the leading dot hides them from pack discovery.
 STAGING_SUFFIX = ".deckard-import"
 
 #: What a pack goes into when the name the user typed leaves nothing usable.
@@ -31,7 +31,7 @@ FALLBACK_FOLDER_NAME = "Imported Pack"
 #: Maximum generated folder-name length; longer user input is truncated.
 MAX_FOLDER_NAME_LENGTH = 64
 
-#: Maximum collision suffix attempts before an import fails.
+#: Candidate limit including the unsuffixed name and all numbered suffix tries.
 MAX_NAME_ATTEMPTS = 100
 
 #: Maximum total bytes copied or extracted. Archive declarations are checked before writes,
@@ -299,8 +299,8 @@ def _is_decodable(path: str) -> bool:
 
 def _write_thumbnail(staging: str, assets_dir: str, planned: list[_PlannedFile],
                      banner_path: str | None) -> str:
-    """Write a valid banner or first planned icon as the thumbnail, with a raster fallback.
-    Check the destination before copying."""
+    """Write a valid banner or the first raster icon as the thumbnail.
+    Use the first planned icon only when all are SVG; check the destination before copying."""
     if banner_path and os.path.isfile(banner_path) and _is_importable(banner_path) \
             and _is_decodable(banner_path):
         name = f"thumbnail{os.path.splitext(banner_path)[1].lower()}"
@@ -329,13 +329,13 @@ def _forget_staging(staging: str) -> None:
 
 
 def _discard_staging(staging: str) -> None:
-    """Drop a staging tree after a failure, and stop tracking it."""
+    """Attempt to remove a failed staging tree, then stop tracking it."""
     _remove_tree(staging)
     _forget_staging(staging)
 
 
 def _sweep_stale_staging(root: str) -> None:
-    """Remove stale hidden staging trees but spare paths tracked by this session.
+    """Attempt to remove stale hidden staging trees but spare paths tracked by this session.
     Hold _staging_lock across listing and removal so new live trees cannot appear untracked."""
     with _staging_lock:
         live = set(_live_staging)
@@ -378,8 +378,8 @@ def set_import_running(running: bool) -> None:
 
 def import_icon_pack(source: str, name: str, description: str = "",
                      banner_path: str | None = None) -> str:
-    """Import a ZIP archive or picture folder off the main thread and return its new folder name.
-    Raise PackImportError with user-facing text and leave no staging data on failure."""
+    """Import a ZIP or picture folder off the main thread and return its folder.
+    Raise user-facing PackImportError; cleanup can leave hidden staging, never a visible pack."""
     title = (name or "").strip()
     if not title:
         raise PackImportError("An icon pack needs a name.")
@@ -396,7 +396,7 @@ def import_icon_pack(source: str, name: str, description: str = "",
         raise
     except (zipfile.BadZipFile, zlib.error) as error:
         # A ZIP with an intact central directory can pass is_zipfile and fail during reading.
-        # _build_pack has already removed its staging tree.
+        # _build_pack has already attempted to remove its hidden staging tree.
         raise PackImportError(
             "This archive is damaged, so nothing from it was imported."
         ) from error
@@ -461,7 +461,7 @@ def _build_pack(title: str, description: str, banner_path: str | None,
             raise PackImportError("The pack could not be put in place.") from error
     except BaseException:
         # Every exit that is not the rename leaves the staging tree behind, so
-        # drop it. Nothing reads it, because of the dot, but it costs disk.
+        # try to drop it. The leading dot keeps a leftover out of pack discovery.
         _discard_staging(staging)
         raise
     _forget_staging(staging)
