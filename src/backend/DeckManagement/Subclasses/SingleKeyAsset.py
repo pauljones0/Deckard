@@ -30,15 +30,10 @@ class SingleKeyAsset:
         self.deck_controller = controller_input.deck_controller
 
     def get_raw_image(self) -> Image.Image | None:
-        # None belongs to the hierarchy contract and not to this
-        # implementation. InputImage returns None once it closes its image
-        # (KeyImage.get_raw_image), so the declaration must allow None here or
-        # that override is not substitutable.
+        # The hierarchy permits None because InputImage returns it after close().
         global _error_image
         if _error_image is None:
-            # Resolve against the repo root (globals.py's directory). A
-            # CWD-relative path breaks when the app starts from anywhere but
-            # the checkout root.
+            # Resolve against the repo root so startup CWD does not affect the asset path.
             path = os.path.join(gl.top_level_dir, "Assets", "images", "error.png")
             with Image.open(path) as img:
                 _error_image = img.copy()

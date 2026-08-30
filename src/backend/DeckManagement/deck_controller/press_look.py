@@ -1,24 +1,5 @@
-"""What a key shows for as long as it is held down.
-
-A press draws the key's picture smaller, centred on a transparent margin, so
-the background shows through at the edges and the key reads as pushed in.
-That look is a preference. A page whose keys carry one picture between them
-shows a seam at every margin, and the general settings turn the shrink off
-for it. The default is on, which is the feedback the app has always given.
-
-The refusal to keep the picture is no preference. The covered-key cache holds
-one composite per key state and reuses it for as long as nothing it depends
-on moves, and a press is one of the gates that keeps a composite out of it.
-The branch that draws a gated look is the branch that decides the store, so
-the caller pairs this call with NO_STORE whatever comes back from it. With the
-shrink off a pressed composite is the picture the key already shows, so a
-stored one would carry the same bytes and harm nothing, and the rule stays the
-one cover_cache states: no kept composite carries a pressed look.
-
-The setting is read per composite rather than kept on the key, so a change in
-the settings dialog reaches the next press with nothing to invalidate. A
-pressed picture lives as long as the finger does.
-"""
+"""Apply the live shrink-on-press preference to a held key image.
+Callers must mark every pressed composite NO_STORE, even when shrinking is disabled."""
 from PIL import Image
 
 import globals as gl
@@ -29,15 +10,8 @@ if TYPE_CHECKING:
 
 
 def apply(key: "ControllerKey", image: Image.Image) -> Image.Image:
-    """The picture a held key shows, given the one it shows at rest.
-
-    It hands back image itself while the shrink is off, rather than a copy of
-    it. That saves one tile-sized allocation per composite of a held key and
-    nothing more. The caller closes the images it did not paint and tells them
-    apart by identity, and a copy would leave it closing one of them twice,
-    which PIL accepts. The scenario pins the identity, so it stays a decision
-    rather than something that drifts.
-    """
+    """Return the pressed image, preserving object identity when shrinking is disabled.
+    The caller uses identity to close only unpainted images."""
     if not gl.settings_manager.app().shrink_on_press:
         return image
     return key.shrink_image(image)

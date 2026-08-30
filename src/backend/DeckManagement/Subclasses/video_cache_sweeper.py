@@ -1,10 +1,5 @@
-"""Startup sweep of the video cache directory.
-
-Cache entries are keyed by the md5 of the source video. An entry for a video
-that no deck settings and no page reference becomes unreachable garbage. That
-happens the moment the user picks a different file. This sweep removes those,
-plus legacy pickle caches and abandoned writer temp files.
-"""
+"""Remove unreferenced MD5-keyed video caches at startup.
+Also remove unreadable legacy formats and abandoned writer temporary files."""
 import contextlib
 import hashlib
 import math
@@ -31,26 +26,16 @@ VID_CACHE = os.path.join(gl.DATA_PATH, "cache", "videos")
 # leftover from a crash.
 TMP_MAX_AGE_S = 24 * 60 * 60
 
-# Valid saturation-factor range. It mirrors DeckController's UI scale
-# (DeckGroup.Saturation min=1.0, max=1.5) and its runtime
-# _read_display_saturation clamp. The sweep must produce the same suffix the
-# runtime writes on disk. The runtime clamps a persisted out-of-range or
-# non-finite factor before it derives the cache filename, so a raw read here
-# protects a variant playback never writes, e.g. ".sat200" for a hand-edited
-# 2.0, and sweeps away the ".sat150" it does write.
+# Match the runtime's 1.0-1.5 saturation clamp when deriving protected suffixes.
+# Raw invalid values can protect an unwritten variant and remove the active one.
 MIN_DISPLAY_SATURATION = 1.0
 MAX_DISPLAY_SATURATION = 1.5
 DEFAULT_DISPLAY_SATURATION = 1.0
 
 
 def _clamp_saturation(raw: Any) -> float:
-    """Maps a persisted saturation to the factor the runtime applies.
-
-    A non-numeric or non-finite value, that is NaN or inf, falls back to the
-    default. This then clamps the value to the MIN and MAX range. It matches
-    DeckController._read_display_saturation, so the sweep and playback agree
-    on the cache filename.
-    """
+    """Map persisted saturation to the runtime-clamped factor.
+    Non-numeric and non-finite values use the default so cache filenames agree."""
     try:
         value = float(raw)
     except (TypeError, ValueError):
@@ -60,26 +45,13 @@ def _clamp_saturation(raw: Any) -> float:
     return min(MAX_DISPLAY_SATURATION, max(MIN_DISPLAY_SATURATION, value))
 
 
-# Current cache-file naming. A default-saturation file is "<md5>.mp4". It can
-# carry a ".satNNN" baked-in saturation variant (mp4_tile_cache.sat_suffix),
-# a ".vXXXX-YYYY-SSSSS" baked-in viewport variant (viewport.view_suffix),
-# and a rendering variant, e.g. ".bounded" for KeyGIF's alpha-dropped
-# over-budget artifact (mp4_tile_cache.acquire_from_frames). The sweep matches
-# on the saturation group. It accepts the view and rendering variants, so it
-# sweeps a ".satNNN.bounded.mp4" with the factor that file belongs to instead
-# of falling through as an unrecognized name and protecting it forever. A
-# view variant of a referenced video is kept whatever its view, because the
-# stored views live spread across deck settings, page files and slideshow
-# entries and the sweep does not collect them; the variant falls to the
-# unreferenced branch when its video does. Anything else in a layout dir is
-# legacy or a writer temp file, and the other sweep branches handle it.
+# Match cache names with optional saturation, viewport, and rendering suffixes.
+# Keep all views for referenced videos; sweep them by source and saturation.
 _MP4_NAME_RE = re.compile(
     r"^(?P<hash>[0-9a-f]+)(?P<sat>\.sat\d+)?(?P<view>\.v[0-9-]+)?(?P<variant>\.[a-z]+)?\.mp4$")
 
-# Top-level directory names the deleted key_video_cache.py JPEG-per-frame
-# format wrote into. Those were VID_CACHE/single_key/<stem>/<size>/<frame>.jpg
-# and VID_CACHE/key: <n>/<stem>/<size>/<n>/<frame>.jpg, written by
-# key_video_cache.write_cache, which is removed. No code can read this format.
+# Match obsolete top-level JPEG-per-frame cache directories.
+# No current reader can use their single_key or key-number layouts.
 _LEGACY_KEY_DIR_RE = re.compile(r"^key: \d+$")
 
 
@@ -88,15 +60,8 @@ def _is_legacy_key_video_dir(name: str) -> bool:
 
 
 def _sweep_legacy_key_video_dirs() -> None:
-    """One-shot migration cleanup.
-
-    Every entry under the two legacy top-level directories above is dead,
-    because key_video_cache.py is gone. Unlike sweep_stale_video_caches below,
-    this bypasses the referenced-hash check. A still-referenced video's old
-    JPEG frames are as unreachable as an unreferenced one's, because nothing
-    decodes them again either way. It is idempotent. Once removed, os.listdir
-    stops finding them on every later startup.
-    """
+    """Idempotently remove unreadable JPEG-per-frame cache directories.
+    Bypass source-reference checks because no current reader can decode them."""
     if not os.path.isdir(VID_CACHE):
         return
     freed = 0
@@ -130,21 +95,16 @@ def _collect_json_paths() -> list[str]:
             os.path.join(decks_dir, name)
             for name in os.listdir(decks_dir) if name.endswith(".json")
         )
-    # This includes plugin-registered custom pages. The sweep thread starts
-    # after create_global_objects(), so the page manager is set by the time
-    # this runs. If it is not, the reference set is incomplete and the sweep
-    # deletes live caches, so abort instead. sweep_stale_video_caches carries
-    # @log.catch, so the raise skips the sweep.
+    # Include plugin custom pages and abort without a page manager.
+    # An incomplete page set can delete live caches.
     page_manager = gl.page_manager
     if page_manager is None:
         raise RuntimeError(
             "video cache sweep started before the page manager exists -- "
             "refusing to sweep against an incomplete reference set")
     paths.extend(page_manager.get_pages(add_custom_pages=True, sort=False))
-    # Plugins keep their own settings JSONs at PluginBase.settings_path, that
-    # is settings/plugins/<id>/settings.json, and can reference media there
-    # that appears in no deck or page file. Scan them, or the sweep deletes
-    # caches whose in-process registry entries are live and marked ready.
+    # Scan plugin settings because they can reference media absent from decks and pages.
+    # Omitting them can delete ready cache files.
     plugins_dir = os.path.join(gl.DATA_PATH, "settings", "plugins")
     if os.path.isdir(plugins_dir):
         for root, _, files in os.walk(plugins_dir):
@@ -155,10 +115,8 @@ def _collect_json_paths() -> list[str]:
 
 
 def _walk_for_video_paths(node: Any, found: set[str]) -> None:
-    """Any string anywhere in the JSON that points at an existing video file
-    counts as a reference. Media appears as a deck or page background, a
-    screensaver, or per-key and per-dial media, and this survives a change in
-    the JSON structure."""
+    """Collect every JSON string that points to an existing video.
+    Structure-independent scanning covers backgrounds, screensavers, keys, and dials."""
     if isinstance(node, dict):
         for value in node.values():
             _walk_for_video_paths(value, found)
@@ -181,11 +139,8 @@ def _md5_of_file(path: str) -> str:
 
 def collect_referenced_video_hashes() -> set[str]:
     video_paths: set[str] = set()
-    # Read barrier before this reads every page file. The sweep deletes what
-    # it does not find, so a page whose new background video still sits on the
-    # write debounce loses that video's cache. Use flush_all and not a
-    # per-path call, because the scan reads the whole page set, and only page
-    # files are ever pending.
+    # Flush all pending page writes before the full-set reference scan.
+    # A debounced video reference would otherwise lose its cache.
     page_flush.get().flush_all()
     for json_path in _collect_json_paths():
         try:
@@ -201,14 +156,7 @@ def collect_referenced_video_hashes() -> set[str]:
 
 
 def collect_active_sat_suffixes() -> set[str]:
-    """Cache-filename suffixes that some deck's current display.saturation can
-    still produce, plus the default empty suffix.
-
-    The unsuffixed cache is the upstream-format file, and it becomes live
-    again the moment a deck resets to 1.0. Any other .satNNN variant of a
-    referenced video is a leftover from a factor tried and abandoned. It is
-    bounded but permanent disk growth unless the sweep removes it.
-    """
+    """Collect active display-saturation suffixes plus the default empty suffix."""
     suffixes = {""}
     decks_dir = os.path.join(gl.DATA_PATH, "settings", "decks")
     if not os.path.isdir(decks_dir):
@@ -221,16 +169,11 @@ def collect_active_sat_suffixes() -> set[str]:
                 os.path.join(decks_dir, name)
             ) or {}
             raw = settings.get("display", {}).get("saturation", 1.0)
-            # Clamp the persisted factor exactly as the runtime clamps it, so
-            # the suffix collected here is the one playback writes. An
-            # out-of-range or hand-edited value then cannot make the sweep
-            # protect a variant name the runtime never produces.
+            # Use runtime clamping so persisted invalid values cannot protect unwritten variants.
             suffixes.add(sat_suffix(_clamp_saturation(raw)))
         except Exception:
-            # An unreadable deck file contributes nothing. The sweep can then
-            # wrongly remove its variant, but a reader that finds its ready
-            # cache missing invalidates the registry entry and rebuilds (see
-            # mp4_tile_cache._maybe_adopt_shared_cache).
+            # An unreadable deck can lose its variant, but an attached reader protects it.
+            # A later reader invalidates a missing ready entry and rebuilds.
             log.opt(exception=True).warning(f"Could not read display saturation from {name}")
     return suffixes
 
@@ -246,19 +189,15 @@ def sweep_stale_video_caches(startup_delay: float = 0.0) -> None:
 
     referenced = collect_referenced_video_hashes()
     active_sat_suffixes = collect_active_sat_suffixes()
-    # Never delete a file a live in-process cache reader or builder is
-    # attached to. The reference scan can miss a source, e.g. a source file
-    # deleted since acquire, or a settings format it cannot parse. An attached
-    # consumer is direct proof of use.
+    # Protect files with attached readers or builders even when the reference scan misses them.
+    # An attached consumer is direct evidence of use.
     protected_paths = registry_cache_paths()
     freed = 0
     removed = 0
 
     for layout in os.listdir(VID_CACHE):
         if _is_legacy_key_video_dir(layout):
-            # The unconditional pass above already handled this. Skip it, so a
-            # leftover entry from a failed rmtree there does not fall into the
-            # referenced-hash check below.
+            # Keep failed legacy-directory removals out of source-reference handling.
             continue
         layout_dir = os.path.join(VID_CACHE, layout)
         if not os.path.isdir(layout_dir):
@@ -269,10 +208,8 @@ def sweep_stale_video_caches(startup_delay: float = 0.0) -> None:
 
             try:
                 if os.path.isdir(entry_path):
-                    # A guard. No current cache format nests a directory
-                    # inside a layout dir. The unconditional pass above
-                    # handles the legacy single_key and key directories
-                    # before this loop sees them.
+                    # No current format nests directories here; remove unreferenced remnants.
+                    # Top-level legacy directories are handled before this loop.
                     if entry_hash in referenced:
                         continue
                     size = sum(
@@ -290,9 +227,8 @@ def sweep_stale_video_caches(startup_delay: float = 0.0) -> None:
                     size = os.path.getsize(entry_path)
                     os.remove(entry_path)
                 elif entry.endswith(".mp4"):
-                    # A cheap early skip against the snapshot. The authoritative
-                    # guard is the live check-and-remove below, which closes the
-                    # window where a consumer attaches after the snapshot.
+                    # Use the snapshot for an early skip, then check live state before removal.
+                    # The second check closes the attachment race.
                     if entry_path in protected_paths:
                         continue
                     if entry_hash in referenced:
@@ -300,9 +236,7 @@ def sweep_stale_video_caches(startup_delay: float = 0.0) -> None:
                         suffix = (match.group("sat") or "") if match else ""
                         if suffix in active_sat_suffixes:
                             continue
-                        # The video is referenced, but no deck's current
-                        # factor produces this saturation variant. Fall
-                        # through and sweep it.
+                        # Sweep referenced-video variants that no active saturation produces.
                     size = os.path.getsize(entry_path)
                     if not remove_cache_file_if_unreferenced(entry_path):
                         # A reader or builder attached to it since the snapshot.

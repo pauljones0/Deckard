@@ -16,11 +16,8 @@ from typing import TYPE_CHECKING
 
 from PIL import Image
 
-# image2pixbuf imports GLib and GdkPixbuf on demand. It is their only
-# consumer, and all its callers live under src/windows/. A module-level
-# import drags the widget stack into the engine's import closure, and
-# ImageHelpers is core to the render path. The annotation below is a string
-# for the same reason: a runtime one would evaluate the name at def time.
+# Import GLib and GdkPixbuf on demand to keep GTK out of the render engine.
+# Keep the annotation deferred because the runtime name is not loaded here.
 if TYPE_CHECKING:
     from gi.repository import GdkPixbuf
 
@@ -40,24 +37,8 @@ def is_transparent(img: Image.Image) -> bool:
 
 def hides_background(image: Image.Image, left: int, top: int,
                      background_size: tuple[int, int]) -> bool:
-    """Whether pasting image at (left, top) leaves no pixel of a background of
-    background_size visible.
-
-    Two conditions, both exact. The paste must reach every pixel of the
-    background, and every pixel it lays down must be fully opaque. An image
-    with no alpha data replaces what it lands on outright; one with alpha is
-    pasted through itself as a mask, and a mask of 255 replaces the
-    destination pixel just as completely. Either way the result of the
-    composite is the same whatever the background held, which is what lets a
-    caller keep the composite and stop rebuilding it per frame.
-
-    Nothing here has a tolerance. One translucent pixel, or one row the paste
-    misses, and the composite depends on the background again. An answer of
-    False costs a composite that was not needed; a wrong True freezes a stale
-    frame on the device, so every case this cannot prove reads False. A
-    palette image that carries its transparency in info, and not in a band,
-    is one such case.
-    """
+    """Return whether the paste fully covers the background with opaque pixels.
+    Any uncovered, translucent, or unprovable pixel returns False to prevent stale composites."""
     background_width, background_height = background_size
     if left > 0 or top > 0:
         return False
@@ -90,7 +71,6 @@ def image2pixbuf(img: Image.Image, force_transparency: bool = False) -> "GdkPixb
     force_transparency = True
 
     w, h = img.size
-    # Two names, because the GLib wrapper is not the buffer it wraps.
     raw = img.tobytes()
     data = GLib.Bytes.new(raw)
     transparent = True if force_transparency else is_transparent(img)

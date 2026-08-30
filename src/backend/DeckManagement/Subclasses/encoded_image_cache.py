@@ -19,46 +19,23 @@ from typing import Any, override
 
 
 class EncodedImageCache(ByteLRUCache):
-    """LRU of encoded, device-native key images, capped by total byte size.
+    """Byte-capped LRU of device-native images with repeat-based admission.
+    The doorkeeper infers reuse because callers only have composed pixels."""
 
-    ByteLRUCache holds the LRU and byte-accounting core, and this class is
-    that core plus a small doorkeeper ring that gates admission (see _admit).
-
-    There is no "volatile" flag and no caller-side plumbing. put()'s one
-    caller sees only the already-composited image, so a caller can tell this
-    cache nothing the class cannot infer from repetition.
-    """
-
-    # The ring size is independent of the byte cap above, because the ring
-    # bounds bookkeeping entries, one hashable key each, and not cached pixel
-    # data. 512 is well above the distinct-key count of a single loop at
-    # today's content sizes, so a full loop's keys are still in the ring, and
-    # therefore admitted, by the time the loop repeats.
+    # The 512-entry ring bounds keys, not pixel bytes, and retains a full content loop.
+    # Repeated loop keys therefore remain eligible for admission.
     DOORKEEPER_SIZE = 512
 
     def __init__(self, max_bytes: int):
         super().__init__(max_bytes)
-        # Doorkeeper bookkeeping, a bounded FIFO of recently-seen keys. The
-        # set gives O(1) membership, and the deque names which key to evict
-        # from the set once the ring is full.
+        # Pair an O(1) membership set with a bounded FIFO eviction order.
         self._doorkeeper_seen: set[Any] = set()
         self._doorkeeper_order: "deque[Any]" = deque()
 
     @override
     def _admit(self, key: object) -> bool:
-        """Doorkeeper check and record. The caller holds _lock.
-
-        Returns True when the ring already holds key, that is on its second or
-        later sighting, and the key then enters the real cache. Otherwise it
-        records a first sighting and returns False, and put() spends a
-        bookkeeping slot instead of a real cache slot.
-
-        Looping content is any video or GIF background, and it is the common
-        case. It repeats the same small key set every cycle, and warms fully
-        by the second or third wrap. High-entropy content, such as background
-        video noise or any source whose composited hash never repeats, gets no
-        second sighting and displaces no reusable entry.
-        """
+        """Admit a key on its second sighting while the caller holds the lock.
+        Looping keys warm; one-off high-entropy keys consume only bounded bookkeeping."""
         if key in self._doorkeeper_seen:
             return True
         self._doorkeeper_seen.add(key)
@@ -70,8 +47,6 @@ class EncodedImageCache(ByteLRUCache):
 
     @override
     def _on_clear_locked(self) -> None:
-        """clear() also resets the doorkeeper. Stale "seen" bookkeeping from
-        the old content must not let one of its keys skip admission when that
-        key recurs by coincidence under the new content."""
+        """Reset the doorkeeper so old content cannot admit coincident new keys."""
         self._doorkeeper_seen.clear()
         self._doorkeeper_order.clear()

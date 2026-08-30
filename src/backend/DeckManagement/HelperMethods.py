@@ -32,16 +32,12 @@ from PIL import Image
 import gi
 from gi.repository import Gio, GLib
 
-# The four colour and font helpers below import Gdk and Pango on demand.
-# They are the only consumers, and their callers all live under src/windows/.
-# A module-level import drags the widget stack into every engine import
-# closure that touches HelperMethods.
+# Import Gdk and Pango on demand to keep GTK out of engine imports.
 if TYPE_CHECKING:
     from gi.repository import Gdk, Pango
 
 from src.backend.DeckManagement import font_resolver
 
-# The decorated method's return type, so instance_cache keeps its signature.
 _Return = TypeVar("_Return")
 _Params = ParamSpec("_Params")
 _Self = TypeVar("_Self")
@@ -144,13 +140,8 @@ def get_sys_param_value(param_name: str) -> str | None:
 
 
 def get_sys_args_without_param(param_name: str) -> list[str]:
-    """sys.argv minus every argument starting with param_name, and the value
-    after it.
-
-    Returns a new list and never modifies sys.argv. An in-place version
-    corrupts sys.argv for later readers, and pops past the end when the
-    matched parameter is the last element of argv.
-    """
+    """Return a new argv without matching parameters and their following values.
+    A terminal matching parameter has no value, and sys.argv remains unchanged."""
     args = []
     skip_next = False
     for arg in sys.argv:
@@ -158,7 +149,7 @@ def get_sys_args_without_param(param_name: str) -> list[str]:
             skip_next = False
             continue
         if arg.startswith(param_name):
-            skip_next = True  # also drop the parameter's value, if present
+            skip_next = True
             continue
         args.append(arg)
     return args
@@ -192,15 +183,8 @@ def is_svg(path: str | None) -> bool:
 
 
 def centered_paste_offset(container: "tuple[int, int]", item: "tuple[int, int]") -> "tuple[int, int]":
-    """The paste offset that centres item inside container.
-
-    It serves the paste sites that centre something known to be no larger than
-    what it goes on, which is what every caller does: an overlay drawn at a
-    fraction of the tile, and the shrunken look of a pressed key. An item wider
-    or taller than its container is outside the contract, because the two ways
-    of writing this arithmetic disagree there, floor against truncation, and a
-    caller that needs a crop must say which it wants.
-    """
+    """Return the centered offset for an item no larger than its container.
+    Larger items are unsupported because floor division and truncation differ."""
     return ((container[0] - item[0]) // 2, (container[1] - item[1]) // 2)
 
 
@@ -245,8 +229,7 @@ def download_file(url: str, path: str = "", file_name: str | None = None) -> str
             the rename onto the returned path fails.
     """
 
-    # Import lazily. Nearly everything imports this module at startup, and
-    # http_client imports requests.
+    # Import lazily to keep requests out of startup imports.
     from src.backend import http_client
 
     if file_name is None:
@@ -254,19 +237,14 @@ def download_file(url: str, path: str = "", file_name: str | None = None) -> str
 
     path = os.path.join(path, file_name)
 
-    # Stream through the shared session. The timeout stops an indefinite block
-    # on a black-holed or hung connection. An HTTP error status raises instead
-    # of writing the error page into the asset cache under the requested file
-    # name, where the extension-based is_image() check accepts it as an asset.
+    # Use the shared session with a timeout; HTTP errors must not enter the asset cache.
+    # The extension-only image check can accept an error page as an asset.
     http_client.download_to_file(url, path, timeout=10)
 
     return path
 
 def natural_keys(s: str) -> "list[int | str]":
-    # The elements alternate text and digit runs; two keys only compare
-    # int against int at an index when both names carry digits there.
-    # isdecimal() is the test that matches what int() accepts: isdigit() is
-    # true for characters such as the superscript two, which int() rejects.
+    # Split text and decimal runs; isdecimal() excludes digits that int() rejects.
     return [int(text) if text.isdecimal() else text.lower() for text in re.split('([0-9]+)', s)]
 
 
@@ -296,35 +274,22 @@ def add_default_keys(d: dict[str, Any], keys: list[Any]) -> None:
 
 
 def instance_cache(func: Callable[Concatenate[_Self, _Params], _Return]) -> Callable[Concatenate[_Self, _Params], _Return]:
-    """Per-instance method memoization.
-
-    Results live in the instance __dict__ and die with the instance. The key
-    is the positional args, which must be hashable. The check-then-set has no
-    lock, so this is not thread-safe.
-    """
-    # Only a plain method carries this decorator, so it always has a __name__.
+    """Memoize positional method calls per instance.
+    Arguments must be hashable; keyword calls and concurrent use are unsupported."""
     func_name = cast(FunctionType, func).__name__
     attr = f"_instance_cache_{func_name}"
 
     @wraps(func)
-    # self is positional-only: the declared return type takes its first
-    # parameter positionally, and a named self would not assign to it.
+    # Keep self positional-only to match the declared callable return type.
     def wrapper(self: _Self, /, *args: _Params.args, **kwargs: _Params.kwargs) -> _Return:
-        # A len test, not a truthiness test: a truthiness test drops the
-        # ParamSpec kwargs identity, and the forwarded call below then fails
-        # to type-check.
+        # A truthiness test loses the ParamSpec kwargs identity.
         if len(kwargs) > 0:
-            # The cache key is the positional args only. A keyword call would
-            # miss or alias a key, so it stays unsupported, as the
-            # positional-only key always made it.
+            # Keyword calls can miss or alias the positional cache key.
             raise TypeError(f"{func_name} is instance-cached; pass arguments positionally")
-        # The dict lives in the instance __dict__; the annotation states what
-        # this decorator stores in it.
         cache: dict[tuple[object, ...], _Return] | None = self.__dict__.get(attr)
         if cache is None:
             cache = self.__dict__[attr] = {}
         if args not in cache:
-            # kwargs is empty here, per the guard above.
             cache[args] = func(self, *args, **kwargs)
         return cache[args]
 
@@ -332,36 +297,27 @@ def instance_cache(func: Callable[Concatenate[_Self, _Params], _Return]) -> Call
 
 
 def _load_gdk() -> Any:
-    """Imports Gdk on demand. See the TYPE_CHECKING note at the top."""
+    """Import Gdk on demand."""
     gi.require_version("Gdk", "4.0")
     from gi.repository import Gdk
     return Gdk
 
 
 def _load_pango() -> Any:
-    """Imports Pango on demand. See the TYPE_CHECKING note at the top."""
+    """Import Pango on demand."""
     from gi.repository import Pango
     return Pango
 
 
 def color_values_to_gdk(color_values: Sequence[int]) -> "Gdk.RGBA":
-    # The annotation is Sequence and not a tuple union. The persisted label
-    # and font colors are JSON lists, and that is what most callers hand over.
-    # The body copies into a list and works off the length, so it accepts any
-    # 3- or 4-element sequence of channel values (scenario_helper_methods pins
-    # that contract).
+    # Accept any 3- or 4-channel sequence because persisted colors are JSON lists.
     gdk = _load_gdk()
-    # Copy before normalizing. Callers pass tuples, which .append rejects,
-    # and they reuse the sequence they passed in.
+    # Copy before appending alpha to preserve the caller's sequence.
     values = list(color_values)
     if len(values) == 3:
         values.append(255)
     color = gdk.RGBA()
-    # Every caller works in 0-255 on all four channels. gdk_color_to_values
-    # hands back that range, and the label and font settings persist it. CSS
-    # rgba() takes the channels in 0-255 but the alpha in 0-1, so this scales
-    # the raw value. An unscaled alpha clamps every alpha at or above 1 to
-    # fully opaque, and a semi-transparent label colour comes back opaque.
+    # Input channels are 0-255, but CSS alpha is 0-1; scale it to preserve transparency.
     color.parse(f"rgba({values[0]}, {values[1]}, {values[2]}, {values[3] / 255})")
 
     return cast("Gdk.RGBA", color)
@@ -376,8 +332,7 @@ def gdk_color_to_values(color: "Gdk.RGBA") -> tuple[int, int, int, int]:
     return red, green, blue, alpha
 
 
-# The inverse of get_values_from_pango_font_description, which answers a
-# fractional size, so this takes one back.
+# Accept the fractional size returned by get_values_from_pango_font_description.
 def get_pango_font_description(font_family: str, font_size: float, font_weight: int, font_style: str) -> "Pango.FontDescription":
     pango = _load_pango()
     if font_style == "italic":
@@ -397,10 +352,7 @@ def get_pango_font_description(font_family: str, font_size: float, font_weight: 
 
 
 def get_values_from_pango_font_description(desc: "Pango.FontDescription") -> tuple[str | None, float, int, str]:
-    # The size really is fractional, because Pango sizes are in 1024ths and
-    # the division keeps the remainder. The family really can be unset. Both
-    # values go into the persisted font settings, so the annotation follows
-    # the data.
+    # Pango size is fractional in 1024ths, and the family can be unset.
     Pango = _load_pango()
     font_family = desc.get_family()
     font_size: float = desc.get_size() / Pango.SCALE
@@ -438,17 +390,8 @@ def sort_times(time_list: "list[str]") -> "list[str]":
 
 
 def run_command(command: "str | None") -> None:
-    """Detaches a shell command line and forgets about it.
-
-    command is a command line, not an argv list. Callers, plugins included,
-    rely on shell syntax such as pipes, && and variable expansion, and the
-    flatpak prefix splices in as a string. This is de-facto plugin API
-    surface. Do not change it to shlex.split and argv. Build the argv
-    yourself and call subprocess directly if you need that.
-
-    The command gets its own session, its stdio pointed at /dev/null and ~ as
-    its cwd, so it outlives the app cleanly.
-    """
+    """Run a shell command with HOME, null stdio, and a detached session.
+    The plugin API accepts shell syntax; use subprocess directly for an argv."""
     if command is None:
         return
 
@@ -460,31 +403,21 @@ def run_command(command: "str | None") -> None:
                                    stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                                    stderr=subprocess.DEVNULL, cwd=os.path.expanduser("~"))
     except OSError as e:
-        # Log a spawn failure and never raise it. Callers are plugin action
-        # callbacks, and they cannot handle an OSError from a missing /bin/sh,
-        # a missing HOME, or a fork refused under load.
+        # Log spawn failures because plugin action callbacks cannot handle them.
         log.error(f"Failed to run command {command!r}: {e}")
         return
-    # Reap the direct child, or it stays a zombie for the life of the app.
-    # One throwaway daemon thread per spawn does that. A
-    # multiprocessing.Process wrapper instead forks the whole interpreter
-    # (GTK, plugins and deck threads) only to orphan the grandchild.
+    # Reap the direct child in a daemon thread to prevent a lifetime zombie.
+    # Do not fork the full GTK and plugin process only to orphan the grandchild.
     threading.Thread(target=process.wait, name="run_command_reaper", daemon=True).start()
 
 def open_web(url: str) -> None:
-    """Opens a URL in the user's default browser.
-
-    Uses Gio instead of a shell call to xdg-open. GLib routes the call through
-    the OpenURI portal when sandboxed, so this works in the flatpak without
-    flatpak-spawn --host. A URL with shell metacharacters cannot become a
-    command.
-    """
+    """Open a URL through Gio so sandboxed calls use the OpenURI portal.
+    The URL never becomes a shell command."""
     if not url.startswith("http"):
         url = f"https://{url}"
     try:
         Gio.AppInfo.launch_default_for_uri(url, None)
     except GLib.Error as e:
-        # Gio raises on failure. Log it.
         log.error(f"Failed to open URL {url}: {e}")
 
 def svg_string_to_pil(svg_string: str, width: int = 96, height: int = 96) -> Image.Image:
@@ -514,14 +447,8 @@ def svg_string_to_pil(svg_string: str, width: int = 96, height: int = 96) -> Ima
     return img
 
 
-#: The width a page or action SVG asset is rasterized at before the layout
-#: manager fits it to its target. It is passed as the width only, and
-#: svg_to_pil keeps its own default height of 96, so the raster canvas is
-#: 192x96 and a square icon lands letterboxed in the middle 96x96 of it. That
-#: 96-pixel square is what the fit then downscales, so an SVG renders at about
-#: half the linear size of a bitmap at the same tile. This names the width the
-#: two former literals passed and is byte-identical to them; correcting the
-#: half-size render is a separate change, not this one.
+#: Rasterize assets at 192x96; square icons occupy the centered 96x96 region.
+#: The layout therefore renders square SVGs at about half the bitmap size.
 SVG_RASTER_WIDTH_PX = 192
 
 
