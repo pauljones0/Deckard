@@ -1,0 +1,133 @@
+"""The page-background decode owns a worker the application pool cannot starve.
+
+Store tab loads, importers, window grabbing, and chooser builds share the
+eight-worker application background pool. A page load submits its
+background decode to the deck's own single-worker executor instead, so a
+burst that saturates the shared pool cannot queue the decode and stutter a
+page switch. The checks pin:
+
+  (1) With the shared pool fully saturated, the decode still starts
+      promptly, on the deck's own named worker thread.
+  (2) A superseding page load cancels a decode that queued behind both
+      busy workers before either starts it. Two workers, not one, so a
+      rapid page switch starts its decode while the superseded page's
+      decode still runs instead of inheriting its time.
+  (3) close() shuts the executor down, so a late submission cannot revive
+      a closed deck's decode.
+"""
+import fixtures  # noqa: F401  (import first: isolated --data tempdir)
+
+import threading
+
+import globals as gl
+
+from fixtures import make_headless_controller, teardown
+from src.backend import main_loop
+
+
+def _saturate_shared_pool(release: threading.Event) -> list:
+    """Fill every worker of the application pool with a blocked task."""
+    holds = []
+    entered = threading.Barrier(9)
+
+    def hold() -> None:
+        entered.wait(timeout=10)
+        release.wait(timeout=30)
+
+    for _ in range(8):
+        holds.append(main_loop.run_in_background(hold))
+    entered.wait(timeout=10)
+    return holds
+
+
+def check_decode_ignores_pool_saturation() -> None:
+    release = threading.Event()
+    controller = make_headless_controller(serial="decode-isolation")
+    try:
+        decoded = threading.Event()
+        seen_thread: list[str] = []
+        real_load_background = controller.load_background
+
+        def recording_load_background(*args, **kwargs) -> None:
+            seen_thread.append(threading.current_thread().name)
+            decoded.set()
+            real_load_background(*args, **kwargs)
+
+        controller.load_background = recording_load_background
+        _saturate_shared_pool(release)
+
+        page_path = fixtures.seed_page("DecodeIsolation")
+        page = gl.page_manager.get_page(page_path, controller)
+        assert page is not None, "fixture page did not build"
+        controller.load_page(page)
+
+        assert decoded.wait(3.0), (
+            "the background decode never started while the application "
+            "pool was saturated; the dedicated worker is not isolating it")
+        assert seen_thread and seen_thread[0].startswith("bg-decode-"), (
+            f"the decode ran on {seen_thread[:1]}, not on the deck's own "
+            f"bg-decode worker")
+    finally:
+        release.set()
+        teardown(controller)
+    print("PASS: a saturated application pool cannot delay the decode")
+
+
+def check_superseding_load_cancels_queued_decode() -> None:
+    controller = make_headless_controller(serial="decode-cancel")
+    try:
+        decoded_pages: list[str] = []
+        real_load_background = controller.load_background
+
+        def recording_load_background(page, *args, **kwargs) -> None:
+            decoded_pages.append(page.get_name())
+            real_load_background(page, *args, **kwargs)
+
+        controller.load_background = recording_load_background
+
+        # Occupy both workers, so the first page load's decode queues and
+        # the superseding load's cancel hits it before it starts. This is
+        # the real load_page supersession path, not a bare Future.
+        entered = threading.Barrier(3)
+        release = threading.Event()
+        for _ in range(2):
+            controller._bg_decode_pool.submit(
+                lambda: (entered.wait(timeout=10), release.wait(10)))
+        entered.wait(timeout=10)
+
+        page_a = gl.page_manager.get_page(fixtures.seed_page("SupersededA"), controller)
+        page_b = gl.page_manager.get_page(fixtures.seed_page("WinnerB"), controller)
+        assert page_a is not None and page_b is not None, "fixture pages did not build"
+        controller.load_page(page_a)
+        superseded = controller._bg_future
+        controller.load_page(page_b)
+        release.set()
+        assert fixtures.wait_until(lambda: "WinnerB" in decoded_pages, timeout=3.0), (
+            "the winning page's decode never ran")
+        assert superseded is not None and superseded.cancelled(), (
+            "load_page did not cancel the superseded page's queued decode")
+        assert "SupersededA" not in decoded_pages, (
+            f"the superseded page still decoded: {decoded_pages}")
+    finally:
+        teardown(controller)
+    print("PASS: a superseding load cancels the queued decode")
+
+
+def check_close_shuts_the_executor_down() -> None:
+    controller = make_headless_controller(serial="decode-close")
+    pool = controller._bg_decode_pool
+    teardown(controller)
+    try:
+        pool.submit(lambda: None)
+    except RuntimeError:
+        print("PASS: close shuts the decode executor down")
+        return
+    raise AssertionError(
+        "a submission after close was accepted; the executor is unowned")
+
+
+fixtures.start_watchdog(90, "render decode isolation")
+check_decode_ignores_pool_saturation()
+check_superseding_load_cancels_queued_decode()
+check_close_shuts_the_executor_down()
+print("SCENARIO PASS")

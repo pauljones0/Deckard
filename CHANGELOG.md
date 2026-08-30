@@ -120,6 +120,10 @@ bundle as a release asset.
 
 ### Changed
 
+- Switching pages no longer competes with store loads, importers, or
+  window-title watching for background workers: each deck decodes its page
+  background on workers of its own, so a busy app cannot delay the moment
+  a new page's background appears.
 - Animated media now renders at its own frame rate instead of on every pass
   of the 30 Hz render loop. A 24 fps video used to be composited 30 times a
   second and a 12 fps one 15 times; each now renders exactly at its own
