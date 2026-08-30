@@ -9,22 +9,15 @@ if TYPE_CHECKING:
 
 
 class InputType(StrEnum):
-    """The top-level input family, and the key it takes in a page json.
-
-    Each member's value is the literal string a page file stores. StrEnum
-    members are real strings, so a member reads, compares and hashes as its
-    value: page.dict[InputType.KEYS] and page.dict["keys"] are one entry, and
-    json writes the member back as its plain string. Renaming a value would
-    break every stored page, so the values are frozen.
-    """
+    """Top-level input families whose frozen values are page JSON keys.
+    As StrEnum strings, members read, compare, hash, and serialize as their values."""
     KEYS = "keys"
     DIALS = "dials"
     TOUCHSCREENS = "touchscreens"
 
 
-# Shape of one entry under an input's "states" map in a page json.
-# This is an annotation only. The accessors below hand back the live dicts.
-# The functional syntax is necessary, because the control keys are hyphenated.
+# Shape of a live entry in an input's page JSON "states" map.
+# Functional syntax permits the hyphenated control keys.
 StateDict = TypedDict("StateDict", {
     "actions": list[dict[str, Any]],
     "media": dict[str, Any],
@@ -37,11 +30,8 @@ StateDict = TypedDict("StateDict", {
 
 
 class InputIdentifier:
-    # Every concrete input below (Input.Key, Dial, Touchscreen) defines its
-    # own nested Events enum, so code holding the base type can reach it.
-    # This is an annotation only, like InputEvent.string_name. It declares
-    # the attribute without creating one, so hasattr(InputIdentifier,
-    # "Events") stays False.
+    # Concrete inputs define nested Events enums; this annotation exposes the type.
+    # It creates no base attribute, so hasattr(InputIdentifier, "Events") stays false.
     Events: "type[InputEvent]"
 
     def __init__(self, input_type: InputType, json_identifier: str, controller_class_name: str):
@@ -55,13 +45,8 @@ class InputIdentifier:
     def get_dict(self, d: "dict[str, Any]") -> "dict[str, Any] | None":
         return cast("dict[str, Any] | None", d.get(self.input_type, {}).get(self.json_identifier))
 
-    # Page state accessors.
-    # State keys in a page json are strings, because Page.save writes
-    # self.dict verbatim. Int keys are legitimate only in the in-memory
-    # action_objects registry. str(state) below is the one place that coerces
-    # them, so callers can pass either. Each accessor returns the live nested
-    # dict or list. Callers mutate in place, and page.save() writes self.dict
-    # wholesale.
+    # Page JSON state keys are strings; accept integers and coerce them here.
+    # Accessors return live nested values only when each requested nested value exists.
 
     def get_states(self, page: "Page") -> dict[str, Any]:
         return cast(dict[str, Any], self.get_config(page).get("states", {}))
@@ -84,9 +69,7 @@ class InputIdentifier:
         input_config = page.dict.setdefault(self.input_type, {}).setdefault(self.json_identifier, {})
         return cast(dict[str, Any], input_config.setdefault("states", {}).setdefault(str(state), {}))
 
-    # DeckController.get_input answers None when this identifier is not among
-    # the controller's inputs, e.g. a wrong deck model or a stale identifier.
-    # The optional return type states that.
+    # A wrong deck model or stale identifier is absent from the controller.
     def get_controller_input(self, controller: "DeckController") -> "ControllerInput[Any] | None":
         return controller.get_input(self)
     
@@ -107,9 +90,7 @@ class InputIdentifier:
         return hash((self.input_type, self.json_identifier))
 
 class InputEvent(Enum):
-    # This is an annotation only. An Enum body turns assignments into
-    # members, so it declares the per-member attribute that __new__ sets below
-    # without creating a member of its own.
+    # Annotation only: __new__ sets this per member without creating an enum member.
     string_name: str
 
     def __new__(cls, string_name: str) -> "InputEvent":
@@ -209,9 +190,7 @@ class Input:
     
     @staticmethod
     def FromTypeIdentifier(input_type: str, json_identifier: str) -> "InputIdentifier":
-        # input_type arrives as a plain string, off a page json or a caller.
-        # It normalizes to an InputType member first, so a raw "keys" finds the
-        # InputType.KEYS entry; an unknown value raises, as it did before.
+        # Normalize page JSON strings to InputType; unknown values raise.
         input_map = {
             InputType.KEYS: Input.Key,
             InputType.DIALS: Input.Dial,

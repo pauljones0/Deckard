@@ -40,9 +40,8 @@ class RemoteDeckManager:
         return os.path.join(gl.DATA_PATH, TOKEN_FILE_NAME)
 
     def start(self) -> bool:
-        """Bind the server and register the remote deck. Returns False and
-        leaves no partial state when the bind fails, so an occupied port
-        cannot abort startup or strand a true _is_running."""
+        """Bind the server and register the remote deck.
+        A bind failure returns false but can leave the token file written before the bind."""
         if self._is_running:
             return True
         try:
@@ -71,9 +70,7 @@ class RemoteDeckManager:
 
 
     def _write_token(self) -> str:
-        """Generate this run's access token and persist it for the local
-        client, readable by the owning user only. A new token per start keeps
-        a leaked one from outliving the session."""
+        """Write a new per-run access token readable only by the owning user."""
         token = secrets.token_urlsafe(32)
         fd = os.open(self.token_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(fd, "w") as f:

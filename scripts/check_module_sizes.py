@@ -28,8 +28,8 @@ SHIM_CAP = 100
 GRANDFATHER: dict[str, int] = {
     # These deck-controller modules retain a typed constructor signature and narrowed class state.
     # Subclasses must declare the narrowed state at class level for attribute readers.
-    "src/backend/DeckManagement/deck_controller/controller.py": 1670,
-    "src/backend/DeckManagement/deck_controller/inputs.py": 1457,
+    "src/backend/DeckManagement/deck_controller/controller.py": 1298,
+    "src/backend/DeckManagement/deck_controller/inputs.py": 1247,
     "src/backend/Store/StoreBackend.py": 1948,
 }
 

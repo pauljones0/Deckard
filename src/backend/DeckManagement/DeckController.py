@@ -69,10 +69,7 @@ from src.backend.DeckManagement.Subclasses.KeyLayout import ImageLayout
 from src.backend.DeckManagement.Subclasses.KeyVideo import InputVideo
 from src.backend.DeckManagement.Subclasses.ScreenSaver import ScreenSaver
 
-# No import above carries a lint suppression. __all__ marks these imports
-# used, so an import that arrives without an __all__ entry still reports as
-# unused, and the floor-import check catches an __all__ entry that arrives
-# without an import.
+# No import above carries a lint suppression.
 __all__ = [
     "ActionPermissionManager", "BOUNDED_TILE_VARIANT", "Background",
     "BackgroundImage", "BackgroundManager", "BackgroundVideo", "BetterDeck",

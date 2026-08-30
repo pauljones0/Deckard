@@ -31,15 +31,7 @@ READ_THREAD_JOIN_TIMEOUT_S = 1.0
 
 
 class _ReleasedOpen:
-    """Instance-level stand-in for open() on a released handle.
-
-    The library's reader re-opens a device from inside the except arm of its
-    read loop, where it reads neither run_read_thread nor
-    reconnect_after_suspend (StreamDeck.py:209-262). A reader already in that
-    arm therefore takes the handle back after close() returned, and its open()
-    re-arms both flags and starts a second reader. A released handle that
-    answers open() with nothing cannot be taken back.
-    """
+    """Ignore reader-loop reopen calls until a deliberate open removes this shadow."""
 
     def __init__(self, device_name: str) -> None:
         self.device_name = device_name
@@ -49,11 +41,9 @@ class _ReleasedOpen:
 
 
 def _install_release_shadow(device: "Any") -> None:
-    """Shadows open() on this device instance, so nothing re-opens it.
-
-    An attribute on the library's own object, as _install_fair_transport_lock
-    does with the transport mutex. open_device_handle lifts it, so a handle
-    released by a failed attempt can still be taken up again.
+    """
+    Shadows open() on this device instance, so nothing re-opens it. open_device_handle lifts it, so
+    a handle released by a failed attempt can still be taken up again.
     """
     if isinstance(getattr(device, "open", None), _ReleasedOpen):
         return
@@ -67,11 +57,9 @@ def _install_release_shadow(device: "Any") -> None:
 
 
 def open_device_handle(device: "Any", resume_from_suspend: bool = True) -> None:
-    """Opens a device handle, and lifts any release shadow first.
-
-    Every deliberate open runs through here. The deck-open retry re-uses the
-    handle of an attempt that released it, and only this makes that handle
-    take an open() again.
+    """
+    Opens a device handle, and lifts any release shadow first. The deck-open retry re-uses the
+    handle of an attempt that released it, and only this makes that handle take an open() again.
     """
     if isinstance(getattr(device, "open", None), _ReleasedOpen):
         del device.open
@@ -79,19 +67,8 @@ def open_device_handle(device: "Any", resume_from_suspend: bool = True) -> None:
 
 
 def stop_device_read_thread(device: "StreamDeck.StreamDeck", timeout: "float | None" = None) -> None:
-    """Stops the library reader thread on a raw device handle.
-
-    This takes the raw handle, not the BetterDeck around it. BetterDeck has no
-    __getattr__ passthrough, so a write of run_read_thread on the wrapper sets
-    a dead attribute, while the reader polls the wrapped object's own flag
-    (StreamDeck.py:_read_with_resume_from_suspend).
-
-    Both flags go down, which stops a reader that is still reading and keeps
-    one that hits a transport error next out of the resume loop. It does not
-    reach a reader already inside that loop, which reads neither flag: only
-    the release shadow stops that one. A later open(True) re-arms both, so a
-    reopened handle keeps its reader and its resume behaviour.
-    """
+    """Clear both reader flags and join the raw handle's reader with a bound.
+    A reader already in its resume loop also needs a release shadow."""
     # FakeDeck and RemoteDeck have no read thread and no run_read_thread
     # attribute, so this guard returns early for them.
     if not hasattr(device, "run_read_thread"):
@@ -108,57 +85,16 @@ def stop_device_read_thread(device: "StreamDeck.StreamDeck", timeout: "float | N
 
 
 def release_device_handle(device: "StreamDeck.StreamDeck", timeout: "float | None" = None) -> None:
-    """Stops the reader thread on a raw device handle, shadows its open(),
-    then closes it.
-
-    For a caller that holds the raw handle: the deck-open retry, a constructor
-    that failed before it wrapped the handle, and the device listing. A caller
-    that holds the wrapper uses BetterDeck.release_handle, which closes under
-    the device lock.
-
-    This closes the device with no check of its own that a media writer
-    stopped first. A caller that has a writer makes that check itself, as
-    DeckController._teardown_failed_init does, because a writer wedged
-    mid-frame holds the device lock.
-    """
+    """Stop the reader, shadow open(), and close a raw handle.
+    A caller that owns a media writer must stop it before this call."""
     _install_release_shadow(device)
     stop_device_read_thread(device, timeout)
     device.close()
 
 
 def device_is_on_bus(deck: "Any") -> bool:
-    """Whether this deck's device is still enumerable on the HID bus.
-
-    The library answers this with an unfiltered hid_enumerate. On Linux it
-    binds the libusb backend, where that call opens every USB device on the
-    system to read its manufacturer, product and serial string descriptors,
-    and it runs under the process-wide hidapi mutex that every deck read and
-    write also waits on. The liveness poll asks the question every two
-    seconds per deck.
-
-    Passing the deck's own vendor and product id to the same call makes
-    hidapi skip every device that does not match, so only this model of deck
-    is opened. The filter comes from the device the poll is about and is not
-    a fixed vendor, so a deck of any supported make narrows to its own kind.
-    The path is what identifies the device, the same key the library
-    compares, and it stays valid for as long as the device stays on its port.
-
-    This takes no per-device transport lock, which the library's own answer
-    does take. Nothing here reads or writes the handle, and the device
-    identity it does read is fixed at enumeration, so the probe has nothing
-    to be serialized against; holding that lock would only park a status
-    question behind an image write in the queue every deck write shares.
-
-    The filtered call still runs under the process-wide hidapi mutex, and it
-    still opens this deck itself; what it spares is every other device on the
-    bus and this deck's write queue.
-
-    A transport that does not carry both the loader and the enumeration entry
-    gets the library's own answer: a fake deck or a remote deck in practice,
-    since a renamed attribute would break the library's own probe too. A call
-    the loader refuses degrades the same way, so drift never raises: under
-    flatpak this answer is the only disconnect detection there is.
-    """
+    """Check this device path through a vendor/product-filtered HID enumeration.
+    Fall back to the library probe when the transport cannot provide that data."""
     device = getattr(deck, "device", None)
     hidapi = getattr(device, "hidapi", None)
     info = getattr(device, "device_info", None)
@@ -188,19 +124,16 @@ class BetterDeck():
         # threads write to the deck. Reentrant for nested wrapped calls.
         self._lock = threading.RLock()
 
-        # The owner assertion detects a device write from any thread other
-        # than the registered writer. It only logs and never raises, because it is
-        # a harness and dev detector. The RLock above is the real defense.
-        # The env read happens once, so the hot path is one attribute test.
+        # The owner assertion detects a device write from any thread other than the registered
+        # writer. It only logs and never raises, because it is a harness and dev detector.
         self._assert_owner: bool = bool(os.environ.get("DECKARD_ASSERT_DEVICE_OWNER"))
         self._expected_writer: threading.Thread | None = None
         self.owner_violations: list[tuple[str, str, str]] = []
 
     def set_expected_writer(self, thread: threading.Thread | None) -> None:
-        """Registers the thread that performs all device writes.
-
-        DeckController registers its media player thread. _check_owner logs a
-        warning when another thread writes to the device.
+        """
+        Registers the thread that performs all device writes. _check_owner logs a warning when
+        another thread writes to the device.
         """
         self._expected_writer = thread
 
@@ -223,13 +156,9 @@ class BetterDeck():
         Opens the device for input/output. This must be called prior to setting
         or retrieving any device state.
 
-        It delegates to open_handle(), which lifts a release shadow and
-        refuses an open that would wait on a reader still running. A plain
-        open() of the wrapped handle does neither, and a released handle
-        ignores it outright.
-
         .. seealso:: See :func:`~StreamDeck.close` for the corresponding close method.
         """
+        # Use the guarded path because a released raw handle ignores a direct open().
         self.open_handle()
 
     def close(self) -> None:
@@ -247,24 +176,8 @@ class BetterDeck():
         stop_device_read_thread(self.deck, timeout)
 
     def release_handle(self, timeout: "float | None" = None) -> None:
-        """Stops the reader thread and shadows open(), then closes the device.
-
-        This is how a live handle is given back, and after it nothing re-opens
-        the device: a bare close() leaves the reader running, and the reader's
-        resume loop takes back what the close released. The close takes the
-        device lock, so it cannot land inside another thread's multi-chunk
-        write.
-
-        The whole transition runs under self._lock, so it cannot interleave
-        with open_handle, which holds the same lock across its own decision and
-        open. Without it a reopen could slip between the reader stop and the
-        close here: it would pass open_handle's reader-alive check, because the
-        stop just joined the reader, lift the shadow and open, and then the
-        close below would close the handle it had just opened. self._lock is an
-        RLock, so the self.close() call re-enters it. The join inside
-        stop_device_read_thread runs under the lock, as the library's own join
-        inside open_handle already does.
-        """
+        """Under the device lock, shadow open(), stop the reader, then close.
+        This serializes release against multi-chunk writes and deliberate opens."""
         with self._lock:
             _install_release_shadow(self.deck)
             stop_device_read_thread(self.deck, timeout)
@@ -272,25 +185,8 @@ class BetterDeck():
 
     def open_handle(self, resume_from_suspend: bool = True,
                     guard: "Callable[[], bool] | None" = None) -> bool:
-        """Takes the device back: lifts any release shadow, then opens.
-        Returns whether it opened.
-
-        This is the deliberate reopen for a caller that holds the wrapper, the
-        counterpart of release_handle(). Two conditions are settled under the
-        device lock, immediately before the open, so neither can change
-        between the decision and the open itself.
-
-        guard() is the caller's own reason to reopen, asked one last time. A
-        teardown that starts while a reopen is queued must win: a reopen that
-        ran after it would lift the shadow the teardown installed and hand the
-        next process a busy device.
-
-        A reader thread that is still alive refuses the open. The library's
-        open() joins the previous reader with no timeout of its own, while
-        release_handle() joins with a bound, so a reader that outlived that
-        bound would wedge this call for as long as it runs. It is a caller
-        error, and it says so rather than waiting.
-        """
+        """Under the device lock, recheck the guard, then lift the shadow and open.
+        Refuse a live reader because the library would join it without a bound."""
         with self._lock:
             if guard is not None and not guard():
                 return False
@@ -310,9 +206,8 @@ class BetterDeck():
         :rtype: bool
         :return: `True` if the deck is open, `False` otherwise.
         """
-        # This takes no BetterDeck lock. A status probe must not stall behind
-        # a multi-chunk image write, and the transport's per-chunk mutex
-        # covers close() races.
+        # This takes no BetterDeck lock. A status probe must not stall behind a multi-chunk image
+        # write, and the transport's per-chunk mutex covers close() races.
         return cast(bool, self.deck.is_open())
 
     def connected(self) -> bool:
@@ -483,36 +378,21 @@ class BetterDeck():
             self.deck.set_poll_frequency(hz)
 
     def _remap_key_event_index(self, physical_index: int) -> "int | None":
-        """Maps a physical key-callback index to its logical grid index, or
-        None when the event must not dispatch a grid key.
-
-        The library fires the key callback for every physical index a device
-        reports. On the Stream Deck Neo that includes its two touch buttons,
-        which the driver reports at indexes past the key grid (key_count plus
-        touch_key_count). Those buttons have no grid position, and there is no
-        touch-button input path to route them to, so a press of one is
-        dropped here: get_logical_index would fold an out-of-grid index back
-        into the rotation arithmetic and fire a real grid key's action, hand
-        the controller a negative index, or, at rotation 0, pass it straight
-        through as an out-of-grid index.
-
-        Grid indexes (0 to rows*cols-1) pass through get_logical_index
-        unchanged in mapping at every rotation. Both key-callback remappers
-        route through here, so the guard is applied in one place.
+        """
+        Maps a physical key-callback index to its logical grid index, or None when the event must
+        not dispatch a grid key.
         """
         rows, cols = self.deck.key_layout()
         if not 0 <= physical_index < rows * cols:
-            # A touch or extra button past the grid, or a stray index. Drop it
-            # rather than remap it. This is a per-press event on hardware that
-            # has such buttons, so it logs at debug.
+            # A touch or extra button past the grid, or a stray index. Drop it rather than remap it.
+            # This is a per-press event on hardware that has such buttons, so it logs at debug.
             log.debug(f"Dropping key event {physical_index}: past the "
                       f"{rows}x{cols} key grid (no grid position)")
             return None
         logical_key = self.get_logical_index(physical_index)
         if logical_key is None:
-            # An in-grid index that still maps to None means a rotation
-            # outside the four the mapper handles. Report it rather than
-            # forward None into the consumer's index math.
+            # An in-grid index that still maps to None means a rotation outside the four the mapper
+            # handles.
             log.warning(f"Dropping key event {physical_index}: rotation "
                         f"{self.rotation!r} maps no keys")
         return logical_key
@@ -804,25 +684,13 @@ class BetterDeck():
         with self._lock:
             self.deck.set_screen_image(image)
 
-    # ---- Rotation -------------------------------------------------------
-    #
-    # rotation is the quarter turn the user gave the physical deck, clockwise.
-    # The key map fixes what that means, and every other surface follows it.
-    # At 90, get_physical_index sends the logical top-left key to the physical
-    # bottom-left one, which is the key that comes to lie top-left once the
-    # device is turned a quarter turn clockwise. A composite is therefore
-    # turned counter-clockwise by rotation to reach the device upright, which
-    # is the direction PIL's Image.rotate takes.
-    #
-    # Everything below states the logical view. A caller of this wrapper
-    # never converts between the two, and nothing above it holds a second
-    # copy of these rules.
+    # Rotation is the user's clockwise physical turn. PIL applies the inverse turn to images.
+    # All wrapper indexes and touch positions use the logical view.
 
     def set_rotation(self, value: int) -> None:
         if not value in [0, 90, 180, 270]:
-            # Reachable from persisted deck settings, where a hand edit or a
-            # half-written file can leave anything. An unhandled value makes
-            # every key write raise, so a deck comes up unrotated instead.
+            # Reachable from persisted deck settings, where a hand edit or a half-written file can
+            # leave anything.
             log.warning(f"Deck rotation {value!r} is not 0, 90, 180 or 270; using 0")
             value = 0
         self.rotation = value
@@ -842,63 +710,22 @@ class BetterDeck():
         return int(size[0]), int(size[1])
 
     def _strip_is_mirrored(self) -> bool:
-        """Whether the strip goes to the device turned end for end.
-
-        One answer decides both halves of that mirror, the image and the
-        touch positions, so the two can never disagree. A deck that reports
-        no strip size has nothing to mirror a touch position against, and a
-        turned image with unturned positions puts every touch at the far end
-        of what the user sees. Such a deck therefore keeps both as they are.
-        """
+        """Whether both the strip image and its touch positions reverse end for end."""
         return self.rotation == 180 and self._touchscreen_size() is not None
 
     def touchscreen_image_rotation(self) -> int:
-        """Counter-clockwise degrees to turn a composed strip by, so that it
-        reaches the device in the device's own orientation.
-
-        At 180 the strip lies end for end under the user's hand, so the
-        composite is turned through half a circle. At 90 and 270 the strip
-        stands on its side, and an upright composite would have to be as tall
-        as the strip is wide. The device takes a fixed 800 by 100 buffer, so
-        there is nothing to turn such a composite into: the strip keeps the
-        device's own orientation there, and its content reads sideways, which
-        is what a strip of fixed shape on a deck laid on its side does.
-        Presenting it upright needs a composite of the transposed size, which
-        reaches the dial slots, the strip background and the window's own
-        strip preview, and is not this.
-
-        This turns the composite the strip's own inputs drew. A background
-        image that extends onto the strip is cut from the band below the key
-        grid, and at 180 the band the user sees is the one above it, so that
-        content still comes off the wrong edge. It is a separate crop, on the
-        background's own geometry, and it is tracked separately.
-        """
+        """Rotate a composed strip 180 degrees only when the fixed-size strip is mirrored."""
         return 180 if self._strip_is_mirrored() else 0
 
     def logical_touch_value(self, value: "dict[str, int]") -> "dict[str, int]":
-        """A touch event's positions, moved from where the device reports
-        them to where the strip was composed.
-
-        The device reports a position in its own frame. At 180 the composite
-        was turned end for end before the write, so the pixel the user
-        touches is reported from the opposite corner, and both ends of a drag
-        move with it. At 0, 90 and 270 the strip goes to the device in the
-        device's own orientation (see touchscreen_image_rotation), so a
-        reported position already names the pixel the composite drew there.
-
-        A position that does not lie on the strip stays where it is; see
-        _mirror_position.
-
-        The event's dict is copied and never edited in place, because the
-        library hands one object to every consumer of that event.
-        """
+        """Map reported touch positions to the composed strip without changing the input dict.
+        Only a 180-degree strip mirrors coordinates; off-strip positions stay unchanged."""
         if not self._strip_is_mirrored() or not isinstance(value, dict):
             return value
         size = self._touchscreen_size()
         if size is None:
-            # Unreachable while _strip_is_mirrored() answers on the same
-            # size. It stays because this reads the size a second time, and
-            # a None here would mirror against nothing.
+            # Unreachable while _strip_is_mirrored() answers on the same size. It stays because this
+            # reads the size a second time, and a None here would mirror against nothing.
             return value
         width, height = size
         mapped = dict(value)
@@ -912,30 +739,16 @@ class BetterDeck():
 
     @staticmethod
     def _mirror_position(position: int, extent: int) -> int:
-        """position measured from the other end of extent, or position
-        unchanged when it does not lie on the strip at all.
-
-        The library reports what the device sends and clamps nothing. A
-        mirror applied to a position past the end lands back on the strip: an
-        x one past the right edge comes out as -1, and the consumer's slot
-        arithmetic reads that as the first slot, so a touch off the end of a
-        deck held upside down would drive a dial. Leaving such a position
-        where it is keeps it past the end, which is where every other
-        rotation leaves it, and the consumer drops it there as it does then.
+        """
+        position measured from the other end of extent, or position unchanged when it does not lie
+        on the strip at all.
         """
         if not 0 <= position < extent:
             return position
         return extent - 1 - position
 
     def _dials_are_reversed(self) -> bool:
-        """Whether logical dial order runs against physical dial order.
-
-        The dials sit in one row along the strip, so they follow the strip.
-        At 180 the composite is turned end for end, which puts the slot drawn
-        first over the last knob. At 90 and 270 the strip is written in the
-        device's own orientation, so slot and knob still line up one for one,
-        whichever way round the row reads to the user.
-        """
+        """Whether the 180-degree strip makes logical dial order oppose physical order."""
         return self.rotation == 180
 
     def get_logical_dial_index(self, physical_index: int) -> int:
@@ -976,15 +789,8 @@ class BetterDeck():
             return None
     
     def reorder_physical_for_rotation(self, original_list: "list[_ElemT]") -> "list[_ElemT | None]":
-        """Maps a physical-indexed list into logical indexing.
-
-        The device reports physical indexes, e.g. key_states(). The mapping
-        under the current rotation is out[get_logical_index(p)] = orig[p]. Do
-        not invert it to out[p] = orig[get_logical_index(p)]. That form
-        applies the inverse rotation, which is self-inverse only at 0 and 180.
-        It scrambles key_states() at 90 and 270, and ControllerKey.__init__
-        then reads the wrong key's press state.
-        """
+        """Map a physical-indexed list with out[logical(p)] = original[p].
+        Reversing that assignment applies the wrong transform at 90 and 270 degrees."""
         pysical_rows, physical_cols = self.deck.key_layout()
         total = pysical_rows * physical_cols
         reordered: "list[_ElemT | None]" = [None] * total
