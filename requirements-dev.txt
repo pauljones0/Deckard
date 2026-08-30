@@ -15,5 +15,6 @@ req2flatpak==0.2.0        # generates the flatpak manifest's python-requirements
 ruff==0.16.0              # linter; config in pyproject.toml, enforced by the lint:ruff CI job
 ty==0.0.73                # type checker; config in pyproject.toml, enforced by the blocking lint:types CI job
 PyGObject-stubs==2.17.0   # editor/type-checker stubs for gi.repository
+PyYAML==6.0.2             # parses the CI release-gate contract in test:compile
 types-setuptools==75.8.0.20250225  # editor/type-checker stubs for setuptools
 types-requests==2.33.0.20260712    # stubs for requests, which ships no py.typed; without them every store read is untyped

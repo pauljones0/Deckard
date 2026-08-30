@@ -1,0 +1,12 @@
+# Low-level, deterministic coverage for the blocking CI smoke job. Keep this
+# list free of hardware, DBus/socket, display, flaky, and long-running cases.
+scenario_media_config.py
+scenario_atomic_settings.py
+scenario_corrupt_json_fallback.py
+scenario_event_dispatch_contract.py
+scenario_input_pipeline.py
+scenario_page_save_mutation.py
+scenario_shutdown.py
+scenario_writer_survival.py
+scenario_runner_timeout_descendants.py
+scenario_scenario_list.py
