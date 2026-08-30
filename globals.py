@@ -12,11 +12,8 @@ from loguru import logger as log
 from cli_args import argparser as argparser
 
 MAIN_PATH: str
-# Data root. Flatpak uses its per-app dir, ~/.var/app/<id>. A native install
-# uses the XDG data dir, $XDG_DATA_HOME/deckard, default ~/.local/share/deckard.
-# main.py moves an old native tree at ~/.var/app/<id> to the XDG dir before this
-# import. native_data_root() returns the old path when the move fails, for
-# example across a filesystem boundary, so the app never starts empty.
+# Flatpak uses ~/.var/app/<id>; native installs use $XDG_DATA_HOME/deckard
+# or ~/.local/share/deckard. A failed move keeps the old root active.
 if os.path.isfile("/.flatpak-info"):
     VAR_APP_PATH = os.path.join(os.path.expanduser("~"), ".var", "app", appinfo.APP_ID)
 else:
@@ -89,24 +86,19 @@ if TYPE_CHECKING:
 
 
 top_level_dir:str = os.path.dirname(__file__)
-# The slots below take two shapes.
-# A slot typed X | None means code observes the None, because a reader runs
-# before main.create_global_objects() publishes the value, or a later step
-# nulls the slot. Each such slot has a real is None branch. A concrete type
-# narrows that branch to an uninhabited type, and the checker then skips the
-# body.
-# A slot typed X with a late-init ignore means nothing observes the None. The
-# type stays concrete, because a union pushes union-attr into hundreds of use
-# sites.
+# Use X | None only when readers branch on startup or teardown None.
+# Otherwise use a concrete late-init type to avoid union errors at each use.
 lm:"LocaleManager" = None  # ty: ignore[invalid-assignment]  # late-init: main.create_global_objects
 media_manager:"MediaManager" = None  # ty: ignore[invalid-assignment]  # late-init: main.create_global_objects
 asset_manager_backend:"AssetManagerBackend" = None  # ty: ignore[invalid-assignment]  # late-init: main.create_global_objects
 asset_manager: "AssetManager | None" = None # Only while the window is open
 page_manager_window: "PageManager | None" = None # Only if opened
-page_manager:"PageManagerBackend | None" = None # None-checked in DeckController teardown + the DBus API #TODO: Rename to page_manager_backend in 2.0.0
+# None-checked during DeckController teardown and by the D-Bus API.
+page_manager:"PageManagerBackend | None" = None
 gnome_extensions:"GnomeExtensions" = None  # ty: ignore[invalid-assignment]  # late-init: main.create_global_objects
 settings_manager:"SettingsManager" = None  # ty: ignore[invalid-assignment]  # late-init: main.create_global_objects
-app:"App | None" = None # Absent until App.on_activate; notify/PluginManager defer onto app_loading_finished_tasks while it is
+# Absent until App.on_activate; notifications and plugins defer tasks while None.
+app:"App | None" = None
 deck_manager:"DeckManager | None" = None # None-checked in the DBus API
 plugin_manager:"PluginManager | None" = None # None-checked in ActionChooser's load-health readout
 video_extensions = ["mp4", "mov", "MP4", "MOV", "mkv", "MKV", "webm", "WEBM", "gif", "GIF"]
@@ -119,9 +111,8 @@ store_backend: "StoreBackend | None" = None # None-checked in App.on_quit's cach
 notify: "Notify" = None  # ty: ignore[invalid-assignment]  # late-init: main.create_global_objects; see src/backend/notify.py
 signal_manager: "SignalManager" = None  # ty: ignore[invalid-assignment]  # late-init: main.create_global_objects
 window_grabber: "WindowGrabber | None" = None # None-checked in the DBus API
-# Constructed only when WAYLAND_DISPLAY is set, so None is the normal state on
-# X11. Nothing reads this slot; the Wayland object sends its lock and unlock
-# notifications through signal_manager from its own thread.
+# Constructed only with WAYLAND_DISPLAY, so None is normal on X11.
+# The object sends lock notifications through signal_manager; nothing reads this slot.
 wayland: "Wayland | None" = None
 lock_screen_detector: "LockScreenManager" = None  # ty: ignore[invalid-assignment]  # late-init: main.create_global_objects
 presence_monitor: "PresenceMonitor | None" = None  # quiescence signal; see src/backend/PresenceMonitor
@@ -132,7 +123,7 @@ threads_running: bool = True
 # them on the main thread and discards the return values.
 app_loading_finished_tasks: list[Callable[[], Any]] = []
 api_page_requests: dict[str, str] = {} # Stores api page requests made my --change-page
-api_state_requests: dict[str, dict[str, Any]] = {} # Stores api state change requests made by --change-state
+api_state_requests: dict[str, dict[str, Any]] = {}
 tray_icon: "TrayIcon" = None  # ty: ignore[invalid-assignment]  # late-init: main.create_global_objects
 showed_donate_window: bool = False
 screen_locked: bool = False
@@ -141,11 +132,8 @@ loggers: dict[str, "Logger"] = {}
 app_version: str = "1.5.0-beta.15"  # In breaking.feature.fix-state format
 exact_app_version_check: bool = False
 
-# Deckard fork release version. The CI release pipeline stamps it into the root
-# VERSION file, or leaves "dev". It stays distinct from app_version, which
-# tracks upstream so the plugin min_app_version gates and the migration system
-# work. This value only appears in the About dialog. The read uses the repo
-# root beside this file, so a source checkout and /opt/deckard both work.
+# Display-only Deckard release version from VERSION; missing or empty reads "dev".
+# app_version stays upstream-aligned for plugin minimum-version gates and migrations.
 def _read_deckard_version() -> str:
     try:
         _root = os.path.dirname(os.path.abspath(__file__))
@@ -181,9 +169,7 @@ release_notes: str = """
 
 def __getattr__(name: str) -> Any:
     """PEP 562 module-level lazy attribute.
-
-    fallback_font costs one fontconfig round trip, so the lookup waits for the
-    first read. The result caches as a plain module attribute.
+    Resolve fallback_font on first read to defer its fontconfig round trip, then cache it.
     """
     if name == "fallback_font":
         from src.backend.DeckManagement.font_resolver import fallback_font

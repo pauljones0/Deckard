@@ -214,7 +214,6 @@ class NetworkEntryRow(Adw.PreferencesRow):
         self.hostname_box = HostnameEntryRow()
         self.main_box.append(self.hostname_box)
 
-        # Events
         self.ip_box.connect("ip-changed", self.ip_changed)
         self.hostname_box.connect("hostname-changed", self.hostname_changed)
 

@@ -1,17 +1,8 @@
-"""One-time move of the app var-app tree from the pre-rename id to Deckard.
+"""Crash-safe var-app move; never merge or discard data, and stop on non-skeleton conflicts.
+Use markers, locks, and compatibility links; autostart cleanup runs separately each launch."""
 
-The whole ~/.var/app/<id> directory moves, a compat symlink stays at the old
-root, and a marker file plus a file lock make the move crash-safe. The
-migration never merges and never deletes user data. If both roots hold files
-beyond the import-time skeleton, it stops and reports the conflict.
-
-autostart.py owns the autostart filenames and removes the pre-rename entries
-at every launch, so this one-shot path does not handle them.
-"""
-
-# Standard library only, plus appinfo and cli_args, which are also stdlib-only
-# and have no import-time side effects. migrate() runs before the globals
-# import, so everything this module imports must import cleanly that early too.
+# Import only side-effect-free standard-library modules, appinfo, and cli_args.
+# migrate runs before globals, so every dependency must be safe that early.
 import contextlib
 import os
 import shutil
@@ -21,28 +12,22 @@ from typing import Callable
 
 import appinfo
 
-# The whole directory moves, because static/settings.json can hold a custom
-# data-path pointer and must travel with the data. A compat symlink stays at
-# the old root, because the live JSON files, which include deck settings, pages
-# and page backups, hold absolute paths into the old tree.
+# Move the whole directory so its custom data-path pointer stays with the data.
+# Keep an old-root symlink because settings, pages, and backups can contain old absolute paths.
 OLD_ID = appinfo.OLD_APP_ID
 NEW_ID = appinfo.APP_ID
 OLD_ROOT = os.path.expanduser(os.path.join("~", ".var", "app", OLD_ID))
 NEW_ROOT = os.path.expanduser(os.path.join("~", ".var", "app", NEW_ID))
 
-# The rename and the symlink cannot be atomic together, so a marker file
-# records the state. _migrate_locked fsyncs the pending marker into the old
-# root just before the rename, so it travels with the tree. A crash after the
-# rename leaves a symlink-pending marker, and the next start finishes the work.
+# A marker joins the non-atomic rename and symlink steps.
+# The fsynced pending marker moves with the tree so the next start can finish after a crash.
 MARKER_NAME = ".migrated-from-" + OLD_ID
 LOCK_NAME = ".deckard-migration.lock"
 _STATE_PENDING = "symlink-pending"
 _STATE_COMPLETE = "complete"
 
-# Marker for the second, native-only migration, migrate_native_var_app_to_xdg.
-# Old builds used ~/.var/app/<id> as the data root outside flatpak, and that
-# tree moves to $XDG_DATA_HOME/deckard. A separate marker keeps it apart from
-# the rename marker above. Both migrations can run, in that order.
+# Keep a separate marker for the native ~/.var/app/<id> to XDG migration.
+# Both migrations can run in rename-then-XDG order.
 XDG_MARKER_NAME = ".migrated-to-xdg"
 
 
@@ -51,9 +36,7 @@ def _is_flatpak() -> bool:
 
 
 def _log(msg: str) -> None:
-    # The logger has no configuration at this point in startup, and must not
-    # have one, because its sinks open files inside the tree that this module
-    # renames.
+    # Logging is unconfigured because sinks would open files inside the tree being renamed.
     print(f"[rebrand-migration] {msg}", file=sys.stderr)
 
 
@@ -71,10 +54,8 @@ def _read_marker(marker_path: str) -> str | None:
 
 
 def _write_marker(marker_path: str, state: str) -> bool:
-    """Write the marker durably: fsync the file, fsync the directory, replace.
-
-    Returns True on success. A truncated marker that survives a crash matches
-    no state, reads as a fresh install, and strands the data with no symlink.
+    """Write the marker durably: fsync the file, replace it, then fsync the directory.
+    Return True on success; a durable truncated marker can strand data without a link.
     """
     tmp_path = marker_path + ".tmp"
     try:
@@ -101,10 +82,7 @@ def _write_marker(marker_path: str, state: str) -> bool:
 @contextlib.contextmanager
 def _migration_lock(new_root: str) -> "Iterator[None]":
     """Serialize the migration across concurrent first-run launches.
-
-    The blocking exclusive lock makes a second launch wait, re-read the
-    complete marker, and return, instead of racing os.rename and rmtree. The
-    migration runs without a lock where fcntl is absent.
+    A second launch waits and re-reads state; continue unlocked when fcntl is unavailable.
     """
     lock_dir = os.path.dirname(new_root)
     fd = None
@@ -143,10 +121,7 @@ def _old_instance_running() -> bool:
 
 def _data_override_active(argv: list[str]) -> bool:
     """True if argv holds a --data override.
-
-    This uses the argparser that globals uses, so abbreviations such as --dat
-    match exactly. A parse error reports no override, which lets the migration
-    run instead of stranding the real data.
+    Use globals parser abbreviations; parse errors report no override to avoid stranding data.
     """
     import cli_args
     try:
@@ -158,10 +133,7 @@ def _data_override_active(argv: list[str]) -> bool:
 
 def _is_skeleton(root: str) -> bool:
     """True only if root is a tree of empty directories.
-
-    globals.py and mp4_tile_cache.py leave that residue at import time. A
-    regular file, or a symlink anywhere below, means the tree holds real user
-    state, such as a data-relocation symlink, and the migration keeps it.
+    Any regular file or symlink marks real state that the migration keeps.
     """
     if os.path.islink(root):
         return False
@@ -195,9 +167,8 @@ def _finish_symlink(old_root: str, new_root: str, marker_path: str) -> None:
         except OSError as e:
             _log(f"could not create compat symlink ({e}); will retry next start")
             return
-    # A failed complete-marker write recovers by itself. The marker that
-    # travelled with the rename still reads pending, so the next start
-    # re-enters _finish_symlink through the pending branch and retries.
+    # A failed complete-marker write leaves the moved pending marker intact.
+    # The next start re-enters _finish_symlink and retries.
     _write_marker(marker_path, _STATE_COMPLETE)
 
 
@@ -206,10 +177,8 @@ def migrate(old_root: str = OLD_ROOT, new_root: str = NEW_ROOT,
             marker_name: str = MARKER_NAME,
             running_check: Callable[[], bool] | None = None,
             locked_fn: Callable[[str, str, str, Callable[[], bool]], None] | None = None) -> None:
-    # globals.py resolves DATA_PATH and makes that directory at import time,
-    # on every invocation, which creates an empty tree under the new id and
-    # breaks the "does the new tree exist" check below. main.py therefore calls
-    # migrate() before its main import block.
+    # globals creates the new data tree at import and would invalidate the existence check.
+    # main calls migrate before importing globals.
     if require_pre_globals and "globals" in sys.modules:
         raise AssertionError(
             "rebrand_migration.migrate() must run before `import globals` -- "
@@ -226,14 +195,12 @@ def migrate(old_root: str = OLD_ROOT, new_root: str = NEW_ROOT,
     if locked_fn is None:
         locked_fn = _migrate_locked
     marker_path = os.path.join(new_root, marker_name)
-    # Fast paths without the lock for the common cases, already migrated and
-    # fresh install. Each does one marker read, takes no lock, and writes no
-    # lock file.
+    # Already-migrated and fresh-install paths use one marker read without a lock file.
     state = _read_marker(marker_path)
     if state == _STATE_COMPLETE:
         return
     if state is None and not os.path.lexists(old_root):
-        return  # fresh install, nothing to migrate
+        return
 
     # The real work runs under the lock, and re-reads the state inside, in
     # case another launch completed the migration during the wait.
@@ -252,7 +219,7 @@ def _migrate_locked(old_root: str, new_root: str, marker_path: str,
         return
 
     if not os.path.lexists(old_root):
-        return  # fresh install, nothing to migrate
+        return
 
     if os.path.islink(old_root):
         if os.path.exists(old_root) and os.path.realpath(old_root) == os.path.realpath(new_root):
@@ -265,7 +232,6 @@ def _migrate_locked(old_root: str, new_root: str, marker_path: str,
             f"foreign). Refusing to touch it -- resolve it manually, then restart."
         )
 
-    # old_root is a real directory holding the pre-rename data.
     if running_check():
         _abort(
             f"a pre-rename instance still owns {OLD_ID} on the session bus. Quit the "
@@ -288,9 +254,8 @@ def _migrate_locked(old_root: str, new_root: str, marker_path: str,
                 f"delete either. Move one of them aside manually, then restart."
             )
 
-    # The pending marker travels with the rename. A marker that is not durable
-    # is the one unrecoverable state, so the rename does not start without it.
-    # old_root stays intact, so the next start retries cleanly.
+    # Require a durable pending marker before rename because it is the only recovery record.
+    # A write failure leaves old_root intact for a clean retry.
     if not _write_marker(os.path.join(old_root, os.path.basename(marker_path)), _STATE_PENDING):
         _abort(
             f"could not durably write the migration marker into {old_root}; refusing "
@@ -311,10 +276,7 @@ def _xdg_root() -> str:
 
 def _same_filesystem(src: str, dest: str) -> bool:
     """True if src and the place for dest share one filesystem.
-
-    os.rename then cannot fail with EXDEV. dest usually does not exist, so this
-    probes its nearest existing ancestor. An unknown result reports True, and
-    migrate() then tries the rename and reports a real failure.
+    Probe the nearest existing ancestor; unknown results try rename and report its failure.
     """
     probe = dest
     while probe and not os.path.exists(probe):
@@ -329,13 +291,8 @@ def _same_filesystem(src: str, dest: str) -> bool:
 
 
 def native_data_root(legacy_root: str = NEW_ROOT, xdg_root: str | None = None) -> str:
-    """Data root for a native install, the XDG dir or the old tree.
-
-    The result is the old ~/.var/app/<id> tree when it exists and the XDG dir
-    does not, which means the relocation stopped or waited. The app then runs
-    from the old location instead of starting empty. After a successful move
-    the old path is a symlink to the XDG dir, so the result is the XDG path.
-    """
+    """Return XDG, or the old tree when relocation stopped or waited.
+    After a successful move the old symlink resolves to XDG, so XDG remains the result."""
     xdg_root = xdg_root or _xdg_root()
     if os.path.exists(xdg_root) or not os.path.exists(legacy_root):
         return xdg_root
@@ -354,12 +311,9 @@ def _safe_rmtree(path: str) -> None:
 
 def _fsync_tree(root: str) -> None:
     """fsync every regular file and every directory below root.
-
-    The publish rename makes the directory entry consistent. This call makes
-    the file contents durable before the migration deletes the source. It skips
-    symlinks, never follows them, and ignores errors.
+    Make contents durable before source deletion; skip symlinks and ignore errors.
     """
-    for dirpath, _dirnames, filenames in os.walk(root):  # followlinks=False
+    for dirpath, _dirnames, filenames in os.walk(root):
         for name in filenames:
             fp = os.path.join(dirpath, name)
             if os.path.islink(fp):
@@ -384,10 +338,7 @@ def _fsync_tree(root: str) -> None:
 
 def _finish_copy(old_root: str, new_root: str, marker_path: str) -> None:
     """Finish a published copy at new_root.
-
-    The pending marker in new_root proves the copy is complete and durable.
-    This removes the original directory, then calls _finish_symlink. A failed
-    removal keeps the marker pending, and the next start retries the cleanup.
+    A pending marker proves durability; failed source removal keeps it pending for retry.
     """
     if os.path.isdir(old_root) and not os.path.islink(old_root):
         try:
@@ -402,15 +353,10 @@ def _finish_copy(old_root: str, new_root: str, marker_path: str) -> None:
 def _copy_migrate_locked(old_root: str, new_root: str, marker_path: str,
                          running_check: Callable[[], bool]) -> None:
     """Cross-filesystem variant of _migrate_locked.
-
-    os.rename cannot cross a filesystem. This copies old_root to a staging
-    sibling on the new_root filesystem, fsyncs it, and marks it pending. It
-    then renames the copy into place, and only then removes the original. It
-    ignores running_check.
+    Stage, mark, fsync, and publish the copy before source removal; ignore running_check.
     """
-    # Each crash point recovers. A crash before the publish leaves old_root
-    # intact, and the copy repeats. A crash after the publish leaves a pending
-    # marker, and _finish_copy completes the work.
+    # Before publish, a crash leaves old_root for a repeated copy.
+    # After publish, the pending marker lets _finish_copy complete cleanup.
     state = _read_marker(marker_path)
     if state == _STATE_COMPLETE:
         return
@@ -420,7 +366,7 @@ def _copy_migrate_locked(old_root: str, new_root: str, marker_path: str,
         return
 
     if not os.path.lexists(old_root):
-        return  # nothing to copy
+        return
 
     if os.path.islink(old_root):
         if os.path.exists(old_root) and os.path.realpath(old_root) == os.path.realpath(new_root):
@@ -448,9 +394,8 @@ def _copy_migrate_locked(old_root: str, new_root: str, marker_path: str,
                 f"delete either. Move one of them aside manually, then restart."
             )
 
-    # Build the copy in a staging sibling on the new_root filesystem, then
-    # publish it with an atomic same-filesystem rename. old_root stays untouched
-    # until the pending marker proves the copy durable and complete.
+    # Build a staged sibling and publish it with an atomic same-filesystem rename.
+    # Keep old_root until the pending marker proves the copy durable and complete.
     staging = new_root + ".xdg-migrating"
     _safe_rmtree(staging)  # drop any partial staging from an earlier crash
     try:
@@ -460,9 +405,8 @@ def _copy_migrate_locked(old_root: str, new_root: str, marker_path: str,
         _log(f"copy migration: copying {old_root} failed ({e}); the app keeps using "
              f"{old_root}, will retry next start")
         return
-    # The pending marker goes into staging last, so a marker in the published
-    # new_root means the copy is complete and durable. _finish_copy reads that
-    # marker before it deletes old_root.
+    # Write the pending marker last so publication proves a complete durable copy.
+    # _finish_copy checks it before deleting old_root.
     if not _write_marker(os.path.join(staging, os.path.basename(marker_path)), _STATE_PENDING):
         _safe_rmtree(staging)
         _log("copy migration: could not durably mark the staged copy; will retry next start")
@@ -482,27 +426,17 @@ def migrate_native_var_app_to_xdg(old_root: str = NEW_ROOT, xdg_root: str | None
                                   argv: list[str] | None = None,
                                   require_pre_globals: bool = True) -> None:
     """Move the native data root from ~/.var/app/<id> to $XDG_DATA_HOME/deckard.
-
-    This runs once and leaves a compat symlink. It does nothing under flatpak,
-    where ~/.var/app/<id> is the correct per-app data root. Call it after
-    migrate(), so the rename lands in ~/.var/app/<id> first. It reuses the
-    crash-safe machinery of migrate() with its own marker.
+    Skip Flatpak; run after migrate and leave a compatibility symlink with a separate marker.
     """
     if _is_flatpak():
         return
     new_root = xdg_root or _xdg_root()
-    # os.rename fails with EXDEV across a filesystem, so the mover is an atomic
-    # rename when old_root and the destination share one, and a crash-safe copy
-    # otherwise. A resumed migration picks the same route, because a
-    # cross-filesystem pair stays cross-filesystem. An old_root that is already
-    # a symlink takes the rename path, which returns at once on the marker.
+    # Use atomic rename on one filesystem and crash-safe copy across filesystems.
+    # Resumption uses the same route; an existing old-root symlink takes the completed rename path.
     cross_fs = (os.path.isdir(old_root) and not os.path.islink(old_root)
                 and not _same_filesystem(old_root, new_root))
-    # This move needs no running-instance check, because it moves the tree of
-    # the same app and the compat symlink keeps a live instance writing into
-    # one tree. One known limitation stays. Between the publish and the
-    # symlink, a live instance that opens a new absolute path gets one
-    # transient ENOENT, which is not fatal.
+    # No running-instance check is needed because the compatibility link keeps writes in one tree.
+    # Between publish and symlink, a live absolute-path open can get one nonfatal ENOENT.
     migrate(old_root=old_root, new_root=new_root, argv=argv,
             require_pre_globals=require_pre_globals,
             marker_name=XDG_MARKER_NAME, running_check=lambda: False,

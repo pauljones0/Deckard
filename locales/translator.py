@@ -1,10 +1,5 @@
-"""The translator surface the application reads through a locale manager.
-
-LocaleManager (CSV storage) and LegacyLocaleManager (per-language JSON)
-both satisfy it. Code that only translates annotates against this
-protocol instead of naming the storage classes, so a plugin's manager can
-be either without a union type at every use site.
-"""
+"""Translator protocol shared by CSV and per-language JSON locale managers.
+Translation users depend on this surface instead of a storage-specific union."""
 from typing import Protocol
 
 

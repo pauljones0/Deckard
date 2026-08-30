@@ -13,8 +13,6 @@ class EntryRow(GenerativeUI[str]):
     A class that represents a UI entry row widget with additional functionality
     for handling text input and providing filters or transformations on the input.
 
-    Inherits from GenerativeUI to provide generic UI management and functionality.
-
     Attributes:
         filter_func (Callable[[str], str]): Optional function to filter or transform the input text.
     """
@@ -71,7 +69,6 @@ class EntryRow(GenerativeUI[str]):
         """
         Disconnects the signal handlers to prevent further handling of the 'changed' signal.
 
-        Call it when the widget stops handling changes.
         """
         self._track_disconnect("changed", self.widget)
 
@@ -90,9 +87,8 @@ class EntryRow(GenerativeUI[str]):
 
     def get_text(self) -> str:
         """
-        Retrieves the current text from the entry row widget. It falls back
-        to the settings value layer while the widget is unbuilt, because a
-        read is a value query and must not force a build.
+        Return the current text, or the stored value while unbuilt.
+        A value read must not force a build.
 
         Returns:
             str: The current text in the entry row.

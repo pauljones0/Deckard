@@ -12,9 +12,7 @@ if TYPE_CHECKING:
     from src.backend.PluginManager.ActionCore import ActionCore
 
 class ToggleRow(GenerativeUI[int]):
-    """The stored value is the *index* of the active toggle, not a flag.
-    That is why this is GenerativeUI[int] (see default_value/set_ui_value
-    below)."""
+    """Store the active toggle index instead of a Boolean flag."""
 
     def __init__(self, action_core: "ActionCore",
                  var_name: str,
@@ -53,10 +51,8 @@ class ToggleRow(GenerativeUI[int]):
             self.set_value(new_value)
 
         if trigger_callback and self.on_change:
-            # A toggle object needs the widget, so this branch runs only
-            # after the widget exists. reset_value and _value_changed both
-            # guarantee a built widget before this point. build() makes a
-            # Toggle, while the base declares the plain Gtk.Widget.
+            # reset_value and _value_changed guarantee a built Toggle before this branch.
+            # The assertion narrows the base Gtk.Widget declaration to Toggle.
             assert isinstance(self._widget, Toggle)
             toggle_row = self._widget
             new_toggle = toggle_row.get_toggle_at(new_value)
@@ -87,11 +83,7 @@ class ToggleRow(GenerativeUI[int]):
     @override
     def reset_value(self) -> None:
         """Reset the active toggle to its default.
-
-        An unbuilt row has no toggle objects to resolve the old and new values
-        against, so it persists the default and skips the on_change callback.
-        A reset must not force a build.
-        """
+        An unbuilt row stores it and skips callbacks because no toggle objects exist."""
         if self._widget is None:
             self.set_value(self._default_value)
             return

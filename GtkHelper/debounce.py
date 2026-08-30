@@ -1,9 +1,5 @@
-"""Trailing debounce for GTK handlers whose follow-up work is expensive.
-
-Without it, the four Settings font rows each start a reload-all-pages thread
-from on_set. A change of family, size and colour then runs up to three full
-page reloads at once. One colour-picker drag alone fires several.
-"""
+"""Trailing debounce for four Settings font rows that start full-page reloads.
+Family, size, or color changes can overlap three reloads; one color drag fires several."""
 import threading
 from typing import Callable, Generic, Optional, Protocol, TypeVar, cast
 
@@ -12,9 +8,8 @@ from typing import Callable, Generic, Optional, Protocol, TypeVar, cast
 HandleT = TypeVar("HandleT", default=int)
 
 
-# The timer source is injectable, so a test drives the coalescing logic with
-# no GTK main loop. Production keeps the GLib.source_remove and
-# GLib.timeout_add pattern that the saturation row uses.
+# Inject the timer source so tests can drive coalescing without a GTK loop.
+# Production uses GLib source removal and timeout scheduling.
 class Scheduler(Protocol[HandleT]):
     """The two operations that a trailing debounce needs from a timer."""
 
@@ -29,9 +24,7 @@ class Scheduler(Protocol[HandleT]):
 
 class GLibScheduler:
     """Scheduler backed by the GTK main loop.
-
-    The methods import gi themselves, so an import of this module never pulls
-    GTK into a process that does not already hold it.
+    Method-local imports keep a module import from loading GTK.
     """
 
     def schedule(self, delay_ms: int, callback: Callable[[], None]) -> int:
@@ -51,37 +44,27 @@ class GLibScheduler:
 
 class TrailingDebouncer(Generic[HandleT]):
     """Coalesce a burst of triggers into one trailing callback.
-
-    Every trigger() disarms the pending timer and arms it again, so the
-    callback runs once, delay_ms after the last trigger of the burst.
+    Each trigger rearms the timer, so the callback runs delay_ms after the final trigger.
     """
 
     def __init__(self, delay_ms: int, callback: Callable[[], None],
                  scheduler: "Optional[Scheduler[HandleT]]" = None):
         self.delay_ms = delay_ms
         self.callback = callback
-        # With no scheduler passed, HandleT falls back to its default of
-        # int, which is exactly what GLibScheduler hands out; the cast states
-        # that binding, because the checker cannot solve HandleT from an
-        # absent argument.
+        # Without a scheduler, HandleT defaults to the int that GLibScheduler returns.
+        # The cast states the binding that the checker cannot infer from an absent argument.
         self.scheduler: "Scheduler[HandleT]" = scheduler or cast("Scheduler[HandleT]", GLibScheduler())
-        # Every trigger reaches the callback. A caller relies on one callback
-        # run per burst, so this class holds no equality check, no dirty flag
-        # and no early return that can drop a trigger. A later change may move
-        # when the callback fires, and every trigger must still reach one fire.
+        # Each trigger must reach exactly one callback per burst.
+        # No equality check, dirty flag, or early return can drop it.
         self._pending: Optional[HandleT] = None
-        # One thread only. trigger() and the callback both run on the thread
-        # that drives the scheduler, which in production is the GTK main
-        # thread, because GTK dispatches the signal handlers there, so the
-        # pending handle needs no lock.
+        # trigger() and callbacks share the scheduler thread, GTK's main thread in production.
+        # The pending handle therefore needs no lock.
         self._owner_thread: Optional[int] = None
 
     def trigger(self) -> None:
         """Request a callback delay_ms from now, and replace a pending one."""
-        # Enforce the one-thread contract. _pending has no lock, so a second
-        # triggering thread races it, which double-fires or calls
-        # source_remove on a dead id. Every caller is a GTK signal handler on
-        # the main thread. Raise here when that changes.
+        # Enforce the one-thread contract because _pending has no lock.
+        # A second thread can double-fire or remove a dead source id.
         ident = threading.get_ident()
         if self._owner_thread is None:
             self._owner_thread = ident

@@ -18,8 +18,6 @@ class ScaleRow(GenerativeUI[float]):
     using a slider. The widget can be configured with various properties such as min, max, step, and the display of
     a text entry field for manual value input.
 
-    Inherits from GenerativeUI to provide generic UI management and functionality.
-
     Attributes:
         value (float): The current value of the scale.
         min (float): The minimum allowed value for the scale.
@@ -60,7 +58,8 @@ class ScaleRow(GenerativeUI[float]):
             step (float, optional): The step size for the scale. Defaults to 0.1.
             digits (int, optional): The number of digits to display for the scale value. Defaults to 2.
             draw_value (bool, optional): Whether to display the current value next to the scale. Defaults to True.
-            round_digits (int, optional): Decimal places to round the slider value to; -1 disables rounding. Defaults to 1.
+            round_digits (int, optional): Decimal places for slider rounding; -1 disables
+                rounding. Defaults to 1.
             add_text_entry (bool, optional): Whether to add a text entry field for manual input of the scale value. Defaults to False.
             text_entry_max_length (int, optional): The maximum length of the text entry if enabled. Defaults to 6.
             on_change (callable, optional): A callback function to call when the scale value changes.
@@ -99,7 +98,6 @@ class ScaleRow(GenerativeUI[float]):
         """
         Disconnects the signal handler for the 'value-changed' signal.
 
-        The widget then handles no further scale value change.
         """
         self._track_disconnect("value-changed", self.widget.scale)
 
@@ -118,9 +116,8 @@ class ScaleRow(GenerativeUI[float]):
 
     def get_number(self) -> float:
         """
-        Retrieves the current value of the scale. It falls back to the
-        settings value layer while the widget is unbuilt, because a read is a
-        value query and must not force a build.
+        Return the scale value, or the stored value while unbuilt.
+        A value read must not force a build.
 
         Returns:
             float: The current value of the scale.

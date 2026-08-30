@@ -1,77 +1,6 @@
 #!/usr/bin/env python3
-"""Settings-JSON ratchet. No module opens a settings file with a bare json.load.
-
-Run it the same way CI does, from anywhere:
-
-    python scripts/check_settings_json.py
-
-Exit 0 means every json.load and json.dump call in the governed trees sits in a
-file that the allowlist below sanctions. Exit 1 prints one message per problem
-and names the fix. The --self-test flag runs the check against a throwaway tree
-with a planted bare reader and proves it goes red. It prints PASS or FAIL and
-is not part of the ordinary run.
-
-The app owns a set of JSON settings files. They are the deck settings, the app
-settings, the page-manager bookkeeping, the asset library index, the plugin
-settings, and the UI state of the asset chooser. Each one needs the same three
-answers. Where does it live, what happens when it is corrupt, and who may write
-it. src/backend/settings_store.py holds those answers, and a surface gets them
-by reading and writing through the store. A module that opens one of these
-files with a bare json.load gets none of them. It does not heal a corrupt file,
-and one such reader took the whole app down at boot. It shares no cache with
-the other readers. Its write can land past the atomic writer.
-
-This check makes a raw reader a decision. A json.load in a file that the
-allowlist does not name fails the build, so a reviewer sees the choice between
-a route through the store and a sanctioned exception, in a two-line diff.
-
-This check does not police json.loads and json.dumps. Those parse an in-memory
-string, such as the stdout of a subprocess, a DBus reply or an HTTP body, and
-they never touch a settings file. A check on them would make every
-window-grabber integration and every store payload a false positive. A settings
-file is opened and then read or written, which is json.load and json.dump, and
-the store draws the same line.
-
-The rules are these.
-
-Every json.load and json.dump call in a governed file must sit in a file that
-ALLOWLIST names. A call anywhere else fails.
-
-The allowlist works per file, so an entry sanctions the raw JSON access in that
-file. A file that the allowlist names and that makes no such call fails too. A
-standing exemption for a read that nobody performs is how the next one arrives
-unremarked, so the exemption goes when its reader goes.
-
-from json import load and from json import dump fail. They bind the file entry
-points under bare names that this check cannot see at the call site, which is
-the one way a governed reader hides from it. Write json.load instead, or, for a
-settings file, go through the store.
-
-A call is any <json>.load(...) or <json>.dump(...) where <json> is the name json
-or a module alias that import json as ... binds. The walk collects them over the
-whole file at any nesting depth, because main.py imports json inside the
-function that uses it. The threat model is the well-meaning change. A raw reader
-arrives because somebody reached for json.load, and every arrival in this tree
-took that form. An alias laundered through another name, and getattr(json,
-"load"), go to review, which is the line the gl-slot freeze draws too.
-
-A guard that fails open reads as green and covers nothing, so this check also
-fails when its own footing moves. Each of these is a loud failure that names the
-fix, and never a silent skip: a governed root that is not a directory, a missing
-governed file, a symlinked directory under a root, because the walk does not
-descend into one and every call inside it would go unseen, a file that does not
-parse, and an allowlist entry that names a file which does not exist or which
-sits outside the governed set.
-
-The trees are src/ and GtkHelper/, which match the module-size ratchet and
-are a subset of the type checker's include set.
-globals.py and main.py are governed by name as well, the way the gl-slot freeze
-names main.py, because the allowlist sanctions a raw read in each, and an
-allowlist entry that the walk never visits sanctions nothing.
-
-This module imports from the standard library only, because it runs in the bare
-python:3.13-slim image of CI beside compileall, with nothing installed.
-"""
+"""Allow json.load/dump only in named files; reject hidden imports, stale entries, or invalid input.
+Detect direct import aliases; skip json.loads/dumps and dynamic/laundered aliases."""
 from __future__ import annotations
 
 import ast
@@ -84,10 +13,8 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 THIS_SCRIPT = "scripts/check_settings_json.py"
 
-# Root-level modules that read a settings file raw and live outside the trees
-# below. They are named one by one for the reason the gl-slot freeze names
-# main.py. The allowlist sanctions a raw read in each, and an allowlist entry
-# that the walk never visits sanctions nothing.
+# Govern root modules with sanctioned raw reads individually.
+# Reject entries outside the walk because they sanction nothing.
 GOVERNED_FILES = ("globals.py", "main.py")
 GOVERNED_TREES = ("src", "GtkHelper")
 
@@ -98,13 +25,10 @@ FILE_JSON_FUNCS = frozenset({"load", "dump"})
 # The from json import <name> names that would hide a governed call.
 HIDDEN_IMPORT_NAMES = frozenset({"load", "dump"})
 
-# Files that may read or write JSON files directly. Everything else routes
-# through the settings store, whose read-with-heal loader and atomic writer are
-# the first two entries. Each line holds one file and one reason.
+# Allow direct JSON file access only in these files for the stated reason.
+# All other settings access uses the healing loader and atomic writer.
 ALLOWLIST: dict[str, str] = {
-    # The store itself. Its loader is the read-with-heal that every settings
-    # read reaches instead of opening a file, and the atomic writer holds the
-    # one json.dump that every settings write passes through.
+    # The store owns the healing loader and the atomic writer's json.dump.
     "src/backend/settings_store.py": "the settings store's read-with-heal loader",
     "src/backend/atomic_json.py": "the atomic settings writer -- the one json.dump every write funnels through",
     # The data-path bootstrap. It runs before the store, or anything else, is
@@ -220,10 +144,7 @@ def collect_governed_files(
 
 def json_aliases(tree: ast.Module) -> set[str]:
     """Names that the file uses for the json module.
-
-    The set always holds json, which is the house form, plus every alias that
-    import json as X binds. The walk collects them at any depth, because main.py
-    imports json inside a function.
+    Include json and aliases imported at any depth.
     """
     aliases = {"json"}
     for node in ast.walk(tree):
@@ -238,9 +159,7 @@ def check_file(
     path: Path, root: Path, allowlist: dict[str, str], used: set[str], failures: list[str]
 ) -> int:
     """Pin every file-level json call in one file. Returns the count.
-
-    This records into used whether an allowlisted file made a call, so a stale
-    exemption can go.
+    Record used allowlist entries so stale exemptions fail.
     """
     where = relative(path, root)
     tree = parse(path, root, failures)
@@ -298,8 +217,7 @@ def check_allowlist_table(
     allowlist: dict[str, str], failures: list[str],
 ) -> None:
     """Reject an allowlist entry that the walk never visits.
-
-    Such an entry sanctions nothing, and it still reads as a sanction.
+    An unvisited entry sanctions nothing.
     """
     for name in sorted(allowlist):
         under_governed = name in governed_files or any(
@@ -321,10 +239,7 @@ def check_allowlist_table(
 
 def check_allowlist_use(allowlist: dict[str, str], used: set[str], failures: list[str]) -> None:
     """Drop an allowlist entry once its reader is gone.
-
-    An exemption that outlives its json call is a standing permission for a read
-    that nobody makes. A standing permission is how the next one arrives
-    unremarked.
+    Reject standing exemptions with no JSON call.
     """
     for name in sorted(allowlist):
         if name not in used:

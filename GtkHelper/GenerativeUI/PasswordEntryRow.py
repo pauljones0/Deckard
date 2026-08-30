@@ -16,8 +16,6 @@ class PasswordEntryRow(GenerativeUI[str]):
     A class that represents a password entry row widget, which allows the user to input and manage passwords.
     This widget includes functionality for setting, getting, and securely handling passwords, with encoding for storage.
 
-    Inherits from GenerativeUI to provide generic UI management and functionality.
-
     Attributes:
         password (str): The currently entered password, encoded and decoded as needed for storage.
     """
@@ -67,7 +65,7 @@ class PasswordEntryRow(GenerativeUI[str]):
         """
         Disconnects the signal handler for the 'changed' signal.
 
-        The widget then handles no further password change.
+        Use it when the widget must stop handling password changes
         or when the signals should be stopped.
         """
         self._track_disconnect("changed", self.widget)
@@ -87,10 +85,8 @@ class PasswordEntryRow(GenerativeUI[str]):
 
     def get_password(self) -> str:
         """
-        Retrieves the current password from the password entry field. It
-        falls back to the settings value layer, which the get_value() override
-        of this class already decodes from base64, while the widget is
-        unbuilt. A read is a value query and must not force a build.
+        Return the password, or the decoded stored value while unbuilt.
+        A value read must not force a build.
 
         Returns:
             str: The current password entered in the widget.

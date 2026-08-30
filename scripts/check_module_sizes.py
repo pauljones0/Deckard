@@ -1,62 +1,6 @@
 #!/usr/bin/env python3
-"""Module-size ratchet. It caps how large a module in src/ or GtkHelper/ grows.
-
-Run it the same way CI does, from anywhere:
-
-    python scripts/check_module_sizes.py
-
-Exit 0 means every module is within its cap. Exit 1 prints one message per
-offending file and names the fix.
-
-A module that nobody can hold in their head stops getting a proper review and
-starts to collect behaviour that belongs elsewhere. The deck controller passed
-seven thousand lines that way, one convenient addition at a time, and the split
-was expensive. This check makes growth past a cap a visible edit to this file,
-not a line that a diff hides.
-
-The rules are these.
-
-Every .py file under src/ and GtkHelper/ takes a cap of DEFAULT_CAP physical
-lines.
-
-GRANDFATHER lists the files that were already over that cap when this guard
-landed, each pinned at the size it had that day. Such a file may shrink and
-nothing else, and one line of growth fails the build.
-
-A GRANDFATHER cap tightens by itself. When a listed file drops more than
-TIGHTEN_SLACK lines below its cap, the check fails and asks for a cap at the
-new size. A refactor therefore cannot bank headroom for later growth. When a
-listed file falls to DEFAULT_CAP or below, its entry goes away and the default
-cap governs.
-
-The deck controller shim takes a separate hard cap of SHIM_CAP lines. It holds
-only re-exports, which are import statements and __all__, and the cap stops code
-from collecting on the old path and undoing the package split.
-
-A guard that fails open reads as green and covers nothing, so this check also
-fails when its own footing moves. Each of these is a loud failure that names the
-fix, and never a silent skip: a root in ROOTS that is not a directory, a
-GRANDFATHER entry that names a file which does not exist or which sits outside
-the roots, a missing shim, and a symlinked directory under a root, because the
-walk does not descend into one and its contents would go uncapped.
-
-The roots are src/ and GtkHelper/. The type checker covers more than that: its
-include set also names locales/ and the root-level modules, such as main.py and
-globals.py. Those stay ungoverned by the cap. They are small and few. Widen the
-roots when that stops being true.
-
-To lower a GRANDFATHER number, or to delete an entry that the check calls
-obsolete, edit the table in the commit that shrinks the file. To raise a number,
-or to add an entry, is a decision to let a module keep growing, and the split it
-needs instead is almost always the cheaper change.
-
-This check counts physical lines the way an editor shows them, which is every
-newline plus a final line without a terminator. A file whose last line has no
-terminator therefore reads one higher here than in wc -l.
-
-This module imports from the standard library only, because it runs in the bare
-python:3.13-slim image of CI beside compileall, with nothing installed.
-"""
+"""Cap src/GtkHelper with defaults, shrink-only caps past TIGHTEN_SLACK, and hard export cap.
+End at DEFAULT_CAP; reject missing/out-of-scope/hidden input and count an unterminated last line."""
 from __future__ import annotations
 
 import os
@@ -65,9 +9,8 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-# Trees that the cap governs, a subset of the type checker's include set. They
-# hold application and helper code only, because a test is a fixture or a
-# scenario, where the length comes from the case.
+# Govern application and helper code in a subset of the type-check roots.
+# Test length follows fixture and scenario needs, so tests stay outside this cap.
 ROOTS = ("src", "GtkHelper")
 
 DEFAULT_CAP = 1200
@@ -76,19 +19,15 @@ DEFAULT_CAP = 1200
 # it down.
 TIGHTEN_SLACK = 100
 
-# The deck controller compatibility surface holds import statements and
-# __all__, and nothing else. Its cap stays out of GRANDFATHER, because it is a
-# permanent ceiling and not a tolerated legacy size.
+# The deck-controller compatibility surface contains only imports and __all__.
+# Its separate cap is permanent, not a grandfather allowance.
 SHIM_PATH = "src/backend/DeckManagement/DeckController.py"
 SHIM_CAP = 100
 
-# Files that were already over DEFAULT_CAP when this check landed, pinned at the
-# size they had then. They may shrink only. See the tightening rule above.
+# Modules above DEFAULT_CAP use shrink-only caps that tighten as described above.
 GRANDFATHER: dict[str, int] = {
-    # The two deck-controller caps hold the declarations the type gate needs:
-    # a constructor signature that names every deck handle it accepts, and a
-    # class-level declaration of the narrowed present state, which a subclass
-    # must state at class level for a reader of the attribute to see it.
+    # These deck-controller modules retain a typed constructor signature and narrowed class state.
+    # Subclasses must declare the narrowed state at class level for attribute readers.
     "src/backend/DeckManagement/deck_controller/controller.py": 1298,
     "src/backend/DeckManagement/deck_controller/inputs.py": 1247,
     "src/backend/Store/StoreBackend.py": 1948,
@@ -105,10 +44,7 @@ def physical_lines(path: Path) -> int:
 
 def iter_modules(failures: list[str]) -> list[Path]:
     """Every .py file under the governed roots, sorted, without the caches.
-
-    The walk does not follow a symlink. It reports whatever makes it cover less
-    than it claims. That is a root that is not a directory, or a symlinked
-    directory whose contents it cannot reach.
+    Do not follow symlinks; report missing roots or hidden directories that reduce coverage.
     """
     found: list[Path] = []
     for root in ROOTS:
