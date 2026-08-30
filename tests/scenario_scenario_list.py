@@ -13,6 +13,7 @@ SMOKE_SCENARIOS = [
     "scenario_atomic_settings.py",
     "scenario_corrupt_json_fallback.py",
     "scenario_move_page_no_stray_destination.py",
+    "scenario_wallpaper_viewport_math.py",
     "scenario_event_dispatch_contract.py",
     "scenario_input_pipeline.py",
     "scenario_page_save_mutation.py",

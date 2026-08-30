@@ -60,6 +60,11 @@ class Slideshow:
         # lets the media tick refuse to advance a rotation whose page is no
         # longer active, the way the background video guards its own repaint.
         self.page: object | None = None
+        # Per-image viewports, keyed by path. The render layer fills and
+        # reads it; the model only carries it beside the rotation so a frame
+        # advance can render the incoming image through its own view. A path
+        # with no entry renders through the default view.
+        self.views: dict[str, tuple[float, float, float]] = {}
 
     def _build_sequence(self) -> list[int]:
         indices = list(range(len(self.paths)))

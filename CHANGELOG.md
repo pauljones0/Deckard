@@ -9,6 +9,15 @@ bundle as a release asset.
 
 ### Added
 
+- Pan and zoom the wallpaper. An "Adjust View" button under the background
+  media selector opens a dialog showing the wallpaper with a draggable white
+  box: the region the deck displays, always in the deck's own aspect. Drag
+  the box to pan and set the zoom factor to size it; the deck follows live
+  while you drag an image. Zooming out letterboxes the extra space. Every
+  slideshow image keeps its own view, picked in the same dialog, and a page
+  background with a stored view renders through it too. Backgrounds without
+  a stored view render exactly as before.
+
 - Read and steer a running Deckard from the command line. `--json` prints the
   state of the running app as one JSON object: every deck with its serial,
   active page and brightness, and the pages that exist. `--get-brightness

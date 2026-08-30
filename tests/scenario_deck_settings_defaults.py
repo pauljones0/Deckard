@@ -34,6 +34,7 @@ EXPECTED_DEFAULTS = {
     ("background", "fps"): 30,
     ("background", "extend-to-touchscreen"): False,
     ("background", "media-paths"): [],   # empty means the single media-path is in effect
+    ("background", "view"): None,        # None is the default view, the centered cover crop
     ("background", "slideshow-interval"): 10,
     ("background", "slideshow-order"): "in-order",
     ("display", "saturation"): 1.0,

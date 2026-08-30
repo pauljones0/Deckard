@@ -28,6 +28,9 @@ from PIL import Image, ImageEnhance, ImageOps, ImageSequence
 from loguru import logger as log
 
 from src.backend.DeckManagement.Subclasses import cache_budget
+from src.backend.DeckManagement.deck_controller.viewport import (
+    DEFAULT_VIEW, is_default_view, render_viewport,
+)
 from src.backend.DeckManagement.Subclasses import mp4_tile_cache
 from src.backend.DeckManagement import media_loop
 from src.backend.DeckManagement.media_loop import MEDIA_LOOP_FPS, FrameScheduled
@@ -243,7 +246,8 @@ def frame_has_alpha(frame: Image.Image) -> bool:
 
 def gif_frame_walk(path: str, max_size: "tuple[int, int] | None" = None,
                    fit_size: "tuple[int, int] | None" = None,
-                   saturation: float = 1.0) -> "Generator[tuple[Image.Image, int], None, None]":
+                   saturation: float = 1.0,
+                   view: tuple[float, float, float] = DEFAULT_VIEW) -> "Generator[tuple[Image.Image, int], None, None]":
     """Generator over one GIF's frames: PIL composites each frame, converts
     it to RGBA, sizes it, bakes the saturation, and yields (frame, delay_ms).
     This is the one GIF compositor in the app. The retained frame list, the
@@ -258,7 +262,12 @@ def gif_frame_walk(path: str, max_size: "tuple[int, int] | None" = None,
         for frame in ImageSequence.Iterator(gif):
             decoded = frame.convert("RGBA")
             if fit_size is not None:
-                if decoded.size != fit_size:
+                if not is_default_view(view):
+                    # The view crops even a size-matched frame, and its
+                    # zoomed-out letterbox stays transparent RGBA, so alpha
+                    # survives the way it does through the plain fit.
+                    decoded = render_viewport(decoded, fit_size, view)
+                elif decoded.size != fit_size:
                     decoded = ImageOps.fit(decoded, fit_size, Image.Resampling.LANCZOS)
             elif max_size is not None and (decoded.width > max_size[0] or decoded.height > max_size[1]):
                 decoded = ImageOps.contain(decoded, max_size)
@@ -272,7 +281,8 @@ def gif_frame_walk(path: str, max_size: "tuple[int, int] | None" = None,
 def decode_gif_frames(path: str, max_size: "tuple[int, int] | None" = None,
                       fit_size: "tuple[int, int] | None" = None,
                       saturation: float = 1.0,
-                      budget_bytes: int | None = None) -> "tuple[list[Image.Image], list[int], list[float]]":
+                      budget_bytes: int | None = None,
+                      view: tuple[float, float, float] = DEFAULT_VIEW) -> "tuple[list[Image.Image], list[int], list[float]]":
     """Every frame of the GIF at path, decoded to RGBA and retained, plus
     its delay timeline. This is GifBackground's entry point; KeyGIF drives
     gif_frame_walk itself so it can decide frame by frame what to keep.
@@ -301,7 +311,7 @@ def decode_gif_frames(path: str, max_size: "tuple[int, int] | None" = None,
     frames: "list[Image.Image]" = []
     delays_ms: "list[int]" = []
     with contextlib.closing(gif_frame_walk(path, max_size=max_size, fit_size=fit_size,
-                                           saturation=saturation)) as walk:
+                                           saturation=saturation, view=view)) as walk:
         for frame, delay in walk:
             frames.append(frame)
             delays_ms.append(delay)
@@ -333,7 +343,8 @@ class GifBackground(FrameScheduled):
 
     def __init__(self, deck_controller: "DeckController", gif_path: str, loop: bool = True,
                  fps: int = MEDIA_LOOP_FPS, extend_touchscreen: bool = False,
-                 canvas_size: "tuple[int, int] | None" = None) -> None:
+                 canvas_size: "tuple[int, int] | None" = None,
+                 view: tuple[float, float, float] = DEFAULT_VIEW) -> None:
         self.deck_controller = deck_controller
         self.video_path = gif_path
         self.loop = loop
@@ -341,6 +352,10 @@ class GifBackground(FrameScheduled):
 
         self.page: Page | None = deck_controller.active_page
         self.saturation = deck_controller.get_display_saturation()
+        # The viewport baked into every decoded frame. The prebuild
+        # keep-check compares it, so a view change re-decodes instead of
+        # keeping the old crop playing.
+        self.view = view
 
         deck = deck_controller.deck
         self.extend_touchscreen = extend_touchscreen and deck.is_touch()
@@ -389,7 +404,7 @@ class GifBackground(FrameScheduled):
 
         self.frames, self.frame_delays, self._cum_delays = decode_gif_frames(
             gif_path, fit_size=canvas_size, saturation=self.saturation,
-            budget_bytes=GIF_BG_BUDGET_MB * 1024 * 1024,
+            budget_bytes=GIF_BG_BUDGET_MB * 1024 * 1024, view=view,
         )
         self._total_delay: float = self._cum_delays[-1] if self._cum_delays else 0.0
 
