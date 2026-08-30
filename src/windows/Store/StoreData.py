@@ -8,30 +8,18 @@ from packaging.version import InvalidVersion
 
 
 def is_min_app_version_satisfied(minimum_app_version: str | None) -> bool:
-    """The minimum-app-version gate for a store asset.
-
-    It is the one implementation behind StorePreview.check_required_version.
-    The comparison includes the running version, so an asset that requires
-    exactly the running version passes.
-    """
+    """Whether the running base version meets or equals an asset minimum."""
     import globals as gl  # deferred, to keep this leaf module cycle-free
 
     if minimum_app_version is None:
         return True
     try:
-        # .base_version drops the pre, post, dev and local segments the same
-        # way PluginBase.is_minimum_version_ok does, and the re-parse keeps the
-        # comparison version-aware instead of a string compare. Without that, a
-        # pre-release such as 1.5.0-beta.15 badges an asset that requires 1.5.0
-        # as incompatible while the loader loads it, and the badge must match
-        # the install-time verdict.
+        # Compare parsed base versions so prerelease badges match the install gate
         minimum = version.parse(version.parse(minimum_app_version).base_version)
         running = version.parse(version.parse(gl.app_version).base_version)
         return bool(minimum <= running)
     except (InvalidVersion, TypeError):
-        # An unparseable version string, or a non-string value from a raw
-        # manifest, returns True, which matches the None case. A malformed
-        # catalog entry must not raise out of a page build or an install.
+        # Malformed or non-string catalog versions stay compatible and do not abort UI
         log.warning(
             f"Unparseable minimum app version {minimum_app_version!r}; assuming compatible"
         )
@@ -41,11 +29,9 @@ def is_min_app_version_satisfied(minimum_app_version: str | None) -> bool:
 @dataclass
 class StoreData:
     github: str | None = None # Link to the github repository
-    # StoreBackend passes "... or None" for each of these, so an absent value
-    # is None and not an empty container. LocaleManager.get_custom_translation
-    # returns "" for None and None for an empty dict, so the two differ.
-    descriptions: dict[str, str] | None = field(default_factory=dict) # All the translations for the description
-    short_descriptions: dict[str, str] | None = field(default_factory=dict) # All the translations for the short descriptions
+    # Preserve None versus empty translations because LocaleManager distinguishes them
+    descriptions: dict[str, str] | None = field(default_factory=dict)
+    short_descriptions: dict[str, str] | None = field(default_factory=dict)
     description: str | None = None # Translated Description of the Content
     short_description: str | None = None # Translated short Description of the Content
     author: str | None = None # Author of the Content
@@ -55,7 +41,7 @@ class StoreData:
     minimum_app_version: str | None = None # Minimum app version that is required to use the Content
     app_version: str | None = None # The Current app version the Plugin is made for
     repository_name: str | None = None # Name of the Repository
-    tags: list[str] | None = field(default_factory=list) # If the asset has a compatible version
+    tags: list[str] | None = field(default_factory=list)
     is_compatible: bool | None = None
 
     @property
@@ -81,18 +67,10 @@ class LicenceData:
     copyright: str | None = None
     original_url: str | None = None
     license: str | None = None # The actual licence
-    license_descriptions: dict[str, str] | None = field(default_factory=dict) # Translations for the Licence Description
+    license_descriptions: dict[str, str] | None = field(default_factory=dict)
 
-# Each concrete class below names its id, name and version triple
-# differently, such as plugin_id, icon_id or wallpaper_id. The asset_id,
-# asset_name and asset_version properties give the shared backend code and the
-# log lines one name for that triple, so a pipeline reads a property instead
-# of a per-type field name. The properties are read-only, and the per-type
-# fields stay writable.
-#
-# StoreBackend uses the name asset_id for three things. This catalog property
-# holds the manifest id. InstalledAsset.asset_id holds an install-directory
-# name. UpdateCheck.asset_id holds the id of the matched install.
+# Shared read-only properties normalize each class's id, name, and version fields
+# Catalog asset_id is a manifest id, unlike installed-directory and update-match ids
 
 @dataclass
 class PluginData(StoreData, ImageData, LicenceData):
@@ -171,8 +149,5 @@ class SDPlusBarWallpaperData(StoreData, ImageData, LicenceData):
         return self.version
 
 
-# The four concrete classes as one type. The store window's shared preview
-# reads the thumbnail and licence fields, which the ImageData and LicenceData
-# mixins hold and StoreData does not, and the asset_name and asset_version
-# properties, which only a concrete class defines.
+# Concrete assets combine image, licence, and normalized name/version fields
 type StoreAssetData = PluginData | IconData | WallpaperData | SDPlusBarWallpaperData

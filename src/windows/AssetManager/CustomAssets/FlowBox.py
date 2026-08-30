@@ -47,23 +47,13 @@ class CustomAssetChooserFlowBox(DynamicFlowBox[AssetPreview, dict[str, Any]]):
         self.selected_asset: str = None  # ty: ignore[invalid-assignment]  # late-init: on_child_activated
 
         self.set_factory(self.preview_factory)
-        # These two hook methods carry names the base does not assign.
-        # DynamicFlowBox.__init__ writes self.filter_func and self.sort_func,
-        # so a hook method under either name is shadowed by the instance
-        # attribute before these lines read them, and the box installs None
-        # over its own hook: the search entry and the kind toggles then change
-        # nothing and the grid keeps backend order. The base keeps its slot
-        # names. Renaming them would end the hazard for every subclass at
-        # once, but it changes every consumer of the flow box, so a test
-        # refuses any subclass that supplies one of those names instead.
+        # Hook names must differ from the base slots that hold installed callables
         self.set_filter_func(self._filter_asset)
         self.set_sort_func(self._sort_assets)
 
         self.flow_box.connect("child-activated", self.on_child_activated)
 
-        # Custom assets have one pack, the whole backend list, so the load
-        # runs as soon as the recycler exists. See the DynamicFlowBox
-        # docstring.
+        # Custom assets use the whole backend list, so load after recycler creation
         self.load_assets()
 
     def load_assets(self) -> None:
@@ -118,19 +108,13 @@ class CustomAssetChooserFlowBox(DynamicFlowBox[AssetPreview, dict[str, Any]]):
         return asset_search.compare(a["name"], b["name"], search_string)
 
     def on_child_activated(self, flow_box: Gtk.FlowBox, child: Any) -> None:
-        # Capture the selection and the callback before the thread starts.
-        # Each open reuses the window, so a thread that reads
-        # self.asset_chooser.asset_manager from its own body can call a new
-        # callback with the state of a new window, when the user reopens the
-        # Asset Manager while the thread runs.
+        # Capture this session before the callback thread can observe a reopened window
         asset_path = child.asset["internal-path"]
         callback = self.asset_chooser.asset_manager.callback_func
         callback_args = self.asset_chooser.asset_manager.callback_args
         callback_kwargs = self.asset_chooser.asset_manager.callback_kwargs
 
-        # The capture is done, so drop the references of the manager. The
-        # hidden window must not pin the bound callback of the opener, and
-        # through it the action and page graph, until the next show_for_path.
+        # Drop manager references so the hidden window pins no opener graph
         self.asset_chooser.asset_manager.callback_func = None
         self.asset_chooser.asset_manager.callback_args = ()
         self.asset_chooser.asset_manager.callback_kwargs = {}
@@ -143,10 +127,7 @@ class CustomAssetChooserFlowBox(DynamicFlowBox[AssetPreview, dict[str, Any]]):
             )
             callback_thread.start()
 
-        # Call hide, not close, so the window survives for the next open.
-        # close() reaches the default GTK4 close-request handling, which
-        # destroys the window on the next main-loop iteration, with no
-        # explicit destroy() call.
+        # Hide instead of close so GTK does not destroy the reusable window
         self.asset_chooser.asset_manager.hide()
 
     @log.catch

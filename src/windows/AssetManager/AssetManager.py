@@ -44,7 +44,7 @@ from src.windows.AssetManager.SDPlusBarWallpaperPacks.Stack import SDPlusBarWall
 
 class AssetManager(Gtk.ApplicationWindow):
     def __init__(self, main_window: "MainWindow", *args: Any, **kwargs: Any):
-        super().__init__(  # GObject.__init__ takes properties by keyword only, so the properties are named and *args only forwards what a caller added
+        super().__init__(  # GObject properties are keyword-only; *args forwards caller additions
             title="Asset Manager",
             default_width=1050,
             default_height=750,
@@ -101,12 +101,7 @@ class AssetManager(Gtk.ApplicationWindow):
         self.present()
 
     def _reset_session_state(self) -> None:
-        """Clear the navigation and filter state from the previous open.
-
-        It backs every pack stack out of its drilled-in chooser and empties
-        every stale search entry. A left filter hides the asset that
-        show_for_path is about to select.
-        """
+        """Reset each pack stack and stale search before path selection."""
         chooser = self.asset_chooser
 
         for pack_stack in (chooser.icon_pack_chooser, chooser.wallpaper_pack_chooser,
@@ -124,9 +119,7 @@ class AssetManager(Gtk.ApplicationWindow):
             chooser.sd_plus_bar_wallpaper_pack_chooser.leaf_chooser,
         )
         for page in pages:
-            # A page whose build failed shows an error instead of a grid,
-            # because the main loop did not run its marshal in time. A reopen
-            # retries the build, and a healthy page does nothing here.
+            # Retry pages whose main-loop build timed out; healthy pages ignore it
             retry_build = getattr(page, "retry_build", None)
             if callable(retry_build):
                 retry_build()
@@ -134,27 +127,17 @@ class AssetManager(Gtk.ApplicationWindow):
             search_entry = getattr(page, "search_entry", None)
             if search_entry is None:
                 continue
-            # Touch only an entry that holds a stale filter. set_text fires
-            # search-changed, and a handler such as the one in
-            # CustomAssetChooser reads widgets that its background build() may
-            # not have attached yet on a fresh window.
+            # Avoid search-changed until a stale filter needs clearing because
+            # a fresh page can still wait for its worker-built widgets
             if search_entry.get_text():
                 search_entry.set_text("")
 
     def deliver_selection(self, path: str) -> None:
-        """Run the selection callback of the opener, then hide the window.
-
-        The callback needs a guard, because the window can be up without one.
-        This calls hide() and not close(). The default GTK4 close-request
-        handling destroys the window on the next main-loop iteration, and
-        each open reuses this window.
-        """
+        """Run an available selection callback, then hide the reusable window."""
         callback_func = self.callback_func
         callback_args = self.callback_args
         callback_kwargs = self.callback_kwargs
-        # Drop the references before the call. The hidden window must not pin
-        # the bound callback of the opener, and through it the action and page
-        # graph, until the next show_for_path.
+        # Drop references before the call so the hidden window pins no opener graph
         self.callback_func = None
         self.callback_args = ()
         self.callback_kwargs = {}
@@ -182,9 +165,7 @@ class AssetManager(Gtk.ApplicationWindow):
             self.main_stack.set_visible_child(self.asset_chooser)
 
         elif self.main_stack.get_visible_child() == self.asset_chooser:
-            # Switch from the asset grid of a pack family back to its pack
-            # grid. Each family names its own leaf child, so this asks the
-            # stack that is showing rather than repeating the three names.
+            # Return the visible pack family from its named asset grid
             pack_stack = self.asset_chooser.get_visible_child()
             if (isinstance(pack_stack, GenericPackChooserStack)
                     and pack_stack.get_visible_child_name() == pack_stack.leaf_child_name):
@@ -219,9 +200,7 @@ class AssetChooser(Gtk.Stack):
         # path is None when the caller has no current selection, e.g. a key
         # without a background image. Only a real path can be a custom asset.
         if path is not None and gl.asset_manager_backend.has_by_internal_path(path):
-            # This is a custom asset, so switch the tab too. The icon-pack
-            # branch does that inside IconPackChooserStack.show_for_path.
-            # Without it, a reopen after a drill-in shows the old grid.
+            # Switch the tab because a reopen after drill-in can show the old grid
             self.custom_asset_chooser.show_for_path(path)
             self.set_visible_child_name("custom-assets")
             self.asset_manager.back_button.set_visible(False)
@@ -232,9 +211,7 @@ class AssetChooser(Gtk.Stack):
 
 
     def on_switch(self, stack: Gtk.Stack, name: GObject.ParamSpec) -> None:
-        # The way back shows for a family that is drilled into its asset grid.
-        # A tab that is not a pack family, such as the custom assets, has no
-        # grid to come back from.
+        # Show the way back only for a pack family drilled into its asset grid
         pack_stack = self.get_visible_child()
         drilled_in = (isinstance(pack_stack, GenericPackChooserStack)
                       and pack_stack.get_visible_child_name() == pack_stack.leaf_child_name)

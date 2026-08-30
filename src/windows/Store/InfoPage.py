@@ -100,9 +100,7 @@ class InfoPage(Gtk.Box):
 
 
 class DescriptionRow(Adw.PreferencesRow):
-    # The row draws its own labels, so the caption and the text live in plain
-    # attributes. A name the row inherits (title) would write the GObject
-    # property instead, and the property drives nothing here.
+    # Plain names avoid inherited GObject properties that do not drive these labels
     def __init__(self, title: str, desc: str, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self.title_str = title

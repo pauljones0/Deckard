@@ -54,7 +54,6 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import GLib, Gtk
 
-# Import python modules
 import os
 import threading
 
@@ -68,10 +67,8 @@ from src.windows.AssetManager.ChooserPage import ChooserPage
 from src.windows.AssetManager.DynamicFlowBox import DynamicFlowBox
 from src.windows.AssetManager.Preview import _PIXBUF_UNSET, Preview, _PixbufUnset
 
-# Import globals
 import globals as gl
 
-# Import typing
 from typing import cast, Generic, Protocol, TYPE_CHECKING, TypeVar, Any, override
 if TYPE_CHECKING:
     from pathlib import Path
@@ -81,9 +78,7 @@ if TYPE_CHECKING:
     from src.windows.AssetManager.AssetManager import AssetManager
 
 
-# The stack child that holds the pack grid. GenericPackChooserStack adds it
-# under this name, the leaf page returns to it by this name when a search
-# across the packs ends, and the window backs every stack out to it.
+# Shared pack-grid child name for stack setup, search return, and session reset
 PACK_CHOOSER_CHILD_NAME = "pack-chooser"
 
 
@@ -118,31 +113,17 @@ class _PackPreviewLike(Protocol[PackT]):
 
 
 def asset_display_name(item: Any, attr: str = "path") -> str:
-    """The string that the search matches on.
-
-    It is the file name of the asset, without the directory and without the
-    extension, which is what the preview label shows.
-    """
+    """The displayed file name without its directory or extension."""
     return cast(str, os.path.splitext(os.path.basename(getattr(item, attr)))[0])
 
 
 def asset_matches_search(item: Any, search: str, attr: str = "path") -> bool:
-    """Filter predicate for one asset.
-
-    An empty query keeps everything. Any other query needs a display name that
-    holds every word of the query. See asset_search for the ladder.
-    """
+    """Whether the display name matches every query token."""
     return asset_search.matches(asset_display_name(item, attr), search)
 
 
 def compare_assets(item1: Any, item2: Any, search: str, attr: str = "path") -> int:
-    """GTK sort comparator over two assets.
-
-    It returns -1 when item1 comes first, 1 when item1 comes last, and 0 on a
-    tie. An empty query gives case-sensitive alphabetical order by display
-    name. Any other query gives the relevance order of asset_search, which
-    ranks the closest name first and ties only names that rank alike.
-    """
+    """Order assets alphabetically for an empty query, else by search relevance."""
     name1 = asset_display_name(item1, attr)
     name2 = asset_display_name(item2, attr)
 
@@ -157,11 +138,7 @@ def compare_assets(item1: Any, item2: Any, search: str, attr: str = "path") -> i
 
 
 class GenericPackFlowBox(Gtk.Box):
-    """The grid shell of a pack chooser page.
-
-    It holds the Gtk.FlowBox that the page appends pack cards to and connects
-    its child-activated signal on.
-    """
+    """The Gtk.FlowBox shell for pack cards and activation."""
 
     def __init__(self, pack_chooser: object, *args: Any, **kwargs: Any) -> None:
         # The chooser passes itself first and positionally. Nothing in this
@@ -183,9 +160,7 @@ class GenericPackPreview(Preview, Generic[PackT]):
 
     def __init__(self, pack_chooser: "GenericPackChooserPage[PackT, Any]", pack: PackT,
                  pixbuf: "GdkPixbuf.Pixbuf | None | _PixbufUnset" = _PIXBUF_UNSET) -> None:
-        # The build worker of the chooser decodes pixbuf. This constructor
-        # decodes the thumbnail itself, on its own thread, only when the
-        # caller supplies no pixbuf.
+        # Decode here only when the build worker did not supply a pixbuf
         super().__init__(
             image_path=pack.get_thumbnail_path() if pixbuf is _PIXBUF_UNSET else None,
             text=pack.name,
@@ -218,11 +193,7 @@ class GenericAssetFlowBox(DynamicFlowBox[PreviewT, AssetT]):
 
 
 class GenericAssetPreview(Preview, Generic[AssetT]):
-    """One asset card in a recycling asset grid.
-
-    The grid pools these, so the constructor takes no asset. It builds an
-    empty card, and set_asset binds one to it and rebinds it on every recycle.
-    """
+    """A pooled asset card that set_asset rebinds on each recycle."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -231,9 +202,7 @@ class GenericAssetPreview(Preview, Generic[AssetT]):
 
     @override
     def on_click_info(self, button: Gtk.Button) -> None:
-        # The window that owns this preview nulls the slot as it closes, and a
-        # recycled child can outlive that, so answer a closed window with a log
-        # line rather than a traceback out of the click handler.
+        # A recycled child can outlive its window, so log instead of raising
         asset_manager = gl.asset_manager
         if asset_manager is None:
             log.error("The asset manager window is gone; cannot show asset info")
@@ -253,34 +222,20 @@ class GenericAssetPreview(Preview, Generic[AssetT]):
     def set_asset(self, asset: AssetT) -> None:
         self.asset = asset
 
-        # This runs inside the main-loop callback of
-        # DynamicFlowBox._apply_range, and the factory function of the chooser
-        # is the one caller, so set the text and the image here. A deferral
-        # through idle_add leaves the recycled child visible for a frame with
-        # the name and thumbnail of the earlier item.
+        # Bind synchronously in _apply_range so no visible frame shows stale data
         self.set_text(os.path.splitext(os.path.basename(asset.path))[0])
         self.set_image(asset.path)
 
 
 class _ChooserBuildPage(ChooserPage):
-    """Build bookkeeping and failure recovery for both chooser bases.
-
-    run_on_main raises RuntimeError when the main loop does not run its idle
-    within RUN_ON_MAIN_TIMEOUT_S, which is 30 s. Anything that stalls the
-    loop reaches that limit. Without this handling, log.catch swallows the
-    raise and the page stays stuck. The spinner runs, build_finished stays
-    unset, a deferred show_for_path strands, and no retry and no message
-    follow.
-    """
+    """Recover chooser builds when main-loop marshalling exceeds its 30 s bound."""
 
     build_finished = False
     build_failed = False
     _build_running = False
 
     def start_build(self) -> bool:
-        """Starts the build worker unless one is already in flight. Called
-        from the main thread only (constructor, retry_build), so the flag
-        needs no lock."""
+        """Start one build worker; main-thread callers serialize the flag."""
         if self._build_running:
             return False
         self._build_running = True
@@ -289,11 +244,7 @@ class _ChooserBuildPage(ChooserPage):
         return True
 
     def build(self) -> None:
-        """Subclass hook.
-
-        It gathers the data of the page off the main thread, and it
-        constructs the widgets inside run_on_main callbacks.
-        """
+        """Gather data off-main and construct widgets through run_on_main."""
         raise NotImplementedError
 
     def _run_build(self) -> None:
@@ -303,11 +254,7 @@ class _ChooserBuildPage(ChooserPage):
             self._build_running = False
 
     def retry_build(self) -> bool:
-        """Rebuild a page whose build failed.
-
-        AssetManager calls it when the user reopens the window. A healthy page
-        does nothing here.
-        """
+        """Restart only a failed build when the window reopens."""
         if not self.build_failed:
             return False
         self.build_failed = False
@@ -326,27 +273,18 @@ class _ChooserBuildPage(ChooserPage):
         GLib.idle_add(self._show_build_error)
 
     def _show_build_error(self) -> bool:
-        """Turn the loading page of ChooserPage into an error panel.
-
-        A stopped spinner tells the user more than one that runs forever.
-        """
+        """Replace the loading page with a stopped error panel."""
         self.spinner.stop()
         self.loading_label.set_label(gl.lm.get("error"))
         self.set_visible_child_name("loading")
-        return False  # one-shot idle
+        return False
 
     def _reset_build_state(self) -> None:
-        """Drop what the failed build would have consumed.
-
-        Nothing then points at a page that never built.
-        """
+        """Drop state that a failed build cannot consume."""
 
 
 class GenericPackChooserPage(_ChooserBuildPage, Generic[PackT, StackT]):
-    """The pack grid of one asset type.
-
-    Subclasses supply the two widget classes, the stack child to drill into,
-    and where the packs come from."""
+    """A pack grid whose subclass supplies widgets, leaf name, and pack source."""
 
     # Gtk.Box subclass that owns a flow_box. Its constructor takes a chooser
     # and keyword properties.
@@ -363,17 +301,8 @@ class GenericPackChooserPage(_ChooserBuildPage, Generic[PackT, StackT]):
     # A marshal that timed out never binds it. See _handle_build_failure.
     pack_flow = None
 
-    # The one gather runs at a time, and a request that arrives while one runs
-    # replaces the one waiting. See search_across_packs.
-    #
-    # All three are class level, like the state above, because ChooserPage
-    # connects the search entry from its own constructor: an emission can
-    # reach apply_search, and so this state, before a subclass has run a line
-    # of its own. The two fields below are read and rebound, so the first
-    # write makes them per instance. The lock is shared by every pack grid on
-    # purpose. It guards two assignments and never spans I/O, so the sharing
-    # costs nothing, and one lock per instance would have to be built
-    # somewhere, which is the window this avoids.
+    # One gather runs at a time; a new request replaces the pending request
+    # Class defaults exist before ChooserPage can emit during base construction
     _search_lock = threading.Lock()
     _search_pending: "tuple[str, ChooserPage, int] | None" = None
     _search_running = False
@@ -392,12 +321,7 @@ class GenericPackChooserPage(_ChooserBuildPage, Generic[PackT, StackT]):
     def build(self) -> None:
         self.build_finished = False
 
-        # This work belongs on the worker thread. The pack discovery reads
-        # the disk, and so does the thumbnail decode. A GdkPixbuf decode is
-        # file I/O and not GTK work, so it is safe here, and it must stay
-        # here. At about 17 ms per store thumbnail, and over 100 ms for an
-        # oversized one, a decode of the whole grid inside the main-loop
-        # callback freezes the window for seconds.
+        # Keep pack discovery and thumbnail file I/O on this worker
         packs = list(self.get_packs().values())
         thumbnails = [Preview.decode_pixbuf(self.get_pack_thumbnail_path(pack))
                       for pack in packs]
@@ -406,9 +330,7 @@ class GenericPackChooserPage(_ChooserBuildPage, Generic[PackT, StackT]):
             # Widgets are GTK, so they are built on the main loop.
             run_on_main(self._build_ui)
 
-            # One batch per main-loop callback. A single callback for every
-            # preview returns the loop only after the last one, so a large
-            # pack set stutters even without the decodes.
+            # Yield between preview batches so a large pack set does not stall GTK
             for start in range(0, len(packs), self.PACK_APPEND_BATCH):
                 stop = start + self.PACK_APPEND_BATCH
                 run_on_main(self._append_packs, list(zip(packs[start:stop],
@@ -431,10 +353,7 @@ class GenericPackChooserPage(_ChooserBuildPage, Generic[PackT, StackT]):
         self.scrolled_box.prepend(self.pack_flow)
 
         self.pack_flow.flow_box.connect("child-activated", self.on_child_activated)
-        # The search entry of this page filters the pack cards. GTK re-runs
-        # this predicate on every card the grid holds, and on every card that
-        # a later batch appends, so the cards a build adds after a search
-        # arrive filtered.
+        # GTK applies the current search to existing and later batched cards
         self.pack_flow.flow_box.set_filter_func(self.filter_pack_child)
 
     def _append_packs(self, batch: "list[tuple[PackT, GdkPixbuf.Pixbuf | None]]") -> None:
@@ -450,19 +369,9 @@ class GenericPackChooserPage(_ChooserBuildPage, Generic[PackT, StackT]):
             flow_box.append(preview)
 
     def reload(self) -> None:
-        """Read the packs from the disk again and rebuild the grid.
+        """Rebuild the pack grid from disk on the main loop.
 
-        A pack that arrived after this page built, which an import is, shows
-        only after this. The old grid goes first, because _build_ui prepends
-        a fresh one and two grids would show every pack twice.
-
-        Main loop only. It returns while a build is already running rather than
-        start a second one over the first. That running build usually reads the
-        disk after the new pack landed and so shows it. The one gap is a build
-        that already listed the disk before the import's rename: it finishes
-        without the new pack, and the pack shows on the next open of the window.
-        An import runs one at a time and reloads only after its own rename, so
-        this gap needs a concurrent unrelated build to open at all.
+        Keep an active build; if it listed before an import rename, the next open catches up.
         """
         if self._build_running:
             return
@@ -486,11 +395,7 @@ class GenericPackChooserPage(_ChooserBuildPage, Generic[PackT, StackT]):
         self.asset_manager.back_button.set_visible(True)
 
     def filter_pack_child(self, child: Gtk.FlowBoxChild) -> bool:
-        """Whether one pack card survives the current query.
-
-        GTK calls this on the main thread, over the cards of one grid, which
-        is a few dozen names at most, so the scoring costs nothing here.
-        """
+        """Whether one pack card matches the current main-thread query."""
         pack = getattr(child, "pack", None)
         if pack is None:
             # Not a pack card. Hiding a child this page does not know about
@@ -513,44 +418,20 @@ class GenericPackChooserPage(_ChooserBuildPage, Generic[PackT, StackT]):
             # on screen now.
             self.search_rendered(query)
             return
-        # A query asks for an asset and not for a pack, so it searches every
-        # pack. The grid here narrows to the packs named like the query while
-        # that runs, and the results replace it when they land. Nothing is
-        # recorded as rendered until they do.
+        # Search every pack for assets; record rendering only when results land
         self.search_across_packs(query, self, self._search_generation)
 
     @override
     def on_shown(self) -> None:
-        """Empty the entry as this page shows. Main loop only.
-
-        Coming back from a search across the packs is the path that matters:
-        the query belongs to that search, and this grid filters its cards on
-        it, so a query left here would narrow the grid to whatever pack is
-        named like it, which is usually no pack at all.
-
-        The base runs this before its catch-up pass, which is what keeps a
-        page turn from starting a gather for a query this page is throwing
-        away in the same handler.
-        """
+        """Clear the cross-pack query before the main-thread catch-up pass."""
         if self.search_entry.get_text():
             self.search_entry.set_text("")
 
     def search_across_packs(self, query: str, requester: ChooserPage,
                             generation: int) -> None:
-        """Show every pack's assets that match query, ranked as one list.
+        """Gather and rank matching assets on one worker for the requester's generation.
 
-        requester is the page whose entry holds the query, and generation the
-        pass it belongs to. Both pages that search across packs pass their
-        own: this grid starts the search, and the results page runs the next
-        one when the query moves on. Guarding on the requester is what makes a
-        page turn or a hidden window drop a search that is still gathering.
-
-        One gather runs at a time. A request that arrives while one runs
-        replaces the request waiting behind it, so three quick queries cost
-        the gather in flight and one more, and never three scans of the whole
-        installation at once. The gather reads the disk, so it runs on a
-        worker thread, and every widget it leads to is built inside a
-        main-loop callback.
+        A new query replaces the pending one; page turns and hidden pages stale the result.
         """
         with self._search_lock:
             self._search_pending = (query, requester, generation)
@@ -566,41 +447,28 @@ class GenericPackChooserPage(_ChooserBuildPage, Generic[PackT, StackT]):
                          name=f"{type(self).__name__}.search").start()
 
     def _run_pack_search(self) -> None:
-        """The search worker. It reads packs and touches no widget.
-
-        It serves the newest request each time round, so a query that arrived
-        while it gathered is answered without a second worker.
-        """
+        """Serve the newest pending query while reading packs off-main."""
         try:
             while True:
                 with self._search_lock:
                     request = self._search_pending
                     self._search_pending = None
                     if request is None:
-                        # The flag falls with the same hold of the lock that
-                        # finds nothing waiting, so a request cannot arrive
-                        # between the two and be left with no worker.
+                        # Clear the worker flag in the same hold that finds no request
                         self._search_running = False
                         return
                 query, requester, generation = request
                 try:
                     assets = self.collect_matching_assets(query, requester, generation)
                 except Exception as error:
-                    # Narrow on purpose. A gather that raises must leave the
-                    # page exactly as it found it, with nothing recorded as
-                    # rendered, so showing the page again or the next
-                    # keystroke tries once more. A swallow around the whole
-                    # worker would instead leave a page that believes it is
-                    # current and never retries.
+                    # Leave failed gathers unrendered so remap or typing retries
                     log.opt(exception=error).error(
                         f"{type(self).__name__}: the search across packs failed for "
                         f"{query!r}; the page keeps what it shows and searches "
                         f"again on the next keystroke or when it is shown")
                     continue
                 if not requester.search_is_current(generation):
-                    # The query moved on, or the page went away, while this
-                    # pass read the packs. Queue nothing: the newer pass
-                    # renders.
+                    # Queue nothing when a newer pass or hidden page stales this result
                     continue
                 GLib.idle_add(self._show_matching_assets, query, requester,
                               generation, assets)
@@ -608,25 +476,16 @@ class GenericPackChooserPage(_ChooserBuildPage, Generic[PackT, StackT]):
             self._release_search_worker()
 
     def _release_search_worker(self) -> None:
-        """Let a later request start a worker, whatever ended this one.
+        """Release or transfer worker ownership after any exit.
 
-        The clean exit above clears the flag itself. This covers the other way
-        out: anything raising outside the narrow catch, which is the marshal
-        of the render and the logger inside that catch. Left set, the flag
-        would make every later request post to a worker that is gone, and the
-        search would be dead for the life of the window.
-
-        It returns rather than raising, so the exception that brought it here
-        still reaches the thread and its traceback.
+        Preserve the original exception while restarting a stranded request.
         """
         with self._search_lock:
             if not self._search_running:
                 # The clean exit cleared it, and another worker may already
                 # hold the flag.
                 return
-            # A request that arrived while this worker was dying found the
-            # flag set, so nothing else starts a worker for it. Hand the flag
-            # straight to the restart, or drop it, in this one hold.
+            # Transfer the flag directly to a request stranded during worker exit
             stranded = self._search_pending is not None
             self._search_running = stranded
         if stranded:
@@ -634,21 +493,9 @@ class GenericPackChooserPage(_ChooserBuildPage, Generic[PackT, StackT]):
 
     def collect_matching_assets(self, query: str, requester: ChooserPage,
                                 generation: int) -> "list[Any]":
-        """Every pack's assets that match query, best match first.
-
-        One ranker scores the merged names of every pack. Its key is total, so
-        the order of the result does not depend on the order the packs came
-        in, and the leaf page's own sort reproduces this order from the same
-        query.
-
-        It runs on the search worker: the pack discovery and the asset scan
-        both read the disk, and a whole installation is tens of thousands of
-        files.
-        """
+        """Collect all matching assets off-main with one deterministic ranker."""
         if not requester.search_is_current(generation):
-            # Before the discovery and not after it. Reading every pack folder
-            # is most of what a gather costs, and a pass that is already stale
-            # must not pay it.
+            # Reject stale work before the expensive pack-folder discovery
             return []
         ranker = asset_search.QueryRanker(query)
         leaf = self.get_leaf_chooser()
@@ -670,33 +517,21 @@ class GenericPackChooserPage(_ChooserBuildPage, Generic[PackT, StackT]):
                               generation: int, assets: "list[Any]") -> bool:
         """Runs on the main loop only."""
         if not requester.search_is_current(generation):
-            return False  # one-shot idle
+            return False
         leaf = self.get_leaf_chooser()
         on_pack_grid = self.stack.get_visible_child_name() == PACK_CHOOSER_CHILD_NAME
         if not on_pack_grid and not leaf.shows_pack_search:
-            # The window moved into the leaf page for one pack while this
-            # gather ran, and writing here would replace that pack's grid with
-            # a search nobody is waiting for. The requester guard above does
-            # not cover it on its own: it holds only because a Gtk.Stack
-            # unmaps the child it leaves, which invalidates the page that
-            # asked. That is GTK's behaviour and not a promise this module
-            # makes, so the target says for itself whether it may be written.
-            return False  # one-shot idle
+            # Do not replace a drilled-in pack grid with obsolete cross-pack results
+            return False
         leaf.load_search_results(self, assets, query)
         requester.search_rendered(query)
         if on_pack_grid:
-            # The first results of a search. Later ones land in the page that
-            # already shows, and moving the stack again would restart its
-            # transition on every keystroke.
+            # Switch only for the first results to avoid restarting each transition
             self.stack.set_visible_child_name(self.LEAF_CHILD_NAME)
             self.asset_manager.back_button.set_visible(True)
-            # The entry the user typed into leaves with this grid, so the
-            # results page takes the typing over. It has to wait for the stack
-            # to show that page: an unmapped entry takes no focus.
+            # Transfer focus after the results page maps
             GLib.idle_add(leaf.focus_search_entry)
-        return False  # one-shot idle
-
-    # Subclass hooks
+        return False
 
     def get_packs(self) -> dict[str, PackT]:
         """{name: pack} for this asset type. Called on the build worker."""
@@ -712,10 +547,7 @@ class GenericPackChooserPage(_ChooserBuildPage, Generic[PackT, StackT]):
 
 
 class GenericAssetChooserPage(_ChooserBuildPage, Generic[PackT, AssetT, PreviewT, StackT]):
-    """The asset grid of one pack.
-
-    It holds a recycling DynamicFlowBox and the shared search and sort.
-    """
+    """A recycling asset grid with shared search and sort."""
 
     # DynamicFlowBox subclass. Its constructor takes a preview class and a
     # chooser.
@@ -725,16 +557,10 @@ class GenericAssetChooserPage(_ChooserBuildPage, Generic[PackT, AssetT, PreviewT
     # Attribute holding an asset's file path.
     ASSET_PATH_ATTR: str = "path"
 
-    # Class-level defaults. The ChooserPage constructor connects the search
-    # entry, and therefore on_search_changed, before __init__ reaches its own
-    # attributes.
+    # Class defaults exist before ChooserPage can emit during base construction
     asset_flow: "DynamicFlowBox[PreviewT, AssetT] | None" = None
     _pending_pack: "PackT | None" = None
-    # The pack grid that gathered what this page shows, and the query it
-    # gathered for. Both are set while the grid holds a search across every
-    # pack, and both are None and empty while it holds one pack. The page asks
-    # that grid again when the query moves on, because the answer to a new
-    # query is a new gather and not a filter of what is here.
+    # Cross-pack results retain their source because a changed query needs a new gather
     _pack_search_source: "GenericPackChooserPage[PackT, Any] | None" = None
     _pack_search_query: str = ""
     _pending_results: "tuple[GenericPackChooserPage[PackT, Any], list[AssetT], str] | None" = None
@@ -804,9 +630,7 @@ class GenericAssetChooserPage(_ChooserBuildPage, Generic[PackT, AssetT, PreviewT
         # Connect flow box select signal
         self.asset_flow.flow_box.connect("child-activated", self.on_child_activated)
 
-        # A pack activated, or a search that landed, while this callback was
-        # still queued renders now instead of being dropped. Only one of the
-        # two is ever held: each request drops the other.
+        # Consume the one pack or search request that arrived before UI construction
         if self._pending_pack is not None:
             pack, self._pending_pack = self._pending_pack, None
             self.load_for_pack(pack)
@@ -816,27 +640,17 @@ class GenericAssetChooserPage(_ChooserBuildPage, Generic[PackT, AssetT, PreviewT
 
     @property
     def shows_pack_search(self) -> bool:
-        """Whether this grid holds a search across the packs.
-
-        False while it holds the assets of one pack, which is what a drill-in
-        loads. A page that writes results into this one asks first, because
-        the grid of a pack the user opened is not a grid to overwrite.
-        """
+        """Whether this grid may receive cross-pack results instead of one pack."""
         return self._pack_search_source is not None
 
     def show_empty_notice(self, visible: bool) -> None:
-        """Say in words that a search across the packs answered nothing.
-
-        An empty grid on its own reads as a page that has not loaded.
-        """
+        """Show whether a cross-pack search returned no results."""
         if self.empty_label is not None:
             self.empty_label.set_visible(visible)
 
     def load_for_pack(self, pack: PackT) -> None:
         if self.shows_pack_search:
-            # The grid held a search across the packs, and it holds one pack
-            # now. The query belongs to that search: kept here it would filter
-            # the pack by something the user typed in another grid.
+            # Clear the cross-pack query before loading one drilled-in pack
             self._pack_search_source = None
             self._pack_search_query = ""
             if self.search_entry.get_text():
@@ -854,14 +668,7 @@ class GenericAssetChooserPage(_ChooserBuildPage, Generic[PackT, AssetT, PreviewT
 
     def load_search_results(self, pack_chooser: "GenericPackChooserPage[PackT, Any]",
                             assets: "list[AssetT]", query: str) -> None:
-        """Show assets that a search across every pack gathered for query.
-
-        pack_chooser gathered them, and is the page this one asks again when
-        the query moves on. The entry takes the query over from the pack grid,
-        whose entry goes away with it, so this page's own filter and sort rank
-        what it shows the way the search ranked it, and so the user can carry
-        on typing.
-        """
+        """Show cross-pack results and retain their source for changed queries."""
         if self.asset_flow is None:
             # The build still waits on the main loop, as in load_for_pack.
             self._pending_pack = None
@@ -876,20 +683,12 @@ class GenericAssetChooserPage(_ChooserBuildPage, Generic[PackT, AssetT, PreviewT
         self.asset_flow.show_range(0, self.asset_flow.N_ITEMS_PER_PAGE)
 
     def leave_search_results(self) -> None:
-        """Go back to the pack grid and forget the search. Main loop only.
-
-        An empty query asks for no asset, and the grid it would leave behind
-        holds every pack's assets, which is a whole installation and no answer
-        at all. The pack grid is the answer, so this page drops what it holds
-        and hands the window back to it.
-        """
+        """Drop an empty cross-pack search and return to the pack grid."""
         source = self._pack_search_source
         self._pack_search_source = None
         self._pack_search_query = ""
         if self.search_entry.get_text():
-            # A query of separators alone reaches here with the entry still
-            # holding them. This page's entry holds a query only while it
-            # holds that query's results.
+            # Clear separator-only text when its normalized query is empty
             self.search_entry.set_text("")
         self.show_empty_notice(False)
         if self.asset_flow is not None:
@@ -904,11 +703,7 @@ class GenericAssetChooserPage(_ChooserBuildPage, Generic[PackT, AssetT, PreviewT
             GLib.idle_add(source.focus_search_entry)
 
     def pack_label_for(self, asset: AssetT) -> str | None:
-        """The pack line a card carries under the asset name.
-
-        None while the grid holds one pack: every card would name the same
-        pack, which says nothing, and the line only takes room.
-        """
+        """The pack subtitle for cross-pack results, else None."""
         if not self.shows_pack_search:
             return None
         return cast(str, asset.pack.name)
@@ -932,9 +727,7 @@ class GenericAssetChooserPage(_ChooserBuildPage, Generic[PackT, AssetT, PreviewT
         # Called from DynamicFlowBox._apply_range's main-loop callback.
         self.bind_preview(preview, asset)
         if isinstance(preview, Preview):
-            # Every rebind sets this, because the pool recycles a card from a
-            # search across the packs into a grid of one pack, where the line
-            # it carried would name the wrong thing.
+            # Always replace a recycled card's cross-pack subtitle
             preview.set_subtitle(self.pack_label_for(asset))
         if self.selected_path == getattr(asset, self.ASSET_PATH_ATTR):
             # The recycler that calls this is the flow box itself, so it
@@ -958,24 +751,17 @@ class GenericAssetChooserPage(_ChooserBuildPage, Generic[PackT, AssetT, PreviewT
             return
         source = self._pack_search_source
         if source is not None and query != self._pack_search_query:
-            # This grid holds the matches of another query across every pack,
-            # so the answer to this one is a new search and not a filter of
-            # what is here. A filter would only ever narrow, and the user who
-            # deletes a letter asks for more.
+            # A changed cross-pack query needs a new gather, not a narrowing filter
             if asset_search.is_empty_query(query):
                 self.leave_search_results()
                 return
-            # Nothing is rendered until the gather lands, so nothing is
-            # recorded here: a gather that is dropped or that fails leaves
-            # this page knowing it has fallen behind.
+            # Record nothing until results land so dropped gathers remain stale
             source.search_across_packs(query, self, self._search_generation)
             return
         # Back to the first page: the grid it shows now holds the matches of
         # the query the user has replaced.
         self.asset_flow.show_range(0, self.asset_flow.N_ITEMS_PER_PAGE)
         self.search_rendered(query)
-
-    # Subclass hooks
 
     def get_assets(self, pack: PackT) -> list[AssetT]:
         """The assets of the pack, in the order the grid receives them."""
@@ -995,32 +781,18 @@ class GenericAssetChooserPage(_ChooserBuildPage, Generic[PackT, AssetT, PreviewT
 
 
 class GenericPackChooserStack(Gtk.Stack, Generic[LeafT]):
-    """The two pages of one pack subsystem, and the switch between them.
-
-    A subclass names the two page classes and the title of the leaf page. The
-    name of the leaf stack child comes from the pack page, which drills into
-    it by that name, so the two cannot drift apart.
-    """
+    """The pack and asset pages of one subsystem with one shared leaf name."""
 
     PACK_CHOOSER_CLASS: "type[GenericPackChooserPage[Any, Any]]" = None  # ty: ignore[invalid-assignment]  # late-init: subclass override, e.g. IconPacks.Stack
     LEAF_CHOOSER_CLASS: "type[LeafT]" = None  # ty: ignore[invalid-assignment]  # late-init: subclass override, e.g. IconPacks.Stack
     LEAF_CHILD_TITLE: str = None  # ty: ignore[invalid-assignment]  # late-init: subclass override, e.g. IconPacks.Stack
 
-    # build() reads this. A page starts a build worker in its constructor, and
-    # that worker calls back into state prepare() creates, so a build that ran
-    # first would race an attribute that does not exist yet. The failure it
-    # gives is silent: @log.catch on the page build swallows the raise, and a
-    # deferred pre-selection then never drains.
+    # prepare must create callback state before either page starts its build worker
     _prepared = False
 
     @property
     def leaf_child_name(self) -> str:
-        """The stack child that holds this family's asset grid.
-
-        The pack page names it, because it drills into it by that name, so a
-        reader outside this stack asks here rather than repeating the name and
-        letting the two drift apart.
-        """
+        """The pack page's canonical child name for this asset grid."""
         return self.PACK_CHOOSER_CLASS.LEAF_CHILD_NAME
 
     def __init__(self, asset_manager: "AssetManager", *args: Any, **kwargs: Any) -> None:
@@ -1032,11 +804,7 @@ class GenericPackChooserStack(Gtk.Stack, Generic[LeafT]):
         self.build()
 
     def prepare(self) -> None:
-        """State that the two pages may touch as soon as they exist.
-
-        It runs before build(), because each page starts a build worker in its
-        constructor and that worker calls back into the stack.
-        """
+        """Create shared state before page constructors start their workers."""
 
     def build(self) -> None:
         if not self._prepared:
