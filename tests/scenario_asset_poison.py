@@ -1,8 +1,5 @@
-"""Poison-file resilience for the asset import and thumbnail backend.
-
-An unreadable or corrupt file must never raise out of generate_thumbnail,
-get_thumbnail, add() or fill_missing_data. No library entry is ever deleted.
-"""
+"""Verify unreadable and corrupt assets fail soft across import and thumbnails.
+Corrupt-but-present library entries must remain retryable."""
 import fixtures  # noqa: F401  (must be first: see fixtures.py docstring)
 
 import os
@@ -55,9 +52,8 @@ def make_poison_files() -> dict:
         "garbage_mp4": write_bytes("garbage.mp4", b"\x00\x01\x02\x03 definitely not ffmpeg-decodable"),
     }
 
-    # A truncated PNG has valid magic and IHDR, so Image.open() succeeds. The
-    # pixel data is cut, so the decode fails at .load() time. The forced
-    # .load() in generate_thumbnail closes that lazy-decode hole.
+    # Valid PNG headers defer this truncation failure until Image.load.
+    # generate_thumbnail must force that decode.
     valid_tmp = os.path.join(POISON_DIR, "_tmp_full.png")
     fixtures.make_test_png(valid_tmp, size=(128, 128))
     with open(valid_tmp, "rb") as f:
@@ -82,7 +78,7 @@ def check_generate_thumbnail_never_raises(files: dict) -> None:
     for name, path in files.items():
         if path is None:
             continue
-        thumb = gl.media_manager.generate_thumbnail(path)  # must not raise
+        thumb = gl.media_manager.generate_thumbnail(path)
         assert isinstance(thumb, Image.Image), (
             f"{name}: generate_thumbnail must return a PIL image, got {type(thumb)}"
         )
@@ -97,7 +93,7 @@ def check_get_thumbnail_no_cache_poison(files: dict) -> None:
 
     # A poison file gives an image back and caches nothing.
     path = files["garbage_png"]
-    thumb = gl.media_manager.get_thumbnail(path)  # must not raise
+    thumb = gl.media_manager.get_thumbnail(path)
     assert isinstance(thumb, Image.Image)
     poison_cache = os.path.join(cache_dir, f"{sha256(path)}.png")
     assert not os.path.exists(poison_cache), (
@@ -124,11 +120,7 @@ def check_get_thumbnail_no_cache_poison(files: dict) -> None:
 
 
 def check_cache_poison_recovery() -> None:
-    """A poisoned cache entry must not wedge a valid source file.
-
-    A crash mid-write leaves an undecodable entry. get_thumbnail must drop it
-    and regenerate from the source.
-    """
+    """Drop an undecodable cache entry and regenerate from the valid source."""
     cache_dir = os.path.join(gl.DATA_PATH, "cache", "thumbnails")
 
     valid = fixtures.make_test_png(os.path.join(POISON_DIR, "cache_recovery_probe.png"), size=(96, 96))
@@ -163,15 +155,13 @@ def check_backend_add_batch_continues(files: dict) -> AssetManagerBackend:
     backend = AssetManagerBackend()
     gl.asset_manager_backend = backend
 
-    # For every undecodable shape add() must not raise, must refuse with None
-    # and must leave the internal Assets dir untouched. The gate runs before the
-    # copy, so no partial import lands.
+    # Refuse each undecodable shape before copying into the internal asset directory.
     for name in ("garbage_png", "empty_mp4", "truncated_png", "unreadable_png"):
         path = files[name]
         if path is None:
             continue
         n_before = len(backend)
-        asset_id = backend.add(path)  # must not raise
+        asset_id = backend.add(path)
         assert asset_id is None, (
             f"{name}: an undecodable file must be refused at import, got {asset_id!r}"
         )
@@ -199,11 +189,7 @@ def check_backend_add_batch_continues(files: dict) -> AssetManagerBackend:
 
 
 def check_basename_collision_still_copied(backend: AssetManagerBackend) -> None:
-    """A basename that collides with a top-level cache entry is still copied.
-
-    A skipped copy leaves internal-path at the user's original file outside the
-    app data dir, which remove_asset_by_id() then deletes.
-    """
+    """Copy a cache-name collision so removal cannot delete the source file."""
     outside_dir = tempfile.mkdtemp(prefix="sc_outside_")
     try:
         os.makedirs(os.path.join(gl.DATA_PATH, "cache", "thumbnails"), exist_ok=True)
@@ -224,12 +210,8 @@ def check_basename_collision_still_copied(backend: AssetManagerBackend) -> None:
 
 
 def check_broken_thumbnail_retry(backend: AssetManagerBackend) -> None:
-    """A thumbnail generation that fails once must be retried.
-
-    A file still downloading or a flaky mount fails once. The retry must run
-    when the source turns valid, so the failed run must leave thumbnail None.
-    A corrupt library entry is never deleted.
-    """
+    """Keep a failed thumbnail unset for retry after download or mount recovery.
+    Do not delete its present library entry during failure."""
     os.makedirs(INTERNAL_ASSETS_DIR, exist_ok=True)
     internal = os.path.join(INTERNAL_ASSETS_DIR, "transient.mp4")
     with open(internal, "wb") as f:
@@ -254,11 +236,8 @@ def check_broken_thumbnail_retry(backend: AssetManagerBackend) -> None:
         "an undecodable LIBRARY entry must never be dropped (transient-failure policy)"
     )
 
-    # The data-loss pin, while the entry is corrupt and present. The full
-    # startup chain that main.py runs, load_json then fill_missing_data then
-    # remove_invalid_data, must keep both the entry and the file.
-    # fill_missing_data alone has no removal path, so only the full chain makes
-    # this assertion mean anything.
+    # The complete startup chain must preserve the corrupt-but-present entry
+    # and file; fill_missing_data alone has no removal path.
     reborn = AssetManagerBackend()
     assert reborn.get_by_id(asset["id"]) is not None, (
         "startup re-init must never drop an undecodable-but-present "
@@ -286,22 +265,19 @@ def check_broken_thumbnail_retry(backend: AssetManagerBackend) -> None:
 
 
 def check_fill_missing_and_reinit(backend: AssetManagerBackend, files: dict) -> None:
-    # A null thumbnail on a valid image asset is poison from a failed run, and
-    # os.path.exists(None) raises TypeError out of __init__. The pass must
-    # repair it. check_broken_thumbnail_retry covers the still-corrupt half.
+    # Repair a None thumbnail for a valid asset before existence checks.
+    # check_broken_thumbnail_retry covers a still-corrupt source.
     valid_asset = backend.get_by_sha256(sha256(files["valid_after_poison"]))
     valid_asset["thumbnail"] = None
 
-    backend.fill_missing_data()  # must not raise
+    backend.fill_missing_data()
 
     assert valid_asset["thumbnail"] is not None, (
         "fill_missing_data must repair a null thumbnail for a decodable-type asset"
     )
 
-    # Poison entry with a null internal-path. The full __init__ chain that
-    # main.py runs, load_json then fill_missing_data then remove_invalid_data,
-    # must survive it and drop the entry. os.path.exists(None) raises
-    # TypeError inside remove_invalid_data.
+    # The complete initialization chain must drop a None internal path without
+    # passing it to os.path.exists.
     n_valid = len(backend)
     backend.append({
         "name": "null-internal-path-poison",
@@ -314,7 +290,7 @@ def check_fill_missing_and_reinit(backend: AssetManagerBackend, files: dict) -> 
     })
     backend.save_json()
 
-    reborn = AssetManagerBackend()  # must not raise
+    reborn = AssetManagerBackend()
     assert len(reborn) == n_valid, (
         f"re-init must drop the null-internal-path entry and keep the "
         f"{n_valid} valid assets, got {len(reborn)}"
@@ -326,11 +302,7 @@ def check_fill_missing_and_reinit(backend: AssetManagerBackend, files: dict) -> 
 
 
 def check_copy_failure_soft(backend: AssetManagerBackend) -> None:
-    """A copy_asset failure must fail soft with None.
-
-    Destination permissions, a full disk or a file deleted between hash and
-    copy must not raise out of the import worker thread.
-    """
+    """Return None when destination, disk, or source failures prevent copying."""
     os.makedirs(INTERNAL_ASSETS_DIR, exist_ok=True)
     probe = fixtures.make_test_png(os.path.join(POISON_DIR, "copy_failure_probe.png"), size=(24, 24))
 
@@ -340,7 +312,7 @@ def check_copy_failure_soft(backend: AssetManagerBackend) -> None:
             print("skip: copy-failure check (dir stays writable, e.g. running as root)")
             return
         n_before = len(backend)
-        asset_id = backend.add(probe)  # must not raise
+        asset_id = backend.add(probe)
         assert asset_id is None, "a failed copy must reject the asset with None"
         assert len(backend) == n_before, "a failed copy must not append a half-imported asset"
     finally:

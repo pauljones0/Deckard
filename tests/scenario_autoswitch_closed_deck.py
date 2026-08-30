@@ -1,8 +1,4 @@
-"""Regression test for the auto-page-switch handler abort.
-
-WindowGrabber.on_active_window_changed must skip a closed or disabled deck
-and keep switching the rest. One bail aborts auto-switching everywhere.
-"""
+"""Verify auto-switching skips closed or failing decks and continues."""
 
 import fixtures
 import globals as gl
@@ -44,19 +40,15 @@ def main() -> None:
         assert controller_open.page_auto_loaded is True
         print("PASS: auto-switch still fires for open decks behind a closed one")
 
-        # The no-match branch must also not abort on the closed deck. A second
-        # event that matches nothing must leave the open deck alone, with its
-        # active page on stay-on-page, and must not raise.
+        # A non-match must preserve stay-on-page despite the closed deck.
         grabber.on_active_window_changed(Window(wm_class="kitty", title="terminal"))
         assert controller_open.active_page.json_path == target_path, (
             "stay-on-page was not honored after a non-matching window change"
         )
         print("PASS: non-matching window change handled with a closed deck present")
 
-        # Per-deck exception isolation. A deck that passes the loop-top
-        # is_open() check but raises mid-body, in the narrow race where close()
-        # flips is_open() after the check, must not abort auto-switching for
-        # the decks after it, and must not let the exception escape.
+        # Isolate a deck that closes after is_open and raises during routing.
+        # Later decks must still switch and the exception must not escape.
         controller_boom = fixtures.make_headless_controller(serial="boom-3")
         try:
             def boom():

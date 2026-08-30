@@ -1,8 +1,4 @@
-"""The six AssetManager chooser loaders must build no GTK widget off-main.
-
-Each spawns a build thread in __init__. Pack discovery stays on the worker;
-widget construction and append marshal through run_on_main.
-"""
+"""Verify six chooser loaders keep discovery off-main and GTK work on main."""
 import fixtures  # noqa: F401  (import first: isolated --data tempdir)
 
 import ast
@@ -17,14 +13,8 @@ from gi.repository import GLib
 import globals as gl
 
 
-# Shared helpers
-
 def pump_until(condition, timeout: float, what: str) -> None:
-    """Iterate the default main context until condition() holds.
-
-    The build workers block inside run_on_main until this thread services
-    their idle source, so pump while they run. A join first would deadlock.
-    """
+    """Pump while workers block in run_on_main; joining first would deadlock."""
     context = GLib.MainContext.default()
     deadline = time.time() + timeout
     while time.time() < deadline:
@@ -50,10 +40,7 @@ class Recorder:
 
 
 def make_stubs(recorder: Recorder):
-    """Build a flow-box stand-in and a bare preview stand-in.
-
-    Both record the thread they were constructed on.
-    """
+    """Build flow-box and preview stubs that record construction threads."""
 
     class StubFlowBox:
         N_ITEMS_PER_PAGE = 50
@@ -99,8 +86,6 @@ class FakePackManager:
     def get_wallpaper_packs(self): return dict(self._packs)
 
 
-# 1. Runtime check. Every construction lands on the main loop.
-
 # Module-global names to swap when a chooser names its widget classes directly.
 # A class attribute wins when it exists.
 WIDGET_GLOBAL_RE = re.compile(r"(FlowBox|Preview)$")
@@ -109,10 +94,7 @@ WIDGET_CLASS_ATTRS = ("FLOW_BOX_CLASS", "PACK_FLOW_BOX_CLASS",
 
 
 def patch_widget_factories(cls, module, stub_flow_box, stub_preview):
-    """Point whatever the chooser builds widgets with at the stubs.
-
-    A class attribute wins over a module global. Returns an undo callable.
-    """
+    """Patch widget factories, preferring class attributes, and return undo."""
     undo: list = []
 
     for attr in WIDGET_CLASS_ATTRS:
@@ -141,10 +123,7 @@ def patch_widget_factories(cls, module, stub_flow_box, stub_preview):
 
 
 def make_page(cls):
-    """A chooser instance with the ChooserPage surface build() touches.
-
-    No real GTK widget anywhere.
-    """
+    """Build the ChooserPage surface without real GTK widgets."""
     page = cls.__new__(cls)
     page.asset_manager = types.SimpleNamespace(
         back_button=types.SimpleNamespace(set_visible=lambda v: None))
@@ -211,13 +190,10 @@ def check_runtime(label: str, module_path: str, class_name: str,
     return 0
 
 
-# 2. Static tripwire. No widget construction is reachable off-main.
-
 MARSHALS = ("run_on_main", "idle_add", "timeout_add", "on_main")
 
-# Constructors that produce GTK widgets. The AssetManager classes end in
-# FlowBox, Preview, Chooser or Page. Anything built straight off Gtk, Adw or
-# Gdk counts too, as does the self.*_CLASS indirection the base uses.
+# Match AssetManager widget classes, direct toolkit constructors, and
+# self.*_CLASS factory indirection.
 WIDGET_CTOR_RE = re.compile(r"(FlowBox|Preview|Button|Label|Dialog|Window)$")
 WIDGET_MODULES = ("Gtk", "Adw", "Gdk")
 WIDGET_CLASS_ATTR_RE = re.compile(r"_CLASS$")
@@ -246,10 +222,7 @@ def _is_widget_construction(node: ast.Call) -> str | None:
 
 
 def _marshalled_targets(fn: ast.AST) -> set[str]:
-    """Names handed to run_on_main or idle_add inside fn.
-
-    These are the callables the function schedules onto the main loop.
-    """
+    """Return callable names scheduled onto the main loop inside fn."""
     targets: set[str] = set()
     for node in ast.walk(fn):
         if not isinstance(node, ast.Call):
@@ -268,10 +241,7 @@ def _marshalled_targets(fn: ast.AST) -> set[str]:
 
 def find_offmain_constructions(class_node: ast.ClassDef,
                                entries: tuple = ("build",)) -> list[str]:
-    """Widget constructions reachable from entries without a main-loop marshal.
-
-    Follows self.<method>() calls inside the class.
-    """
+    """Find widget construction reachable through unmarshalled self calls."""
     methods = {n.name: n for n in class_node.body
                if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
     missing = [e for e in entries if e not in methods]
@@ -332,21 +302,16 @@ def class_node_for(cls, entry: str = "build") -> tuple[ast.ClassDef, str]:
     return class_node(owner)
 
 
-# Hooks the build worker calls into. A subclass may override these, and its
-# body then runs off the main thread like build() does, so they get the same
-# reachability check in the subclass file. The rest of the subclass surface
-# runs from main-loop callbacks only.
+# Subclass overrides of these hooks run on the build worker.
+# Apply the same off-main reachability check to their bodies.
 WORKER_SIDE_HOOKS = ("get_packs", "get_pack_thumbnail_path",
                      "on_build_finished", "_reset_build_state")
 
-# Sum of those hooks across the six classes is three get_packs and two
-# on_build_finished. This guards the static leg against going vacuous when the
-# six classes collapse onto shared bases.
+# Require the three get_packs and two on_build_finished overrides.
+# This prevents shared bases from making the static leg vacuous.
 MIN_SUBCLASS_HOOKS_CHECKED = 5
 
-# Thread bodies beside build(). A pack page also gathers the assets of every
-# pack on a worker, for the search that reaches across them, and that body
-# owes the same discipline: it reads the disk and builds no widget.
+# Pack-wide search also runs on a worker and must construct no widget.
 WORKER_ENTRIES = ("build", "_run_pack_search")
 
 # The three pack pages carry the search worker. A drop means the static leg
@@ -385,9 +350,7 @@ def check_static(label: str, module_path: str, class_name: str) -> tuple[int, in
             print(f"FAIL({label}): {v} [{source_file}]")
         return 1, len(own_hooks), len(searchers)
 
-    # The check means something only while build() really is a thread body,
-    # directly or through the one-hop _run_build wrapper that clears the
-    # in-flight flag around it.
+    # Require build or its one-hop wrapper to remain the worker entry point.
     owner_src = open(source_file, encoding="utf-8").read()
     if not re.search(r"threading\.Thread\(target=self\.(build|_run_build)\b", owner_src):
         print(f"FAIL({label}): build() is no longer started on a worker thread "
@@ -406,9 +369,8 @@ def check_static(label: str, module_path: str, class_name: str) -> tuple[int, in
     return 0, len(own_hooks), len(searchers)
 
 
-# The tripwire's own regression test. It must flag the broken shape, both the
-# direct construction and the one behind a helper call, and clear the fixed
-# shape. A broken checker would otherwise pass everything.
+# The self-test must catch direct and helper-reachable widget construction.
+# It must also accept a marshalled implementation.
 BAD_SOURCE = """
 class Chooser:
     def build(self):
@@ -455,15 +417,8 @@ def check_tripwire_self_test() -> int:
     return 0
 
 
-# 2b. A marshal that times out must not strand the page
-
 def check_marshal_timeout(label: str, module_path: str, class_name: str) -> int:
-    """A run_on_main timeout must not strand the page.
-
-    run_on_main raises RuntimeError when the main loop does not service its
-    idle in time. Unhandled, the page keeps spinning, build_finished stays
-    unset, and readers hit AttributeError on the flow box.
-    """
+    """Leave a timed-out page retryable, stopped, and safely unbuilt."""
     import importlib
 
     import src.backend.main_loop as main_loop
@@ -566,17 +521,8 @@ def check_marshal_timeout(label: str, module_path: str, class_name: str) -> int:
     return 0
 
 
-# 2c. The icon stack's deferred drill-in runs its widget half on the main loop
-
 def check_stack_drain_marshals() -> int:
-    """A deferred show_for_path drains on a build worker and must marshal.
-
-    IconPackChooser.on_build_finished and IconChooserPage.on_build_finished
-    both run at the tail of a build thread and both call
-    IconPackChooserStack.on_load_finished, which runs the deferred tasks. The
-    widget half of that task therefore has to reach the main loop, and it has
-    to run once, not once per finished page.
-    """
+    """Marshal one deferred icon drill-in after both build workers finish."""
     from src.windows.AssetManager.IconPacks.Stack import IconPackChooserStack
 
     target = "/icons/pack-0/battery.png"
@@ -665,14 +611,8 @@ def check_stack_drain_marshals() -> int:
     return 0
 
 
-# 3. Real-widget check over the actual window, when a display is available.
-
 def check_real_window() -> int:
-    """Build the real AssetManager and check every flow box against live GTK.
-
-    All six choosers must construct their flow box on the main thread and
-    attach it. Prints SKIP and exits without a display.
-    """
+    """Check six attached flow boxes against live GTK when a display exists."""
     import importlib
     import os
 
@@ -806,12 +746,8 @@ def check_real_window() -> int:
     return 0
 
 
-# Cases
-
-# (label, module, class, minimum widget constructions the runtime drive sees).
-# A pack chooser builds a flow box and one preview per pack, with two fake
-# packs. A leaf chooser builds the flow box; its 50 previews live inside the
-# real DynamicFlowBox, which the stub replaces.
+# Each case gives label, module, class, and minimum observed constructions.
+# Pack pages build three widgets; leaf previews stay in the stubbed flow box.
 CASES = [
     ("icon-packs", "src.windows.AssetManager.IconPacks.PackChooser",
      "IconPackChooser", 3),

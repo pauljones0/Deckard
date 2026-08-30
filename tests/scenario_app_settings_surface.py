@@ -1,8 +1,5 @@
-"""Pins the app-settings surface to one file, one shared copy, one snapshot.
-
-Every holder of settings/settings.json shares one dict. Absent keys read the
-table default without a write-back. The settings dialog keeps a private copy.
-"""
+"""Verify one shared app-settings dictionary and one private dialog snapshot.
+Absent keys read copied table defaults without writing them back."""
 import fixtures  # noqa: F401  (must be first: isolates the data dir)
 
 import inspect  # noqa: E402
@@ -33,9 +30,8 @@ WATCHDOG_SECONDS = 60
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
-# The four modules that reach the app settings. Three read a value through the
-# typed view instead of opening the file and applying an inline default. The
-# fourth is the dialog, which asks for its snapshot instead of building a path.
+# These readers use the typed view or its snapshot instead of opening the file
+# and applying independent defaults.
 CONVERTED_READERS = (
     os.path.join(REPO_ROOT, "main.py"),
     os.path.join(REPO_ROOT, "src", "windows", "Settings", "Settings.py"),
@@ -60,25 +56,15 @@ def write_disk(data: dict) -> None:
 
 
 def fresh_manager(seed: dict) -> SettingsManager:
-    """Build a real settings manager over a file holding exactly seed.
-
-    The store cache starts cold.
-    """
+    """Build a real manager over seed with a cold store cache."""
     write_disk(seed)
     settings_store.get().invalidate_path(settings_path())
     gl.settings_manager = SettingsManager()
     return gl.settings_manager
 
 
-# The dialog and the font row, reduced to what the revert needs
-
 class WindowStub:
-    """The settings dialog, reduced to the three members the font row reaches.
-
-    The snapshot, the typed view over it and the batch save are the real
-    Settings methods carried onto a stub, so no Adw.PreferencesWindow is built.
-    Change Settings.load_json or Settings.save_json and this scenario follows.
-    """
+    """Carry real snapshot, typed-view, and batch-save methods without Adw."""
 
     app = Settings.app
     load_json = Settings.load_json
@@ -119,14 +105,8 @@ class FontButtonStub:
         return Pango.FontDescription.from_string(self.description)
 
 
-# Checks
-
 def check_tables_reexported_by_identity() -> None:
-    """The re-exported table names reach the same objects, not copies.
-
-    A copy reads identically and drifts silently. The table's own pin imports
-    these names, so it would keep passing against a table nothing uses.
-    """
+    """Require re-exported settings tables to share object identity."""
     assert DEFAULTS is settings_store.APP_DEFAULTS, (
         "SettingsManager.DEFAULTS is a different object from the app surface's "
         "schema -- two tables that agree today and need not tomorrow"
@@ -155,10 +135,7 @@ def check_tables_reexported_by_identity() -> None:
 
 
 def check_shared_copy_is_one_object() -> None:
-    """Every holder of the app settings holds the same dict.
-
-    A write to the file replaces that dict instead of leaving a holder behind.
-    """
+    """Share one app-settings dict until a persisted write replaces it."""
     manager = fresh_manager({"general": {"hold-time": 0.4}})
 
     first = manager.get_app_settings()
@@ -193,12 +170,7 @@ def check_shared_copy_is_one_object() -> None:
 
 
 def check_stored_containers_shared_by_reference() -> None:
-    """The sharing holds all the way down, not at the top dict alone.
-
-    A view hands back a stored list or dict by reference. A copy breaks the
-    idiom silently; an append then a save writes the file back unchanged, with
-    no error. The font-defaults dict has the same shape.
-    """
+    """Return stored lists and dictionaries by reference through the app view."""
     manager = fresh_manager({
         "general": {"default-font": {"font-size": 11}},
         "store": {"custom-stores": [{"url": "https://first.invalid", "branch": "main"}]},
@@ -216,9 +188,7 @@ def check_stored_containers_shared_by_reference() -> None:
         f"appending through the typed accessor and saving persisted nothing: {stored}"
     )
 
-    # The font defaults rely on this shape. The in-place holder of the manager
-    # is the dict inside the settings, so the label engine and the settings
-    # agree with no save between them.
+    # Font defaults share the nested dictionary so label reads see unsaved edits.
     manager = fresh_manager({"general": {"default-font": {"font-size": 11}}})
     assert manager.font_defaults is manager.get_app_settings()["general"]["default-font"], (
         "the font defaults the label engine reads are a snapshot of the settings, "
@@ -231,11 +201,7 @@ def check_stored_containers_shared_by_reference() -> None:
 
 
 def check_defaults_copied_per_read() -> None:
-    """An absent key still reads as a copy of the table default.
-
-    Nothing is stored to alias. Handing out the table's own container lets the
-    first holder that mutates it poison every later reader of that key.
-    """
+    """Copy container defaults per read so one caller cannot poison the table."""
     a = AppSettings({})
     b = AppSettings({})
 
@@ -263,10 +229,7 @@ def check_defaults_copied_per_read() -> None:
 
 
 def check_defaults_at_read_tripwire() -> None:
-    """Absent keys read table defaults and are not written back.
-
-    A key the table does not describe is refused on write.
-    """
+    """Read absent defaults without write-back and reject unknown writes."""
     manager = fresh_manager({})
 
     app = manager.app()
@@ -303,12 +266,8 @@ def check_defaults_at_read_tripwire() -> None:
 
 
 def check_reads_do_not_reresolve_path() -> None:
-    """A read served from memory must not walk the filesystem first.
-
-    The cache keys on the resolved path, so a symlinked settings file is one
-    identity for reads, writes and invalidation. Resolving costs an lstat per
-    path component, and every write and invalidation still resolves for real.
-    """
+    """Serve cached reads without path resolution.
+    Writes and invalidations must still resolve the symlink target."""
     manager = fresh_manager({"general": {"hold-time": 0.4}})
     manager.get_app_settings()  # warm the cache with the read that resolves
 
@@ -338,12 +297,7 @@ def check_reads_do_not_reresolve_path() -> None:
 
 
 def check_moved_symlink_refollow() -> None:
-    """What the remembered resolution costs, stated exactly.
-
-    A settings file that is a symlink into a managed config tree reads and
-    writes under its target identity. The store is blind to a retargeted link
-    until the next write or invalidation, which resolves afresh and refollows.
-    """
+    """Keep a symlink target identity until the next write or invalidation."""
     path = settings_path()
     real_a = path + ".target-a"
     real_b = path + ".target-b"
@@ -405,26 +359,18 @@ def check_snapshot_private_read_from_disk() -> None:
 
 
 def check_font_row_keeps_sibling_settings() -> None:
-    """A font pick must not revert a sibling general.* value.
-
-    A settings window is open. The launch counter, a second window or a plugin
-    changes general.hold-time on disk. The user then picks a font. The font row
-    must not write the construction-time snapshot on top of that change.
-    """
+    """Preserve concurrent general settings when a font choice is saved."""
     manager = fresh_manager({"general": {"hold-time": 0.5, "rolling-labels": True}})
 
-    # The window opens with hold-time 0.5 in its snapshot.
     window = WindowStub()
     assert window.settings_json["general"]["hold-time"] == 0.5
 
-    # The other writer lands while the window sits there.
     other = manager.app()
     other.hold_time = 2.5
     other.rolling_labels = False
     other.save()
     assert read_disk()["general"]["hold-time"] == 2.5
 
-    # The user picks a font.
     group = FontGroupStub(window)
     FontRowStub(group).on_set(FontButtonStub("DejaVu Sans Bold 12"))
 
@@ -449,12 +395,8 @@ def check_font_row_keeps_sibling_settings() -> None:
 
 
 def check_batch_save_writes_snapshot() -> None:
-    """The batch save of every other dialog row still writes the whole snapshot.
-
-    The rows depend on that batch contract, so a second writer that lands while
-    the window is open still loses to the next toggle. A different save model
-    for the dialog is the only fix, and that is a change to the dialog.
-    """
+    """Verify non-font dialog rows still save the complete snapshot.
+    A concurrent file write therefore loses to the next batch save."""
     manager = fresh_manager({"general": {"hold-time": 0.5}})
     window = WindowStub()
 
@@ -477,11 +419,7 @@ def check_batch_save_writes_snapshot() -> None:
 
 
 def check_launch_counter_path_unchanged() -> None:
-    """The launch counter reads, increments and saves through the shared view.
-
-    It is the app's own second writer, the one that lands while a settings
-    window can be open. This check pins its shape.
-    """
+    """Keep launch-counter reads and writes on the shared settings view."""
     import src.app as app_mod
 
     source = inspect.getsource(app_mod.App.on_activate)
@@ -508,12 +446,7 @@ def check_launch_counter_path_unchanged() -> None:
 
 
 def check_no_module_opens_settings_file() -> None:
-    """No module opens the app settings file by name.
-
-    A module with its own inline default gives one setting different meanings,
-    and a module behind the shared copy cannot see an unsaved write. The dialog
-    keeps a snapshot, but it asks the surface for it instead of assembling one.
-    """
+    """Require app-settings readers to use the typed surface or its snapshot."""
     for path in CONVERTED_READERS:
         with open(path, encoding="utf-8") as f:
             body = f.read()
