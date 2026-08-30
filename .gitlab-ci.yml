@@ -321,6 +321,10 @@ test:flatpak-python:
         - flatpak/**/*
         - .gitlab-ci.yml
   script:
+    - apt-get update -qq
+    - >-
+      apt-get install -y -qq --no-install-recommends gcc libc6-dev pkg-config
+      libcairo2-dev libgirepository-2.0-dev
     - pip install --quiet -r flatpak/requirements-manifest-tools.txt
     - python flatpak/ci/generate_python_manifest.py --check
     - python flatpak/ci/check_python_payload.py --cache-dir .flatpak-python-archives

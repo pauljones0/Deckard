@@ -32,7 +32,8 @@ also be incomplete.
 6. Run regeneration drift and payload checks in a Python 3.13
    `test:flatpak-python` job that `build:flatpak` needs. The build is an existing
    direct dependency of `release:gate`, so a release cannot bypass the checks.
-   Give the test and build the same automatic rules for manifest inputs.
+   Install the native headers required to read PyGObject source metadata, and
+   give the test and build the same automatic rules for manifest inputs.
    Keep the download cache keyed by the app and Python manifests, which fully
    identify the sources that enter that cache.
 7. Add offline scenario coverage for generator normalization, architecture
