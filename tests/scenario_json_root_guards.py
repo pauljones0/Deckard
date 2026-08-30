@@ -1,16 +1,5 @@
-"""
-Regression scenario for JSON files whose root is not an object.
-
-The migration-flag file, the store cache index, and the manifest and
-attribution documents a repository serves are all read as dicts. A hand-edited
-or hostile file can decode to a list, a string or a number. Each reader must
-report the file as empty instead of handing the wrong root on to a caller that
-calls .get() on it. A populated list is the sharp case: it is truthy, so an
-emptiness test in the caller passes it straight through.
-
-The migration file also holds user data, so a non-object root is quarantined
-rather than clobbered by the next write.
-"""
+"""Reject non-object roots from migration, cache, and store JSON readers.
+Quarantine invalid migration data instead of overwriting it."""
 
 import json
 import os

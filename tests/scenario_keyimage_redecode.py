@@ -1,8 +1,4 @@
-"""InputImage must not re-decode from disk on every composite.
-
-A source smaller than the ask can never satisfy the check, so the native size
-is memoized. A swapped-out image is dropped, not closed, for live readers.
-"""
+"""Avoid repeated InputImage decodes and preserve in-flight image readers."""
 import fixtures  # noqa: F401  (import first: sets up the isolated data dir)
 
 import os
@@ -19,10 +15,7 @@ from src.backend.DeckManagement.Subclasses.KeyImage import InputImage
 
 
 class StubInput:
-    """Just enough ControllerInput for InputImage.
-
-    Saturation, an active state with a composed layout, and the tile size.
-    """
+    """Provide InputImage with saturation, layout, state, and tile size."""
 
     def __init__(self, layout_size: float):
         self.deck_controller = types.SimpleNamespace(
@@ -40,12 +33,8 @@ class StubInput:
 
 
 def leg_concurrent_swap() -> int:
-    """Two threads on one InputImage, a compositor and a resizer.
-
-    The compositor reads pixels off the reference get_raw_image() hands it,
-    as the resize of add_image_to_background does, while the resizer forces
-    genuine re-decode swaps. An in-flight composite must always complete.
-    """
+    """Read pixels while another thread forces InputImage re-decode swaps.
+    Each in-flight composite must retain a usable image reference."""
     big_path = os.path.join(gl.DATA_PATH, "concurrent_src.png")
     # A large source, so every re-decode yields a fresh, still-open image the
     # compositor can be caught reading.
@@ -60,9 +49,7 @@ def leg_concurrent_swap() -> int:
     stop = threading.Event()
 
     def reseed_for_next_swap():
-        # Re-arm the swap path. Shrink the retained copy and forget the
-        # memoized native size, so the next get_raw_image() re-decodes and
-        # swaps again. The clamp would otherwise settle after one decode.
+        # Shrink the copy and clear native size to force another decode swap.
         key_image.image = key_image.image.resize((64, 64))
         key_image._source_native_size = None
 

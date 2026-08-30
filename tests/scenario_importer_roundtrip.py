@@ -1,8 +1,5 @@
-"""Round-trip scenario for the StreamDeck-UI importer.
-
-Label dicts must carry the hyphenated keys the loader reads, deck settings
-must merge, and a suffixed page name must keep ChangePage references valid.
-"""
+"""Round-trip StreamDeck-UI data through loader keys and merged settings.
+Collision suffixes must also preserve ChangePage references."""
 import fixtures  # noqa: F401  (must be first: isolates DATA_PATH)
 
 import json
@@ -71,13 +68,11 @@ def main() -> int:
 
     failures = []
 
-    # 3a. The sentinels are untouched.
     for n in (1, 2):
         with open(os.path.join(pages_dir, f"ui_{SERIAL}_{n}.json")) as f:
             if json.load(f) != sentinel:
                 failures.append(f"pre-existing page ui_{SERIAL}_{n}.json was clobbered")
 
-    # 3b. The imported pages landed under suffixed names.
     imported = sorted(
         p for p in os.listdir(pages_dir)
         if p.startswith(f"ui_{SERIAL}_") and p.endswith(".json")
@@ -111,7 +106,6 @@ def main() -> int:
     if page0_dict is not None:
         state0 = page0_dict.get("keys", {}).get("0x0", {}).get("states", {}).get("0", {})
 
-        # 1. The hyphenated label keys the loader reads.
         label = state0.get("labels", {}).get("bottom", {})
         if "font-family" not in label or "font-size" not in label:
             failures.append(f"label written with keys {sorted(label)} -- loader reads font-family/font-size")
@@ -120,7 +114,6 @@ def main() -> int:
         if label.get("text") != "hello":
             failures.append(f"label text lost: {label.get('text')!r}")
 
-        # 3c. ChangePage points at the final suffixed path of page 1.
         actions = state0.get("actions", [])
         change = [a for a in actions if a.get("id") == "com_core447_DeckPlugin::ChangePage"]
         if not change:
@@ -131,7 +124,6 @@ def main() -> int:
                 failures.append(
                     f"ChangePage points at {target!r}; the import wrote page 1 to {page1_path!r}")
 
-    # 2. The deck settings were merged, not replaced.
     with open(deck_settings_path) as f:
         deck_settings = json.load(f)
     if deck_settings.get("rotation") != 90 or deck_settings.get("custom") != {"keep": 1}:

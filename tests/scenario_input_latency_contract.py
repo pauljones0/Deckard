@@ -114,9 +114,7 @@ def main() -> None:
     cached_report = json.loads((cached_dir / "cached-serial.json").read_text())
     assert cached_report["deck_model"] == "Cached Stream Deck"
 
-    # The HID entry itself creates and correlates the sample: a press
-    # arriving through the deck's key callback reaches event_callback under
-    # an active token, and a release passes through untracked.
+    # Correlate presses at the HID entry and pass releases through untracked.
     class _HidController:
         def __init__(self, tracker):
             self.input_latency = tracker
@@ -140,10 +138,7 @@ def main() -> None:
     assert release_event == KeyEvent(pressed=False) and release_sample is None, (
         "a release is not a measured input and must pass through untracked")
 
-    # Construction parity: the three deck adapters build exactly the
-    # typed events the injection paths (control plane, emulation, the
-    # deck-plus widgets) construct, and the key adapter still maps the
-    # library's key index into the logical identifier.
+    # Build the same typed events as injection paths and map key indexes.
     from src.backend.DeckManagement.deck_events import DialEvent, TouchscreenEvent
     from StreamDeck.Devices.StreamDeck import DialEventType, TouchscreenEventType
 
@@ -204,11 +199,8 @@ def main() -> None:
         "writer_slot_superseded": 1,
     }
 
-    # A background recomposite offers with no sample of its own, but it
-    # shows the same pressed state, so its device write answers the press.
-    # The displaced sample rides the superseding frame instead of dropping.
-    # This is the video-saturation shape, where every press paint is
-    # replaced by a video composite before the writer drains the slot.
+    # Let an unsampled recomposite inherit the displaced press sample.
+    # Video saturation can supersede each press frame before writer drain.
     inherit_controller, inherit_writer, _manager = fixtures.make_stub_controller(n_keys=1)
     inherit_tracker = InputLatencyTracker(clock=Clock(30.0))
     inherit_controller.input_latency = inherit_tracker
@@ -245,9 +237,7 @@ def main() -> None:
         "a press completed by a superseding frame must yield a comparable "
         "report")
 
-    # A producer may issue two frames while handling one physical input. The
-    # latest writer ticket wins, but its discarded predecessor is not a lost
-    # input: the same token still reaches USB and yields a valid report.
+    # Keep a sample valid when its latest of multiple frames reaches USB.
     same_controller, same_writer, _manager = fixtures.make_stub_controller(n_keys=1)
     same_tracker = InputLatencyTracker(clock=Clock(25.0))
     same_controller.input_latency = same_tracker
@@ -276,9 +266,7 @@ def main() -> None:
         "writer_slot_superseded": 1,
     }
 
-    # A writer batch can contain two frames for one press. A stale sibling
-    # still contributes a frame-drop reason, but the press remains valid when
-    # another frame from that exact token reaches USB and GTK.
+    # Count a stale sibling frame but keep its sample valid through another frame.
     batch_controller, batch_writer, _manager = fixtures.make_stub_controller(n_keys=2)
     batch_tracker = InputLatencyTracker(clock=Clock(26.0))
     batch_controller.input_latency = batch_tracker
@@ -364,9 +352,7 @@ def main() -> None:
     assert failing.drop_reasons == {"writer_tick_exception": 1}
     assert unrun.drop_reasons == {"writer_tick_exception": 1}
 
-    # The touchscreen write cap can discard an old local task in favor of a
-    # concurrently queued one. Preserve same-token work and name a different
-    # token's lost path explicitly.
+    # Account for touchscreen tasks displaced by a concurrently queued task.
     rate_controller, rate_writer, _manager = fixtures.make_stub_controller(
         n_keys=1, has_touchscreen=True)
     rate_tracker = InputLatencyTracker(clock=Clock(27.0))
@@ -449,9 +435,7 @@ def main() -> None:
     clear_writer._exec_clear_and_close()
     assert terminal_sample.drop_reasons == {"terminal_clear": 1}
 
-    # The mirror slot carries the sample with its payload. A video frame has
-    # no sample and therefore cannot satisfy a press that arrives before GTK
-    # drains it; a superseded press frame is counted independently.
+    # Carry samples in mirror payloads; unsampled video cannot complete a press.
     mirror_tracker = InputLatencyTracker(clock=Clock(30.0))
     video_slot = _MirrorSlot()
     video_slot.offer(_MirrorFrame("video", None))
@@ -477,9 +461,7 @@ def main() -> None:
     assert mirror_a.gtk_paint_at is None
     assert mirror_b.gtk_paint_at is not None
 
-    # Exercise the adapter's real drain too: its older video payload cannot
-    # stamp a press that arrived before GTK processed that payload, and its
-    # latest-wins replacement preserves the winning press token.
+    # The real adapter drain must preserve only the winning payload's sample.
     class MirrorController:
         def __init__(self, tracker: InputLatencyTracker) -> None:
             self.input_latency = tracker
@@ -567,9 +549,8 @@ def main() -> None:
     adapter.unbind(adapter_controller)
     assert unbound_sample.drop_reasons == {"ui_unbound": 1}
 
-    # report() copies every mutable sample field while its lock is held. The
-    # concurrent drop cannot mutate drop_reasons mid-serialization, so the
-    # completed snapshot is always a valid JSON-compatible report.
+    # report() snapshots mutable sample fields while holding the tracker lock.
+    # A concurrent drop mutates the same sample, so it waits for snapshot completion.
     class SnapshotGateTracker(InputLatencyTracker):
         def __init__(self) -> None:
             super().__init__(clock=Clock(50.0))

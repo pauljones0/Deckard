@@ -1,16 +1,5 @@
-"""A failed StreamDeck-UI import must surface the error and close the dialog.
-
-Importer.import_from_streamdeck_ui runs on a worker thread and is decorated
-with @log.catch, whose default reraise=False logs and then swallows any
-exception. Without a guard around perform_import, a failing import logged and
-returned, so the progress bar stayed frozen at 0%, on_finished never fired, and
-the dialog never closed: a silent partial import that looked like a hang.
-
-This scenario injects a failure inside perform_import and asserts that the
-dialog surfaces the error and schedules its own close through show_error, that
-every GTK touch is marshalled onto the main thread, and that on_finished does
-not fire on a failed import.
-"""
+"""Surface a failed StreamDeck-UI import and close its dialog.
+GTK updates must run on the main thread, and failure must not call on_finished."""
 import fixtures  # noqa: F401  (must be first: isolates DATA_PATH)
 
 import json
@@ -48,11 +37,7 @@ class FakeProgressBar:
 
 
 class FakeImporterSelf:
-    """Duck-typed stand-in for the Importer window.
-
-    show_error is the real Importer method bound onto this object, so the test
-    exercises the dialog's own error-and-close path rather than a stub.
-    """
+    """Stand in for Importer while using its real show_error method."""
 
     def __init__(self) -> None:
         self.progess_bar = FakeProgressBar()
@@ -66,12 +51,8 @@ class FakeImporterSelf:
 
 
 def _pump(ctx: GLib.MainContext, predicate, budget: float) -> None:
-    """Iterate the default context until predicate() or the budget elapses.
-
-    show_error schedules the close on a 3s GLib timeout, so the budget must
-    comfortably exceed that. A tight non-blocking loop lets wall time pass so
-    the timeout matures without blocking the test forever.
-    """
+    """Iterate until the predicate or budget expires.
+    The budget must exceed show_error's three-second close timeout."""
     deadline = time.monotonic() + budget
     while not predicate() and time.monotonic() < deadline:
         while ctx.pending():
@@ -87,8 +68,7 @@ def main() -> int:
         StreamDeckUIImporter,
     )
 
-    # Capture ERROR-level loguru records so the "keep the logging" half is
-    # verified, not only the surfacing.
+    # Capture ERROR records to verify logging and user-visible surfacing.
     logged: list[str] = []
 
     def _sink(message) -> None:
@@ -102,8 +82,7 @@ def main() -> int:
     with open(export_path, "w") as f:
         json.dump({"state": {}}, f)
 
-    # Inject a failure inside perform_import, the operation the dialog cannot
-    # foresee (an unreadable source, a permission error, a future raise).
+    # Inject an unexpected perform_import failure.
     def _boom(self) -> None:
         raise PermissionError("injected import failure")
 
@@ -143,31 +122,26 @@ def main() -> int:
     ctx = GLib.MainContext.default()
     _pump(ctx, lambda: fake.closed, budget=6.0)
 
-    # 1. The failure is surfaced: the progress bar shows the error message.
     if "Import failed" not in fake.progess_bar.texts:
         failures.append(
             f"error not surfaced; progress bar texts were {fake.progess_bar.texts}"
         )
 
-    # 2. The dialog closes rather than hanging.
     if not fake.closed:
         failures.append(
             "the dialog never closed after the import failed (the reported hang)"
         )
 
-    # 3. Every marshalled GTK touch ran on the main thread.
     off_main = [t for t in fake.progess_bar.threads + fake.close_threads
                 if t is not threading.main_thread()]
     if off_main:
         failures.append(f"a GTK touch ran off the main thread: {off_main}")
 
-    # 4. A failed import must not report success.
     if finished:
         failures.append("on_finished fired even though the import failed")
     if "Imported!" in fake.progess_bar.texts:
         failures.append("the dialog reported 'Imported!' for a failed import")
 
-    # 5. The failure was logged, not silently swallowed.
     if not any("import failed" in m.lower() for m in logged):
         failures.append(f"the failure was not logged at ERROR level: {logged}")
 

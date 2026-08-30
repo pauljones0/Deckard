@@ -1,15 +1,7 @@
-"""
-Closes the ControllerInputState plugin-API gaps.
+"""Require consistent media operations across ControllerInputState classes.
+Dials clear media, and touchscreens store and paint images and videos."""
 
-Three state classes must present the same media protocol. A dial state must
-implement clear(), so ControllerInput.clear() does not crash on a dial. A
-touchscreen state must implement set_image() and set_video(), so a plugin that
-drives touchscreen media stores and paints it instead of raising.
-"""
-
-# The dial clear() mirrors ControllerKeyState.clear(): it releases the media
-# and resets the page-owned layers. The touchscreen set_image/set_video mirror
-# the key and dial slots and compose over the strip background.
+# Dial and touchscreen states follow the shared media lifecycle.
 import os
 
 import fixtures  # noqa: F401  (import first: sets up the isolated data dir)
@@ -35,13 +27,8 @@ def check(name: str, ok: bool, detail: str = "") -> None:
 
 
 def settle_inputs(controller) -> None:
-    """Wait until the async input load stops replacing state objects.
-
-    make_headless_controller returns with a page loaded, but background load
-    threads can rebuild an input's states once more. Capturing a state before
-    that settles would paint a stale object. This waits until two reads of a
-    dial's active state a moment apart return the same object.
-    """
+    """Wait until two active-state reads return the same object.
+    Background page loading can replace state objects after controller creation."""
     wait_until(lambda: controller.active_page is not None, timeout=5)
     dial = controller.inputs[Input.Dial][0]
     prev: list = [object()]
@@ -64,17 +51,14 @@ def check_dial_clear(controller) -> None:
         state.set_image(InputImage(controller_input=dial, image=img.copy(), path=green), update=False)
     check("dial set_image stored the image", state.image is not None)
 
-    # ControllerInput.clear() drives active_state.clear(). Before the fix a
-    # dial state had no clear() and this raised AttributeError.
+    # ControllerInput.clear() delegates to the active state.
     dial.clear(update=False)
     check("dial clear() released the media", state.image is None and state.video is None)
     check("dial clear() reset the media owner", state.media_owner_action is None)
 
 
 def check_dial_video_to_still(controller) -> None:
-    # A dial that switches from a video to a still must close and clear the
-    # video. The render path draws state.video before state.image, so a
-    # leftover video kept playing over the new still and leaked its capture.
+    # Close the video when a still replaces it because video renders first.
     dial = controller.inputs[Input.Dial][0]
     state = dial.get_active_state()
 
@@ -92,8 +76,7 @@ def check_dial_video_to_still(controller) -> None:
 
 
 def check_dial_gif_loads(controller) -> None:
-    # #390: a GIF assigned to a dial through the page loader raised
-    # NotImplementedError. It must build a KeyGIF instead, like a key.
+    # A dial GIF must use the same KeyGIF provider as a key.
     from src.backend.DeckManagement.deck_controller.gif_pipeline import KeyGIF
 
     dial = controller.inputs[Input.Dial][0]
@@ -123,8 +106,7 @@ def check_touchscreen_media(controller) -> None:
     baseline = state.get_current_image()
     baseline_bytes = baseline.tobytes()
 
-    # set_image on a touchscreen state raised NotImplementedError before the
-    # fix (it inherited the base declaration). It must store and paint now.
+    # A touchscreen image must be stored and painted.
     green = make_test_png(
         os.path.join(gl.DATA_PATH, "media", "strip_icon.png"),
         size=touch.get_screen_dimensions(), color=(0, 220, 0),
@@ -154,15 +136,8 @@ def check_touchscreen_media(controller) -> None:
 
 
 def check_action_media_stash_protocol(controller) -> None:
-    """The pair a page load uses to carry action-owned media across the wipe.
-
-    One load path serves every input type that stashes, so the two state
-    classes it reaches must answer the same pair with the same semantics. A
-    detach hands the media out and clears the slot without closing it, because
-    the caller puts that same object back. A closing detach, or one that routed
-    through set_image, would hand back released media and repaint a state that
-    is about to be destroyed.
-    """
+    """Detach and reattach action-owned media across page-state replacement.
+    Detach must clear the slot without closing media that the caller restores."""
     key = controller.inputs[Input.Key][0]
     dial = controller.inputs[Input.Dial][0]
 
@@ -196,10 +171,7 @@ def check_action_media_stash_protocol(controller) -> None:
         check(f"{name} attach clears with a None pair", getattr(state, slot) is None)
         media.close()
 
-    # The touchscreen runs no stashing load, so it inherits the refusing base
-    # rather than a silent no-op that would drop media if a load ever reached
-    # it. Both halves of the pair must refuse: an attach that returned quietly
-    # would silently swallow the media a future loader handed it.
+    # Touchscreens do not stash, so both operations must refuse instead of drop media.
     touch_state = controller.get_input(Input.Touchscreen("sd-plus")).get_active_state()
     detach_raised = False
     try:

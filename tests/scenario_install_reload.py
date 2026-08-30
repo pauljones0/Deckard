@@ -1,17 +1,5 @@
-"""A dependency installed mid-process is importable by the install reload.
-
-The store's install steps can pip-install a plugin's requirements, and the
-import finders cache directory listings, so a package that lands in a
-site directory after the finder scanned it can stay invisible until the
-caches drop. The reload the install runs must drop them, or the plugin
-imports only after an app restart.
-
-The staleness in the field depends on filesystem mtime granularity, so the
-first check manufactures it deterministically: it primes the finder on a
-directory, writes a module into it, and pins the directory's mtime back to
-the primed value, which is exactly the state a pip install finishing within
-the same mtime tick leaves behind.
-"""
+"""Invalidate finder caches before loading dependencies installed in-process.
+Recreate same-mtime staleness by restoring the primed directory timestamp."""
 import fixtures  # must be first; isolates DATA_PATH before import globals
 
 import importlib
@@ -122,9 +110,7 @@ def check_load_failure_reaches_the_user() -> None:
 
 def main() -> None:
     fixtures.start_watchdog(60, label="scenario_install_reload")
-    # The staleness-precondition check runs LAST: on an interpreter whose
-    # finders do not cache this way it fails alone, after the checks that
-    # actually pin the fix have reported.
+    # Run the platform-dependent stale-cache precondition after behavior checks.
     check_reload_sees_the_fresh_dependency()
     check_load_failure_reaches_the_user()
     check_stale_cache_hides_the_module()

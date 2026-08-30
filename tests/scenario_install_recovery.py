@@ -1,11 +1,5 @@
-"""The store install swap survives a crash between its renames.
-
-An install stages a new tree, moves the old install to a dot sibling, then
-moves the new tree onto the destination. A crash between those two renames
-left the destination absent. This drives the swap and the recovery directly
-against hand-built filesystem states: a normal swap, a rollback on failure,
-and every crash leftover the recovery must repair.
-"""
+"""Recover store installs interrupted between atomic renames.
+Covers normal swap, rollback, missing destinations, and stale leftovers."""
 import fixtures  # noqa: F401  (must be first: isolates DATA_PATH before globals)
 
 import os  # noqa: E402
@@ -40,7 +34,7 @@ def main() -> int:
     with tempfile.TemporaryDirectory() as parent:
         dest = os.path.join(parent, "asset")
 
-        # --- Normal swap over an existing install -------------------------
+        # Normal swap over an existing install
         _tree(dest, "old")
         staging = os.path.join(parent, "staging1")
         _tree(staging, "new")
@@ -51,7 +45,7 @@ def main() -> int:
            os.path.exists(os.path.join(parent, f".asset{NEW}")):
             failures.append("a normal swap left a dot leftover behind")
 
-        # --- Rollback when the final rename fails -------------------------
+        # Rollback when the final rename fails
         _tree(dest, "current")
         staging = os.path.join(parent, "staging2")
         _tree(staging, "incoming")
@@ -77,8 +71,7 @@ def main() -> int:
         if _marker(dest) != "current":
             failures.append("a failed swap did not roll the old install back")
 
-        # --- Recovery: crash between the two renames ----------------------
-        # destination gone, old tree parked. Recovery restores the old tree.
+        # Restore a parked old tree when the destination is absent.
         if os.path.lexists(dest):
             install_recovery._remove_leftover(dest)
         _tree(os.path.join(parent, f".asset{OLD}"), "previous")
@@ -88,14 +81,14 @@ def main() -> int:
         if os.path.exists(os.path.join(parent, f".asset{OLD}")):
             failures.append("recovery left the old leftover behind")
 
-        # --- Recovery: first install interrupted, only a new tree ---------
+        # Complete an interrupted first install from its new tree.
         install_recovery._remove_leftover(dest)
         _tree(os.path.join(parent, f".asset{NEW}"), "fresh")
         install_recovery.recover_interrupted_installs([parent])
         if _marker(dest) != "fresh":
             failures.append("recovery did not complete a staged first install")
 
-        # --- Recovery: completed swap left a stale old leftover -----------
+        # Remove a stale old tree after a completed swap.
         _tree(dest, "live")
         _tree(os.path.join(parent, f".asset{OLD}"), "stale")
         install_recovery.recover_interrupted_installs([parent])

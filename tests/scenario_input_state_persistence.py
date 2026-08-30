@@ -1,12 +1,5 @@
-"""
-An input opens on the state it was last left on.
-
-The page carries which of its states an input shows, so the number survives a
-page switch and the next start of the app. A reload of a page a deck already
-shows keeps that deck's own state instead, because one page serves several
-decks and each is on its own state. A page that never leaves the first state
-carries no number, and a number the input cannot show opens the first state.
-"""
+"""Persist active input state across switches and starts; warm reloads keep per-deck state.
+Missing or invalid values open 0; valid positive but unavailable values open 0 and stay stored."""
 
 # Timers stay disarmed, so every write here is one a check asks for by name.
 import fixtures  # noqa: F401  (must be first: isolates DATA_PATH)
@@ -34,11 +27,7 @@ SETTLE_TIMEOUT_S = 10.0
 
 
 class NoTimers:
-    """A timer source that arms nothing.
-
-    Every write in this scenario is one a check asks for, so a line in the
-    test fixes the moment a page reaches its file.
-    """
+    """Disable scheduled flushes so each test controls file-write timing."""
 
     def schedule(self, delay_s, callback):
         return object()
@@ -48,11 +37,7 @@ class NoTimers:
 
 
 class RecordingPort(ui_port.UIPort):
-    """Records the sidebar calls the engine makes, and nothing else.
-
-    Every other port method keeps the base no-op, so nothing here needs a
-    widget.
-    """
+    """Record sidebar state selection calls without creating widgets."""
 
     def __init__(self):
         self.state_selected = []
@@ -62,20 +47,13 @@ class RecordingPort(ui_port.UIPort):
 
 
 def fresh_flush() -> None:
-    """A flush seam that writes only when told, installed process-wide.
-
-    Every production caller reaches the seam through page_flush.get(), so
-    replacing the singleton is the injection point for the whole process.
-    """
+    """Install a process-wide PageFlush that writes only when requested."""
     page_flush._flush = page_flush.PageFlush(scheduler=NoTimers())
 
 
 def seed_states_page(name: str, n_states: int, extra: dict | None = None) -> str:
-    """Write a page whose key 0x0 carries n_states action-free states.
-
-    extra goes beside the states map, which is where the state number lives,
-    so a check can plant one the way another build would leave it.
-    """
+    """Write n_states action-free states for key 0x0.
+    Put extra fields beside the states map, where active state is stored."""
     path = os.path.join(gl.page_manager.PAGE_PATH, f"{name}.json")
     os.makedirs(os.path.dirname(path), exist_ok=True)
     key_config: dict = {"states": {str(i): {} for i in range(n_states)}}
@@ -107,20 +85,8 @@ def stored_number(content: dict):
 
 
 def load_barrier(c_input) -> dict:
-    """Record which page each of c_input's loads rebuilt from.
-
-    A page switch loads the inputs on the deck's own thread, so a check waits
-    for the load to end rather than for a time to pass. A count of the states
-    is no barrier: the load builds them first and picks the state last, so the
-    count is right already when the page before had as many states.
-
-    The page is recorded, not just a count, because a bare count is not a
-    barrier for THIS page either. Under load a queued load from an earlier
-    page can land after the mark and bump a counter, and the check below then
-    reads the state list of the page before this one. DeckController.load_input
-    passes the page it is loading, so each entry names the page whose rebuild
-    finished.
-    """
+    """Record the page completed by each asynchronous input load.
+    State counts cannot identify completion or exclude an older queued load."""
     box = getattr(c_input, "_test_loads", None)
     if box is not None:
         return box
@@ -220,10 +186,7 @@ def check_a_cold_load_opens_the_kept_state(controller) -> int:
               "the state the page names")
         return 1
 
-    # The next start of the app. Poison the number the page holds in memory,
-    # without marking the page, so the file is the only place the state
-    # survives. A second deck mints its own Page for the file, and that read
-    # replaces what every Page of this file holds.
+    # Poison memory without marking it, then require a second deck to read disk.
     key_of(page.dict)[ACTIVE_STATE_KEY] = 0
     second = make_headless_controller(serial="input-state-2")
     try:
@@ -244,11 +207,8 @@ def check_a_cold_load_opens_the_kept_state(controller) -> int:
 
 
 def check_a_warm_reload_keeps_each_deck_on_its_own_state(controller) -> int:
-    """A reload of a page a deck already shows keeps that deck's state.
-
-    One page carries one number while two decks can show it on different
-    states, so an edit made through one deck must not drag the other one.
-    """
+    """Keep each deck's state when reloading a shared page.
+    The page stores one value although multiple decks can show different states."""
     fresh_flush()
     path = seed_states_page("StateShared", 3)
     page_one, input_one = show_page(controller, path, 3)
@@ -332,9 +292,8 @@ def check_a_number_the_input_cannot_show_opens_the_first(controller) -> int:
     """A number outside the states the input has, and a value that is no state
     number, both open the first state. Only the second is dropped."""
     fresh_flush()
-    # 3 is what a page written with four states carries after a plugin
-    # rebuilt the input with two. It stays, because the missing states can
-    # come back. The rest are what a hand edit leaves, and they go.
+    # Keep an unavailable positive state because removed states can return.
+    # Drop negative, text, and Boolean values because they are not state numbers.
     for name, planted, keep in (("StateTooHigh", 3, True),
                                 ("StateNegative", -1, False),
                                 ("StateText", "1", False),
@@ -380,9 +339,7 @@ def check_a_write_reaches_only_the_page_the_input_loaded(controller) -> int:
     c_input.set_state(1)
     page_to = gl.page_manager.get_page(to_path, controller)
 
-    # The window a page switch opens: the deck has taken the new page, and
-    # this input still holds the states of the old one. A plugin's state
-    # change lands right there.
+    # Change state after the deck takes the new page but before input replacement.
     controller.active_page = page_to
     try:
         c_input.set_state(2)
@@ -403,9 +360,7 @@ def check_a_write_reaches_only_the_page_the_input_loaded(controller) -> int:
     # one, and a write that never happens cannot read as one that did.
     c_input.set_state(1)
 
-    # The other half of the same window: a load of the leaving page that
-    # finishes after the deck has taken the new one. It carries the leaving
-    # page's states, so it must record that page and not the arriving one.
+    # A late load must retain the leaving page as its persistence owner.
     controller.active_page = page_to
     try:
         controller.load_input(c_input, page_from)
@@ -428,12 +383,8 @@ def check_a_write_reaches_only_the_page_the_input_loaded(controller) -> int:
 
 
 def check_a_rename_keeps_the_page_the_input_holds(controller) -> int:
-    """A page rename re-points the file of the page a deck shows.
-
-    Nothing reloads the inputs for it, so an input must still know the page it
-    holds: its next state change belongs in that page, and its next reload is
-    a reload of the page it is already on.
-    """
+    """Retain an input's page owner when its file is renamed.
+    Later state changes and warm reloads must use the new path."""
     fresh_flush()
     old_path = seed_states_page("StateRenameFrom", 3)
     new_path = os.path.join(gl.page_manager.PAGE_PATH, "StateRenameTo.json")
@@ -472,13 +423,8 @@ def check_a_rename_keeps_the_page_the_input_holds(controller) -> int:
 
 
 def check_the_sidebar_shows_the_state_without_selecting_it(controller) -> int:
-    """The sidebar's input editor must never move the input.
-
-    It runs to mirror the input: from the sidebar build, from the task the
-    build defers until the window maps, and from every refresh. Each carries
-    the state its caller last held, so a selection from there moves the input
-    to a state the user did not pick, and the page keeps what it is moved to.
-    """
+    """Show the sidebar state without selecting it on the input.
+    Build, deferred map, and refresh calls must only mirror current state."""
     fresh_flush()
     from src.windows.mainWindow.elements.Sidebar.Sidebar import KeyEditor
 
@@ -537,11 +483,8 @@ def check_the_sidebar_shows_the_state_without_selecting_it(controller) -> int:
 
 
 def check_a_reload_with_no_move_leaves_the_sidebar_alone(controller, port) -> int:
-    """Only a load that moves the state refreshes the sidebar.
-
-    The sidebar's input editor puts the main stack back on itself, so a
-    refresh with no move takes a user out of an action edit.
-    """
+    """Refresh the sidebar only when a load changes state.
+    A redundant refresh moves the main stack away from an action edit."""
     fresh_flush()
     path = seed_states_page("StateSidebarSync", 3)
     page, c_input = show_page(controller, path, 3)
@@ -557,10 +500,7 @@ def check_a_reload_with_no_move_leaves_the_sidebar_alone(controller, port) -> in
         print(f"FAIL: the reload moved the input to state {c_input.state}")
         return 1
 
-    # A load that does move the state must reach the sidebar, or the editor
-    # keeps showing a state the input has left. Take the shown state out of
-    # the page, which is what removing a state on another deck does, and
-    # reload: the input has nowhere to stay.
+    # Remove the shown state so reload must move and notify the sidebar.
     del port.state_selected[:]
     with page.edit() as data:
         data["keys"]["0x0"]["states"].pop("2")
