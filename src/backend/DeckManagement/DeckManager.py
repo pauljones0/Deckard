@@ -180,7 +180,8 @@ class DeckManager:
         self.reader_watchdog.start()
 
         portal = Xdp.Portal.new()
-        self.flatpak = portal.running_under_flatpak() # on_disconnect does not work under Flatpak. A separate thread polls instead. #TODO: Find a better solution
+        # USBMonitor.on_disconnect does not work under Flatpak, so a polling thread detects removal.
+        self.flatpak = portal.running_under_flatpak()
         if self.flatpak:
             log.info("Running under Flatpak. Using separate thread to detect device disconnection.")
             self.flatpak_disconnect_thread.start()

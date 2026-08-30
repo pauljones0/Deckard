@@ -1102,8 +1102,8 @@ class DeckController:
             self.media_player.discard_paint_tasks("controller_queue_cleared")
 
     def close(self, remove_media: bool, app_quit: bool = False) -> None:
-        """Run one idempotent teardown; non-quit callers must use a worker thread.
-        Resource cleanup follows remove_media; device, thread, and registration cleanup does not."""
+        """Run one idempotent teardown; non-quit main-thread calls are supported but warn.
+        A worker thread avoids UI freeze if a plugin teardown hook stalls."""
         # Serialize state removal with page installation, then run blocking hooks outside the lock.
         load_page_lock = getattr(self, "_load_page_lock", None)
         with load_page_lock if load_page_lock is not None else nullcontext():

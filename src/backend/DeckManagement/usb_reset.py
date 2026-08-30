@@ -235,10 +235,8 @@ def _descriptor_identity(fd: int) -> "tuple[int, int] | None":
 
 def reset_usb_device(vendor_id: "int | None", product_id: "int | None",
                      serial: "str | None", label: str) -> "str | None":
-    """
-    Reset the device this identity names, and return the node that took the reset, or None when
-    nothing was reset.
-    """
+    """Reset the named device only after its caller has stopped all device writes.
+    Return the reset node, or None when no reset was issued."""
     if vendor_id != ELGATO_VENDOR_ID or product_id is None:
         # A fake deck, a remote deck, or a device this app does not drive.
         log.debug(f"Deck {label}: not an Elgato USB device, so no reset is issued")

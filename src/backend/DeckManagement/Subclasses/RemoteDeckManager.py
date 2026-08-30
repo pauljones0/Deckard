@@ -41,7 +41,7 @@ class RemoteDeckManager:
 
     def start(self) -> bool:
         """Bind the server and register the remote deck.
-        A bind failure returns false without partial state."""
+        A bind failure returns false but can leave the token file written before the bind."""
         if self._is_running:
             return True
         try:
