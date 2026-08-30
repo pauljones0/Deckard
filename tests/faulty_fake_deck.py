@@ -1,8 +1,5 @@
-"""FakeDeck subclass that journals every device write.
-
-Entries are (t, seq, op, slot, bytes_hash, thread_name). The deck also injects
-TransportErrors, latency and input events. Import fixtures first.
-"""
+"""FakeDeck with write journaling, fault injection, latency, and input events.
+Journal entries are (t, seq, op, slot, bytes_hash, thread_name)."""
 import hashlib
 import itertools
 import os
@@ -29,11 +26,8 @@ def _hash_bytes(data) -> str:
 
 
 class FaultyFakeDeck(FakeDeck):
-    """FakeDeck plus a write journal and scriptable fault injection.
-
-    Journal entries are (t, seq, op, slot, bytes_hash, thread_name). Each deck
-    counts seq on its own, so two-deck scenarios keep independent sequences.
-    """
+    """FakeDeck with a write journal and scriptable fault injection.
+    Each deck has an independent journal sequence."""
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -49,10 +43,8 @@ class FaultyFakeDeck(FakeDeck):
 
         self._write_latency: float = 0.0
 
-        # FakeDeck hard-wires is_open() and connected() to True, which hides a
-        # post-close write and makes an unplug inexpressible. Model both here.
-        # close() clears _open; simulate_unplug() clears _connected and _open.
-        # Strict mode makes later writes raise. set_strict_lifecycle(False) opts out.
+        # Track close and unplug states that FakeDeck hard-wires to True.
+        # Strict mode rejects later writes; set_strict_lifecycle(False) permits them.
         self._lifecycle_lock = threading.Lock()
         self._open = True
         self._connected = True
@@ -201,21 +193,14 @@ class FaultyFakeDeck(FakeDeck):
         self._do_write("reset", "device", None)
 
     def close(self):
-        # The close op is lifecycle-exempt, so a double or post-unplug close
-        # still records. Journal it first, then release the handle, so a later
-        # write raises. close() is idempotent.
+        # Record the lifecycle-exempt close before later writes become invalid
         self._do_write("close", "device", None)
         with self._lifecycle_lock:
             self._open = False
 
     def stop_read_thread(self, timeout=None) -> None:
-        """The wrapper-role stop, for the unit tier.
-
-        The unit-tier stub controller holds this deck where a real controller
-        holds a BetterDeck, so the teardown paths call this by the wrapper's
-        name. It runs the same body the wrapper delegates to, which is a
-        no-op for a deck that models no reader thread.
-        """
+        """Provide the BetterDeck stop interface for unit-tier teardown.
+        The delegated operation is a no-op because this deck has no reader thread."""
         from src.backend.DeckManagement.BetterDeck import stop_device_read_thread
 
         stop_device_read_thread(self, timeout)

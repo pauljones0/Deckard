@@ -1,15 +1,6 @@
 #!/usr/bin/env python3
-"""Gated: a dead input reader is reopened on the real deck and the deck
-recovers.
-
-The real-transport half of the headless reader-reconnect scenario. The
-library's reader thread is stopped through the same flags the release path
-writes, the reader supervisor's sweep must reopen the real handle from the
-media thread, the deck must fully repaint after the reopen, and the reopened
-reader must hold long enough to settle the recovery count. One handle cycle,
-no USB reset: the contract's one-deck-cycle rule is exactly this script's
-budget.
-"""
+"""Verify real-deck reader recovery, repaint, and recovery-count settling.
+The supervisor must reopen from the media thread in one handle cycle without a USB reset."""
 import os
 import sys
 import time
@@ -42,9 +33,7 @@ def main() -> int:
         if reader is None or not reader.is_alive():
             failures.append("the real deck has no live reader thread to kill")
         else:
-            # Stop the reader the way the release path does: both flags down,
-            # then wait for the thread to exit. The handle stays open, which
-            # is the shape a died-mid-read reader leaves.
+            # Stop both reader flags but leave the handle open to model a dead reader
             if hasattr(raw, "reconnect_after_suspend"):
                 raw.reconnect_after_suspend = False
             raw.run_read_thread = False

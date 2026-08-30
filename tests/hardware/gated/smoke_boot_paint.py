@@ -1,12 +1,5 @@
 #!/usr/bin/env python3
-"""Gated smoke: the engine boots on the real deck, paints every key, and
-settles.
-
-The foundational hardware gate. It proves what no fake deck can: real
-transport writes land for every key of the synthetic page, the media loop
-goes quiet afterwards instead of repainting a static page, and a clean
-close through the production quit path releases the handle inside its bound.
-"""
+"""Verify real-deck boot paint, static-page settling, and bounded release."""
 import os
 import sys
 import time
@@ -44,8 +37,7 @@ def main() -> int:
     if stray:
         failures.append(f"{len(stray)} writes landed on a quiet static page: {stray[:5]}")
 
-    # Clean close through the production path, inside the bound, handle
-    # released.
+    # Close through the bounded production path and release the handle
     try:
         took = hwlib.shutdown_engine(env, timeout=15)
         print(f"  teardown took {took:.2f}s")

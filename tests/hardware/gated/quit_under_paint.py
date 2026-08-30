@@ -1,13 +1,6 @@
 #!/usr/bin/env python3
-"""Gated: quitting mid-paint stays bounded and nothing writes after close.
-
-The smoke gate closes a settled deck; this one closes it in the middle of
-the boot paint burst, when the media thread has writes in flight. The
-production close path must still finish inside its bound, release the
-handle, and no device write may land after close_all returns: a write after
-the terminal clear-and-close would hit a closed handle or repaint a deck
-the app has given back.
-"""
+"""Verify that a mid-paint quit stays bounded and releases the handle.
+No device write may land after close_all returns."""
 import os
 import sys
 import time

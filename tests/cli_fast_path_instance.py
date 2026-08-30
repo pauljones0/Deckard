@@ -1,16 +1,5 @@
-"""A stand-in for a running Deckard, for the CLI fast-path scenario.
-
-It owns the application name on the session bus it is pointed at and answers
-the control methods the CLI forwards, so a real `main.py --change-page` has
-something to talk to without an application, a display or a deck. Every call
-it takes is appended to the record file as one JSON line, which is what proves
-a forward arrived rather than merely returned.
-
-Environment: DECKARD_STUB_APP_ID, DECKARD_STUB_RECORD, and a session bus
-address. DECKARD_STUB_REFUSE, when set, is the sentence every method answers
-with instead of success, which is how a failing instance is driven without a
-second stand-in. It prints READY on stdout once it owns the name.
-"""
+"""Session-bus stand-in for CLI forwarding scenarios.
+Records calls and uses DECKARD_STUB_* variables to control replies."""
 import json
 import os
 
@@ -23,16 +12,11 @@ APP_ID = os.environ["DECKARD_STUB_APP_ID"]
 OBJECT_PATH = "/" + APP_ID.replace(".", "/")
 RECORD_PATH = os.environ["DECKARD_STUB_RECORD"]
 REFUSE = os.environ.get("DECKARD_STUB_REFUSE", "")
-# What a query method returns as its one JSON object. The read verbs (--json,
-# --get-brightness) read this, so a scenario can drive a real dump through the
-# CLI without a live deck behind it.
+# Query result used to test read verbs without a live deck
 QUERY_JSON = os.environ.get("DECKARD_STUB_QUERY_JSON", "{}")
 
-# The methods src/backend/cli_forward.py calls, with the signatures src/api.py
-# exports. A signature that drifts from the app's own makes the reply
-# unreadable to the CLI, which is a failure this stand-in should show rather
-# than paper over. The read methods answer one JSON object; the rest answer the
-# reason alone, empty on success.
+# Keep these signatures equal to src/api.py so interface drift fails the scenario.
+# Read methods return JSON; other methods return an empty or refusal reason.
 _QUERY_METHODS = {"QueryState", "ListActions"}
 
 INTROSPECTION = f"""
@@ -116,9 +100,7 @@ def main() -> None:
     connection.register_object(OBJECT_PATH, node.interfaces[0], on_call, None, None)
 
     def acquired(_connection, _name) -> None:
-        # The parent waits for this line before it runs the CLI. Without it
-        # the CLI can probe an unowned name and read a fall-through as a
-        # broken fast path.
+        # Signal ownership before the parent probes the CLI fast path
         print("READY", flush=True)
 
     def lost(_connection, _name) -> None:

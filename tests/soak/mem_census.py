@@ -1,23 +1,8 @@
 #!/usr/bin/env python3
-"""
-Bucket a process's anonymous VMAs by size class, and read its swap footprint.
+"""Report anonymous VMA size classes, RSS, and swap for a process."""
 
-Reads /proc/<pid>/smaps and prints anonymous-mapping counts with total RSS
-and swap per size-class bucket, plus the process-wide VmRSS and VmSwap.
-
-Usage:
-    .venv/bin/python tests/soak/mem_census.py [pid]
-    .venv/bin/python tests/soak/mem_census.py [pid] --max-rss-mb 800 --max-swap-mb 200
-"""
-
-# The bucket view surfaces glibc per-thread arena shapes, which a flat RSS
-# number cannot tell apart from content growth. RSS alone under-reports an
-# idle regrowth, because the regrowth hides in swap.
-#
-# With no pid, the scan below walks /proc for a process whose cmdline mentions
-# main.py and Deckard. With --max-rss-mb or --max-swap-mb the exit code is 1
-# once the process-wide figure passes the threshold, so a soak fails
-# mechanically instead of needing someone to read the table.
+# Size buckets distinguish allocator arenas from content growth.
+# Optional RSS and swap thresholds make a breach fail the soak.
 import argparse
 import os
 import re
@@ -63,14 +48,9 @@ def bucket_for(size_kb: int) -> str:
 
 
 def census(pid: int) -> dict[str, dict[str, int]]:
-    """Return {bucket_label: {"count": n, "rss_kb": n, "swap_kb": n}} for the
-    anonymous VMAs, which are the mappings with no backing file.
-
-    A file-backed mapping and the kernel's own regions are excluded.
-    """
-    # Swap is summed per bucket beside Rss. An anonymous region paged out to
-    # swap carries a small Rss and a large Swap, so an Rss-only view
-    # under-reports where the memory went, which is the field symptom.
+    """Bucket anonymous VMAs by count, RSS, and swap.
+    Exclude file-backed mappings and kernel regions."""
+    # Include swap because paged-out anonymous regions can have little RSS
     buckets = {label: {"count": 0, "rss_kb": 0, "swap_kb": 0} for label, _ in SIZE_CLASSES_KB}
     with open(f"/proc/{pid}/smaps") as f:
         lines = f.readlines()
@@ -103,12 +83,7 @@ def census(pid: int) -> dict[str, dict[str, int]]:
 
 
 def read_vm_status(pid: int) -> dict[str, int]:
-    """Process-wide VmRSS and VmSwap in kB from /proc/<pid>/status.
-
-    These totals are authoritative and independent of the per-VMA smaps walk.
-    A VmRSS read alone under-reports the footprint, because the idle symptom
-    the soak README names is RSS regrowth beside about 463MB of VmSwap.
-    """
+    """Read process-wide VmRSS and VmSwap in kB from /proc/<pid>/status."""
     result = {"VmRSS": 0, "VmSwap": 0}
     with open(f"/proc/{pid}/status") as f:
         for line in f:

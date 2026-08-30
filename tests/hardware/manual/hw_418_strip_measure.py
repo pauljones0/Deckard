@@ -1,28 +1,6 @@
 #!/usr/bin/env python3
-"""Measure the SD+ strip mapping with a dial-nulled marker line (#418).
-
-Finger taps proved ~20 buffer px biased (the contact patch lands beside the
-straightedge, differently per column), while per-edge repeatability was good.
-This version removes the finger: the strip shows a bright GREEN vertical
-marker line that the dials move; the user aligns it with the straightedge
-under a lit key edge and records it with a dial press. Aligning two adjacent
-lines is a null measurement, good to a pixel or two.
-
-Procedure, prompted on the strip:
-    1. The current target key lights BLUE with one WHITE edge bar.
-    2. Hold a straightedge (credit card) vertically along the WHITE bar so
-       it reaches down over the strip.
-    3. Turn dial 1 (coarse) and dial 2 (fine) until the GREEN marker line on
-       the strip sits exactly at the straightedge.
-    4. PRESS any dial to record; the white bar moves to the next edge.
-    5. Eight edges per pass, left to right; results print, sequence repeats.
-
-Any key press: undo the last recording. Ctrl+C (or SIGINT) ends and prints
-all passes.
-
-Usage: hw_418_strip_measure.py [SY GAP]  (echoed into the suggested restart
-command; vertical geometry is not measured here)
-"""
+"""Measure SD+ strip mapping by aligning a dial-controlled marker to eight edges.
+Run with no app instance; dial turns move, dial presses record, key presses undo; arguments are [SY GAP]."""
 
 import contextlib
 import sys

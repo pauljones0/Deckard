@@ -1,12 +1,6 @@
 #!/usr/bin/env python3
-"""Capture physical input latency while a claimed deck paints video.
-
-This is an operator-assisted hardware procedure. It measures the real HID
-callback only; it never injects a controller event. The operator must claim
-the deck outside this process, close every other Deckard instance, select the
-video-saturation page, press a responsive physical key repeatedly, and end
-the capture from this terminal.
-"""
+"""Capture real HID input latency while an externally claimed deck paints video.
+Never inject events; the operator must claim the deck, close other instances, and press a physical key."""
 from __future__ import annotations
 
 import argparse
