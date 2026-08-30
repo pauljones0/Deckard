@@ -63,11 +63,8 @@ if TYPE_CHECKING:
 
 
 class ControllerInputState:
-    # The ActionCore that set this state's media through set_media(), or None
-    # when the page or the user owns it. Every state class that carries media
-    # assigns it in its own __init__. The declaration sits here so the shared
-    # page-load path can read it off any state without knowing which class it
-    # got, and it binds nothing at runtime.
+    # The ActionCore that set this state's media through set_media(), or None when the page or the user owns it. Every state class that carries media assigns it in its own __init__.
+    # The declaration sits here so the shared page-load path can read it off any state without knowing which class it got, and it binds nothing at runtime.
     media_owner_action: "ActionCore | None"
 
     def __init__(self, controller_input: "ControllerInput[Any]", state: int):
@@ -137,23 +134,16 @@ class ControllerInputState:
         pass
 
     def clear(self) -> None:
-        """Reset this state to blank for a fresh page load: release its media
-        and drop its page-owned labels, layout and background colour.
-
-        ControllerInput.clear() drives this through get_active_state(), so the
-        declaration here keeps the call checkable against the base type. Each
-        state class overrides it; the three do, and none reaches this body."""
+        """Reset this state to blank for a fresh page load: release its media and drop its page-owned labels, layout and background colour.
+        ControllerInput.clear() drives this through get_active_state(), so the declaration here keeps the call checkable against the base type. Each state class overrides it; the three do, and none reaches this body."""
         raise NotImplementedError
 
     def get_own_actions(self) -> list["ActionCore | NoActionHolderFound | ActionOutdated"]:
-        # The page's action table holds placeholders next to live actions: a
-        # NoActionHolderFound for a missing plugin and an ActionOutdated for an
-        # incompatible one. Callers isinstance-filter for what they drive.
+        # The page's action table holds placeholders next to live actions: a NoActionHolderFound for a missing plugin and an ActionOutdated for an incompatible one.
+        # Callers isinstance-filter for what they drive.
         if not self.deck_controller.get_alive(): return []
-        # Snapshot once and use the snapshot throughout. Other threads null
-        # or swap active_page, from close() and from load_page, so a re-read
-        # of the live attribute after the None check races that window and
-        # raises AttributeError out of every own_actions_ caller.
+        # Snapshot once and use the snapshot throughout.
+        # Other threads null or swap active_page, from close() and from load_page, so a re-read of the live attribute after the None check races that window and raises AttributeError out of every own_actions_ caller.
         active_page = self.deck_controller.active_page
         if active_page is None:
             return []
@@ -167,12 +157,8 @@ class ControllerInputState:
         for action in self.get_own_actions():
             if not isinstance(action, ActionCore):
                 continue
-            # Gate on ready_finished, not on ready_called. The default
-            # on_update calls on_ready for compatibility, so a dispatch here
-            # during initialization runs a second on_ready beside the pool's
-            # first one, which duplicates backend processes. A skip loses
-            # nothing, because the initial ready sequence ends with its own
-            # on_update.
+            # Gate on ready_finished, not on ready_called. The default on_update calls on_ready for compatibility, so a dispatch here during initialization runs a second on_ready beside the pool's first one, which duplicates backend processes.
+            # A skip loses nothing, because the initial ready sequence ends with its own on_update.
             if not action.on_ready_finished:
                 continue
             action.on_update()
@@ -190,11 +176,8 @@ class ControllerInputState:
 
     @log.catch
     def own_actions_event_callback(self, event: InputEvent | None, data: dict[str, Any] | None = None, show_notifications: bool = False, actions: list[Any] | None = None) -> None:
-        # actions lets the caller pin the dispatch to a list resolved
-        # earlier, such as the DOWN-time gesture snapshot of ControllerKey. By
-        # default it resolves here, when the pool worker runs, which reads
-        # deck_controller.active_page and so tracks any page swap between the
-        # event and this dispatch.
+        # actions lets the caller pin the dispatch to a list resolved earlier, such as the DOWN-time gesture snapshot of ControllerKey.
+        # By default it resolves here, when the pool worker runs, which reads deck_controller.active_page and so tracks any page swap between the event and this dispatch.
         tracker = getattr(self.controller_input.deck_controller, "input_latency", None)
         if tracker is not None:
             tracker.action_started(tracker.current_sample())
@@ -225,22 +208,13 @@ class ControllerInputState:
             if not isinstance(action, ActionCore):
                 continue
 
-            # A pinned snapshot, the DOWN-time gesture list of ControllerKey,
-            # can outlive its page's cache entry. The key handler's hold on
-            # the pressed page ends when the DOWN callback returns, not at
-            # gesture end, so a mid-hold eviction, a remove_page or a
-            # reload-diff can run ActionCore.teardown on a snapshot member
-            # while its UP is still owed. Never dispatch into a torn-down
-            # action. _cleaned_up is the idempotency marker of clean_up(), set
-            # under _cleanup_lock. The lock-free read here is benign. At
-            # worst one event reaches an action during teardown, the same
-            # envelope live resolution always had.
+            # A pinned snapshot, the DOWN-time gesture list of ControllerKey, can outlive its page's cache entry. The key handler's hold on the pressed page ends when the DOWN callback returns, not at gesture end, so a mid-hold eviction, a remove_page or a reload-diff can run ActionCore.teardown on a snapshot member while its UP is still owed.
+            # Never dispatch into a torn-down action. _cleaned_up is the idempotency marker of clean_up(), set under _cleanup_lock. The lock-free read here is benign. At worst one event reaches an action during teardown, the same envelope live resolution always had.
             if getattr(action, "_cleaned_up", False):
                 continue
 
-            # Isolate each action. The method-level @log.catch aborts this
-            # whole loop at the first raiser and starves every later action in
-            # the list of its event.
+            # Isolate each action.
+            # The method-level @log.catch aborts this whole loop at the first raiser and starves every later action in the list of its event.
             try:
                 action._raw_event_callback(event, data)
             except Exception:
@@ -275,9 +249,8 @@ class ControllerInputState:
                 self._tick_stuck_warned = True
                 log.warning(f"on_tick for {self.controller_input.identifier} has been running >10s; this input's updates are paused until it returns")
             return
-        # Submit only what the worker would run: it skips every entry that is
-        # not an ActionCore, and the pool it runs on retires no worker. This
-        # sits after the stuck-tick warning and before the flag a return strands.
+        # Submit only what the worker would run: it skips every entry that is not an ActionCore, and the pool it runs on retires no worker.
+        # This sits after the stuck-tick warning and before the flag a return strands.
         try:
             has_action = any(isinstance(a, ActionCore) for a in self.get_own_actions())
         except Exception:
@@ -286,12 +259,8 @@ class ControllerInputState:
         self._tick_running = True
         self._tick_stuck_warned = False
         self._tick_started_at = time.monotonic()
-        # The flag is armed above and the completion callback below is what
-        # disarms it, so every path between the two owns the flag. A raise in
-        # that window, or a submit that took no worker, leaves this input
-        # armed for good and silences it until the page reloads. Whoever
-        # reaches the completion callback hands the flag to it; nobody else
-        # leaves the window with the flag still set.
+        # The flag is armed above and the completion callback below is what disarms it, so every path between the two owns the flag.
+        # A raise in that window, or a submit that took no worker, leaves this input armed for good and silences it until the page reloads. Whoever reaches the completion callback hands the flag to it; nobody else leaves the window with the flag still set.
         handed_over = False
         try:
             future = self._submit_action_callback(self.own_actions_tick)
@@ -340,45 +309,24 @@ class ControllerInputState:
             tracker.drop(sample, "action_not_submitted")
 
     def set_image(self, image: "InputImage | None", /, update: bool = True) -> None:
-        """Attach this state's still media, or clear it with None.
-
-        This is the media protocol that ActionCore.set_media drives an input
-        state through. ControllerKeyState and ControllerDialState implement
-        it, and ControllerTouchScreenState does not. Nothing reaches this base
-        body, because ActionCore.set_media returns early for any identifier
-        outside Input.Key and Input.Dial. The declaration exists so the
-        protocol is checkable at that call site. A touchscreen media route
-        must override it rather than inherit this.
-        """
+        """Attach this state's still media, or clear it with None. This is the media protocol that ActionCore.set_media drives an input state through. ControllerKeyState and ControllerDialState implement it, and ControllerTouchScreenState does not.
+        Nothing reaches this base body, because ActionCore.set_media returns early for any identifier outside Input.Key and Input.Dial. The declaration exists so the protocol is checkable at that call site. A touchscreen media route must override it rather than inherit this."""
         raise NotImplementedError
 
     def set_video(self, video: "InputVideo | KeyGIF", /) -> None:
-        """Attach this state's animated media. See set_image for who
-        implements it and why the base body is unreachable. It accepts both
-        providers; the .gif route builds a KeyGIF and every other route builds
-        an InputVideo."""
+        """Attach this state's animated media. See set_image for who implements it and why the base body is unreachable.
+        It accepts both providers; the .gif route builds a KeyGIF and every other route builds an InputVideo."""
         raise NotImplementedError
 
     def detach_action_media(self) -> "tuple[InputImage | None, InputVideo | KeyGIF | None]":
-        """Take this state's media off it, without closing it, and hand it back.
-
-        A page load calls it before create_n_states destroys every state
-        object, so action-owned media survives the wipe and can go back on the
-        state that replaces this one. The slots are cleared directly, and not
-        through set_image, because a setter closes the media it replaces and
-        repaints a state that is about to be destroyed.
-
-        ControllerKeyState and ControllerDialState implement it, which are the
-        two state classes a stashing load reaches. See set_image for the same
-        contract on the media protocol.
-        """
+        """Take this state's media off it, without closing it, and hand it back. A page load calls it before create_n_states destroys every state object, so action-owned media survives the wipe and can go back on the state that replaces this one.
+        The slots are cleared directly, and not through set_image, because a setter closes the media it replaces and repaints a state that is about to be destroyed. ControllerKeyState and ControllerDialState implement it, which are the two state classes a stashing load reaches. See set_image for the same contract on the media protocol."""
         raise NotImplementedError
 
     def attach_action_media(self, image: "InputImage | None",
                             video: "InputVideo | KeyGIF | None") -> None:
-        """Put stashed media back on this state, directly and without a
-        repaint. See detach_action_media for who implements it and why the
-        assignment bypasses the setters."""
+        """Put stashed media back on this state, directly and without a repaint.
+        See detach_action_media for who implements it and why the assignment bypasses the setters."""
         raise NotImplementedError
 
     def remove_media(self) -> None:
@@ -393,9 +341,8 @@ class ControllerInputState:
 
 
 class ControllerTouchScreenState(ControllerInputState):
-    # set_current_image() creates this lazily, so close_resources() guards it
-    # with getattr; a state closed before its first render never has one. It
-    # is declared and not assigned, so that contract stands at runtime.
+    # set_current_image() creates this lazily, so close_resources() guards it with getattr; a state closed before its first render never has one.
+    # It is declared and not assigned, so that contract stands at runtime.
     current_image: Image.Image | None
 
     def __init__(self, controller_touch: "ControllerTouchScreen", state: int):
@@ -406,32 +353,17 @@ class ControllerTouchScreenState(ControllerInputState):
         # (key, fitted-image-or-None) for _get_fitted_background_image.
         self._fitted_background_cache: "tuple[tuple[str, float, tuple[int, int], float] | None, Image.Image | None]" = (None, None)
 
-        # Playback state for a video configured as this touchscreen's
-        # background. It is an InputVideo over a strip-sized shared frame
-        # cache, which the media tick advances.
-        # _get_background_video_frame manages it, and get_current_image
-        # releases it once the background stops being a video. The lock
-        # covers the create and the release, because a composite can run on
-        # the media thread and on a load or UI thread at the same time. The
-        # .gif route builds a GifBackground and every other route builds an
-        # InputVideo. Both answer the get_next_frame, close and video_path
-        # surface that _get_background_video_frame drives them through.
+        # Playback state for a video configured as this touchscreen's background. It is an InputVideo over a strip-sized shared frame cache, which the media tick advances. _get_background_video_frame manages it, and get_current_image releases it once the background stops being a video.
+        # The lock covers the create and the release, because a composite can run on the media thread and on a load or UI thread at the same time. The .gif route builds a GifBackground and every other route builds an InputVideo. Both answer the get_next_frame, close and video_path surface that _get_background_video_frame drives them through.
         self.background_video: "InputVideo | GifBackground | None" = None
         self._background_video_failed: str | None = None
         self._background_video_lock = threading.Lock()
-        # The display-saturation factor that background_video was built at,
-        # and that acquired its shared tile cache. The keep-check in
-        # _get_background_video_frame uses it. The factor bakes into the cache
-        # at construction and set_playback never revisits it, so a reuse of
-        # the video across a saturation change keeps serving frames enhanced
-        # at the old factor.
+        # The display-saturation factor that background_video was built at, and that acquired its shared tile cache. The keep-check in _get_background_video_frame uses it.
+        # The factor bakes into the cache at construction and set_playback never revisits it, so a reuse of the video across a saturation change keeps serving frames enhanced at the old factor.
         self._background_video_saturation: float | None = None
 
-        # Media set on this touchscreen through set_image/set_video, the
-        # touchscreen twin of the key and dial slots. get_current_image
-        # composites it over the strip background, beneath the dial overlays,
-        # and close_resources releases it. ActionCore.set_media returns early
-        # for a touchscreen, so a plugin that drives these directly owns them.
+        # Media set on this touchscreen through set_image/set_video, the touchscreen twin of the key and dial slots.
+        # get_current_image composites it over the strip background, beneath the dial overlays, and close_resources releases it. ActionCore.set_media returns early for a touchscreen, so a plugin that drives these directly owns them.
         self.image: "InputImage | None" = None
         self.video: "InputVideo | KeyGIF | None" = None
         self.media_owner_action: "ActionCore | None" = None
@@ -443,9 +375,8 @@ class ControllerTouchScreenState(ControllerInputState):
 
     @override
     def set_image(self, image: "InputImage | None", update: bool = True) -> None:
-        """Attach this touchscreen's still media, or clear it with None. This
-        matches the key and dial slots. get_current_image composites the media
-        over the strip background."""
+        """Attach this touchscreen's still media, or clear it with None. This matches the key and dial slots.
+        get_current_image composites the media over the strip background."""
         if self.image is not None:
             self.image.close()
         if self.video is not None:
@@ -471,22 +402,15 @@ class ControllerTouchScreenState(ControllerInputState):
         self.media_owner_action = None
 
     def _get_fitted_background_image(self, path: str, size: tuple[int, int]) -> Image.Image | None:
-        # Decode and fit once per (path, mtime, size, saturation), then
-        # cache. This runs on every composite, 30 times a second while a
-        # background video plays, and a failed decode must not log per frame.
-        # A video takes the playback path in _get_background_video_frame.
+        # Decode and fit once per (path, mtime, size, saturation), then cache.
+        # This runs on every composite, 30 times a second while a background video plays, and a failed decode must not log per frame. A video takes the playback path in _get_background_video_frame.
         try:
             mtime = os.path.getmtime(path)
         except OSError:
             return None
 
-        # The saturation boost bakes into the cached fitted image, on the
-        # same one-time contract BackgroundImage uses for the key grid, so
-        # the factor is part of the cache key. A saturation change must not
-        # keep serving the stale enhancement. The value rounds to the
-        # persisted 2-decimal precision, because set_display_saturation stores
-        # round(v, 2), so an unrounded caller cannot mint a near-duplicate
-        # float key that misses the cache on every composite.
+        # The saturation boost bakes into the cached fitted image, on the same one-time contract BackgroundImage uses for the key grid, so the factor is part of the cache key. A saturation change must not keep serving the stale enhancement.
+        # The value rounds to the persisted 2-decimal precision, because set_display_saturation stores round(v, 2), so an unrounded caller cannot mint a near-duplicate float key that misses the cache on every composite.
         saturation = round(self.controller_touch.deck_controller.get_display_saturation(), 2)
 
         key = (path, mtime, size, saturation)
@@ -515,29 +439,19 @@ class ControllerTouchScreenState(ControllerInputState):
         return fitted.copy() if fitted is not None else None
 
     def _get_background_video_frame(self, path: str, fps: int = MEDIA_LOOP_FPS, loop: bool = True) -> Image.Image | None:
-        # The InputVideo owns a strip-sized shared frame cache. It picks
-        # frames by the media clock, clamps a gap, and runs at the source fps, so
-        # neither the composite rate nor the fps setting changes playback
-        # speed. fps and loop come from the page's background settings. loop
-        # wraps playback, and fps only caps the strip's re-render rate; see
-        # ControllerTouchScreen.on_media_player_tick.
+        # The InputVideo owns a strip-sized shared frame cache. It picks frames by the media clock, clamps a gap, and runs at the source fps, so neither the composite rate nor the fps setting changes playback speed.
+        # fps and loop come from the page's background settings. loop wraps playback, and fps only caps the strip's re-render rate; see ControllerTouchScreen.on_media_player_tick.
         with self._background_video_lock:
             if path == self._background_video_failed:
                 return None
 
-            # The saturation is part of the keep-check. The factor bakes into
-            # the video's shared tile cache at construction, and set_playback
-            # only updates fps and loop, so a factor change forces a rebuild
-            # for the same path. The key-grid BackgroundVideo keep-check and
-            # the fitted-image cache key one method up work the same way, and
-            # this uses the same 0.001 tolerance.
+            # The saturation is part of the keep-check. The factor bakes into the video's shared tile cache at construction, and set_playback only updates fps and loop, so a factor change forces a rebuild for the same path.
+            # The key-grid BackgroundVideo keep-check and the fitted-image cache key one method up work the same way, and this uses the same 0.001 tolerance.
             saturation = self.controller_touch.deck_controller.get_display_saturation()
 
             video = self.background_video
             # Both reads stay inside the short-circuit.
-            # _background_video_saturation exists only once a video attaches;
-            # the keepcheck scenario builds this state through __new__ and
-            # sets only the attributes the no-video path touches.
+            # _background_video_saturation exists only once a video attaches; the keepcheck scenario builds this state through __new__ and sets only the attributes the no-video path touches.
             if (video is None or video.video_path != path
                     or self._background_video_saturation is None
                     or abs(self._background_video_saturation - saturation) > 0.001):
@@ -545,13 +459,8 @@ class ControllerTouchScreenState(ControllerInputState):
                     video.close()
                 video = None
                 if os.path.splitext(path)[1].lower() == ".gif":
-                    # A .gif goes to the PIL provider. It fits each frame to
-                    # exactly the strip size, because the alpha_composite in
-                    # get_current_image needs same-size RGBA, and alpha and
-                    # the per-frame delays survive. A budget or decode failure
-                    # falls back to the opaque source-fps InputVideo path
-                    # below, as the deck-background route in
-                    # prebuild_from_path does.
+                    # A .gif goes to the PIL provider. It fits each frame to exactly the strip size, because the alpha_composite in get_current_image needs same-size RGBA, and alpha and the per-frame delays survive.
+                    # A budget or decode failure falls back to the opaque source-fps InputVideo path below, as the deck-background route in prebuild_from_path does.
                     try:
                         video = GifBackground(
                             self.controller_touch.deck_controller, path,
@@ -577,14 +486,8 @@ class ControllerTouchScreenState(ControllerInputState):
 
             frame = video.get_next_frame()
             if frame is None:
-                # n_frames is known from construction, because the reader
-                # opens its source eagerly, so a value of 0 or less names a
-                # bad file. Fail it once instead of a retry and a log per
-                # frame. A transient miss on a healthy file retries on the
-                # next tick. This applies to InputVideo only. GifBackground
-                # has no video_cache, because a bad GIF already fell back at
-                # construction, and a None after close is transient and
-                # self-heals on the rebuild above.
+                # n_frames is known from construction, because the reader opens its source eagerly, so a value of 0 or less names a bad file. Fail it once instead of a retry and a log per frame. A transient miss on a healthy file retries on the next tick.
+                # This applies to InputVideo only. GifBackground has no video_cache, because a bad GIF already fell back at construction, and a None after close is transient and self-heals on the rebuild above.
                 if isinstance(video, InputVideo) and (video.video_cache is None or video.video_cache.n_frames <= 0):
                     log.error(f"Could not decode touchscreen background video {path}")
                     video.close()
@@ -603,18 +506,14 @@ class ControllerTouchScreenState(ControllerInputState):
                 self.background_video = None
 
     def tick_background_video(self, now: float) -> bool:
-        """Whether the strip needs a re-composite for the background video this
-        media tick. The read of background_video and the deadline advance both
-        run under _background_video_lock, so a concurrent
-        _release_background_video() cannot null the video between the check
-        and the advance, and two ticks cannot tear the deadline."""
+        """Whether the strip needs a re-composite for the background video this media tick.
+        The read of background_video and the deadline advance both run under _background_video_lock, so a concurrent _release_background_video() cannot null the video between the check and the advance, and two ticks cannot tear the deadline."""
         with self._background_video_lock:
             bg_video = self.background_video
             if bg_video is None:
                 return False
-            # The video's own deadline paces the re-composite. The playback
-            # position follows the clock at the source's native rate, so a
-            # skipped tick drops a frame and does not slow the video down.
+            # The video's own deadline paces the re-composite.
+            # The playback position follows the clock at the source's native rate, so a skipped tick drops a frame and does not slow the video down.
             return bg_video.frame_due(now)
 
     def get_current_image(self) -> Image.Image:
@@ -622,9 +521,8 @@ class ControllerTouchScreenState(ControllerInputState):
 
         # Start with the background image, when one is set.
         background: Image.Image | None = None
-        # Snapshot it and guard it. load_page(None) and close() null
-        # active_page from other threads while the writer composites, and a
-        # blank strip is the only sensible frame then.
+        # Snapshot it and guard it.
+        # load_page(None) and close() null active_page from other threads while the writer composites, and a blank strip is the only sensible frame then.
         active_page = self.controller_touch.deck_controller.active_page
         if active_page is None:
             return Image.new("RGBA", (screen_width, screen_height), (0, 0, 0, 255))
@@ -639,9 +537,8 @@ class ControllerTouchScreenState(ControllerInputState):
             and is_video(background_image_path)
         )
         if not has_video_background:
-            # The background stopped being a video, because something cleared
-            # it or swapped an image in. Detach its frame cache so the tick
-            # predicate goes quiet.
+            # The background stopped being a video, because something cleared it or swapped an image in.
+            # Detach its frame cache so the tick predicate goes quiet.
             self._release_background_video()
 
         if background_image_path and os.path.isfile(background_image_path):
@@ -659,10 +556,8 @@ class ControllerTouchScreenState(ControllerInputState):
         if background is None:
             deck_background = self.controller_touch.deck_controller.background.get_touchscreen_image()
             if deck_background is not None:
-                # convert() copies, because the slice is shared and a caller
-                # pastes dial images onto the returned image in place. It also
-                # normalizes an RGB video-frame slice for the
-                # alpha_composite below.
+                # convert() copies, because the slice is shared and a caller pastes dial images onto the returned image in place.
+                # It also normalizes an RGB video-frame slice for the alpha_composite below.
                 background = deck_background.convert("RGBA")
 
         # Take the background color from the state's background_manager.
@@ -696,9 +591,8 @@ class ControllerTouchScreenState(ControllerInputState):
                 # Blend the color over the image.
                 background = Image.alpha_composite(background, background_color_img)
 
-        # Composite this touchscreen's own media over the background, beneath
-        # the dial overlays. A plugin attaches it through set_image/set_video.
-        # A None frame leaves the background unchanged.
+        # Composite this touchscreen's own media over the background, beneath the dial overlays.
+        # A plugin attaches it through set_image/set_video. A None frame leaves the background unchanged.
         media_frame: Image.Image | None = None
         if self.video is not None:
             media_frame = self.video.get_next_frame()
@@ -726,9 +620,8 @@ class ControllerTouchScreenState(ControllerInputState):
     
 
     def set_dial_image(self, identifier: Input.Dial, image: Image.Image, update: bool = True) -> None:
-        # Disabled. An implementation composites the image into
-        # get_dial_image_area(identifier) over get_empty_dial_image() and
-        # calls update().
+        # Disabled.
+        # An implementation composites the image into get_dial_image_area(identifier) over get_empty_dial_image() and calls update().
         return
 
 
@@ -747,12 +640,8 @@ class ControllerTouchScreenState(ControllerInputState):
 
     @override
     def close_resources(self) -> None:
-        # Only set_current_image() sets current_image. A touchscreen state
-        # closed before its first render never gets one, such as a
-        # screensaver-stash sweep of a page that never painted, or a fresh
-        # state right after create_n_states(). An unconditional dereference
-        # raises AttributeError, so the getattr and the None guard make this
-        # safe to call any number of times.
+        # Only set_current_image() sets current_image. A touchscreen state closed before its first render never gets one, such as a screensaver-stash sweep of a page that never painted, or a fresh state right after create_n_states().
+        # An unconditional dereference raises AttributeError, so the getattr and the None guard make this safe to call any number of times.
         current_image = getattr(self, "current_image", None)
         if current_image is not None:
             current_image.close()
@@ -775,19 +664,14 @@ class ControllerDialState(ControllerInputState):
         self.dial = dial
 
         self.image: InputImage | None = None
-        # Typed to the provider union of the base protocol; see
-        # ControllerInputState.set_video. Only the key route builds a KeyGIF,
-        # because the .gif branch of ActionCore guards on ControllerKey, but
-        # the slot and the render path handle either provider.
+        # Typed to the provider union of the base protocol; see ControllerInputState.set_video.
+        # Only the key route builds a KeyGIF, because the .gif branch of ActionCore guards on ControllerKey, but the slot and the render path handle either provider.
         self.video: "InputVideo | KeyGIF | None" = None
 
         self.touch_image: Image.Image | None = None
 
-        # The ActionCore that set the current image or video through
-        # set_media(), or None when the page or the user owns the media. Every
-        # other media writer resets it to None, and set_media() stamps it again
-        # after the write. ControllerDial.load_from_input_dict uses it to carry
-        # action-owned media across the create_n_states wipe, as the key does.
+        # The ActionCore that set the current image or video through set_media(), or None when the page or the user owns the media.
+        # Every other media writer resets it to None, and set_media() stamps it again after the write. ControllerDial.load_from_input_dict uses it to carry action-owned media across the create_n_states wipe, as the key does.
         self.media_owner_action: "ActionCore | None" = None
 
         super().__init__(dial, state)
@@ -797,10 +681,8 @@ class ControllerDialState(ControllerInputState):
         if self.image is not None:
             self.image.close()
         if self.video is not None:
-            # The render path draws self.video ahead of self.image, so a
-            # still that replaces a video must close and clear it, as the key
-            # and touchscreen setters do. Without this the dial kept playing
-            # the old video and leaked its capture.
+            # The render path draws self.video ahead of self.image, so a still that replaces a video must close and clear it, as the key and touchscreen setters do.
+            # Without this the dial kept playing the old video and leaked its capture.
             self.video.close()
 
         self.image = image
@@ -838,9 +720,8 @@ class ControllerDialState(ControllerInputState):
 
     @override
     def clear(self) -> None:
-        # The dial twin of ControllerKeyState.clear(): release action-owned
-        # media and reset the page-owned layers so a fresh page load starts
-        # blank. ControllerInput.clear() drives it.
+        # The dial twin of ControllerKeyState.clear(): release action-owned media and reset the page-owned layers so a fresh page load starts blank.
+        # ControllerInput.clear() drives it.
         if self.video is not None:
             # Close the video here; a bare drop leaks its capture.
             self.video.close()
@@ -855,10 +736,7 @@ class ControllerDialState(ControllerInputState):
 
     @override
     def close_resources(self) -> None:
-        # The base class default does nothing, so this override releases a
-        # dial's InputImage and InputVideo from
-        # ControllerInput.close_resources(), as
-        # ControllerKeyState.close_resources does for a key.
+        # The base class default does nothing, so this override releases a dial's InputImage and InputVideo from ControllerInput.close_resources(), as ControllerKeyState.close_resources does for a key.
         if self.image is not None:
             self.image.close()
             self.image = None
@@ -893,9 +771,8 @@ class ControllerDialState(ControllerInputState):
         
 
         if background is None:
-            # Unreachable, because every alpha from 0 to 255 satisfies one of
-            # the two branches above. ControllerKey.get_current_image keeps
-            # the same fallback, so the composite below always has a canvas.
+            # Unreachable, because every alpha from 0 to 255 satisfies one of the two branches above.
+            # ControllerKey.get_current_image keeps the same fallback, so the composite below always has a canvas.
             background = touch_screen.get_empty_dial_image()
 
         image: Image.Image | None = None
@@ -914,18 +791,14 @@ class ControllerKeyState(ControllerInputState):
         super().__init__(controller_key, state)
 
         self.key_image: InputImage | None = None
-        # A .gif key media builds a KeyGIF and every other media builds an
-        # InputVideo. Both expose the get_raw_image and close surface that the
-        # key paint path and close_resources drive them through.
+        # A .gif key media builds a KeyGIF and every other media builds an InputVideo.
+        # Both expose the get_raw_image and close surface that the key paint path and close_resources drive them through.
         self.key_video: "InputVideo | KeyGIF | None" = None
         # The composite this state last produced, kept only while its own
         # foreground hides the background and nothing else about it moved.
         self.cover_cache = CoveredComposite()
-        # The ActionCore that set the current key_image or key_video through
-        # set_media(), or None when the page or the user owns the media. Every
-        # other media writer resets it to None, and set_media() stamps it
-        # again after the write. ControllerKey.load_from_input_dict uses it to
-        # carry action-owned media across the create_n_states wipe.
+        # The ActionCore that set the current key_image or key_video through set_media(), or None when the page or the user owns the media.
+        # Every other media writer resets it to None, and set_media() stamps it again after the write. ControllerKey.load_from_input_dict uses it to carry action-owned media across the create_n_states wipe.
         self.media_owner_action: "ActionCore | None" = None
 
     @override
@@ -944,18 +817,14 @@ class ControllerKeyState(ControllerInputState):
         if self.key_image is not None:
             self.key_image.close()
         if self.key_video is not None:
-            # A drop of key_video here without a close leaks its tile-cache
-            # registry attachment and its VideoCapture on every switch from a
-            # video to an image.
+            # A drop of key_video here without a close leaks its tile-cache registry attachment and its VideoCapture on every switch from a video to an image.
             self.key_video.close()
 
         self.key_image = key_image
         self.key_video = None
         self.media_owner_action = None
-        # The kept composite belongs to the media that just went away. A paint
-        # would drop it, but a key that keeps no media stops reaching the paint
-        # path that does: over a background video a bare key is served straight
-        # from the frame identity instead.
+        # The kept composite belongs to the media that just went away.
+        # A paint would drop it, but a key that keeps no media stops reaching the paint path that does: over a background video a bare key is served straight from the frame identity instead.
         self.cover_cache.invalidate()
 
         if update:
@@ -978,10 +847,8 @@ class ControllerKeyState(ControllerInputState):
         media = (self.key_image, self.key_video)
         self.key_image = None
         self.key_video = None
-        # The kept composite belongs to the media that just came off, as it
-        # does in set_image. This state is destroyed straight after, and its
-        # teardown drops the composite too, but the order is not this method's
-        # to rely on.
+        # The kept composite belongs to the media that just came off, as it does in set_image.
+        # This state is destroyed straight after, and its teardown drops the composite too, but the order is not this method's to rely on.
         self.cover_cache.invalidate()
         return media
 

@@ -1,19 +1,5 @@
-"""Typed events from the deck hardware to a controller input.
-
-The deck reports key, dial, and touchscreen changes with three mutually
-incompatible argument shapes, which forced the dispatch seam into a star
-signature no checker could verify. One frozen event object per input kind
-carries the payload instead, so the base seam takes exactly one argument
-and each input binds its own kind.
-
-The name family is "deck event" on purpose: InputEvent already names the
-action-facing enums (Input.Key.Events.DOWN, ...), and this seam feeds
-those, it does not replace them.
-
-This module stays import-light: the enum types come in under TYPE_CHECKING
-only, so the CLI fast path and the control plane can construct a KeyEvent
-without pulling the device library.
-"""
+"""Typed hardware events with one frozen payload shape per input kind.
+InputEvent names action-facing enums; device enums stay type-only imports."""
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 

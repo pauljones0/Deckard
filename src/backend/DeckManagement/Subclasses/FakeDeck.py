@@ -24,11 +24,8 @@ from typing import Any, cast
 
 @dataclass(frozen=True)
 class SurfaceFormat:
-    """One drawable surface of a deck: its keys, its touchscreen or its screen.
-
-    The fields are the four a device class answers with, and the defaults are
-    what the driver's base class reports for a surface a model does not have.
-    """
+    """Device image format for a key, touchscreen, or screen surface.
+    Defaults match the driver base class for a surface the model lacks."""
 
     size: tuple[int, int] = (0, 0)
     format: str = ""
@@ -43,29 +40,8 @@ class SurfaceFormat:
 
 @dataclass(frozen=True)
 class FakeDeckModel:
-    """The device shape a fake deck reports.
-
-    One of these stands for a deck model. Every field is something a caller
-    reads off the device: the key grid, the image format of each surface, how
-    many dials and touch buttons there are, and the identity the USB layer
-    reads. A fake deck built from a model answers every one of those the way a
-    real deck of that model answers it, so a headless scenario can cover a
-    geometry that nobody has hardware for.
-
-    vendor_id stays 0 on every model, and __post_init__ refuses anything else.
-    The USB reset path acts on the Elgato vendor id plus the product id, and it
-    falls back to "the one device of this model on the bus" when no serial
-    matches. A fake that claimed the Elgato vendor id would therefore aim that
-    reset at a real deck of the same model plugged into the same host. A
-    scenario that needs the Elgato identity says so in its own subclass, where
-    it is visible, rather than in a model that any caller can hand around.
-
-    __post_init__ also refuses the two shapes that have no meaning and fail far
-    from their cause: a deck that takes touch events on a touchscreen of no
-    size, and a visual deck whose keys have no size. The second one divides by
-    zero inside the image helpers and is reported as a deck that failed to
-    initialize.
-    """
+    """Device geometry, surfaces, controls, and USB identity for a fake deck.
+    Validation forbids Elgato vendor IDs and non-positive visual surface sizes."""
 
     name: str
     key_layout: tuple[int, int]
@@ -99,10 +75,8 @@ class FakeDeckModel:
                 f"is_visual to False.")
 
 
-# The shape every fake deck has had since fake decks existed: an SD+ key grid
-# and dials, with the key image format of an Original. It is nobody's hardware,
-# and it stays exactly as it is, because the whole scenario suite is built on
-# it. A caller that wants a real model's shape names one of the presets below.
+# Stable synthetic default: SD+ controls with an Original key image format.
+# Use a named preset when real model geometry is required.
 DEFAULT_FAKE_DECK_MODEL = FakeDeckModel(
     name="default",
     key_layout=(2, 4),
@@ -113,9 +87,8 @@ DEFAULT_FAKE_DECK_MODEL = FakeDeckModel(
     screen_image=SurfaceFormat(format="JPEG"),
 )
 
-# The real models, each field as the driver's device class reports it. The
-# Original and the MK.2 both answer "Stream Deck Original" and differ in their
-# key image format and their product id, which is what the two devices do.
+# Real model fields match the driver; Original and MK.2 share a type name but
+# differ in key image format and product ID.
 FAKE_DECK_PRESETS: "tuple[FakeDeckModel, ...]" = (
     DEFAULT_FAKE_DECK_MODEL,
     FakeDeckModel(
@@ -179,13 +152,8 @@ FAKE_DECK_MODELS: "dict[str, FakeDeckModel]" = {model.name: model for model in F
 
 
 def fake_deck_model(model: "str | FakeDeckModel | None") -> FakeDeckModel:
-    """The model a caller named: a preset name, a model of its own, or the
-    default for None.
-
-    An unknown name raises, and the message lists the presets. A silent fall
-    back to the default would hand a scenario the wrong geometry and let it
-    assert against it.
-    """
+    """Resolve a preset name or model, using the default for None.
+    Unknown names raise with the available presets instead of changing geometry."""
     if model is None:
         return DEFAULT_FAKE_DECK_MODEL
     if isinstance(model, FakeDeckModel):
@@ -214,23 +182,13 @@ class FakeDeck:
 
         asked_layout = key_layout if key_layout is not None else list(self.model.key_layout)
         if model is None:
-            # No model named, so the grid is settled as it always was: a layout
-            # the deck settings hold wins over the key_layout argument, and the
-            # argument only fills in when the settings hold none. The row and
-            # column spinners on the deck settings page write that setting and
-            # read it back, which is why it ranks first.
+            # Without a named model, persisted grid settings override key_layout.
             self._key_layout = gl.settings_manager.get_deck_settings(self.serial_number).get("key-layout", asked_layout)
         else:
-            # A named model states the geometry, so the settings are not read at
-            # all here: otherwise a deck that once took a spinner edit would keep
-            # that grid and silently refuse every model asked for after it. The
-            # key_layout argument still wins over the model's own grid, which is
-            # how a caller asks for a model with a grid of its own.
+            # A named model ignores persisted geometry; key_layout can override its grid.
             self._key_layout = asked_layout
 
-        # Keep a stable per-instance identity. A real deck returns the same
-        # physical id() on every call. A fresh uuid per call breaks callers that compare
-        # ids to de-dup already-loaded decks (DeckManager.connect_new_decks).
+        # Keep one ID per instance so deck discovery can detect an already loaded deck.
         self._id = str(uuid.uuid4())
 
     def deck_type(self) -> "str | None":

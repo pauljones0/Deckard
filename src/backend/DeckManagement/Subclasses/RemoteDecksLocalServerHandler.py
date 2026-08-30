@@ -19,9 +19,8 @@ if TYPE_CHECKING:
 MAX_BODY_BYTES = 64 * 1024
 
 def create_handler(remote_deck_manager: "RemoteDeckManager", token: str) -> "type[BaseHTTPRequestHandler]":
-    """Factory function to create a handler class bound to one manager and
-    one access token. Every endpoint except the CORS preflight requires the
-    token, checked before any body byte is read."""
+    """Create a handler bound to one manager and access token.
+    All endpoints except CORS preflight authenticate before reading the body."""
 
     expected_token = token.encode("utf-8")
 
@@ -52,9 +51,7 @@ def create_handler(remote_deck_manager: "RemoteDeckManager", token: str) -> "typ
             self.wfile.write(json.dumps(data).encode('utf-8'))
 
         def _authorized(self) -> bool:
-            """Whether this request carries the token, compared in constant
-            time. On failure the 401 goes out before the body is read, so an
-            unauthenticated caller feeds no byte into any parser."""
+            """Check the request token in constant time before any body read."""
             supplied = self.headers.get('X-Deckard-Token')
             if supplied is None:
                 bearer = self.headers.get('Authorization', '')
@@ -83,13 +80,7 @@ def create_handler(remote_deck_manager: "RemoteDeckManager", token: str) -> "typ
 
         @classmethod
         def send_button_image(cls, button_id: int, image: "Image.Image") -> None:
-            """
-            Store a PIL image for a specific button to be sent to the browser.
-
-            Args:
-                button_id: The button identifier (e.g., row * 5 + col)
-                image: PIL Image object
-            """
+            """Store a button image for the browser."""
             # Convert PIL image to base64-encoded JPEG
             buffered = BytesIO()
             image.save(buffered, format="JPEG")
@@ -102,9 +93,7 @@ def create_handler(remote_deck_manager: "RemoteDeckManager", token: str) -> "typ
             }
 
         def do_OPTIONS(self) -> None:
-            """Handle preflight OPTIONS request. A preflight carries no
-            custom header, so it is the one unauthenticated verb, and it
-            reveals nothing beyond the CORS policy."""
+            """Handle unauthenticated CORS preflight requests."""
             self.send_response(200)
             self._set_cors_headers()
             self.end_headers()

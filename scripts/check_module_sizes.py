@@ -89,8 +89,8 @@ GRANDFATHER: dict[str, int] = {
     # a constructor signature that names every deck handle it accepts, and a
     # class-level declaration of the narrowed present state, which a subclass
     # must state at class level for a reader of the attribute to see it.
-    "src/backend/DeckManagement/deck_controller/controller.py": 1670,
-    "src/backend/DeckManagement/deck_controller/inputs.py": 1457,
+    "src/backend/DeckManagement/deck_controller/controller.py": 1298,
+    "src/backend/DeckManagement/deck_controller/inputs.py": 1247,
     "src/backend/Store/StoreBackend.py": 1948,
 }
 
