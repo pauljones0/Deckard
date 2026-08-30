@@ -1,5 +1,5 @@
-"""Check rotated dispatch, input retirement, repaint, and gesture cancellation.
-Key checks use three non-square presets; dial and strip checks use the plus preset.
+"""Check (a) key dispatch, (b) rebuild/repaint, (c) dial and (d) touch/drag dispatch under rotation.
+Check (e) unlocked load, (f) retired release, (g) consecutive turns, (h) held-key cancellation, and (i) dirty-marker clearing.
 """
 import fixtures  # must be first; isolates DATA_PATH before import globals
 

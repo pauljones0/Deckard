@@ -1,4 +1,4 @@
-"""Swallow write failures, resume writes, and schedule one repaint per burst."""
+"""Swallow write failures, resume writes, and repaint once per burst on a 2 s cadence."""
 import fixtures
 
 

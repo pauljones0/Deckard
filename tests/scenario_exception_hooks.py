@@ -438,8 +438,8 @@ def main() -> None:
     )
     assert "process exiting" in at_exit.stderr
 
-    # 11. Keep the guard lock re-entrant because a raising __del__ can re-enter
-    # _log_exc during GC inside the guarded region. Bound the worker join.
+    # Keep the guard lock re-entrant when __del__ re-enters _log_exc during GC.
+    # Use the completion Event's bounded wait instead of joining the worker.
     records.clear()
     log_hooks._rate_state.clear()
 

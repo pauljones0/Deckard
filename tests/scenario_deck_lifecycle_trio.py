@@ -145,8 +145,8 @@ def check_close_gen_invalidation() -> int:
 
 
 def check_close_load_race() -> int:
-    """Close a load parked past its generation gate during prebuild.
-    Its orphaned video must not attach after the resource sweep.
+    """Close while a load holds the background lock during prebuild.
+    The resumed load must reject its payload before close acquires the lock to sweep.
     """
     controller = make_headless_controller(serial="trio-15race")
     page = controller.active_page
@@ -193,8 +193,8 @@ def check_close_load_race() -> int:
         release.set()
         return 1
 
-    # Close while the load is past its gate; apply_prebuilt must recheck
-    # _closing, suppress attachment, and close the orphaned payload.
+    # The resumed load sees _closing and rejects its payload before releasing
+    # the lock, after which close can acquire the lock and sweep.
     closer = threading.Thread(
         target=lambda: controller.close(remove_media=True), name="race-close", daemon=True)
     closer.start()
