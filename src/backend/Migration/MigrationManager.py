@@ -33,8 +33,8 @@ class MigrationManager:
                 migrator.create_backup()
                 migrator.migrate()
             except Exception:
-                # Stop the chain without aborting startup; later migrators require this one to finish.
-                # The failed migrator stays pending, so the next launch retries it.
+                # Stop the chain without aborting startup; later migrators require this one
+                # to finish. The failed migrator stays pending for the next launch.
                 log.opt(exception=True).error(
                     f"Migrator to app version {migrator.app_version} failed; "
                     f"leaving it pending and skipping later migrators this run")

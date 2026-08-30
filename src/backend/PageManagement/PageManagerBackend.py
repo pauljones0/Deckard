@@ -82,7 +82,10 @@ class PageManagerBackend:
         self.PAGE_PATH = os.path.join(gl.DATA_PATH, "pages")
 
     def load_page(self, path: str, deck_controller: "DeckController") -> Page | None:
-        """Load and cache a page for one deck controller."""
+        """Load and cache a page for one deck controller.
+
+        :param path: The path to the page
+        """
         if not path or not os.path.isfile(path):
             return None
 
@@ -210,8 +213,8 @@ class PageManagerBackend:
         return page_names
 
     def clear_old_cached_pages(self) -> None:
-        # Eviction never writes JSON and excludes live or pinned Pages; a bad eviction leaves dead actions.
-        # Select and remove under lock, then run potentially blocking plugin teardown after release.
+        # Eviction never writes JSON; exclude live or pinned Pages to avoid dead actions.
+        # Select and remove under lock, then run blocking plugin teardown after release.
         with self._pages_lock:
             total = sum(len(controller_pages) for controller_pages in self.pages.values())
             excess = total - self.max_pages
@@ -238,8 +241,8 @@ class PageManagerBackend:
         # discard_controller can orphan a captured controller_pages dict.
         # Its later pop remains a safe no-op.
         for _, controller_pages, path, page in to_evict:
-            # Revalidate active or screensaver-pending state and fetch, tick, or gesture pins under lock.
-            # Pop before teardown so a concurrent fetch cannot receive the gutted Page.
+            # Revalidate active or pending-screensaver state and fetch, tick, or gesture
+            # pins under lock. Pop before teardown so concurrent fetch gets a fresh Page.
             with self._pages_lock:
                 current_entry = controller_pages.get(path)
                 if current_entry is None or current_entry.get("page") is not page:
@@ -427,8 +430,8 @@ class PageManagerBackend:
                 controller_pages = self.pages.get(controller, {})
                 entry = controller_pages.pop(page_path, None)
             if entry is not None:
-                # No live guard: caches are per controller, and this Page is replaced or has no page left.
-                # Screensavers fail the path guard; clear outside the lock because plugin hooks can block.
+                # No live guard: Pages are per controller; this one is replaced or no page remains.
+                # Screensavers fail the path guard; release the lock before blocking plugin hooks.
                 entry["page"].clear_action_objects()
                 if not controller_pages:
                     with self._pages_lock:
@@ -467,8 +470,8 @@ class PageManagerBackend:
         if os.path.exists(path):
             raise FileExistsError(f"A page with the name '{page_name}' already exists.")
 
-        # Imported or duplicated content can add rules; discard stale writes before reusing its path.
-        # This prevents old Page holders from resurrecting deleted content over the new page.
+        # Imported or duplicated content can add rules; discard stale writes before
+        # reusing the path. Refresh its document so old holders cannot restore content.
         page_flush.get().discard_path(path)
         atomic_write_json(path, page_dict)
         self.refresh_document(path)
@@ -568,8 +571,8 @@ class PageManagerBackend:
     def rename_document(self, old_path: str, new_path: str) -> PageDocument:
         """Move old_path's shared document to new_path and return it.
         Existing Pages keep the same document object and any unsaved edits."""
-        # Move the source; displace but do not mutate held destination docs; otherwise reuse or create one.
-        # Moved docs keep unsaved edits, while reused destination docs refresh after the registry lock.
+        # Move source; displace held destination docs unchanged; otherwise reuse or create one.
+        # Moved docs keep edits; reused destination docs refresh after the registry lock.
         old_key = canonical_path(old_path)
         new_key = canonical_path(new_path)
         with self._documents_guard:
@@ -605,8 +608,8 @@ class PageManagerBackend:
 
         data, corrupt = self.settings_manager.load_settings_reporting_corruption(path)
 
-        # Use a valid backup for every corrupt primary, independent of use_backup or quarantine success.
-        # Returning an empty dict would let a settings write erase the page before a later heal.
+        # Use a valid backup for every corrupt primary, regardless of use_backup
+        # or quarantine success. An empty result could erase the page on save.
         if corrupt and path != backup_path and os.path.exists(backup_path):
             healed, backup_corrupt = self.settings_manager.load_settings_reporting_corruption(backup_path)
             if not backup_corrupt:
@@ -656,23 +659,24 @@ class PageManagerBackend:
             # Do not create documents for unheld pages because the registry retains them.
             document = self.existing_document(page_path)
             if document is not None:
-                # Scan a snapshot because concurrent live-content mutation can invalidate iteration.
-                # Edit only after a match; both passes are idempotent, and the second finds what remains.
+                # Scan a snapshot because concurrent mutation can invalidate iteration.
+                # Edit only after a match; both passes are idempotent, and second finds remainder.
                 page_had_asset = self._strip_asset(
                     document.get_without_action_objects(), abs_target_path)
                 if page_had_asset:
                     with document.edit() as page_dict:
                         self._strip_asset(page_dict, abs_target_path)
             else:
-                # Unheld pages have only a file copy; flush before bypassing get_page_data.
-                # Corrupt reads preserve sidecar and backup, keep page_had_asset false, and skip the write.
+                # Flush unheld pages before bypassing get_page_data.
+                # Corrupt reads preserve sidecar and backup, leave no match, and skip the write.
                 page_flush.get().flush_path(page_path)
                 page_dict = self.settings_manager.load_settings_from_file(page_path)
                 page_had_asset = self._strip_asset(page_dict, abs_target_path)
                 if page_had_asset:
                     atomic_write_json(page_path, page_dict)
 
-                    # A deck can load this page during the write, so refresh any new document holder.
+                    # A deck can load this page during the write.
+                    # Refresh any document created during that race.
                     self.refresh_document(page_path)
 
             # Reload active holders after edits release the document lock.
@@ -763,7 +767,10 @@ class PageManagerBackend:
             yield settings
 
     def set_page_settings(self, path: str | None, settings: dict[str, Any]) -> None:
-        """Replace the complete settings section of one page."""
+        """
+        :param path: Path to the file
+        :return: None
+        """
         if path is None:
             return
 

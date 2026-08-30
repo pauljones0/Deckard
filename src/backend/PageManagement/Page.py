@@ -85,7 +85,8 @@ class Page:
 
     def update_dict(self) -> None:
         """Refresh shared content from disk without changing action objects.
-        Call only before action-object changes; this replaces every Page's unsaved content."""
+        Call only before action-object changes; this replaces every Page's unsaved content.
+        """
         self._document.refresh_from_disk()
 
     def load(self, load_from_file: bool = False) -> None:
@@ -445,7 +446,8 @@ class Page:
             try:
                 state_int = int(state_key)
             except (TypeError, ValueError):
-                # Skip non-integer state keys so settings and event-assignment writes reach valid states.
+                # Skip non-integer state keys so settings and event-assignment writes
+                # can reach valid states.
                 continue
             actions = ident.get_actions(self, state_key)
             for i, _existing_dict in enumerate(actions):
