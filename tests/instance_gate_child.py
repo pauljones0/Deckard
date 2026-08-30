@@ -3,7 +3,7 @@ import os
 import sys
 
 # Set the parent data directory before globals resolves and creates DATA_PATH
-# Refuse a fallback because os._exit modes cannot clean writes to real user data.
+# Refuse fallback because os._exit modes cannot clean real user data
 _DATA_PATH = os.environ.get("DECKARD_GATE_DATA")
 if not _DATA_PATH:
     raise SystemExit(
@@ -118,7 +118,7 @@ def _become_primary_loop(app_id: str, answer_quit: bool,
             say(f"VERDICT {decision.value}")
             raise SystemExit(f"expected to be the primary, got {decision.value}")
     else:
-        # Register directly because the old-name gate would probe the name it claims
+        # Register directly; the old-name gate would probe its claimed name
         app.register(None)
         if app.get_is_remote():
             raise SystemExit(f"{app_id} was already owned")
@@ -132,7 +132,7 @@ def _become_primary_loop(app_id: str, answer_quit: bool,
                 # Delay exit so the waiting launch must poll for name release
                 GLib.timeout_add(int(delay * 1000), lambda: os._exit(0))
                 return
-            # Exit inside the handler so the caller observes name release without a reply
+            # Exit in the handler; the caller sees release without a reply
             os._exit(0)
 
         action = Gio.SimpleAction.new("quit", None)
@@ -142,7 +142,7 @@ def _become_primary_loop(app_id: str, answer_quit: bool,
     say("READY")
     # Model boot after registration but before main-context dispatch
     time.sleep(float(os.environ.get("DECKARD_GATE_DISPATCH_DELAY", "0")))
-    # Print before dispatch so the parent can order boot completion against wire events
+    # Print before dispatch to order boot completion against wire events
     say("DISPATCHING")
     GLib.MainLoop().run()
 

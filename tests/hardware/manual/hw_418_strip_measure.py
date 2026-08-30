@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Measure SD+ strip mapping by aligning a dial-controlled marker to eight edges.
-Run with no app instance; dial turns move, dial presses record, key presses undo; arguments are [SY GAP]."""
+"""Measure SD+ strip mapping with a dial-controlled marker.
+Deckard must not run; dials move and record, keys undo; args: [SY GAP]."""
 
 import contextlib
 import sys

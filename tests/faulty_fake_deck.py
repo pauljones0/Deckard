@@ -44,7 +44,7 @@ class FaultyFakeDeck(FakeDeck):
         self._write_latency: float = 0.0
 
         # Track close and unplug states that FakeDeck hard-wires to True.
-        # Strict mode rejects later writes; set_strict_lifecycle(False) permits them.
+        # Strict mode rejects later writes; disabling it permits them.
         self._lifecycle_lock = threading.Lock()
         self._open = True
         self._connected = True
@@ -200,7 +200,7 @@ class FaultyFakeDeck(FakeDeck):
 
     def stop_read_thread(self, timeout=None) -> None:
         """Provide the BetterDeck stop interface for unit-tier teardown.
-        The delegated operation is a no-op because this deck has no reader thread."""
+        The helper is a no-op because this deck has no reader thread."""
         from src.backend.DeckManagement.BetterDeck import stop_device_read_thread
 
         stop_device_read_thread(self, timeout)

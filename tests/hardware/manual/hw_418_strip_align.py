@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Interactively align SD+ key and strip geometry with a color-coded test card.
-Run with no app instance; dials adjust sx, sy, gap, span; keys adjust xoff, bandh, mode, and output; arguments are [IMAGE] [SX SY GAP SPAN [XOFF [BANDH]]]."""
+"""Align SD+ key and strip geometry with a color test card.
+No Deckard instance can run; args: [IMAGE] [SX SY GAP SPAN [XOFF [BANDH]]]."""
 
 import json
 import os
@@ -158,7 +158,7 @@ def main() -> int:
     deck = plus[0]
     deck.open()
     try:
-        # Retry feature reports briefly, then paint because data writes can still work
+        # Retry feature reports, then paint because data writes can still work
         for attempt in range(3):
             try:
                 deck.reset()

@@ -15,7 +15,7 @@ REFUSE = os.environ.get("DECKARD_STUB_REFUSE", "")
 # Query result used to test read verbs without a live deck
 QUERY_JSON = os.environ.get("DECKARD_STUB_QUERY_JSON", "{}")
 
-# Keep these signatures equal to src/api.py so interface drift fails the scenario.
+# Match src/api.py signatures so interface drift fails the scenario.
 # Read methods return JSON; other methods return an empty or refusal reason.
 _QUERY_METHODS = {"QueryState", "ListActions"}
 

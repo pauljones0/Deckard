@@ -1,5 +1,5 @@
 """Shared fixtures that set a temporary DATA_PATH for the headless harness.
-Import this module before src or globals because globals.py reads argv at import."""
+Import before src or globals because globals.py reads argv at import."""
 import atexit
 import json
 import os
@@ -72,7 +72,7 @@ class _StubDeckSettings(DeckSettings):
 
 
 class StubSettingsManager:
-    """Unit-tier settings manager with the app and deck operations under test."""
+    """Unit-tier settings manager for app and deck operations under test."""
 
     def __init__(self, app_settings: dict = None):
         self._app_settings = app_settings if app_settings is not None else {}
@@ -154,7 +154,7 @@ class StubBackground:
         self.slideshow = None
 
     def slideshow_tick(self, now=None):
-        # Match a real background with no slideshow: each media tick returns False
+        # Match a real background with no slideshow
         return False
 
 
@@ -187,7 +187,7 @@ _QUIET_STATE = _QuietInputState()
 
 class StubInput:
     """Input stand-in with production present-state tracking.
-    update() forces paint because the unit tier has no rendered content to deduplicate."""
+    update() forces paint; the unit tier has no content to deduplicate."""
 
     def __init__(self, controller: "StubDeckController", index: int, touchscreen: bool = False):
         self.controller = controller
@@ -212,7 +212,7 @@ class StubInput:
 
 
 class StubDeckController:
-    """Unit-tier controller with production write-result and repaint methods."""
+    """Unit-tier controller with production write and repaint methods."""
 
     def __init__(self, deck=None, serial: str = "stub-serial-1", n_keys: int = 0, has_touchscreen: bool = False):
         self.deck = deck if deck is not None else FaultyFakeDeck(serial_number=serial)
@@ -244,7 +244,7 @@ class StubDeckController:
 
     def _release_handle(self) -> None:
         """Release the raw unit-tier deck through the BetterDeck helper.
-        Swallow close failures so ClearAndClose cannot stop the media writer."""
+        Swallow close failures so ClearAndClose cannot stop the writer."""
         from src.backend.DeckManagement.BetterDeck import release_device_handle
 
         try:
@@ -262,7 +262,7 @@ class StubDeckController:
             size = self.get_touchscreen_image_size()
             self.deck.set_touchscreen_image(b"\x00" * 16, x_pos=0, y_pos=0, width=size[0], height=size[1])
 
-    # Bind write-result and repaint methods to DeckController instead of copying them
+    # Bind write and repaint methods to DeckController; do not copy them
 
     def update_all_inputs(self, gen=None) -> None:
         """Update all inputs and count each full repaint."""
@@ -286,7 +286,7 @@ _stub_methods_bound = False
 
 def _bind_real_deckcontroller_methods() -> None:
     """Bind the production write-result and repaint protocol to the stub.
-    Import lazily to keep psutil and mem_telemetry out of pure D-Bus scenarios."""
+    Import lazily to keep psutil and mem_telemetry out of D-Bus scenarios."""
     global _stub_methods_bound
     if _stub_methods_bound:
         return
@@ -378,7 +378,7 @@ def seed_page_with_background_and_screensaver(
     screensaver_time_delay: int = 60, data_dir: str = None,
 ) -> str:
     """Seed background and screensaver settings in one page.
-    Persist the screensaver path because each load overwrites its media_path."""
+    Persist the path because each load overwrites screensaver media_path."""
     data_dir = data_dir if data_dir is not None else gl.DATA_PATH
     pages_dir = os.path.join(data_dir, "pages")
     os.makedirs(pages_dir, exist_ok=True)
@@ -451,7 +451,7 @@ def _install_integration_globals() -> None:
 def make_headless_controller(serial: str = "headless-1", key_layout=None, page_name: str = "Main",
                              model=None):
     """Build an integration-tier DeckController with a seeded empty page.
-    model accepts a preset name, FakeDeckModel, or None for the default shape."""
+    model accepts a preset name, FakeDeckModel, or None for the default."""
     _install_integration_globals()
     seed_page(page_name)
 
@@ -483,7 +483,7 @@ def wait_until(predicate, timeout: float = 3.0, interval: float = 0.02) -> bool:
 
 
 def start_watchdog(seconds: float, label: str = "scenario") -> None:
-    """Exit the process after a bounded delay and identify the deadlocked scenario."""
+    """Exit after a bounded delay and identify a deadlocked scenario."""
     def _fire():
         time.sleep(seconds)
         print(f"FAIL: {label} watchdog fired after {seconds}s -- likely deadlock", flush=True)
@@ -524,7 +524,7 @@ def teardown(controller) -> None:
 
 
 # Stub plugin manager and latch action for wipe-restore scenarios
-# Action pages require this graph because the base harness installs no plugin manager.
+# Action pages need this graph because the harness has no plugin manager.
 
 STUB_ACTION_ID = "dev_test_LatchAction"
 
@@ -611,7 +611,7 @@ _FAKE_PLUGIN_BASE = _types.SimpleNamespace(PATH="/tmp", backend=None)
 
 
 def install_stub_plugin_manager(action_cls, icon_path, action_id: str = STUB_ACTION_ID):
-    """Install and return a plugin manager that resolves action_id to action_cls.
+    """Install a plugin manager that maps action_id to action_cls.
     Install it before DeckController.__init__ loads the default page."""
     holder = _StubActionHolder(action_cls, action_id, icon_path)
     gl.plugin_manager = _StubPluginManager(holder, action_id)

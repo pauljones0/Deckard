@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Cycle configured pages over D-Bus and mark the memory telemetry timeline."""
 
-# Mark page switches on the sampler timeline; report an unreachable service cleanly
+# Mark page switches; report an unreachable service cleanly
 import argparse
 import os
 import re

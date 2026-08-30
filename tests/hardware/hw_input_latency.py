@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Capture real HID input latency while an externally claimed deck paints video.
-Never inject events; the operator must claim the deck, close other instances, and press a physical key."""
+"""Capture physical input latency while a claimed deck paints video.
+Never inject events; claim deck, close other instances, press a deck key."""
 from __future__ import annotations
 
 import argparse

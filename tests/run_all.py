@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run each scenario in an isolated subprocess so failures cannot corrupt later tests."""
+"""Run each scenario in an isolated subprocess."""
 import argparse
 from contextlib import suppress
 import os
@@ -137,7 +137,7 @@ def run_one(path: Path, timeout: float) -> tuple[bool, str, float]:
 
 
 def _classify(name: str, ok: bool) -> tuple[str, bool]:
-    """Map a result to status and hard-failure state through the expected-fail list."""
+    """Map a result to status and hard-failure state."""
     expected_fail_reason = EXPECTED_FAIL_UNTIL_M1.get(name)
     if ok:
         return "PASS", False

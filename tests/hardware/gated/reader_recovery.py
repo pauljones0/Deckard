@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Verify real-deck reader recovery, repaint, and recovery-count settling.
-The supervisor must reopen from the media thread in one handle cycle without a USB reset."""
+The supervisor reopens on the media thread in one cycle, without USB reset."""
 import os
 import sys
 import time
@@ -33,7 +33,7 @@ def main() -> int:
         if reader is None or not reader.is_alive():
             failures.append("the real deck has no live reader thread to kill")
         else:
-            # Stop both reader flags but leave the handle open to model a dead reader
+            # Leave the handle open when both reader flags stop
             if hasattr(raw, "reconnect_after_suspend"):
                 raw.reconnect_after_suspend = False
             raw.run_read_thread = False

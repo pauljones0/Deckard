@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Run gated hardware scripts with one exclusive deck claim for the batch.
-Scripts must be non-interactive and isolated; timeouts kill groups, owners are never forced, and stopped instances are restored."""
+"""Run isolated, non-interactive hardware scripts with one deck claim.
+Use bounded process groups; never force owners; restore stopped instances."""
 import argparse
 import os
 import signal

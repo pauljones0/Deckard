@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # hw: no-deck-ok
 """Run deck-free self-tests for hardware parsing and orchestration.
-The gated entry exercises discovery, process-group execution, and summary output."""
+Exercises discovery, process-group execution, and summary output."""
 import os
 import subprocess
 import sys

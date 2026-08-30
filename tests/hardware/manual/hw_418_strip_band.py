@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Interactively calibrate SD+ key spacing and strip-band geometry.
-Run with no app instance; dials adjust sx, sy, gap, span; keys adjust xoff, bandh, and output; arguments are SX SY GAP SPAN [XOFF [BANDH]]."""
+"""Calibrate SD+ key spacing and strip-band geometry.
+No Deckard instance can run; args: SX SY GAP SPAN [XOFF [BANDH]]."""
 
 import sys
 import threading
@@ -27,7 +27,7 @@ class Params:
                  bandh: int = 0) -> None:
         self.lock = threading.Lock()
         self.sx, self.sy, self.gap, self.span, self.xoff = sx, sy, gap, span, xoff
-        # Zero follows the strip's 800:100 aspect; nonzero sets an independent height
+        # Zero follows 800:100; nonzero sets an independent height
         self.bandh = bandh
         self.dirty = threading.Event()
         self.dirty.set()

@@ -1,5 +1,5 @@
 """Shared engine boot, write journal, synthetic data, and teardown helpers.
-boot_engine imports globals after argv points at scratch data; each process boots one engine."""
+Import globals after argv points at scratch; boot one engine per process."""
 import hashlib
 import itertools
 import json
@@ -69,7 +69,7 @@ class Journal:
 
 
 def attach_journal(controller) -> Journal:
-    """Journal the live BetterDeck write surface after each device write returns."""
+    """Journal BetterDeck writes after each device write returns."""
     bd = controller.deck
     j = Journal()
     orig_key = bd.set_key_image
@@ -132,7 +132,7 @@ class HwDeckManager:
 
 
 def build_scratch(tag: str) -> str:
-    """Build synthetic per-key icons and one page without reading real user data."""
+    """Build synthetic icons and one page without reading user data."""
     from PIL import Image, ImageDraw
 
     scratch = os.path.join(WORK_ROOT, tag)
@@ -178,8 +178,8 @@ def default_page_for(scratch: str, serial: str) -> None:
 
 def boot_engine(tag: str) -> dict:
     """Open exactly one real deck with a headless DeckController.
-    Return globals, controller, journal, scratch data, serial, and key slots."""
-    # Refuse concurrent access while the system instance owns the exclusive deck
+    Return globals, controller, journal, scratch, serial, and key slots."""
+    # Refuse access while the system instance owns the deck
     import hw_verify
     pid = hw_verify.dbus_owner_pid()
     if pid is not None:
@@ -233,7 +233,7 @@ def boot_engine(tag: str) -> dict:
 
 def shutdown_engine(env: dict, timeout: float = 15.0) -> float:
     """Close through the production path and return the elapsed time.
-    Raise if the media thread exceeds the bound or the device handle stays open."""
+    Raise if the media thread exceeds the bound or the handle stays open."""
     controller = env["controller"]
     began = time.monotonic()
     env["gl"].threads_running = False
@@ -243,7 +243,7 @@ def shutdown_engine(env: dict, timeout: float = 15.0) -> float:
         media.join(timeout)
         if media.is_alive():
             raise RuntimeError(f"the media writer outlived the {timeout:g}s teardown bound")
-    # Stop the non-daemon tick thread because this process does not end with os._exit
+    # Stop the non-daemon tick thread before normal interpreter exit
     controller.keep_actions_ticking = False
     stop_event = getattr(controller, "_tick_stop_event", None)
     if stop_event is not None:
