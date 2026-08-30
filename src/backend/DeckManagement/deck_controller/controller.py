@@ -58,7 +58,8 @@ from src.backend.DeckManagement.Subclasses.encoded_image_cache import EncodedIma
 from src.backend.DeckManagement.Subclasses.native_tile_cache import NativeTileCache, native_tile_cache_max_bytes
 from src.backend.DeckManagement.deck_controller.background_media import Background, BackgroundVideo
 from src.backend.DeckManagement.deck_controller.inputs import ControllerDial, ControllerKey, ControllerTouchScreen
-from src.backend.DeckManagement.deck_controller.input_latency import InputLatencyRun, dispatch_dial_callback, dispatch_key_callback, dispatch_touchscreen_callback, make_input_latency_tracker, write_input_latency_report
+from src.backend.DeckManagement.deck_controller.input_latency import InputLatencyRun, dispatch_deck_event, make_input_latency_tracker, write_input_latency_report
+from src.backend.DeckManagement.deck_events import DeckEvent, DialEvent, KeyEvent, TouchscreenEvent
 from src.backend.DeckManagement.deck_controller.page_completion import PageLoadCompletion
 from src.backend.DeckManagement.deck_controller.media_writer import (
     ClearAndCloseMsg,
@@ -218,11 +219,10 @@ class DeckController:
         # Background decode owns two workers of its own, so a burst on the
         # application background pool (store tabs, importers, window
         # grabbing) cannot queue this deck's page background behind
-        # unrelated work. Two, not one: a rapid page switch must start the
-        # new page's decode while the superseded page's decode still runs,
-        # or the switch inherits the old page's decode time. A third rapid
-        # switch cancels the queued middle one, and close() shuts the pool
-        # down.
+        # unrelated work. Two, not one: a rapid page switch must start its
+        # decode while the superseded page's decode still runs, or it
+        # inherits that decode's time. A third rapid switch cancels the
+        # queued middle one, and close() shuts the pool down.
         try:
             _serial = self.serial_number()
         except Exception:
@@ -589,28 +589,29 @@ class DeckController:
             self._had_write_failure = True
             self._full_repaint_pending = True
 
-    def event_callback(self, ident: InputIdentifier, *args: Any, **kwargs: Any) -> None:
+    def event_callback(self, ident: InputIdentifier, event: "DeckEvent") -> None:
         if not self.allow_interaction:
             return
         i = self.get_input(ident)
         if not i:
             return
-        i.event_callback(*args, **kwargs)
+        i.event_callback(event)
 
-    def key_event_callback(self, deck: Any, key: int, *args: Any, **kwargs: Any) -> None:
+    def key_event_callback(self, deck: Any, key: int, state: bool) -> None:
         # key arrives already mapped into the logical grid. Decode it against
         # the wrapper, whose key_layout is the logical one and is what
         # Available_Identifiers named the registry from. deck is the raw
         # handle the reader thread passes, and it reports the unrotated
         # layout: decoding against that names a different key for six of the
         # eight positions of a two by four grid at 90 and at 270.
-        dispatch_key_callback(self, key, args, kwargs)
+        x, y = self.index_to_coords(key)
+        dispatch_deck_event(self, Input.Key(f"{x}x{y}"), KeyEvent(pressed=bool(state)))
 
-    def dial_event_callback(self, deck: Any, dial: Any, *args: Any, **kwargs: Any) -> None:
-        dispatch_dial_callback(self, dial, args, kwargs)
+    def dial_event_callback(self, deck: Any, dial: Any, event_type: Any, value: Any) -> None:
+        dispatch_deck_event(self, Input.Dial(str(dial)), DialEvent(kind=event_type, value=int(value)))
 
-    def touchscreen_event_callback(self, deck: Any, *args: Any, **kwargs: Any) -> None:
-        dispatch_touchscreen_callback(self, args, kwargs)
+    def touchscreen_event_callback(self, deck: Any, event_type: Any, value: Any) -> None:
+        dispatch_deck_event(self, Input.Touchscreen("sd-plus"), TouchscreenEvent(kind=event_type, value=value))
 
     ### Helper methods
     def generate_alpha_key(self) -> Image.Image:

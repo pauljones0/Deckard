@@ -14,6 +14,7 @@ import threading
 from fixtures import make_headless_controller, seed_page, start_watchdog
 
 import globals as gl
+from src.backend.DeckManagement.deck_events import KeyEvent
 from src.backend.DeckManagement.InputIdentifier import Input
 
 
@@ -26,6 +27,11 @@ class FakeVideo:
         self.calls = []
         from PIL import Image
         self._frame = Image.new("RGBA", (72, 72), (0, 0, 0, 255))
+
+    def frame_due(self, now):
+        # The media tick asks the video's own deadline; this stand-in is
+        # always due, matching its pre-deadline every-tick behavior.
+        return True
 
     def set_playback(self, fps=None, loop=None):
         self.calls.append(fps)
@@ -341,7 +347,7 @@ def check_ready_to_clear_key_handler(controller) -> int:
         # loop brackets the active page once a second and a window straddling
         # only one of them shifts the comparison in either direction.
         holders_before = gl.page_manager.pins.count(pressed_page)
-        key.event_callback(press_state=True)  # key DOWN
+        key.event_callback(KeyEvent(pressed=True))  # key DOWN
     finally:
         key.update = real_update
 

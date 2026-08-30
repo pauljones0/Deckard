@@ -38,6 +38,7 @@ from typing import Any, TYPE_CHECKING
 # future import above prevents that.
 import globals as gl
 from src.backend import timer_wheel
+from src.backend.DeckManagement.deck_events import KeyEvent
 from src.backend.DeckManagement.InputIdentifier import Input
 
 if TYPE_CHECKING:
@@ -325,7 +326,7 @@ class _Press:
         c_input = self._controller.get_input(self._identifier)
         held_before = None if c_input is None else c_input._gesture
         try:
-            self._controller.event_callback(self._identifier, True)
+            self._controller.event_callback(self._identifier, KeyEvent(pressed=True))
         finally:
             self._arm_release(held_before)
 
@@ -378,7 +379,7 @@ class _Press:
         c_input = self._controller.get_input(self._identifier)
         if c_input is None or c_input._gesture is not self._gesture:
             return
-        self._controller.event_callback(self._identifier, False)
+        self._controller.event_callback(self._identifier, KeyEvent(pressed=False))
 
     def wait_for_start(self) -> str:
         """Block until the press is delivered or refused, and say which.

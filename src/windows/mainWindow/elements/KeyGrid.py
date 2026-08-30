@@ -38,6 +38,7 @@ from loguru import logger as log
 # Imort globals
 from src.backend import services
 
+from src.backend.DeckManagement.deck_events import KeyEvent
 import globals as gl
 
 # Import own modules
@@ -480,9 +481,9 @@ class KeyButton(Gtk.Frame):
         if not gl.settings_manager.app().emulate_at_double_click:
             return
         
-        self.key_grid.deck_controller.event_callback(self.identifier, True)
+        self.key_grid.deck_controller.event_callback(self.identifier, KeyEvent(pressed=True))
         # Release key after 100ms
-        GLib.timeout_add(100, self.key_grid.deck_controller.event_callback, self.identifier, False)
+        GLib.timeout_add(100, self.key_grid.deck_controller.event_callback, self.identifier, KeyEvent(pressed=False))
 
     def set_border_active(self, visible: bool) -> None:
         if visible:

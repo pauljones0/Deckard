@@ -16,6 +16,7 @@ import time  # noqa: E402
 import globals as gl  # noqa: E402
 
 from src.backend import control_plane  # noqa: E402
+from src.backend.DeckManagement.deck_events import KeyEvent
 from src.backend.DeckManagement.InputIdentifier import Input  # noqa: E402
 
 # The recording action and the stub plugin manager behind it, shared rather
@@ -695,7 +696,7 @@ def leg_release_arms_when_the_press_raises(plane, controller) -> None:
     def raising_event_callback(ident, *args, **kwargs):
         seen.append(args)
         real_event_callback(ident, *args, **kwargs)
-        if args and args[0]:
+        if args and args[0].pressed:
             raise RuntimeError("an action raised on the way down")
 
     controller.event_callback = raising_event_callback
@@ -706,7 +707,7 @@ def leg_release_arms_when_the_press_raises(plane, controller) -> None:
     finally:
         del controller.event_callback
 
-    assert seen == [(True,), (False,)], f"the deck saw {seen}"
+    assert seen == [(KeyEvent(pressed=True),), (KeyEvent(pressed=False),)], f"the deck saw {seen}"
     # The release clears the gesture clock first and drops the snapshot last,
     # with a dispatch between the two. A wait on the clock alone reads the
     # snapshot while the release is still running, and reports a press that

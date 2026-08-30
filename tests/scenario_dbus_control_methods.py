@@ -22,6 +22,7 @@ import src.api as api  # noqa: E402
 # defines helpers, because its own legs run under its __main__ guard.
 import scenario_api_lifecycle_publish as harness  # noqa: E402
 
+from src.backend.DeckManagement.deck_events import KeyEvent
 from src.backend.DeckManagement.InputIdentifier import Input  # noqa: E402
 
 WATCHDOG_SECONDS = 80
@@ -287,7 +288,8 @@ def leg_emulate_input(client, controller) -> None:
         del controller.event_callback
 
     assert [(ident, args) for (ident, args, _thread) in seen] == [
-        (STATE_KEY, (True,)), (STATE_KEY, (False,)),
+        (STATE_KEY, (KeyEvent(pressed=True),)),
+        (STATE_KEY, (KeyEvent(pressed=False),)),
     ], f"the press reached the deck as {seen}"
     assert all(thread is not threading.main_thread() for (_i, _a, thread) in seen), (
         f"the press ran on the main thread: {[t.name for (_i, _a, t) in seen]} -- "
