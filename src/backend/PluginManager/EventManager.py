@@ -42,11 +42,8 @@ class EventManager:
         for event_assigner in self._event_assigners:
             for default_event in event_assigner.default_events:
                 if default_event is None:
-                    # EventAssigner falls back to [default_event] when a caller
-                    # gives neither default_events nor default_event, so an
-                    # assigner declared with no event yields [None]. A real
-                    # InputEvent reads this map, so no lookup finds such an
-                    # entry. Keep it out of the map.
+                    # An assigner with no declared event defaults to [None].
+                    # Exclude it because map lookups use real InputEvent values.
                     continue
                 event_map[default_event] = event_assigner
 
@@ -54,13 +51,8 @@ class EventManager:
             for input_event_str, event_id in self._overrides.items():
                 input_event = Input.EventFromStringName(input_event_str)
                 if input_event is None:
-                    # A junk key, like the one the default-events loop above
-                    # drops. EventFromStringName answers None for an override
-                    # key it cannot resolve, the literal "None" included, which
-                    # page JSON carries because it stores an assignment as
-                    # str(input_event). Such a key gives the map an entry no
-                    # lookup finds and the event configurator a wrong row, and
-                    # it shadows nothing. Drop the stale override.
+                    # Drop unresolved override keys, including the stored literal "None".
+                    # They match no lookup and add an invalid configurator row.
                     continue
                 override_assigner = self.get_event_assigner_by_id(event_id) if event_id else None
                 event_map[input_event] = override_assigner
