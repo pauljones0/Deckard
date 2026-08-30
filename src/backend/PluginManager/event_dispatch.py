@@ -191,7 +191,8 @@ class Lane:
         self.current: _CurrentObserver = {"name": None, "label": None, "started": 0.0, "next_warn": 0.0}
         self.backlog = 0
         self.backlog_warned = False
-        # Lifetime batches dropped at the cap; the monitor reports nonzero values.
+        # Lifetime count of batches dropped at the cap.
+        # _account_dropped reports each producer-side update immediately.
         self.dropped = 0
         with _watch_lock:
             _lanes.add(self)
@@ -242,8 +243,8 @@ class Lane:
         dropped = 0
         with self._cond:
             if _shutdown:
-                # Recheck under the runner-exit lock after shutdown sets its flag.
-                # This prevents a new runner during teardown.
+                # Recheck under the lane lock, but shutdown can race after this point.
+                # A newly created runner then sees _shutdown and abandons its queue.
                 raise DispatchShutdown("event dispatch is shut down")
             self._pending.append(batch)
             # Drop oldest batches until the queue is within its cap.

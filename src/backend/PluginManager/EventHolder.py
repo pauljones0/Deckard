@@ -53,7 +53,7 @@ class EventHolder:
 
     def trigger_event(self, *args: Any, **kwargs: Any) -> None:
         """Queue observers in registration order and return without waiting for completion.
-        Hold unobserved events until backend registration; queue observed events immediately."""
+        Hold observerless events only in armed bounded window; registration queues, expiry drops."""
         # Prepend event_id as the observers' first positional argument.
         payload = (self.event_id, *args)
 

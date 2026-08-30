@@ -90,7 +90,7 @@ class SignalManager:
 
     def trigger_signal(self, signal: type[Signal], *args: Any, **kwargs: Any) -> None:
         """Queue each observer on the GTK main loop from any thread.
-        Return before observers run; use trigger_signal_sync to wait."""
+        Return without waiting for completion; use trigger_signal_sync to wait."""
         if not issubclass(signal, Signal):
             raise TypeError("signal must be of type Signal")
 
