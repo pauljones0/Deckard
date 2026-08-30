@@ -23,12 +23,8 @@ class PaintQueue:
 
     @staticmethod
     def _inherit_sample(task: PaintTask, replaced: PaintTask | None) -> None:
-        # A superseding frame for the same slot still shows the state the
-        # sampled input produced, so its device write answers that input.
-        # When the newer frame carries no sample of its own, the displaced
-        # sample rides it, and the displaced ticket keeps nothing to drop.
-        # A frame with its own sample retires the older one instead. Caller
-        # holds _slot_lock, which makes the two ticket swaps atomic.
+        # A superseding frame inherits a displaced sample only when it has none;
+        # its own sample retires the old one, and _slot_lock makes swaps atomic.
         if (replaced is not None
                 and task.ticket.latency_sample is None
                 and replaced.ticket.latency_sample is not None):

@@ -98,13 +98,9 @@ class _LatencySnapshot:
 
 
 class InputLatencyTracker:
-    """Collect exact sample tokens and conservative completed-only summaries.
+    """Collect exact sample tokens and completed-only summaries.
 
-    A sample is never re-resolved from a target object. The physical callback
-    creates it, synchronous input work carries it in this tracker's
-    ``ContextVar``, and asynchronous writer/UI hand-offs carry the token in
-    their immutable payloads. Tokens from another tracker are ignored rather
-    than relying on an object id that a retired input could reuse.
+    Tracker tokens cross hand-offs; foreign tokens are ignored to avoid reused object IDs.
     """
 
     def __init__(self, *, clock: Callable[[], float] = time.perf_counter,
@@ -122,9 +118,7 @@ class InputLatencyTracker:
     def input_received(self) -> LatencySample | None:
         """Create a token at the real HID callback boundary.
 
-        The bounded collector fails closed: beyond its capacity, the report
-        records untracked inputs and becomes invalid for comparison instead of
-        dropping them from a favorable percentile population.
+        Over capacity, untracked inputs invalidate the report instead of biasing percentiles.
         """
         with self._lock:
             self._next_sequence += 1
@@ -224,12 +218,9 @@ class InputLatencyTracker:
                deck_serial: str | None = None,
                run_id: str | None = None,
                extra: dict[str, Any] | None = None) -> dict[str, Any]:
-        """Return an honest, JSON-compatible hardware-capture report.
+        """Return a JSON report with percentiles from complete inputs.
 
-        Percentiles deliberately use only samples that reached every required
-        boundary. Frame drops remain visible in ``frame_funnel``; a completed
-        sibling frame can recover the same physical input. Any input still
-        missing a boundary, or any collector overflow, makes comparison invalid.
+        Incomplete inputs or overflow invalidate it; frame_funnel keeps drops and sibling recovery.
         """
         with self._lock:
             samples = [self._snapshot(sample) for sample in self._samples]
@@ -408,9 +399,10 @@ def mirror_input_image(controller: Any, identifier: InputIdentifier, image: Any,
 
 
 def _is_physical(event: "DeckEvent") -> bool:
-    """Whether this event is a measurable physical edge. A key press, a
-    dial turn, a dial push-down, and every touchscreen gesture start a
-    latency sample; releases and push-ups pass through untracked."""
+    """Return whether an event starts a measurable physical-input sample.
+
+    Key presses, dial turns, push-downs, and touchscreen gestures qualify; releases do not.
+    """
     match event:
         case KeyEvent(pressed=pressed):
             return pressed
@@ -424,10 +416,10 @@ def _is_physical(event: "DeckEvent") -> bool:
 
 def dispatch_deck_event(controller: Any, identifier: InputIdentifier,
                         event: "DeckEvent") -> None:
-    """Route one typed deck event through the latency seam. A physical
-    edge runs the controller funnel under a fresh correlated sample, so
-    everything the event triggers stamps against the input that caused
-    it."""
+    """Route one typed deck event through latency tracking.
+
+    A physical edge gives its callback a fresh sample, which keeps triggered work correlated.
+    """
     if not _is_physical(event):
         controller.event_callback(identifier, event)
         return
