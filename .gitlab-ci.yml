@@ -286,6 +286,10 @@ test:scenarios:
   extends: .scenario-suite
   needs: []
   rules:
+    # The nightly schedule runs the complete suite strictly: the runner
+    # image is the Python 3.13 deployment floor with the real GTK runtime,
+    # so a red nightly pipeline is the floor-coverage signal.
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
       when: manual
       allow_failure: true
