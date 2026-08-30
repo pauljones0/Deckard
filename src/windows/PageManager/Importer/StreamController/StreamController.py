@@ -45,21 +45,15 @@ class StreamControllerImporter:
             if ".json.json" in page_path:
                 page_path = page_path.replace(".json.json", ".json")
 
-            # The page name is a key of the export file, so a crafted name
-            # could resolve to a target outside the pages directory. Keep the
-            # import inside it and skip a page whose name escapes.
+            # Export keys are untrusted page names; skip paths outside pages_dir.
             try:
                 require_containment(pages_dir, page_path)
             except ValueError:
                 log.error(f"Skipped a page whose name points outside the pages directory: {page_name!r}")
                 continue
 
-            # An import replaces a whole page, so a write that still waits
-            # for that path holds a version that the user discarded, and it
-            # lands after this one and undoes the import. Drop it instead of
-            # flushing it, and scope the drop to the page path, because
-            # save_json also writes deck settings, which the flush seam does
-            # not cover.
+            # Drop pending writes for this page before replacing it, or a stale
+            # write can land after the import and restore discarded data.
             page_flush.get().discard_path(page_path)
 
             self.save_json(page_path, page)
@@ -72,10 +66,8 @@ class StreamControllerImporter:
 
         log.success("Imported all pages from StreamController")
 
-        # These pages go to disk whole, past every page-settings setter, so
-        # an import that carries enabled window auto-change rules is the one
-        # way such rules appear unnoticed. Without this call the watcher stays
-        # off for the rest of the session and the imported rules do nothing.
+        # Whole-page imports bypass setting hooks, so refresh the window watcher
+        # after importing possible auto-change rules.
         if gl.page_manager is not None:
             gl.page_manager.refresh_window_watch_state()
 

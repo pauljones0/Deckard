@@ -30,7 +30,6 @@ from src.backend import services
 from src.backend.Store.StoreURL import parse_repo_url
 from src.windows.Settings.PluginSettingsPage import PluginSettingsPage
 
-# Import globals
 import globals as gl
 
 gi.require_version("Gtk", "4.0")
@@ -70,19 +69,15 @@ class Settings(Adw.PreferencesWindow):
 
     @property
     def app(self) -> AppSettings:
-        """Typed view onto the snapshot of this dialog.
+        """Return a typed view of this dialog's private settings snapshot.
 
-        It is not the shared cached dict, so the batch-save behaviour of
-        save_json() stays the same. Each access rebuilds it, because
-        load_json() rebinds settings_json.
+        Rebuild it after load_json() rebinds the underlying dictionary.
         """
         return AppSettings(self.settings_json)
 
     def load_json(self) -> None:
-        # A snapshot read from disk, and not the shared app-settings dict.
-        # This dialog edits its own picture of the file and writes the whole
-        # picture back. See the batch-save note on the app property above. A
-        # shared dict would publish half-made edits to the other writers.
+        # Edit a private disk snapshot, then save it as one batch so other
+        # writers cannot observe partial dialog changes.
         self.settings_json = gl.settings_manager.app_snapshot().data
 
     def save_json(self) -> None:
@@ -227,9 +222,7 @@ class FakeDecksGroup(Adw.PreferencesGroup):
         self.n_fake_decks_row.set_value(self.settings.app.n_fake_decks)
 
     def on_n_fake_decks_row_changed(self, *args: Any) -> None:
-        #FIXME: For some reason this gets called twice
-        # Cast with int(). The SpinRow returns a float, and the setting is a
-        # count, as n-cached-pages is.
+        # SpinRow returns float, but deck counts are integers.
         self.settings.app.n_fake_decks = int(self.n_fake_decks_row.get_value())
 
         # Save
@@ -259,9 +252,7 @@ class RemoteDecksGroup(Adw.PreferencesGroup):
         self.n_remote_decks_row.set_value(gl.settings_manager.app().n_remote_decks)
 
     def on_row_changed(self, *args: Any) -> None:
-        #FIXME: For some reason this gets called twice
-        # Cast with int(). The SpinRow returns a float, and the setting is a
-        # count, as n-cached-pages is.
+        # SpinRow returns float, but deck counts are integers.
         n_decks = int(self.n_remote_decks_row.get_value())
         app_settings = gl.settings_manager.app()
         app_settings.n_remote_decks = n_decks
@@ -290,13 +281,8 @@ class DataPathGroup(Adw.PreferencesGroup):
 
         self.load_defaults()
 
-        # Connect signals.
-        # Persist only on an explicit apply, which is Enter or the check
-        # button. A persist on notify::text saves every keystroke, so a
-        # half-typed edit that the user abandons becomes the data path that
-        # globals.py adopts at the next launch, which creates a wrong
-        # directory and boots an empty profile. A close without an apply now
-        # discards the edit.
+        # Persist only on Enter or the apply button; saving each keystroke can
+        # make an abandoned partial path the next startup directory.
         self.data_path.connect("apply", self.on_data_path_apply)
 
     def load_defaults(self) -> None:
@@ -313,9 +299,7 @@ class DataPathGroup(Adw.PreferencesGroup):
         self.data_path.remove_css_class("error")
         self.data_path.set_tooltip_text(None)
 
-        # Show the expanded path in the row, so the user sees the value that
-        # the app stores and adopts at boot. The store holds the expanded
-        # value, not the "~/..." text that the user typed.
+        # Show the expanded path that the app stores and uses at startup.
         if self.data_path.get_text() != new_path:
             self.data_path.set_text(new_path)
 
@@ -330,16 +314,12 @@ class DataPathGroup(Adw.PreferencesGroup):
 
     @staticmethod
     def _validate_data_path(path: str) -> bool:
-        """True when a data path is absolute and usable.
+        """Validate an absolute writable directory, creating it if absent.
 
-        Usable means an existing writable directory, or a directory that this
-        call creates. It runs on the GTK main thread, and only on an explicit
-        apply, not per keystroke.
+        Run only on explicit apply because this can block the GTK main thread.
         """
-        # globals.py creates the directory at boot in any case, and a create
-        # here shows the failure while the user still looks at the row. The
-        # stat and the makedirs can stall the UI on a hung network mount, and
-        # that cost arrives once, when the user commits.
+        # Create now to report failure in the row; explicit apply limits any
+        # network-mount stall to one committed change.
         if not path or not os.path.isabs(path):
             return False
         if os.path.isdir(path):
@@ -351,10 +331,8 @@ class DataPathGroup(Adw.PreferencesGroup):
             return False
 
     def on_open_data_path_button_clicked(self, *args: Any) -> None:
-        # Use Gio instead of a shell call to xdg-open, for the reason that
-        # HelperMethods.open_web gives. Gio does not block the GTK main loop,
-        # it routes through the OpenURI portal inside a sandbox, and the entry
-        # text never becomes a command.
+        # Gio avoids a shell command, does not block GTK, and uses the OpenURI
+        # portal inside a sandbox.
         path = os.path.expanduser(self.data_path.get_text())
         uri = Gio.File.new_for_path(path).get_uri()
         try:
@@ -443,17 +421,8 @@ class FontPageGroup(Adw.PreferencesGroup):
         self.settings = settings
         super().__init__(title=gl.lm.get("settings-font-settings-header"))
 
-        # All four rows share one debouncer. Font changes arrive in bursts:
-        # family and size from one dialog, then colour, then outline, and a
-        # colour-picker drag fires many times on its own. Without the shared
-        # debouncer each row starts its own reload-all-pages thread, so one
-        # visit here runs several page reloads at once.
-        #
-        # Every font change reaches exactly one reload. reload_all_pages calls
-        # create_n_states, which rebuilds every LabelManager, and the label
-        # memos rely on that rebuild for pixel correctness. So no equality
-        # check against the previous value, and no early return for an
-        # unchanged look, may drop the trailing fire.
+        # Share one trailing debouncer because font dialogs and color drags emit
+        # bursts; do not skip events, because each burst must rebuild caches once.
         self.reload_debouncer = TrailingDebouncer(self.RELOAD_DEBOUNCE_MS, self._reload_all_pages)
 
         self.font_row = FontRow(self)
@@ -469,11 +438,7 @@ class FontPageGroup(Adw.PreferencesGroup):
         self.add(self.font_outline_color_row)
 
     def request_page_reload(self) -> None:
-        """Every font row asks for its reload through this method.
-
-        See the debouncer note in __init__. The settings write already
-        finished when a row calls this, and only the reload waits.
-        """
+        """Queue the shared trailing reload after a font setting is saved."""
         self.reload_debouncer.trigger()
 
     def _reload_all_pages(self) -> None:
@@ -518,12 +483,8 @@ class FontRow(Adw.ActionRow):
 
         self.font_page_group.settings.app.default_font = gl.settings_manager.font_defaults
         gl.settings_manager.save_font_defaults()
-        # No save_json() call here, unlike the toggle rows. save_font_defaults
-        # already merged the font into the shared settings, the copy that every
-        # write refreshes, and wrote that. A write of the snapshot that this
-        # dialog took at construction would restore every general value as it
-        # stood when the window opened, and revert what another window, or the
-        # app itself, changed on disk since.
+        # save_font_defaults already writes the shared settings; saving this
+        # dialog's older snapshot could revert changes from another writer.
 
         self.font_page_group.request_page_reload()
 
@@ -752,12 +713,9 @@ class CustomContentEntry(Adw.PreferencesRow):
         self.refresh_url_validity()
 
     def refresh_url_validity(self) -> str | None:
-        """Returns the url to persist, or None when the field holds
-        something the store could not use.
+        """Return a URL accepted by the store's parse_repo_url, or mark it invalid.
 
-        parse_repo_url validates the url, and the store runs the same parse
-        later, so the catalog load never skips a url that this method accepts.
-        Main-thread only, because it restyles the row.
+        Main-thread only because validation restyles the row.
         """
         url = self.url.get_text().strip()
         if url and parse_repo_url(url) is None:
@@ -771,9 +729,8 @@ class CustomContentEntry(Adw.PreferencesRow):
     def on_value_changed(self, *args: Any) -> None:
         url = self.refresh_url_validity()
         if url is None:
-            # Keep the stored entry. A url that the store skips gains
-            # nothing, and the row stays flagged until it parses. An empty
-            # field does persist, as an empty string, so a clear takes effect.
+            # Keep the stored entry while a nonempty URL is invalid; an empty
+            # URL remains valid so clearing the field persists.
             return
 
         settings = gl.settings_manager.get_app_settings()
@@ -831,9 +788,8 @@ class PerformancePageGroup(Adw.PreferencesGroup):
                                           tooltip_text=gl.lm.get("settings.performance.cache-videos.tooltip"))
         self.add(self.cache_videos)
 
-        # Quiescence gating. The default pauses only while the deck
-        # screensaver is up, which matches the behaviour without these rows,
-        # so an untouched setting changes nothing.
+        # Default to screensaver gating so an untouched setting keeps existing
+        # animation pause behavior.
         self.animation_pause_mode = Adw.ComboRow(
             title=gl.lm.get("settings.performance.animation-pause.title"),
             subtitle=gl.lm.get("settings.performance.animation-pause.subtitle"),
@@ -914,9 +870,7 @@ class PerformancePageGroup(Adw.PreferencesGroup):
         self.push_to_presence_monitor()
 
     def push_to_presence_monitor(self) -> None:
-        # A runtime push, in the same pattern as the fan-out of the
-        # FPS-warning row to the media players. The monitor re-evaluates at
-        # once instead of waiting for the next lock or idle event.
+        # Push changes at once so the monitor need not wait for a lock or idle event.
         if gl.presence_monitor is not None:
             gl.presence_monitor.set_mode(
                 self.settings.app.animation_pause_mode,

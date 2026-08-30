@@ -38,11 +38,8 @@ class FlatpakPermissionRequestWindow(Gtk.ApplicationWindow):
             self.set_modal(True)
         self.set_default_size(600, 600)
 
-        # Both arguments are optional, so app.show_permissions(), which knows
-        # no command and no reason, can construct the window. build() passes
-        # both into Gtk.Label, which rejects None, so the description falls
-        # back to the generic string that a per-command request also uses when
-        # its caller passes none.
+        # Normalize optional arguments before Gtk.Label receives them; use the
+        # generic description when no request-specific reason exists.
         self.command = command if command is not None else ""
         if description is None:
             description = gl.lm.get("permissions.request.default-description")

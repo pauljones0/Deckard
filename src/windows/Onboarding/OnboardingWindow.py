@@ -160,16 +160,13 @@ class OnboardingWindow(Adw.Dialog):
         command = ["udevadm", "--version"]
 
         if is_flatpak():
-            # udevadm lives on the host, so the call needs flatpak-spawn.
-            # Without it the command fails and the udev warning never reaches
-            # a flatpak user, who is the reader it targets.
+            # udevadm lives on the host, so Flatpak must use flatpak-spawn.
             command = ["flatpak-spawn", "--host"] + command
 
         try:
             output = subprocess.check_output(command).decode("utf-8").strip()
-            # The output is a number such as "252", and some distributions
-            # append build information. Keep the first token, so
-            # version.parse() in build() accepts it.
+            # Some distributions append build data to the version number.
+            # Keep the first token for version.parse().
             return output.split()[0] if output else None
         except (subprocess.CalledProcessError, FileNotFoundError):
             return None
@@ -201,7 +198,6 @@ class IconOnboardingScreen(Gtk.Box):
     def __init__(self, icon_name: str, label: str, detail: str):
         super().__init__(orientation=Gtk.Orientation.VERTICAL, hexpand=True)
         self.icon_name = icon_name
-        # See ImageOnboardingScreen: the caption strings keep their own names.
         self.label_text = label
         self.detail_text = detail
 
@@ -347,9 +343,8 @@ class OnboardingScreen5(Gtk.Box):
 
         backend = gl.store_backend
         failed: list[str] = []
-        # The onboarding page is a dialog, which cannot itself parent one, so
-        # the prompts hang on the window presenting it. None is safe: a
-        # prompt with no parent stands on its own.
+        # A dialog cannot parent another dialog, so use its root window.
+        # A missing window leaves the prompt unparented.
         root = self.onboarding_window.get_root()
         prompt_parent = root if isinstance(root, Gtk.Window) else None
         for i, plugin_data in enumerate(plugins):
@@ -362,11 +357,8 @@ class OnboardingScreen5(Gtk.Box):
                 log.error(f"Onboarding: could not resolve {plugin_data.plugin_name} for install")
                 failed.append(plugin_data.plugin_name or plugin_data.plugin_id or "unknown plugin")
                 continue
-            # The first run asks the same questions a store install asks.
-            # This window can parent a dialog, and a plugin picked from a
-            # recommendation list is still a plugin whose setup step runs
-            # code on this computer, so it is not a place to skip consent.
-            # The set prompt names whatever the plugin pulls in with it.
+            # Recommended plugins can run setup code, so use store consent prompts.
+            # The set prompt includes all dependencies.
             from src.windows.Store.install_consent import make_consent, make_set_consent
             report = dependencies.install_with_dependencies(
                 backend, dependencies.plugin_item(plugin),
@@ -386,11 +378,8 @@ class OnboardingScreen5(Gtk.Box):
         GLib.idle_add(self.onboarding_window.close)
         GLib.idle_add(services.require_main_window().show)
         if failed:
-            # The progress-bar text above dies with the closing window, and
-            # the user then reaches the main window with no plugins and no
-            # explanation. This report goes to the main window, which the
-            # idle_add(show) above already queued. The idle of gl.notify runs
-            # after that one, so the window is up when this arrives.
+            # Report failures after queuing the main window, because closing
+            # onboarding removes its progress text.
             gl.notify.error(
                 f"Failed to install {len(failed)} plugin"
                 f"{'s' if len(failed) != 1 else ''} "

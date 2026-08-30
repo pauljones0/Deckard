@@ -83,11 +83,8 @@ class Importer(Adw.ApplicationWindow):
         try:
             ui_importer.perform_import()
         except Exception:
-            # The @log.catch decorator swallows the exception and returns, so
-            # without this branch a failed import leaves the progress bar
-            # frozen at 0% and the dialog open forever. Log the failure and
-            # then route it to show_error, which marshals the text and the
-            # close onto the main thread.
+            # Handle the failure before @log.catch returns, or the dialog stays open.
+            # show_error marshals the status and close to the main thread.
             log.exception("StreamDeck UI import failed")
             self.show_error("Import failed")
             return
@@ -116,11 +113,8 @@ class Importer(Adw.ApplicationWindow):
         try:
             ui_importer.perform_import()
         except Exception:
-            # The @log.catch decorator swallows the exception and returns, so
-            # without this branch a failed import leaves the progress bar
-            # frozen at 0% and the dialog open forever. Log the failure and
-            # then route it to show_error, which marshals the text and the
-            # close onto the main thread.
+            # Handle the failure before @log.catch returns, or the dialog stays open.
+            # show_error marshals the status and close to the main thread.
             log.exception("StreamController import failed")
             self.show_error("Import failed")
             return
