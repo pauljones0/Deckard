@@ -44,9 +44,8 @@ import globals as gl
 
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, TypedDict, cast, override
-# One stored label of this action, keyed by position. set_label writes every
-# key from the KeyLabel it builds; the hyphenated names force the functional
-# syntax.
+# One label keyed by position; functional TypedDict syntax supports the
+# hyphenated field names written by set_label.
 ActionLabel = TypedDict("ActionLabel", {
     "text": "str | None",
     "color": "list[int] | None",
@@ -66,9 +65,8 @@ if TYPE_CHECKING:
     # that use Adw and Gtk are strings.
     from gi.repository import Adw
     from gi.repository import Gtk
-    # GenerativeUI imports Gtk at module scope, and ActionCore sits in the
-    # import closure of the engine through DeckController and Page. The name
-    # stays type-only here, and the isinstance below imports it lazily.
+    # GenerativeUI imports Gtk at module scope, so keep it type-only here and
+    # import it lazily for the runtime check.
     from src.backend.PageManagement.Page import ActionOutdated, NoActionHolderFound
     from GtkHelper.GenerativeUI.GenerativeUI import GenerativeUI
     from src.backend.PluginManager.PluginBase import PluginBase
@@ -88,26 +86,21 @@ class ActionCore(rpyc.Service):
         # register_backend relaxes its port-ownership check for a terminal
         # launch, where the backend is not a child of the Popen handle.
         self._backend_via_terminal: bool = False
-        # register_backend sets this on an rpyc service thread, which the
-        # backend process drives, and it wakes wait_for_backend on the
-        # launching thread.
+        # The backend's rpyc service thread sets this and wakes
+        # wait_for_backend on the launching thread.
         self._backend_ready = threading.Event()
 
         # The (signal, callback) pairs of this action, disconnected on teardown.
         self._connected_signals: "list[tuple[type[Signal], Callable[..., Any]]]" = []
 
-        # An eviction reaches clean_up() from whichever thread calls get_page,
-        # the USB monitor or the media thread, and the rpyc on_disconnect hook
-        # reaches it too. A bool cannot make it idempotent, so it takes a
-        # lock.
+        # Eviction, USB, media, and rpyc threads can call clean_up(); the lock
+        # makes the state transition idempotent.
         self._cleaned_up = False
         self._cleanup_lock = threading.Lock()
 
         self.deck_controller = deck_controller
-        # A live action always has its page. The teardown in
-        # Page.clear_action_objects detaches it, because the page describes the
-        # live phase and that teardown ends it, so the slot states both and
-        # every reader guards. Construction still requires a real page.
+        # Construction requires a page, but Page.clear_action_objects detaches
+        # it at teardown; every reader must support both states.
         self.page: "Page | None" = page
         self.state = state
         self.input_ident = input_ident
@@ -117,10 +110,8 @@ class ActionCore(rpyc.Service):
         self.generative_ui_objects: list["GenerativeUI[Any]"] = []
 
         self.on_ready_called = False
-        # Set after on_ready() returned or raised. A tick and an external
-        # on_update() dispatch gate on this flag and not on on_ready_called.
-        # on_ready_called reads True from schedule time, so a plugin API call
-        # inside on_ready passes raise_error_if_not_ready.
+        # Set after on_ready() returns or raises; ticks and external updates
+        # use it because on_ready_called is true while on_ready still runs.
         self.on_ready_finished = False
 
         self.has_configuration = False
@@ -186,18 +177,8 @@ class ActionCore(rpyc.Service):
 
     def on_update(self) -> None:
         """The app calls this when the action must redraw itself."""
-        # The compatibility call below re-runs the whole on_ready body, so it
-        # fires only after a ready completed. A caller that arrives while the
-        # first on_ready still runs would start a second on_ready body beside
-        # it, and a plugin allocates, subscribes and spawns backend processes
-        # in on_ready. own_actions_update gates the app's own dispatch, and
-        # this gate covers every other caller, a plugin that calls on_update()
-        # on itself inside on_ready included.
-        #
-        # The call is skipped and never deferred. The running ready sequence
-        # ends with its own on_update in Page._run_ready_callbacks, so no
-        # redraw is lost, and a queued duplicate is the re-entry this removes.
-        # After a completed ready the compatibility call fires per update.
+        # Block all on_ready re-entry until the first call finishes; plugins can
+        # allocate duplicate resources. The ready sequence supplies the skipped update.
         if not self.on_ready_finished:
             log.debug(f"{self.action_id}: on_update compat on_ready skipped, on_ready has not finished")
             return
@@ -208,11 +189,8 @@ class ActionCore(rpyc.Service):
 
         if type(self.input_ident) not in [Input.Key, Input.Dial, Input.Touchscreen]:
             return
-        # Touchscreen media reaches the state through the same write path as a
-        # key or dial: ControllerTouchScreenState implements set_image and
-        # set_video, and the layout and permission managers the write below
-        # uses live on the shared state base. A touchscreen GIF takes the cv2
-        # path, because the KeyGIF guard tests for a ControllerKey.
+        # Touchscreens share the image, video, layout, and permission path with
+        # keys and dials. Only keys use KeyGIF; touchscreen GIFs use InputVideo.
 
         if not self.get_is_present(): return
         if self.has_custom_user_asset(): return
@@ -225,10 +203,8 @@ class ActionCore(rpyc.Service):
         if input_state.state != self.state:
             return
 
-        # Set this only when the code below opened media_path for the image. An
-        # image a plugin supplies has no known source file to decode again, so
-        # InputImage must upscale it instead of a failed re-open of
-        # media_path.
+        # Set a reopen path only for images loaded here; plugin-supplied images
+        # have no known source file and must upscale in memory.
         path_for_reopen = None
         if media_path is not None and is_image(media_path) and image is None:
             with Image.open(media_path) as img:
@@ -242,12 +218,8 @@ class ActionCore(rpyc.Service):
         if controller_input is None:
             return
 
-        # The write runs under the input's states lock, against a state object
-        # resolved again inside that lock. A concurrent page load replaces
-        # every state object through create_n_states, so a write to the object
-        # resolved above strands this media on a dead state, and the key stays
-        # blank until the action repaints. The image decode above stays outside
-        # the lock.
+        # Re-resolve the state under its lock because a page load can replace
+        # all states; keep image decoding outside the lock.
         with controller_input._states_lock:
             input_state = controller_input.states.get(self.state)
             if input_state is None:
@@ -264,25 +236,14 @@ class ActionCore(rpyc.Service):
                 self._stamp_media_owner(input_state)
 
             elif media_path is not None and is_video(media_path):
-                # A local import. deck_controller/inputs.py imports ActionCore
-                # at module level, so a top-level ControllerKey import here
-                # closes a cycle. KeyGIF comes in at the same call site.
+                # Keep these imports local because deck_controller/inputs.py
+                # imports ActionCore at module scope.
                 from src.backend.DeckManagement.deck_controller.gif_pipeline import KeyGIF
                 from src.backend.DeckManagement.deck_controller.inputs import ControllerKey
                 key_gif = None
                 if os.path.splitext(media_path)[1].lower() == ".gif" and isinstance(controller_input, ControllerKey):
-                    # A GIF on a key goes to KeyGIF, which matches the
-                    # page-media loader ControllerKey.load_from_input_dict.
-                    # KeyGIF keeps the RGBA alpha that the GIF demuxer of cv2
-                    # drops, and it honors the per-frame delays. Keys alone
-                    # take this route, because KeyGIF is a SingleKeyAsset. A
-                    # dial and a touchscreen keep the InputVideo path below.
-                    #
-                    # KeyGIF decodes at once and raises on a corrupt or
-                    # truncated GIF, where the detached cv2 builder of
-                    # InputVideo fails soft. set_media must not raise into
-                    # plugin code over bad media, so this falls back to the cv2
-                    # path, as the GifBackground routes in DeckController do.
+                    # Keys use KeyGIF to preserve RGBA alpha and frame delays;
+                    # dials, touchscreens, and bad KeyGIF input use InputVideo.
                     try:
                         key_gif = KeyGIF(
                             controller_key=controller_input,
@@ -319,11 +280,8 @@ class ActionCore(rpyc.Service):
             controller_input.update()
 
     def _stamp_media_owner(self, input_state: "ControllerInputState") -> None:
-        # Record this action as the owner of the media it set, so the input's
-        # load_from_input_dict restores that media across the state wipe of
-        # create_n_states while this action object still drives the input. Key
-        # and dial states both carry the attribute and both restore; set_media
-        # reaches only those two identifier types.
+        # Mark key and dial media ownership so load_from_input_dict can restore
+        # it after create_n_states replaces the state objects.
         from src.backend.DeckManagement.deck_controller.inputs import (
             ControllerDialState,
             ControllerKeyState,
@@ -422,8 +380,8 @@ class ActionCore(rpyc.Service):
         if font_style not in ["normal", "italic", "oblique", None]:
             raise ValueError("font_style must be one of ['normal', 'italic', 'oblique', None]")
 
-        # position is a plain string off a plugin. An unknown value once fell
-        # through to the bottom slot silently; keep that fallback but log it.
+        # Plugin values are untyped; unknown positions use the bottom slot and
+        # emit a warning.
         match position:
             case LabelPosition.TOP:
                 label_index = 0
@@ -507,17 +465,15 @@ class ActionCore(rpyc.Service):
     def get_settings(self) -> dict[str, Any]:
         # self.page.load()
         if self.page is None:
-            # A plugin can construct or drive an action untyped over rpyc, so
-            # the runtime check stays even though the annotation says the
-            # page is always set.
+            # Untyped rpyc callers can drive a detached action, so keep the
+            # runtime check despite the construction contract.
             return {}
         return cast(dict[str, Any], self.page.get_action_settings(action_object=self))
     
     def set_settings(self, settings: dict[str, Any]) -> None:
         if self.page is None:
-            # A plugin can construct or drive an action untyped over rpyc, so
-            # the runtime check stays even though the annotation says the
-            # page is always set.
+            # Untyped rpyc callers can drive a detached action, so keep the
+            # runtime check despite the construction contract.
             return
         self.page.set_action_settings(action_object=self, settings=settings)
 
@@ -527,9 +483,6 @@ class ActionCore(rpyc.Service):
         self._connected_signals.append((signal, callback))
 
     def get_own_key(self) -> "ControllerKey | None":
-        # Upstream plugin-API surface, so this method stays. It resolves
-        # through the identifier, as get_input() does, and returns None for an
-        # action that does not sit on a key.
         if not isinstance(self.input_ident, Input.Key):
             return None
         # The isinstance guard selects get_input()'s Key overload, so this
@@ -541,10 +494,8 @@ class ActionCore(rpyc.Service):
 
         page = self.page
         if page is None or not self.get_is_present(): return False
-        # action_objects nests input -> identifier -> state -> index -> action,
-        # so a read that stops at the identifier hands back the state map and
-        # counts states, not actions. Ask the page for this input's actions at
-        # the action's own state instead.
+        # Query this state directly; action_objects at the identifier level
+        # contains a state map, not an action list.
         actions = page.get_all_actions_for_input(self.input_ident, self.state)
         return len(actions) > 1
 
@@ -609,8 +560,8 @@ class ActionCore(rpyc.Service):
         return background_control_index == self.get_own_action_index()
     
     def get_is_present(self) -> bool:
-        # A plugin can drive an action untyped over rpyc, so the runtime check
-        # stays even though the annotation says the page is always set.
+        # Untyped rpyc callers can drive a detached action, so keep the runtime
+        # check despite the construction contract.
         if self.page is None: return False
         if self.page.deck_controller.active_page is not self.page: return False
         if self.page.deck_controller.screen_saver.showing: return False
@@ -624,11 +575,8 @@ class ActionCore(rpyc.Service):
         return media.get("path", None) is not None
     
     def get_own_action_index(self) -> int | None:
-        # There are two answers for no index. It returns -1 while the action
-        # sits off the active page, and None while the action is absent from
-        # this input's actions. None must stay, because a permission getter
-        # compares it against an unset control-action entry, which is None
-        # too. The annotation states both, and nothing normalizes them.
+        # Return -1 off the active page and None when absent from this input;
+        # permission getters compare None with an unset control-action entry.
         page = self.page
         if page is None or not self.get_is_present(): return -1
         actions = page.get_all_actions_for_input(self.input_ident, self.state)
@@ -636,16 +584,13 @@ class ActionCore(rpyc.Service):
             return None
         return cast(int | None, actions.index(self))
 
-    # None is a valid value here. Input.EventFromStringName answers None for
-    # the stored str(None), which maps that event to no assigner. Every event
-    # key is present, so a caller iterates the map and skips None instead of a
-    # probe for a missing key.
+    # None maps an event to no assigner; every event key remains present so
+    # callers can iterate the complete map and skip None values.
     def get_page_event_assignments(self) -> dict[InputEvent, InputEvent | None]:
         assignment: dict[InputEvent, InputEvent | None] = {}
 
-        # A detached action has no page to read from. An empty map then leaves
-        # every event mapped to itself below, which is what a page with no
-        # stored assignment gives too.
+        # A detached action has no stored overrides, so use the same empty map
+        # as a page without assignments.
         page = self.page
         page_assignment_dict = ({} if page is None
                                 else page.get_action_event_assignments(action_object=self))
@@ -665,9 +610,8 @@ class ActionCore(rpyc.Service):
 
     
     def get_event_assignments(self) -> dict[str, str | None]:
-        # A detached action carries no stored assignments. load_event_overrides
-        # reads this on teardown paths, so an empty map keeps it working
-        # instead of raising on the missing page.
+        # Teardown can reload overrides after detachment; an empty map keeps
+        # that path valid without a page.
         page = self.page
         if page is None:
             return {}
@@ -678,9 +622,8 @@ class ActionCore(rpyc.Service):
     def set_event_assignment(self, input_event: InputEvent | None, event_assigner: EventAssigner | None) -> None:
         page = self.page
         if page is None:
-            # The page owns the stored assignments, so a detached action has
-            # nowhere to write one. Dropping it silently would hide a UI edit
-            # that never landed.
+            # A detached action has nowhere to store the assignment; warn so a
+            # lost UI edit is visible.
             log.warning(f"Action {self.action_id} has no page, so its event assignment was not stored")
             return
         page.set_action_event_assigment(
@@ -735,13 +678,8 @@ class ActionCore(rpyc.Service):
         GLib.idle_add(self._do_load_initial_generative_ui)
 
     def _do_load_initial_generative_ui(self) -> None:
-        # A GenerativeUI widget builds on the first read of .widget, which
-        # normally happens when the config opens. A call to load_initial_ui()
-        # for every object would read .widget on every action's on_ready and
-        # build every gen-ui object in the app, which ends the laziness.
-        # get_value() reads the persisted value from the settings, so an
-        # unbuilt object has nothing to sync. Reconcile only the widgets a
-        # plugin built already, by a read of .widget at construction time.
+        # Reconcile only built widgets; reading .widget here would eagerly
+        # build every config row, while unbuilt rows already read persisted values.
         for generative_object in self.generative_ui_objects:
             if generative_object.is_built:
                 generative_object.load_initial_ui()
@@ -765,15 +703,8 @@ class ActionCore(rpyc.Service):
         self._release_backend_resources()
     
     def launch_backend(self, backend_path: str, venv_path: str | None = None, open_in_terminal: bool = False) -> None:
-        """Launch the backend process of the action, as PluginBase does for a plugin.
-
-        Raises:
-            RuntimeError: When the rpyc server is not running after
-                start_server(), so the backend has no port to register on.
-            ValueError: When backend_path is None or absent, or when a given
-                venv_path is absent. The validation stops a bad path here,
-                before Popen receives it.
-        """
+        """Launch this action's backend; require a running rpyc server and valid backend and optional venv paths.
+        Raise RuntimeError without a server and ValueError for invalid paths before Popen runs."""
         from src.backend.PluginManager.PluginManager import (
             backend_guard_env,
             build_backend_launch_command,
@@ -788,18 +719,15 @@ class ActionCore(rpyc.Service):
             raise RuntimeError("the rpyc server is not running, so the backend has no port to register on")
         port = self.server.port
 
-        # Before the argv, which reads the venv's interpreter and refuses a
-        # venv that a Python upgrade stranded. The install steps that rebuild
-        # it belong to the plugin that owns this action.
+        # Validate the venv before command construction; the owning plugin must
+        # rebuild an environment stranded by a Python upgrade.
         if venv_path is not None:
             ensure_backend_venv(venv_path, self.plugin_base.PATH, self.action_id)
 
-        # It validates the paths and returns argv, and not a shell string.
         command = build_backend_launch_command(backend_path, venv_path, port, open_in_terminal)
 
-        # The guard rebinds the backend's own rpyc server to loopback. The
-        # .pth copy in the venv survives a terminal launch, which loses the
-        # environment; the PYTHONPATH below covers a venv-less backend.
+        # The guard binds the child server to loopback; the venv copy survives
+        # terminal launch, while PYTHONPATH covers a venv-less child.
         if venv_path is not None:
             inject_backend_guard(venv_path)
         elif open_in_terminal:
@@ -807,9 +735,8 @@ class ActionCore(rpyc.Service):
 
         log.info(f"Launching backend: {command}")
         self._backend_via_terminal = open_in_terminal
-        # Cleared after the validation and before the spawn, so a relaunch
-        # waits for the registration of the new backend instead of a return on
-        # the registration of the previous one.
+        # Clear after validation and before spawn so relaunch waits for the new
+        # backend registration instead of the previous one.
         self._backend_ready.clear()
         self.backend_process = subprocess.Popen(command, start_new_session=True, env=backend_guard_env())
         if gl.plugin_manager is not None:
@@ -818,22 +745,16 @@ class ActionCore(rpyc.Service):
         self.wait_for_backend()
 
     def wait_for_backend(self, tries: int = 3) -> None:
-        """Block until the backend registers, up to tries * 0.1 seconds.
-
-        A plugin calls this with its own tries value, which stays a parameter.
-        It is a timeout budget and not a poll count, because the registration
-        wakes this call at once.
-        """
+        """Block until registration or a timeout of tries * 0.1 seconds.
+        Registration wakes the call immediately, so tries is a timeout budget."""
         self._backend_ready.wait(timeout=tries * 0.1)
 
     def register_backend(self, port: int) -> None:
         """Internal method. Do not call it manually."""
         from src.backend.PluginManager.PluginManager import terminate_refused_backend, verify_backend_port
 
-        # Connecting hands the netref surface of this process to whoever
-        # listens on the port, so the port must belong to the launched child.
-        # The check returns the loopback address it verified; connect to that,
-        # not to a name that could resolve to a squatter in another family.
+        # Verify that the launched child owns a loopback port before exposing
+        # this process through netref, then connect to the verified address.
         try:
             host = verify_backend_port(port, self.backend_process, self._backend_via_terminal, self.action_id)
         except RuntimeError:
@@ -857,28 +778,19 @@ class ActionCore(rpyc.Service):
         return True
     
     def on_removed_from_cache(self) -> None:
-        """A notification hook for an action dropped from a live page or cache.
-
-        This hook only notifies. The framework always calls clean_up() right
-        after it, even when an override omits super() and even when it raises.
-        A plugin therefore needs no clean_up() call of its own here.
-        """
+        """Notify a plugin that an action left a live page or cache.
+        The framework always calls clean_up(), even if this override raises."""
         pass
 
     def on_remove(self) -> None:
-        """A notification hook for a removal through the action configurator.
-
-        It keeps the contract of on_removed_from_cache(). The framework calls
-        clean_up() whatever this override does."""
+        """Notify a plugin of removal through the action configurator.
+        The framework always calls clean_up(), as for on_removed_from_cache()."""
         pass
 
     @staticmethod
     def teardown(action: "ActionCore | NoActionHolderFound | ActionOutdated | None", hook_name: str = "on_removed_from_cache") -> None:
-        """Framework-owned teardown at a drop site.
-
-        Call this, and not the hook alone, wherever an action leaves a live
-        structure. It notifies through the named hook and then always calls
-        clean_up(). It ignores a placeholder that is no ActionCore."""
+        """Run the named removal hook and always clean up an ActionCore.
+        Ignore placeholders and other values that are not ActionCore instances."""
         if not isinstance(action, ActionCore):
             return
         try:
@@ -890,30 +802,16 @@ class ActionCore(rpyc.Service):
         action.clean_up()
 
     def clean_up(self) -> None:
-        """Framework teardown for a dropped action. It runs on any thread.
-
-        A page reload, a plugin uninstall, a removal in the sidebar or the
-        config, and a cache eviction each drop an action. Never call
-        run_on_main() from in here, or from anything this calls synchronously.
-        """
-        # A lock makes this idempotent, because an eviction and the rpyc
-        # on_disconnect path can call it from two threads at once. The caller
-        # can be the main thread, the USB monitor or the media thread.
-        #
-        # clean_up() flushes and cancels no work queued elsewhere with a strong
-        # reference to this action. An event callback on the deck's action
-        # executor, and a GLib idle dispatched just before the teardown, can
-        # still run after this returns, because the executor cancels its
-        # futures at deck close alone. A plugin hook must therefore tolerate a
-        # cleaned-up action. get_is_present() is the recommended guard, and a
-        # settings read returns an empty dict once the page reference drops.
+        """Tear down actions dropped by reload, uninstall, UI removal, or cache eviction; this can run on any thread.
+        Never call run_on_main() here or from synchronous teardown work."""
+        # The lock makes teardown idempotent across the main, USB, media, and
+        # rpyc threads. Queued callbacks can run later; use get_is_present() and expect empty settings after detachment.
         with self._cleanup_lock:
             if self._cleaned_up:
                 return
             self._cleaned_up = True
 
-        # Disconnect the signal callbacks here, so the SignalManager stops
-        # retaining this action.
+        # Disconnect callbacks so SignalManager stops retaining this action.
         for signal, callback in self._connected_signals:
             try:
                 gl.signal_manager.disconnect_signal(signal, callback)
@@ -921,10 +819,8 @@ class ActionCore(rpyc.Service):
                 log.error(f"Failed to disconnect signal {signal}: {e}")
         self._connected_signals.clear()
 
-        # The snapshot and the clear are cheap list operations, and they run
-        # here, so a caller reads an empty generative_ui_objects list as soon
-        # as clean_up() returns. The widget teardown is GTK work for the main
-        # loop, so it goes on a queue.
+        # Clear the list synchronously, then queue the GTK widget teardown on
+        # the main loop.
         gen_ui_snapshot = list(self.generative_ui_objects)
         self.generative_ui_objects.clear()
         if gen_ui_snapshot:
@@ -934,18 +830,14 @@ class ActionCore(rpyc.Service):
 
     @staticmethod
     def _destroy_gen_ui_batch(snapshot: list["GenerativeUI[Any]"]) -> None:
-        """Destroy each GenerativeUI object of the teardown snapshot.
-
-        clean_up() queues this callback with GLib.idle_add. It runs on the GTK
-        main loop, where the run_on_main() inside GenerativeUI.destroy() runs
-        inline (main_loop.py), so nothing re-queues and nothing deadlocks."""
+        """Destroy a GenerativeUI teardown snapshot on the GTK main loop.
+        GenerativeUI.destroy() then runs inline and cannot re-queue or deadlock."""
         for obj in snapshot:
             try:
                 owner = obj.action_core
                 if owner is not None and obj in owner.generative_ui_objects:
-                    # A live action registered this object again since the
-                    # snapshot, as a rebuilt row does. It has an owner, so
-                    # leave it alone.
+                    # A live action re-registered this object after the snapshot;
+                    # its current owner must retain it.
                     continue
                 if getattr(obj, "_widget", None) is None:
                     # It built no widget, so there is nothing to unparent, and
@@ -956,11 +848,8 @@ class ActionCore(rpyc.Service):
                 log.opt(exception=True).error(f"Failed to destroy GenerativeUI object {obj!r}")
 
     def _release_backend_resources(self) -> None:
-        """Detach and tear down the rpyc server, connection and process.
-
-        It is idempotent and safe against a concurrent call from clean_up and
-        from the rpyc on_disconnect hook. close and terminate both tolerate a
-        lost race."""
+        """Detach and tear down the rpyc server, connection, and process.
+        Concurrent cleanup and disconnect calls are safe and idempotent."""
         if self.backend_connection is None and self.server is None and self.backend_process is None:
             return
 
@@ -972,7 +861,6 @@ class ActionCore(rpyc.Service):
         self.backend_process = None
         self.backend = None
 
-        # Drop these from the global registries. Both are list removals.
         if connection is not None and gl.plugin_manager is not None:
             with contextlib.suppress(ValueError):
                 gl.plugin_manager.backends.remove(connection)

@@ -41,8 +41,8 @@ class ActionHolder:
         plugin_base: "PluginBase",
         action_name: str,
         action_core: type[ActionCore] | None = None,
-        # The name is historical; any ActionCore subclass works here, and
-        # live plugins pass ones that skip ActionBase.
+        # Compatibility alias for any ActionCore subclass, including classes
+        # that do not inherit ActionBase.
         action_base: type[ActionCore] | None = None,
         icon: Gtk.Widget | None = None,
         min_app_version: str | None = None,
@@ -65,11 +65,8 @@ class ActionHolder:
             raise ValueError("Please specify an action id or an action id suffix")
         
         if icon is None:
-            # An ActionHolder is built in plugin __init__, which runs on a
-            # store worker thread on the install path. GTK4 works on the main
-            # thread alone, and a widget built off it aborts the process, so
-            # this marshals the default icon onto the main loop. The startup
-            # path already runs on main, where the marshal costs nothing.
+            # GTK icon creation off-main can abort; installation builds holders
+            # on a worker, so marshal it to the main loop. Startup runs inline.
             from src.backend.main_loop import run_on_main
             icon = run_on_main(lambda: Gtk.Image(icon_name="insert-image-symbolic"))
 
@@ -95,9 +92,6 @@ class ActionHolder:
             return None
 
         if self.action_core is None:
-            # __init__ got neither action_core nor action_base. The call below
-            # raises TypeError into @log.catch, which swallows it and returns
-            # None.
             log.error(f"Action holder {self.action_id} has no action class")
             return None
 
