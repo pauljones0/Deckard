@@ -1,12 +1,4 @@
-"""
-A Page label setter reaches only decks that currently show this page.
-
-get_controller_inputs iterates every controller. Without a page filter a setter
-called on page A writes its label into a deck that shows page B (cross-page
-bleed), because that deck owns an input with the same identifier and state. The
-filter keeps the setter on the active-page scope update_input already uses:
-same-json_path decks are reached, a deck on another page is not.
-"""
+"""Verify label setters reach same-page decks without cross-page writes."""
 
 # fixtures must import first: it points argv at an isolated data dir before
 # globals resolves DATA_PATH.
@@ -63,9 +55,8 @@ def main() -> None:
         label_b = _label(deck_b, identifier, state)
         label_c = _label(deck_c, identifier, state)
 
-        # Mutation witness: the pre-fix, unfiltered walk (iterate every
-        # controller, no page filter) reaches deck_b. If it did not, deck_b
-        # could never bleed and the no-bleed assertion would be vacuous.
+        # Confirm that an unfiltered controller walk reaches deck_b, so the
+        # filtered no-bleed assertion can detect the scope difference.
         unfiltered = []
         for controller in gl.deck_manager.deck_controller:
             for c_input in controller.get_inputs(identifier):

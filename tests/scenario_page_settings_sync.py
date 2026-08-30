@@ -1,10 +1,4 @@
-"""
-Regression test for auto-switch settings that do not persist.
-
-PageManagerBackend.set_page_settings must refresh a cached page's in-memory
-dict as well as the file. Page.save rewrites the whole file from self.dict,
-so a stale cached Page erases the settings section at its next save.
-"""
+"""Verify auto-change settings stay synchronized in cached and active pages."""
 import json
 
 import fixtures
@@ -13,9 +7,7 @@ from src.backend.PageManagement import page_flush
 
 
 def read_json(path: str):
-    # Read through the barrier, like every reader of a page file. A settings
-    # write and a Page.save are both page edits, marked on the flush seam and
-    # written on its timer, so a raw read shows the page before them.
+    # Flush pending page edits before reading the file through its barrier.
     page_flush.get().flush_path(path)
     with open(path) as f:
         return json.load(f)

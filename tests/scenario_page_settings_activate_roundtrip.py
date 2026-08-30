@@ -1,10 +1,4 @@
-"""
-Persistence round-trip for a page edited, then activated, then saved.
-
-set_page_settings must refresh the cached Page object, not only the pages
-already active. Activation adopts the same cached object, so a stale dict makes
-the first ordinary save erase the settings section.
-"""
+"""Verify settings survive non-active edits, activation, and later saves."""
 
 # A real DeckController over the FaultyFakeDeck drives the activation.
 import json
@@ -15,9 +9,7 @@ from src.backend.PageManagement import page_flush
 
 
 def read_settings(path: str) -> dict:
-    # Read through the barrier, like every reader of a page file. A settings
-    # write and a Page.save are both page edits, marked on the flush seam and
-    # written on its timer, so a raw read shows the page before them.
+    # Flush pending page edits before reading the file through its barrier.
     page_flush.get().flush_path(path)
     with open(path) as f:
         return json.load(f).get("settings", {})
@@ -46,9 +38,8 @@ def check_edit_survives_activation_then_save(controller) -> None:
         f"set_page_settings never wrote the settings: {on_disk}"
     )
 
-    # Activate the page. get_page returns the same cached object and load_page
-    # promotes it to active_page. Without a refresh in set_page_settings, the
-    # active page now carries a stale dict.
+    # Activation promotes the same cached object, which must already contain
+    # the settings edit.
     page_to_activate = gl.page_manager.get_page(target_path, controller)
     controller.load_page(page_to_activate)
     assert fixtures.wait_until(
@@ -83,9 +74,7 @@ def check_edit_survives_activation_then_save(controller) -> None:
 
 
 def check_edit_activate_second_edit(controller) -> None:
-    """A stricter round-trip. Edit while non-active, activate, edit again
-    through the page-settings path, then save. Both keys must coexist,
-    because a stranded stale baseline would swallow the second write."""
+    """Keep both settings edits across non-active edit, activation, and re-edit."""
     target_path = fixtures.seed_page("ActivateTarget2")
     cached = gl.page_manager.get_page(target_path, controller)
     assert controller.active_page.json_path != target_path

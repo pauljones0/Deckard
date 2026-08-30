@@ -1,14 +1,4 @@
-"""A page load superseded mid-flight stops mutating the shared input.
-
-The loader pool's deadline abandons the wait, not the task: a plugin callback
-inside own_actions_update can block past a page switch and resume against an
-input the next page has re-stamped. load_from_input_dict now takes a
-still_current probe and re-asks it at every mutation boundary, so the
-resumed load stops instead of writing the old page's labels and media over
-the new page's live state. This flips the probe inside the blocking call and
-asserts nothing lands after it, then proves a current load still applies
-everything, and that the controller wires the probe to its generation check.
-"""
+"""Verify superseded loads stop at mutation boundaries and current loads finish."""
 import fixtures  # noqa: F401  (must be first: isolates DATA_PATH before globals)
 
 import globals as gl  # noqa: F401, E402
@@ -35,9 +25,8 @@ def main() -> int:
     try:
         key = controller.get_input(Input.Key("0x0"))
 
-        # --- A superseded load stops at the boundary after the blocking call.
-        # The supersession happens inside own_actions_update, which is where a
-        # blocked plugin callback resumes after the page switched.
+        # Supersede inside own_actions_update to model a blocked plugin callback
+        # that resumes after the page switched.
         current = {"value": True}
         real_update = input_state_classes.ControllerKeyState.own_actions_update
 
@@ -66,9 +55,8 @@ def main() -> int:
         if landed is None or landed.text != "OLD-PAGE":
             failures.append(f"a current load did not apply the label: {landed}")
 
-        # --- The controller wires the probe through: a stale generation never
-        # enters the load, and a current one passes a live still_current that
-        # answers the generation check.
+        # A stale generation must not load; a current generation must pass a
+        # live still_current probe that tracks later generation changes.
         page = controller.active_page
         if page is None:
             failures.append("no active page; the wiring leg would prove nothing")

@@ -1,9 +1,4 @@
-"""
-Regression test for a page-flipping button that starts pressed on the new page.
-
-load_page resets press_state on every ControllerKey, after the early-outs and
-before the generation bump.
-"""
+"""Verify page loads reset visual press state before the generation bump."""
 
 # A render reads config_gen at the start of update() and press_state later, so
 # a render stamped with the new generation always composes the key unpressed.
@@ -22,10 +17,8 @@ def main() -> None:
         assert key is not None, "expected a ControllerKey at 0x0 on the 2x4 fake deck"
         assert key.press_state is False, "key must start unpressed"
 
-        # Physical DOWN on key 0, synchronous like the real reader thread's
-        # callback. The page carries no actions, so the pool dispatch does
-        # nothing. This check stands in for ChangePage and calls load_page
-        # itself while the key is held.
+        # Hold key 0 with no actions, then call load_page synchronously as a
+        # ChangePage action would during the gesture.
         deck.fire_key_event(0, True)
         assert key.press_state is True, "DOWN must set press_state"
         assert key.down_start_time is not None, "DOWN must start the gesture clock"
@@ -34,9 +27,8 @@ def main() -> None:
         page = gl.page_manager.get_page(seed_path, controller)
         controller.load_page(page)
 
-        # The reset is synchronous and happens before the gen bump. Once
-        # load_page returns, no render stamped with the new generation can
-        # compose this key as pressed.
+        # The synchronous reset precedes the generation bump, so new-generation
+        # renders cannot compose the key as pressed.
         assert key.press_state is False, (
             "press_state survived load_page -- the new page's key renders "
             "shrunk/'pressed'"

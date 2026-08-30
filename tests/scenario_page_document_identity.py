@@ -1,10 +1,4 @@
-"""
-One page file holds one dict, shared by every deck that shows it.
-
-The page manager hands out one document per page file. Two Pages on one path
-therefore share a dict, and an edit crosses with no write. A refresh refills
-that dict in place and never blanks a section.
-"""
+"""Verify one shared document per page file and in-place refreshes."""
 
 # Two spellings of one path are one document, one save lock and one pending
 # write.
@@ -40,11 +34,7 @@ class StubController:
 
 
 class FrozenScheduler:
-    """A timer source that arms and never fires.
-
-    A scenario that asserts nothing was written must not let the deferral
-    clock run; a trailing timer would write the page mid-check.
-    """
+    """Arm timers without firing them during no-write checks."""
 
     def __init__(self):
         self.armed = 0
@@ -58,11 +48,7 @@ class FrozenScheduler:
 
 
 def install_flush_recorder() -> None:
-    """A fresh flush seam whose writes are counted.
-
-    Every caller reaches the seam through page_flush.get(), so replacing the
-    singleton covers the whole process.
-    """
+    """Install a process-wide flush seam that records writes."""
     page_flush._flush = page_flush.PageFlush(scheduler=FrozenScheduler(),
                                              clock=lambda: 0.0)
     real_write = page_flush.atomic_write_json
@@ -81,12 +67,7 @@ def read_file(path: str) -> dict:
 
 
 def read_file_through_barrier(path: str) -> dict:
-    """The file as any reader of a page sees it, pending edits written first.
-
-    A page save, a settings write and a whole-page replace all mark the page
-    and write it on the flush seam's timer. A raw read of the bytes therefore
-    shows the page as it stood before the edit.
-    """
+    """Read a page after flushing its pending edits."""
     page_flush.get().flush_path(path)
     return read_file(path)
 
@@ -204,14 +185,9 @@ def check_refresh_preserves_aliasing() -> int:
 
 
 class ProbedContent(dict):
-    """New page content that looks at the document while it is applied.
-
-    dict.update() copies from a plain dict in C, with nothing to hook from
-    Python.
-    """
-    # An __iter__ override moves update() onto the mapping protocol, where it
-    # asks for keys() first and inserts afterwards, so a probe in keys() runs
-    # at the one moment the two possible orders differ.
+    """Probe the document while mapping-protocol content is applied."""
+    # The __iter__ override selects the mapping protocol, where keys() runs
+    # before insertion and can probe the observable mutation order.
 
     def __init__(self, content: dict, probe):
         super().__init__(content)
@@ -228,12 +204,7 @@ class ProbedContent(dict):
 
 
 def check_refresh_never_blanks_section() -> int:
-    """The reader's view across a refresh is stale, never missing.
-
-    This drives the document rather than a file, because the order of its two
-    mutations is what matters. The new content goes in first, and the dropped
-    sections go second.
-    """
+    """Verify refresh adds new content before removing dropped sections."""
     path = seed_page("Concurrent")
     document = gl.page_manager.get_document(path)
     with_settings = {"keys": {"0x0": {"states": {"0": {}}}}, "settings": {"a": 1}}
@@ -272,10 +243,8 @@ def check_refresh_never_blanks_section() -> int:
 
     thread = threading.Thread(target=reader, daemon=True)
     thread.start()
-    # The window between the two steps is a few bytecodes wide, so at the
-    # default 5 ms switch interval the reader almost never lands inside it. A
-    # very small interval puts the reader there, and it still sees every
-    # section.
+    # Use a short switch interval to expose the few-bytecode mutation window
+    # while requiring every read to retain a keys section.
     previous_interval = sys.getswitchinterval()
     sys.setswitchinterval(1e-6)
     try:
@@ -359,12 +328,7 @@ def check_two_spellings_one_page() -> int:
 
 
 def check_rename_preserves_live_page() -> int:
-    """A move with a deck that has no cache entry for the page.
-
-    The move asks every controller for the page under its old name, so that
-    deck mints a Page, and a mint reads the file. An edit held only in memory
-    must survive that read.
-    """
+    """Keep in-memory edits when a move mints a Page for another deck."""
     old_path = seed_page("RenameMe")
     ctrl_a = StubController("rename-a")
     ctrl_b = StubController("rename-b")
@@ -407,13 +371,7 @@ def check_rename_preserves_live_page() -> int:
 
 
 def check_rename_over_live_page() -> int:
-    """A rename onto a page name that already exists is refused.
-
-    move_page rejects an existing destination rather than overwrite it, so a
-    live page a deck shows keeps its content and its file. Both real callers
-    already guard this name-in-use case; the seam now enforces it too, which
-    closes the overwrite path the containment fix removed.
-    """
+    """Refuse a rename onto an existing live page without changing either page."""
     source_path = seed_page("StandingSource")
     write_file(source_path, {"keys": {}, "which-page": "the-source"})
     target_path = seed_page("StandingTarget")

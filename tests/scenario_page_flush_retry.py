@@ -1,12 +1,4 @@
-"""A deferred page write that fails transiently is retried, not dropped.
-
-The flush seam used to retire a pending edit whether or not the write landed,
-so a transient filesystem error lost the edit unless the user typed again. Now
-a transient failure keeps the edit pending and re-arms a retry, so a later
-flush or the quit flush persists it, while a permanent serialization error is
-retired rather than retried forever. This drives the seam with a manual
-scheduler and a fake page source, and injects the write outcomes.
-"""
+"""Verify transient page-write retries and permanent-error retirement."""
 import fixtures  # noqa: F401  (must be first: isolates DATA_PATH before globals)
 
 from typing import Any  # noqa: E402
