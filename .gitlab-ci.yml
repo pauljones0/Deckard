@@ -316,12 +316,16 @@ build:flatpak:
     key:
       files:
         - io.github.nazbert.Deckard.yml
+        - requirements.txt
+        - flatpak/python-requirements.lock
+        - flatpak/python-payload-budgets.json
         - pypi-requirements.yaml
     paths:
       - .flatpak-builder/downloads
       - .flatpak-builder/git
       - .flatpak-builder/ccache
       - .flatpak-builder/checksums
+      - .flatpak-builder/python-archives
   rules:
     - if: '$CI_COMMIT_TAG =~ /^v[0-9]/'
     - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
@@ -330,6 +334,7 @@ build:flatpak:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
       changes:
         - io.github.nazbert.Deckard.yml
+        - requirements.txt
         - pypi-requirements.yaml
         - flatpak/**/*
         - .gitlab-ci.yml
@@ -340,7 +345,9 @@ build:flatpak:
     # The image's user differs from the checkout's owner — git refuses to
     # operate on "dubiously owned" repos without this.
     - git config --global --add safe.directory "$CI_PROJECT_DIR"
-    - python3 -c "import yaml" 2>/dev/null || pip3 install --user --quiet PyYAML
+    - pip3 install --user --quiet -r flatpak/requirements-manifest-tools.txt
+    - python3 flatpak/ci/generate_python_manifest.py --check
+    - python3 flatpak/ci/check_python_payload.py
     - mkdir -p build-ws/src dist
     - git archive "$CI_COMMIT_SHA" | tar -x -C build-ws/src
     - cp io.github.nazbert.Deckard.yml pypi-requirements.yaml build-ws/
