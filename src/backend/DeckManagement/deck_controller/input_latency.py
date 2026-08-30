@@ -100,7 +100,7 @@ class _LatencySnapshot:
 class InputLatencyTracker:
     """Collect exact sample tokens and completed-only summaries.
 
-    Tracker-owned tokens cross synchronous and asynchronous hand-offs; foreign tokens are ignored to avoid reused object IDs.
+    Tracker tokens cross hand-offs; foreign tokens are ignored to avoid reused object IDs.
     """
 
     def __init__(self, *, clock: Callable[[], float] = time.perf_counter,
@@ -118,7 +118,7 @@ class InputLatencyTracker:
     def input_received(self) -> LatencySample | None:
         """Create a token at the real HID callback boundary.
 
-        Beyond capacity, the report counts untracked inputs and becomes invalid rather than biasing percentiles.
+        Over capacity, untracked inputs invalidate the report instead of biasing percentiles.
         """
         with self._lock:
             self._next_sequence += 1
@@ -218,9 +218,9 @@ class InputLatencyTracker:
                deck_serial: str | None = None,
                run_id: str | None = None,
                extra: dict[str, Any] | None = None) -> dict[str, Any]:
-        """Return an honest, JSON-compatible hardware-capture report.
+        """Return a JSON report with percentiles from complete inputs.
 
-        Percentiles use complete inputs; incomplete inputs or overflow invalidate comparison, while frame_funnel keeps drops and sibling recovery visible.
+        Incomplete inputs or overflow invalidate it; frame_funnel keeps drops and sibling recovery.
         """
         with self._lock:
             samples = [self._snapshot(sample) for sample in self._samples]
@@ -401,7 +401,7 @@ def mirror_input_image(controller: Any, identifier: InputIdentifier, image: Any,
 def _is_physical(event: "DeckEvent") -> bool:
     """Return whether an event starts a measurable physical-input sample.
 
-    Key presses, dial turns or push-downs, and touchscreen gestures qualify; releases and push-ups do not.
+    Key presses, dial turns, push-downs, and touchscreen gestures qualify; releases do not.
     """
     match event:
         case KeyEvent(pressed=pressed):
@@ -418,7 +418,7 @@ def dispatch_deck_event(controller: Any, identifier: InputIdentifier,
                         event: "DeckEvent") -> None:
     """Route one typed deck event through latency tracking.
 
-    A physical edge runs the controller callback under a fresh sample, so triggered work keeps the same correlation.
+    A physical edge gives its callback a fresh sample, which keeps triggered work correlated.
     """
     if not _is_physical(event):
         controller.event_callback(identifier, event)

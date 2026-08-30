@@ -92,17 +92,17 @@ def encode_native_key(deck: "BetterDeck", image: "Image.Image", quality: int = K
     with io.BytesIO() as buf:
         save_kwargs = {"quality": quality}
         if fmt["format"] == "JPEG":
-            # Below quality 95, 4:2:0 halves chroma resolution and caused ~4% average desaturation plus smear on busy 120 px tiles.
-            # Force 4:4:4; quality 90 keeps encode speed and costs ~17% more bytes.
+            # Below q95, 4:2:0 adds about 4% desaturation and smear on busy 120 px tiles.
+            # It halves chroma; force 4:4:4 at q90 for 17% more bytes and the same speed.
             save_kwargs["subsampling"] = 0
         image.save(buf, fmt["format"], **save_kwargs)
         return buf.getvalue()
 
 
 def encode_native_touchscreen(deck: "BetterDeck", image: "Image.Image", quality: int = 90) -> bytes:
-    """Encode a touchscreen in native format with configurable quality without mutating the caller.
+    """Encode a touchscreen at configurable quality without mutating the caller.
 
-    The library fixes quality at 100 and resizes in place; copy for UI reuse, while lower quality reduces the largest device write and mutex hold.
+    Copying preserves UI reuse; lower quality cuts the largest device write and mutex hold.
     """
     fmt = deck.touchscreen_image_format()
     if image.size != fmt["size"]:
@@ -145,9 +145,9 @@ class SetBrightnessMsg:
 
 @dataclass
 class ClearMsg:
-    """Blank the deck after discarding queued paints older than seq; later paints preserve clear-then-paint order.
+    """Blank after dropping paints older than seq; later paints preserve clear-then-paint order.
 
-    expects_repaint is submission-time intent: transition clears can recover if late, while terminal blank states cannot.
+    expects_repaint lets a late transition clear recover but keeps terminal blank states blank.
     """
     seq: int
     expects_repaint: bool = False
@@ -155,7 +155,7 @@ class ClearMsg:
 
 @dataclass
 class ClearAndCloseMsg:
-    """Discard pending paints, blank and close the device where possible, and stop the media loop."""
+    """Drop pending paints, blank and close the device if possible, then stop the loop."""
     pass
 
 
@@ -163,7 +163,7 @@ class ClearAndCloseMsg:
 class ReleaseStashedInputsMsg:
     """Close and clear stashed inputs as a page-independent FIFO control operation.
 
-    Do not use add_task(), because a page change can drop it before the screensaver releases the previous page.
+    Do not use add_task(); a page change can drop it before the screensaver releases the old page.
     """
     stashed_inputs: "dict[type[InputIdentifier], list[ControllerKey | ControllerDial | ControllerTouchScreen]]"
 
@@ -172,7 +172,7 @@ class ReleaseStashedInputsMsg:
 class ReopenDeckMsg:
     """Release and reopen a live device after its input reader thread dies.
 
-    The media thread performs it because it is the sole writer and close waits for in-flight writes under the device lock.
+    The sole writer does this because close waits for in-flight writes under the device lock.
     """
     supervisor: "DeckReaderSupervisor"
 
@@ -193,9 +193,9 @@ def _env_float(name: str, default: float) -> float:
 
 
 def _install_fair_transport_lock(deck: Any) -> bool:
-    """Install a FIFO transport mutex before deck.open() starts the reader, and report success.
+    """Install a FIFO transport mutex; this must run before deck.open().
 
-    FIFO prevents write bursts from starving HID reads; missing or held mutexes keep the stock lock, while suspend reopen keeps an installed lock.
+    A missing device or mutex prevents install; a held mutex stays, and reopen keeps a FairLock.
     """
     device = getattr(deck, "device", None)
     if device is None:
@@ -236,8 +236,8 @@ class MediaPlayerThread(threading.Thread):
     # Quiet render ticks required before quiescence resumes after a generation
     # change; three full-FPS ticks cost about 100 ms while the user is away.
     GATE_SETTLE_TICKS = 3
-    # Hard limit for a gate window that otherwise rearms while queues remain nonempty.
-    # Producers at 10 Hz or more can hold that state; expiry can leave slow-page transparent keys stale for one away window.
+    # Bound a gate window that otherwise rearms while queues remain nonempty.
+    # A 10 Hz producer can hold it; expiry can leave transparent keys stale for one away window.
     GATE_WINDOW_MAX_S = 0.5
 
     def __init__(self, deck_controller: "DeckController"):
@@ -250,8 +250,8 @@ class MediaPlayerThread(threading.Thread):
         self.deck_controller: DeckController = deck_controller
         self.FPS = MEDIA_LOOP_FPS
 
-        # Cap background-video render and writes at loop rate; 0 disables the cap.
-        # FIFO bounds HID-reader wait; high-entropy content can still produce about 270 candidate key writes per second before deduplication.
+        # Cap background-video renders and writes at the configured rate; zero disables it.
+        # High-entropy content can produce about 270 key writes per second before deduplication.
         self._video_write_hz = _env_float("DECKARD_VIDEO_WRITE_HZ", 30.0)
         self._last_video_write = 0.0
         # Apply the same write budget to touchscreen frames so dial videos and
@@ -387,8 +387,8 @@ class MediaPlayerThread(threading.Thread):
         force_render = False
         gate_window_open = False
         if gated:
-            # On a gated generation change, render transparent video keys through the required quiet ticks.
-            # Page-load queues rearm it, the deadline bounds producers, and _page_gen_lock supplies the snapshot.
+            # Gated generation changes render transparent video keys for required quiet ticks.
+            # Page-load queues rearm the bounded window; _page_gen_lock supplies its snapshot.
             with self.deck_controller._page_gen_lock:
                 current_gen = self.deck_controller._page_load_generation
             if current_gen != self._gated_generation:
@@ -482,8 +482,8 @@ class MediaPlayerThread(threading.Thread):
             media_prof.add("tick", end - start)
             media_prof.maybe_report()
 
-        # Use 2 Hz only without animation or queued paints; unlocked slot reads affect one tick.
-        # Quiescence outranks cached animation, queued work stays full-rate, and 2 Hz remains below the 5-second resume-gap threshold.
+        # Queued paints and control-adjacent work stay full-rate; gate beats cached animation.
+        # The 2 Hz gate stays below the 5 s resume-gap threshold; unlocked reads affect one tick.
         has_pending = bool(self.tasks or self.image_tasks or self.touchscreen_task)
         if has_pending:
             target_fps = self.FPS
@@ -518,7 +518,7 @@ class MediaPlayerThread(threading.Thread):
     def submit_control(self, msg: "SetBrightnessMsg | ClearMsg | ClearAndCloseMsg | ReleaseStashedInputsMsg | ReopenDeckMsg") -> bool:
         """Append and wake without blocking; GIL-atomic deque append is safe from any thread.
 
-        Reject after stop because no loop remains to drain the message, and return rejection to callers with in-flight state.
+        Reject after stop because no loop can drain it; callers can then clear in-flight state.
         """
         if self._stop:
             return False
@@ -543,7 +543,7 @@ class MediaPlayerThread(threading.Thread):
             elif isinstance(msg, ReleaseStashedInputsMsg):
                 self._exec_release_stashed_inputs(msg)
             elif isinstance(msg, ReopenDeckMsg):
-                # A reopen blocks this deck's loop until the supervisor deadline, with no valid handle for paints.
+                # Reopen blocks until the supervisor deadline; paints have no valid handle.
                 # _stop shortens it after the current open and one retry gap.
                 msg.supervisor.run_attempt(stopping=lambda: self._stop)
         return True
@@ -606,8 +606,8 @@ class MediaPlayerThread(threading.Thread):
         except Exception as e:
             log.error(f"Failed to write blank frames for Clear: {e}")
 
-        # If a transition Clear runs after a later paint attempt, its blanks land last; require intent and a higher executed sequence.
-        # Ordinary clears must stay blank, and queue occupancy cannot prove that the later paint already ran.
+        # A late transition Clear can blank a later paint; require intent and a higher executed seq.
+        # Ordinary clears stay blank; queue occupancy cannot prove that the later paint ran.
         if msg.expects_repaint and self._max_executed_seq > msg.seq:
             self.deck_controller._schedule_full_repaint()
 
@@ -775,8 +775,8 @@ class MediaPlayerThread(threading.Thread):
                 touch_task.ticket.discarded(self.deck_controller, "device_writes_suspended")
             return
 
-        # Optional bulk pacing yields every YIELD_STRIDE writes for the 20 Hz HID reader, which needs one slot per about 50 ms.
-        # FIFO makes the default 0 ms and interactive batches never yield; per-write yields cost about 12 ms at 19 FPS on high-entropy video.
+        # Yield every YIELD_STRIDE bulk writes; the 20 Hz reader needs a slot about each 50 ms.
+        # FIFO defaults to 0 ms; interactive batches never yield; each costs 12 ms at 19 FPS.
         bulk = len(image_batch) >= self.BULK_BATCH_THRESHOLD
         writes_since_yield = 0
         for index, image_task in enumerate(image_batch):
@@ -798,8 +798,8 @@ class MediaPlayerThread(threading.Thread):
                 image_task.ticket.discarded(self.deck_controller, "stale_paint")
 
         if touch_task is not None and _is_current(touch_task):
-            # Share _video_write_hz across background video, dial video, scrolling labels, and interactive touchscreen paints.
-            # An over-budget frame returns only if still newest, so one shared timestamp delays it by at most one budget window.
+            # Share the video cap across background, dial, scrolling-label, and interactive paints.
+            # Return only the newest over-budget frame; shared timing delays it at most one window.
             now = media_loop.now()
             min_gap = 1.0 / self._video_write_hz if self._video_write_hz > 0 else 0
             if min_gap and now - self._last_touch_write < min_gap:
@@ -820,9 +820,9 @@ class MediaPlayerThread(threading.Thread):
             touch_task.ticket.discarded(self.deck_controller, "stale_paint")
 
     def _note_executed(self, task: "MediaPlayerSetImageTask | MediaPlayerSetTouchscreenImageTask") -> None:
-        """Advance executed sequence only after a task returns; stale or deferred paints do not count.
+        """Advance executed sequence after return; stale or deferred paints do not count.
 
-        Swallowed transport errors still count but schedule the same recovery through _on_write_result(False); media thread only.
+        Swallowed errors count; _on_write_result(False) schedules recovery; media thread only.
         """
         seq = task.submit_seq
         if seq is not None and seq > self._max_executed_seq:

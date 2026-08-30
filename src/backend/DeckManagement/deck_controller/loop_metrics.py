@@ -1,6 +1,6 @@
 """Track the media loop's pre-wait capacity rate, not its achieved cadence.
 
-The median inverse work duration warns below 80% of target; idle cadence near 2 Hz does not warn, and settings can delay one update by one tick.
+Median inverse work time warns below 80%; idle 2 Hz does not, and settings delay an update one tick.
 """
 import statistics
 from typing import Callable
@@ -9,7 +9,7 @@ from typing import Callable
 class WorkRateMonitor:
     """Maintain a sliding work-rate window and edge-triggered warning.
 
-    Call record() before update_warning(); publish runs only on state changes, and an empty window raises.
+    Call record() before update_warning(); publish only on changes, and an empty window raises.
     """
 
     # The warning shows once the median work-rate falls below this fraction
@@ -49,7 +49,7 @@ class WorkRateMonitor:
     def set_enabled(self, state: bool) -> None:
         """Enable or disable the warning, mirroring the settings toggle.
 
-        Enabling resets the edge state for a standing warning; disabling hides the banner immediately.
+        Enabling resets standing-warning edge state; disabling hides the banner immediately.
         """
         self.warnings_enabled = state
         if state:

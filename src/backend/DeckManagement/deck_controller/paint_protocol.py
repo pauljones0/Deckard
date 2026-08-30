@@ -50,9 +50,9 @@ if TYPE_CHECKING:
 
 
 class PresentState:
-    """Track one target's presented and enqueued hashes; skip only when both match.
+    """Track one target slot's presented and enqueued hashes; skip only when both match.
 
-    Render threads update enqueued, the media thread updates presented or resets both, subclasses bind key or strip slots, and deck-wide ordering stays on the writer.
+    Renderers set enqueued; the writer sets presented, resets both, and owns deck-wide order.
     """
 
     def __init__(self) -> None:
@@ -77,9 +77,9 @@ class PresentState:
     def offer(self, media_player: "MediaPlayerThread", *, page: "Page | None",
               config_gen: int | None, img_hash: int,
               encode: "Callable[[], bytes]", force: bool = False) -> bool:
-        """Offer an image unless both hashes match; force bypasses the check, and encoding runs only after acceptance.
+        """Callers must hold the target paint lock; both matching hashes skip unless forced.
 
-        Callers must hold the target paint lock to order stamp and slot; page or generation changes may drop tickets, while the presented hash permits recovery.
+        Encode after acceptance; presented hashes recover page, generation, or Clear ticket drops.
         """
         if (not force and img_hash == self.last_presented_hash
                 and img_hash == self.last_enqueued_hash):
@@ -154,7 +154,7 @@ class TouchscreenPresentState(PresentState):
 class PaintTicket:
     """Carry one immutable paint from rendering to device write.
 
-    The writer releases payload bytes through a successor ticket, so producer and media-thread references never mutate.
+    A successor drops payload bytes, so producer and media-thread references never mutate.
     """
 
     # Present state for this paint, or None for targetless writer scenarios.
@@ -175,7 +175,7 @@ class PaintTicket:
     def released(self) -> "PaintTicket":
         """Return a successor ticket without encoded bytes; all other fields remain.
 
-        Tasks call this after each write so payload memory, especially the uncached touchscreen strip, is released before batch end; empty means already written.
+        Release uncached strip bytes after each write; empty means it was already written.
         """
         return replace(self, native_image=b"")
 
@@ -204,7 +204,7 @@ class PaintTicket:
     def presented_by(self, deck_controller: object) -> "PaintTicket":
         """Record a completed device write and release its bytes.
 
-        Only successful writes update the presented hash; otherwise a correcting render could be deduplicated.
+        Only successful writes update the hash, so a correcting render is not deduplicated.
         """
         self.usb_presented(deck_controller)
         if self.present is not None:

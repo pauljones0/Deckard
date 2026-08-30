@@ -1,17 +1,6 @@
-"""The media loop's declared rate, its clock, and per-source frame deadlines.
+"""Provide the shared loop rate, monotonic clock, and per-source frame deadlines.
 
-This is a leaf module: it imports only the standard library, so every layer
-that needs the loop rate can import it without a cycle. Every follower of
-the rate reads MEDIA_LOOP_FPS from here: the writer's loop, the media and
-page defaults, the sidebar's fps range, and the scroll cadence. The number
-was previously declared independently at each of those sites.
-
-The clock is monotonic. Deadlines, durations, and rate gates must not move
-when the wall clock steps, so wall time stays out of scheduling entirely.
-The one deliberate exception is the writer's resume-gap check, which keeps
-wall time because the monotonic clock stops across a system suspend. Tests
-install a controllable clock through install_clock(), which is the
-deterministic seam the frame-deadline scenarios run on.
+All consumers use MEDIA_LOOP_FPS; tests can replace the clock, but resume-gap checks use wall time.
 """
 import time
 from collections.abc import Callable
@@ -33,9 +22,9 @@ def install_clock(clock: Callable[[], float] | None) -> None:
 
 
 class FrameDeadline:
-    """Schedule one source on its timeline, so a 24 FPS source on a 30 Hz loop renders at most 24 times per second.
+    """Schedule 24 FPS on 30 Hz at most 24 times each second; early calls return False.
 
-    Calls before a deadline return False; late ticks skip whole periods without drift or replay, and gaps over RESYNC_GAP_S reseed at the end.
+    Late ticks skip frames without drift or replay; gaps over RESYNC_GAP_S reseed.
     """
 
     RESYNC_GAP_S = 1.0
@@ -73,7 +62,7 @@ class FrameDeadline:
 
 
 class FrameScheduled:
-    """Gate animated-source renders on each source's current rate, avoiding composition between frames.
+    """Gate animated renders at the source rate to avoid between-frame composition.
 
     Read _render_rate() each tick so playback-rate changes apply immediately.
     """
