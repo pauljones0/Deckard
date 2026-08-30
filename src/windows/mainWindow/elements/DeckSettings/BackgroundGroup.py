@@ -424,7 +424,7 @@ class BackgroundMediaRow(LazyMapTasks, Adw.PreferencesRow):
             # a list-entry view; the single-media view key is then spent.
             current = settings.get("background", "media-path")
             if current:
-                current_view = _view_as_setting(normalize_view(settings.get("background", "view")))
+                current_view = view_as_setting(normalize_view(settings.get("background", "view")))
                 paths.append(current if current_view is None
                              else {"path": current, "view": current_view})
                 settings.set("background", "view", None)

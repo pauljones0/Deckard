@@ -765,9 +765,12 @@ class BackgroundGroup(PageEditorGroup):
     def update_image(self, file_path: str | None) -> None:
         self.set_thumbnail(file_path)
 
+        # A view belongs to the image it was framed on; a new file starts
+        # from the default crop instead of inheriting the previous zoom.
         services.require_page_manager().overwrite_background_settings(
             path=self.page_editor.require_active_page_path(),
-            media_path=file_path
+            media_path=file_path,
+            view=None,
         )
 
         self.update_background()
