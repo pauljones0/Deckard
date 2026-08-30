@@ -155,6 +155,14 @@ def check_page_change_follows_action_init() -> None:
         fixtures.teardown(controller)
 
 
+def _pump_default_context() -> None:
+    from gi.repository import GLib
+
+    ctx = GLib.MainContext.default()
+    while ctx.pending():
+        ctx.iteration(False)
+
+
 class _RaisingButton:
     """A widget whose conversion blows up the way a torn-down/rebuilt one does
     (image2pixbuf on a freed surface, a disposed GtkPicture, ...)."""
@@ -167,8 +175,8 @@ class _RaisingButton:
 
 
 class _RecordingMirror:
-    """Stands in for a KeyButton / ScreenBarImage. Conversion on the producer,
-    paint on the main loop, each half recorded separately."""
+    """Stands in for a KeyButton / ScreenBarImage. Conversion and paint both
+    run in the drain on the main loop, each half recorded separately."""
 
     def __init__(self):
         self.prepared: list = []
@@ -221,8 +229,9 @@ def check_mirror_pushes_coalesce() -> None:
     # retained pixbuf per frame per key on a stalled loop, then paints every
     # superseded frame in turn. The drains are counted as well as the paints,
     # because a slot that armed a callback per push still paints once, and
-    # would look identical from the widget's side.
-    from gi.repository import GLib
+    # would look identical from the widget's side. Conversion is counted
+    # too: a superseded frame must never be converted, so the winning frame
+    # pays the only PIL and pixbuf work, inside the drain.
 
     from src.windows.ui_adapter import TOUCHSCREEN_UI_INTERVAL_S, GtkUIAdapter
 
@@ -244,11 +253,7 @@ def check_mirror_pushes_coalesce() -> None:
 
     adapter._drain_mirror = counting_drain
 
-    ctx = GLib.MainContext.default()
-
-    def pump() -> None:
-        while ctx.pending():
-            ctx.iteration(False)
+    pump = _pump_default_context
 
     # Earlier checks left idles of their own on the default context.
     pump()
@@ -263,10 +268,10 @@ def check_mirror_pushes_coalesce() -> None:
         "a frame painted while the main loop was blocked -- the paint must be "
         "marshalled onto the loop, never run on the producer"
     )
-    assert button.prepared == frames, (
-        "the pixbuf conversion did not run once per frame ON THE PRODUCER "
-        f"({len(button.prepared)} of {len(frames)}) -- coalescing happens on "
-        "the way to the loop, it must not push conversion onto the loop"
+    assert button.prepared == [], (
+        f"the producer converted {len(button.prepared)} frames before any "
+        "drain ran -- admission comes first, and a frame the slot may still "
+        "supersede must not pay conversion"
     )
 
     pump()
@@ -274,6 +279,11 @@ def check_mirror_pushes_coalesce() -> None:
         f"{len(frames)} pushes against a blocked main loop scheduled "
         f"{len(drains)} main-loop callbacks -- the slot must arm at most one "
         "while a drain is outstanding, however many frames arrive"
+    )
+    assert button.prepared == [frames[-1]], (
+        f"{len(frames)} pushes converted {len(button.prepared)} frames "
+        f"({button.prepared!r}) -- only the winning frame pays conversion, "
+        "in the drain"
     )
     assert button.painted == [frames[-1]], (
         f"{len(frames)} pushes against a blocked main loop produced "
@@ -331,7 +341,7 @@ def check_mirror_pushes_coalesce() -> None:
         "unbind left the unplugged deck's mirror slots behind -- each one "
         "pins the controller and its last frame"
     )
-    print("PASS: mirror pushes coalesce to one paint of the newest frame per input")
+    print("PASS: mirror pushes coalesce to one conversion and one paint of the newest frame")
 
 
 def check_unbind_tolerates_concurrent_drain() -> None:
@@ -591,21 +601,47 @@ def check_port_methods_headless_safe() -> None:
     # returns, so it is checked separately from the no-warning assertion.
     assert adapter._run_input_visuals_changed(controller, identifier, 0, "bogus") is False
 
-    # push_input_image's except path (the containment that keeps a failing
-    # preview from throttling the media writer). Exercised with a widget that
-    # raises, because a refusal of any other kind returns False through a
-    # guard and never reaches the except at all.
-    adapter.bind(controller, _fake_key_child(_RaisingButton()))
+    # The drain's containment (what keeps a failing preview from throttling
+    # the media writer). The conversion runs in the drain, so a raising
+    # widget does not fail the push: the push admits the frame, and the
+    # drain contains the failure, logs it, and dirty-marks the input so the
+    # frame is not silently lost.
+    marking_controller = _FakeController()
+    adapter.bind(marking_controller, _fake_key_child(_RaisingButton()))
     adapter._window_mapped = True
     warnings.clear()
-    assert adapter.push_input_image(controller, identifier, object()) is False, (
-        "a raising widget must come back as False so the engine dirty-marks; "
-        "anything else silently loses the frame"
+    assert adapter.push_input_image(marking_controller, identifier, object()) is True, (
+        "a mapped, bound input must admit the frame; the drain owns "
+        "conversion failures"
+    )
+    _pump_default_context()
+    assert warnings, (
+        "the drain swallowed a widget failure without logging"
+    )
+    assert marking_controller.ui_image_changes_while_hidden.get(identifier) is True, (
+        "a drain-time conversion failure must dirty-mark the input, or the "
+        "frame is silently lost"
+    )
+    adapter.unbind(marking_controller)
+
+    # push_input_image's own except path: a widget lookup that raises at
+    # push time (a child mid-teardown) comes back False, so the engine
+    # dirty-marks, and the failure logs instead of reaching the media tick.
+    class _TornChild:
+        def __getattr__(self, name):
+            raise RuntimeError("child widget tree is being torn down")
+
+    torn_controller = _FakeController()
+    adapter.bind(torn_controller, _TornChild())
+    warnings.clear()
+    assert adapter.push_input_image(torn_controller, identifier, object()) is False, (
+        "a raising widget lookup must come back as False so the engine "
+        "dirty-marks; anything else silently loses the frame"
     )
     assert warnings, (
-        "the containment path swallowed a widget failure without logging"
+        "the push containment swallowed a lookup failure without logging"
     )
-    adapter.unbind(controller)
+    adapter.unbind(torn_controller)
     log.remove(sink_id)
 
     # on_deck_layout_changed ran inline on the main thread, which is the path

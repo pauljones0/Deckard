@@ -61,9 +61,12 @@ _PayloadT = TypeVar("_PayloadT")
 
 
 class MirrorWidget(Protocol, Generic[_PayloadT]):
-    """A widget that mirrors one input: it converts a frame off the main
-    loop and paints the result on it. The payload shape is the widget's
-    own; the adapter only carries it between the two calls."""
+    """A widget that mirrors one input: it converts a frame and paints the
+    result on the main loop. The payload shape is the widget's own; the
+    adapter's drain runs the two calls back to back on the loop, so only
+    the frame that won the latest-wins slot is ever converted. The
+    map-time replay paths convert on their own thread and idle the paint,
+    which the payload contract permits."""
 
     def prepare_mirror_frame(self, image: "Image.Image") -> _PayloadT: ...
     def paint_mirror_frame(self, payload: _PayloadT, /) -> bool: ...
@@ -72,10 +75,11 @@ class MirrorWidget(Protocol, Generic[_PayloadT]):
 class _MirrorSlot:
     """Latest-wins hand-off of the preview frames of one input.
 
-    A producer leaves a paint-ready payload here and arms at most one main-loop
-    callback. That callback paints whatever the slot holds when it runs. A
-    backlogged loop therefore keeps one callback and one payload per input, and
-    the newest frame is the one that lands.
+    A producer leaves the newest raw frame here and arms at most one
+    main-loop callback. That callback converts and paints whatever the slot
+    holds when it runs, so a superseded frame is dropped unconverted. A
+    backlogged loop keeps one callback and one frame per input, and the
+    newest frame is the one that lands.
     """
 
     __slots__ = ("_interval", "_lock", "_pending", "_armed", "_last_drain")
@@ -306,11 +310,10 @@ class GtkUIAdapter(ui_port.UIPort):
             if widget is None:
                 return False
 
-            # Convert on this thread, the media thread for a live frame.
-            # prepare_mirror_frame uses only PIL and GdkPixbuf, so the main
-            # loop receives the finished payload.
-            payload = widget.prepare_mirror_frame(image)
-
+            # Offer the raw frame; the drain converts. A frame the slot
+            # supersedes then costs nothing beyond this admission check,
+            # and only the winning frame pays PIL and pixbuf work, on the
+            # widget the drain re-resolves.
             key = (controller, identifier)
             slot = self._mirror_slots.get(key)
             if slot is None:
@@ -319,7 +322,7 @@ class GtkUIAdapter(ui_port.UIPort):
                             else KEY_UI_INTERVAL_S)
                 slot = self._mirror_slots.setdefault(key, _MirrorSlot(interval))
 
-            delay_s = slot.offer(payload)
+            delay_s = slot.offer(image)
             if delay_s is None:
                 # A drain is already armed and now carries this frame.
                 return True
@@ -341,22 +344,23 @@ class GtkUIAdapter(ui_port.UIPort):
                 raise
             return True
         except Exception:
-            # The failure set is open. A widget lookup races the window
-            # teardown, and prepare_mirror_frame runs PIL and
-            # GdkPixbuf.new_from_bytes. Contain all of it. This code runs under
-            # the media tick, whose catch-all waits 0.25 s per exception, and a
-            # failed preview must not throttle the deck writer loop.
+            # The failure set is open: the widget lookup races the window
+            # teardown, and the GLib scheduling call can raise after the
+            # offer. Contain all of it. This code runs under the media tick,
+            # whose catch-all waits 0.25 s per exception, and a failed
+            # preview must not throttle the deck writer loop.
             log.opt(exception=True).warning(f"Failed to mirror {identifier} into the UI")
             return False
 
     def _drain_mirror(self, controller: "DeckController", identifier: "InputIdentifier") -> bool:
-        # On the main loop, paint the newest frame of this input. Return
-        # False, because a GLib callback that returns a true value re-arms.
+        # On the main loop, convert and paint the newest frame of this
+        # input. Return False, because a GLib callback that returns a true
+        # value re-arms.
         slot = self._mirror_slots.get((controller, identifier))
         if slot is None:
             return False
-        payload = slot.take()
-        if payload is None:
+        image = slot.take()
+        if image is None:
             return False
         try:
             # Resolve again here instead of a capture at push time. The bind
@@ -372,10 +376,14 @@ class GtkUIAdapter(ui_port.UIPort):
             if not self._window_mapped or widget is None:
                 # The adapter accepted and then dropped this frame.
                 # push_input_image already returned True, so nothing else
-                # records it.
+                # records it. The dropped frame was never converted.
                 mark_dirty(controller, identifier)
                 return False
-            widget.paint_mirror_frame(payload)
+            # Only the winning frame reaches this conversion; every frame
+            # the slot superseded was dropped as a raw image, and one armed
+            # drain serves any number of pushes.
+            widget.paint_mirror_frame(
+                widget.prepare_mirror_frame(cast("Image.Image", image)))
         except Exception:
             log.opt(exception=True).warning(f"Failed to paint the {identifier} mirror")
             mark_dirty(controller, identifier)
