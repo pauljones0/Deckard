@@ -1,8 +1,4 @@
-"""Static tripwire for constructor calls that cannot bind their own __init__.
-
-An AST scan checks every call to a class defined once in the tree. It also
-pins FlatpakPermissionRequestWindow, which app.show_permissions() builds.
-"""
+"""Detect constructor calls that cannot bind their class initializer."""
 import ast
 import os
 

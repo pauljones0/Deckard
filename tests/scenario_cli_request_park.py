@@ -1,8 +1,4 @@
-"""Pins the parked page and state requests in src/backend/startup_queue.py.
-
-A page request is claimed once and gone. A state request is peeked, then
-resolved, so an exception during apply leaves it for the next load to retry.
-"""
+"""Verify one-shot page claims and retryable parked state requests."""
 import fixtures  # noqa: F401  (isolates DATA_PATH before src imports)
 
 import os  # noqa: E402
@@ -128,10 +124,7 @@ def check_slots_are_read_per_call(queue) -> None:
         assert queue.claim_page_request(SERIAL) == "Parked"
         assert queue.peek_state_request(SERIAL) is not None
 
-        # The other direction. A request written straight into the slot must be
-        # visible to the queue. The CLI-facing surface is the dict, and
-        # scenario_active_page_guards drives the state branch by writing one by
-        # hand. Both stay honest only while nothing here is cached.
+        # Requests written directly to the CLI-facing dictionaries must remain visible.
         gl.api_page_requests["hand-written"] = "Parked"
         gl.api_state_requests["hand-written"] = _state_request("StateTarget")
         assert queue.claim_page_request("hand-written") == "Parked", (
@@ -152,11 +145,7 @@ def check_slots_are_read_per_call(queue) -> None:
 
 
 def check_first_load_claims_parked_page(controller) -> None:
-    """The first load of a controller claims a page request parked before it.
-
-    DeckController.__init__ ends in load_default_page(), so that first load is
-    the claim.
-    """
+    """Require the controller's first default load to claim its parked page."""
     parked_path = fixtures.seed_page("Parked")
 
     assert controller.active_page is not None, (
@@ -170,10 +159,7 @@ def check_first_load_claims_parked_page(controller) -> None:
         f"applying the request must consume it: {gl.api_page_requests}"
     )
 
-    # A request left parked re-applies itself on every later load_default_page
-    # for this serial, on every replug and every fallback, so the deck can never
-    # be moved off the page the CLI named. The second load must fall back to the
-    # normal default.
+    # The second load must use the normal default instead of the claimed request.
     fallback_path = gl.page_manager.get_pages()[0]
     controller.load_default_page()
     assert os.path.abspath(controller.active_page.json_path) != os.path.abspath(parked_path), (
@@ -222,10 +208,7 @@ def check_state_request_survives_failed_apply(queue, controller) -> None:
     def exploding_load_page(page, *args, **kwargs):
         loads.append(page)
         if len(loads) >= 2:
-            # Within one load_default_page() call the first load is the default
-            # page and the second is the page of the state request, so this
-            # raises exactly between the peek and the resolve, which is the
-            # window the split exists for.
+            # Raise between the state request peek and resolve operations.
             raise RuntimeError("simulated failure while applying a state request")
         return original_load_page(page, *args, **kwargs)
 

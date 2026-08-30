@@ -1,14 +1,4 @@
-"""Three small, independent cosmetic fixes, one leg each.
-
-The onboarding icon page builds its icon at the size its sibling carousel pages
-use. The plugin settings list sorts case-insensitively by name and keeps both of
-its None guards. The action comment update refuses an index past the rows
-instead of raising.
-
-Each leg drives production code over duck-typed stand-ins, so no window and no
-device is needed. The onboarding leg builds a real Gtk.Image, so it needs a
-display and is skipped without one.
-"""
+"""Verify independent onboarding and plugin-settings presentation details."""
 import fixtures  # noqa: F401  (import first: sets up the isolated data dir)
 
 import sys
@@ -36,8 +26,6 @@ def call(handler, *args):
         return e
 
 
-# ------------------------------------------------------ onboarding icon size
-
 def check_onboarding_icon_size() -> None:
     print("(1) the onboarding icon page builds its icon at the sibling size")
     if not fixtures.has_usable_display():
@@ -52,14 +40,10 @@ def check_onboarding_icon_size() -> None:
 
     screen = IconOnboardingScreen("go-home-symbolic", "header", "detail")
     size = screen.image.get_pixel_size()
-    # The three icon pages share a carousel with the extension and udev pages,
-    # whose icons build at 250. A page that draws its icon at another size reads
-    # as a size jump on the swipe between them.
+    # Match the 250-pixel icons on the sibling carousel pages.
     check("the icon page builds its icon at 250px", size == 250,
           f"built at {size}px, not the 250px its sibling pages use")
 
-
-# ------------------------------------------------------- plugin settings sort
 
 def check_plugin_settings_sorted() -> None:
     print("(2) the plugin settings list sorts by name and keeps its guards")
