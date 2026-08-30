@@ -1,6 +1,6 @@
 """Provide the shared loop rate, monotonic clock, and per-source frame deadlines.
 
-All consumers use MEDIA_LOOP_FPS; tests can replace the clock, but resume-gap checks use wall time.
+All consumers use MEDIA_LOOP_FPS; resume-gap checks use the replaceable monotonic clock.
 """
 import time
 from collections.abc import Callable
@@ -22,9 +22,9 @@ def install_clock(clock: Callable[[], float] | None) -> None:
 
 
 class FrameDeadline:
-    """Schedule 24 FPS on 30 Hz at most 24 times each second; early calls return False.
+    """Schedule any source at its rate without replay; the first call is due immediately.
 
-    Late ticks skip frames without drift or replay; gaps over RESYNC_GAP_S reseed.
+    Early calls return False; late ticks do not drift; gaps over RESYNC_GAP_S reseed.
     """
 
     RESYNC_GAP_S = 1.0

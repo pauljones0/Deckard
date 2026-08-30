@@ -297,9 +297,8 @@ class MediaPlayerThread(threading.Thread):
         # Clear uses it to detect later paint attempts that ran before its blanks.
         self._max_executed_seq: int = -1
 
-        # Wall-clock gap detection. A gap much larger than the loop's own
-        # wait interval means the process suspended on a system sleep and then
-        # resumed. See check_resume_gap().
+        # Seed before the first tick; later resume-gap checks use media_loop.now().
+        # A gap of at least 5 s schedules a repaint.
         self._last_iter_ts: float = time.time()
 
         # Per-tick work-rate window and low-FPS warning state; loop_metrics
@@ -543,7 +542,7 @@ class MediaPlayerThread(threading.Thread):
             elif isinstance(msg, ReleaseStashedInputsMsg):
                 self._exec_release_stashed_inputs(msg)
             elif isinstance(msg, ReopenDeckMsg):
-                # Reopen blocks until the supervisor deadline; paints have no valid handle.
+                # Reopen blocks for at most the supervisor deadline; paints lack a valid handle.
                 # _stop shortens it after the current open and one retry gap.
                 msg.supervisor.run_attempt(stopping=lambda: self._stop)
         return True
@@ -577,12 +576,10 @@ class MediaPlayerThread(threading.Thread):
         stashed_inputs.clear()
 
     def check_resume_gap(self, now: float | None = None) -> bool:
-        """Detect a wall-clock gap of 5s or more between media-loop
-        iterations, which is the signature of a process suspend and resume
-        cycle. It is split out of run() so a unit-tier scenario drives it
-        without a running thread, as drain_control_queue is. Returns whether
-        it detected a gap, and not whether a repaint fired, because
-        _schedule_full_repaint() applies its own rate limit."""
+        """Detect a media-loop clock gap of at least 5 s and report whether it occurred.
+
+        The tick path passes media_loop.now(); repaint scheduling remains rate-limited.
+        """
         if now is None:
             now = time.time()
         gap = now - self._last_iter_ts
@@ -775,8 +772,8 @@ class MediaPlayerThread(threading.Thread):
                 touch_task.ticket.discarded(self.deck_controller, "device_writes_suspended")
             return
 
-        # Yield every YIELD_STRIDE bulk writes; the 20 Hz reader needs a slot about each 50 ms.
-        # FIFO defaults to 0 ms; interactive batches never yield; each costs 12 ms at 19 FPS.
+        # YIELD_STRIDE paces bulk writes; interactive batches never yield.
+        # Per-write yields cost about 12 ms per high-entropy frame at 19 FPS.
         bulk = len(image_batch) >= self.BULK_BATCH_THRESHOLD
         writes_since_yield = 0
         for index, image_task in enumerate(image_batch):

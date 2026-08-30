@@ -154,7 +154,7 @@ class TouchscreenPresentState(PresentState):
 class PaintTicket:
     """Carry one immutable paint from rendering to device write.
 
-    A successor drops payload bytes, so producer and media-thread references never mutate.
+    A successor releases encoded key or strip bytes without mutating shared references.
     """
 
     # Present state for this paint, or None for targetless writer scenarios.
@@ -175,7 +175,7 @@ class PaintTicket:
     def released(self) -> "PaintTicket":
         """Return a successor ticket without encoded bytes; all other fields remain.
 
-        Release uncached strip bytes after each write; empty means it was already written.
+        Release encoded key or strip bytes after each write; empty means already written.
         """
         return replace(self, native_image=b"")
 
