@@ -87,7 +87,7 @@ def build_backend_launch_command(backend_path: str, venv_path: str | None, port:
 
 def frontend_authenticator(sock: "socket.socket") -> "tuple[socket.socket, None]":
     """Use socket tables to authenticate frontends because loopback TCP has no peer credentials.
-    Accept only same-UID peers before rpyc starts; children need no cooperation.
+    Accept only same-UID loopback peers before rpyc starts; children need no cooperation.
     """
     reason = deckard_rpyc_guard.refusal_reason(sock)
     if reason is not None:
@@ -292,7 +292,7 @@ def _rebuild_lock_for(key: str) -> threading.Lock:
 
 def ensure_backend_venv(venv_path: str, plugin_dir: str, display_name: str) -> None:
     """Rebuild a stale venv through the confined install gate once per process and one at a time.
-    Only "always" permits unattended steps; apply timeout and guard, and restore on every failure.
+    Only "always" runs unattended; use timeout and guard; failures can restore the stale tree.
     """
     key = os.path.realpath(venv_path)
     # Lock before probing because another rebuild temporarily moves the venv;
@@ -391,8 +391,8 @@ class PluginManager:
         self.initialized_plugin_classes = list[type[PluginBase]]()
         self.backends: list[Connection] = []
         self.backend_processes: list[subprocess.Popen[bytes]] = []
-        # Enable warm-up on activation and after later loads; each plugin's
-        # fired marker limits on_app_ready to one call.
+        # Activation enables warm-up after later loads; each call starts a new thread.
+        # Concurrent workers can race the unsynchronized per-plugin fired marker.
         self._app_ready: bool = False
         # Map plugin folders to user-facing failures; prune on removal or registration.
         # Full tracebacks stay in logs, and the lock makes worker updates atomic for GTK reads.
@@ -406,8 +406,9 @@ class PluginManager:
         self.backend_processes.clear()
 
     def warm_up_plugins(self) -> None:
-        """Start one daemon thread that calls each unfired plugin on_app_ready in order.
-        Return without waiting, and isolate each plugin's exception."""
+        """Start a daemon thread that visits registered plugins in order.
+        Return immediately; each worker skips marked plugins and isolates hook exceptions.
+        """
         # Warm-up starts backends in background mode or without decks before interaction.
         # It must run off the GTK main thread because backend launch can block.
         self._app_ready = True
@@ -423,7 +424,8 @@ class PluginManager:
             plugin_base = plugin.get("object")
             if plugin_base is None:
                 continue
-            # Each plugin instance fires once across startup and post-install warm-ups.
+            # Skip a marked plugin, but concurrent workers can both pass this
+            # unsynchronized check and call the same hook.
             if getattr(plugin_base, "_on_app_ready_fired", False):
                 continue
             plugin_base._on_app_ready_fired = True

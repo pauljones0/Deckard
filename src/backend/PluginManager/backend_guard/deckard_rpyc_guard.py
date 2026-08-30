@@ -1,5 +1,5 @@
-"""Check plugin-backend rpyc peers and bind child servers to loopback; app imports add no hook.
-Use /proc for UIDs; child patches fail open, and top-level imports stay stdlib-only.
+"""Accept only current-UID loopback peers and bind child rpyc servers to loopback.
+Use /proc UIDs; app imports do not patch, child patches fail open, and top-level imports use stdlib.
 """
 from __future__ import annotations
 
@@ -158,8 +158,8 @@ def loopback_uid_authenticator(sock: socket.socket) -> "tuple[socket.socket, Non
     return sock, None
 
 
-# Child-side hook replaces rpyc's hostname-less wildcard bind with loopback and
-# adds peer authentication; it fails open because app-side checks remain active.
+# Child hook replaces rpyc's hostname-less wildcard bind with loopback and
+# enforces current-UID peers; it fails open because app checks remain active.
 
 _PATCHED_MARK = "_deckard_rpyc_guard_patched"
 _TARGET_MODULE = "rpyc.utils.server"

@@ -45,7 +45,7 @@ class AssetManager:
         assets[self.icons.get_save_key()] = self.icons.get_override_json()
 
         # Preserve non-asset settings before the wholesale write; an unreadable
-        # file becomes an empty document without raising in UI callers.
+        # file becomes empty without raising through the colour-picker path.
         settings = self._settings_file()
         content = settings.document() or {}
         content["assets"] = assets

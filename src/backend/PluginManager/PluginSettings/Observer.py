@@ -16,8 +16,8 @@ class Observer:
         # Weak bound-method storage prevents subscribers that omit unsubscribe()
         # from retaining themselves through this registry.
         self.observers = CallbackRegistry()
-        # Subscribers run in order on this notifier's lane, so a block stalls
-        # only this asset stream; the watchdog names the lane by label.
+        # Subscribers run one at a time in subscription order; a block stalls
+        # only this asset stream, and the watchdog names the lane by label.
         self._lane = event_dispatch.Lane(label=label)
 
     def subscribe(self, observer: Callable[..., Any]) -> None:
@@ -28,7 +28,8 @@ class Observer:
 
     def notify(self, *args: Any, **kwargs: Any) -> None:
         """Queue a subscriber snapshot on this notifier's lane and return.
-        Callbacks run in order; a block stalls this lane only, and cross-lane order is undefined."""
+        Callbacks run later, one at a time in subscription order; cross-lane order is undefined.
+        """
         try:
             self._lane.dispatch(self.observers.snapshot(), args, kwargs)
         except event_dispatch.DispatchShutdown:
