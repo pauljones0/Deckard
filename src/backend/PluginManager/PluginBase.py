@@ -39,8 +39,8 @@ from src.backend.settings_store import PluginSettings
 
 
 class PluginRegistration(TypedDict):
-    """Registration data written by register().
-    Readers tolerate a missing object, so that key remains optional."""
+    """Registry entry; register() is the sole writer and always sets object.
+    Warm-up tolerates malformed entries without it, so the key stays optional."""
 
     object: NotRequired["PluginBase"]
     plugin_version: "str | None"
@@ -73,8 +73,8 @@ class PluginBase(rpyc.Service):
 
     @property
     def backend_event_hold(self) -> "BackendEventHold":
-        """Hold events for a bounded time while the plugin backend connects.
-        Create it lazily because overrides can skip super().__init__ and all backend paths use it; label it by folder before registration."""
+        """Bound backend events for every event holder, launch, registration, and teardown.
+        Create lazily after skipped super(); the folder labels it before register() sets the id."""
         hold = self._backend_event_hold
         if hold is not None:
             return hold
@@ -108,8 +108,8 @@ class PluginBase(rpyc.Service):
 
         self.PATH = os.path.dirname(inspect.getfile(self.__class__))
         self.settings_path: str = self._resolve_settings_path()
-        # Serialize settings read-modify-write cycles that concurrent on_ready calls can lose;
-        # use a plain outer lock because accessors do not re-enter and the store takes only its inner cache lock.
+        # Serialize settings read-modify-write cycles that concurrent on_ready calls can lose.
+        # Use a plain outer lock; accessors do not re-enter, and the store cache lock is inner.
         self._settings_lock = threading.Lock()
 
         # The two storage adapters share the Translator surface, which is
@@ -524,8 +524,6 @@ class PluginBase(rpyc.Service):
         full_id = event_id or f"{self.get_plugin_id()}::{event_id_suffix}"
 
         if full_id in self.event_holders:
-            # A None callback matched nothing in the registry before; the
-            # guard keeps that no-op without the call.
             if callback is not None:
                 self.event_holders[full_id].remove_listener(callback)
         else:
@@ -587,8 +585,8 @@ class PluginBase(rpyc.Service):
                 with open(manifest_path, "r") as f:
                     manifest = json.load(f)
             except ValueError as e:
-                # Do not quarantine invalid plugin-source JSON: the app never writes it, and a dev plugin can point into Git.
-                # Treat it as missing so registration records the load error and plugin scanning continues.
+                # Keep source JSON in place; dev plugins can point into Git.
+                # The app never writes it; treat invalid data as missing and continue scanning.
                 log.error(
                     f"Plugin manifest {manifest_path} contains invalid JSON: {e} -- treating "
                     f"it as empty and leaving it in place (the app never writes plugin "
@@ -771,8 +769,6 @@ class PluginBase(rpyc.Service):
     def get_settings_area(self) -> "Adw.PreferencesGroup | None":
         pass
 
-    # Rpyc
-
     def start_server(self) -> None:
         """Start the rpyc server of the plugin.
 
@@ -816,8 +812,8 @@ class PluginBase(rpyc.Service):
     def _release_backend_resources(self) -> None:
         """Detach and tear down the rpyc server, connection, and process.
         Concurrent callers are safe and idempotent, as in ActionCore."""
-        # Detach before close or terminate can block a worker for 5 seconds, so GTK and relaunch do not wait.
-        # Always cancel the event hold because a backend that never registered cannot release it.
+        # Detach before close or terminate can block a worker for 5 seconds.
+        # Keep GTK and relaunch free; cancel holds that unregistered backends cannot release.
         self.backend_event_hold.cancel()
 
         if self.backend_connection is None and self.server is None and self.backend_process is None:
@@ -1035,7 +1031,7 @@ class PluginBase(rpyc.Service):
         pass
 
     def on_app_ready(self) -> None:
-        """Start a backend or long-lived work once after startup; __init__ blocks startup and action on_ready needs a deck.
+        """Start backend or long work after startup; __init__ blocks and on_ready needs a deck.
         This runs on a background thread; do not access GTK."""
         pass
 

@@ -177,8 +177,8 @@ class ActionCore(rpyc.Service):
 
     def on_update(self) -> None:
         """The app calls this when the action must redraw itself."""
-        # Block all on_ready re-entry until the first call finishes; plugins can
-        # allocate duplicate resources. The ready sequence supplies the skipped update.
+        # Delay the compatibility call until on_ready finishes to avoid duplicate resources.
+        # The ready sequence supplies the skipped update.
         if not self.on_ready_finished:
             log.debug(f"{self.action_id}: on_update compat on_ready skipped, on_ready has not finished")
             return
@@ -575,8 +575,8 @@ class ActionCore(rpyc.Service):
         return media.get("path", None) is not None
     
     def get_own_action_index(self) -> int | None:
-        # Return -1 off the active page and None when absent from this input;
-        # permission getters compare None with an unset control-action entry.
+        # Return -1 if detached, inactive, hidden by the screen saver, or absent from page actions.
+        # Return None if absent from this input state; permission getters need the unset value.
         page = self.page
         if page is None or not self.get_is_present(): return -1
         actions = page.get_all_actions_for_input(self.input_ident, self.state)
@@ -684,8 +684,6 @@ class ActionCore(rpyc.Service):
             if generative_object.is_built:
                 generative_object.load_initial_ui()
     
-    # Rpyc
-
     def start_server(self) -> None:
         if self.server is not None:
             log.warning("Server already running, skipping...")
@@ -703,8 +701,8 @@ class ActionCore(rpyc.Service):
         self._release_backend_resources()
     
     def launch_backend(self, backend_path: str, venv_path: str | None = None, open_in_terminal: bool = False) -> None:
-        """Launch this action's backend; require a running rpyc server and valid backend and optional venv paths.
-        Raise RuntimeError without a server and ValueError for invalid paths before Popen runs."""
+        """Start the rpyc server, validate paths, and launch this action backend.
+        Raise RuntimeError if no server starts, or ValueError for invalid paths before Popen."""
         from src.backend.PluginManager.PluginManager import (
             backend_guard_env,
             build_backend_launch_command,
@@ -802,10 +800,10 @@ class ActionCore(rpyc.Service):
         action.clean_up()
 
     def clean_up(self) -> None:
-        """Tear down actions dropped by reload, uninstall, UI removal, or cache eviction; this can run on any thread.
-        Never call run_on_main() here or from synchronous teardown work."""
-        # The lock makes teardown idempotent across the main, USB, media, and
-        # rpyc threads. Queued callbacks can run later; use get_is_present() and expect empty settings after detachment.
+        """Tear down after reload, uninstall, sidebar or config removal, or cache eviction.
+        Any thread can call this; do not call run_on_main() here or from synchronous teardown."""
+        # The lock makes cleanup idempotent across main, USB, media, and rpyc threads.
+        # Queued work can run later; use get_is_present() and expect empty settings when detached.
         with self._cleanup_lock:
             if self._cleaned_up:
                 return
