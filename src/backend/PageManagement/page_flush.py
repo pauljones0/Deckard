@@ -386,11 +386,11 @@ class PageFlush:
         # file, and one copy per keystroke gives a backup that chases the
         # primary. A backup is read only when the primary is unreadable, and
         # nothing here can make it unreadable. Every page write goes out
-        # through the temporary-then-replace of atomic_write_json. The one page
-        # write that is not atomic is the copy2 of a rename onto the name it
-        # claims, which cannot truncate the page being renamed. Corruption
-        # therefore arrives from outside, and against that a copy from before
-        # this seam's writes serves as well as a copy from a second ago. The
+        # through an atomic publish: saves through the temporary-then-replace
+        # of atomic_write_json, the rename fill and the backup copy itself
+        # through atomic_copy_file. Corruption therefore arrives from
+        # outside, and against that a copy from before this seam's writes
+        # serves as well as a copy from a second ago. The
         # boot backup zip keeps the older history.
         #
         # A refusal counts as done. make_backup copies nothing when the

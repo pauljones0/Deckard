@@ -270,34 +270,53 @@ def atomic_write_json(file_path: str, data: Any, indent: int | None = 4) -> None
         raise
 
 
-def atomic_copy_file(src_path: str, dst_path: str) -> None:
-    """Copy src_path over dst_path atomically and durably.
+def atomic_copy_file(src_path: str, dst_path: str, overwrite: bool = True) -> None:
+    """Copy src_path to dst_path atomically and durably.
 
     The content lands in a temp file in the destination's real directory,
-    fsyncs, and moves in with os.replace(), like atomic_write_json above. A
-    reader sees the old destination or the whole copy, never a truncated one,
-    and a failure leaves the destination as it was. The copy carries the
-    source's permission bits and timestamps, as shutil.copy2 does.
+    fsyncs, and publishes in one atomic rename, like atomic_write_json
+    above. A reader sees the old destination or the whole copy, never a
+    truncated one, and a failure or a hard kill leaves the destination as
+    it was, with at most a stale temp for the reaper above.
+
+    The copy carries content and mode, not timestamps: an existing
+    destination keeps its own mode, a new one takes the source's, and the
+    temp keeps its fresh mtime, because a temp stamped with an old source
+    mtime reads as stale to the reaper while it is still being filled.
+
+    With overwrite False an existing destination is refused with
+    FileExistsError. The publish then goes through os.link, which creates
+    the destination name with its full content in one atomic step, so no
+    empty or partial file exists under dst_path at any point, even across
+    a hard kill mid-copy.
     """
     dst_path = os.path.realpath(dst_path)
     dir_path = os.path.dirname(dst_path) or "."
+    os.makedirs(dir_path, exist_ok=True)
 
     basename = os.path.basename(dst_path)
     _reap_stale_tmp_siblings(dir_path, basename)
 
     fd, tmp_path = tempfile.mkstemp(dir=dir_path, prefix=f".save-{basename}.", suffix=".tmp")
     try:
-        os.close(fd)
-        # copy2 follows the mkstemp create, so the temp holds the source's
-        # mode and times before the rename publishes it.
-        shutil.copy2(src_path, tmp_path)
-        read_fd = os.open(tmp_path, os.O_RDONLY)
+        with open(src_path, "rb") as src_f, os.fdopen(fd, "wb") as tmp_f:
+            shutil.copyfileobj(src_f, tmp_f)
+            tmp_f.flush()
+            os.fsync(tmp_f.fileno())
         try:
-            os.fsync(read_fd)
-        finally:
-            os.close(read_fd)
-        os.replace(tmp_path, dst_path)
-        # fsync the directory so the rename itself becomes durable.
+            mode = os.stat(dst_path).st_mode & 0o777
+        except FileNotFoundError:
+            mode = os.stat(src_path).st_mode & 0o777
+        os.chmod(tmp_path, mode)
+        if overwrite:
+            os.replace(tmp_path, dst_path)
+        else:
+            os.link(tmp_path, dst_path)
+            # The published file has its own name now; the temp is surplus,
+            # and a failed unlink here leaves only reaper work.
+            with contextlib.suppress(OSError):
+                os.remove(tmp_path)
+        # fsync the directory so the publish itself becomes durable.
         try:
             dir_fd = os.open(dir_path, os.O_RDONLY)
             try:

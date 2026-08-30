@@ -1,17 +1,17 @@
 """An aborted page rename leaves no destination file behind.
 
-move_page claims the destination with O_EXCL, which creates a 0-byte file,
-then fills it from the source. A failure between the claim and the fill used
-to strand that empty file under a real page name, and the loader then
-quarantines it as a corrupt page at the next load. The fill also streamed
-straight into the destination, so a kill mid-copy left a truncated page.
-This injects a failing and a partially-writing copy into the rename and
-asserts the destination is gone afterward, and that a successful rename
-lands the whole content with no temp strays.
+move_page once claimed the destination with O_EXCL, a 0-byte file, and then
+filled it in place. A failure between the claim and the fill stranded that
+empty file under a real page name, which the loader quarantines as a corrupt
+page at the next load, and a kill mid-copy left a truncated page. The fill
+now goes through a temp file that os.link publishes as the destination in
+one atomic step, so no destination name exists until the whole content
+does. This injects a failing and a partially-writing copy into the rename
+and asserts no destination and no strays remain and the source survives,
+and that a successful rename lands the whole content.
 """
 import fixtures  # noqa: F401  (must be first: isolates DATA_PATH)
 
-import glob
 import json
 import os
 import shutil
@@ -29,12 +29,16 @@ def _pages_dir() -> str:
 
 
 def _strays() -> list[str]:
-    """Every empty page file and every leftover temp in the pages folder."""
+    """Every empty page file and every leftover temp in the pages folder.
+
+    os.listdir, not glob: the temps are dot-prefixed and glob patterns skip
+    dotfiles, which would make this scan blind to the exact files it is for.
+    """
     found = []
-    for path in glob.glob(os.path.join(_pages_dir(), "*")):
+    for name in os.listdir(_pages_dir()):
+        path = os.path.join(_pages_dir(), name)
         if not os.path.isfile(path):
             continue
-        name = os.path.basename(path)
         if name.endswith(".tmp") or name.startswith(".save-"):
             found.append(name)
         elif name.endswith(".json") and os.path.getsize(path) == 0:
@@ -48,16 +52,20 @@ def main() -> int:
     os.makedirs(_pages_dir(), exist_ok=True)
     failures: list[str] = []
 
-    real_copy2 = shutil.copy2
+    # The injection sits inside atomic_copy_file, so it exercises that
+    # helper's own failure cleanup, not just move_page's handling. The pages
+    # seeded here carry no pending edits, so the backup seam declines before
+    # its copy and the fill is the only copyfileobj call in the move.
+    real_copyfileobj = shutil.copyfileobj
 
     # --- Part A: the copy raises before writing anything -------------------
     src_a = fixtures.seed_page("StrayMoveSrcA")
     dst_a = os.path.join(_pages_dir(), "StrayMoveDstA.json")
 
-    def failing_copy2(src, dst, **kwargs):
-        raise InjectedCopyFailure(dst)
+    def failing_copyfileobj(fsrc, fdst, *args, **kwargs):
+        raise InjectedCopyFailure("no bytes written")
 
-    shutil.copy2 = failing_copy2
+    shutil.copyfileobj = failing_copyfileobj
     try:
         gl.page_manager.move_page(src_a, dst_a)
     except InjectedCopyFailure:
@@ -65,7 +73,7 @@ def main() -> int:
     else:
         failures.append("a failed copy did not surface out of move_page")
     finally:
-        shutil.copy2 = real_copy2
+        shutil.copyfileobj = real_copyfileobj
 
     if os.path.exists(dst_a):
         failures.append("a failed copy left a destination file behind "
@@ -77,14 +85,12 @@ def main() -> int:
     src_b = fixtures.seed_page("StrayMoveSrcB")
     dst_b = os.path.join(_pages_dir(), "StrayMoveDstB.json")
 
-    def partial_copy2(src, dst, **kwargs):
-        with open(dst, "w") as f:
-            f.write('{"keys": {')
-            f.flush()
-            os.fsync(f.fileno())
-        raise InjectedCopyFailure(dst)
+    def partial_copyfileobj(fsrc, fdst, *args, **kwargs):
+        fdst.write(b'{"keys": {')
+        fdst.flush()
+        raise InjectedCopyFailure("died mid-copy")
 
-    shutil.copy2 = partial_copy2
+    shutil.copyfileobj = partial_copyfileobj
     try:
         gl.page_manager.move_page(src_b, dst_b)
     except InjectedCopyFailure:
@@ -92,10 +98,15 @@ def main() -> int:
     else:
         failures.append("a dying copy did not surface out of move_page")
     finally:
-        shutil.copy2 = real_copy2
+        shutil.copyfileobj = real_copyfileobj
 
     if os.path.exists(dst_b):
         failures.append("a dying copy left a destination file behind")
+    if not os.path.exists(src_b):
+        failures.append("a dying copy lost the source page")
+
+    for name in _strays():
+        failures.append(f"stray file after the aborted renames: {name}")
 
     # --- Part C: a normal rename lands whole, with nothing left over --------
     src_c = fixtures.seed_page("StrayMoveSrcC")
@@ -122,8 +133,8 @@ def main() -> int:
             print(f"FAIL: {failure}")
         return 1
 
-    print("PASS: an aborted rename leaves no destination and no strays, "
-          "and a completed rename lands the whole page")
+    print("PASS: an aborted rename leaves no destination, no strays, and a "
+          "live source; a completed rename lands the whole page")
     return 0
 
 
