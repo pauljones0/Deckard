@@ -24,7 +24,7 @@ from src.backend.atomic_json import (
 @dataclass(frozen=True)
 class SurfaceSpec:
     """Describe one settings file with value-based equality and hashing.
-    The store does not depend on module-constant identity, so equal caller-built specs behave alike."""
+    Equal caller-built specs behave like module constants; identity is not used."""
 
     #: Human name, used in error messages only.
     name: str
@@ -41,8 +41,7 @@ class SurfaceSpec:
     cached: bool = False
     #: Whether path_fn takes a key.
     keyed: bool = False
-    #: Hand every reader the cached object itself rather than a copy (see the
-    #: module docstring). This needs cached.
+    #: Hand every reader the cached object instead of a copy; this requires cached.
     shared: bool = False
 
     def __post_init__(self) -> None:
@@ -74,7 +73,7 @@ DECK_DEFAULTS: dict[str, Any] = {
         "enable": False,
         "media-path": None,
         # Loop old screensaver media instead of freezing on its final frame;
-        # ScreenSaver.loop, both Background path setters, BackgroundVideo, and GifBackground default True.
+        # ScreenSaver.loop, both Background setters, BackgroundVideo, and GifBackground use True.
         "loop": True,
         "fps": 30,
         # Minutes of no input before it shows.
@@ -252,7 +251,7 @@ STATIC = SurfaceSpec(
 )
 
 
-# Persist both asset filters with True defaults so the chooser never opens empty;
+# Default both filters to True so disabled defaults alone cannot empty the chooser;
 # one schema prevents divergent inline defaults across readers and writers.
 UI_ASSET_MANAGER_DEFAULTS: dict[str, Any] = {
     "video-toggle": True,
@@ -307,13 +306,13 @@ class SettingsStore:
 
     def read(self, spec: SurfaceSpec, key: str | None = None) -> Any:
         """Return content or an empty root; cached reads copy unless the surface is shared.
-        Mutations never persist without write(), while shared readers see each other's in-memory changes."""
+        Mutations need write() to persist; shared readers see each other's in-memory changes."""
         data, _corrupt = self.read_reporting_corruption(spec, key)
         return data
 
     def read_reporting_corruption(self, spec: SurfaceSpec, key: str | None = None) -> tuple[Any, bool]:
-        """Return (content, corrupt), where corrupt is true only for this read of an existing unparseable file.
-        Never cache the flag or depend on quarantine success; missing, empty, later, and cached reads report false."""
+        """Return content and whether this read found an existing unparseable or wrong-root file.
+        Missing, {}, later, and cached reads are false; do not cache or depend on quarantine."""
         path = spec.path(key)
         if not spec.cached:
             return self.load_file(path, root=spec.root)
@@ -341,7 +340,7 @@ class SettingsStore:
 
     def read_fresh(self, spec: SurfaceSpec, key: str | None = None) -> Any:
         """Read a private disk snapshot without reading or filling any cache entry.
-        Editors use it so a final whole-file write matches what they saw and unfinished changes never reach shared readers."""
+        Editors use this so final writes match shown data and unfinished changes stay private."""
         data, _corrupt = self.load_file(spec.path(key), root=spec.root)
         return data
 
@@ -359,7 +358,7 @@ class SettingsStore:
     @contextmanager
     def edit(self, spec: SurfaceSpec, key: str | None = None) -> Iterator[Any]:
         """Serialize disk read-modify-write blocks per file, writing only after normal block exit.
-        Plain writes remain last-writer-wins, different keyed files use different locks, and cached surfaces still read fresh."""
+        Plain writes are last-wins; keyed files lock separately, and cached reads are fresh."""
         path = spec.path(key)
         with self._edit_lock(path):
             data, _corrupt = self.load_file(path, root=spec.root)
@@ -368,7 +367,7 @@ class SettingsStore:
 
     def load_file(self, file_path: str, root: type[dict[str, Any]] | type[list[Any]] = dict) -> tuple[Any, bool]:
         """Read and quarantine one path-level JSON file, returning (data, corrupt).
-        The requested root type supplies absent or corrupt content; this entry point knows no surface."""
+        root supplies absent or corrupt content; this path API knows no surface."""
         empty = root()
         if not os.path.exists(file_path):
             return empty, False

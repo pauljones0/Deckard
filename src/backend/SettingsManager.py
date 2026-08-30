@@ -35,8 +35,8 @@ class SettingsManager:
 
     @staticmethod
     def load_settings_reporting_corruption(file_path: str) -> tuple[dict[str, Any], bool]:
-        """Load through the store and return data plus this read's corruption flag.
-        Only an existing unparseable file is corrupt; missing or empty objects are not, and recovery must not depend on quarantine success."""
+        """Return data and a corruption flag from the store.
+        Existing invalid or wrong-root files are corrupt; missing files and {} are not."""
         return settings_store.get().load_file(file_path)
 
     @staticmethod
@@ -87,7 +87,7 @@ class SettingsManager:
 
     def get_app_settings(self) -> dict[str, Any]:
         """Return the current shared app-settings dictionary for visible pre-save edits.
-        The store shares one object per cache generation; a write invalidates it so later readers load disk."""
+        Each cache generation shares one object; writes invalidate it so later readers reload."""
         return cast(dict[str, Any], settings_store.get().read(settings_store.APP))
 
     def app(self) -> AppSettings:
@@ -106,7 +106,7 @@ class SettingsManager:
         """
         Returns always the same settings, no matter what the data path is set to.
 
-        STATIC reads the fixed data-path override file; globals.py alone reads it earlier during bootstrap.
+        STATIC reads the fixed override file; only globals.py reads it earlier during bootstrap.
         """
         return cast(dict[str, Any], settings_store.get().read(settings_store.STATIC))
 

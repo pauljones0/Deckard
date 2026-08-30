@@ -1,5 +1,7 @@
-"""Serialize page content through canonical per-file locks, pending records, deferred writes, and one-session backups.
-All disk readers must flush first, while importers that replace content must discard; every operation is thread-safe."""
+"""
+Flush before get_page_data, asset-sweep reads, page exports, duplicate reads, and page-move copies.
+Boot backup zip and video-cache sweep flush; replacing importers discard; calls are thread-safe.
+"""
 from __future__ import annotations
 
 import os
@@ -18,7 +20,7 @@ from src.backend.atomic_json import atomic_write_json
 
 class PageContent(Protocol):
     """A Page or PageDocument that holds a page's unwritten shared content.
-    Off-deck edits mark the document because no Page exists; the pending record selects the serializer, not a different dictionary."""
+    Off-deck edits mark the document because no Page exists; the record selects the serializer."""
 
     json_path: str
 
@@ -47,8 +49,8 @@ RETRY_S = 2.0
 def canonical_path(path: str) -> str:
     """Return the canonical key used by document, lock, pending, and backup registries.
     Resolving aliases prevents separate locks and invisible pending edits for one file."""
-    # Resolution costs about 8 us against a guarded write's 150 us and belongs
-    # here so the document does not own a second canonicalization rule.
+    # Under a normal data directory, resolution costs about 8 us against a
+    # guarded write's 150 us; keep the canonicalization rule here.
     return os.path.realpath(path)
 
 
@@ -60,7 +62,7 @@ _save_locks_guard = threading.Lock()
 
 def save_lock(path: str) -> threading.Lock:
     """Return the canonical lock shared by content edits and writes for one file.
-    This leaf may take only file I/O, _pending_guard, or the timer lock; page-load and document-load locks stay above it."""
+    Only file I/O, _pending_guard, or timer locks may nest below this leaf lock."""
     # Canonicalize here because trusting raw caller spelling would silently give
     # one file two locks; the page cache lock is never held across this lock.
     with _save_locks_guard:
@@ -87,7 +89,7 @@ class Scheduler(Protocol):
 
 class TimerWheelScheduler:
     """Schedule each fire on a separate short-lived timer-wheel daemon thread.
-    Slow writes do not delay timers, but quit must flush because os._exit terminates daemon threads."""
+    Slow writes do not delay timers; quit must flush because os._exit stops daemon threads."""
 
     def schedule(self, delay_s: float, callback: Callable[[], None]) -> timer_wheel.TimerHandle:
         return timer_wheel.schedule(delay_s, callback, name="page_flush")
@@ -130,7 +132,7 @@ class PageFlush:
 
     def mark_dirty(self, source: PageContent) -> None:
         """Record the latest shared source and arm a write without doing file I/O.
-        Re-arm after DEBOUNCE_S but retain first_marked, so continuous or mid-write marks clamp at MAX_DIRTY_AGE_S."""
+        Re-arm at DEBOUNCE_S; first_marked makes mid-write marks stop at MAX_DIRTY_AGE_S."""
         # One entry per file is sufficient because every Page and its document
         # share one dictionary; a clean completed write starts the next age window.
         with self._pending_guard:
@@ -167,8 +169,8 @@ class PageFlush:
             log.opt(exception=True).error(f"Deferred write of page {key} failed")
 
     def flush_path(self, path: str) -> None:
-        """Write pending edits now, retaining transient failures and retiring permanent serialization failures.
-        The no-pending fast path and all failure paths return so read barriers can use the current file; retries preserve recoverable edits."""
+        """Write pending edits now; retain OSError failures and retire all other failures.
+        No-pending and failure paths return for read barriers; retained edits retry later."""
         # Write before retiring under the marked path's save lock so readers never
         # observe an unmarked stale file and moves cannot redirect an old-path write.
         key = canonical_path(path)
@@ -201,8 +203,8 @@ class PageFlush:
                 self._retain_for_retry(key, entry, e)
                 return
             except Exception:
-                # Unserializable content cannot recover through retries; retire it
-                # after logging so it does not pin the entry and fail every barrier.
+                # Do not retry non-OSError failures; log and retire them so read
+                # barriers do not fail repeatedly.
                 log.opt(exception=True).error(
                     f"Discarding an unserializable pending edit of page {key}")
                 self._retire(key, entry)
@@ -211,7 +213,7 @@ class PageFlush:
 
     def _retire(self, key: str, entry: "_Pending") -> None:
         """Drop only the written or unrecoverable entry and cancel its timer.
-        A replacement marked during the write remains pending with its own timer because it is ahead of these bytes."""
+        A replacement marked during the write stays pending with its timer, ahead of these bytes."""
         with self._pending_guard:
             if self._pending.get(key) is entry:
                 del self._pending[key]
@@ -233,7 +235,7 @@ class PageFlush:
 
     def _back_up_once(self, key: str, path: str, source: PageContent) -> None:
         """Back up the locked path once per session before overwriting it.
-        The copy is the corrupt-primary heal source and must use path because a move can repoint source.json_path."""
+        The corrupt-primary heal copy uses path because moves can repoint source.json_path."""
         # Atomic writes cannot corrupt the primary, so one pre-write copy serves external
         # corruption. Missing or invalid files count as done; only a raised I/O error retries.
         with self._pending_guard:
@@ -258,7 +260,7 @@ class PageFlush:
 
     def discard_path(self, path: str) -> None:
         """Discard pending edits and the backup record before deletion, move, or import.
-        Hold the save lock so any active flush finishes first and cannot restore the old record or overwrite replacement content."""
+        Hold the save lock so an active flush cannot restore old state over replacement content."""
         # The next flush must back up the new file; retaining the old heal source
         # could restore a deleted or moved page over its replacement.
         key = canonical_path(path)

@@ -34,8 +34,8 @@ CORRUPT_SIDECAR_KEEP = 3
 
 
 def _process_umask() -> int:
-    """Read Linux umask without changing process state; elsewhere set and restore it.
-    os.umask has no read-only call, so its fallback briefly exposes a zero mask to concurrent opens."""
+    """Read Linux umask without changing state; elsewhere set and restore it.
+    The fallback briefly exposes a zero process mask to concurrent opens."""
     try:
         with open("/proc/self/status") as f:
             for line in f:
@@ -69,8 +69,8 @@ def _reap_stale_tmp_siblings(dir_path: str, target_basename: str) -> None:
 
 
 def quarantine_corrupt_file(file_path: str) -> tuple[bool, str]:
-    """Atomically move corrupt data to the first free .corrupt[.n] sidecar and return (moved, destination).
-    Read-only, permission, or concurrent-move failure returns the original path without canceling recovery; racers can replace one corrupt sidecar."""
+    """Move corrupt data to the first free .corrupt[.n] atomically; return (moved, path).
+    Read-only, permission, or race failures keep source; recovery survives sidecar races."""
     candidate = file_path + ".corrupt"
     n = 0
     # Bounded probe for a free sidecar name. If every slot is taken, keep the
@@ -89,8 +89,8 @@ def quarantine_corrupt_file(file_path: str) -> tuple[bool, str]:
 
 def prune_corrupt_sidecars(primary_path: str, keep: int = CORRUPT_SIDECAR_KEEP,
                            protect: "str | list[str] | tuple[str, ...] | None" = None) -> list[str]:
-    """Prune one primary's regular .corrupt[.numeric] files by mtime, then name, while protecting requested paths within keep.
-    Ignore all filesystem errors; names only break equal-mtime ties, protected files count toward keep, and unrelated suffixes or directories remain."""
+    """Prune one primary's regular .corrupt[.numeric] files by mtime, then name.
+    Protected paths count toward keep; unrelated names and directories stay; errors are ignored."""
     keep = max(keep, 0)
     if protect is None:
         protected = set()
@@ -120,8 +120,7 @@ def prune_corrupt_sidecars(primary_path: str, keep: int = CORRUPT_SIDECAR_KEEP,
             continue
         if not stat.S_ISREG(st.st_mode):
             continue
-        # The name is a stable tie-break for equal mtimes. The docstring
-        # explains why it is no age order.
+        # The name gives equal mtimes a stable order but does not indicate age.
         sidecars.append((st.st_mtime, entry, path))
 
     n_remove = len(sidecars) - keep
@@ -148,7 +147,7 @@ def prune_corrupt_sidecars(primary_path: str, keep: int = CORRUPT_SIDECAR_KEEP,
 
 def require_containment(base_dir: str, path: str) -> str:
     """Return path's real path when it is base_dir or below it; otherwise raise ValueError.
-    Resolve both sides like atomic_write_json so untrusted traversal and symlink components cannot escape containment."""
+    Resolve both sides like atomic_write_json so traversal and symlinks cannot escape."""
     real_base = os.path.realpath(base_dir)
     real_path = os.path.realpath(path)
     if real_path != real_base and not real_path.startswith(real_base + os.sep):
@@ -157,8 +156,8 @@ def require_containment(base_dir: str, path: str) -> str:
 
 
 def atomic_write_json(file_path: str, data: Any, indent: int | None = 4) -> None:
-    """Durably replace real file_path with fsynced JSON, preserving its mode or applying umask for a new file.
-    The same-directory temp and directory fsync expose only old or new content; resolving first preserves symlink-managed targets."""
+    """Durably replace real file_path with fsynced JSON and preserve or derive its mode.
+    Same-directory temp and directory fsync expose old or new data; realpath preserves symlinks."""
     file_path = os.path.realpath(file_path)
     dir_path = os.path.dirname(file_path) or "."
     os.makedirs(dir_path, exist_ok=True)
@@ -196,8 +195,8 @@ def atomic_write_json(file_path: str, data: Any, indent: int | None = 4) -> None
 
 
 def atomic_copy_file(src_path: str, dst_path: str, overwrite: bool = True) -> None:
-    """Durably publish a content-and-mode copy through a fresh same-directory temp, never copying timestamps or exposing partial data.
-    Preserve existing or source mode; failure leaves the destination unchanged, and overwrite=False atomically links or raises FileExistsError."""
+    """Durably copy content and mode through a fresh same-directory temp without timestamps.
+    Use dst/src mode; keep dst on error; no-overwrite links atomically or raises FileExistsError."""
     dst_path = os.path.realpath(dst_path)
     dir_path = os.path.dirname(dst_path) or "."
     os.makedirs(dir_path, exist_ok=True)

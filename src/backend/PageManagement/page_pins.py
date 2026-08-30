@@ -1,5 +1,5 @@
-"""Pin cached Page objects beyond the cache-visible active_page and screensaver-pending page so eviction cannot duplicate live actions.
-Identity counts support renames and replacements; holding() and bracket() protect work, while each deck has one reserve_fetch() slot."""
+"""Pin Pages beyond active_page and screensaver-pending so eviction cannot duplicate live actions.
+Identity counts handle renames/replacements; brackets protect work, and decks get one fetch slot."""
 from __future__ import annotations
 
 import threading
@@ -80,7 +80,7 @@ class PagePins:
 
     def bracket(self, page: "Page | None", ready_to_clear: bool) -> "Page | None":
         """Pin on False or release on True, and return the named page.
-        Pass the False result to True; rereading active_page can leak the worked page and unprotect a concurrently installed page."""
+        Pass False's result to True; rereading active_page can leak it and unprotect a new page."""
         if ready_to_clear:
             self.unpin(page)
             return page
@@ -90,7 +90,7 @@ class PagePins:
         """Replace this deck's outstanding fetch, pinning before release.
         A repeat fetch of one page therefore retains at least one holder throughout."""
         # One slot per deck bounds abandoned fetches but lets another caller retire
-        # it; window cycling can break screensaver handoff, and reload can release another caller's slot.
+        # it; window cycling can break handoff, and reload can release another caller's slot.
         with self._lock:
             self.pin(page)
             previous = self._reservations.pop(deck_controller, None)
@@ -106,6 +106,6 @@ class PagePins:
 
     def _retire(self, reference: "weakref.ref[Page] | None") -> None:
         """Release a popped weak reservation outside the lock that removed it.
-        The resolved Page can be the last strong reference and run plugin finalizers, which must not run under this leaf lock."""
+        Last Page reference can run plugin finalizers, so resolve it outside this leaf lock."""
         page = reference() if reference is not None else None
         self.unpin(page)

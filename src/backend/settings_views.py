@@ -1,5 +1,5 @@
 """Implement sparse schema views plus deck, app, and plugin settings adapters.
-settings_store re-exports these views after defining their specs and singleton; callers must use that public entry point."""
+settings_store re-exports them after defining specs and get(); callers use that entry point."""
 from __future__ import annotations
 
 import copy
@@ -29,13 +29,13 @@ UNNAMED_DECK = "Stream Deck"
 
 def _copied(value: Any) -> Any:
     """Deep-copy containers and return scalars unchanged.
-    Never expose schema containers because in-place mutation would change every later default read."""
+    Copy schema containers so one mutation cannot change later default reads."""
     return copy.deepcopy(value) if isinstance(value, (dict, list)) else value
 
 
 class SchemaView:
-    """Wrap one settings read: absent keys return copied defaults, unknown writes raise, and reads never persist defaults.
-    Stored values copy by default or alias at every level when shared=True; defaults always copy to protect the schema."""
+    """Wrap one settings read: absent keys use copied defaults, and unknown writes raise.
+    Stored values copy unless shared=True throughout; defaults copy; reads do not persist them."""
 
     def __init__(self, data: dict[str, Any], schema: Mapping[str, Any], shared: bool = False):
         self.data: dict[str, Any] = data
@@ -57,7 +57,7 @@ class SchemaView:
 
     def section(self, name: str) -> dict[str, Any]:
         """Return a copied section with absent schema keys filled and unknown stored keys retained.
-        This destructuring result aliases neither schema nor storage, although saving it would persist filled defaults."""
+        The result aliases neither source; saving it would persist filled defaults."""
         merged = {k: _copied(v) for k, v in self._section_defaults(name).items()}
         merged.update(copy.deepcopy(dict(self._stored_section(name))))
         return merged
@@ -119,8 +119,8 @@ class DeckSettings(SchemaView):
         self.serial: str | None = serial
 
     def display_name(self, model_name: str | None = None) -> str:
-        """Return a nonempty stripped name, preferring chosen name, model, serial, then UNNAMED_DECK.
-        Limit only the user-chosen name to DECK_NAME_MAX_LENGTH; device model and serial remain complete."""
+        """Return stripped chosen name, model, serial, or UNNAMED_DECK, in that order.
+        Limit only the chosen name to DECK_NAME_MAX_LENGTH; preserve model and serial."""
         stored = self.get("name")
         chosen = stored.strip()[:DECK_NAME_MAX_LENGTH] if isinstance(stored, str) else ""
         if chosen:
@@ -143,8 +143,8 @@ class DeckSettings(SchemaView):
 
 
 class AppSettings(SchemaView):
-    """Alias any APP_DEFAULTS-backed mapping and its stored containers so in-place edits persist on save.
-    Missing defaults still copy to protect the schema; the caller chooses a shared mapping or private snapshot."""
+    """Alias an APP_DEFAULTS-backed mapping so stored-container edits can persist on save.
+    Missing defaults copy; the caller chooses a shared mapping or private snapshot."""
 
     def __init__(self, data: dict[str, Any]):
         super().__init__(data, APP_DEFAULTS, shared=True)
@@ -391,14 +391,14 @@ class AppSettings(SchemaView):
 
 
 class PluginSettings:
-    """Manage the app-owned plugin envelope while plugins own "settings" and the app retains siblings such as "assets".
-    Log settings OSError as empty and quarantine decode failures, but never alter manifest.json or about.json; PluginBase locks outside the store."""
+    """Manage plugin "settings" in an app envelope that retains "assets"; OSError reads empty.
+    Quarantine decode failures, preserve manifest.json/about.json, and use PluginBase's lock."""
 
     def __init__(self, settings_path: str) -> None:
         self.path: str = settings_path
 
     def document(self) -> dict[str, Any] | None:
-        """Return the full object, or None for absent, quarantined, unreadable, or non-object content.
+        """Return the object, or None for absent, quarantined, unreadable, or non-object content.
         An empty object remains a real document that migration can rewrite."""
         try:
             content, corrupt = get().read_reporting_corruption(PLUGIN, self.path)
