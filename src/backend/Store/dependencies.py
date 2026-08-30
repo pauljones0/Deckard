@@ -1,5 +1,5 @@
 """Resolve catalog-listed, id-only plugin dependencies before download and ask consent for the set.
-The cycle-safe bounded plan leaves installed items unchanged and never rolls back or cascades removal."""
+The bounded cycle-safe plan keeps installed items and never rolls back or cascades removal."""
 from __future__ import annotations
 
 from collections.abc import Callable

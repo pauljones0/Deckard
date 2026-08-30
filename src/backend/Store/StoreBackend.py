@@ -248,8 +248,18 @@ class StoreBackend:
             raise StoreFetchError(url, str(e)) from e
     
     def build_url(self, repo_url: str, file_path: str, branch_name: "str | None" = "main") -> str:
-        """Build a raw GitHub file URL for a branch or commit.
-        A None ref intentionally produces an unservable URL for caller error handling."""
+        """
+        Replaces the domain in the given repository URL with "raw.githubusercontent.com" and constructs the URL for the specified file path in the repository's branch.
+
+        Parameters:
+            repo_url (str): The URL of the repository.
+            file_path (str): The path of the file in the repository.
+            branch_name (str, optional): Branch or commit; defaults to "main".
+                         None builds an unservable URL for caller error handling.
+
+        Returns:
+            str: The constructed URL for the specified file path in the repository's branch.
+        """
         repo_url = repo_url.replace("github.com", "raw.githubusercontent.com")
         return f"{repo_url}/{branch_name}/{file_path}"
 
@@ -264,7 +274,21 @@ class StoreBackend:
     def get_remote_file(self, repo_url: str, file_path: str, branch_name: "str | None" = "main",
                         data_type: DataType = DataType.TEXT,
                         force_refetch: bool = False) -> "str | bytes":
-        """Read and cache a text or binary file from a GitHub repository."""
+        """
+        Retrieve a remote file from a GitHub repository.
+
+        Parameters:
+            repo_url (str): The URL of the GitHub repository.
+            file_path (str): The path to the file within the repository.
+            branch_name (str, optional): Branch or commit; defaults to "main".
+
+        Returns:
+            str: The content of the remote file.
+
+        Note:
+            - Cached files avoid repeated requests.
+            - github.com URLs are rewritten to raw.githubusercontent.com.
+        """
         # Keep literal modes for the cache read and write overloads.
         read_mode: Literal["r", "rb"] = "r"
         write_mode: Literal["w", "wb"] = "w"
@@ -369,7 +393,7 @@ class StoreBackend:
 
     def process_store_data(self, filename: str, process_func: Callable[..., Any], get_custom_func: Callable[..., Any] | None, data_class: "type[StoreDataT]", include_images: bool = True, base_dir: str | None = None) -> "list[StoreDataT] | None":
         """Fetch configured catalogs and prepare entries on the fan-out pool.
-        Excluding images builds the local-first update view and uses base_dir for legacy identity."""
+        Without images, base_dir supplies legacy identity for the local-first update view."""
         n_stores_with_errors = 0
         data_list = []
 
@@ -914,7 +938,7 @@ class StoreBackend:
     def _staged_tree_acceptable(self, staging_tree: str, expected_id: str | None,
                                 gate_app_version: bool = True) -> bool:
         """Require the expected manifest id and, for plugins, a supported minimum app version.
-        Callers without an id accept unreadable manifests; packs skip the loader's minimum-version gate."""
+        Callers without an id accept unreadable manifests; packs skip minimum-version gating."""
         try:
             with open(os.path.join(staging_tree, "manifest.json")) as f:
                 manifest = json.load(f)
@@ -948,8 +972,8 @@ class StoreBackend:
 
     def download_repo(self, repo_url:str, directory:str, commit_sha:str | None = None, branch_name:str | None = None, expected_id:str | None = None,
                       gate_app_version: bool = True) -> StoreResult[None]:
-        """Download, validate, stamp, and transactionally swap a repository tree.
-        Return INVALID_ASSET for manifest rejection, INSTALL_FAILED for invalid refs, or NO_CONNECTION for network or archive faults."""
+        """Transactionally download, validate, stamp, and swap a repository tree.
+        Use INVALID_ASSET for manifests, INSTALL_FAILED for refs, and NO_CONNECTION for I/O."""
         if not is_flatpak() and gl.argparser.parse_args().devel:
             return self.clone_repo(repo_url, directory, commit_sha, branch_name, expected_id, gate_app_version)
 
@@ -1067,7 +1091,8 @@ class StoreBackend:
                               f"(commit unreachable?) -- refusing to install the default-branch tip")
                     return Err(ErrReason.INSTALL_FAILED, f"git reset --hard {commit_sha!r} failed (exit {rc})")
             elif branch_name is not None:
-                # Checkout supports detachable refs; reject failure instead of using the default tip.
+                # Checkout supports detachable refs.
+                # Reject failure instead of using the default tip.
                 rc = self.subp_call(["git", "-C", staging, "checkout", branch_name])
                 if rc != 0:
                     log.error(f"git checkout {branch_name!r} failed with exit code {rc} for {repo_url}")
@@ -1110,7 +1135,8 @@ class StoreBackend:
 
         local_path = os.path.join(gl.PLUGIN_DIR, plugin_id)
 
-        # Decide scripts before download; a declined update stays intact and a fresh install proceeds bare.
+        # Decide scripts before download so a declined update stays intact.
+        # A fresh install proceeds without declined scripts.
         plugin_manager = gl.plugin_manager
         is_update = plugin_manager is not None and plugin_manager.get_plugin_by_id(plugin_id) is not None
         run_scripts = install_script.decide_install_scripts(

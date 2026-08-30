@@ -1,5 +1,5 @@
 """Consent, confinement, timeout, and guard injection for plugin install steps.
-bwrap is the boundary; without it, steps keep user filesystem/network access and can daemonize past timeout."""
+bwrap is the boundary; without it, steps keep user files/network and daemons can outlive timeout."""
 
 import contextlib
 import enum
