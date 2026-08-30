@@ -61,8 +61,8 @@ def leg_fetched_page_survives_pressure() -> int:
     fillers = [gl.page_manager.get_page(seed_page(f"PinFiller{i}"), controller)
                for i in range(2)]
 
-    # The page under test is fetched last, so this is the state a caller sits
-    # in between get_page and load_page.
+    # A get_page result remains reserved until the deck fetches another page
+    # or installs it, which protects this unactivated target.
     target_path = seed_page("PinTarget")
     target = gl.page_manager.get_page(target_path, controller)
     arm(target)
@@ -70,8 +70,7 @@ def leg_fetched_page_survives_pressure() -> int:
         print("FAIL(1-setup): the cache was not seeded")
         return 1
 
-    # Total 4 with budget 1 makes three entries evictable; only the fetch pin
-    # identifies the unactivated target as referenced.
+    # Total 4 with budget 1 makes three entries evictable without the target pin.
     gl.page_manager.max_pages = 1
     gl.page_manager.clear_old_cached_pages()
 
@@ -258,8 +257,8 @@ def leg_brackets_are_counted(controller) -> int:
     return 0
 
 
-# Leg 6. hide() re-reserves the pending page while moving it from the stash
-# to the active slot outside the load lock.
+# Leg 6. hide() pops and re-reserves the pending page under the load lock,
+# then installs it after releasing that lock.
 def leg_screensaver_handoff_survives_pressure(controller) -> int:
     saver = controller.screen_saver
     deferred = gl.page_manager.get_page(seed_page("PinHandoff"), controller)

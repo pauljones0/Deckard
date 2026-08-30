@@ -150,7 +150,8 @@ def name_of(row) -> str:
 
 
 def pump_until(condition, timeout: float, what: str) -> None:
-    """Iterate the main context until asynchronous widget work meets a condition."""
+    """Pump the default main context for the search timer, Signals idle, and
+    popover scroll source until the condition holds."""
     context = GLib.MainContext.default()
     deadline = time.time() + timeout
     while time.time() < deadline:

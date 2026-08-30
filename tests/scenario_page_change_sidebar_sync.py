@@ -57,7 +57,7 @@ def main() -> None:
     ui_port.install(adapter)
     try:
         # Match PageSettingsPage and provide the low-FPS sink used by media
-        # ticks, without adding the obsolete settings_page attribute.
+        # ticks, without adding a settings_page attribute.
         own_child = SimpleNamespace(
             deck_controller=controller,
             page_settings=SimpleNamespace(deck_config=SimpleNamespace(grid=object())),

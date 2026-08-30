@@ -59,7 +59,8 @@ def check_focus_leave_commits_typed_text(group, page_path, grabber) -> None:
 
 
 def check_focus_leave_without_an_edit_rechecks_only(group, page_path, grabber) -> None:
-    """Recheck on unchanged focus leave without rewriting the rule."""
+    """Do not write unchanged text because that re-gates and reapplies every rule.
+    Still recheck because focus leave can bring the named window forward after Enter."""
     rechecks_before = grabber.rechecks
     gate_passes_before = grabber.gate_passes
 
