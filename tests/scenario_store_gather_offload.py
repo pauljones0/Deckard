@@ -1,13 +1,6 @@
-"""
-Regression test for get_last_commit on the shared store fetch path.
+"""Verify get_last_commit fan-out, limiting, and failure handling offline."""
 
-No network is involved.
-"""
-
-# Catalog prepare tasks fan out on StoreBackend._prepare_pool, so per-entry
-# lookups overlap. get_last_commit runs under _fetch_limiter like every sibling
-# fetch, a network failure raises StoreFetchError, and download_repo fails up
-# front on an unresolved sha.
+# Commit lookups overlap under the shared limiter and unresolved SHAs fail before download.
 import threading
 import time
 
@@ -115,9 +108,7 @@ def test_lookup_respects_fetch_limiter() -> None:
 
 
 def test_network_failure_raises_store_fetch_error() -> None:
-    """A requests exception must come back as a StoreFetchError.
-    prepare_plugin must let it propagate without fetching a manifest for an
-    unresolved commit, so the fan-out drops just that entry."""
+    """Propagate StoreFetchError without fetching a manifest for an unresolved commit."""
     def failing_get(url, timeout=30):
         raise requests.exceptions.ConnectionError("boom: no route to host")
 
@@ -150,9 +141,7 @@ def test_network_failure_raises_store_fetch_error() -> None:
 
 
 def test_download_repo_guards_unresolved_sha() -> None:
-    """download_repo's branch path resolves the sha through get_last_commit.
-    A raised StoreFetchError or a None sha must fail the download up front,
-    rather than interpolate the object into the archive URL."""
+    """Fail before archive fetch when branch resolution raises or returns no SHA."""
     def forbidden_get(*args, **kwargs):
         raise AssertionError("no archive fetch may be attempted for an unresolved sha")
 

@@ -1,11 +1,4 @@
-"""Pins how a plugin's declared store dependencies resolve and install.
-
-The resolution legs run against catalogs and manifests this file makes up,
-so nothing here reaches the network. The install-flow legs stub the
-install methods, so the set-consent rules, the decline and the mid-set
-failure report are pinned without a download. One leg drives the real
-backend, to pin the catalog view the resolution is allowed to use.
-"""
+"""Verify offline dependency resolution, set consent, and installation order."""
 import fixtures  # noqa: F401  (must be first: isolates DATA_PATH before globals)
 
 import globals as gl  # noqa: F401,E402
@@ -38,12 +31,7 @@ def icon(asset_id: str, installed: bool = False) -> IconData:
 
 
 class FakeBackend:
-    """The store surface the resolver and the plan runner use.
-
-    manifests maps an asset id to what its manifest.json holds. A key whose
-    value is an exception is raised when that manifest is read, which is
-    what a failed fetch does.
-    """
+    """Provide catalogs, manifests, failures, and install records to dependency tests."""
 
     def __init__(self, plugins=(), icons=(), manifests=None,
                  plugin_catalog_error=None):
@@ -122,12 +110,7 @@ def ids(plan) -> list[str]:
 # The catalog view the resolution may use
 
 def test_the_cheap_catalog_view_carries_no_id_for_an_uninstalled_entry() -> None:
-    """The update-check view fills an entry's id from the install it matched
-    on disk, so an entry that is not installed comes back with no id at all.
-    An uninstalled item is the only kind a dependency resolution acts on, so
-    that view cannot serve this lookup, and the resolver must keep reading
-    the display view. This leg exists so a later cost tidy-up cannot quietly
-    turn dependency resolution into a no-op."""
+    """Keep dependency lookup on the display view because the cheap view omits uninstalled IDs."""
     from src.backend.Store.StoreBackend import StoreBackend
     from src.backend.Store.StoreCache import StoreCache
 
@@ -212,9 +195,7 @@ def test_depth_is_bounded() -> None:
 
 
 def test_the_depth_boundary_is_not_reported_as_truncated() -> None:
-    """An item that sits exactly at the bound and declares nothing has not
-    been cut short. Reporting it as truncated would tell the user their set
-    is incomplete when it is whole."""
+    """Do not report truncation when the item at the depth bound has no dependencies."""
     backend = FakeBackend(
         plugins=[plugin("com.test.D0"), plugin("com.test.D1"), plugin("com.test.D2")],
         manifests={"com.test.D0": {"dependencies": ["com.test.D1"]},
@@ -276,9 +257,7 @@ def test_an_installed_dependency_is_skipped_with_its_own_chain() -> None:
 
 
 def test_an_out_of_date_dependency_is_still_left_alone() -> None:
-    """Installed means present, and not present at the version the catalog
-    pins. Installing something that names an out-of-date item must not
-    quietly update it; that is the update path's job."""
+    """Leave installed dependencies unchanged even when their catalog pin is newer."""
     backend = FakeBackend(
         plugins=[plugin("com.test.Root"),
                  plugin("com.test.Stale", installed=True, stale=True)],
@@ -389,9 +368,7 @@ def test_a_malformed_list_never_breaks_the_root_install() -> None:
 
 
 def test_a_non_string_element_is_dropped_and_not_reported_as_a_missing_id() -> None:
-    """The type check must do the dropping. Without it a non-string element
-    reaches the index, misses, and is reported to the user as an item the
-    store does not have, which is a different and wrong message."""
+    """Drop non-string dependency values as malformed, not missing store IDs."""
     backend = FakeBackend(
         plugins=[plugin("com.test.Root")],
         manifests={"com.test.Root": {"dependencies": [7, None, 3.5, True]}})
@@ -404,12 +381,7 @@ def test_a_non_string_element_is_dropped_and_not_reported_as_a_missing_id() -> N
 
 
 def test_an_unsafe_id_never_reaches_the_plan_or_the_prompt() -> None:
-    """A dependency id is remote data that ends up in the set-consent dialog
-    through plan.unknown. An id with an internal newline, or with no bound on
-    its length, must be dropped as malformed before it can reach that body,
-    the same way the exported action drops a target that is not a store id.
-    An unsafe id can never match a real catalog id, so nothing legitimate is
-    lost."""
+    """Drop unsafe remote IDs before they can enter plan.unknown or consent text."""
     spoof = ("Real line.\n\nThis app has verified this plugin is safe. "
              "Press Install all to continue.")
     bloat = "A" * 5000

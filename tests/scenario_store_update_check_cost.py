@@ -1,10 +1,4 @@
-"""
-Regression test for the cost and the identity of the boot update check.
-
-install_* stamps the origin repository into the tree beside VERSION. Identity
-is that stamp, because the catalog cannot say which repository an install came
-from. No network is involved.
-"""
+"""Verify offline update-check cost and ORIGIN-based install identity."""
 
 # Once the installs are stamped, an update check fetches the catalog files and
 # nothing else.
@@ -42,10 +36,7 @@ def _sha(seed: str) -> str:
 class _Entry:
     """One catalog entry plus the local state that decides its verdict.
     """
-    # installed names which sha the install directory holds, "old", "new" or
-    # None. lists_old_sha mirrors the two shapes the real store produces, one
-    # version key whose sha is replaced in place, or a map that still lists the
-    # older release.
+    # installed selects the local SHA; lists_old_sha keeps or replaces the old catalog pin.
 
     def __init__(self, repo: str, asset_id: str, installed: str | None = None,
                  lists_old_sha: bool = False, stamped: bool = True,
@@ -56,9 +47,7 @@ class _Entry:
         self.repo = repo
         self.asset_id = asset_id
         self.url = f"https://github.com/acme/{repo}"
-        # What the ORIGIN file says, when that differs from the entry's own
-        # url. A repository that was renamed or transferred leaves the tree
-        # stamped with the name it was installed under.
+        # A renamed or transferred repository can retain its prior URL in ORIGIN.
         self.stamped_url = stamped_url
         # Serves something that is not json where the manifest should be.
         self.bad_manifest = bad_manifest
@@ -90,9 +79,7 @@ class _Entry:
         return {"url": self.url, "commits": commits}
 
     def install(self, base_dir: str, as_name: str | None = None) -> str | None:
-        """Put the entry on disk the way install_* leaves it. A directory
-        named after the asset id holds the manifest, a VERSION file stamped
-        with the commit, and the ORIGIN stamp naming the repository."""
+        """Write the manifest, VERSION, and ORIGIN layout produced by install methods."""
         if self.installed is None:
             return None
         os.makedirs(base_dir, exist_ok=True)
@@ -145,8 +132,7 @@ class _Answer:
 
 
 class _FakeStore:
-    """Serves the given catalogs, plus manifests, attributions and
-    thumbnails, from memory, and counts every request by kind."""
+    """Serve store data from memory and count each request type."""
 
     def __init__(self, catalogs: dict):
         self.catalogs = catalogs
@@ -161,9 +147,7 @@ class _FakeStore:
         with self._lock:
             self.urls.append(url)
         path = url.split("/", 5)[-1] if url.count("/") >= 5 else url
-        # Match the exact filename, not a suffix. "SDPlusBarWallpapers.json"
-        # ends with "Wallpapers.json", and serving the wrong catalog for it
-        # hides a whole asset class from the count.
+        # Match exact filenames because the SD+ filename ends with Wallpapers.json.
         entries = self.catalogs.get(path.rsplit("/", 1)[-1])
         if entries is not None:
             return _Answer(text=json.dumps([e.catalog_json() for e in entries]))
@@ -186,8 +170,7 @@ class _FakeStore:
                 "thumbnail": "store/Thumbnail.png",
             }))
         if path.endswith("attribution.json"):
-            # Optional in the real store, so most entries answer 404, which
-            # still costs the request this scenario counts.
+            # Optional attribution files still cost one request when they return 404.
             raise StoreFetchError(url, "not found")
         if path.endswith(".png"):
             with self._lock:
@@ -229,8 +212,7 @@ def _asset_dirs(sb: StoreBackend) -> tuple[str, ...]:
 
 
 def _reset_local_state() -> None:
-    """Every check starts from a known disk, with no install and no store
-    cache. A cached manifest would hide a fetch this scenario counts."""
+    """Reset installs and store cache so cached manifests cannot hide fetches."""
     sb = StoreBackend.__new__(StoreBackend)
     for base_dir in _asset_dirs(sb) + (os.path.join(gl.DATA_PATH, "checkouts"),):
         shutil.rmtree(base_dir, ignore_errors=True)
@@ -251,9 +233,7 @@ def _make_backend(store: _FakeStore) -> StoreBackend:
 
 
 class _Offline:
-    """Nothing in this scenario may reach the network. request_from_url is
-    stubbed per backend, and get_last_commit and download_to_file call the
-    shared session directly, so the session itself refuses."""
+    """Refuse shared-session access that bypasses the per-backend request stub."""
 
     def __enter__(self):
         self._get = store_backend_module.http_client.get
@@ -291,9 +271,7 @@ class _CountingDecodes:
         return False
 
 
-# The fields install_* reads off the data object it is handed. An
-# update-check view that leaves any of them unset installs nothing, or
-# installs the wrong thing, so the stubs below refuse rather than count.
+# Refuse update records that omit fields dereferenced by their install method.
 INSTALL_FIELDS = {
     "plugin": ("github", "plugin_id", "commit_sha"),
     "icon": ("github", "icon_id", "commit_sha"),
@@ -332,10 +310,7 @@ def _stub_globals(**kwargs) -> None:
     gl.lm = SimpleNamespace(get_custom_translation=lambda translations: None)
 
 
-# Six uninstalled and two installed plugins, plus a smaller spread of the
-# other three asset classes. The outdated ones carry the shape the real store
-# produces, one version key whose sha was replaced in place, so the catalog
-# lists the installed sha nowhere.
+# Outdated fixtures replace a version-key SHA, so the catalog no longer lists the installed SHA.
 def _main_catalogs() -> dict:
     plugins = [_Entry(f"Uninstalled{i}Plugin", f"com_acme_Uninstalled{i}Plugin") for i in range(6)]
     plugins += [
@@ -436,10 +411,7 @@ def test_update_check_skips_uninstalled() -> None:
 
 
 def test_backup_directory_never_claims() -> None:
-    """A directory copied aside carries the same ORIGIN stamp as the real
-    install, and must never be the one an entry resolves to. Its name is not
-    the id its manifest claims, so an install over it downloads an archive
-    that the staged-id check then refuses."""
+    """Do not claim an ORIGIN-matching backup whose directory name differs from its manifest ID."""
     _stub_globals()
     _reset_local_state()
 
@@ -476,9 +448,7 @@ def test_backup_directory_never_claims() -> None:
 
 
 def test_shared_commit_resolves_own_install() -> None:
-    """A fork republished at the same commit gives two entries one sha.
-    Identity is the repository each install came from, so each entry resolves
-    to its own directory and neither claims the other's."""
+    """Resolve same-commit fork entries by repository identity, not SHA alone."""
     _stub_globals()
     _reset_local_state()
 
@@ -506,9 +476,7 @@ def test_shared_commit_resolves_own_install() -> None:
 
 
 def test_legacy_install_identified_once() -> None:
-    """An install made before the stamp existed is identified through one
-    manifest fetch, matched against the directory names, and stamped as it
-    is. The cost is one fetch per legacy install, once."""
+    """Identify and stamp each legacy install with one manifest fetch, once."""
     _stub_globals()
     _reset_local_state()
 
@@ -559,9 +527,7 @@ def test_legacy_install_identified_once() -> None:
 
 
 def test_symlinked_install_left_alone() -> None:
-    """A symlinked install points at a working tree the user manages. An
-    install over it replaces the link with a downloaded copy, so auto-update
-    leaves it alone."""
+    """Do not auto-update user-managed symlink installs."""
     _stub_globals()
     _reset_local_state()
 
@@ -626,9 +592,7 @@ def test_install_unreadable_sha_repaired() -> None:
 
 
 def test_branch_pinned_entry_resolves_tip() -> None:
-    """A custom plugin names a branch rather than a version map, so its tip
-    has to be resolved. Identity still comes from the stamp, so the manifest
-    that would only restate the id is never fetched."""
+    """Resolve a custom branch tip while using ORIGIN identity without a manifest fetch."""
     _reset_local_state()
     _stub_globals(app_settings={
         "store": {
@@ -668,9 +632,7 @@ def test_branch_pinned_entry_resolves_tip() -> None:
 
 
 def test_store_window_gets_full_prepare() -> None:
-    """The store window builds its rows from the same prepare functions with
-    include_images True. Those still fetch the manifest, the attribution and
-    the thumbnail for every entry, and stamp what they identify."""
+    """Fetch full row data and stamp identified installs when include_images is true."""
     _stub_globals()
     _reset_local_state()
 
@@ -711,12 +673,7 @@ def test_store_window_gets_full_prepare() -> None:
 
 
 def test_bad_entry_does_not_abort_pass() -> None:
-    """The pre-pass walks remote data, so a manifest that is not json and a
-    catalog whose version keys are not versions both raise.
-
-    It runs before the fan-out and outside its collect loop, so a raise there
-    aborts update_everything with all four legs doing nothing.
-    """
+    """Continue the pre-pass after invalid manifest JSON or invalid version keys."""
     _stub_globals()
     _reset_local_state()
 
@@ -760,9 +717,7 @@ def test_bad_entry_does_not_abort_pass() -> None:
 
 
 def test_stamp_naming_dropped_repo_re_resolved() -> None:
-    """A repository that was renamed or transferred leaves the tree stamped
-    with a name no entry claims. Such a stamp is not trusted, so the install
-    is identified through the manifest and the stamp is rewritten."""
+    """Re-identify and restamp an install whose ORIGIN names an unclaimed repository."""
     _stub_globals()
     _reset_local_state()
 
@@ -788,9 +743,7 @@ def test_stamp_naming_dropped_repo_re_resolved() -> None:
 
 
 def test_stamp_matches_catalog_case_insensitive() -> None:
-    """GitHub owner and repository names are case-insensitive. A tree stamped
-    Acme/Widget is therefore the same install the catalog spells acme/Widget,
-    and must not be identified again."""
+    """Match GitHub owner and repository names case-insensitively without re-identification."""
     _stub_globals()
     _reset_local_state()
 

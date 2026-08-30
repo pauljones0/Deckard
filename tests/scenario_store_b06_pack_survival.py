@@ -1,10 +1,4 @@
-"""
-The icon, wallpaper and SD+ bar-wallpaper update path must not pre-delete.
-
-download_repo stages, validates and version-stamps the new tree before it swaps
-that tree over the installed one. The three pack installers make no uninstall
-call of their own.
-"""
+"""Verify that pack updates do not delete the installed tree before download."""
 
 # A failing download therefore leaves the installed pack byte-identical on
 # disk. download_repo is stubbed to return Err.

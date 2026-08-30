@@ -1,17 +1,6 @@
-"""Pins what the exported store actions let a session peer do.
+"""Verify confirmation and input gates on store actions exported over D-Bus.
 
-The application publishes its action group on the session bus, so a peer
-that never touched this window can name install-plugin and pass a plugin
-id, or name update-all-assets and pass nothing. These legs run a real
-dbus-daemon, register a real Gio.Application on it, and drive both actions
-from a separate bus connection, which is what an outside program has.
-
-The property under test: an activation from outside reaches a
-confirmation and never the worker on its own, a target that is not a
-store id never reaches a dialog at all, a run of refusals makes an action
-quiet, and the install path the app's own windows use, which calls the
-store backend directly, still installs with nothing to confirm.
-"""
+Direct in-process installs remain unprompted while external actions require consent."""
 import fixtures  # noqa: F401  (must be first: isolates DATA_PATH before globals)
 
 import threading  # noqa: E402
@@ -36,9 +25,7 @@ from scenario_api_lifecycle_publish import (  # noqa: E402
 
 WATCHDOG_SECONDS = 120
 
-# An id of this scenario's own. The app's real id would let a Deckard
-# running on the developer's session answer these calls if the daemon
-# isolation ever broke.
+# A unique ID prevents another Deckard session from answering if bus isolation fails.
 APP_ID = "io.github.nazbert.DeckardInstallGate"
 
 ACTIONS_IFACE = "org.gtk.Actions"
@@ -77,13 +64,7 @@ class Recorder:
 
 
 def off_thread(work, timeout: float = 25.0):
-    """Run one blocking bus call on another thread while this one pumps.
-
-    The application dispatches its incoming calls on the default main
-    context, which is this thread. A call_sync from here would wait for a
-    reply that only this thread can produce, so it would time out rather
-    than prove anything.
-    """
+    """Run blocking bus calls off-thread while this thread pumps the main context."""
     box: dict = {}
     done = threading.Event()
 
@@ -122,9 +103,7 @@ class Peer:
         return list(reply.unpack()[0])
 
     def _activate(self, name: str, arguments: list) -> None:
-        # The reply is waited for, so the call returns only once the exported
-        # action group has handled the activation, and the assertions below
-        # a call are not racing it.
+        # Wait for the reply so assertions cannot race action-group dispatch.
         off_thread(lambda: self.connection.call_sync(
             APP_ID, self.object_path, ACTIONS_IFACE, "Activate",
             GLib.Variant("(sava{sv})", (name, arguments, {})),
@@ -214,9 +193,7 @@ def leg_update_action_is_gated(peer: Peer, recorder: Recorder) -> None:
 
 def leg_a_bad_target_never_reaches_a_dialog(peer: Peer, recorder: Recorder,
                                             gate: ConfirmedActionGate) -> None:
-    """A target is attacker-controlled and ends up in a dialog heading. Only
-    a store id may get that far: no traversal, no newline, no unbounded
-    length."""
+    """Reject traversal, multiline, and unbounded targets before the dialog."""
     recorder.clear()
     recorder.agree = True
 
@@ -279,9 +256,8 @@ def leg_one_request_at_a_time(peer: Peer, recorder: Recorder) -> None:
         f"the gate must accept a later activation, got {recorder.events}")
 
 
-# In-process legs, each on a gate of its own, because they leave the gate in
-# a state a later leg would inherit. request() is the same entry point
-# on_activate uses, so nothing is bypassed.
+# Use one gate per in-process leg because each leg changes gate state.
+# request() is the entry point used by on_activate.
 
 def leg_the_slot_is_held_until_the_work_ends() -> None:
     """The slot must cover the install and not only the dialog. Two installs
@@ -366,9 +342,7 @@ def leg_refusals_make_the_action_quiet() -> None:
 
 
 def leg_internal_path_installs_unprompted(recorder: Recorder) -> None:
-    """The path the store window, the missing-action row and the onboarding
-    page use: a direct call on the store backend. It installs, and it asks
-    the exported action's confirmation nothing."""
+    """Keep direct store-window, missing-action, and onboarding installs unprompted."""
     from src.backend.Store.StoreBackend import StoreBackend
     from src.backend.Store.StoreCache import StoreCache
 
@@ -418,10 +392,7 @@ def leg_internal_path_installs_unprompted(recorder: Recorder) -> None:
 
 
 def leg_the_app_wires_both_actions_through_a_gate() -> None:
-    """The legs above build their own gates, so they would all pass while
-    the application itself exported a raw action. This drives the
-    application's own wiring over a duck-typed self, and activates what it
-    produced."""
+    """Activate the application's own exported actions through a duck-typed instance."""
     import types
 
     import src.app as app_mod

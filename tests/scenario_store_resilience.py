@@ -1,10 +1,4 @@
-"""
-Regression test for the two backend failure modes that blanked the store.
-
-process_store_data collects each prepare_* future on its own and filters, so
-one raising entry cannot kill the catalog. get_remote_file with force_refetch
-falls back to the cached copy, bounded by the entry's fetched age.
-"""
+"""Keep healthy catalog entries and age-bounded cached data after fetch failures."""
 
 # Fetches overlap up to the limiter's cap, and a failed thumbnail lists without
 # image.
@@ -76,9 +70,7 @@ def test_remote_file_falls_back_to_cache() -> None:
         f"failed refetch must serve the cached copy, got {second!r}"
     )
 
-    # With no cached copy the failure propagates as a raise. The fetch layer
-    # raises, and get_remote_file re-raises only a genuine no-cache failure,
-    # because the stale-cache path above still returns bytes.
+    # Propagate the fetch failure when no cached copy exists.
     try:
         sb.get_remote_file(repo, "Missing.json", "main", force_refetch=True)
         raise AssertionError("uncached failure must raise StoreFetchError")
@@ -196,9 +188,7 @@ def test_fetches_run_concurrently() -> None:
         sb_module.http_client.get = real_get
 
     assert all(isinstance(r, FakeResponse) for r in results)
-    # A generous non-serialization ceiling. Ten 0.2s blocking fetches take
-    # 2.0s or more when serialized, so any ceiling below that proves they
-    # overlapped. 1.8s leaves headroom for a loaded runner.
+    # Ten 0.2 s serial fetches need at least 2.0 s; 1.8 s permits runner load.
     assert elapsed < 1.8, (
         f"10 x 0.2s fetches took {elapsed:.2f}s -- fetches are "
         f"serializing (fully serial would be >=2.0s)"

@@ -1,13 +1,6 @@
-"""
-Regression test for install and update results across the store backend.
+"""Verify StoreResult contracts for offline store installs and updates."""
 
-The four install_* entry points answer a StoreResult, Ok(None) on success and
-an Err naming the failure otherwise. No network is involved.
-"""
-
-# Each update_all_* narrows on Ok, never on truthiness, and returns Ok(count)
-# or propagates the Err. update_everything returns Ok(sum) or the first leg's
-# Err.
+# Update methods narrow on Ok because Err is truthy, and propagate the first failure.
 
 import fixtures  # noqa: F401  (isolated --data tempdir; import first)
 import globals as gl  # noqa: F401
@@ -237,9 +230,7 @@ def test_install_icon_propagates_download_result() -> None:
 
 
 def test_install_load_failure_refreshes_but_stays_silent() -> None:
-    # A plugin whose reload fails after install must still refresh the UI
-    # and decks (an update already deregistered the old version), but fire
-    # no install signal and log no success for a plugin nobody can use.
+    # Refresh after a reload failure, but emit no install signal for an unusable plugin.
     fixtures.install_stub_globals()
     gl.plugin_manager = RecordingPluginManager()
 

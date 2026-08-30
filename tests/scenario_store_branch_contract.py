@@ -1,9 +1,4 @@
-"""
-Regression test for the ways the store tab froze or built garbage URLs.
-
-get_official_store_branch answers STORE_PIN with no fetch, offline or not.
-StorePage re-arms itself after a failed load. No network is involved.
-"""
+"""Verify pinned store refs, URL validation, and failed-load recovery offline."""
 
 # A url that names no GitHub repository is skipped everywhere, through one
 # shared parse.
@@ -164,10 +159,7 @@ def test_prepare_plugin_skips_bad_url() -> None:
 
 
 def test_settings_row_refuses_bad_url() -> None:
-    """Drives the real CustomContentEntry.refresh_url_validity on a
-    duck-typed stand-in, because this headless harness builds no GTK widget.
-    The row and the store share one parse, so a url the row accepts is never
-    one the catalog has to skip."""
+    """Use the shared URL parser on a headless CustomContentEntry stand-in."""
     from src.windows.Settings.Settings import CustomContentEntry
 
     gl.lm = SimpleNamespace(get=lambda key, fallback=None: key)
@@ -219,9 +211,7 @@ def test_settings_row_refuses_bad_url() -> None:
 
 
 def test_store_page_rearms_after_failed_load() -> None:
-    """Drives the real StorePage.ensure_loaded, _load_guarded and
-    show_connection_error on a duck-typed stand-in, because this headless
-    harness builds no GTK widget."""
+    """Drive StorePage failed-load recovery on a headless stand-in."""
     from src.windows.Store.StorePage import StorePage
     from gi.repository import GLib
 

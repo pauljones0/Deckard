@@ -1,10 +1,4 @@
-"""
-Regression test for the deferred StoreCache index flush.
-
-A read, and the first sighting of a cache string, marks the index dirty, and
-one daemon timer flushes the whole index once, FLUSH_DEBOUNCE_S later. No
-network is involved.
-"""
+"""Verify the single-timer deferred StoreCache index flush offline."""
 
 # A committed blob write stays synchronous, because a lost path or fetched
 # record orphans the blob forever.
@@ -32,9 +26,7 @@ BURST = 12
 
 
 class _IndexWriteCounter:
-    """Counts atomic_write_json calls aimed at the cache index, delegating
-    to the real writer so the on-disk file stays truthful (the assertions
-    read it back)."""
+    """Count cache-index writes while delegating to the real atomic writer."""
 
     def __init__(self):
         self._real = store_cache_mod.atomic_write_json
@@ -114,9 +106,7 @@ def test_read_burst_writes_index_once() -> None:
 
 
 def test_deferral_lands_renewed_date() -> None:
-    """The flush carries the renewed last-use clock, and before it fires the
-    on-disk "date" is still the old one. "fetched" must stay separate from
-    "date" through all of it."""
+    """Flush the renewed use date without changing the fetched date."""
     cache = _new_cache()
     _seed(cache, ["Renewed.json"])
     key = cache.generate_cache_string(REPO, "Renewed.json")
@@ -134,13 +124,7 @@ def test_deferral_lands_renewed_date() -> None:
     )
 
     renewed = cache.files[key]["date"]
-    # The write counter ticks when the flush ENTERS atomic_write_json, one
-    # os.replace before the new file lands. Reading the index the instant the
-    # counter moves can catch the pre-flush file, whose "date" is still the
-    # seed stamp -- a stale read that widens with load, not a float rounding
-    # gap. Wait for the renewed date to actually reach disk instead of racing
-    # the replace. The equality below then holds exactly, because json
-    # round-trips the float.
+    # The counter advances before os.replace, so wait for the renewed date to reach disk.
     assert fixtures.wait_until(
         lambda: _on_disk(cache)[key].get("date") == renewed, timeout=5.0
     ), "the debounced flush must land the renewed date on disk"
@@ -207,15 +191,8 @@ def test_second_burst_rearms() -> None:
 
 
 def test_read_burst_arms_one_timer() -> None:
-    """The debounce dedupes, so a burst arms one timer rather than one per
-    read.
-
-    The write counts cannot see this alone, because many timers firing inside
-    one window still collapse to one write.
-    """
-    # What those timers cost is one thread per read, which turns a warm
-    # catalog browse into a thread storm. The debounce here is long enough
-    # that nothing fires mid-burst.
+    """Arm one timer per read burst; write counts alone cannot prove this."""
+    # A long debounce keeps the one-thread-per-read failure observable during the burst.
     def _armed_flush_threads() -> list:
         return [t for t in threading.enumerate()
                 if t.name == "store-cache-index-flush" and t.is_alive()]
@@ -252,9 +229,7 @@ def test_read_burst_arms_one_timer() -> None:
 
 
 def test_exit_hook_drains_dirty_index() -> None:
-    """A quit inside the debounce window still persists the renewals. The
-    module's atexit hook, and the explicit flush on the app's os._exit path,
-    drain every live cache."""
+    """Drain every live cache when quit occurs inside the debounce window."""
     # A debounce no check can outwait, so only the exit hook flushes here.
     cache = _new_cache(debounce=600.0)
     _seed(cache, ["Draining.json"])
@@ -286,19 +261,8 @@ def test_exit_hook_drains_dirty_index() -> None:
 
 
 def test_exit_hook_registered_with_atexit() -> None:
-    """The drain is wired into interpreter exit.
-
-    The check above calls _flush_live_caches directly, so it stays green even
-    with the atexit registration dropped. atexit exposes no way to enumerate
-    its table, so an unregister that removes something proves it was there --
-    but only where atexit._ncallbacks() reflects the removal.
-    """
-    # Some CPython builds remove the callback on unregister yet leave
-    # _ncallbacks() unchanged (the count tracks registrations, not removals).
-    # The removal-delta probe below reads a false negative there, so
-    # self-calibrate against a throwaway first and trust the probe only where
-    # a sentinel's register/unregister round-trips the count. The end-to-end
-    # drain stays covered by test_exit_hook_drains_dirty_index.
+    """Verify atexit registration only where callback counts reflect unregister."""
+    # Self-calibrate because some CPython builds do not decrement _ncallbacks().
     calib = atexit._ncallbacks()
 
     def _sentinel() -> None:
