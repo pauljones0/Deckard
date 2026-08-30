@@ -1,8 +1,4 @@
-"""A GIF deck background must decode through GifBackground, not the cv2 cache.
-
-The cv2 GIF demuxer mangles palette frames and drops alpha. Published tiles
-must byte-match an independent PIL decode, and the strip slice must too.
-"""
+"""Check PIL-based GIF backgrounds, alpha, key tiles, and strip slices."""
 import json
 import os
 
@@ -38,22 +34,14 @@ def _make_gif(path: str, size=(64, 64), n_frames: int = 4) -> str:
 
 
 def _reference_canvas(gif_path: str, frame_index: int, canvas_size) -> Image.Image:
-    """Independent PIL decode of one source frame, fitted the way GifBackground
-    fits it, with an exact-canvas ImageOps.fit and LANCZOS. Computed from
-    scratch here, so the comparison cannot inherit a provider bug.
-    """
+    """Decode and fit one reference frame independently with PIL and LANCZOS."""
     with Image.open(gif_path) as gif:
         gif.seek(frame_index)
         return ImageOps.fit(gif.convert("RGBA"), tuple(canvas_size), Image.Resampling.LANCZOS)
 
 
 def _seed_deck_background(serial: str, gif_path: str) -> None:
-    """Put the extended GIF background in the deck settings before construction.
-
-    The controller loads the deck background on a worker thread while starting,
-    and that load reads these settings. Seeding what the check sets makes the
-    two agree in any order. Written raw, because no settings manager exists yet.
-    """
+    """Seed the extended background before its startup worker can read settings."""
     path = os.path.join(gl.DATA_PATH, "settings", "decks", f"{serial}.json")
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w") as f:
@@ -69,12 +57,7 @@ def _seed_deck_background(serial: str, gif_path: str) -> None:
 
 
 def _await_startup_background(controller) -> None:
-    """Wait out the background load of the controller before touching it.
-
-    That load runs on a worker thread and goes through the same setters.
-    Anything it does after the check begins lands in the middle of it. The
-    published tile is the signal, and the lock then fences the worker exit.
-    """
+    """Wait for a published tile, then use the load lock to fence worker exit."""
     assert fixtures.wait_until(
         lambda: controller.background.get_identified_tile(0) is not None, timeout=10.0
     ), "the controller never published its deck-scope background"
@@ -102,9 +85,7 @@ def check_deck_background(controller, gif_path: str) -> None:
         f"(c) alpha did not survive the background decode (extrema {alphas})"
     )
 
-    # The published tile must byte-match the independent reference decode.
-    # get_identified_tile hands the tile and its identity out as one read, so
-    # the frame a media tick lands on meanwhile cannot tear the pair.
+    # Read tile and identity atomically before comparing with the reference decode.
     identified = background.get_identified_tile(0)
     assert identified is not None, "(b) no identified tile published after set_from_path"
     tile, (md5, frame_index) = identified
@@ -134,9 +115,7 @@ def check_strip_background_route(controller, gif_path: str) -> None:
     ts_state = ts.get_active_state()
 
     frame = ts_state._get_background_video_frame(gif_path, fps=30, loop=True)
-    # Capture immediately. get_current_image on the media tick releases a
-    # background_video its page config does not back, so only local references
-    # are stable from here on.
+    # Capture local references before a media tick can release this temporary video.
     bg_video = ts_state.background_video
     assert type(bg_video).__name__ == "GifBackground", (
         f"(e) a .gif strip background must land a GifBackground, got {type(bg_video).__name__}"

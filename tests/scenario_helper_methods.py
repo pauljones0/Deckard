@@ -1,8 +1,4 @@
-"""Unit-tier scenario for three HelperMethods regressions.
-
-get_sys_args_without_param returns a new list and never pops past the end.
-color_values_to_gdk accepts any sequence and scales alpha into the 0-1 range.
-"""
+"""Check argument removal and GDK color conversion behavior."""
 import sys
 
 import fixtures
@@ -58,11 +54,7 @@ def check_color_values_to_gdk() -> None:
 
 
 def check_alpha_round_trip() -> None:
-    """Alpha arrives as 0-255, like the other three channels, and CSS wants 0-1.
-
-    Feeding the raw value into the CSS string clamps every alpha of 1 or more
-    to fully opaque. Only 0 and 255 then survive the round trip.
-    """
+    """Check 0-to-255 alpha conversion to CSS scale and exact round trips."""
     for alpha in (0, 1, 64, 128, 200, 254, 255):
         rgba = HelperMethods.color_values_to_gdk((10, 20, 30, alpha))
         assert abs(rgba.alpha - alpha / 255) < 0.01, (
@@ -80,9 +72,7 @@ def check_alpha_round_trip() -> None:
     assert HelperMethods.gdk_color_to_values(
         HelperMethods.color_values_to_gdk((10, 20, 30))) == (10, 20, 30, 255)
 
-    # The built-in outline-colour default must survive the fixed scale. A
-    # default of (0,0,0,1) only looks opaque while the clamp rounds any alpha
-    # of 1 or more up, so the default and the conversion are pinned together.
+    # The built-in outline color must remain opaque under the corrected scale.
     from src.backend.SettingsManager import FONT_DEFAULTS
     default_outline = FONT_DEFAULTS["outline-color"]
     rgba = HelperMethods.color_values_to_gdk(default_outline)

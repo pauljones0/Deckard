@@ -1,17 +1,4 @@
-"""The recycling flow box must survive a nav click before its first range.
-
-DynamicFlowBox steps its pages from current_start_index, which show_range
-sets. A chooser reaches show_range only when it loads a pack, so a Next or a
-Back click before that has no index to step from. The buttons are built and
-connected in the constructor, so the click is reachable from the first frame
-the Asset Manager draws.
-
-Three legs. The offset has to exist before any range runs, the two handlers
-have to do nothing sane on a box that has shown nothing, and the buttons have
-to be insensitive until a range makes them meaningful. A fourth leg proves the
-nav still pages a loaded box, so the guards above cannot pass by refusing
-everything.
-"""
+"""Check flow-box navigation before and after the first displayed range."""
 import fixtures  # noqa: F401  (import first: isolated --data tempdir)
 
 import time
@@ -72,8 +59,7 @@ def check_offset_exists() -> None:
 def check_nav_before_first_range() -> None:
     box: DynamicFlowBox = DynamicFlowBox(Child)
 
-    # The real click path. An insensitive button still emits when a caller
-    # asks it to, so this reaches the handler either way.
+    # Programmatic emission reaches handlers even while buttons are insensitive.
     box.next_button.emit("clicked")
     box.back_button.emit("clicked")
     box.on_next()
@@ -83,8 +69,7 @@ def check_nav_before_first_range() -> None:
     assert box.current_start_index == 0, (
         "a nav click before the first range must leave the offset on the "
         f"first page, it moved to {box.current_start_index}")
-    # The pool holds unbound placeholders until the first range binds them.
-    # A nav step that reached show_range would run the factory over them.
+    # Placeholders stay unbound until the first range runs the factory.
     assert visible_items(box) == [None] * box.N_ITEMS_PER_PAGE, (
         "a nav click before the first range must leave every placeholder "
         f"unbound, the pool shows {visible_items(box)}")

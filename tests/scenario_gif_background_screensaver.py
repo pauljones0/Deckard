@@ -1,8 +1,4 @@
-"""A GIF screensaver background must take the same GifBackground branch.
-
-ScreenSaver.show() and set_media_path() reach into prebuild_from_path and
-set_from_path, so the .gif divert must hold there too. hide() releases it.
-"""
+"""Check screensaver GIF routing, live replacement, and release on hide."""
 import os
 
 import fixtures
@@ -53,9 +49,7 @@ def main() -> None:
             "no identified tile published for the screensaver GIF background"
         )
 
-        # The while-showing reach-in, where ScreenSaver.set_media_path calls
-        # background.set_from_path, takes the same branch and swaps the
-        # provider. Background.set_video closes the old one.
+        # A live path change uses the same route and closes the old provider.
         controller.screen_saver.set_media_path(gif_b)
         swapped = controller.background.video
         assert type(swapped).__name__ == "GifBackground" and swapped.video_path == gif_b, (

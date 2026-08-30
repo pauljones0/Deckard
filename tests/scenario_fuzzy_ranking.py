@@ -1,11 +1,6 @@
-"""Pins the fuzzy-search contract the rapidfuzz call sites rely on.
+"""Check rapidfuzz contracts for store, action-chooser, and page-selector search.
 
-rapidfuzz returns a float in [0, 100] where fuzzywuzzy returned a rounded int.
-The result shape, the thresholds and the int sort comparator are pinned.
-
-The store, the action chooser and the page selector score this way. The asset
-searches do not: they rank on the positional ladder of asset_search, which
-scenario_asset_search_ladder pins.
+Asset search uses a separate positional ranking ladder.
 """
 from functools import lru_cache
 
@@ -24,10 +19,7 @@ CORPUS = [
 ]
 VOLUME_FAMILY = {"volume_up", "volume_down", "volume_mute"}
 
-# Every threshold used at a call site, so a rapidfuzz bump that shifts the scale
-# is caught here rather than as a search that silently returns nothing. The
-# store and both action-chooser filters cut at 20; the page selector ranks
-# without a cut.
+# Threshold shared by store and action-chooser filters
 THRESHOLDS = (20,)
 
 
@@ -97,11 +89,7 @@ def test_sort_comparator_still_returns_int() -> None:
 
 
 def test_threshold_boundary_is_rounded() -> None:
-    # Pairs whose exact indel ratio is a whole number sitting on a call-site
-    # threshold. fuzzywuzzy returned int(round(...)) and let them through, and
-    # the rapidfuzz float can land one ULP below, so the store filter and both
-    # action-chooser filters compare round(score). Without that, typing n in the
-    # action chooser dropped Next Song and p in the store dropped OS Plugin.
+    # Scores one ULP below an integer threshold must pass after rounding.
     exact = [
         ("n", "next song", 20),
         ("p", "os plugin", 20),

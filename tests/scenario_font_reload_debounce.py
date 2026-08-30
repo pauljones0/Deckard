@@ -1,8 +1,4 @@
-"""Unit-tier scenario for the shared font-row reload debounce.
-
-The four Settings font rows share one TrailingDebouncer. A burst coalesces to
-one trailing fire, and every trigger is eventually followed by a fire.
-"""
+"""Check shared font-row trailing debounce, reuse, and never-drop behavior."""
 import ast
 import os
 import time
@@ -90,8 +86,7 @@ def check_trigger_during_window_rearms() -> None:
 
 def check_callback_fires_after_trigger() -> None:
     """The debounce may delay the reload and must never drop it."""
-    # 1. Repeated identical triggers still fire. The debouncer carries no value
-    #    at all, so there is nothing an equality check could dedupe against.
+    # Repeated identical triggers still produce one trailing fire.
     scheduler = FakeScheduler()
     fires = []
     debouncer = TrailingDebouncer(300, lambda: fires.append(1), scheduler=scheduler)
@@ -100,16 +95,12 @@ def check_callback_fires_after_trigger() -> None:
     scheduler.advance()
     assert len(fires) == 1, "identical repeated triggers must still produce a fire (never elide)"
 
-    # 2. A second, independent cycle after one completed still fires. The
-    #    pending handle is cleared on fire, so the debouncer is reusable.
+    # A completed cycle clears the handle so a later cycle can fire.
     debouncer.trigger()
     scheduler.advance()
     assert len(fires) == 2, "a trigger after a completed cycle was swallowed (never elide)"
 
-    # 3. A trigger raised from inside the callback is the reentrant shape, where
-    #    the user changes another font row while the reload is being spawned. It
-    #    arms a fresh timer instead of cancelling a dead source, and that timer
-    #    fires too.
+    # A callback can trigger a fresh timer after the pending handle clears.
     scheduler = FakeScheduler()
     reentrant = []
 
@@ -196,11 +187,7 @@ def _func_def(class_node: ast.ClassDef, name: str) -> ast.FunctionDef:
 
 
 def _derive_font_row_classes(tree) -> tuple:
-    """Every class whose on_set touches font_page_group is a font row.
-
-    Derived from the AST, so a fifth row added later is covered without anyone
-    extending a list. FONT_ROW_CLASSES stays as the minimum expected set.
-    """
+    """Derive font rows from on_set calls while enforcing the expected minimum set."""
     found = []
     for node in ast.walk(tree):
         if isinstance(node, ast.ClassDef):
@@ -245,10 +232,7 @@ def check_font_rows_route_through_group() -> None:
     assert "self.reload_debouncer.trigger" in _called_names(request), (
         "FontPageGroup.request_page_reload bypasses the debouncer"
     )
-    # The never-drop invariant, enforced structurally. The trigger must be
-    # unconditional. Any If or Return in the body is the skip-when-unchanged
-    # optimization, which silently breaks the correctness contract of the label
-    # memos. The reload may be delayed and never dropped.
+    # Conditional control flow could drop a reload required by label memoization.
     conditional = [n for n in ast.walk(request)
                    if isinstance(n, (ast.If, ast.Return, ast.IfExp))]
     assert not conditional, (
@@ -268,10 +252,7 @@ def check_font_rows_route_through_group() -> None:
 
 
 def check_trigger_is_single_thread() -> None:
-    """The _pending field of the debouncer has no lock.
-
-    A second triggering thread must fail loudly instead of racing it.
-    """
+    """Check that the unlocked pending handle rejects a second triggering thread."""
     import threading
 
     from GtkHelper.debounce import TrailingDebouncer

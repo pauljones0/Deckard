@@ -1,8 +1,4 @@
-"""Integration scenario for lazy GenerativeUI widget construction.
-
-GenerativeUI.__init__ stores the build closure of the subclass and runs it on
-first .widget access. The value layer works fully unbuilt.
-"""
+"""Check lazy GenerativeUI construction and unbuilt value-layer behavior."""
 import threading
 import time
 
@@ -19,12 +15,7 @@ from GtkHelper.GenerativeUI.SwitchRow import SwitchRow
 
 
 class _FakeAction(ActionCore):
-    """Stand-in for a plugin action, following scenario_action_teardown.
-
-    get_settings and set_settings are overridden to a plain dict, so the
-    value-layer checks need no real page.dict entry. GenerativeUI.get_value
-    and set_value only ever go through those two methods.
-    """
+    """Provide dictionary settings without a real page entry."""
 
     def __init__(self, page):
         super().__init__(
@@ -124,9 +115,7 @@ def check_teardown_never_built_is_noop(page) -> None:
     assert action.generative_ui_objects == [], "generative_ui_objects not cleared synchronously"
 
     _pump_glib()
-    # The never-built row must still be unbuilt. The idle destroy batch skips
-    # it outright through the _widget check rather than building it just to
-    # tear it down.
+    # The idle destroy batch must skip a row that was never built.
     assert row._widget is None, "teardown built a never-built widget"
     print("PASS: teardown of a never-built object is a no-op build-wise")
 
@@ -150,11 +139,9 @@ def check_widget_builds_exactly_once(page) -> None:
 
 
 def _all_concrete_subclass_factories():
-    """Every concrete GenerativeUI subclass, paired with a zero-config factory.
+    """Build concrete subclasses without titles to avoid translation dependencies.
 
-    Titles are left None, so build() short-circuits to an empty translation and
-    needs no plugin_base or locale manager. FileDialogRow is absent because it
-    is abstract and is only ever subclassed further.
+    FileDialogRow is excluded because it is abstract.
     """
     from gi.repository import Adw
     from GtkHelper.GenerativeUI.SwitchRow import SwitchRow
@@ -181,12 +168,7 @@ def _all_concrete_subclass_factories():
 
 
 def check_subclasses_lazy_build_once(page) -> None:
-    """Laziness must hold for every concrete subclass, not one of them.
-
-    A build closure that ran widget work at construction time would regress
-    silently. Each subclass must be unbuilt and registered at construction, and
-    one .widget access must build exactly once.
-    """
+    """Check that each concrete subclass registers unbuilt and builds once."""
     for name, factory in _all_concrete_subclass_factories():
         action = _FakeAction(page)
         row = factory(action, f"{name}_var")
@@ -205,12 +187,7 @@ def check_subclasses_lazy_build_once(page) -> None:
 
 
 def check_ensure_built_double_build_race(page) -> None:
-    """Two threads reading .widget concurrently must build exactly once.
-
-    _ensure_built guards the flag transition with _build_flag_lock and flips
-    _built True before it runs the build, so the losing thread queues nothing.
-    A barrier forces contention, and this thread pumps until the build lands.
-    """
+    """Check one build under concurrent widget reads using forced contention."""
     from gi.repository import GLib
 
     action = _FakeAction(page)
@@ -223,10 +200,7 @@ def check_ensure_built_double_build_race(page) -> None:
     def reader(tag):
         try:
             barrier.wait(timeout=5)
-            # Reading .widget calls _ensure_built. Exactly one worker wins the
-            # flag lock and queues the build through run_on_main, and the other
-            # short-circuits on _built. This blocks until the main-context pump
-            # below runs the queued build.
+            # One worker queues the main-thread build while the other sees _built.
             results[tag] = obj.widget
         except Exception as e:
             errors.append((tag, e))
@@ -254,10 +228,7 @@ def check_ensure_built_double_build_race(page) -> None:
         f"_ensure_built must build exactly once under a concurrent double read, "
         f"built {obj.build_count} times"
     )
-    # The loser of the flag-lock race may observe the documented transient,
-    # where _built is True and _widget is still None, so a racing reader can
-    # return None. Every non-None result must be the one built widget, and once
-    # the build has landed a fresh read must converge on it for both.
+    # A racing loser may see _built before _widget; later reads must converge.
     assert obj._widget is not None, "the single build must have produced a widget"
     for tag, w in results.items():
         assert w is None or w is obj._widget, (

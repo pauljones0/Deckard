@@ -1,8 +1,4 @@
-"""faulthandler.log must not bypass log redaction.
-
-faulthandler writes at the C level to the stored fd, so redirect_faulthandler()
-scrubs the existing file before it appends the next boot marker and re-attaches.
-"""
+"""Check startup redaction before faulthandler opens its append descriptor."""
 import fixtures  # must be first; isolates DATA_PATH before any src import
 
 import faulthandler
@@ -18,10 +14,7 @@ HOME = os.path.expanduser("~")
 USER = getpass.getuser()
 HOST = "deckard-ci-box"  # this machine's name, injected, never the runner's
 
-# scrub() redacts this machine's own name alongside the home path. Pin the name
-# to an injected one, because the runner's could be any word and a rule on it
-# would rewrite the seeded dump below. The home and username rules stay real,
-# which is what the frame-path assertions need.
+# Fix the hostname rule while retaining real home and username redaction.
 log_redaction._hostname_candidates = lambda: [HOST]
 log_redaction._RULES = log_redaction._compile_rules()
 
@@ -46,9 +39,7 @@ def read_log(path: str) -> str:
 
 
 def simulate_restart() -> None:
-    # In a real run the module-level _fault_file reference lives for the whole
-    # process, because faulthandler stores the raw fd. Clearing it is what a
-    # process restart does to module state.
+    # Clear process-lifetime module state to simulate a restart.
     log_hooks._fault_file = None
 
 
@@ -68,11 +59,7 @@ def main() -> None:
     # Boot 1, over a seeded raw dump from a previous session.
     with open(log_path, "w") as f:
         f.write(SEEDED_DUMP)
-    # The tmp-and-replace of the scrub must not restamp the log mode, so a user
-    # who chose a non-default mode keeps it. Seed 0640, which differs from both
-    # the 0600 of mkstemp, so a dropped os.chmod leaves 0600 and fails this
-    # assert, and the umask default, so a naive open would leave 0644. Only
-    # copying the source mode yields 0640.
+    # Seed a mode distinct from mkstemp and umask defaults to prove preservation.
     os.chmod(log_path, 0o640)
 
     log_hooks.redirect_faulthandler(log_dir)
@@ -121,11 +108,7 @@ def main() -> None:
         "SIGQUIT dump did not land in faulthandler.log -- fd not attached"
     )
     assert "scenario_faulthandler_redaction.py" in session_dump
-    # The known limitation. A current-session dump stays raw until next boot.
-    # Prove it is raw by the real frame path appearing unredacted, which holds
-    # wherever the checkout lives (a $HOME check assumes a checkout under home;
-    # CI checks out under /builds). The seeded home paths above already prove
-    # the scrub redacts home to ~.
+    # Current-session C-level output remains raw until the next startup scrub.
     assert os.path.dirname(os.path.abspath(__file__)) in session_dump, (
         "expected the live dump to be raw (C-level write): the real frame path "
         "must appear unredacted. If this starts failing, the residual-risk "

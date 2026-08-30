@@ -1,8 +1,4 @@
-"""font_resolver.py replaces matplotlib.font_manager as the font backend.
-
-resolve() must map the app weight scale onto the fontconfig one, the resolved
-file must open in PIL, and fallback_font() must stay lazy at import.
-"""
+"""Check fontconfig weight mapping, PIL compatibility, and lazy fallback loading."""
 import os
 import subprocess
 import sys
@@ -13,8 +9,7 @@ from src.backend.DeckManagement import font_resolver
 
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
-# A family verified with fc-list to be present on the harness machine with both
-# a regular and a bold face, so the weight check has something real to bite on.
+# Harness family with distinct regular and bold faces
 _TEST_FAMILY = "DejaVu Sans"
 
 
@@ -58,8 +53,7 @@ def check_font_name_round_trips() -> None:
 
 
 def check_fallback_font_lazy_at_import() -> None:
-    # Fresh interpreter. Import globals, check the lazy attribute is not
-    # materialized, then access it and check that it is.
+    # Use a fresh interpreter to observe the lazy module attribute.
     script = (
         "import sys, tempfile\n"
         f"sys.path.insert(0, {_REPO_ROOT!r})\n"
@@ -92,8 +86,7 @@ def check_fallback_font_lazy_at_import() -> None:
 
 
 def check_no_matplotlib_imported() -> None:
-    # font_resolver itself, and everything it pulls in on the Linux path, must
-    # never import matplotlib.
+    # The Linux resolver closure must not import matplotlib.
     script = (
         "import sys\n"
         f"sys.path.insert(0, {_REPO_ROOT!r})\n"

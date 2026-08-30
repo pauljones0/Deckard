@@ -1,30 +1,6 @@
-"""Pins the fake deck model presets: geometry, identity and the default shape.
+"""Check fake-deck model geometry, identity, selection, and controller behavior.
 
-A fake deck takes a model, which is the whole device shape: the key grid, the
-image format of every surface, the dial and touch-button counts, and the
-identity the USB layer reads. This scenario checks four things.
-
-  (1) Every named preset reports what the driver's own device class reports for
-      that model. The expected values come from the library classes themselves,
-      so a preset that drifts from the hardware it names fails here.
-  (2) No preset carries the Elgato vendor id, and no fake deck carries a
-      transport. The USB reset acts on vendor plus product id and falls back to
-      "the one device of this model on the bus", so a fake that claimed the
-      Elgato identity would aim a real reset at real hardware on the same host.
-      The liveness probe must also keep taking its fallback arm for a fake.
-  (3) A model refuses a shape that cannot work, and the command line shapes the
-      deck at each index: one name covers every deck, several clamp at the last,
-      and the name "default" leaves a deck's own layout in charge. A deck of a
-      named model says which model it is.
-  (4) A real controller builds and loads a page over a Mini, an XL and an SD+,
-      and its input registry matches each geometry.
-  (5) The default shape is what it always was. A frozen literal snapshot pins
-      every value a scenario can read off the deck, the input registry of a
-      default controller is the 2x4 grid with four dials and one touchscreen
-      that the suite assumes, and the key-event remapper still behaves exactly
-      as the Neo dispatch scenario proves it does on this same shape.
-
-No hardware is involved. Import fixtures first.
+The checks also pin the default surface and prevent fake devices from reaching USB reset.
 """
 import fixtures  # noqa: F401  (import first: sets up the isolated data dir)
 
@@ -65,8 +41,7 @@ from src.backend.DeckManagement.Subclasses.FakeDeck import (
     fake_deck_model,
 )
 
-# The device class each preset models, and the product id the USB layer reads
-# off that model.
+# Device class and USB product identity for each preset
 MODEL_SOURCES = {
     "original": (StreamDeckOriginal, USBProductIDs.USB_PID_STREAMDECK_ORIGINAL),
     "mk2": (StreamDeckOriginalV2, USBProductIDs.USB_PID_STREAMDECK_MK2),
@@ -77,9 +52,7 @@ MODEL_SOURCES = {
     "pedal": (StreamDeckPedal, USBProductIDs.USB_PID_STREAMDECK_PEDAL),
 }
 
-# What a fake deck of the default shape has always answered. These are
-# literals on purpose: the whole suite stands on this shape, and a change to it
-# is a change to every scenario that never asked for a model.
+# Literal default surface used by scenarios that do not select a model
 DEFAULT_SURFACE = {
     "deck_type": None,
     "key_layout": [2, 4],
@@ -162,9 +135,7 @@ def check_presets_match_the_hardware() -> None:
         assert deck.product_id() == product_id, (
             f"{name}: product id {deck.product_id():#06x}, expected {product_id:#06x}")
 
-    # The grid geometry the presets exist for is genuinely varied: no two of
-    # these three share a key count, so a scenario that runs over all of them
-    # cannot pass by accident on one hardcoded grid.
+    # Distinct key counts prevent a hardcoded grid from satisfying all three cases.
     counts = {name: FakeDeck(serial_number=f"grid-{name}", model=name).key_count()
               for name in ("mini", "xl", "plus")}
     assert len(set(counts.values())) == 3, f"expected three distinct key counts, got {counts}"
@@ -172,8 +143,7 @@ def check_presets_match_the_hardware() -> None:
 
 
 def check_no_preset_claims_the_elgato_identity() -> None:
-    """A fake deck never steers the USB reset, and never leaves the liveness
-    fallback arm."""
+    """Check that fake decks avoid USB reset and use the liveness fallback."""
     assert usb_reset.ELGATO_VENDOR_ID == USBVendorIDs.USB_VID_ELGATO, (
         f"the vendor id the reset guards, {usb_reset.ELGATO_VENDOR_ID:#06x}, is not the one "
         f"the driver knows, {USBVendorIDs.USB_VID_ELGATO:#06x}")
@@ -190,8 +160,7 @@ def check_no_preset_claims_the_elgato_identity() -> None:
         assert usb_reset.reset_wedged_deck(deck) is None, (
             f"{name}: a fake deck reached the USB reset")
 
-        # device_is_on_bus reads a transport off the deck. A fake carries none,
-        # so the probe must fall back to the deck's own connected().
+        # No transport means the probe must use the deck's connected answer.
         assert getattr(deck, "device", None) is None, (
             f"{name}: a fake deck grew a transport, which puts it on the filtered "
             f"enumeration arm of the liveness probe")
@@ -204,11 +173,7 @@ def check_no_preset_claims_the_elgato_identity() -> None:
 
 @contextlib.contextmanager
 def _flags(*flags: str):
-    """Run the body with these flags appended to the command line.
-
-    fake_deck_model_for_index reads the parser, and the parser reads sys.argv,
-    so this is how a scenario states what the app was started with.
-    """
+    """Run the body with the specified command-line flags."""
     saved = list(sys.argv)
     sys.argv = saved + list(flags)
     try:
@@ -230,12 +195,7 @@ def _errors_logged():
 
 @contextlib.contextmanager
 def _parser_answering(names):
-    """Make the parser hand back names that argparse would have refused.
-
-    This shadows the parser's own parse_args, so the helper's fall back can be
-    reached at all: the flag itself accepts nothing but the preset names.
-    gl.argparser is this same object.
-    """
+    """Return names that argparse would reject to exercise the helper fallback."""
     cli_args.argparser.parse_args = lambda *a, **k: SimpleNamespace(fake_deck_model=names)
     try:
         yield
@@ -250,8 +210,7 @@ def check_the_flag_shapes_each_deck() -> None:
     assert [m.name for m in picked] == ["xl", "xl", "xl"], (
         f"one name must shape every fake deck; got {[m.name for m in picked]}")
 
-    # Two names, three decks: the last name covers the rest. It must clamp and
-    # never wrap, or deck three would silently go back to the first name.
+    # Multiple names clamp at the last entry instead of wrapping.
     with _flags("--fake-deck-model", "mini", "--fake-deck-model", "xl"):
         picked = [fake_deck_model_for_index(i) for i in range(4)]
     assert [m.name for m in picked] == ["mini", "xl", "xl", "xl"], (
@@ -270,10 +229,7 @@ def check_the_flag_shapes_each_deck() -> None:
     assert abbreviated is not None and abbreviated.name == "neo", (
         f"the --fake-deck abbreviation must resolve; got {abbreviated}")
 
-    # The name "default" leaves the deck alone. It must not resolve to the
-    # default model: a model, any model, states the geometry and drops a key
-    # layout the settings hold, and this flag reads by position, so "default"
-    # is how a caller shapes the second deck and leaves the first one alone.
+    # "default" leaves persisted geometry in control at its deck position.
     gl.settings_manager.save_deck_settings("cli-default", {"key-layout": [5, 6]})
     with _flags("--fake-deck-model", "default", "--fake-deck-model", "xl"):
         first = fake_deck_model_for_index(0)
@@ -297,8 +253,7 @@ def check_the_flag_shapes_each_deck() -> None:
     assert "stream-deck-4000" in complaint.getvalue(), (
         f"the refusal must name what was typed; got {complaint.getvalue()!r}")
 
-    # A name that reaches the helper any other way is reported once and leaves
-    # the deck's shape alone. The app still starts.
+    # A name that bypasses argparse logs once and leaves the shape unchanged.
     with _parser_answering(["stream-deck-4000"]), _errors_logged() as errors:
         fallback = fake_deck_model_for_index(0)
     assert fallback is None, f"an unknown name must leave the shape alone; got {fallback}"
@@ -321,8 +276,7 @@ def check_the_deck_says_which_model_it_is() -> None:
     assert fake_deck_display_name(0, DEFAULT_FAKE_DECK_MODEL) == "Fake Deck 1", (
         "the default shape is nobody's hardware, so it names no model")
 
-    # The name reaches the device, which is what the deck list and the stack
-    # child read.
+    # The device exposes the display name consumed by the deck list and stack.
     deck = FakeDeck(serial_number="named-deck",
                     deck_type=fake_deck_display_name(0, FAKE_DECK_MODELS["xl"]),
                     model="xl")
@@ -360,13 +314,9 @@ def check_a_model_refuses_a_shape_that_cannot_work() -> None:
 
 
 def check_model_selection_rules() -> None:
-    """How the key grid is settled, in both branches.
+    """Check layout precedence with and without a named model.
 
-    With no model named the order is what it has always been: a layout the deck
-    settings hold, then the key_layout argument, then the default grid. The
-    settings win, because the row and column spinners write them and read them
-    back. With a model named the settings are not read at all, and the
-    key_layout argument still outranks the model's own grid.
+    Persisted layout wins without one; explicit layout wins with one.
     """
     serial = "layout-persisted"
     gl.settings_manager.save_deck_settings(serial, {"key-layout": [3, 5]})
@@ -418,9 +368,7 @@ def check_model_selection_rules() -> None:
     assert fake_deck_model("  XL  ") is FAKE_DECK_MODELS["xl"], (
         "a preset name must resolve whatever its spacing and case")
 
-    # The flag carries the preset names twice over, as the choices argparse
-    # enforces and as the help a reader sees, and cli_args cannot import the
-    # table (it stays importable before globals). Pin all three together.
+    # Parser choices and help must match presets without importing globals.
     flag = [a for a in cli_args.argparser._actions if "--fake-deck-model" in a.option_strings]
     assert len(flag) == 1, "the --fake-deck-model flag is gone"
     assert set(cli_args.FAKE_DECK_MODEL_NAMES) == set(FAKE_DECK_MODELS), (
@@ -455,8 +403,7 @@ def _settle_keys(controller, deck, page, key_count: int) -> None:
 
 
 def check_controller_over_each_geometry() -> None:
-    """A real controller builds its input registry and paints a page at each
-    geometry."""
+    """Check controller input registries and page painting across model geometries."""
     media = fixtures.make_test_png(os.path.join(gl.DATA_PATH, "media", "model_bg.png"),
                                    color=(12, 200, 90))
 
@@ -547,10 +494,7 @@ def check_default_shape_is_unchanged() -> None:
     finally:
         fixtures.teardown(controller)
 
-    # The key-event remapper, on the default shape and with nothing patched.
-    # The Neo dispatch scenario proves these two properties over a grid it pins
-    # by hand; the default deck already carries that grid, so the same
-    # assertions must hold over it untouched.
+    # Check the unpatched key-event remapper on the default grid.
     faulty = fixtures.FaultyFakeDeck(serial_number="golden-remap")
     better = BetterDeck(faulty)
     dispatched: "list[int]" = []

@@ -1,8 +1,4 @@
-"""Every deck_controller module must import cleanly on Python 3.13.
-
-3.13 evaluates annotations at definition time, so a bare TYPE_CHECKING name in
-one raises NameError there and is invisible on 3.14. Each body runs stubbed.
-"""
+"""Check that engine modules import on Python 3.13 with evaluated annotations."""
 import fixtures  # noqa: F401  (isolated data dir + sys.path, house convention)
 
 import os
@@ -18,58 +14,31 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PACKAGE_DIR = os.path.join(_REPO_ROOT, "src", "backend", "DeckManagement", "deck_controller")
 COMPAT_SHIM = os.path.join(_REPO_ROOT, "src", "backend", "DeckManagement", "DeckController.py")
 
-# Modules outside the package that claim to be importable from anywhere, engine
-# closure included. Each one is here because something depends on that claim.
-# Add a module when it makes the claim, not because it is nearby.
+# Modules outside the package that are part of the engine import closure
 EXTRA_MODULES = (
     # The app-ready deferral protocol imports globals and stdlib only.
     os.path.join(_REPO_ROOT, "src", "backend", "startup_queue.py"),
-    # The control plane. The deck controller asks it whether a parked state
-    # request is valid, so it carries the floor contract of the engine closure.
-    # It imports globals, the input identifiers and stdlib, and every
-    # application type it names is TYPE_CHECKING-only.
+    # Control plane imported by the deck controller
     os.path.join(_REPO_ROOT, "src", "backend", "control_plane.py"),
-    # The forwarding half of the CLI. Its body runs on the deployment floor at
-    # every --change-page and --change-state invocation, and main.py, the only
-    # importer, cannot be imported by a scenario, so nothing else executes it on
-    # 3.13. Standard library plus the app id, with the toolkit imported inside
-    # the bus transport and the startup queue inside the parking call.
+    # CLI forwarding path executed before the application imports
     os.path.join(_REPO_ROOT, "src", "backend", "cli_forward.py"),
-    # The CLI fast path. main.py runs its body above every other import, so it
-    # executes on the floor before anything else in the tree does, and a name
-    # it cannot bind there fails the whole application rather than one command.
+    # CLI fast path executed before all other main imports
     os.path.join(_REPO_ROOT, "src", "backend", "cli_fast_path.py"),
-    # The typed gl accessors import globals and stdlib only, and every type they
-    # name is TYPE_CHECKING-only, which is the shape this check exists for.
+    # Typed global accessors with TYPE_CHECKING-only application types
     os.path.join(_REPO_ROOT, "src", "backend", "services.py"),
-    # The page flush seam. Page imports it and Page is in the engine closure, so
-    # it carries the floor contract of the closure. Its only Page annotations
-    # are TYPE_CHECKING-only.
+    # Page flush seam imported by Page
     os.path.join(_REPO_ROOT, "src", "backend", "PageManagement", "page_flush.py"),
-    # The page document. Page holds one and reads every byte of its content
-    # through it, so it inherits the floor contract too. It names no application
-    # type at all, only globals and stdlib.
+    # Page document used for all page content reads
     os.path.join(_REPO_ROOT, "src", "backend", "PageManagement", "page_document.py"),
-    # The settings store. The settings manager forwards its loader to it, and
-    # the settings manager is read from the engine closure, so the store carries
-    # the floor contract. Standard library plus globals, the atomic writer and
-    # the logger, and it names no application type at all.
+    # Settings store reached through the engine's settings manager
     os.path.join(_REPO_ROOT, "src", "backend", "settings_store.py"),
-    # The settings views. The store imports them at the foot of its own body as
-    # a compat re-export, so they are reached on the floor the moment the store
-    # is, and they carry the same closure contract. Standard library plus
-    # globals, the store surfaces and the logger, with no toolkit and no
-    # application type of their own.
+    # Settings views imported by the store as compatibility exports
     os.path.join(_REPO_ROOT, "src", "backend", "settings_views.py"),
-    # The page-cache pins. The deck controller reaches them on its tick and key
-    # paths, which is the engine closure at its busiest. It imports globals and
-    # stdlib only, and every type it names is TYPE_CHECKING-only.
+    # Page-cache pins reached by deck-controller tick and key paths
     os.path.join(_REPO_ROOT, "src", "backend", "PageManagement", "page_pins.py"),
 )
 
-# Runs in the floor interpreter, one module per argument. Prints one OK or FAIL
-# line per module, so one process covers the whole package and a failure names
-# the module that raised.
+# Child program that imports each requested module under stubs
 _CHILD = r'''
 import ast, importlib.abc, importlib.machinery, os, sys, traceback, types
 
@@ -200,11 +169,7 @@ for p in paths:
 
 
 def discover_modules() -> list[str]:
-    """Every module of the deck_controller package, by listing the directory.
-
-    A module added to the package is covered without touching this scenario.
-    The compat shim and EXTRA_MODULES are added to the list.
-    """
+    """Discover package modules, the compatibility shim, and extra closure modules."""
     assert os.path.isdir(PACKAGE_DIR), f"package dir missing: {PACKAGE_DIR}"
     names = sorted(
         n for n in os.listdir(PACKAGE_DIR)
