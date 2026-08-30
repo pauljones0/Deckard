@@ -30,7 +30,6 @@ import collections
 import io
 import itertools
 import os
-import statistics
 import threading
 import time
 from dataclasses import dataclass
@@ -42,6 +41,7 @@ from loguru import logger as log
 from src.backend.DeckManagement.fair_lock import FairLock
 from src.backend.DeckManagement.InputIdentifier import Input, InputIdentifier
 from src.backend.DeckManagement.Subclasses.media_pipeline_profiler import media_prof
+from src.backend.DeckManagement.deck_controller.loop_metrics import WorkRateMonitor
 from src.backend.DeckManagement.deck_controller.paint_protocol import PaintTicket
 from src.backend.PageManagement.Page import Page
 from src.backend import ui_port
@@ -472,10 +472,12 @@ class MediaPlayerThread(threading.Thread):
         # resumed. See check_resume_gap().
         self._last_iter_ts: float = time.time()
 
-        self.fps: list[float] = []
-        self.old_warning_state = False
-
-        self.show_fps_warnings = gl.settings_manager.app().enable_fps_warnings
+        # Per-tick work-rate window and low-FPS warning state; loop_metrics
+        # owns the semantics.
+        self.metrics = WorkRateMonitor(
+            self.FPS,
+            gl.settings_manager.app().enable_fps_warnings,
+            self.set_banner_revealed)
 
         # Set by this deck's reader supervisor while the device handle is
         # down, and cleared when a reopen takes it back. Every device write
@@ -775,8 +777,10 @@ class MediaPlayerThread(threading.Thread):
         else:
             target_fps = 2  # idle; check for new tasks occasionally
 
-        self.append_fps(1 / (end - start))
-        self.update_low_fps_warning()
+        # Recorded before the wait below on purpose: the value is this
+        # tick's work-rate, not the achieved cadence.
+        self.metrics.record(1 / (end - start))
+        self.metrics.update_warning()
         wait = max(0, 1/target_fps - (end - start))
         # Event-based wait on both paths. A submitted control op or an
         # interactive paint wakes the loop at once, instead of a wait for a
@@ -987,32 +991,8 @@ class MediaPlayerThread(threading.Thread):
         self._cached_needs_ticks = needs
         return needs
 
-    def append_fps(self, fps: float) -> None:
-        self.fps.append(fps)
-        if len(self.fps) > self.FPS *2:
-            self.fps.pop(0)
-
-    def get_median_fps(self) -> float:
-        return statistics.median(self.fps)
-    
-    def update_low_fps_warning(self) -> None:
-        if not self.show_fps_warnings:
-            return
-        
-        show_warning = self.get_median_fps() < self.FPS * 0.8
-        if self.old_warning_state == show_warning:
-            return
-        self.old_warning_state = show_warning
-
-        self.set_banner_revealed(show_warning)
-
-
     def set_show_fps_warnings(self, state: bool) -> None:
-        self.show_fps_warnings = state
-        if state:
-            self.old_warning_state = False
-        else:
-            self.set_banner_revealed(False)
+        self.metrics.set_enabled(state)
 
     def set_banner_revealed(self, state: bool) -> None:
         ui_port.get().set_low_fps_warning(self.deck_controller, state)
