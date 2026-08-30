@@ -1,5 +1,5 @@
-"""Verify state-scoped multi counts and input-identifier support filtering.
-Two one-action states are single; one two-action state is multi; no entry is UNSUPPORTED.
+"""Verify multi counts per state: two one-action states are single; one two-action state is multi.
+A missing support-map entry defaults to UNSUPPORTED.
 """
 import sys
 

@@ -1,7 +1,7 @@
 """Verify plugin settings use the manifest id as their stable key."""
 
-# A differing folder name must survive rename or reinstall; an existing
-# manifest-id settings file takes precedence over the legacy folder-name file.
+# Settings survive folder renames and reinstalls; an existing manifest-id file
+# takes precedence over the legacy folder-name file.
 import json
 import os
 import textwrap

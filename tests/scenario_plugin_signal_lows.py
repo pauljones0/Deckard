@@ -18,8 +18,8 @@ from src.Signals.weak_callbacks import CallbackRegistry
 
 
 def pump_main_context(max_iterations: int = 25) -> int:
-    """Dispatch at most max_iterations default-context sources and return the count.
-    The bound prevents a repeating idle source from hanging the scenario."""
+    """Run at most max_iterations main-context iterations that dispatch work.
+    Return their count; the bound prevents a repeating idle from hanging the scenario."""
     ctx = GLib.MainContext.default()
     dispatched = 0
     for _ in range(max_iterations):

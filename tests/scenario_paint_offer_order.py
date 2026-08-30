@@ -172,7 +172,7 @@ def leg_older_strip_paint_never_wins(controller) -> None:
 
 def leg_paint_lock_is_released_before_dispatch(controller) -> None:
     """Verify a paint releases its RLock before callback dispatch.
-    The non-blocking probe uses a second thread because the lock owner can reacquire an RLock."""
+    The second-thread probe can block up to five seconds on the real RLock."""
     def probe(lock) -> bool:
         got: list = []
 
