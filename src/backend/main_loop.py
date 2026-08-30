@@ -1,14 +1,5 @@
-"""Toolkit-free main-loop marshalling and background-pool helpers.
-
-This module imports gi.repository.GLib and stdlib only, so an import never
-pulls in the widget stack (Gtk, Adw, Gdk, Pango). Engine code under
-src/backend must import from here. GtkHelper.GtkHelper re-exports every name
-for plugin compatibility.
-
-RUN_ON_MAIN_TIMEOUT_S lives here only. run_on_main reads it at call time so
-tests can shrink it, and a name-only re-export elsewhere would be a dead
-write.
-"""
+"""Marshal GLib work and manage background tasks without widget imports.
+Backend code imports here; GtkHelper re-exports names, and timeouts are read at call time."""
 import functools
 import threading
 from collections.abc import Callable
@@ -38,26 +29,16 @@ RUN_ON_MAIN_TIMEOUT_S = 30
 
 
 def run_on_main(func: Callable[_Params, _Return], *args: _Params.args, **kwargs: _Params.kwargs) -> _Return:
-    """Run func on the GTK main loop and block until it returns. Runs inline
-    on the main thread, because GTK4 accepts calls from that thread only.
-
-    A timeout cancels the queued idle source, so either the timeout path or
-    the idle callback proceeds, never both. An idle source left in place fires
-    after the caller gives up. It then runs func a second time against the
-    state the caller rebuilt (GenerativeUI._ensure_built builds the same row
-    twice).
-    """
+    """Run on the GTK main thread and block; execute inline when already there.
+    Cancel an unclaimed idle source on timeout so func cannot run after abandonment."""
     if threading.current_thread() is threading.main_thread():
         return func(*args, **kwargs)
 
     done = threading.Event()
-    # Holds the result under "result" and an escaped exception under "exc".
     box: "_MarshalBox[_Return]" = {}
     state_lock = threading.Lock()
-    # claimed means the idle callback committed to a run of func.
-    # abandoned means the caller timed out and cancelled, and the callback
-    # must not run. Both transitions happen under state_lock, so only one of
-    # them takes effect.
+    # claimed commits the callback; abandoned cancels an unclaimed callback.
+    # The lock makes these states mutually exclusive.
     state = {"claimed": False, "abandoned": False}
 
     def _cb() -> bool:
@@ -84,18 +65,16 @@ def run_on_main(func: Callable[_Params, _Return], *args: _Params.args, **kwargs:
             timed_out = not state["claimed"]
             if timed_out:
                 state["abandoned"] = True
-                # Under the lock with claimed False the source has not started
-                # to dispatch func, so it is still alive to remove. A removal
-                # during dispatch only flags the source destroyed.
+                # An unclaimed source has not dispatched func and is safe to remove.
+                # Removing during dispatch would only flag the source as destroyed.
                 GLib.source_remove(source_id)
         if timed_out:
             raise RuntimeError(
                 f"main loop did not service run_on_main({getattr(func, '__name__', func)}) "
                 f"within {timeout}s"
             )
-        # The callback claimed the run at the deadline. The main loop is alive
-        # again and func is in flight, so wait for it instead of raising a
-        # timeout for a running call.
+        # A callback claimed at the deadline is in flight, not abandoned.
+        # Wait once more instead of reporting a timeout for a running call.
         if not done.wait(timeout=timeout):
             raise RuntimeError(
                 f"run_on_main({getattr(func, '__name__', func)}) started on the main loop "
@@ -103,9 +82,8 @@ def run_on_main(func: Callable[_Params, _Return], *args: _Params.args, **kwargs:
             )
     if "exc" in box:
         raise box["exc"]
-    # A completed wait leaves exactly one of the two keys set, and the raise
-    # above took the exc path, so "result" is present; get() still answers
-    # None for the shape the checker sees, and the cast strips that.
+    # Completion sets exactly one key; the exception branch left result present.
+    # cast removes the optional type introduced by dict.get().
     return cast("_Return", box.get("result"))
 
 
@@ -117,20 +95,13 @@ def on_main(func: Callable[_Params, _Return]) -> Callable[_Params, _Return]:
     return wrapper
 
 
-# App-lifecycle pool for @background work. It takes I/O-bound work only,
-# because the GIL serializes pure-Python CPU work.
-#
-# The workers are non-daemon. CPython 3.9 removed daemon threads from
-# ThreadPoolExecutor (bpo-39812) and offers no way back. Exit still works.
-# quit ends in os._exit (src/app.py), and a normal interpreter exit wakes idle
-# workers through the atexit queue of concurrent.futures.
+# Eight non-daemon workers run I/O-bound work; Python CPU work stays GIL-bound.
+# App quit uses os._exit, while normal exit wakes idle workers through atexit.
 _background_pool = ThreadPoolExecutor(max_workers=8, thread_name_prefix="background")
 
 
 def log_future_exception(future: "Future[Any]") -> None:
-    """Done-callback that reports a raised future into the logs. Shared by
-    the application pool below and every owned executor whose failures
-    would otherwise vanish with the worker."""
+    """Log exceptions from application and owned-executor futures."""
     try:
         exc = future.exception()
     except Exception:

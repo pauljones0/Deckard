@@ -1,11 +1,5 @@
-"""Desktop-session identification for window grabbing and lock-screen detection.
-
-XDG_CURRENT_DESKTOP holds a colon-separated list of names, most specific first
-("ubuntu:GNOME", "sway:wlroots:swayfx"), so callers must match one component.
-A whole-string comparison misses stock distro sessions.
-This module stays stdlib-only, because the lock screen manager detects on a
-worker thread, before globals and GTK are safe to import.
-"""
+"""Read desktop and session identifiers without importing globals or GTK.
+XDG_CURRENT_DESKTOP is colon-separated and ordered most-specific first."""
 import os
 
 
