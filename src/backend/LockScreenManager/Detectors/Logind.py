@@ -14,8 +14,8 @@ from gi.repository import Gio, GLib
 from loguru import logger as log
 
 class LogindLockScreenDetector(LockScreenDetector):
-    """Fallback for Niri, Sway, and river that handles logind Lock and Unlock from loginctl, lid switches, and idle policy.
-    It misses lockers that do not call logind, so desktop screen-saver detectors take priority."""
+    """Fallback for Niri, Sway, and river through logind Lock and Unlock.
+    It covers loginctl, lid, and idle policy; other lockers need desktop detectors."""
 
     def __init__(self, lock_screen_manager: "LockScreenManager", bus: Gio.DBusConnection | None = None):
         super().__init__(lock_screen_manager)

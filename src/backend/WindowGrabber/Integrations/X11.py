@@ -254,8 +254,11 @@ class X11(Integration):
 
 
 class WatchForActiveWindowChange(threading.Thread):
-    """Watch root focus and focused-window title PropertyNotify events on a thread-owned X connection.
-    Report nothing without an X server; display_factory permits synthetic event tests without one."""
+    """Watch focus and title PropertyNotify events on a thread-owned X connection.
+
+    Report nothing without X; display_factory supports synthetic event tests.
+
+    """
 
     def __init__(self, x11: X11, display_factory=None):
         super().__init__(name="WatchForActiveWindowChange", daemon=True)
@@ -263,7 +266,7 @@ class WatchForActiveWindowChange(threading.Thread):
         self._stop_event = threading.Event()
         self._display_factory = display_factory or _open_display
 
-        # A locked wake-pipe write interrupts select without racing a close and reused file descriptor.
+        # Lock the wake-pipe write against close so it wakes select, not a reused descriptor.
         # The non-blocking writer cannot stall; a full pipe already contains the required wake byte.
         self._wake_lock = threading.Lock()
         self._wake_read_fd, self._wake_write_fd = os.pipe()
@@ -374,7 +377,7 @@ class WatchForActiveWindowChange(threading.Thread):
             try:
                 drained = self._drain_events(display, root)
             except ConnectionClosedError:
-                # Server, Xwayland, display-manager, and SSH forwarding loss can close this connection.
+                # X, Xwayland, display-manager, or SSH forwarding loss can close this.
                 # Stop before select spins on the dead socket; the caller requests recovery.
                 log.warning("The X connection closed; the X11 active window watcher stops")
                 return True

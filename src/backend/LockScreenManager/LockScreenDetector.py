@@ -60,8 +60,8 @@ class LockScreenDetector:
             log.error(f"Failed to connect to D-Bus: {e}")
 
     def read_initial_lock_state(self) -> None:
-        """Seed the startup lock with GetActive because an existing lock sends no ActiveChanged signal.
-        Detectors without a session-bus screen saver leave the source unset and seed from their own source."""
+        """Seed startup with GetActive because an existing lock sends no ActiveChanged.
+        Detectors without a session-bus screen saver use their own source."""
         bus = self.bus
         object_path = self._screen_saver_object_path
         interface = self._screen_saver_interface

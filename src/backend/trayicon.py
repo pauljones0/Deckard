@@ -110,8 +110,8 @@ class DBusService:
 
     def register(self) -> None:
         if self.registration_id is not None:
-            # Keep an existing registration because a duplicate would orphan its object on the connection.
-            # Do not unregister here: the service override also unregisters the menu, while this base method restores only the SNI object.
+            # Keep the registration; a duplicate would orphan its bus object.
+            # Do not unregister: the override removes the menu, while this restores only SNI.
             return
         self.registration_id = self.bus.register_object(
             object_path=self.object_path,
@@ -392,7 +392,7 @@ class StatusNotifierItemService(DBusService):
         self._menu.register()
         super().register()
 
-        # A restarted or late StatusNotifierWatcher does not know registrations from its prior instance.
+        # A restarted or late watcher does not know prior registrations.
         # Watch its well-known name and announce the item whenever that name gains an owner.
         if self._watcher_watch_id is None:
             self._watcher_watch_id = Gio.bus_watch_name_on_connection(

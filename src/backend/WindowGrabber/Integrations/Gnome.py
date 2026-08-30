@@ -82,8 +82,8 @@ class Gnome(Integration):
     @log.catch
     @override
     def stop_watching(self) -> None:
-        """Drop the local window-change handler immediately but keep the proxy for one-shot page-editor queries.
-        An existing proxy keeps its bus match rule, so delivered signals are discarded until watching resumes."""
+        """Drop the local handler but keep the proxy for one-shot queries.
+        The proxy retains its match rule, so delivered signals are discarded while stopped."""
         proxy = self.proxy
         handler_id = self._signal_handler_id
         self._signal_handler_id = 0
@@ -113,7 +113,7 @@ class Gnome(Integration):
             answer = json.loads(self.call("GetAllWindows"))
         except (GLib.Error, IndexError, TypeError, json.JSONDecodeError):
             # Treat an absent or incompatible extension as no windows.
-            # Calls can fail with GLib.Error, empty replies with IndexError, and invalid JSON inputs with TypeError or JSONDecodeError.
+            # Handle GLib errors, empty replies, and JSON type or decode errors.
             return []
         windows: list[Window] = []
         

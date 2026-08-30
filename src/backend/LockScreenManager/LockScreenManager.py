@@ -56,7 +56,7 @@ class LockScreenManager:
     @log.catch
     def lock(self, active: bool, initial: bool = False) -> None:
         """Apply a lock change.
-        initial marshals startup deck work from the setup daemon to the main loop; signal callbacks already run there."""
+        initial moves startup deck work to the main loop; signals already run there."""
         gl.screen_locked = active
         if gl.presence_monitor:
             # Notify presence before screen-saver work reads the lock.

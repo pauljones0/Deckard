@@ -1,5 +1,5 @@
-"""Provide a process-wide, event-driven quiescence flag read lock-free by media loops; inputs can arrive on GLib, timer-wheel, or deck-reader threads, and this module makes no GTK calls.
-System-idle mode gates only animation work after the lock grace or logind idle delay; screensaver mode stays false while control and interactive-paint queues continue."""
+"""GLib, timer-wheel, and deck-reader events update one quiescence flag without GTK.
+Media loops read it lock-free; system-idle gates animations after lock grace or idle delay."""
 import os
 import threading
 import time
@@ -31,7 +31,7 @@ PROPERTIES_IFACE = "org.freedesktop.DBus.Properties"
 
 
 def _settings_seed() -> tuple[str, int]:
-    """Read the persisted mode and delay, or use conservative defaults while settings are unavailable.
+    """Read persisted values or use conservative defaults while settings are unavailable.
     An unreadable setting must not enable the animation gate."""
     try:
         app = gl.settings_manager.app()
@@ -45,8 +45,8 @@ def _settings_seed() -> tuple[str, int]:
 class PresenceMonitor:
     """The quiescence signal. See the module docstring for the rule."""
 
-    # Keep animations live briefly after deck input on a locked screen, including when lock-on-lock-screen is off.
-    # The class attribute lets tests shorten the 30-second balance between active use and prompt CPU savings.
+    # Keep animations live after input when lock-on-lock-screen is off.
+    # Tests can shorten this 30-second balance between active use and CPU savings.
     DECK_ACTIVITY_GRACE_S = 30.0
 
     def __init__(self, mode: str | None = None, minutes: int | None = None,
@@ -70,8 +70,8 @@ class PresenceMonitor:
         self._last_deck_activity: float = 0.0
         self._deadline: "timer_wheel.TimerHandle | None" = None
 
-        # Build logind only for system-idle mode; each deferred build seeds the current IdleHint before evaluation.
-        # Capture the test opt-out and bus seam now so an already-idle injected session reaches the first verdict.
+        # Build logind only for system-idle; each build seeds IdleHint before evaluation.
+        # Capture the test opt-out and bus seam for that deferred build.
         self.idle_detector: "LogindIdleDetector | None" = None
         self._idle_detector_enabled: bool = bool(idle_detector)
         self._idle_detector_bus = bus
@@ -100,11 +100,11 @@ class PresenceMonitor:
     # Inputs
 
     def on_lock_changed(self, active: bool) -> None:
-        """Handle a lock after LockScreenManager publishes gl.screen_locked, even when decks stay live on lock.
-        active is for logging; evaluation re-reads the shared state so app components cannot disagree."""
+        """Handle a published lock even when lock-on-lock-screen keeps decks live.
+        active records unlock activity; evaluation re-reads gl.screen_locked."""
         log.debug(f"PresenceMonitor: screen lock -> {active}")
         if not active:
-            # Treat unlock as activity because some idle agents set IdleHint without clearing it on resume.
+            # Treat unlock as activity because some idle agents do not clear IdleHint.
             # This prevents a stale IdleSinceHint from keeping decks frozen until the next press.
             self._last_deck_activity = time.time()
         self._evaluate()
@@ -182,11 +182,11 @@ class PresenceMonitor:
                 since_activity = now - self._last_deck_activity
                 if bool(getattr(gl, "screen_locked", False)):
                     # A lock is the strongest away signal and is independent of lock-on-lock-screen.
-                    # Recent deck input gets a grace; the 0.0 seed makes an already-locked startup gate immediately.
+                    # Recent input gets a grace; 0.0 makes locked startup gate at once.
                     if since_activity >= self.DECK_ACTIVITY_GRACE_S:
                         quiescent = True
                     else:
-                        # Arm the grace expiry because lock state does not change and logind cannot see deck input.
+                        # Arm expiry because lock state and logind cannot report later input.
                         # Without this deadline, gating waits for an unrelated input.
                         rearm_in = self.DECK_ACTIVITY_GRACE_S - since_activity
                 elif self._idle_hint:
@@ -231,8 +231,8 @@ class PresenceMonitor:
 
 
 class LogindIdleDetector:
-    """Feed the monitor from logind IdleHint and IdleSinceHint over the system bus, with XDG session and PID lookup.
-    GNOME and KDE set the hint; Niri, Sway, and river need an idle agent, otherwise gating uses the lock alone."""
+    """Feed the monitor from logind IdleHint and IdleSinceHint on the system bus.
+    GNOME and KDE set it; Niri, Sway, and river need an agent or use lock-only gating."""
 
     def __init__(self, monitor: PresenceMonitor, bus: Gio.DBusConnection | None = None) -> None:
         self.monitor = monitor
@@ -338,7 +338,7 @@ class LogindIdleDetector:
 
     def _read_idle_since(self, changed: dict[str, Any] | None = None) -> float | None:
         """Return IdleSinceHint as wall-clock seconds, or None for zero or unusable values.
-        Prefer the signal value, then read the property because logind can omit it from IdleHint changes."""
+        Prefer the signal value, then read the property because logind can omit it."""
         raw = None
         if changed is not None:
             raw = changed.get("IdleSinceHint")

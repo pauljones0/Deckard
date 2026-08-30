@@ -142,8 +142,11 @@ class Hyprland(Integration):
 
 
 class WatchForActiveWindowChange(threading.Thread):
-    """Watch Hyprland socket2 activewindow events without repeated hyprctl and Flatpak helper processes.
-    Fall back to a 200 ms poll when the socket path is unavailable."""
+    """Watch Hyprland socket2 events without polling helper processes.
+
+    Fall back to a 200 ms poll when the socket path is unavailable.
+
+    """
 
     def __init__(self, hyprland: Hyprland):
         super().__init__(name="WatchForActiveWindowChange", daemon=True)
@@ -155,7 +158,7 @@ class WatchForActiveWindowChange(threading.Thread):
 
     def stop(self) -> None:
         """Ask the loop to end immediately, then let the caller join.
-        Shut down, but do not close, the socket so pending recv returns and the listener retains close ownership."""
+        Shut down without closing so recv returns and the listener retains close ownership."""
         self._stop_event.set()
         sock = self._sock
         if sock is None:

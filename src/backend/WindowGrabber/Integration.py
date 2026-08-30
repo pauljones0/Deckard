@@ -53,7 +53,7 @@ def _warn_query_timeout(message: str) -> None:
 
 def communicate_bounded(popen: "subprocess.Popen[bytes]", label: str,
                         timeout_s: float = QUERY_TIMEOUT_S) -> "bytes | None":
-    """Communicate before the deadline, or terminate, then kill and reap the child before returning None.
+    """Communicate before timeout, or terminate, kill, and reap before returning None.
     communicate(timeout) alone leaves the child running; timeout warnings are rate-limited."""
     try:
         out, _ = popen.communicate(timeout=timeout_s)
