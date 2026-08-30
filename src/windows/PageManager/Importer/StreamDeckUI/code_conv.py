@@ -217,13 +217,16 @@ def parse_keys_as_keycodes(keys: str) -> list[list[int]]:
         names = list(filter(None, names))
         # Remapping changes names into keycodes, so entries remain str or int
         # until the final all-int check.
+        # replace any string with e.KEY_<string>
         individual: list[int | str] = [getattr(e, f"KEY_{key.upper()}", key) for key in names]
+        # check if delay
         # StreamDeck-UI encodes pauses as "delay<ms>", but the Hotkey action
         # has no delay form, so reject them explicitly.
         for key in individual:
             if isinstance(key, str) and key.startswith("delay"):
                 raise ValueError(f"Delays are not supported in imported hotkeys: {key!r}")
         # Name-based remapping leaves resolved integer keycodes unchanged.
+        # replace special keys
         individual = [_SPECIAL_KEYS.get(key, key) if isinstance(key, str) else key for key in individual]
         # replace old numpad keys
         individual = [_OLD_NUMPAD_KEYS.get(key, key) if isinstance(key, str) else key for key in individual]

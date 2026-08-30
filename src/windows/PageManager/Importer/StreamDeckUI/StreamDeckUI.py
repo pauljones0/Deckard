@@ -263,6 +263,7 @@ class StreamDeckUIImporter:
                 # write can land after the import and undo it.
                 page_flush.get().discard_path(page_path)
                 self.save_json(page_path, page)
+                # gl.signal_manager.trigger_signal(Signals.PageAdd, page_path) # We don't trigger the action to save ressources
 
                 page_manager = services.require_page_manager()
                 page_manager.refresh_document(page_path)

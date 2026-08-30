@@ -222,6 +222,7 @@ class FakeDecksGroup(Adw.PreferencesGroup):
         self.n_fake_decks_row.set_value(self.settings.app.n_fake_decks)
 
     def on_n_fake_decks_row_changed(self, *args: Any) -> None:
+        #FIXME: For some reason this gets called twice
         # SpinRow returns float, but deck counts are integers.
         self.settings.app.n_fake_decks = int(self.n_fake_decks_row.get_value())
 
@@ -252,6 +253,7 @@ class RemoteDecksGroup(Adw.PreferencesGroup):
         self.n_remote_decks_row.set_value(gl.settings_manager.app().n_remote_decks)
 
     def on_row_changed(self, *args: Any) -> None:
+        #FIXME: For some reason this gets called twice
         # SpinRow returns float, but deck counts are integers.
         n_decks = int(self.n_remote_decks_row.get_value())
         app_settings = gl.settings_manager.app()

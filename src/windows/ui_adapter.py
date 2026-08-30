@@ -1,6 +1,6 @@
-"""Implement the engine UI port without exposing widgets; calls stay nonblocking on any thread.
+"""Implement the UI port without exposing widgets; calls stay nonblocking on any thread.
 
-Use idle_add, never run_on_main, so a wedged loop cannot stall media writes; layout rebuild is the exception.
+Use idle_add, not run_on_main, so a wedged loop cannot stall media writes; layout may run inline.
 """
 # Keep window imports out of module scope because KeyGrid imports mark_dirty.
 import threading
@@ -37,7 +37,7 @@ KEY_UI_INTERVAL_S = 0.0
 def mark_dirty(controller: "DeckController", identifier: "InputIdentifier") -> None:
     """Mark an accepted frame dropped after push_input_image returned True.
 
-    load_from_changes replays the frame when the window maps again.
+    load_from_changes recomposites the marked input when the window maps again.
     """
     # The markers dict lives on the controller, so a detached UI client can
     # ask the engine to composite again.
@@ -74,7 +74,7 @@ class _MirrorFrame:
 class MirrorWidget(Protocol, Generic[_PayloadT]):
     """Convert and paint one input frame with a widget-specific payload.
 
-    The main-loop drain converts only the latest frame; replay can prepare off-loop and idle the paint.
+    The drain converts only the latest frame; replay prepares off-loop and idles the paint.
     """
 
     def prepare_mirror_frame(self, image: "Image.Image") -> _PayloadT: ...
@@ -120,7 +120,7 @@ class _MirrorSlot:
     def take(self) -> object | None:
         """Take the frame and disarm the slot on the main loop.
 
-        Return None when another callback was armed after this slot became empty.
+        Return None when empty; a separately armed callback owns any later offer.
         """
         with self._lock:
             payload, self._pending = self._pending, None
