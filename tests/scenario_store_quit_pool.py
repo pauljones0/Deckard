@@ -130,7 +130,8 @@ def test_shutdown_blocks_a_new_catalog_pass() -> None:
 
 
 def test_quit_path_calls_shutdown_before_the_join() -> None:
-    """Release the pool before cache flush and bounded non-daemon thread joins."""
+    """Release the pool before flush so an in-flight pass cannot dirty the index afterward.
+    Release it before joins so idle non-daemon workers can exit."""
     import os
     source_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                                "src", "app.py")

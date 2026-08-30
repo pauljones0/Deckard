@@ -426,7 +426,8 @@ Use loader base-version semantics, but disable this gate for data-only packs."""
 
 
 def test_update_replaces_pack_and_stamps() -> None:
-    """Stamp VERSION before swap, replace old content, and remove transient trees."""
+    """Stamp VERSION before swap because unstamped trees read as absent and are not retried.
+    Replace old content and remove transient swap trees."""
     sb = _make_backend()
     dest = os.path.join(gl.DATA_PATH, "plugins", "com_test_Replace")
     sentinel = _seed_install(dest, content="old version file")

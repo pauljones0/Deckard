@@ -1,6 +1,7 @@
 """Verify StoreResult contracts for offline store installs and updates."""
 
-# Update methods narrow on Ok because Err is truthy, and propagate the first failure.
+# update_all_* counts Ok results and continues after Err values.
+# update_everything alone returns the first failed leg; all methods narrow because Err is truthy.
 
 import fixtures  # noqa: F401  (isolated --data tempdir; import first)
 import globals as gl  # noqa: F401

@@ -64,7 +64,8 @@ class Recorder:
 
 
 def off_thread(work, timeout: float = 25.0):
-    """Run blocking bus calls off-thread while this thread pumps the main context."""
+    """Run blocking bus calls off-thread while this thread pumps the main context.
+    A synchronous call here would deadlock because this context must dispatch it and reply."""
     box: dict = {}
     done = threading.Event()
 
