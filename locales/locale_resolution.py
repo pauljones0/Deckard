@@ -1,11 +1,5 @@
-"""One locale-selection policy for every locale manager.
-
-This module is the single owner of the selection ladder: an exact match
-wins, then the first available locale sharing the primary language code,
-then the fallback. The managers are storage adapters (CSV and
-per-language JSON) and delegate their selection here, so the policy
-cannot drift between them.
-"""
+"""Shared locale-selection policy for CSV and per-language JSON managers.
+Choose an exact match, then the first locale with the same primary language, then the fallback."""
 import locale
 from collections.abc import Iterable
 

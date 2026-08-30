@@ -1,49 +1,6 @@
 #!/usr/bin/env python3
-"""Type-gate coverage guard. It stops the gate from checking nothing.
-
-Run it the same way CI does, from anywhere:
-
-    python scripts/check_type_gate.py
-
-Exit 0 means every entry in [tool.ty.src] include exists on disk, every
-first-party module outside the named exclusions is inside it, and no module in
-it carries a mypy-shaped suppression.
-
-The checker takes an explicit include list. A path in that list that does not
-exist is not an error to it: ty drops the entry, checks whatever is left, prints
-"All checks passed!" and exits 0. Rename GtkHelper/ and forget this file and the
-gate goes green while a whole tree stops being checked. Measured on ty 0.0.73
-with a deliberate typo, and again with an include list of one absent directory,
-which gives "WARN No python files found under the given path(s)" and still exits
-0. A warning nobody reads is not a gate.
-
-The second check exists because the include list replaced import following. The
-previous checker took two directories plus every module it reached through an
-import, so a new root module was covered the moment something imported it. Nothing imports main.py, which is how it went unchecked
-for the whole life of that gate. An explicit list fixes that, and trades it for
-a new way to lose coverage: add a top-level package, forget the list, and it is
-invisible. So this walks the repo root and insists that every first-party
-module is either included or named in EXCLUDED below, with a reason.
-
-The third check refuses a mypy-shaped suppression in the checked set. Neither
-form of one is visible to the checker. `# type: ignore[assignment]` suppresses
-nothing, because ty reads no mypy error code, and ty does not report it as
-unused either, so it sits dead over an error the gate then has to catch some
-other way. A bare `# type: ignore` is the opposite and worse: ty honours it as
-a blanket suppression that silences every rule on its line, and neither
-blanket-ignore-comment nor unused-ignore-comment says a word about it. Both
-measured on ty 0.0.73. One form is silently dead and the other is silently
-absolute, so this refuses both and asks for `# ty: ignore[rule]` instead.
-
-A guard that fails open reads as green and covers nothing, so this one also
-fails when its own footing moves: a missing pyproject.toml, a missing or
-malformed [tool.ty.src] table, an include list that is not a list of strings,
-or an empty one, and a checked module it cannot read or tokenize. Each is a
-loud failure that names the fix, never a silent skip.
-
-To put a new tree under the gate: add it to include in pyproject.toml. To leave
-one out on purpose: add it to EXCLUDED here, with the reason written next to it.
-"""
+"""Require ty paths and reasoned first-party coverage; reject mypy ignores in checked comments.
+Fail on missing/malformed config or unreadable/untokenizable files; use reasoned ty ignores."""
 from __future__ import annotations
 
 import re
@@ -54,10 +11,8 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-# Trees and files deliberately outside the gate. The reason is the entry. A
-# tree that the include list already names does not belong here: the escape
-# walk tests the include list first, so an entry here would hide the day that
-# tree leaves the include list.
+# Each excluded tree carries its reason.
+# Do not also exclude included trees, because that would hide later coverage loss.
 EXCLUDED: dict[str, str] = {
     "tests": "the scenario harness; its fixtures and fakes are written against runtime shapes, not declared ones",
     "scripts": "stdlib-only guards and helpers that the gate's own jobs run",
@@ -149,9 +104,8 @@ def checked_modules(include: list[str]) -> list[Path]:
                 found.append(target)
             continue
         for path in target.rglob("*.py"):
-            # Relative parts, because the checkout itself can sit under a
-            # directory this set names. A worktree lives under .claude, and
-            # testing the absolute path there skips every file in the tree.
+            # Match skip names on root-relative parts.
+            # A worktree path can contain .claude and hide every file if matched absolutely.
             if any(part in SKIPPED_DIRS for part in path.relative_to(REPO_ROOT).parts):
                 continue
             found.append(path)
@@ -160,9 +114,7 @@ def checked_modules(include: list[str]) -> list[Path]:
 
 def check_no_mypy_ignores(include: list[str]) -> int:
     """Refuse a mypy suppression in the checked set, and return the file count.
-
-    It reads comments through the tokenizer, so the same text inside a string
-    or a docstring is not a hit.
+    Tokenize comments so matching text in strings and docstrings is ignored.
     """
     offenders: list[str] = []
     modules = checked_modules(include)
