@@ -1,23 +1,15 @@
-"""The command-line argument parser, in a module of its own.
-
-A caller imports it without globals, which resolves and creates the data
-directory at import time. This module uses the standard library only and has
-no import-time side effects, so a module can import it before globals, and
-rebrand_migration.py does.
-"""
-# globals.py imports argparser from here, so every gl.argparser reference
-# works, and the rebrand migration resolves a --data override with the same
-# parser, which matches the argparse abbreviations and the flag handling.
+"""Side-effect-free standard-library command-line parser.
+It is safe to import before globals resolves and creates the data directory."""
+# globals and rebrand migration share this parser.
+# This keeps --data abbreviations and flag handling identical.
 import argparse
 
 argparser = argparse.ArgumentParser()
 argparser.add_argument("-b", help="Open in background", action="store_true")
 argparser.add_argument("--devel", help="Developer mode (disables auto update)", action="store_true")
 argparser.add_argument("--skip-load-hardware-decks", help="Skips initilization/use of hardware decks", action="store_true")
-# The fake deck model presets, spelled out. This module stays importable before
-# globals, and the model table is not, so the names live here as a literal and a
-# scenario pins the two lists to each other. argparse refuses anything else, so
-# a typo stops the app at the flag instead of at the eighth line of a log.
+# Keep model names as a literal because this module must remain importable before globals.
+# argparse rejects unknown names at the flag.
 FAKE_DECK_MODEL_NAMES = ("default", "original", "mk2", "mini", "xl", "plus", "neo", "pedal")
 argparser.add_argument("--fake-deck-model", action="append", metavar="MODEL",
                        choices=FAKE_DECK_MODEL_NAMES,
@@ -47,10 +39,8 @@ argparser.add_argument("--emulate-input", action="append", nargs=4,
                            "Example: --emulate-input CL123456789 Main 0,0 press\n"
                            "Deckard has to be running already: a press cannot wait for a deck to appear",
                       metavar=("SERIAL", "PAGE", "COORDS", "EVENT"))
-# Read-side and page verbs. Each asks the running Deckard a question or gives
-# it one thing to do, and each needs an instance already running: a read has
-# nothing to answer without one, and none of these can wait for a deck that is
-# not open yet. They are refused, not parked, when nothing runs.
+# These read and page verbs require a running instance because they cannot wait for an open deck.
+# Refuse them instead of parking them when no instance runs.
 argparser.add_argument("--json", action="store_true",
                       help="Print the state of the running Deckard as one JSON object: "
                            "every deck with its serial, active page and brightness, and "

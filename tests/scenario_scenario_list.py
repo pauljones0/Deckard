@@ -22,6 +22,7 @@ SMOKE_SCENARIOS = [
     "scenario_writer_survival.py",
     "scenario_runner_timeout_descendants.py",
     "scenario_floor_import.py",
+    "scenario_comment_inventory.py",
     "scenario_scenario_list.py",
 ]
 

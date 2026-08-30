@@ -50,33 +50,21 @@ class Migrator:
         try:
             with open(self.SETTINGS_DIR, "r") as f:
                 root = json.load(f)
-            # A hand-edited file can hold any JSON root. Only an object
-            # carries the migration keys, so a list or a scalar is as
-            # unreadable here as undecodable bytes are. Raise into the
-            # recovery branch below, so the file is preserved rather than
-            # clobbered by the next set_migrated.
+            # Only an object can hold migration keys; treat any other JSON root as corrupt.
+            # Raise into recovery so set_migrated does not overwrite the original file.
             if not isinstance(root, dict):
                 raise ValueError(f"root is a JSON {type(root).__name__}, not an object")
             return cast(dict[str, Any], root)
         except ValueError as e:
-            # Catch ValueError. A file of garbage bytes raises
-            # UnicodeDecodeError while the reader decodes it, json raises
-            # JSONDecodeError, and a decodable file with a non-object root
-            # raises the one above. All three derive from ValueError.
-            #
-            # Quarantine the file and report every migration as pending. A
-            # re-run is safe. beta_5 writes before it deletes and leaves an
-            # existing target alone, the 1_5_0 walker is idempotent, and
-            # create_backup() runs before any destructive work.
+            # ValueError covers decode errors, invalid JSON, and the non-object check above.
+            # Quarantine the file and retry all idempotent, backup-protected migrations.
             moved, dest = quarantine_corrupt_file(self.SETTINGS_DIR)
             if moved:
                 log.error(
                     f"Could not read {self.SETTINGS_DIR} ({e}) -- preserved at "
                     f"{dest}, treating all migrations as pending"
                 )
-                # Bound the sidecar count for this file. atomic_json imports
-                # stdlib only, so the migrators can call it before
-                # SettingsManager exists.
+                # Bound this file's sidecars; atomic_json is available before SettingsManager.
                 for pruned in prune_corrupt_sidecars(self.SETTINGS_DIR, protect=dest):
                     log.info(f"Pruned old quarantined copy {pruned}")
             else:
@@ -87,10 +75,8 @@ class Migrator:
                 )
             return {}
         except OSError as e:
-            # Unreadable is not corrupt. A rename here moves a healthy
-            # migrations.json aside over a transient EACCES or EIO, and every
-            # migrator then re-runs against an empty state file. Report every
-            # migration as pending and leave the file alone.
+            # An unreadable file can be healthy, so do not quarantine it after EACCES or EIO.
+            # Leave it in place and report all migrations as pending.
             log.error(
                 f"Could not read {self.SETTINGS_DIR} ({e}) -- leaving it in place "
                 f"(unreadable, not corrupt), treating all migrations as pending"
@@ -106,10 +92,8 @@ class Migrator:
         raise NotImplementedError
 
     def create_backup(self) -> None:
-        # Back up every tree a migrator can rewrite or delete, which are
-        # pages/ and settings/plugins/. Migrator_1_5_0_beta_5 moves and then deletes each
-        # plugin's settings.json, so a pages-only backup gives no recovery
-        # path. A fresh install has neither tree and needs no backup.
+        # Back up pages and plugin settings because migrators can rewrite or delete both trees.
+        # A fresh install has neither tree and needs no backup.
         pages_path = os.path.join(gl.DATA_PATH, "pages")
         plugin_settings_path = os.path.join(gl.DATA_PATH, "settings", "plugins")
         sources = [p for p in (pages_path, plugin_settings_path) if os.path.exists(p)]
@@ -119,14 +103,11 @@ class Migrator:
         backup_path = os.path.join(gl.DATA_PATH, "backups")
         os.makedirs(backup_path, exist_ok=True)
 
-        # Name the archive after this migrator's own version, not
-        # gl.app_version. A chained upgrade runs several migrators in one
-        # session and they all share gl.app_version, so each backup would
-        # overwrite the previous one. self.app_version is unique per migrator.
+        # Use the migrator version because chained migrators share gl.app_version.
+        # The unique name prevents one migration backup from overwriting another.
         safe_version = self.app_version.replace(os.sep, "_")
         with tempfile.TemporaryDirectory() as staging:
             for src in sources:
-                # pages/ -> <staging>/pages, settings/plugins/ -> <staging>/plugins
                 shutil.copytree(src, os.path.join(staging, os.path.basename(src)))
 
             log.info(f"Creating backup to {backup_path}")

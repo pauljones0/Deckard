@@ -29,9 +29,7 @@ class RemoteDeck:
     def __init__(self, remote_deck_manager: "RemoteDeckManager | None", serial_number: "str | None" = None, deck_type: "str | None" = None) -> None:
         self.remote_deck_manager: "RemoteDeckManager | None" = remote_deck_manager
         if serial_number is None:
-            # The settings store is keyed by the deck serial and refuses a
-            # None key, so the first settings access, in set_key_layout,
-            # failed anyway.
+            # The settings store requires a serial key.
             raise ValueError("RemoteDeck needs a serial number")
         self.serial_number: str = serial_number
         self._deck_type = deck_type
@@ -43,9 +41,7 @@ class RemoteDeck:
         self._is_touch = False
         self._dial_count = 0
 
-        # RemoteDeckManager reads deck.key_callback directly to deliver a
-        # remote press. Keep the self. prefix. A bare annotated local here
-        # leaves the attribute missing until set_key_callback runs.
+        # RemoteDeckManager can receive a press before set_key_callback runs.
         self.key_callback: Callable[..., Any] | None = None
 
     def deck_type(self) -> "str | None":
@@ -107,9 +103,7 @@ class RemoteDeck:
         return True
     
     def is_touch(self) -> bool:
-        # Return _is_touch and not is_touch. is_touch is this bound method,
-        # so it is always truthy and every caller reads the deck as
-        # touch-capable.
+        # Return the stored flag; this bound method itself is always truthy.
         return self._is_touch
     
     def dial_count(self) -> int:

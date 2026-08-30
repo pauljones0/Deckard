@@ -1,12 +1,6 @@
 #!/usr/bin/env python3
-"""Verify that release and tag writers cannot bypass the static CI gates.
-
-The checker loads the root GitLab configuration with a duplicate-key-safe
-PyYAML loader. That makes quoted keys, flow mappings, aliases, and YAML merges
-ordinary Python values before the dependency contract is evaluated. GitLab
-includes remain deliberately unsupported: this offline check cannot verify a
-configuration that is merged elsewhere.
-"""
+"""Verify that release and tag writers cannot bypass static CI gates.
+Handle quoted keys, flow maps, aliases, and merges; reject duplicates and external includes."""
 from __future__ import annotations
 
 import copy
@@ -301,9 +295,8 @@ def check_execution(job: str, data: dict[str, object]) -> None:
 
 
 def check_smoke_selection(config: dict[str, object]) -> None:
-    # The blocking smoke job must run the tracked list, nothing else. A
-    # cleared or retargeted SCENARIO_LIST silently changes what blocks,
-    # and the needs graph cannot see it.
+    # The blocking smoke job must use the tracked scenario list.
+    # The needs graph cannot detect a cleared or retargeted SCENARIO_LIST.
     smoke = job_mapping(config, "test:scenario-smoke")
     variables = require_mapping(
         smoke.get("variables", {}), "test:scenario-smoke variables")

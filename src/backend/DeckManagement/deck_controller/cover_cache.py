@@ -93,12 +93,8 @@ if TYPE_CHECKING:
     from src.backend.PageManagement.Page import Page
 
 
-#: A pre-read that refuses the store outright. precheck() answers it for a
-#: composite that can never be kept, so the caller pays one attribute read and
-#: no stamp, and the composite itself assigns it over its own pre-read the
-#: moment it draws something a kept picture must not carry. The False alone
-#: refuses, and the empty stamp refuses again, because no stamp a real
-#: pre-read produces can equal it.
+#: Refuse retention without computing a stamp before or during a gated composite.
+#: False rejects directly, and the empty stamp cannot match a real precheck stamp.
 NO_STORE: "tuple[bool, tuple[object, ...]]" = (False, ())
 
 
@@ -116,12 +112,8 @@ class _Covered:
         self._img_hash: int | None = None
 
     def img_hash(self) -> int:
-        """The hash the paint path would have computed for this composite.
-
-        It is computed on the first reuse and kept, so the second frame pays
-        one serialization and every frame after it pays none. Two threads that
-        race here compute the same value, so the store needs no lock.
-        """
+        """Return the paint-path hash, computing it only on first reuse.
+        Racing threads compute the same value, so storage needs no lock."""
         img_hash = self._img_hash
         if img_hash is None:
             img_hash = hash(self.image.tobytes())
@@ -130,24 +122,8 @@ class _Covered:
 
 
 def _gates_clear(key: "ControllerKey", state: "ControllerKeyState") -> bool:
-    """Whether nothing about this key stops its composite from being a still
-    picture of a static foreground.
-
-    An overlay or a video paints over that foreground, a rolling label redraws
-    every tick, a press draws the look of a held key, and the warning point
-    marks a key whose action is about to be replaced. Each of the four is read
-    on both sides of a composite, before it and after it, so one definition
-    serves both and they cannot disagree.
-
-    The press look is a setting: it shrinks the composite onto a transparent
-    margin the background shows through, unless the general settings turn that
-    off, and then a press composites the resting picture byte for byte. The
-    press gate is unconditional through both, and must stay so. A held key
-    must leave no kept composite behind whatever it drew, and with the shrink
-    off there is nothing in the picture to say a press was ever there. The
-    cost of the gate is a full composite per frame while a covered key is
-    held, which lasts as long as the finger does.
-    """
+    """Reject video, overlay, press, visible action warning, or scrolling-label composites.
+    Press always rejects retention, even when shrink-on-press is disabled."""
     if state.key_video is not None or state._overlay is not None:
         return False
     if key.is_pressed():
@@ -160,14 +136,8 @@ def _gates_clear(key: "ControllerKey", state: "ControllerKeyState") -> bool:
 
 
 def _stamp(state: "ControllerKeyState") -> "tuple[object, ...]":
-    """What the composite depends on that the foreground entry cannot be
-    trusted to describe. See the module docstring for why it is these three.
-
-    The composed layout is here, and not left to the entry that already
-    carries it, because the entry is re-keyed by a composite and a reuse runs
-    instead of one. A layout edit alone would otherwise reach no composite,
-    leave the entry as it was, and freeze the key at the old size.
-    """
+    """Return label, background-color, and layout state not proven by foreground identity.
+    Stamp layout because reuse bypasses the composite that would re-key its entry."""
     layout = state.layout_manager.get_composed_layout()
     return (state.label_manager.get_label_epoch(),
             tuple(state.background_manager.get_composed_color()),
@@ -175,20 +145,8 @@ def _stamp(state: "ControllerKeyState") -> "tuple[object, ...]":
 
 
 def precheck(key: "ControllerKey", state: "ControllerKeyState") -> "tuple[bool, tuple[object, ...]]":
-    """What a composite about to run must be judged against when it ends.
-
-    It answers NO_STORE without reading anything else for the two shapes this
-    module can never help, so neither pays for it per composite: a key with no
-    static media, which is every bare key and every key playing a video, and a
-    key whose foreground was already resized and found not to cover.
-
-    The second test reads the verdict of the previous composite, so a
-    foreground that goes from bare to covering without its asset changing,
-    which a size or fill-mode edit does, settles one composite later than it
-    otherwise would: this one is judged on the old verdict and not kept, the
-    next builds and keeps. New media has no entry to read, so it settles at
-    once. The trade buys a page of transparent icons its full speed back.
-    """
+    """Return the gate verdict and stamp that a completed composite must match.
+    Bare media rejects early; layout-only coverage changes settle one composite later."""
     image = state.key_image
     if image is None or state.layout_manager.foreground_proved_bare(image):
         return NO_STORE
@@ -196,15 +154,8 @@ def precheck(key: "ControllerKey", state: "ControllerKeyState") -> "tuple[bool, 
 
 
 def _covering_foreground(key: "ControllerKey", state: "ControllerKeyState") -> "tuple[object, ...] | None":
-    """The foreground entry this state's composite stands on, when that
-    composite owes nothing to the background behind it, else None.
-
-    The entry is asked for first, because it is one attribute read and it
-    refuses every key that carries no covering static media, which is most of
-    them. It also stands in for the media test: an entry is only ever stored
-    against a foreground asset, so a state whose media went away, or was
-    replaced, fails the identity check.
-    """
+    """Return this state's covering foreground entry when all gates remain clear.
+    Foreground identity also rejects removed or replaced media."""
     foreground = state.layout_manager.get_covering_foreground()
     if foreground is None or foreground[0] is not state.key_image:
         # No entry, an entry whose paste did not cover, or an entry left by
@@ -216,45 +167,19 @@ def _covering_foreground(key: "ControllerKey", state: "ControllerKeyState") -> "
 
 
 class CoveredComposite:
-    """The kept composite of one key state, or nothing.
-
-    One state owns one of these, so a key with several states holds one
-    picture per state it has painted while covered, not one per key. A page of
-    32 keys whose five states have all been visited therefore retains 32 times
-    5 tile-sized images, about 5.9 MB at the XL tile size. Each is no larger
-    than the resized foreground the same state's layout manager already keeps.
-
-    These images sit outside the process byte budget, which enrols the encode
-    memo and the native tile cache and nothing else, and outside the sweep of
-    clear_encoded_key_caches(). What bounds them instead is the state objects
-    themselves: a page load builds new ones, and close_resources() and clear()
-    release what the old ones held.
-    """
+    """Hold at most one retained composite per key state outside the image byte budget.
+    State teardown bounds lifetime, and each image is no larger than its resized foreground."""
 
     def __init__(self) -> None:
         self._entry: "_Covered | None" = None
 
     def invalidate(self) -> None:
-        """Drop the kept composite.
-
-        Five callers release an image, and the memory claim above rests on
-        them: the state's teardown, its reset for a fresh page load, its media
-        setters, its detach of action-owned media for a page load, and present()
-        when it finds a key with no static media. A reuse that no longer holds
-        drops the entry too, but a key that stops qualifying may also stop
-        reaching reuse(), which is why the setters, the detach and present() do
-        not leave it to that.
-
-        The image is released by reference count and never closed here. A
-        thread that took this entry out of reuse() may still be encoding it,
-        and a close under that read raises out of the media thread.
-        """
+        """Drop retained data during teardown, reset, media change, detach, or bare presentation.
+        Release by reference only because a concurrent reuse can still encode the image."""
         self._entry = None
 
     def reuse(self, key: "ControllerKey", state: "ControllerKeyState") -> "_Covered | None":
-        """The kept composite when it is still what this key paints, else
-        None. A miss drops the entry, so a key that stops qualifying stops
-        holding an image."""
+        """Return the current retained composite, or drop a stale entry and return None."""
         entry = self._entry
         if entry is None:
             return None
@@ -268,28 +193,8 @@ class CoveredComposite:
 
     def remember(self, key: "ControllerKey", state: "ControllerKeyState",
                  image: Image.Image, pre: "tuple[bool, tuple[object, ...]]") -> Image.Image:
-        """Keep image as this state's composite when nothing moved across the
-        composite that produced it, and return image either way.
-
-        pre is what precheck() read before that composite started, unless the
-        composite replaced it with NO_STORE because it drew a gated look. That
-        replacement is what makes the gate claim hold: a press or a warning
-        point that arrives and leaves inside one composite window is invisible
-        to a read taken before it and to a read taken after it, and only the
-        branch that drew the shrink or the dot ever saw it.
-
-        Three things must hold together: pre still permits a store, so nothing
-        the picture carries forbids it; the foreground it built covers the tile
-        and the gates are clear now; and the stamp is where it was, so no
-        label, layout or colour edit landed in between. Any one of them failing
-        costs one uncacheable composite, which is the cheap half of the trade.
-
-        The stored stamp is the one read before the composite, which the
-        equality test has just proved equal to the one after it.
-
-        The copy exists because the caller owns what it passes in and closes
-        it once the paint is judged.
-        """
+        """Retain a copy only when precheck allowed it, foreground covers, and the stamp is stable.
+        NO_STORE captures transient composition gates; return the caller-owned image."""
         gates_were_clear, pre_stamp = pre
         if not gates_were_clear:
             self._entry = None
@@ -304,21 +209,11 @@ class CoveredComposite:
 
 def present(key: "ControllerKey", page: "Page | None", config_gen: "int | None",
             force: bool) -> bool:
-    """Paint a covered key from its kept composite, and report whether that
-    happened. False means the caller composites as it always did.
-
-    The offer is the one the full paint path makes, with the kept hash in
-    place of a fresh one, so the write boundary, the encode memo and the
-    hash de-dup all see exactly what they would have seen. The bytes the
-    encode produces are the kept picture's own, so a memo that evicted between
-    two paints re-encodes what the key really shows.
-    """
+    """Offer a retained covered-key composite through the normal paint boundary.
+    Return false for normal composition; cache eviction re-encodes the retained image."""
     state = key.get_active_state()
     if state.key_image is None:
-        # A key with no static media can hold no picture of its own. This is
-        # also where a key that lost its media releases the one it kept: the
-        # test costs one attribute read on every bare key's paint, and it is
-        # the reason this call is not guarded at its site.
+        # A bare key cannot retain a composite; invalidate media removed since the last paint.
         state.cover_cache.invalidate()
         return False
     entry = state.cover_cache.reuse(key, state)
@@ -329,8 +224,6 @@ def present(key: "ControllerKey", page: "Page | None", config_gen: "int | None",
         media_prof.count("cover_skip")
 
     img_hash = entry.img_hash()
-    # is_visual short-circuits the offer as in ControllerKey.update(),
-    # equivalently.
     if key.deck_controller.is_visual() and not key.present_state.offer(
             key.deck_controller.media_player, page=page, config_gen=config_gen,
             img_hash=img_hash, force=force,

@@ -44,7 +44,6 @@ class LegacyLocaleManager:
         self.locales = language
         
         if not os.path.isfile(os.path.join(self.locales_path, f"{self.locales}.json")):
-            # Use the fallback language
             return
 
         with open(os.path.join(self.locales_path, f"{self.locales}.json")) as f:

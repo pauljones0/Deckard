@@ -87,22 +87,12 @@ class Background:
     def __init__(self, deck_controller: "DeckController"):
         self.deck_controller = deck_controller
 
-        # Guards the shared render-state that the media tick writes from one
-        # thread while a GTK, load or screensaver thread swaps the background
-        # from another: tiles, _video_strip, _touchscreen_slice and the
-        # _identified_tiles pair. It is a leaf lock, held only across those
-        # field reads and writes and never while calling update_all_inputs or
-        # the deck, so it cannot invert against the media, BetterDeck or load
-        # locks. _identified_tiles keeps its one-atomic-pair publish and now
-        # publishes under this lock beside its siblings.
+        # Guard tiles, strip slices, and identified tiles across media and load threads.
+        # Keep this leaf lock away from deck calls to prevent lock-order inversion.
         self._render_state_lock = threading.RLock()
 
-        # Bumped under the lock by every source swap. update_tiles snapshots
-        # it with the source and publishes only while it still matches, so a
-        # render of the old source that finishes after a newer set_image or
-        # set_video discards its result instead of overwriting the newer
-        # tiles. A still image has no later tick to repair such an overwrite,
-        # which is why a lock around the publish alone is not enough.
+        # Increment on each source swap and publish rendered tiles only for the same epoch.
+        # This stops a late old-source render from replacing a newer still image permanently.
         self._source_epoch = 0
 
         self.image: "BackgroundImage | None" = None
@@ -110,39 +100,24 @@ class Background:
         # which carries the same playback surface without subclassing it.
         self.video: "BackgroundVideo | GifBackground | None" = None
 
-        # The still-image rotation, or None when the background is a single
-        # image, a video, or blank. It owns the index and the interval clock;
-        # slideshow_tick() reads it each media pass and swaps self.image when
-        # an image comes due. It and self.video are mutually exclusive: a
-        # slideshow is a list of stills, so set_video() and every single-image
-        # or blank swap clear it, and set_slideshow() nulls self.video.
+        # A slideshow owns still-image order and timing and is mutually exclusive with video.
+        # Single-image, video, and blank swaps clear it unless advancing its own frame.
         self.slideshow: Slideshow | None = None
 
-        # Extend the background onto the SD+ touchscreen strip. An image slice
-        # is memoized; the strip re-composites on every dial label change.
-        # update_tiles() refreshes _video_strip once per video frame.
+        # Memoize still-image strip slices; refresh video strips once per frame.
         self.extend_to_touchscreen: bool = False
         self._touchscreen_slice: Image.Image | None = None
         self._video_strip: Image.Image | None = None
 
-        # update_tiles() replaces the whole list and nothing mutates it in
-        # place. Sequence accepts both element types: a source yields all-Image
-        # entries, or None entries on the video cache fallback path.
+        # Replace tile sequences atomically; video fallback can supply None entries.
         self.tiles: Sequence[Image.Image | None] = [None] * deck_controller.deck.key_count()
-        # (tiles, (video md5, frame index)) for the frame tiles holds. None
-        # when the frame has no name. See get_identified_tile().
-        # Published only with a real identity; see update_tiles.
+        # Publish tiles with video MD5 and actual frame index only when identity is known.
         self._identified_tiles: "tuple[Sequence[Image.Image | None], tuple[str, int]] | None" = None
 
     def set_image(self, image: "BackgroundImage", update: bool = True,
                   _keep_slideshow: bool = False) -> None:
-        # Publish the swap under the lock, then close the old video and clear
-        # caches outside it, so the leaf lock never wraps a deck call.
-        #
-        # _keep_slideshow is the one internal caller's flag: the slideshow's
-        # own frame advance swaps the image and must not tear down the
-        # rotation it belongs to. Every other caller ends any slideshow,
-        # because an external single-image set replaces the whole background.
+        # Publish under the leaf lock, then close video and clear caches outside it.
+        # Preserve slideshow only for its own frame advance; external image sets end it.
         with self._render_state_lock:
             old_video = self.video
             self.image = image
@@ -152,22 +127,15 @@ class Background:
                 self.slideshow = None
             self._touchscreen_slice = None
             self._video_strip = None
-            # A content change orphans every cached native. Each key holds the
-            # previous background's composited pixels, hashes or frames. Clear
-            # them here, or they stay dead until LRU eviction reaches them.
+            # Clear native entries orphaned by the background content change.
             self._identified_tiles = None
         if old_video is not None:
             old_video.close()
         self.deck_controller.clear_encoded_key_caches()
         self.deck_controller.refresh_tile_cache_min_age(None)
         if not _keep_slideshow:
-            # A slideshow advance runs this on the media thread once per
-            # interval, and a full collection there is a needless hitch on the
-            # sole writer. The orphaned previous frame is a plain object with no
-            # reference cycle, so refcounting frees it and its PIL image at the
-            # reassignment above without a collection. An external single-image
-            # set keeps the collect: it runs off the writer, on a page-load
-            # worker.
+            # Do not collect during slideshow advances on the sole writer.
+            # Refcounting frees those acyclic frames; external page-load swaps can collect.
             gc.collect()
 
         self.update_tiles()
@@ -185,9 +153,7 @@ class Background:
             self.slideshow = None
             self._touchscreen_slice = None
             self._video_strip = None
-            # As in set_image(), a content change orphans every cached native.
-            # The md5 in a native tile key makes a source swap collision-free.
-            # The clear stops the old video's frames from lingering.
+            # Clear old-video native entries; MD5 keys already prevent source collisions.
             self._identified_tiles = None
         if old_video is not None:
             old_video.close()
@@ -203,52 +169,29 @@ class Background:
     def set_slideshow(self, paths: "Sequence[str]", interval: float, order: str = IN_ORDER,
                       update: bool = True, now: "float | None" = None,
                       views: "Sequence[tuple[float, float, float]] | None" = None) -> None:
-        """Install a still-image rotation over paths.
-
-        This loads the first frame at once and arms the interval clock, so the
-        first swap lands one interval later. slideshow_tick() drives the rest.
-        A list with fewer than two loadable images installs the one image (or
-        clears the background) and no rotation, which keeps a one-element list
-        behaving like a single-image background.
-
-        now is the monotonic reading the interval clock starts from; the media
-        tick and a test both pass it. order is in-order or shuffle.
-        """
+        """Install an ordered or shuffled still rotation with aligned views.
+        Fewer than two listed paths installs one still or clears after a failed load."""
         show = Slideshow(paths, interval, order=order)
-        # Bind the rotation to the page it loads for. This load runs on a page
-        # switch's worker, so a media tick can still hold the old page's
-        # rotation for a moment; slideshow_tick() reads this to refuse to
-        # advance a rotation whose page is no longer active, the way the
-        # background video guards its own repaint on video.page.
+        # Bind to page identity so a stale worker result cannot advance on a new active page.
         show.page = self.deck_controller.active_page
-        # Each image carries its own viewport, aligned by position with
-        # paths. A rotation with the same file twice shares one view, which
-        # the path-keyed lookup makes explicit.
+        # Align views by position; duplicate paths share one path-keyed view.
         if views is not None and len(views) != len(paths):
             log.warning(f"Slideshow views ({len(views)}) do not align with paths ({len(paths)}); "
                         "rendering every frame through the default view")
             views = None
         show.views = {p: v for p, v in zip(paths, views)} if views is not None else {}
-        # Drop the current rotation before installing the first frame below.
-        # The install runs off the lock, and a media tick during it would
-        # otherwise advance the old rotation and overwrite the frame installed
-        # here (the new show publishes only at the end). With no rotation set,
-        # a racing tick no-ops instead.
+        # Clear the old rotation before lock-free first-frame installation.
+        # A racing media tick then no-ops instead of overwriting the new frame.
         with self._render_state_lock:
             self.slideshow = None
         first = show.current_path()
-        # Build the first frame lock-free, then swap it in. keep=True leaves the
-        # (now cleared) rotation slot untouched, so nothing re-arms the old one.
-        # A path that is not a loadable image (a stale entry, or a video the
-        # caller did not filter) is skipped, so the rotation starts on the first
-        # frame that renders.
+        # Build the first frame lock-free and preserve the cleared rotation slot during swap.
+        # Skip stale, video, or otherwise unloadable paths.
         installed = (self._install_slideshow_frame(
             first, update=update, keep=True,
             view=show.views.get(first, DEFAULT_VIEW)) if first else False)
         if not installed and len(show) <= 1:
-            # One entry that would not load, or an empty list, leaves nothing
-            # to rotate. Clear to a blank background rather than hold whatever
-            # showed before.
+            # Blank an empty or single-unloadable slideshow instead of retaining old content.
             self.set_image_to_blank(update=update)
             return
         show.seed(time.monotonic() if now is None else now)
@@ -266,21 +209,13 @@ class Background:
             self.deck_controller.update_all_inputs()
 
     def slideshow_tick(self, now: "float | None" = None) -> bool:
-        """Advance the rotation when its interval has elapsed. Returns True
-        when this pass swapped the image.
-
-        The media-player tick calls this each pass with a monotonic reading.
-        It no-ops when no slideshow is set, so a video or single-image
-        background costs one attribute read and one branch per tick.
-        """
+        """Advance a due slideshow and return whether this pass swapped its image.
+        Video, single-image, and blank backgrounds return after one attribute check."""
         show = self.slideshow
         if show is None:
             return False
-        # Advance only while this rotation's page is the active one. A page
-        # switch bumps active_page synchronously but reloads the background on a
-        # worker, so between the two self.slideshow can still hold the old
-        # page's rotation. Without this guard a due tick in that window advances
-        # it and swaps the old rotation's next image onto the new page.
+        # Advance only for the active page because reload follows page change on a worker.
+        # A stale due rotation must not place its next image on the new page.
         if show.page is not self.deck_controller.active_page:
             return False
         now = time.monotonic() if now is None else now
@@ -292,18 +227,12 @@ class Background:
 
     def _install_slideshow_frame(self, path: "str | None", update: bool, keep: bool,
                                  view: "tuple[float, float, float]" = DEFAULT_VIEW) -> bool:
-        """Load path as a still and swap it in as the background image. Returns
-        True on success. A path that does not resolve to an image is discarded
-        and the previous frame stays, so one bad entry does not blank the deck.
-        keep leaves the rotation in place through the swap."""
+        """Load and swap one still through its view, retaining the previous frame on failure.
+        Return success; keep preserves the rotation through its own frame swap."""
         if not path:
             return False
         try:
-            # prebuild_from_path opens and decodes the file. A file that exists
-            # but is corrupt raises here rather than returning a kind, so catch
-            # it and discard cleanly, which is what a missing entry already
-            # does. Without this a corrupt frame raises into the media loop's
-            # per-tick guard instead of being skipped.
+            # Skip corrupt files here so decode errors do not escape into the per-tick media guard.
             kind, payload = self.prebuild_from_path(path, allow_keep=False, view=view)
         except Exception:
             log.opt(exception=True).warning(
@@ -413,12 +342,8 @@ class Background:
     def prebuild_from_path(self, path: str | None, fps: int = MEDIA_LOOP_FPS, loop: bool = True,
                            allow_keep: bool = True,
                            view: "tuple[float, float, float]" = DEFAULT_VIEW) -> "tuple[str, BackgroundVideo | GifBackground | BackgroundImage | str | None]":
-        """Build the new background object lock-free, without a touch on
-        self.video, self.image or the deck. apply_prebuilt() swaps it in.
-
-        Returns (kind, payload). blank clears the background. noop keeps the
-        current one. keep refreshes page, fps and loop only. video or image
-        carries a new object."""
+        """Build a background payload without mutating render state, then return its action kind.
+        Kinds are blank, noop, keep, video, or image for apply_prebuilt."""
         if path == "":
             path = None
         if path is None:
@@ -426,26 +351,17 @@ class Background:
         if is_video(path):
             extend = self.extend_to_touchscreen and self.deck_controller.deck.is_touch()
             if allow_keep:
-                # The extend mode and the saturation factor bake into the
-                # video's canvas geometry and its cache file. A change to
-                # either forces a rebuild for the same path, or a playing
-                # video keeps showing the old factor.
+                # Rebuild the same path when extension geometry or baked saturation changes.
                 if (self.video is not None and self.video.video_path == path
                         and self.video.extend_touchscreen == extend
                         and self.video.view == view
                         and abs(self.video.saturation - self.deck_controller.get_display_saturation()) <= 0.001):
-                    # Carry the path so apply_prebuilt re-checks it. This
-                    # verdict is lock-free, and a load_background that races
-                    # it can swap self.video first. GifBackground carries the
-                    # same three attributes, so a GIF that fell back to cv2
-                    # keeps the fallback and skips the failed PIL decode.
+                    # Carry the path so apply_prebuilt validates this lock-free keep verdict.
+                    # GIF fallback shares these fields and avoids repeated failed PIL decode.
                     return ("keep", path)
             if os.path.splitext(path)[1].lower() == ".gif":
-                # A .gif goes to the PIL provider so alpha and the per-frame
-                # delay timeline survive. The cv2 demuxer drops both. Over
-                # budget or undecodable, fall back to the opaque source-fps
-                # cv2 path below instead of an OOM risk. The keep-check
-                # above stops the warning from repeating.
+                # Use PIL for GIF alpha and frame delays; cv2 loses both.
+                # Fall back to opaque source-fps cv2 on decode or memory-budget failure.
                 try:
                     return ("video", GifBackground(self.deck_controller, path, loop=loop, fps=fps, extend_touchscreen=extend, view=view))
                 except GifBudgetExceeded as e:
@@ -459,12 +375,9 @@ class Background:
             return ("image", BackgroundImage(self.deck_controller, image.copy(), path=path, view=view))
 
     def _discard_prebuilt(self, kind: str, payload: "BackgroundVideo | GifBackground | BackgroundImage | str | None") -> None:
-        """Release the resources of a prebuilt payload that no caller applied.
-        A video or image payload holds a cv2 capture or a PIL image, and a
-        drop without close() leaks it. keep, noop and blank hold nothing."""
+        """Close an unapplied video or image payload to release capture or PIL resources.
+        Keep, noop, and blank payloads own nothing."""
         if kind not in ("video", "image") or payload is None or isinstance(payload, str):
-            # A keep verdict carries the path string; the kind gate above
-            # already returns for it, and the isinstance restates that.
             return
         try:
             payload.close()
@@ -474,23 +387,16 @@ class Background:
             )
 
     def apply_prebuilt(self, kind: str, payload: "BackgroundVideo | GifBackground | BackgroundImage | str | None", fps: int = MEDIA_LOOP_FPS, loop: bool = True, update: bool = True) -> None:
-        """Apply the result of prebuild_from_path(). The screensaver
-        transition calls this under _background_load_lock, after it re-checks
-        the generation. This does no file I/O; it assigns the objects and
-        fans out update_all_inputs()."""
-        # A load_background that passed its generation gate before close()
-        # bumped the generation arrives here with a live payload. The close() sweep already ran, or waits on the lock, so an
-        # attach now leaks. close() sets _closing before the sweep.
+        """Apply a prebuilt payload without file I/O and update all inputs.
+        Screensaver transitions call this under their load lock after generation validation."""
+        # Reject payloads after closing starts; the resource sweep cannot release a late attachment.
         if getattr(self.deck_controller, "_closing", False):
             self._discard_prebuilt(kind, payload)
             return
         if kind == "noop":
             return
         if kind == "keep":
-            # Re-check the lock-free keep verdict against the current video.
-            # A load_background that raced the prebuild can swap in a
-            # different file. A mismatch does nothing and self-heals on the
-            # next transition, instead of corrupting that video's settings.
+            # Recheck lock-free keep so it cannot change a raced-in video's settings.
             if self.video is not None and self.video.video_path == payload:
                 self.video.page = self.deck_controller.active_page
                 self.video.fps = fps
@@ -509,19 +415,14 @@ class Background:
 
     def set_from_path(self, path: str | None, fps: int = MEDIA_LOOP_FPS, loop: bool = True, update: bool = True, allow_keep: bool = True,
                       view: "tuple[float, float, float]" = DEFAULT_VIEW) -> None:
-        """Prebuild and apply in one call, for a caller that does not need
-        the lock-free split. Those callers are load_background, which already
-        holds _background_load_lock, and the ScreenSaver setters that act
-        while it shows."""
-        kind, payload = self.prebuild_from_path(path, fps=fps, loop=loop, allow_keep=allow_keep, view=view)
+        """Prebuild and apply for callers serialized by background or screensaver loading."""
+        kind, payload = self.prebuild_from_path(
+            path, fps=fps, loop=loop, allow_keep=allow_keep, view=view)
         self.apply_prebuilt(kind, payload, fps=fps, loop=loop, update=update)
 
     def get_identified_tile(self, key_index: int) -> "tuple[Image.Image, tuple[str, int]] | None":
-        """(tile, (video md5, frame index)) for a video background, or None
-        when no tile has a nameable frame. Tiles and identity publish as one
-        pair and read as one, so a concurrent update_tiles() cannot pair this
-        frame's pixels with the next frame's identity. The media tick, the
-        GTK thread and the screensaver thread all call update_tiles()."""
+        """Return a video tile with its MD5 and actual frame index, or None.
+        Pixels and identity publish as one pair across media, GTK, and screensaver updates."""
         pair = self._identified_tiles
         if pair is None:
             return None
@@ -537,21 +438,14 @@ class Background:
         # Refcounting reclaims the old tiles. A close() here races a
         # concurrent composite that still holds one.
         try:
-            # Snapshot the source under the lock, so a concurrent set_image or
-            # set_video cannot null self.video between the branch test and the
-            # reads inside it. Everything below composes from the local
-            # snapshot.
+            # Snapshot source and epoch under the lock, then compose only from local references.
             with self._render_state_lock:
                 image = self.image
                 video = self.video
                 epoch = self._source_epoch
             identity = None
-            # Compose the new frame outside the lock (get_tiles and
-            # get_next_tiles do the heavy work and touch other caches), then
-            # publish tiles, the strip slice and the identity pair together
-            # under the leaf lock. _video_strip is written only when this frame
-            # produced one, so an image or blank frame does not clobber the
-            # None a concurrent set_image just published.
+            # Compose outside the leaf lock, then publish tiles, strip, and identity together.
+            # Write video strip only when produced so stale work cannot clobber a concurrent reset.
             new_video_strip = None
             wrote_strip = False
             if image is not None:
@@ -570,19 +464,14 @@ class Background:
                 new_tiles = [self.deck_controller.generate_alpha_key() for _ in range(self.deck_controller.deck.key_count())]
             with self._render_state_lock:
                 if self._source_epoch != epoch:
-                    # A set_image or set_video swapped the source while this
-                    # frame rendered. Its own update_tiles published the newer
-                    # content; publishing this frame would put the old source
-                    # back over it, and a still image would never repair that.
+                    # Discard a frame rendered across a source swap; do not replace newer content.
                     return
                 self.tiles = new_tiles
                 if wrote_strip:
                     self._video_strip = new_video_strip
                 self._identified_tiles = None if identity is None else (new_tiles, identity)
         except Exception:
-            # A tile error must not kill the media thread. Keep the old tiles
-            # and rate-limit the log, because a broken video fails every
-            # frame.
+            # Keep old tiles and rate-limit repeated failures instead of killing the media thread.
             now = time.time()
             if now - getattr(self, "_last_tile_error_log", 0) > 10:
                 self._last_tile_error_log = now
@@ -592,10 +481,7 @@ class BackgroundImage:
     def __init__(self, deck_controller: "DeckController", image: Image.Image, path: str | None = None,
                  view: "tuple[float, float, float]" = DEFAULT_VIEW) -> None:
         self.deck_controller = deck_controller
-        # The source file that image came from, or None for a caller with no
-        # file (the test harness). An extend-to-touchscreen toggle can need
-        # more canvas height than the fitted copy holds; _ensure_fits_canvas()
-        # then re-decodes from this path.
+        # Retain source path for re-decode when runtime strip extension outgrows the fitted image.
         self.path = path
 
         # The pan-and-zoom viewport this image renders through, a normalized
@@ -603,10 +489,7 @@ class BackgroundImage:
         # the centered cover crop.
         self.view = view
 
-        # Bake the saturation into the source image once, at load time. The
-        # key tiles and the strip slice both derive from self.image, so they
-        # inherit one enhancement pass at no per-frame cost. Factor 1.0 skips
-        # the ImageEnhance call and the mode conversion, so the bytes stay.
+        # Bake saturation once for both key tiles and strip; 1.0 preserves original bytes.
         image = self._prepare_image(image)
         # The source's own resolution caps what a re-decode can recover, so
         # _ensure_fits_canvas() does not re-open a file that simply has no
@@ -625,10 +508,7 @@ class BackgroundImage:
         self._ensure_fits_canvas(self._extend_effective())
 
     def _extend_effective(self) -> bool:
-        # extend_to_touchscreen lives on Background, not on DeckController.
-        # This repeats the deck.is_touch() condition of
-        # Background._extend_effective without its image check; that check
-        # asks if an image background exists, not how to size one.
+        # Read extension from Background but test only touch capability, not current image presence.
         background = getattr(self.deck_controller, "background", None)
         extend = bool(getattr(background, "extend_to_touchscreen", False)) if background is not None else False
         deck = getattr(self.deck_controller, "deck", None)
@@ -651,9 +531,8 @@ class BackgroundImage:
                 key_height * key_rows + spacing_y * (key_rows - 1))
 
     def _canvas_size(self, extend_touchscreen: bool) -> "tuple[int, int] | None":
-        """The canvas size that create_full_deck_sized_image() targets, with
-        the touchscreen strip when extend is on. Returns None when the deck
-        geometry is absent; the caller then skips the fit and the re-decode."""
+        """Return target canvas size, including strip extension when active.
+        Return None without deck geometry so callers skip fitting and re-decode."""
         return background_canvas_size(self.deck_controller, extend_touchscreen)
 
     def _budget_multiplier(self) -> float:
@@ -687,12 +566,8 @@ class BackgroundImage:
         return image
 
     def _ensure_fits_canvas(self, extend_touchscreen: bool) -> None:
-        """Re-decode from path when the current canvas and zoom need more
-        resolution than the retained image was fitted for, and shrink the
-        retained copy back when the zoom no longer needs it. The canvas grows
-        when the user toggles touchscreen-extend at runtime, and the demand
-        moves when set_view() zooms, both with no fresh page load. At most
-        one decode per growth step; a shrink is a thumbnail of what is held."""
+        """Refit or re-decode when extension or zoom changes the resolution budget.
+        Shrink held pixels when demand falls; decode at most once per growth step."""
         if not self.path or self.image is None:
             return
         canvas = self._canvas_size(extend_touchscreen)
@@ -731,19 +606,13 @@ class BackgroundImage:
         self._ensure_fits_canvas(extend_touchscreen)
         canvas_width, canvas_height = self._grid_size()
 
-        # Extend the canvas to the union of the key grid and the strip's
-        # view: taller by the bezel gap plus the band, and wider when the
-        # band overhangs the grid (the SD+ strip shows content beyond the
-        # outer key columns). strip_band owns that geometry; on an SD+ it is
-        # device-calibrated rather than derived from the spacing.
+        # Extend to the grid and strip union, including calibrated SD+ overhang and bezel gap.
         if extend_touchscreen:
             canvas_width, canvas_height, _grid_x, _band = \
                 band_layout(self.deck_controller, canvas_width, canvas_height)
 
-        # close() releases the source image. Raise instead of composing a
-        # transparent canvas. Background.update_tiles catches the raise and
-        # keeps the previous tiles behind a rate-limited log. A blank canvas blanks
-        # every key without a log, once per tile refresh.
+        # Raise after close so update_tiles retains old tiles and logs the failure.
+        # A transparent fallback would silently blank every key on each refresh.
         source = self.image
         if source is None:
             raise RuntimeError(
@@ -776,7 +645,6 @@ class BackgroundImage:
         key_width, key_height = deck.key_image_format()['size']
         spacing_x, spacing_y = self.deck_controller.key_spacing
 
-        # Find the row and the column of the requested key.
         row = key // key_cols
         col = key % key_cols
 
@@ -785,7 +653,6 @@ class BackgroundImage:
         start_x = x_offset + col * (key_width + spacing_x)
         start_y = row * (key_height + spacing_y)
 
-        # Crop the region that the key occupies.
         region = (start_x, start_y, start_x + key_width, start_y + key_height)
         segment = image.crop(region)
 
@@ -822,48 +689,34 @@ class BackgroundVideo(BackgroundVideoCache, FrameScheduled):
         self.active_frame: int = -1
         self._play_start: float | None = None  # playback start on the media clock, set on the first real-time frame
         self._last_frame_tick: float | None = None  # last real-time frame pick, for gap clamping
-        # True after the tile cache min-age moves to this video's loop period.
-        # The first tick past cache completion sets it. Before that, playback
-        # does not run at source fps and the loop period is unknown.
+        # Sync tile min-age to loop period on the first complete-cache tick.
+        # Sequential build playback has no known source-rate loop period.
         self._min_age_synced: bool = False
 
         super().__init__(video_path, deck_controller=deck_controller, extend_touchscreen=extend_touchscreen, view=view)
 
     @override
     def _render_rate(self) -> float:
-        """Playback advances at the source rate once the reader knows it;
-        the page's fps key only caps rendering, and nothing renders above
-        the loop rate. A 0 or None cap plays at loop rate. While the cache
-        still builds, the source rate is unknown and playback advances one
-        frame per render, so the cap alone paces the build."""
+        """Return the minimum of loop, page cap, and known source rate.
+        Zero cap uses loop rate; during build, page cap paces sequential decode."""
         cap = self.fps or MEDIA_LOOP_FPS
         source = self.get_source_fps() or MEDIA_LOOP_FPS
         return min(MEDIA_LOOP_FPS, cap, source)
 
     def get_next_tiles(self) -> "tuple[list[Image.Image | None], tuple[str, int] | None]":
-        """(tiles, identity) for the frame this tick lands on. identity is
-        (video md5, source frame index), or None for a fallback or alpha
-        payload. One pair keeps the pixels with their identity, because
-        Mp4FrameCache.get_frame_and_index can serve a different frame."""
+        """Return copied tiles with video MD5 and actual source index.
+        Use None identity for fallback or alpha payloads that have no proven frame."""
         if self.is_cache_complete():
             if not self._min_age_synced:
-                # First tick past cache completion. Until now the clamp
-                # maximum shielded the frame set, because sequential build
-                # playback has no loop period. From here the clock picks
-                # frames at source fps, so the real loop period applies.
+                # Replace maximum min-age with real loop period when clock playback starts.
                 self._min_age_synced = True
                 self.deck_controller.refresh_tile_cache_min_age(self)
-            # A full cache makes any frame a free lookup. Pick by the clock
-            # so a slow media loop drops frames instead of playing in slow motion.
-            # Playback runs at the source fps. The page fps setting limits
-            # how often the media loop renders a frame, and must not change
-            # the speed.
+            # Pick complete-cache frames by source-rate clock so late ticks drop frames.
+            # Page fps limits rendering but does not change playback speed.
             playback_fps = float(self.get_source_fps() or self.fps or MEDIA_LOOP_FPS)
             now = media_loop.now()
             if self._play_start is None:
-                # Seed the timebase from the current position. The cache
-                # completes mid-play, and a zero base replays a non-looping
-                # video or jumps a looping one.
+                # Seed from current position because completion mid-play must not replay or jump.
                 self._play_start = now - (self.active_frame + 1) / playback_fps
             elif self._last_frame_tick is not None and now - self._last_frame_tick > 1.0:
                 # Ticks stop while the page is away. Shift the timebase across
@@ -873,9 +726,7 @@ class BackgroundVideo(BackgroundVideoCache, FrameScheduled):
             frame = int((now - self._play_start) * playback_fps)
             self.active_frame = frame % self.n_frames if self.loop else min(frame, self.n_frames - 1)
         else:
-            # The cache is still decoding, so advance sequentially and let
-            # the decoder read every frame. A clock-driven jump leaves a gap
-            # and forces an expensive seek.
+            # Advance sequentially during build so every frame decodes without a gap or seek.
             self.active_frame += 1
             if self.active_frame >= self.n_frames and self.loop:
                 self.active_frame = 0
@@ -884,10 +735,8 @@ class BackgroundVideo(BackgroundVideoCache, FrameScheduled):
         copied_tiles: list[Image.Image | None]
         tiles, frame_index = self.get_tiles_and_index(self.active_frame)
         try:
-            # Every path through get_tiles_and_index() yields real Images:
-            # decoded tiles, the last good payload, or the alpha fallback.
-            # This catch fires only if a cache puts None in place of a tile
-            # that it cannot decode.
+            # Normal paths return decoded, repeated, or alpha images.
+            # Handle only an unexpected None tile from cache decode failure.
             copied_tiles = [tile.copy() for tile in tiles]
         except AttributeError:
             copied_tiles = [None for _ in range(len(tiles))]

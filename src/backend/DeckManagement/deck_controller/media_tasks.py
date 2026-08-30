@@ -33,9 +33,8 @@ class MediaPlayerSetTouchscreenImageTask:
             return
         ticket = self.ticket
         if not ticket.native_image:
-            # Released, so this task already wrote. A second run would put an
-            # empty frame on the strip and then record it as presented, which
-            # is the bleed the present stamp exists to prevent.
+            # An empty payload means this task already wrote; rerunning would
+            # send and present an empty frame.
             return
         try:
             ticket.writer_started(self.deck_controller)

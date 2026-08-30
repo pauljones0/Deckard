@@ -38,14 +38,8 @@ from fontTools.ttLib import TTFont
 from typing import Any
 
 
-# Weight mapping from the OpenType and CSS range, 100 to 900, into the
-# fontconfig range, 0 to 215.
-#
-# This is FcWeightFromOpenTypeDouble's own table, from fontconfig's
-# fcweight.c, and it interpolates piecewise-linearly between these anchor
-# points. Do not change a value here. The fontconfig raw scale differs from
-# the OpenType and CSS scale the rest of the app uses, and an untranslated
-# value silently picks the wrong file (see the module docstring).
+# Exact FcWeightFromOpenTypeDouble anchors map OpenType/CSS 100-900 to fontconfig 0-215.
+# Interpolate between them; raw OpenType values select the wrong fontconfig file.
 _OT_TO_FC_WEIGHT = (
     (0, 0),
     (100, 0),
@@ -76,16 +70,8 @@ _FC_MATCH_PATTERN = 0  # FcMatchKind.FcMatchPattern
 
 
 def _ot_weight_to_fc(weight: int | None) -> int:
-    """Translate a numeric Pango or CSS weight, 100 to 900, into the
-    fontconfig 0 to 215 scale, through the same piecewise-linear table
-    fontconfig uses.
-
-    The rest of the app speaks Pango and CSS weights, where 400 is normal and
-    700 is bold. The fontconfig scale runs 0 to 215, where regular is 80 and
-    bold is 200, and it rejects a raw OpenType or CSS value. fc-match
-    "DejaVu Sans:weight=400" returns DejaVu Sans Bold, because 400 on the
-    fontconfig scale is well past bold.
-    """
+    """Map Pango/CSS weight 100-900 to fontconfig 0-215 by its interpolation table.
+    Raw Pango/CSS values exceed fontconfig's scale and select the wrong file."""
     if weight is None:
         weight = 400
     weight = max(0, min(1000, weight))
@@ -110,31 +96,21 @@ def _style_to_fc_slant(style: str) -> int:
 
 
 def _escape_fc_value(value: str) -> str:
-    """Escape the characters that carry syntax in the fontconfig pattern-string
-    mini-language. Only the fc-match subprocess fallback uses this. The ctypes
-    path sets pattern fields directly and parses no string."""
+    """Escape fontconfig pattern syntax for the fc-match subprocess fallback.
+    The ctypes path sets fields directly and does not parse this string."""
     for ch in ("\\", ",", ":", "="):
         value = value.replace(ch, "\\" + ch)
     return value
 
 
 class _FontConfig:
-    """Thin ctypes binding to the few libfontconfig entry points this module
-    needs.
-
-    It initializes lazily, so no work happens at import time. It loads one
-    FcConfig and reuses it for the life of the process, behind a lock. The
-    fontconfig match calls are not documented as safe for concurrent use from
-    several threads on a shared FcConfig. Label rendering can run off the
-    main thread.
-    """
+    """Lazily load the required fontconfig bindings and one process FcConfig.
+    Serialize matches because shared-config thread safety is unspecified."""
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
-        # Both stay None until _ensure_loaded() binds them, and both go back
-        # to meaning "unavailable" through _unavailable rather than by being
-        # cleared. FcInitLoadConfigAndFonts is declared with a c_void_p
-        # restype, so the config is an int address or None.
+        # None means not loaded; _unavailable records permanent load failure.
+        # c_void_p exposes the config as an integer address or None.
         self._lib: ctypes.CDLL | None = None
         self._config: int | None = None
         self._unavailable = False
@@ -193,18 +169,15 @@ class _FontConfig:
             return False
 
     def match(self, family: str, weight: int | None, style: str | None) -> dict[str, str | None] | None:
-        """Returns a dict with "family" and "file". Either is None when
-        fontconfig set no such field on the match. The whole result is None
-        when fontconfig is unreachable, and the caller then falls back to the
-        fc-match subprocess."""
+        """Return matched family and file fields, each optionally absent.
+        Return None when fontconfig is unavailable so the caller uses fc-match."""
         with self._lock:
             if not self._ensure_loaded():
                 return None
 
             lib = self._lib
             if lib is None:
-                # _ensure_loaded() answered True, so this cannot fire; the
-                # read is declared so the calls below narrow.
+                # Declare the defensive read so calls below narrow the loaded library.
                 return None
             pattern = lib.FcPatternCreate()
             if not pattern:
@@ -248,9 +221,8 @@ _fontconfig = _FontConfig()
 
 
 def _match_via_subprocess(family: str, weight: int | None, style: str | None) -> dict[str, str | None] | None:
-    """fc-match fallback for an environment that cannot dlopen libfontconfig,
-    e.g. a stripped-down flatpak runtime. It runs the same matcher the
-    fontconfig binaries and the ctypes path use, as a subprocess."""
+    """Run fc-match when the environment cannot load libfontconfig.
+    The subprocess uses the same matcher as the ctypes path."""
     parts = [_escape_fc_value(family)]
     if weight is not None:
         parts.append(f"weight={_ot_weight_to_fc(weight)}")
@@ -285,16 +257,8 @@ def _resolve_pattern(family: str, weight: int | None, style: str | None) -> dict
 
 @functools.lru_cache(maxsize=256)
 def resolve(family: str | None, weight: int | None = 400, style: str | None = "normal") -> str | None:
-    """Resolve a family, weight and style to a concrete font file path through
-    fontconfig. It lands where the Pango and GTK font picker lands.
-
-    weight is a numeric Pango or CSS weight from 100 to 900. style is
-    "normal", "italic" or "oblique". A caller can pass None for any of the
-    three, e.g. a KeyLabel whose defaults are not injected yet, and this
-    replaces None with the CSS and fontconfig default. It returns None when
-    fontconfig is unreachable, that is with a missing library and a missing
-    fc-match binary.
-    """
+    """Resolve a family and Pango/CSS weight to a font file.
+    Style is normal, italic, or oblique; return None without a matcher or file field."""
     if weight is None:
         weight = 400
     if style is None:
@@ -310,12 +274,7 @@ def resolve(family: str | None, weight: int | None = 400, style: str | None = "n
 
 @functools.lru_cache(maxsize=1)
 def fallback_font() -> str | None:
-    """Resolve the generic fontconfig "sans" alias to a concrete family name,
-    e.g. "DejaVu Sans" or "Noto Sans" on a given system.
-
-    The lru_cache holds the result, because this is one fontconfig round trip
-    and it happens at first use.
-    """
+    """Resolve and cache the generic sans alias to a concrete family name."""
     result = _resolve_pattern("sans", None, None)
     if result is None:
         return "DejaVu Sans"
@@ -323,12 +282,7 @@ def fallback_font() -> str | None:
 
 
 def font_name_from_path(font_path: str) -> str | None:
-    """Read the human-readable family name out of a font file name table,
-    IDs 1 "Font Family" and 16 "Typographic Family".
-
-    It reads through fontTools, which is already a hard dependency for
-    KeyLabel's symbol-font detection.
-    """
+    """Read human family names from name IDs 1 and 16 with fontTools."""
     try:
         font = TTFont(font_path, fontNumber=0, lazy=True)
     except Exception:
@@ -351,9 +305,7 @@ def font_name_from_path(font_path: str) -> str | None:
             continue
         if not value:
             continue
-        # Prefer nameID 16 (Typographic Family) over 1 (Font Family). Inside
-        # one nameID, prefer a Windows platform record (platformID 3), which
-        # is what fontTools consumers usually expect.
+        # Prefer typographic family over font family, then Windows platform records.
         priority = (record.nameID, 1 if record.platformID == 3 else 0)
         if record.nameID not in best or priority > best[record.nameID][0]:
             best[record.nameID] = (priority, value)

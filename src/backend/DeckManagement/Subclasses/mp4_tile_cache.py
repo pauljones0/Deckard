@@ -1,21 +1,5 @@
-"""Shared build, promote and decode-ahead discipline for video-backed tile
-caches.
-
-Mp4FrameCache decodes the source video once, through a cv2.VideoWriter mp4v
-encode that os.replace promotes atomically. Every frame after that is a cheap
-decode out of the small canvas or tile-resolution mp4, and no raw frame data
-sits in RAM. BackgroundVideoCache (background_video_cache.py) subclasses this
-as a single instance that is both the builder and the only consumer, with the
-build interleaved with playback ticks.
-
-KeyVideoCache below uses the same discipline differently. The module-level
-registry shares the cache file across consumers. Exactly one detached builder
-thread per md5, size and saturation decodes the source and encodes the tile
-mp4 independently of playback ticks. Every consumer of acquire() gets its own
-KeyVideoCache reader with its own cv2.VideoCapture and its own last-frame
-memo. A reader decodes straight from the source until the builder promotes,
-then switches over.
-"""
+"""Build and atomically promote low-resolution MP4 caches without retaining raw frames.
+Background caches build inline; key caches use one shared builder and per-consumer readers."""
 import contextlib
 import hashlib
 import os
@@ -39,40 +23,23 @@ VID_CACHE = os.path.join(gl.DATA_PATH, "cache", "videos")
 os.makedirs(VID_CACHE, exist_ok=True)
 
 
-# Source-hash memo.
-
 _md5_memo_lock = threading.Lock()
-# A small LRU. Every edit of a source video mints a new (path, size, mtime)
-# key, so an unbounded dict grows by one small entry per file version forever.
-# 256 keys is far beyond any realistic working set of distinct videos, and an
-# eviction only costs a re-hash.
+# Bound source identities because each video edit creates a new key.
+# The 256-entry limit exceeds normal working sets, and eviction only causes re-hashing.
 _MD5_MEMO_MAX = 256
 # Key: (path, st_dev, st_ino, st_size, st_mtime_ns). See _video_identity.
 _md5_memo: "OrderedDict[tuple[str, int, int, int, int], str]" = OrderedDict()
 
 
 def _video_identity(st: "os.stat_result") -> tuple[int, int, int, int]:
-    """The identity a digest is memoized under. Device and inode tell a
-    same-size, same-mtime replacement apart from the original, because a new
-    file lands on a new inode, and nanosecond mtime catches a sub-second
-    rewrite in place that a float second-resolution mtime rounds away."""
+    """Return digest identity from device, inode, size, and nanosecond mtime.
+    Inode detects replacement; nanosecond mtime detects subsecond in-place rewrites."""
     return (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns)
 
 
 def get_video_md5(path: str, attempts: int = 3) -> str:
-    """Maps a file's identity to an md5, memoized in a bounded LRU.
-
-    Both cache classes hash the whole source file in their constructor, once
-    per page switch and per InputVideo construction. That is cheap once and
-    expensive when repeated. The registry key below hashes on every acquire(),
-    which without the memo multiplies the cost across every consumer of a
-    shared video.
-
-    The file is stat-ed before and after the hash. A write that lands during
-    the hash changes the identity, so the digest names bytes no later reader
-    opens; that pass is retried, and a digest is memoized only under an
-    identity that held steady across the read.
-    """
+    """Return an MD5 memoized by stable file identity in a bounded LRU.
+    Compare identity before and after hashing; retry changed files and memoize only stable reads."""
     digest = ""
     for _ in range(max(1, attempts)):
         st_before = os.stat(path)
@@ -105,49 +72,30 @@ def get_video_md5(path: str, attempts: int = 3) -> str:
                 _md5_memo.popitem(last=False)
         return digest
 
-    # The file kept changing across every attempt. Return the last digest
-    # without memoizing it, so a settled read later can still cache a stable
-    # one under its own identity.
+    # Return the last digest without memoizing after repeated concurrent changes.
+    # A later stable read can then cache under its own identity.
     return digest
 
 
 def _sat_centi(saturation: float) -> int:
-    """Saturation factor in integer hundredths, the single rounding for
-    everything saturation-derived.
-
-    The registry key, the cache-file suffix and the factor baked into frames
-    must fall into the same bucket for a given raw float. Two independent
-    roundings disagree at the half-hundredth boundaries: round(sat, 2) for
-    the key against int(round(sat * 100)) for the path. A reader then polls
-    forever for a file its entry's builder writes under a different name.
-    """
+    """Return the saturation bucket in integer hundredths.
+    Keys, paths, and baked frames must share one rounding to prevent permanent adoption misses."""
     return int(round(float(saturation) * 100))
 
 
 def canonical_saturation(saturation: float) -> float:
-    """Maps a raw factor to the canonical two-decimal value. Every saturation
-    consumer derives from it, that is the registry key, the file suffix and
-    the bake-in enhance."""
+    """Map raw saturation to the canonical value used by keys, paths, and enhancement."""
     return _sat_centi(saturation) / 100.0
 
 
 def sat_suffix(saturation: float) -> str:
-    """Two-decimal fixed encoding, e.g. 1.30 becomes ".sat130".
-
-    It is empty at the default factor, so plain "{md5}.mp4" caches stay valid
-    and no enhance or mode conversion runs at 1.0. It derives from the same
-    canonical rounding as the registry key (see _sat_centi).
-    """
+    """Encode nondefault saturation in fixed hundredths, such as .sat130.
+    Default saturation has no suffix and uses the same rounding as the registry key."""
     centi = _sat_centi(saturation)
-    # centi == 100 treats [0.995, 1.005) as the default, the centi rounding
-    # this whole module shares. The still-image and GIF bake elsewhere gates on
-    # abs(sat - 1.0) > 0.001 instead. The UI cannot reach the (1.001, 1.005)
-    # gap, because the saturation slider steps by 0.05 and rounds to two
-    # decimals, so only exact 0.05 multiples arrive here.
+    # Hundredth rounding treats [0.995, 1.005) as default.
+    # The UI emits exact 0.05 steps, so it cannot reach the different still-image threshold gap.
     return "" if centi == 100 else f".sat{centi}"
 
-
-# Mp4FrameCache.
 
 # What one decoded frame becomes: a single tile image for the key cache,
 # or the per-key tile list of the background cache.
@@ -155,25 +103,15 @@ PayloadT = TypeVar("PayloadT")
 
 
 class Mp4FrameCache(Generic[PayloadT]):
-    """Builds or reuses an mp4 per source, out_size and saturation. It decodes
-    faster than the source and holds no per-frame data in RAM.
+    """Build or reuse one MP4 per source, output size, and saturation without retaining frames.
+    Builders promote temporary files atomically; readers never write."""
 
-    A builder (is_builder=True, the default) decodes the source and writes
-    every frame to a tmp mp4 that a promote makes atomic on completion. A
-    reader (is_builder=False) never writes, and it decodes whichever of the
-    promoted cache and the source is available.
-    """
-
-    # A forward jump of up to this many frames is bridged by a decode and
-    # discard, which is cheaper than a container seek at tile or canvas
-    # resolution. Anything larger, or backward, is a real seek.
+    # Decode and discard through short forward jumps because it is cheaper than seeking.
+    # Seek for larger or backward jumps.
     MAX_DECODE_AHEAD = 30
 
-    # Registry bookkeeping. The acquire() and attach_promoted() entry points
-    # below attach it from outside on the readers they hand out. This is a
-    # declaration and not a class-level value, because a directly-constructed
-    # instance has neither attribute. That is why every read of them goes
-    # through getattr(..., None).
+    # Registry entry points attach these fields only to their readers.
+    # Direct instances lack them, so reads use getattr defaults.
     _registry_key: "tuple[str, tuple[int, int], float, str] | None"
     _registry_entry: "_TileCacheEntry | None"
 
@@ -189,10 +127,7 @@ class Mp4FrameCache(Generic[PayloadT]):
         # The viewport baked into every cached frame; it joins the file name
         # like the saturation, so a view change builds a new cache.
         self.view, self._view_suffix = view, view_suffix(view)
-        # BackgroundVideoCache uses one instance as both roles, a single
-        # consumer with the build interleaved with playback ticks. The
-        # KeyVideoCache registry splits them into one detached builder thread
-        # and N per-consumer readers.
+        # Background video combines builder and reader; key video separates them.
         self.is_builder = is_builder
 
         self.video_md5 = get_video_md5(source_path)
@@ -200,9 +135,7 @@ class Mp4FrameCache(Generic[PayloadT]):
         self.cache_path = cache_path or self._default_cache_path()
         cache_dir = os.path.dirname(self.cache_path)
         os.makedirs(cache_dir, exist_ok=True)
-        # Unique per instance. Two builders for the same key that write at the
-        # same time must not collide on one temp file. os.replace keeps a
-        # collision last-wins safe.
+        # Use a unique temporary path per writer; os.replace makes any promotion collision atomic.
         self._writer_tmp_path = os.path.join(
             cache_dir,
             f"{os.path.basename(self.cache_path)}.{os.getpid()}-{id(self):x}.tmp.mp4",
@@ -227,35 +160,21 @@ class Mp4FrameCache(Generic[PayloadT]):
         if not self._open_existing_cache():
             self._open_source()
 
-        # Image-cache census, for accounting only. These hold real image RAM
-        # and are never evictable. A drop of the one-frame memo forces a
-        # re-decode every media tick, and the decoder buffers belong to
-        # FFmpeg. Register last, so budget_bytes() never sees a
-        # half-constructed instance.
+        # Register reader RAM for accounting only; eviction would cause per-tick decode.
+        # Register last so budget_bytes never observes partial construction.
         cache_budget.register(
             self,
             label=f"video_readers:{self.video_md5[:8]}@{self.out_size[0]}x{self.out_size[1]}",
             evictable=False,
         )
 
-    # Flat allowance per open cv2.VideoCapture. FFmpeg's decoder internals,
-    # the packet buffers, reference frames and swscale contexts, are opaque to
-    # Python, so this is an honest constant and not a measurement. The census
-    # shows that video readers hold memory and how their count moves. It does
-    # not price libavcodec.
+    # Use a flat allowance because Python cannot inspect FFmpeg decoder buffers.
+    # The census tracks reader count and approximate memory, not exact libavcodec use.
     CAPTURE_OVERHEAD_BYTES = 2 * 1024 * 1024
 
     def budget_bytes(self) -> int:
-        """Estimated image RAM held by this reader, for the image-cache census.
-
-        This method takes no lock. self.lock is held across whole decode, seek
-        and build-frame operations. A lock here lets one slow source stall the
-        budget daemon, and through it every deck's eviction. Every read
-        below is a single attribute load, which the GIL makes atomic. Each
-        read goes into a local, so a concurrent close() can null the original
-        without a raise here. A torn read costs one diagnostic sample a stale
-        number, which is the right trade for a census.
-        """
+        """Estimate reader image RAM without taking the decode lock.
+        Atomic local reads can give one stale sample but cannot stall process-wide eviction."""
         payload = self.last_payload
         total = 0
         if payload is not None:
@@ -273,9 +192,7 @@ class Mp4FrameCache(Generic[PayloadT]):
         return total
 
     def get_source_fps(self) -> float | None:
-        """Native fps of the source video, or None when unknown. The cache mp4
-        is written at the source fps, so whichever capture is open, source or
-        cache, can answer."""
+        """Return source fps from the open source or same-rate cache, or None."""
         if self._source_fps is None:
             with self.lock:
                 cap = self._cache_cap if self._cache_cap is not None else self.cap
@@ -285,48 +202,30 @@ class Mp4FrameCache(Generic[PayloadT]):
                         self._source_fps = float(fps)
         return self._source_fps
 
-    # Overridable hooks.
-
     def _default_cache_path(self) -> str:
         raise NotImplementedError
 
     def _payload_from_bgr(self, frame_bgr: "npt.NDArray[np.uint8]") -> PayloadT:
-        """Convert one target-resolution BGR frame into what get_frame()
-        returns. KeyVideoCache decodes a single RGB PIL image at tile
-        resolution; BackgroundVideoCache crops the canvas into per-key tiles
-        and the strip."""
+        """Convert target-resolution BGR to the subclass payload.
+        Key caches return one RGB tile; background caches return cropped tiles and strip."""
         raise NotImplementedError
 
     def _fallback_payload(self) -> "PayloadT | None":
-        """Used when no decoded frame exists yet and no previous payload is
-        there to repeat. That is the first request during a build, or a
-        request after an unrecoverable early failure."""
+        """Return a fallback before the first decode or after unrecoverable early failure."""
         return None
 
     def _on_promoted(self) -> None:
-        """Hook fired whenever this instance becomes _complete, either from an
-        existing cache found at startup or from a fresh build just promoted.
-        It does nothing by default. BackgroundVideoCache uses it to purge the
-        legacy pickle cache format."""
+        """Run when an existing or newly promoted cache becomes complete.
+        The default does nothing; background caches remove their unreadable old format."""
         pass
 
     def _writer_enabled(self) -> bool:
-        """Whether a builder instance opens a VideoWriter.
-
-        The default is True. KeyVideoCache's registry gates
-        performance.cache-videos once at acquire() time, before any builder
-        exists, so its builder instances need no re-check.
-        BackgroundVideoCache is a single self-contained instance that decides
-        for itself, so it overrides this to read the live setting.
-        """
+        """Return whether a builder opens its writer.
+        Key registries gate at acquisition; background caches override for live settings."""
         return True
 
-    # Setup.
-
     def _open_cache_capture(self) -> cv2.VideoCapture:
-        # A tile or canvas-resolution stream decodes at thousands of fps on
-        # one thread. The default lets FFmpeg spawn a 16-thread frame pool per
-        # capture, which wastes threads at this resolution.
+        # Use one FFmpeg thread because small tile and canvas streams decode faster than needed.
         return cv2.VideoCapture(self.cache_path, cv2.CAP_FFMPEG, [cv2.CAP_PROP_N_THREADS, 1])
 
     def _open_existing_cache(self) -> bool:
@@ -336,19 +235,13 @@ class Mp4FrameCache(Generic[PayloadT]):
         n_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) if cap.isOpened() else 0
         cached_size = (int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
                        int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))) if cap.isOpened() else (0, 0)
-        # mp4v truncates an odd dimension down to even, so a cache written
-        # for an odd out_size can only ever hold the truncated size. Compare
-        # against that, or every open of such a cache reads as stale and the
-        # rebuild loops forever.
+        # mp4v truncates odd dimensions; compare against the writable even size.
+        # Comparing the requested odd size would cause an endless rebuild loop.
         writable_size = (self.out_size[0] - self.out_size[0] % 2,
                          self.out_size[1] - self.out_size[1] % 2)
         if n_frames <= 0 or cached_size != writable_size:
-            # A frame-size mismatch means the render geometry changed since
-            # the cache was built (key spacing, strip band). The file name
-            # does not always carry the size, so reusing it would crop every
-            # tile from the wrong coordinates. Rebuild instead, but only
-            # delete when this instance can actually rebuild; with the cache
-            # writer disabled, leave the file and decode from source.
+            # A size mismatch means render geometry changed and crop coordinates are stale.
+            # Delete only when this instance can rebuild; otherwise retain it and decode the source.
             cap.release()
             can_rebuild = self.is_builder and self._writer_enabled()
             if n_frames <= 0:
@@ -373,9 +266,7 @@ class Mp4FrameCache(Generic[PayloadT]):
         return True
 
     def _open_source(self) -> None:
-        # The builder decodes as fast as it can on its own thread. A plain
-        # reader is cheap at tile size and must not spin up extra threads per
-        # consumer.
+        # Give detached builders four decode threads but keep each consumer reader at one.
         threads = 4 if self.is_builder else 1
         self.cap = cv2.VideoCapture(self.source_path, cv2.CAP_FFMPEG, [cv2.CAP_PROP_N_THREADS, threads])
         self.n_frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
@@ -388,22 +279,12 @@ class Mp4FrameCache(Generic[PayloadT]):
         else:
             log.warning(f"Could not open tile cache writer for {self.source_path}; playing uncached")
 
-    # Frame access.
-
     def get_frame(self, n: int) -> "PayloadT | None":
         return self.get_frame_and_index(n)[0]
 
     def get_frame_and_index(self, n: int) -> "tuple[PayloadT | None, int | None]":
-        """Returns the payload and the source frame index of that payload.
-
-        The index names what the payload is and not what the caller asked
-        for. This clamps a request to the readable range, and a transient
-        decode failure repeats the last good frame. The index is None when the
-        payload provenance is unknown. That covers a fallback frame, and a
-        repeat served before any index existed. A caller that keys a cache off
-        the index then never files one frame's pixels under another frame's
-        identity.
-        """
+        """Return a payload and its actual source index, not the requested index.
+        Clamp requests, repeat transient failures, and use None when provenance is unknown."""
         if not self._complete:
             self._maybe_adopt_shared_cache()
         with self.lock:
@@ -411,44 +292,27 @@ class Mp4FrameCache(Generic[PayloadT]):
                 payload = self._get_cached_frame(n)
             else:
                 payload = self._decode_source_frame(n)
-            # Publish under the lock. close() clears last_payload under this
-            # same lock, so this write cannot overtake a teardown that races
-            # a decode in flight and leave one frame retained on a closed
-            # instance.
+            # Publish under the close lock so an active decode cannot retain a frame after teardown.
             if payload is not None:
                 self.last_payload = payload
-                # _last_entry is the (clamped index, payload) pair that
-                # whichever decode path just produced or replayed. Claim the
-                # identity only when the pair describes this payload.
+                # Claim the clamped index only when _last_entry contains this exact payload.
                 if self._last_entry is not None and self._last_entry[1] is payload:
                     self.last_payload_index = self._last_entry[0]
                 else:
                     self.last_payload_index = None
                 return payload, self.last_payload_index
-            # Keep showing the last good frame over a transient decode
-            # failure. last_payload_index still describes it, so it stays
-            # valid.
+            # Repeat the last good payload and its index over transient decode failure.
             if self.last_payload is not None:
                 return self.last_payload, self.last_payload_index
         return self._fallback_payload(), None
 
-    # Give up after this many failed adoptions of a cache file the registry
-    # claims is ready. Invalidate the entry, so a future acquire() starts a
-    # fresh builder, and detach, so playback stops paying a per-frame stat on
-    # a file that never appears.
+    # After bounded adoption failures, invalidate and detach from the missing ready file.
+    # Future acquisition can rebuild, and current playback stops per-frame file checks.
     MAX_ADOPT_FAILURES = 3
 
     def _maybe_adopt_shared_cache(self) -> None:
-        """Switches a registry consumer over to a promoted shared cache file.
-
-        This applies to registry consumers only (see KeyVideoCache and
-        acquire() below). The switch needs two conditions. This instance is a
-        non-builder reader still decoding the source. The registry reports
-        that another builder promoted the shared cache file. The instance then
-        switches over and closes the source capture. It does nothing for
-        BackgroundVideoCache, which never sets _registry_entry, and nothing
-        for the builder instance itself.
-        """
+        """Switch an attached non-builder source reader to its promoted shared cache.
+        Direct background instances and builder instances have no registry entry and do nothing."""
         entry = getattr(self, "_registry_entry", None)
         if entry is None or not entry.ready:
             return
@@ -460,11 +324,8 @@ class Mp4FrameCache(Generic[PayloadT]):
                     self.cap.release()
                     self.cap = None
                 return
-            # The registry says ready but the file will not open, e.g. an
-            # external cleanup of the cache dir deleted or corrupted it behind
-            # the registry's back. Bound the retry. After MAX_ADOPT_FAILURES
-            # attempts, invalidate the entry so a rebuild can happen, and
-            # detach this reader onto its own source decode.
+            # Bound retries when a ready registry file is missing or unreadable.
+            # Then invalidate for rebuild and detach this reader to source decode.
             self._adopt_failures += 1
             give_up = self._adopt_failures >= self.MAX_ADOPT_FAILURES
         if not give_up:
@@ -474,12 +335,8 @@ class Mp4FrameCache(Generic[PayloadT]):
             f"opened; invalidating its registry entry and continuing uncached "
             f"from {self.source_path}"
         )
-        # Claim the detach before doing it. The reference below is given back
-        # exactly once, so the claim reads the key and drops both registry
-        # attributes under the same lock, and a release() of this reader that
-        # lands in between then finds nothing to detach instead of detaching a
-        # second time. self.lock is released again before any registry lock, so
-        # this adds no order between the two.
+        # Clear both reader registry fields under its lock before returning one reference.
+        # Concurrent release then cannot detach twice, and no registry lock nests with self.lock.
         with self.lock:
             key = getattr(self, "_registry_key", None)
             self._registry_key = None
@@ -488,22 +345,12 @@ class Mp4FrameCache(Generic[PayloadT]):
             return
         with _registry_lock:
             entry.ready = False
-            # Exactly one builder per key, always. The handle names the builder
-            # that produced the unusable file. A live one must stay the entry's
-            # builder: clearing the handle while it decodes lets the next
-            # acquire() start a second builder for the same key, and both then
-            # decode the same source at once. The trade is that a live builder
-            # which later exits without promoting leaves the entry with ready
-            # False and a spent handle, so consumers that stay attached play
-            # uncached until the last of them detaches and the entry goes. A
-            # finished builder cannot duplicate anything, so its handle drops
-            # here and a rebuild can start.
+            # Keep a live builder handle to enforce one builder per key.
+            # Clear only finished handles; attached consumers stay uncached until detachment.
             if entry.builder_thread is not None and not entry.builder_thread.is_alive():
                 entry.builder_thread = None
-        # This reader stops using the shared file, so it gives its reference
-        # back here rather than at release(). At zero that signals the builder
-        # and joins it, bounded and outside the registry lock, which is what
-        # stops a builder whose output nothing can read.
+        # Return this reader's reference now; release will find it detached.
+        # A zero count signals and joins a builder whose output has no consumer.
         _detach_entry(key, entry)
 
     def _get_cached_frame(self, n: int) -> "PayloadT | None":
@@ -525,10 +372,7 @@ class Mp4FrameCache(Generic[PayloadT]):
                 return None
             self._cache_pos += 1
         if frame is None:
-            # Not reachable. The seek above pins _cache_pos to n whenever it
-            # ran ahead, so the loop always reads at least once. This stays a
-            # cheap guard and not an assert, because it sits on the media
-            # thread's per-frame path.
+            # Seek position guarantees one read; keep a cheap guard instead of an assertion.
             return None
         # cv2's stubs erase the dtype; a decoded video frame is uint8 BGR.
         payload = self._payload_from_bgr(cast("npt.NDArray[np.uint8]", frame))
@@ -543,10 +387,8 @@ class Mp4FrameCache(Generic[PayloadT]):
         if self._last_entry is not None and self._last_entry[0] == n:
             return self._last_entry[1]
 
-        # A backward request during a build appends frames out of order, so
-        # this drops the partial cache and the builder plays uncached from
-        # here. A fresh builder restarts from scratch. A plain reader only
-        # re-seeks, and it has nothing to abort.
+        # Abort a partial build before a backward request can append out of order.
+        # Plain readers only seek; a later builder can restart from scratch.
         if n < self.last_frame_index:
             if self.is_builder:
                 self._abort_writer()
@@ -569,9 +411,7 @@ class Mp4FrameCache(Generic[PayloadT]):
             if self.last_frame_index == n:
                 payload = self._payload_from_bgr(target_bgr)
 
-        # The frame-count metadata is usually exact, so the last read succeeds
-        # and never trips the end-of-stream branch above. Promote the cache as
-        # soon as the writer writes every promised frame.
+        # Promote when all metadata-promised frames are written because EOF may not be read.
         if self.n_frames > 0 and self.last_frame_index >= self.n_frames - 1:
             self._end_of_source()
 
@@ -580,9 +420,7 @@ class Mp4FrameCache(Generic[PayloadT]):
         return payload
 
     def _fit_to_target(self, frame_bgr: "npt.NDArray[np.uint8]") -> "npt.NDArray[np.uint8]":
-        """Fit a source BGR frame to out_size through the viewport and bake
-        in the saturation boost. This runs once per source frame during a
-        cache build, and never again once the cache is complete."""
+        """Fit BGR through the viewport and bake saturation once during cache build."""
         pil_image = Image.fromarray(cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB))
         if is_default_view(self.view):
             # The centered cover crop of before, byte-identical, so a cache
@@ -590,9 +428,7 @@ class Mp4FrameCache(Generic[PayloadT]):
             canvas = ImageOps.fit(pil_image, self.out_size, Image.Resampling.HAMMING)
         else:
             canvas = render_viewport_rgb(pil_image, self.out_size, self.view, Image.Resampling.HAMMING)
-        # canvas is always mode "RGB" here, because pil_image came from a
-        # 3-channel BGR to RGB conversion, so ImageEnhance.Color needs no mode
-        # check and no conversion. The default factor skips this entirely.
+        # BGR conversion guarantees RGB for enhancement; default saturation skips it.
         if self._sat_suffix:
             canvas = ImageEnhance.Color(canvas).enhance(self.saturation)
         # cv2's stubs erase the dtype; the conversion of an RGB canvas is
@@ -600,15 +436,8 @@ class Mp4FrameCache(Generic[PayloadT]):
         return cast("npt.NDArray[np.uint8]", cv2.cvtColor(np.asarray(canvas), cv2.COLOR_RGB2BGR))
 
     def _end_of_source(self) -> None:
-        """Handles an exhausted source, at EOF or after a decode failure
-        partway through.
-
-        It promotes whatever the writer produced, or it clamps n_frames when
-        the source metadata promised more frames than it delivered. It always
-        releases the source capture. A decode failure that wrote and decoded
-        no frame must not leak self.cap. A break out of a decode loop with no
-        release leaks it.
-        """
+        """Finish on EOF or decode failure, promoting written frames or clamping count.
+        Always release the source capture, including failure before the first frame."""
         if self._writer is not None:
             self._writer.release()
             self._writer = None
@@ -643,20 +472,9 @@ class Mp4FrameCache(Generic[PayloadT]):
         return self._complete
 
     def is_build_terminal(self) -> bool:
-        """True once the source capture is released and the cache is not
-        complete, so no further get_frame() can make progress.
-
-        That state follows a VideoWriter open failure, an os.replace failure,
-        a cache reopen failure, or a truncated source whose metadata promised
-        more frames. It is only meaningful after at least one get_frame()
-        call. The constructor opens the source eagerly through _open_source,
-        so a fresh builder already has its cap. _run_builder's n_frames <= 0
-        guard screens the case of a source that does not open at all, and it
-        returns before the first terminal check.
-        """
+        """Return whether source release without cache completion prevents further progress.
+        This follows writer, promotion, reopen, or truncation failure after a frame request."""
         return self.cap is None and not self._complete
-
-    # Teardown.
 
     def _abort_writer(self) -> None:
         if self._writer is not None:
@@ -672,10 +490,7 @@ class Mp4FrameCache(Generic[PayloadT]):
             pass
 
     def close(self) -> None:
-        # Leave the census the moment this closes, rather than when GC reaches
-        # the weak registry. A closed reader reports only its released
-        # captures anyway. This keeps the reader count honest between teardown
-        # and collection.
+        # Unregister immediately so census counts do not retain closed readers until collection.
         cache_budget.unregister(self)
         with self.lock:
             if self.cap is not None:
@@ -691,18 +506,9 @@ class Mp4FrameCache(Generic[PayloadT]):
             self.last_payload_index = None
 
 
-# KeyVideoCache.
-
 class KeyVideoCache(Mp4FrameCache[Image.Image]):
-    """Per-key and per-dial tile video.
-
-    out_size is the tile size, the key width by height or the dial area size.
-    Each frame is one PIL image decoded at that resolution, with no crop,
-    unlike BackgroundVideoCache's canvas and crop.
-
-    It serves both as the registry's detached builder (is_builder=True) and as
-    each consumer's own reader (is_builder=False, see acquire() below).
-    """
+    """Decode one uncropped tile-size image per key or dial frame.
+    Instances act as either the detached registry builder or one consumer reader."""
 
     @override
     def _payload_from_bgr(self, frame_bgr: "npt.NDArray[np.uint8]") -> Image.Image:
@@ -716,12 +522,8 @@ class KeyVideoCache(Mp4FrameCache[Image.Image]):
         return os.path.join(cache_dir, f"{self.video_md5}{self._sat_suffix}.mp4")
 
 
-# File-level registry. It shares the cache file and not the instance. Many
-# InputVideo instances can reference the same source, tile size and
-# saturation, and they must not share one cache instance. The build loop
-# requires monotonically increasing frame requests, so interleaved consumers
-# abort the writer, and after the build their independent wall-clock timelines
-# seek-thrash the shared capture, measured at 0.05 ms to 0.92 ms per frame.
+# Share cache files, not reader instances, by source, size, and saturation.
+# Interleaved readers would abort monotonic builds and seek-thrash independent timelines.
 
 def cache_videos_enabled() -> bool:
     return gl.settings_manager.app().cache_videos
@@ -739,63 +541,31 @@ class _TileCacheEntry:
         self.ready = os.path.isfile(path)
         self.builder_thread: threading.Thread | None = None
         self.stop_event = threading.Event()
-        # monotonic time of the last failed build, or 0.0. acquire() waits a
-        # cooldown after a failure before it restarts a builder, so a source
-        # that cannot build does not rebuild on every acquire.
+        # Store last failure monotonic time, or zero, so acquisition enforces rebuild cooldown.
         self.last_build_failure = 0.0
 
 
 _registry_lock = threading.Lock()
 _registry: dict[tuple[str, tuple[int, int], float, str], _TileCacheEntry] = {}
 
-# Bound for the inline join of a builder that was just signalled to stop.
-#
-# The join is inline in the detach path, and not deferred to a reaper at
-# shutdown, because the damage is not limited to process exit. A builder whose
-# entry is gone writes a cache file nothing will ever read, holds a source
-# capture and burns a core until it finishes the whole video. A deferred reaper
-# also cannot help the mid-run case at all, which is the common one: pages
-# switch far more often than the app quits.
-#
-# The bound is short because release() can run on the media player thread, the
-# sole device writer, through the stashed-screensaver sweep. Every millisecond
-# spent here is a frozen deck. stop_event is set before the join starts and the
-# builder tests it once per decoded frame, so the wait it has to cover is one
-# frame decode, measured around a millisecond at tile resolution. The lingering
-# list below catches whatever needs longer, so a short bound costs nothing.
+# Join signalled builders inline to stop orphaned decoding, but bound the media-thread wait.
+# Builders test stop each frame; longer exits enter the lingering list.
 _BUILDER_JOIN_TIMEOUT_S = 0.5
 
-# Minimum gap between builder restarts for one entry after a failed build. A
-# build that raises clears its handle so a later acquire can retry, but a
-# permanently broken source must not rebuild on every acquire; it waits this
-# long between attempts.
+# Delay builder restart after failure so broken sources do not rebuild on every acquire.
 _BUILD_RETRY_COOLDOWN_S = 30.0
 
-# Total budget for the quit-time sweep, shared across every builder it joins
-# rather than allowed per thread. The quit path runs against a force-quit timer
-# that calls os._exit, which would skip the backend termination, the tray
-# teardown and the log flush that follow. N attached builders must therefore
-# cost this once, not N times.
+# Share one quit-time join budget across all builders.
+# Per-thread budgets can exceed the force-quit deadline and skip later teardown.
 _SHUTDOWN_JOIN_BUDGET_S = 2.0
 
-# Builders that outlived their inline join. They are still signalled, so they
-# end on their own shortly after; shutdown_builders() gives them one last,
-# bounded chance to finish before the interpreter tears the C++ runtime down
-# underneath them.
+# Track signalled builders that outlive inline joins for one bounded shutdown join.
 _lingering_builders: list[threading.Thread] = []
 
 
 def _join_builder(thread: threading.Thread | None, timeout: float = _BUILDER_JOIN_TIMEOUT_S) -> None:
-    """Wait, bounded, for a builder thread that was already signalled to stop.
-
-    A builder that is not joined stays inside cv2. When it is the process exit
-    that follows the release, the C++ runtime is destroyed under a live
-    decode and the process aborts after every Python-level teardown has
-    already succeeded.
-
-    Never joins from the builder thread itself: _run_builder's own failure
-    exits reach the detach path, and a self-join raises.
-    """
+    """Bound the join of a signalled builder so cv2 decode ends before runtime teardown.
+    Never self-join because builder failure can reach the detach path."""
     if thread is None or thread is threading.current_thread():
         return
     thread.join(timeout=timeout)
@@ -806,24 +576,14 @@ def _join_builder(thread: threading.Thread | None, timeout: float = _BUILDER_JOI
         f"leaving it to finish in the background"
     )
     with _registry_lock:
-        # Prune the ones that have since finished, so the list holds only
-        # builders still running rather than growing a session-long tail of
-        # dead Thread objects that only shutdown clears.
+        # Retain only live stragglers so dead Thread objects do not accumulate.
         _lingering_builders[:] = [t for t in _lingering_builders if t.is_alive()]
         _lingering_builders.append(thread)
 
 
 def shutdown_builders(timeout: float = _SHUTDOWN_JOIN_BUDGET_S) -> None:
-    """Signal every builder still in flight and join them, bounded.
-
-    Called from the app quit path. Releases during the run already join their
-    own builder; this covers the builders whose consumers are still attached
-    at quit, and the stragglers a bounded inline join gave up on.
-
-    timeout is one deadline for the whole sweep and not a per-thread bound.
-    Several attached builders must not multiply into a wait long enough for
-    the force-quit timer to os._exit through the rest of the shutdown.
-    """
+    """Signal attached and lingering builders, then join within one shared deadline.
+    A per-thread timeout can multiply past the force-quit deadline."""
     with _registry_lock:
         threads = [entry.builder_thread for entry in _registry.values()]
         threads.extend(_lingering_builders)
@@ -837,11 +597,8 @@ def shutdown_builders(timeout: float = _SHUTDOWN_JOIN_BUDGET_S) -> None:
 
 def _registry_key(source_path: str, out_size: tuple[int, int], saturation: float,
                   variant: str = "") -> tuple[str, tuple[int, int], float, str]:
-    # canonical_saturation is the same rounding sat_suffix() uses, so a key
-    # and the file path derived from it can never disagree. variant names a
-    # second and different rendering of the same source at the same size (see
-    # acquire_from_frames). It must be part of the key, or the two share a
-    # file and each serves the other's pixels.
+    # Use the path's canonical saturation rounding in the key.
+    # Include rendering variant so noninterchangeable pixels cannot share a file.
     return (get_video_md5(source_path), out_size, canonical_saturation(saturation), variant)
 
 
@@ -853,22 +610,12 @@ def _cache_file_path(md5: str, out_size: tuple[int, int], saturation: float,
 
 
 def acquire(source_path: str, out_size: tuple[int, int], saturation: float = 1.0) -> KeyVideoCache:
-    """Attach a new consumer to the shared tile-cache file for one source,
-    out_size and saturation.
-
-    It returns a fresh KeyVideoCache reader that owns its own cv2.VideoCapture
-    and decode state. Release it with release(), which InputVideo.close() does.
-
-    The builder demuxes the source with FFmpeg, so this entry point takes real
-    video only. See acquire_from_frames for a source such as a GIF whose
-    frames must come from a different compositor.
-    """
+    """Attach a fresh reader to a shared real-video cache by source, size, and saturation.
+    Release it with release; externally composited sources use acquire_from_frames."""
     key = _registry_key(source_path, out_size, saturation)
     path = _cache_file_path(key[0], out_size, saturation)
 
-    # Carry the thread to start out of the lock directly, rather than as a
-    # flag plus a re-read of entry.builder_thread, which another acquire() can
-    # replace by then.
+    # Carry the exact builder out of the lock so another acquire cannot replace it before start.
     start_builder: threading.Thread | None = None
     with _registry_lock:
         entry = _registry.get(key)
@@ -876,10 +623,8 @@ def acquire(source_path: str, out_size: tuple[int, int], saturation: float = 1.0
             entry = _TileCacheEntry(path)
             _registry[key] = entry
         entry.refcount += 1
-        # Start exactly one detached builder the first time a key has no
-        # promoted cache on disk, and only while performance.cache-videos is
-        # enabled. A recent build failure holds the retry off for a cooldown,
-        # so a source that cannot build does not rebuild on every acquire.
+        # Start one builder only for an uncached, enabled, non-cooling entry.
+        # Failure cooldown prevents rebuild on every acquire.
         cooling = (entry.last_build_failure != 0.0
                    and time.monotonic() - entry.last_build_failure < _BUILD_RETRY_COOLDOWN_S)
         if not entry.ready and entry.builder_thread is None and not cooling and cache_videos_enabled():
@@ -894,12 +639,8 @@ def acquire(source_path: str, out_size: tuple[int, int], saturation: float = 1.0
     if start_builder is not None:
         start_builder.start()
 
-    # The refcount is already bumped and a builder may already be running. A
-    # constructor raise past this point, e.g. an os.stat of a source deleted
-    # since the key above, or an os.makedirs that hits ENOSPC, must not leave
-    # the reference outstanding: the entry would never reach zero, so its
-    # builder would never be signalled and would decode the whole source for a
-    # consumer that does not exist.
+    # Balance the pre-incremented reference if reader construction fails.
+    # Otherwise a builder can decode for a nonexistent consumer and never receive stop.
     try:
         reader = KeyVideoCache(source_path, out_size, saturation, cache_path=path, is_builder=False)
     except BaseException:
@@ -911,14 +652,8 @@ def acquire(source_path: str, out_size: tuple[int, int], saturation: float = 1.0
 
 
 def release(reader: KeyVideoCache) -> None:
-    """Detach a consumer that acquire() returned.
-
-    It always closes the reader's own capture. At refcount zero it also
-    signals a builder in flight to abort, because nothing needs its output,
-    and it drops the registry bookkeeping entry. A future acquire() then
-    re-discovers the file from disk, if the builder promoted it, or starts a
-    fresh builder.
-    """
+    """Close and detach one acquired reader.
+    At zero references, signal its builder and drop the entry."""
     reader.close()
 
     key = getattr(reader, "_registry_key", None)
@@ -929,14 +664,10 @@ def release(reader: KeyVideoCache) -> None:
 
 
 def _detach_entry(key: tuple[str, tuple[int, int], float, str], entry: "_TileCacheEntry") -> None:
-    """Drop one reference to entry. release() and the failure exit of the
-    build-from-frames path share it, so a consumer that never got a usable
-    reader still balances its refcount."""
+    """Drop one entry reference and balance callers that never received a reader."""
     stopped: threading.Thread | None = None
     with _registry_lock:
-        # Compare identity. A late release must not evict a newer entry for
-        # the same key, e.g. when this entry was already dropped and a fresh
-        # acquire() replaced it.
+        # Compare identity so a late release cannot remove a newer entry for the same key.
         if _registry.get(key) is not entry:
             return
         entry.refcount -= 1
@@ -950,39 +681,17 @@ def _detach_entry(key: tuple[str, tuple[int, int], float, str], entry: "_TileCac
     _join_builder(stopped)
 
 
-# Externally composited sources (GIF keys).
-#
-# A GIF's pixels must never come from FFmpeg. FFmpeg and PIL disagree about
-# GIF disposal and partial-extent frames. On a stock 15-frame file, 7 frames
-# differed structurally, with about 48% of pixels off by more than 32/255 and
-# disposed regions black on one side and olive on the other. A demux of a GIF
-# here therefore changes what a key looks like, silently. The two entry points
-# below let a caller that composited the frames itself, in PIL, the same
-# compositor the retained frame list uses, put them into the shared tile-cache
-# file and read them back. This module never opens the GIF as video.
+# GIF pixels must come from PIL because FFmpeg differs on disposal and partial frames.
+# External entry points cache caller-composited frames and never demux GIFs here.
 
-# Container timestamps only. Every consumer of these caches picks frames by
-# index off its own timeline, such as KeyGIF's per-frame delay walk, so
-# nothing plays back at the encoded frame rate. It exists because mp4 needs
-# one.
+# This rate supplies container timestamps only; consumers use their own timelines.
 EXTERNAL_TILE_FPS = 15.0
 
 
 def attach_promoted(source_path: str, out_size: tuple[int, int],
                     saturation: float = 1.0, variant: str = "") -> KeyVideoCache | None:
-    """Attach a reader to an already-built tile cache for this key, or return
-    None when nothing built exists to attach to.
-
-    It never starts a builder, and it never hands back a reader that fell
-    through to decoding the source. Those are the two things acquire() does
-    that an externally-composited source must not get. A returned reader is
-    always is_cache_complete(), that is it serves the promoted mp4.
-
-    Callers use this as the warm path. The artifact's existence proves that
-    something classified the source as buildable, so nothing needs re-deriving
-    from pixels to route. That inference holds per variant only, see
-    acquire_from_frames.
-    """
+    """Attach only to a complete promoted cache, or return None without building or source decode.
+    Artifact existence proves buildability only for the exact rendering variant."""
     key = _registry_key(source_path, out_size, saturation, variant)
     path = _cache_file_path(key[0], out_size, saturation, variant)
     with _registry_lock:
@@ -1003,17 +712,10 @@ def attach_promoted(source_path: str, out_size: tuple[int, int],
 def acquire_from_frames(source_path: str, out_size: tuple[int, int], saturation: float,
                         frames: "Iterable[Image.Image]", fps: float = EXTERNAL_TILE_FPS,
                         variant: str = "") -> KeyVideoCache | None:
-    """Write the shared tile cache for this key from caller-supplied frames,
-    then attach a reader to it.
-
-    Returns None when the write or the read back fails. The caller then keeps
-    whatever it already has, and it never gets a reader that decodes the
-    source instead. Refcounting, sharing and release() match acquire().
-    """
-    # variant separates renderings that are not interchangeable even though
-    # they come from the same source at the same size. KeyGIF uses it to keep
-    # its alpha-dropping over-budget artifact away from the lossless one, so a
-    # later load cannot read the degraded file as proof the GIF was opaque.
+    """Write caller-composited frames to a shared cache and attach its reader.
+    Return None on write or readback failure without falling through to source decode."""
+    # Separate noninterchangeable renderings of the same source and size.
+    # In particular, degraded alpha-dropped GIFs must not prove that a lossless GIF is opaque.
     key = _registry_key(source_path, out_size, saturation, variant)
     path = _cache_file_path(key[0], out_size, saturation, variant)
 
@@ -1028,9 +730,7 @@ def acquire_from_frames(source_path: str, out_size: tuple[int, int], saturation:
         needs_build = not entry.ready
 
     if needs_build:
-        # frames is any iterable of PIL images, consumed lazily and exactly
-        # once. A caller holding the whole animation passes its list, and one
-        # that cannot afford to passes a generator and stays O(1).
+        # Consume any image iterable lazily and once so generators remain O(1) memory.
         if _write_tile_mp4(path, out_size, frames, fps) <= 0:
             _detach_entry(key, entry)
             return None
@@ -1046,14 +746,8 @@ def acquire_from_frames(source_path: str, out_size: tuple[int, int], saturation:
 
 def _attach_promoted_reader(source_path: str, out_size: tuple[int, int], saturation: float,
                             key: tuple[str, tuple[int, int], float, str], entry: "_TileCacheEntry", path: str) -> KeyVideoCache | None:
-    """A reader on this entry, or None. The None path drops the caller's
-    refcount.
-
-    It rejects a reader that did not open the promoted cache.
-    Mp4FrameCache.__init__ falls back to opening the source when the cache
-    file is missing or unreadable. That fallback is the FFmpeg demux of a GIF
-    these entry points exist to make impossible.
-    """
+    """Return a promoted-cache reader, or drop the caller's reference and return None.
+    Reject source fallback because externally composited GIFs must not use FFmpeg demux."""
     # Same balance as acquire(): the caller bumped the refcount before this
     # call, so a constructor raise has to give it back.
     try:
@@ -1070,13 +764,8 @@ def _attach_promoted_reader(source_path: str, out_size: tuple[int, int], saturat
 
 
 def _write_tile_mp4(path: str, out_size: tuple[int, int], frames: "Iterable[Image.Image]", fps: float) -> int:
-    """Encode frames into the tile cache at path, atomically.
-
-    It writes to a per-writer temp file and calls os.replace on success, the
-    same promote discipline _end_of_source uses. It returns the number of
-    frames written, and 0 on any failure. It never raises, because a failed
-    cache write must cost playback quality and never the key.
-    """
+    """Atomically encode frames through a per-writer temporary file.
+    Return the frame count or 0 on failure; cache failure must not fail the key."""
     written = 0
     tmp_path = f"{path}.{os.getpid()}-{threading.get_ident():x}.tmp.mp4"
     try:
@@ -1115,30 +804,15 @@ def _write_tile_mp4(path: str, out_size: tuple[int, int], frames: "Iterable[Imag
 
 
 def registry_cache_paths() -> set[str]:
-    """Cache-file paths of every live registry entry.
-
-    The startup sweep (video_cache_sweeper.py) reads them, so it never deletes
-    a file an attached reader or builder uses. That holds even when the
-    reference scan cannot see the source, e.g. after a delete of the source
-    file that followed acquire(), which makes its hash unrecomputable.
-    """
+    """Return cache paths used by all live registry readers and builders.
+    The sweeper protects them even when source deletion prevents hash discovery."""
     with _registry_lock:
         return {entry.path for entry in _registry.values()}
 
 
 def remove_cache_file_if_unreferenced(path: str) -> bool:
-    """Remove a cache file only when no live registry entry points at it, with
-    the membership test and the unlink under one hold of the registry lock.
-
-    The sweeper's snapshot of registry_cache_paths() goes stale during its
-    walk: a reader or builder that acquire()s a file after the snapshot but
-    before the unlink would lose it. acquire() adds its entry under this same
-    lock, so a check-and-remove here is atomic against it: either the entry is
-    present and the file is kept, or it is absent and no consumer is attached.
-    Returns True when the file was removed (or was already gone), False when a
-    live entry protected it. Raises OSError for a real removal failure, which
-    the sweeper already handles.
-    """
+    """Atomically check live registry use and remove an unreferenced cache file.
+    Return true if absent or removed, false if protected, and propagate removal errors."""
     with _registry_lock:
         if any(entry.path == path for entry in _registry.values()):
             return False
@@ -1150,11 +824,8 @@ def remove_cache_file_if_unreferenced(path: str) -> bool:
 
 
 def _run_builder(entry: _TileCacheEntry, source_path: str, out_size: tuple[int, int], saturation: float) -> None:
-    # Construct inside the try. A KeyVideoCache constructor that raises would
-    # otherwise leave entry.builder_thread set to this now-dead thread, and
-    # acquire() starts a builder only when that field is None, so the key
-    # would stay uncached for every remaining consumer. The finally clears the
-    # handle whatever happened, so a later acquire can retry.
+    # Construct inside try so finally clears a failed builder handle.
+    # A stale dead handle would prevent every later acquisition from retrying.
     builder: "KeyVideoCache | None" = None
     failed = False
     try:
@@ -1166,17 +837,8 @@ def _run_builder(entry: _TileCacheEntry, source_path: str, out_size: tuple[int, 
                 return
             builder.get_frame(builder.last_frame_index + 1)
             if builder.is_build_terminal():
-                # The source is released and the build did not complete.
-                # get_frame() returns instantly in this state, so another loop
-                # busy-spins a full core for as long as the key stays on
-                # screen.
-                #
-                # This logs once per builder and exits. A permanently
-                # unbuildable source therefore re-attempts, and re-logs once,
-                # each time a fresh acquire() recreates the entry after its
-                # refcount hit zero. One bounded decode pass and one log per
-                # acquire cycle is acceptable, and playback degrades to
-                # uncached either way.
+                # Exit after terminal failure because repeated get_frame calls would busy-spin.
+                # A fresh acquisition can retry once, while current playback remains uncached.
                 log.error(
                     f"Tile cache build cannot complete for {source_path} -- "
                     f"leaving uncached playback"
@@ -1189,10 +851,8 @@ def _run_builder(entry: _TileCacheEntry, source_path: str, out_size: tuple[int, 
     finally:
         if builder is not None:
             builder.close()
-        # Release this entry's builder slot, but only if it still points at
-        # this thread: an invalidation or a detach may already have cleared or
-        # replaced it. On a failure, stamp the cooldown so acquire() paces the
-        # retry instead of rebuilding on the next paint.
+        # Clear only this thread's builder slot because invalidation can replace it.
+        # Stamp failures so acquisition cooldown prevents rebuild on the next paint.
         with _registry_lock:
             if entry.builder_thread is threading.current_thread():
                 entry.builder_thread = None
