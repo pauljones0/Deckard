@@ -1,9 +1,6 @@
-"""
-Integration scenario for DeckController.clear write ordering.
+"""Check DeckController.clear write ordering.
 
-clear() submits a seq-stamped ClearMsg to the media thread's control queue,
-so the write lands after the call returns. The blanking writes every key,
-then the touchscreen, with nothing interleaved.
+Queued blanking writes every key, then the touchscreen, without interleaving.
 """
 import time
 

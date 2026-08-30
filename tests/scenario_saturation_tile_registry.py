@@ -2,10 +2,7 @@
 Unit-tier scenario for the KeyVideoCache tile-cache registry.
 """
 
-# mp4_tile_cache._registry_key carries the saturation as a distinguishing
-# dimension, so two key or dial videos of one source and tile size but
-# different factors resolve to distinct registry entries and distinct cache
-# files, and each file bakes in its own factor.
+# Saturation separates otherwise identical registry entries and cache files.
 import os
 
 import fixtures  # noqa: F401  (isolated data dir + sys.path, house convention)
@@ -99,9 +96,7 @@ def check_acquire_separates_entries_and_files() -> None:
         assert os.path.isfile(r_plain.cache_path) and os.path.isfile(r_boost.cache_path), \
             "both distinct cache files must exist on disk"
 
-        # Each reader's decoded tile carries its own factor, so the boosted
-        # tile is measurably more saturated. One get_frame each makes them
-        # adopt their promoted files.
+        # One get_frame makes each reader adopt its separately saturated file.
         r_plain.get_frame(0)
         r_boost.get_frame(0)
         plain_tile = r_plain.get_frame(0)

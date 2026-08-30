@@ -2,10 +2,8 @@
 Three small guards.
 """
 
-# Page.set_media_fps applies only to inputs on a controller showing that page.
-# mark_page_ready_to_clear releases the page it captured at the False call, not
-# whatever is active at the True call. initialize_actions claims on_ready
-# atomically under a per-page lock, at both of its entry points.
+# Guard page-local FPS, captured-page release, and atomic on_ready claims.
+# The ready claim lock must cover both entry points.
 import fixtures  # noqa: F401  (import first: sets up the isolated data dir)
 
 import contextlib
@@ -82,9 +80,7 @@ def check_ready_to_clear_repoint(controller) -> int:
     page_b_path = seed_page("MarkSwapB")
     page_b = gl.page_manager.get_page(page_b_path, controller)
 
-    # The baseline the bracket must return to, taken after the fetch above.
-    # An "unpinned" assertion would pass on that fetch retiring page_a's own
-    # reservation rather than on the bracket balancing.
+    # Take the baseline after fetch so its retired reservation cannot satisfy it.
     holders_before = gl.page_manager.pins.count(page_a)
 
     # Run the bracket the tick loop and the key handler use, with a page
@@ -109,11 +105,9 @@ def check_ready_to_clear_repoint(controller) -> int:
 
 
 def _make_claim_probe(barrier):
-    """Build a barrier-rendezvous ActionCore probe and return the instance.
+    """Build the shared barrier-rendezvous ActionCore probe.
 
-    Both ready-claim checks share it, so they drive the same interleave. The
-    on_ready_called getter reads the flag before any rendezvous. A True read
-    returns at once, which marks the serialized second reader.
+    A True pre-barrier read identifies the serialized second reader.
     """
     # A False read waits on a two-party barrier to force the concurrent-read
     # interleave.
@@ -178,14 +172,11 @@ def check_atomic_ready_claim(controller) -> int:
 
 
 def check_atomic_ready_claim_reload_path(controller) -> int:
-    """The second entry point for the ready claim.
+    """Check ready claims through the active-page reload entry point.
 
-    Page.load calls initialize_actions when this page is already active, so a
-    reload picks up newly-added actions.
+    Page.load calls initialize_actions to pick up new actions.
     """
-    # The per-page lock sits at the claim site, so a reload racing a direct
-    # initialize_actions must still yield exactly one ready claim for the
-    # shared action instance.
+    # A reload racing direct initialization must yield one claim for the shared action.
     page = controller.active_page
     barrier = threading.Barrier(2)
     action = _make_claim_probe(barrier)
@@ -194,15 +185,11 @@ def check_atomic_ready_claim_reload_path(controller) -> int:
     submits = []
     page._submit_ready_callbacks = lambda a: submits.append(a)
 
-    # Thread 1 drives the reload entry point, where Page.load re-runs
-    # initialize_actions because active_page is this page. Thread 2 drives a
-    # direct initialize_actions. Both funnel through _ready_claim_lock.
+    # Race reload and direct initialization through _ready_claim_lock.
     controller.active_page = page  # so load()'s active_page gate passes
 
     def reload_entry():
-        # load() rebuilds action_objects, so patch get_all_actions to
-        # re-inject the probe. The claim serialization is under test here,
-        # not load()'s file I/O.
+        # Reinject the probe after load rebuilds action_objects.
         page.get_all_actions = lambda: [action]
         page.initialize_actions()
 
@@ -231,10 +218,9 @@ def check_atomic_ready_claim_reload_path(controller) -> int:
 
 
 def check_ready_to_clear_evicts_end_to_end(controller) -> int:
-    """ready_to_clear, end to end.
+    """Require a reset mid-work page to become evictable again.
 
-    A page that was mid-work, marked ready_to_clear False and then reset, must
-    become evictable again through clear_old_cached_pages.
+    Exercise the result through clear_old_cached_pages.
     """
     # Without the pass-back the page stays pinned and survives eviction
     # forever, which silently shrinks the budget.
@@ -261,18 +247,14 @@ def check_ready_to_clear_evicts_end_to_end(controller) -> int:
         for name in ("EvictNewer1", "EvictNewer2"):
             gl.page_manager.get_page(seed_page(name), controller)
 
-        # Run the tick bracket on pinned_page with a page switch landing
-        # mid-work. Capture at the False call, swap active_page away, then
-        # reset through the captured page at the True call.
+        # Switch mid-bracket, then reset the page captured by the False call.
         controller.active_page = pinned_page
         captured = controller.mark_page_ready_to_clear(False)
         controller.active_page = active  # concurrent switch mid-work
         try:
             controller.mark_page_ready_to_clear(True, captured)
         except TypeError:
-            # An older signature takes no page parameter, so the True call
-            # re-reads the now-active page and leaves pinned_page stuck. Call
-            # it the old way, so the eviction assertion reports the failure.
+            # Without a captured-page parameter, let the eviction assertion report it.
             controller.mark_page_ready_to_clear(True)
 
         cached_before = set(gl.page_manager.pages.get(controller, {}).keys())
@@ -303,11 +285,10 @@ def check_ready_to_clear_evicts_end_to_end(controller) -> int:
 
 
 def check_ready_to_clear_key_handler(controller) -> int:
-    """ready_to_clear on the key-handler path.
+    """Require the key-handler bracket to reset the pressed page.
 
-    A real key press that triggers a page change lands the switch between the
-    False call and the True call. The old, pressed page must be reset, not
-    whatever page the press switched to."""
+    A page switch lands between its False and True calls.
+    """
     from src.backend.DeckManagement.InputIdentifier import Input
 
     ident = Input.Key("0x0")
@@ -323,9 +304,7 @@ def check_ready_to_clear_key_handler(controller) -> int:
         print("FAIL(setup): switch target resolved to the pressed page")
         return 1
 
-    # Inject the page switch mid-callback. event_callback calls self.update()
-    # after mark_page_ready_to_clear(False) and before the matching True call,
-    # which is where a press that changes the page lands.
+    # Inject the switch in update(), between the bracket's False and True calls.
     real_update = key.update
     switched = {"done": False}
     held_mid_callback = {"count": -1}
@@ -333,19 +312,14 @@ def check_ready_to_clear_key_handler(controller) -> int:
     def switching_update(*a, **k):
         if not switched["done"]:
             switched["done"] = True
-            # Sampled inside the bracket, because the hold must exist while
-            # the callback runs. A balance at the end alone is satisfied by a
-            # key site that takes no hold at all.
+            # Sample inside the bracket; final balance alone cannot prove a hold existed.
             held_mid_callback["count"] = gl.page_manager.pins.count(pressed_page)
             controller.active_page = switched_to  # the page change the press caused
         return real_update(*a, **k)
 
     key.update = switching_update
     try:
-        # The baseline the bracket must return to, and the floor the sample
-        # above must clear. The two samples must be adjacent, because the tick
-        # loop brackets the active page once a second and a window straddling
-        # only one of them shifts the comparison in either direction.
+        # Keep baseline and sample adjacent to avoid crossing the one-second tick bracket.
         holders_before = gl.page_manager.pins.count(pressed_page)
         key.event_callback(KeyEvent(pressed=True))  # key DOWN
     finally:

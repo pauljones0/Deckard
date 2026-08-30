@@ -1,9 +1,6 @@
-"""
-Unit-tier scenario for submit_control after a terminal ClearAndClose.
+"""Reject submit_control messages after terminal ClearAndClose.
 
-MediaPlayerThread.submit_control must silently reject a message once the writer
-is stopped. Nothing drains the control queue again, and the queue would
-otherwise grow for the life of the process.
+Nothing drains the stopped writer's queue, so accepted messages would accumulate.
 """
 
 # This is unit tier, so it runs in a subprocess where the unit tier is the only
@@ -22,17 +19,13 @@ def test_submit_control_rejected_after_stop() -> None:
     assert len(media_player.control_q) == 1, "fixture sanity: submit_control should enqueue before stop"
     media_player.control_q.clear()
 
-    # Drive the terminal message through drain_control_queue directly. At
-    # the unit tier the thread never starts, so the loop body is called by
-    # hand.
+    # Drive the queue directly because the unit-tier writer thread never starts.
     media_player.submit_control(ClearAndCloseMsg())
     still_running = media_player.drain_control_queue()
     assert still_running is False, "ClearAndCloseMsg must signal the caller to stop the loop"
     assert media_player._stop is True, "_exec_clear_and_close must set _stop itself (not just rely on stop())"
 
-    # After the stop, a further submission must be rejected silently.
-    # Nothing drains this queue again, so accepting more grows it without
-    # bound.
+    # Reject later submissions because no consumer remains.
     media_player.submit_control(SetBrightnessMsg(75))
     assert len(media_player.control_q) == 0, "submit_control after stop must be a no-op"
 

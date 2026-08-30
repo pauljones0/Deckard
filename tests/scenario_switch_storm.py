@@ -1,9 +1,6 @@
-"""
-Integration scenario for 200 alternating load_page calls between two pages.
+"""Run 200 alternating load_page calls between distinct pages.
 
-The deck must settle with every key painted for the final page and no
-cross-page frame left as the last write on any key. Each page carries a
-distinct solid-color background, so a bleed shows up in the per-key hash.
+Every key must settle on the final page without a cross-page last write.
 """
 import os
 import time
@@ -52,10 +49,7 @@ def main() -> None:
             f"test fixture isn't actually distinguishing the two pages"
         )
 
-    # Reset to a neutral, background-less page before the storm. Otherwise
-    # the storm's last write can be a no-op, because the media thread's dedup
-    # guard skips a key that already shows that image and the signature pass
-    # above already painted page B's content once.
+    # Reset to neutral so dedup cannot skip the storm's final page-B write.
     neutral_path = fixtures.seed_page("Neutral")
     neutral_page = gl.page_manager.get_page(neutral_path, controller)
     _paint_signature(controller, deck, neutral_page, key_count)

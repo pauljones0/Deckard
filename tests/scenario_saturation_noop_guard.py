@@ -1,8 +1,6 @@
-"""
-Opening deck settings at a non-default saturation must not reload the page.
+"""Opening deck settings at a stored saturation must not reload the page.
 
-The Saturation row defers load_default to "map", which runs after value-changed
-is connected, so set_value re-emits the stored factor.
+The mapped row re-emits its stored value after value-changed is connected.
 """
 
 # DeckController.set_display_saturation therefore short-circuits on the same

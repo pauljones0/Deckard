@@ -1,16 +1,6 @@
-"""Pins how a chooser page decides when to search, and when to stop.
+"""Check chooser search debounce, generation coalescing, and invalidation.
 
-Gtk.SearchEntry owns the wait for the typing to stop: it holds its
-search-changed emission back for its own delay, and the page widens that
-delay because one pass scores and sorts a whole icon pack. The page owns two
-things only. A pass carries the generation it was queued with, so two
-emissions in one turn of the loop cost one pass. And a page that stops showing
-invalidates every pass in flight, because the entry can deliver an emission
-after the window has gone.
-
-The pure-logic legs drive the base methods over a stand-in page. The legs that
-prove the hooks fire build a real page in a real window, which is what a
-teardown hook connected to the wrong signal fails.
+Gtk.SearchEntry owns the pack-search delay; unmap invalidates all pending passes.
 """
 import fixtures  # noqa: F401  (import first: isolated --data tempdir)
 
@@ -48,10 +38,9 @@ MIN_SUBCLASSES_SCANNED = 7
 
 
 class FakePage:
-    """A chooser page reduced to what the search decision touches.
+    """A chooser page reduced to the base search decision methods.
 
-    It takes the base methods themselves, so a change to either reaches these
-    checks. apply_search is the hook a real page overrides.
+    apply_search is the override hook.
     """
 
     on_search_changed = ChooserPage.on_search_changed
@@ -71,9 +60,7 @@ class FakePage:
         self.search_entry = types.SimpleNamespace(get_text=lambda: self.text)
 
     def apply_search(self, query: str) -> None:
-        # A page that renders here says so. One that starts work which renders
-        # later says so when that work lands, and this stand-in models the
-        # first kind.
+        # Record immediate renders; deferred pages record when their work lands.
         self.applied.append(query)
         self.search_rendered(query)
 
@@ -118,11 +105,9 @@ def pump_until(condition, timeout: float, what: str) -> None:
 
 
 def test_base_holds_the_defaults() -> None:
-    """Both must be class attributes.
+    """Require search defaults on the class.
 
-    ChooserPage._build connects on_search_changed from the constructor, before
-    a subclass reaches its own attributes, so an emission can arrive before any
-    instance attribute exists.
+    Constructor wiring can emit before a subclass creates instance attributes.
     """
     for name, expected in (("_search_generation", 0), ("_search_showing", True)):
         assert name in vars(ChooserPage), (
@@ -133,11 +118,9 @@ def test_base_holds_the_defaults() -> None:
 
 
 def test_the_entry_owns_the_wait() -> None:
-    """The page must not hold a timer of its own beside the entry's.
+    """Require Gtk.SearchEntry to own the only debounce timer.
 
-    Gtk.SearchEntry already waits for the typing to stop. A second wait on top
-    of it coalesces nothing and only delays the answer, and it delays a
-    cleared entry too, which GTK reports at once.
+    A second timer adds latency, including after GTK reports a cleared entry.
     """
     page = RecordingPage()
     assert page.search_entry.get_search_delay() == SEARCH_DELAY_MS, (
@@ -158,10 +141,9 @@ def test_the_entry_owns_the_wait() -> None:
 
 
 def test_generation_guard_drops_an_overtaken_pass() -> None:
-    """Two emissions in one turn of the loop cost one pass.
+    """Coalesce two same-turn emissions into the newer pass.
 
-    A cleared entry reports at once, so it can land in the same turn as a
-    delayed emission. Only the newer of the two may render.
+    An immediate clear can share a turn with a delayed emission.
     """
     page = FakePage()
     page.type("bat")
@@ -226,13 +208,9 @@ def test_invalidate_stops_passes_and_frees_the_cache() -> None:
 
 
 def test_a_pass_that_only_starts_work_re_arms_the_catch_up() -> None:
-    """A page whose pass renders later must not read as current yet.
+    """Do not mark a deferred search current before its render lands.
 
-    The pages that search across the packs only start a gather in
-    apply_search. Recorded as rendered at that point, a gather that is dropped
-    or that fails leaves the page believing it shows the query: showing it
-    again finds nothing to catch up with, the grid keeps the results of the
-    query before, and only another keystroke recovers it.
+    A dropped or failed gather must run again when the page is shown.
     """
     class DeferringPage(FakePage):
         def apply_search(self, query: str) -> None:
@@ -264,12 +242,9 @@ def test_a_pass_that_only_starts_work_re_arms_the_catch_up() -> None:
 
 
 def test_the_page_settles_its_entry_before_the_catch_up() -> None:
-    """on_shown runs inside the map handler, before the catch-up test.
+    """Run on_shown before the map handler tests for catch-up.
 
-    A page that empties its entry as it shows must do so first. Settled after,
-    the catch-up pass searches for a query the page throws away in the same
-    handler, which for a search across the packs is a whole gather started and
-    invalidated at once.
+    This prevents a gather for a query that on_shown clears.
     """
     class SettlingPage(FakePage):
         def on_shown(self) -> None:
@@ -303,13 +278,9 @@ def test_the_page_settles_its_entry_before_the_catch_up() -> None:
 
 
 def test_search_is_current_answers_both_halves() -> None:
-    """The staleness test a pass carries off the main thread.
+    """Reject worker results after a generation change or page hide.
 
-    A search that gathers on a worker asks this before it renders. It must
-    answer False for both ways a pass goes stale: a later pass moved the
-    generation on, and the page stopped showing. A test on the generation
-    alone would render into a page nobody sees, because hiding a page keeps
-    the generation it invalidated with.
+    Generation alone is insufficient because a hidden page keeps its new value.
     """
     page = FakePage()
     generation = page._search_generation
@@ -329,12 +300,9 @@ def test_search_is_current_answers_both_halves() -> None:
 
 
 def test_hiding_the_window_invalidates_for_real() -> None:
-    """The hook must be on a signal that fires while a pass is pending.
+    """Require invalidation on unmap while queued work still holds the page.
 
-    A destroy-connected hook cannot: a widget that is not a window emits
-    destroy from dispose, and anything still holding the page, a queued pass
-    among them, keeps dispose from running. Hiding the window unmaps the page,
-    which is what this leg drives.
+    A destroy hook waits for dispose and cannot stop that pending work.
     """
     window = Gtk.Window()
     page = RecordingPage()
@@ -456,10 +424,9 @@ def subclass_defs() -> list[tuple[str, ast.ClassDef]]:
 
 
 def test_no_page_overrides_the_handler() -> None:
-    """A page overrides apply_search, never on_search_changed.
+    """Require pages to override apply_search, not the guarded handler.
 
-    An override of the handler bypasses the staleness guard and the
-    invalidation for that page, and nothing else would report it.
+    Handler overrides bypass staleness and invalidation.
     """
     subclasses = subclass_defs()
     assert len(subclasses) >= MIN_SUBCLASSES_SCANNED, (

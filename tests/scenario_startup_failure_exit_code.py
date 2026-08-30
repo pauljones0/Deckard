@@ -1,15 +1,6 @@
-"""An unexpected startup failure must exit nonzero, not 0.
+"""Require an injected startup failure in main.py to exit with status 1.
 
-main() used to run under a bare log.catch that logged the failure and
-returned, so the process exited 0 and a supervisor read a crash as success.
-The entry point now logs once and exits nonzero. This runs the real main.py
-as __main__ in a subprocess, injects a failure into main()'s first startup
-call, and asserts the exit code is 1.
-
-The child imports the toolkit that main.py pulls in at module load. Where the
-environment cannot load it (no display driver, a mismatched interpreter) the
-child cannot run, and this scenario skips, as the other GTK-touching
-scenarios do.
+Skip when the child environment cannot load the application's toolkit imports.
 """
 import fixtures  # noqa: F401  (must be first: isolates DATA_PATH before globals)
 
@@ -23,9 +14,7 @@ from fixtures import start_watchdog  # noqa: E402
 _REPO_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 MAIN = os.path.join(_REPO_ROOT, "main.py")
 
-# The exit code a probe child returns when the heavy imports load. Distinct
-# from 0 and 1 so the driver can tell "environment cannot run this" apart from
-# the real assertions.
+# A distinct probe status separates import limits from the tested 0 and 1 statuses.
 IMPORTS_OK = 42
 
 # A child that only tries the module-level imports main.py performs. If it

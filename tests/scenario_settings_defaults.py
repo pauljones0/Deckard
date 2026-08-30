@@ -2,10 +2,8 @@
 Pins the app-settings DEFAULTS table.
 """
 
-# SettingsManager owns one DEFAULTS table and AppSettings reads and writes
-# through it, so a transcription slip fails here. store.custom-stores defaults
-# to a list, the value the writer appends to, and system.keep-running has no
-# default, so None means never asked.
+# Pin DEFAULTS and AppSettings to one schema, including list-valued custom stores.
+# system.keep-running uses None for "never asked".
 import fixtures  # noqa: F401  (isolates gl.DATA_PATH before anything reads it)
 import globals as gl
 
@@ -243,9 +241,10 @@ def check_round_trip_through_dict() -> None:
 
 
 def check_unknown_keys_rejected_both_ways() -> None:
-    """DEFAULTS is the schema on writes as well as reads. A misspelled key
-    must raise on set() as it does on get(), and the runtime-computed keys
-    CustomContentGroup uses must keep working."""
+    """Use DEFAULTS as the read and write schema.
+
+    Reject misspellings while retaining CustomContentGroup's computed keys.
+    """
     app = AppSettings({})
 
     for section, key in (("general", "hold-tmie"), ("nope", "hold-time")):

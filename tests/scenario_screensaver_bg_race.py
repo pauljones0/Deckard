@@ -1,8 +1,6 @@
-"""
-Integration scenario for the background-load and screensaver race.
+"""Check the background-load and screensaver race.
 
-A load_background worker that holds _background_load_lock and already passed
-its generation check must never land its write after the screensaver's.
+A generation-checked worker must not write after the screensaver.
 """
 
 # A gate inside Background.set_from_path parks the worker with the lock held,
@@ -27,11 +25,8 @@ def main() -> None:
 
     page_png = fixtures.make_test_png(os.path.join(gl.DATA_PATH, "media", "race_page.png"), color=(10, 200, 10))
     ss_png = fixtures.make_test_png(os.path.join(gl.DATA_PATH, "media", "race_ss.png"), color=(10, 10, 200))
-    # The screensaver settings must persist on the page, not only through
-    # ScreenSaver.set_media_path. load_page always calls
-    # load_screensaver(page), which reloads media_path, enable and time_delay
-    # from the page on every call, so a page with no persisted settings
-    # resets media_path to None and show() paints blank.
+    # Persist the settings because each load_page reloads them from the page.
+    # Without them, media_path resets to None and show() paints blank.
     page_path = fixtures.seed_page_with_background_and_screensaver(
         "RacePage", page_png, ss_png, screensaver_time_delay=60
     )
@@ -64,7 +59,6 @@ def main() -> None:
     assert ok, "fixture setup: screensaver never hid"
     time.sleep(0.1)
 
-    # The race.
     real_set_from_path = Background.set_from_path
     gate = threading.Event()
     worker_parked = threading.Event()
@@ -77,16 +71,12 @@ def main() -> None:
     Background.set_from_path = gated_set_from_path
     try:
         deck.clear_journal()
-        # This dispatches load_background onto the pool. It acquires
-        # _background_load_lock, passes its generation check, and parks inside
-        # gated_set_from_path with the lock still held.
+        # Park load_background after its generation check with the lock held.
         controller.load_page(page, allow_reload=True)
         ok = fixtures.wait_until(worker_parked.is_set, timeout=5)
         assert ok, "the load_background worker never reached the gate"
 
-        # show() races the parked worker on its own thread. It needs
-        # _background_load_lock to apply its own background, so it blocks here
-        # until the gate below is released.
+        # show() needs the same lock, so it waits until the worker is released.
         show_done = threading.Event()
 
         def do_show():
@@ -96,9 +86,7 @@ def main() -> None:
         t_show = threading.Thread(target=do_show, name="RaceShow")
         t_show.start()
 
-        # Give show() a real chance to run all the way through if it does not
-        # need the lock. An implementation without the lock applies its
-        # background here, before the worker's stale write lands below.
+        # Let an unlocked show() finish before the worker's stale write can land.
         time.sleep(0.3)
 
         gate.set()  # release the parked worker, which writes the page content

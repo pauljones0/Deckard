@@ -1,9 +1,6 @@
-"""
-Unit-tier scenario for the straggler drop at the present boundary.
+"""Drop stale-generation paints at the present boundary.
 
-A paint enqueued for generation G is dropped once a newer load_page bumps the
-generation past G. A paint against the current generation still lands.
-This drives perform_media_player_tasks directly, so one call is one cycle.
+Current-generation paints still land; each direct task pass is one cycle.
 """
 import fixtures
 
@@ -15,9 +12,7 @@ def main() -> None:
     page = controller.active_page
     gen_g = controller._page_load_generation
 
-    # Enqueue a frame for gen G, then bump the generation the way load_page
-    # does, under _page_gen_lock and with no page switch. The straggler case
-    # is the same page with a superseded content generation.
+    # Supersede generation G without a page switch, as load_page does under its lock.
     stale_image = fixtures.make_native_image(fill=1)
     media_player.add_image_task(0, stale_image, page=page, config_gen=gen_g)
 

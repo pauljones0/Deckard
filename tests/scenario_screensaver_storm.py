@@ -1,8 +1,6 @@
-"""
-Integration scenario for a concurrent screensaver transition storm.
+"""Run concurrent timer, USB-event, and settings screensaver transitions.
 
-Three threads hammer ScreenSaver's entry points at once, a timer-like show(), a
-USB-event-like on_key_change() and a settings-like set_enable pair.
+The final state must stay coherent without deadlock or exceptions.
 """
 
 # Nothing may deadlock or raise, and the final journal must agree with showing
@@ -24,11 +22,8 @@ def main() -> None:
 
     page_png = fixtures.make_test_png(os.path.join(gl.DATA_PATH, "media", "storm_page.png"), color=(200, 20, 20))
     ss_png = fixtures.make_test_png(os.path.join(gl.DATA_PATH, "media", "storm_ss.png"), color=(20, 20, 200))
-    # Pre-seed "Main" with a distinct background and persisted screensaver
-    # settings before the controller exists. load_page always calls
-    # load_screensaver(page), and hide() ends in a load_page, so without this
-    # the first hide() resets media_path to None and later show() calls
-    # paint blank.
+    # Persist settings before construction because hide() reloads them from the page.
+    # Without them, the first hide resets media_path and later shows paint blank.
     fixtures.seed_page_with_background_and_screensaver(
         "Main", page_png, ss_png, screensaver_time_delay=60
     )
@@ -62,7 +57,6 @@ def main() -> None:
     ok = fixtures.wait_until(lambda: not controller.screen_saver.showing, timeout=5)
     assert ok, "fixture setup: screensaver never hid"
 
-    # The storm.
     exceptions: list[tuple[str, BaseException]] = []
     exc_lock = threading.Lock()
 
@@ -109,7 +103,6 @@ def main() -> None:
         assert not t.is_alive(), f"{t.name} did not finish within {JOIN_TIMEOUT}s -- possible deadlock"
     assert not exceptions, f"exceptions occurred during the storm: {exceptions!r}"
 
-    # Settle, then check coherence.
     ok = fixtures.wait_until(settled, timeout=5)
     assert ok, "deck did not settle after the storm"
     # A quiescence window. A straggler transition still landing frames shows

@@ -1,13 +1,6 @@
-"""Sidebar and deck-settings rows must stay wired after a mid-update raise.
+"""Keep sidebar and deck-settings rows wired after mid-update failures.
 
-Four more rows disconnect a handler, update the widget, then reconnect: the
-event-assigner combo row, the state switcher stack, the deck background row and
-the screensaver row. A raise between the disconnect and the reconnect left the
-row permanently dead, so every later selection, state switch or settings change
-was dropped silently.
-
-This harness builds no real GTK widget: it drives the real loaders and setters
-on duck-typed stand-ins, the same pattern scenario_action_reconnect uses.
+Drive real loaders and setters on duck-typed widgets without GTK construction.
 """
 
 import fixtures  # noqa: F401  (must be first: isolates DATA_PATH before globals)
@@ -101,8 +94,6 @@ class FakeLabel:
     def set_label(self, text):
         self.text = text
 
-
-# --- 1. EventAssignerRow ----------------------------------------------------
 
 class FakeModelItem:
     def __init__(self, id) -> None:
@@ -230,8 +221,6 @@ def test_event_row_wires_exactly_once_across_selects() -> None:
     assert row.changes == 1, f"one selection reported {row.changes} times"
 
 
-# --- 2. StateSwitcher -------------------------------------------------------
-
 class FakeStack(FakeWidget):
     def __init__(self) -> None:
         super().__init__()
@@ -337,8 +326,6 @@ def test_state_switcher_wires_exactly_once() -> None:
         f"one switch reported {len(switcher.switches)} times"
     )
 
-
-# --- 3 and 4. Deck-settings rows -------------------------------------------
 
 class FakeSection:
     def __init__(self, values, raise_on_get) -> None:
@@ -571,8 +558,6 @@ def test_screensaver_row_reconnects_after_midload_raise() -> None:
     settings = _install_settings(_SCREENSAVER_VALUES)
     _run_settings_row_case(FakeScreensaverRow(), settings, "screensaver row")
 
-
-# --- 5, 6 and 7. The single-widget deck-settings rows -----------------------
 
 class FakeToggleGroup(FakeWidget):
     def __init__(self) -> None:

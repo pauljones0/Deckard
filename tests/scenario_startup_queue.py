@@ -1,9 +1,6 @@
-"""
-Pins the app-ready startup queue in src/backend/startup_queue.py.
+"""Check exact-once ownership in the app-ready startup queue.
 
-The protocol is a race protocol, so most checks are about ownership. A task
-queued before gl.app exists must be delivered exactly once, by the caller
-through its post-append reclaim or by the drain.
+The caller can reclaim after append, or the drain owns delivery.
 """
 
 # The module stays lock-free and engine-closure-safe, and knows nothing about
@@ -124,9 +121,10 @@ def check_non_callable_entries_skipped(queue) -> None:
 
 
 class _FlipOnAppend(list):
-    """Makes the append-and-drain interleaving deterministic. When the queue
-    appends, on_activate already published gl.app, and with drain_first the
-    drain also runs before the reclaim can go through."""
+    """Make append-versus-drain ordering deterministic.
+
+    Publish gl.app on append and optionally drain before reclaim.
+    """
 
     def __init__(self, app, queue, drain_first: bool = False):
         super().__init__()
@@ -200,9 +198,7 @@ def check_readiness_is_gl_app(queue) -> None:
         f"nothing may be queued once gl.app exists: {gl.app_loading_finished_tasks}"
     )
 
-    # A drain has run at least once in this process. Readiness must still
-    # come from gl.app. An internal ready flag would answer True here and skip
-    # the queue for calls the app has not come up for.
+    # Readiness must follow gl.app after an earlier drain, not a latched flag.
     queue.drain_app_ready()
     gl.app = None
     assert queue.when_app_ready(lambda: None) is False, (
@@ -255,10 +251,10 @@ def check_slot_is_read_per_call(queue) -> None:
 
 
 def check_runtime_imports_lock_free() -> None:
-    """The module must stay importable from the render engine's closure, so
-    its runtime imports are globals plus stdlib. It must not synchronize with
-    a lock, because the GIL-atomic list ops and the append, re-check and
-    remove order are the whole protocol."""
+    """Keep runtime imports to globals and the standard library without locks.
+
+    GIL-atomic list operations and append-recheck-remove define the protocol.
+    """
     tree = ast.parse(open(MODULE_PATH, encoding="utf-8").read(), MODULE_PATH)
 
     type_checking_bodies: set[int] = set()
@@ -267,9 +263,7 @@ def check_runtime_imports_lock_free() -> None:
             test = node.test
             name = getattr(test, "id", None) or getattr(test, "attr", None)
             if name == "TYPE_CHECKING":
-                # Only the body is compile-time. The orelse of an
-                # if TYPE_CHECKING runs at runtime like any other code, so
-                # walking the whole If node would hide an import there.
+                # Exclude only the compile-time body; the orelse runs at runtime.
                 for stmt in node.body:
                     for child in ast.walk(stmt):
                         type_checking_bodies.add(id(child))
@@ -282,9 +276,7 @@ def check_runtime_imports_lock_free() -> None:
             roots.update(a.name.split(".")[0] for a in node.names)
         elif isinstance(node, ast.ImportFrom):
             if node.level:
-                # A relative import has no root to resolve and can only
-                # reach first-party code, so record it verbatim and let the
-                # check below fail.
+                # Record relative imports verbatim because they are first-party.
                 roots.add("." * node.level + (node.module or ""))
             elif node.module:
                 roots.add(node.module.split(".")[0])
