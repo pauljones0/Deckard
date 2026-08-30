@@ -320,9 +320,6 @@ build:flatpak:
     key:
       files:
         - io.github.nazbert.Deckard.yml
-        - requirements.txt
-        - flatpak/python-requirements.lock
-        - flatpak/python-payload-budgets.json
         - pypi-requirements.yaml
     paths:
       - .flatpak-builder/downloads

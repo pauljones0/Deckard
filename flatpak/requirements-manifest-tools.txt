@@ -1,5 +1,6 @@
 # Tools for flatpak/ci/generate_python_manifest.py.
+-r requirements-build-tools.txt
+
 pip-tools==7.6.1
 PyYAML==6.0.2
 req2flatpak==0.2.0
-setuptools==80.9.0  # req2flatpak imports pkg_resources, removed in setuptools 81

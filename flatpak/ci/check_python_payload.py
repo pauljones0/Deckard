@@ -161,6 +161,13 @@ def budget_errors(sizes: dict[str, int], budgets: dict[str, int]) -> list[str]:
     return errors
 
 
+def report_budget_result(sizes: dict[str, int], budgets: dict[str, int]) -> int:
+    errors = budget_errors(sizes, budgets)
+    for error in errors:
+        print(f"error: {error}")
+    return 1 if errors else 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--manifest", type=Path, default=MANIFEST)
@@ -176,10 +183,7 @@ def main() -> int:
         print(f"error: {error}")
         return 1
 
-    errors = budget_errors(sizes, budgets)
-    for error in errors:
-        print(f"error: {error}")
-    return 1 if errors else 0
+    return report_budget_result(sizes, budgets)
 
 
 if __name__ == "__main__":

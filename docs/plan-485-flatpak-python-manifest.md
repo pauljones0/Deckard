@@ -11,40 +11,48 @@ also be incomplete.
 
 ## Design
 
-1. Add a small requirements file for the pinned manifest-generation tools.
-   `requirements-dev.txt` will include it instead of duplicating those pins.
+1. Add small requirements files for pinned manifest-generation and Python build
+   tools. `requirements-dev.txt` will include them instead of duplicating pins.
 2. Add a Python 3.13 generator that resolves `requirements.txt` into a committed
-   transitive lock with pip-tools, then supplies that lock to req2flatpak for
-   CPython 3.13 on x86_64 and aarch64. The generator will remove unstable tool
-   paths and defective third-party header text from committed output.
-3. Replace `pypi-requirements.yaml` with the generated two-architecture runtime
-   closure.
+   transitive runtime lock and the native-extension tools into a separate build
+   lock. It will supply both locks to req2flatpak for CPython 3.13 on x86_64 and
+   aarch64, and remove unstable tool paths and defective third-party header text
+   from committed output.
+3. Replace `pypi-requirements.yaml` with the generated two-architecture closure.
+   The Flatpak build will install build backends into a temporary build-only
+   target, install pycairo first, and then install the remaining locked runtime
+   without shipping the build tools.
 4. Add a checker that downloads each selected archive from
    `files.pythonhosted.org`, verifies its committed SHA-256, and sums archive
    member sizes without extracting files. It will enforce separate x86_64 and
    aarch64 budgets.
-5. Set the initial budgets from the measured clean closure plus 5%, rounded up
-   to the next MiB: 288 MiB for x86_64 and 213 MiB for aarch64.
+5. Set the initial budgets from the measured clean runtime and required build
+   source closure plus 5%, rounded up to the next MiB: 297 MiB for x86_64 and
+   222 MiB for aarch64.
 6. Run regeneration drift and payload checks in `build:flatpak`. This job is an
    existing direct dependency of `release:gate`, so a release cannot bypass the
-   checks. Extend its merge-request change rules and cache inputs for all new
-   manifest inputs.
+   checks. Extend its merge-request change rules for all new manifest inputs.
+   Keep the download cache keyed by the app and Python manifests, which fully
+   identify the sources that enter that cache.
 7. Add offline scenario coverage for generator normalization, architecture
    selection, archive-size calculation, hash verification, and budget failure.
 
 ## Acceptance criteria
 
 - When the generator runs with Python 3.13, the system shall resolve every
-  direct and transitive runtime dependency into one pinned lock.
+  direct and transitive runtime dependency and required build tool into separate
+  pinned locks.
 - When the generator reads the pinned lock, the system shall generate
   x86_64 and aarch64 Flatpak sources with stable URLs and SHA-256 values.
 - When generated lock or manifest content differs from committed content, the
   check mode shall fail and show the stale file.
 - When the clean manifest is generated, the system shall select
   `opencv-python-headless` and shall not select `opencv-python`.
+- When Flatpak builds native Python extensions, the system shall make their
+  pinned build backends available without installing those tools into the app.
 - When the payload checker reads an archive, the system shall verify its
   SHA-256 before it counts uncompressed file-member sizes.
-- When the selected payload is at or below 288 MiB for x86_64 and 213 MiB for
+- When the selected payload is at or below 297 MiB for x86_64 and 222 MiB for
   aarch64, the payload checker shall pass.
 - When either selected payload exceeds its architecture budget, the payload
   checker shall fail and identify the architecture, measured size, and budget.
