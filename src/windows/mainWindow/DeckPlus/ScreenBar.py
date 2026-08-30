@@ -287,20 +287,21 @@ class ScreenBarImage(LazyMapTasks, Gtk.Picture):
         """The paint-ready payload for paint_mirror_frame.
 
         Any thread may call it. The thumbnail and every conversion use only PIL
-        and GdkPixbuf, so they run on the caller, which is the media thread for
-        a live frame. The mapped check lives in set_pixbuf_and_del, because
-        widget state needs the main thread.
+        and GdkPixbuf, so they run on the caller. For a live frame that is
+        the adapter's drain on the main loop, after the latest-wins slot
+        decided the frame; the map-time replay calls it from its own thread.
+        The mapped check lives in set_pixbuf_and_del, because widget state
+        needs the main thread.
         """
         width = 385 #TODO: Find a better way to do this
         thumbnail = image.copy()
         thumbnail.thumbnail((width, width/8))
 
         pixbuf = image2pixbuf(thumbnail.convert("RGBA"), force_transparency=True)
-        # The task id travels with the pixbuf, so a paint that lost the race to
-        # a newer frame drops out in set_pixbuf_and_del. The stamp goes on this
-        # widget while the mirror drain resolves the screenbar from the deck
-        # stack again, so it decides only between frames of one widget. A
-        # screenbar replaced between a push and its paint takes the id with it,
+        # The task id travels with the pixbuf, so a paint that lost the race
+        # to a newer frame drops out in set_pixbuf_and_del. The stamp goes on
+        # the widget this prepare ran against, so it decides only between
+        # frames of one widget: a replaced screenbar takes its ids with it,
         # and the replacement stamps its own frames from its own counter.
         self.latest_task_id = self.get_new_task_id()
         task_id = self.latest_task_id
@@ -325,11 +326,11 @@ class ScreenBarImage(LazyMapTasks, Gtk.Picture):
     def _prepare_dial_preview(self, image: Image.Image) -> DialPreview:
         """The icon preview of the sidebar for a selected dial.
 
-        The crop comes out of this same strip frame, and the conversion runs
-        here on the producer. It travels in the payload of the strip, because
-        the crop matches the frame it came from. One payload keeps the two in
-        step and costs no second callback. A direct call to
-        IconSelector.set_image would add one uncoalesced idle per frame.
+        The crop comes out of this same strip frame and travels in the
+        payload of the strip, because the crop matches the frame it came
+        from. One payload keeps the two in step and costs no second
+        callback. A direct call to IconSelector.set_image would add one
+        uncoalesced idle per frame.
         """
         sidebar = services.sidebar()
         if sidebar is None:
@@ -339,8 +340,9 @@ class ScreenBarImage(LazyMapTasks, Gtk.Picture):
         if not isinstance(identifier, Input.Dial):
             return None
         # Use the own controller, not the visible deck. This widget belongs
-        # to one deck, and a lookup through the deck stack is a GTK read on
-        # the producer thread.
+        # to one deck, and the map-time replay path runs this off the main
+        # loop, where a lookup through the deck stack is an off-main GTK
+        # read.
         touch_screen = self.screenbar.deck_controller.get_input(Input.Touchscreen("sd-plus"))
         if touch_screen is None:
             return None

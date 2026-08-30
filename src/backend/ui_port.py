@@ -34,8 +34,9 @@ class UIPort:
     thread, the USB monitor, tick and action threads, and the GLib main loop.
     An implementation marshals a widget mutation with GLib.idle_add and must
     not call run_on_main, because a wedged main loop must not stall the media
-    writer. push_input_image shows the pattern, which converts on the calling
-    thread and idles the paint.
+    writer. push_input_image shows the pattern: it admits the frame on the
+    calling thread, and a main-loop drain converts and paints the newest
+    admitted frame.
     """
 
     # Render mirror on the hot path. The media thread calls it up to keys x
@@ -46,8 +47,8 @@ class UIPort:
                          image: "Image.Image") -> bool:
         """Mirror a freshly composed input image into the UI.
 
-        True means accepted or pending. The conversion can run on this thread,
-        and the implementation idles and throttles the paint. False means the
+        True means accepted or pending. The implementation converts on the
+        thread of its choice and idles and throttles the paint. False means the
         UI does not show it (no window, unmapped, grid mid-rebuild) and the
         caller dirty-marks. This never raises. An internal exception or a
         refusal returns False.

@@ -171,10 +171,16 @@ def main() -> None:
         assert adapter.push_input_image(controller, identifier, object()) is True, (
             "push was refused despite a bound, mapped grid"
         )
-        assert len(new_grid.buttons[0][0].prepared) == 1, "the push did not reach the button"
-        # The paint resolves the widget again, so it has to land on the
-        # bound grid as well, rather than on the orphan the push saw.
+        assert len(new_grid.buttons[0][0].prepared) == 0, (
+            "conversion ran at push time; only the drain's winning frame "
+            "pays conversion"
+        )
+        # The drain resolves the widget again, converts, and paints, so both
+        # halves land on the bound grid rather than on any orphan.
         assert adapter._drain_mirror(controller, identifier) is False
+        assert len(new_grid.buttons[0][0].prepared) == 1, (
+            "the drain did not convert on the bound grid's button"
+        )
         assert len(new_grid.buttons[0][0].painted) == 1, (
             "the drain did not paint into the bound grid's button"
         )

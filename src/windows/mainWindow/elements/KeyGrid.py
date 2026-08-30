@@ -396,8 +396,9 @@ class KeyButton(Gtk.Frame):
         """The paint-ready payload for paint_mirror_frame.
 
         Any thread may call it. image2pixbuf uses only PIL and GdkPixbuf, so
-        the conversion runs on the caller. The caller is the media thread for
-        a live frame. Only the widget change needs the loop.
+        the conversion runs on the caller. For a live frame the adapter's
+        drain calls it on the main loop, after the latest-wins slot decided
+        the frame; the map-time replay calls it from its own thread.
         """
         # This carries no staleness stamp, unlike the screenbar. One slot
         # coalesces the live frames of a key, so they cannot queue out of
