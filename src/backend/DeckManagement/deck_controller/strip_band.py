@@ -26,35 +26,18 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from src.backend.DeckManagement.deck_controller.controller import DeckController
 
-# Device-calibrated SD+ band, in key-grid canvas pixels: (gap, span, xoff,
-# band_height). gap is the bezel below the bottom key row. The strip shows a
-# span-wide view of the canvas, offset xoff from centered on the key grid,
-# band_height tall. span and xoff were measured with the strip's own touch
-# sensor as a ruler (a dial-nulled marker aligned under a straightedge at
-# each lit key edge); gap, band_height and the key spacing were tuned
-# visually on a color-coded card. The strip shows slightly more than the
-# grid's width, and its vertical scale is a few percent taller than the
-# square-pixel derivation, so band_height is measured, not derived.
+# SD+ calibrated band in key-grid pixels: gap, span, center offset, and height.
+# Span, offset, gap, and height are measured because the strip exceeds derived grid geometry.
 PLUS_BAND = (88, 867, -4, 114)
 
-# The canvas width the SD+ band was calibrated at: 4 keys of 120 at the
-# calibrated 116-pixel horizontal gap. PLUS_BAND's span and xoff are absolute
-# canvas pixels, so they hold only at this width; strip_band_geometry checks
-# it, and a key-spacing change without a recalibration falls back loudly to
-# the derived band instead of silently cutting the wrong slice.
+# PLUS_BAND uses absolute pixels valid only at this calibrated four-key width.
+# A width mismatch warns and falls back to derived geometry.
 PLUS_CANVAS_WIDTH = 828
 
 
 def strip_band_geometry(deck_controller: "DeckController", canvas_width: int) -> tuple[int, int, int, int]:
-    """(gap, span, xoff, band_height) for deck_controller's strip band.
-
-    An SD+ answers the device-calibrated PLUS_BAND, valid at its calibrated
-    key spacing. Every other touch deck keeps the derived geometry: one
-    spacing_y gap, the full canvas width, and the height that width maps to
-    at the strip's aspect. A canvas width the calibration does not cover
-    (a spacing change, or a dead deck's fallback key size) gets the derived
-    band, behind a warning.
-    """
+    """Return strip gap, span, offset, and height for the canvas.
+    Use calibrated SD+ geometry only at its exact width; otherwise warn and derive from strip aspect."""
     if getattr(deck_controller, "is_plus", False):
         if canvas_width == PLUS_CANVAS_WIDTH:
             return PLUS_BAND
@@ -69,17 +52,8 @@ def strip_band_geometry(deck_controller: "DeckController", canvas_width: int) ->
 
 
 def band_layout(deck_controller: "DeckController", grid_w: int, grid_h: int) -> tuple[int, int, int, tuple[int, int, int, int]]:
-    """The extended canvas around a grid_w by grid_h key grid:
-    (canvas_w, canvas_h, grid_x, band_crop_box).
-
-    The canvas covers the union of the key grid and the strip's view. When
-    the band is wider than the grid (the SD+ strip shows content beyond the
-    outer key columns), the canvas grows by the overhang and the grid sits
-    at grid_x inside it; key crops must add that offset. The band crop box
-    is in canvas coordinates and in bounds by construction. A deck whose
-    band is the derived full-grid one gets grid_x 0 and the old geometry
-    unchanged.
-    """
+    """Return extended canvas size, grid offset, and in-bounds strip crop box.
+    The canvas covers grid and band union; key crops must include any left overhang."""
     gap, span, xoff, band_h = strip_band_geometry(deck_controller, grid_w)
     band_left = (grid_w - span) // 2 + xoff
     left_overhang = max(0, -band_left)
@@ -92,11 +66,8 @@ def band_layout(deck_controller: "DeckController", grid_w: int, grid_h: int) -> 
 
 
 def clamp_box(box: tuple[int, int, int, int], width: int, height: int) -> tuple[int, int, int, int]:
-    """box intersected with a width-by-height image, preserving size where it
-    fits. Defends a crop against an image smaller than the layout expects (a
-    dead deck's fallback key size); PIL would otherwise pad the out-of-bounds
-    region with black.
-    """
+    """Clamp a crop box into the image while preserving its size where possible.
+    This prevents PIL black padding when fallback images are smaller than layout."""
     left, top, right, bottom = box
     w = min(right - left, width)
     h = min(bottom - top, height)

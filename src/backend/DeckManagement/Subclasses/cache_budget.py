@@ -61,13 +61,8 @@ class BudgetSource(Protocol):
 
 
 class BudgetParticipant(Protocol):
-    """The surface the sweep reads off a registrant.
-
-    register() stamps the four budget_* fields; the methods come from the
-    registrant itself. An accounting-only registrant answers budget_bytes
-    and nothing more. The evictable gate keeps the sweep off the other two
-    methods for it, exactly as the register() docstring states.
-    """
+    """The registered fields and methods read by the budget sweep.
+    Accounting-only participants implement budget_bytes; eviction methods remain gated."""
 
     budget_label: str
     budget_evictable: bool
@@ -78,15 +73,10 @@ class BudgetParticipant(Protocol):
     def budget_head_ts(self) -> "float | None": ...
     def budget_evict_oldest(self, want_bytes: int, min_age_s: float, floor_bytes: int) -> int: ...
 
-# Tunables.
-
 ENV_CEILING = "DECKARD_IMAGE_CACHE_MB"
 
-# Default ceiling of MemTotal/64, clamped. That is 256 MiB on any host with
-# 16 GiB or more. It does not bind on a typical single-deck rig, whose local
-# caps sum to 96 MiB, so the default-on deliverable is attribution. The
-# mem_telemetry columns and the eviction counters make the ceiling tunable
-# against field data, and one env var arms the enforcement mechanism.
+# Default to MemTotal/64 between 64 and 256 MiB; single-deck local caps total 96 MiB.
+# Telemetry, eviction counters, and ENV_CEILING support field tuning.
 DEFAULT_CEILING_MB = 256
 MIN_DEFAULT_CEILING_MB = 64
 MEM_TOTAL_DIVISOR = 64
@@ -94,11 +84,8 @@ MEM_TOTAL_DIVISOR = 64
 # Per-registrant defaults, overridable at register().
 DEFAULT_MIN_AGE_S = 2.0
 DEFAULT_FLOOR_BYTES = 4 * 1024 * 1024
-# Upper bound on a retuned min-age (set_min_age). It also installs when the
-# right value is not yet knowable, see
-# DeckController.refresh_tile_cache_min_age. Over-protecting a cache costs at
-# most a stale entry surviving a pass, while under-protecting it costs the
-# re-encode the cache exists to remove.
+# Cap retuned min-age and use this value until loop duration is known.
+# Over-protection retains stale entries; under-protection causes re-encoding.
 MAX_MIN_AGE_S = 30.0
 
 # Evict down to this fraction of the ceiling, so a hot loop that keeps
@@ -108,48 +95,28 @@ TARGET_FRACTION = 0.95
 # The periodic pass self-heals drift, e.g. a cache that shrank or a registrant
 # that died. It is also the beat the census and telemetry reads ride on.
 WAKE_INTERVAL_S = 60.0
-# Wake damping. The hysteresis bounds eviction churn and not wake churn.
-# Without it, warm-up wakes the daemon at paint rate, and each wake sums every
-# registrant.
+# Damp wakes because eviction hysteresis does not limit notification churn.
+# Without damping, warm-up scans every registrant at paint rate.
 MIN_WAKE_INTERVAL_S = 0.05
-# Back off harder after a pass that found nothing evictable, that is
-# everything under min-age or everything at floor. Notifications keep arriving
-# at paint rate, and this daemon can provably do nothing about them until
-# entries age.
+# Back off when all entries are too young or all caches are at their floors.
+# Notifications can continue at paint rate before entries become evictable.
 DEGENERATE_BACKOFF_S = 5.0
 # A put must grow its own cache by this much before it is worth a wake.
 NOTIFY_WATERMARK_BYTES = 1024 * 1024
 
-# Entries one pass sheds before it yields. Each pick is a head scan over every
-# registrant plus a per-cache lock. An unbounded pass against a large deficit,
-# such as a ceiling lowered under a warm multi-deck rig with tens of thousands
-# of native key JPEGs, is one long uninterruptible burst contending with every
-# painter's put. Capped, the same work happens in MIN_WAKE_INTERVAL_S-spaced
-# slices, because the pass re-arms the wake before it returns and the next one
-# continues where this one stopped. The cap is sized so the common case, a
-# page change of a few hundred entries, is never split.
+# Cap per-pass head scans to bound lock contention with painters.
+# Larger deficits continue after MIN_WAKE_INTERVAL_S; common page changes fit one pass.
 MAX_PICKS_PER_PASS = 2000
 
-# How often, in picks, a pass re-reads the live sum instead of trusting its
-# own running subtraction. A clear() elsewhere in the process, from a
-# background change or a deck teardown, drops a whole cache at once and frees
-# bytes the pass cannot see. Every pick made against the stale-high total
-# after that evicts another deck's entry for no reason. The re-read costs one
-# budget_bytes() lock per registrant, once per this many evictions.
+# Re-read the live sum periodically because concurrent clear() can make subtraction stale.
+# Each recheck takes one budget_bytes lock per registrant.
 RECHECK_EVERY_PICKS = 64
 
 LOG_INTERVAL_S = 5.0
 
-# Module state.
-
 _lock = threading.Lock()
-# Every registrant, held weakly. A cache dies with the DeckController or media
-# asset that owns it, and this registry must not keep either alive. The label
-# lives on the cache object and not in a side dict, because a dict of cache to
-# label holds a strong ref and defeats the WeakSet, the same way the lane
-# registry in event_dispatch.py documents. A pass snapshots the set as a list
-# under _lock before it iterates, because a WeakSet tolerates a GC-driven
-# removal mid-iteration but not a concurrent add.
+# Hold registrants weakly and keep labels on them to avoid hidden strong references.
+# Snapshot under the lock because WeakSet does not tolerate concurrent additions.
 _registry: "WeakSet[BudgetParticipant]" = WeakSet()
 
 _wake = threading.Event()
@@ -163,11 +130,8 @@ _default_ceiling_cache: int | None = None
 _warned_ceiling_values: set[str] = set()
 
 
-# Ceiling.
-
 def _mem_total_bytes() -> int | None:
-    """MemTotal from /proc/meminfo, or None. mem_telemetry.py sets the house
-    precedent for /proc reads."""
+    """Return MemTotal from /proc/meminfo, or None when unavailable."""
     try:
         with open("/proc/meminfo") as f:
             for line in f:
@@ -179,8 +143,7 @@ def _mem_total_bytes() -> int | None:
 
 
 def default_ceiling_bytes() -> int:
-    """RAM-derived default. The value is cached, because MemTotal does not
-    change and every ceiling_bytes() call reads it."""
+    """Return the cached RAM-derived default because MemTotal does not change."""
     global _default_ceiling_cache
     if _default_ceiling_cache is None:
         total = _mem_total_bytes()
@@ -195,29 +158,19 @@ def default_ceiling_bytes() -> int:
 
 
 def ceiling_bytes() -> int:
-    """Process-wide ceiling on the sum of the evictable caches, read from
-    DECKARD_IMAGE_CACHE_MB.
-
-    0 or a negative value disables global eviction. Every cache's own local
-    cap still applies, so the sum of the local caps still bounds the total.
-    """
-    # Re-read os.environ on every call instead of a snapshot taken at import,
-    # the same as native_tile_cache_max_bytes(). The env legs of the scenarios
-    # must be able to change it inside one process.
+    """Read the process ceiling for evictable caches from DECKARD_IMAGE_CACHE_MB.
+    A nonpositive value disables global eviction but leaves local caps active."""
+    # Re-read the environment so the value can change within one process.
     raw = os.environ.get(ENV_CEILING)
     if raw is None:
         return default_ceiling_bytes()
     try:
         mb = float(raw)
-        # isfinite, not just float(): "nan", "inf" and an overflowing literal
-        # such as "1e400" parse and then raise from the int() below,
-        # ValueError for nan and OverflowError for inf. The daemon then logs
-        # "pass failed" every 5 s forever with enforcement silently off, and
-        # DeckController.__init__ loses the deck.
+        # Reject NaN and infinity before int conversion.
+        # Invalid values must not disable enforcement or abort deck initialization.
         usable = math.isfinite(mb)
     except ValueError:
-        # Bind mb so the name exists on every path. The usable test below
-        # returns before any read of it here.
+        # Bind mb on the exception path before the common validity branch.
         mb = 0.0
         usable = False
     if not usable:
@@ -234,26 +187,13 @@ def ceiling_bytes() -> int:
     return int(mb * 1024 * 1024)
 
 
-# Registration.
-
 def register(cache: BudgetSource, *, label: str, evictable: bool = True,
              min_age_s: float = DEFAULT_MIN_AGE_S,
              floor_bytes: int = DEFAULT_FLOOR_BYTES) -> None:
-    """Enrols cache in the process-wide budget. Idempotent.
-
-    An evictable registrant must implement the whole participant surface,
-    which is budget_bytes, budget_head_ts and budget_evict_oldest. An
-    accounting-only registrant (evictable=False) needs only budget_bytes() and
-    never sheds. It sits in the registry so its footprint shows up in totals()
-    and in the telemetry CSV.
-
-    label has the form group:instance, e.g. encode_memo:AB123. totals() sums
-    by group, and logs name the instance.
-    """
+    """Idempotently register a cache as evictable or accounting-only.
+    Labels use group:instance; evictable caches implement head and eviction methods."""
     try:
-        # The stamp below is what makes cache a BudgetParticipant; the cast
-        # states that hand-off. The two methods beyond budget_bytes stay the
-        # evictable contract, unreached for an accounting-only registrant.
+        # Stamped fields complete the participant hand-off; eviction methods stay gated.
         participant = cast(BudgetParticipant, cache)
         participant.budget_label = label
         participant.budget_evictable = bool(evictable)
@@ -263,20 +203,13 @@ def register(cache: BudgetSource, *, label: str, evictable: bool = True,
             _registry.add(participant)
         _ensure_thread()
     except Exception as e:
-        # Never raise. This runs from DeckController.__init__, where
-        # DeckManager reports any exception as "Failed to initialize deck" and
-        # skips the whole device. A housekeeping feature must not cost a deck.
+        # Registration is housekeeping and must not abort deck initialization.
         log.warning(f"cache-budget: could not register {label!r}: {e}")
 
 
 def unregister(cache: BudgetSource) -> None:
-    """Drops cache from the registry.
-
-    The call is optional. A dropped cache falls out of the WeakSet on its own,
-    and a cleared one reports 0 bytes. The media holders still call it from
-    close(), so a torn-down reader stops counting the instant it closes rather
-    than at the next GC.
-    """
+    """Remove a cache immediately instead of waiting for weak-reference collection.
+    The call is optional because collected or cleared caches stop contributing."""
     try:
         with _lock:
             _registry.discard(cast(BudgetParticipant, cache))
@@ -285,15 +218,8 @@ def unregister(cache: BudgetSource) -> None:
 
 
 def set_min_age(cache: BudgetParticipant, min_age_s: float) -> None:
-    """Retunes a registrant's min-age protection in place.
-
-    Group-A entries are keyed per frame, so a given entry is re-touched once
-    per content-loop period and not once per tick. A flat 2 s leaves a playing
-    video's frame set eligible for eviction exactly one loop before it is
-    needed again. That silently reinstates the per-frame encode the frame
-    identity cache exists to avoid. The tile cache therefore tracks the active
-    loop duration.
-    """
+    """Retune min-age protection to the active content-loop duration.
+    Per-frame entries are touched once per loop, so a shorter age causes repeat encoding."""
     try:
         cache.budget_min_age_s = float(min_age_s)
     except Exception as e:
@@ -303,15 +229,10 @@ def set_min_age(cache: BudgetParticipant, min_age_s: float) -> None:
 def notify_grew() -> None:
     """A cache calls this after it releases its own lock and after it grows
     past its notify watermark."""
-    # This Event.set() is the whole cost of the budget to a painter thread.
-    # There is no global lock, no cross-cache walk and no cross-deck
-    # coordination on the paint path. That constraint shaped every other
-    # decision here. Caches keep their own exact LRU, and this module only
-    # compares their heads.
+    # Painter threads only set this event after releasing their cache lock.
+    # Global locking, cross-cache scans, and cross-deck work stay off the paint path.
     _wake.set()
 
-
-# Introspection.
 
 def _snapshot() -> list[BudgetParticipant]:
     with _lock:
@@ -319,8 +240,7 @@ def _snapshot() -> list[BudgetParticipant]:
 
 
 def totals() -> dict[str, int]:
-    """Maps each label group to the bytes it holds, summed across instances.
-    mem_telemetry and the scenarios read it."""
+    """Map each label group to its bytes summed across instances."""
     out: dict[str, int] = {}
     for cache in _snapshot():
         group = str(getattr(cache, "budget_label", "?")).split(":", 1)[0]
@@ -346,50 +266,27 @@ def evictable_bytes() -> int:
 
 
 def eviction_stats() -> tuple[int, int]:
-    """(cumulative entries evicted by the budget, cumulative bytes freed).
-    Both are monotonic for the life of the process.
-
-    The read takes _lock, because the writes do. Any thread can drive
-    _drain_once(). The daemon drives it, and the scenarios call it directly.
-    A += on a module global is a read-modify-write that two passes
-    interleave, and telemetry then reports a torn pair.
-    """
+    """Return process-lifetime cumulative eviction count and bytes.
+    Lock the pair because concurrent enforcement passes can interleave updates."""
     with _lock:
         return _evictions, _evicted_bytes
 
 
 def degenerate_pass_count() -> int:
-    """Passes that found real pressure but nothing to evict.
-
-    The count includes the ones whose warning the log rate-limiter swallowed,
-    which is one line per WAKE_INTERVAL_S shared by every caller of
-    _drain_once(). It is monotonic for the life of the process. The scenarios
-    assert on it rather than on the log, which cannot separate "not
-    degenerate" from "throttled".
-    """
+    """Return the process-lifetime count of pressured passes with no eviction.
+    Count rate-limited warnings so throttling does not hide degenerate passes."""
     with _lock:
         return _degenerate_passes
 
 
-# The budget thread.
-
 def _ensure_thread() -> None:
-    """Spawns the budget daemon on the first register(), once per process.
-
-    One caller claims the latch under the lock, so exactly one caller spawns,
-    and it releases the latch again when the spawn fails. This is the only
-    place that creates the daemon, and register() swallows what escapes it. A
-    latch left standing over a failed start() leaves enforcement dead for the
-    life of the process, with nothing to retry it. A thread-limit RuntimeError
-    under memory pressure is one such failure. Released, the next registrant
-    tries again.
-    """
+    """Start one process budget daemon under a lock.
+    Release the latch after start failure so the next registrant can retry."""
     global _thread_started
     if _thread_started:
         return
     with _lock:
-        # A fresh, declared read: the outer check narrowed the module flag,
-        # and narrowing cannot see another thread's write before the lock.
+        # Re-read under the lock because another thread can set the module flag.
         started: bool = _thread_started
         if started:
             return
@@ -417,9 +314,7 @@ def _budget_loop() -> None:
         try:
             degenerate = _drain_once()
         except Exception as e:
-            # This thread spawns exactly once and never respawns, so an
-            # escaping exception ends budget enforcement for the life of the
-            # process.
+            # Contain each pass failure because the daemon does not respawn.
             log.warning(f"cache-budget: pass failed: {e}")
             degenerate = True
         next_allowed = time.monotonic() + (
@@ -432,13 +327,8 @@ _last_degenerate_warn_ts = 0.0
 
 
 def _drain_once() -> bool:
-    """One enforcement pass.
-
-    Returns True when the pass made no progress, that is when nothing was
-    evictable, and the caller must back off harder. The scenarios also drive
-    it synchronously, which is why the whole pass is a plain function with no
-    thread affinity of its own.
-    """
+    """Run one thread-independent enforcement pass.
+    Return True when nothing was evictable so the caller uses longer backoff."""
     ceiling = ceiling_bytes()
     caches = [c for c in _snapshot() if getattr(c, "budget_evictable", False)]
     _report_thrash(caches)
@@ -455,30 +345,20 @@ def _drain_once() -> bool:
 
     before = total
     target = int(ceiling * TARGET_FRACTION)
-    # The sum of the floors must never exceed half the ceiling. Otherwise a
-    # many-deck rig, and every small test ceiling, leaves nothing evictable
-    # and this manager goes silently inert.
+    # Keep total floors at or below half the ceiling.
+    # Higher floors can make multi-deck or small-ceiling budgets inert.
     floor_cap = max(0, ceiling // (2 * len(caches)))
 
-    # The per-pass skip set holds a cache that is at its floor, entirely
-    # younger than its min-age, or empty. Such a cache is out for the rest of
-    # this pass, so every loop iteration either strictly decreases total or
-    # grows skip, and both are finite. The periodic re-read below can push
-    # total back up, because painters keep putting, so MAX_PICKS_PER_PASS and
-    # not that argument alone makes termination unconditional. The ids are
-    # stable here, because caches holds strong references for the duration.
-    # Keyed by id(): the sweep excludes exact instances for this pass.
+    # Skip exact cache instances that are empty, at floor, or entirely too young.
+    # Strong snapshot references stabilize ids; MAX_PICKS_PER_PASS guarantees termination.
     skip: set[int] = set()
     freed = 0
     evicted = 0
     picks = 0
     while total > target:
         if picks >= MAX_PICKS_PER_PASS:
-            # Slice the burst (see MAX_PICKS_PER_PASS) and re-arm the wake, so
-            # the next pass picks up where this one stopped. That pass is one
-            # damping interval away and not one 60 s periodic away. This pass
-            # still reports progress, so the caller uses the short interval
-            # and not the degenerate backoff.
+            # Re-arm after a capped burst so work continues after the damping interval.
+            # Report progress so the caller does not use degenerate backoff.
             _wake.set()
             break
         picks += 1
@@ -496,11 +376,8 @@ def _drain_once() -> bool:
         if pick is None:
             break
         floor = min(int(getattr(pick, "budget_floor_bytes", DEFAULT_FLOOR_BYTES)), floor_cap)
-        # Eviction is never a correctness risk. Cache values are immutable
-        # bytes handed out by reference, so refcounting keeps any paint that
-        # already holds one alive across an eviction. Evicting the wrong entry
-        # costs one re-encode, never a wrong or torn frame, so there is no pin
-        # API.
+        # Immutable bytes remain alive while a paint holds a reference.
+        # Eviction can cause re-encoding but cannot produce a wrong or torn frame.
         got = pick.budget_evict_oldest(
             total - target,
             float(getattr(pick, "budget_min_age_s", DEFAULT_MIN_AGE_S)),
@@ -515,10 +392,8 @@ def _drain_once() -> bool:
         freed += got
         evicted += 1
         if picks % RECHECK_EVERY_PICKS == 0:
-            # Re-anchor on the live sum. total is a running subtraction, and a
-            # clear() elsewhere, from a background change or a deck teardown,
-            # frees bytes it cannot see. A long pass then keeps shedding other
-            # decks' entries against a total that is already stale-high.
+            # Re-anchor because concurrent clear() can make the running total stale-high.
+            # Otherwise a long pass can evict other decks unnecessarily.
             total = evictable_bytes()
 
     global _evictions, _evicted_bytes
@@ -548,18 +423,9 @@ def _log_evictions(evicted: int, freed: int, before: int, after: int, ceiling: i
 
 
 def _warn_degenerate(total: int, ceiling: int) -> None:
-    """Over the ceiling with nothing evictable.
-
-    Every registrant sits at its floor or is entirely younger than its
-    min-age. That requires a live working set physically larger than the
-    ceiling protects, so an eviction only re-encodes the frames the painter
-    draws this instant. The pass therefore stops and warns. The sum of the
-    local caps still bounds the total. The operator gets a log line naming the
-    knob, and the thrash tripwire counts any key that comes straight back.
-    """
-    # Count unconditionally, before the rate-limiter below. That limiter stops
-    # a daemon backing off every 5 s from repeating itself 12 times a minute,
-    # which also means the log cannot answer whether a pass was degenerate.
+    """Stop and warn when every pressured cache is at floor or too young.
+    Local caps still bound total use; forced eviction would only re-encode live frames."""
+    # Count before rate limiting so suppressed logs do not hide degenerate passes.
     global _degenerate_passes
     with _lock:
         _degenerate_passes += 1
@@ -579,13 +445,8 @@ def _warn_degenerate(total: int, ceiling: int) -> None:
 
 
 def _report_thrash(caches: list[BudgetParticipant]) -> None:
-    """Thrash tripwire. A key that comes straight back after the budget shed
-    it means the ceiling binds against a live working set.
-
-    The failure mode is a re-encode per frame and never corruption, but it
-    must never be silent. The cache counts it, which is a dict lookup on the
-    put path, and this function reports it, so the put path never does I/O.
-    """
+    """Report keys re-admitted after eviction as live-working-set thrash.
+    Caches count without I/O on put; this reporter performs the warning."""
     for cache in caches:
         take = getattr(cache, "budget_take_thrash_count", None)
         if take is None:

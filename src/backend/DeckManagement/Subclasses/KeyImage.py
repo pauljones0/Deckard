@@ -20,66 +20,31 @@ if TYPE_CHECKING:
     from src.backend.DeckManagement.deck_controller.inputs import ControllerInput
 
 class InputImage(SingleKeyAsset):
-    # Without a fit at load, static media retains the source-resolution RGBA
-    # forever, which is tens of MB for a photo. The stock UI caps
-    # ImageLayout.size at 200% (ImageEditor.py SizeRow, SpinButton(0, 200, 1)),
-    # so 2x the tile size is the largest composed size a well-behaved layout
-    # asks for. This constant sizes the one-time fit at load below, and the
-    # fit budget is 2x it (4x the tile), so a 200% layout never re-decodes.
-    # It is not a hard cap. A plugin calls set_action_layout() or
-    # set_media(size=...) with an unvalidated float, and it can do so after
-    # this constructor runs. _ensure_fits_composed() then re-decodes from path.
+    # Fit for the UI's 200% maximum and retain 2x resolution headroom.
+    # Unbounded plugin layouts can trigger a later source re-decode.
     MAX_LAYOUT_SCALE = 2.0
 
     def __init__(self, controller_input: "ControllerInput[Any]", image: Image.Image, path: str | None = None):
-        """
-        Initialize the class with the given controller key, image, fill mode, size, vertical alignment, and horizontal alignment.
-
-        Parameters:
-            controller_key (ControllerKey): The key of the controller.
-            image (Image.Image): The image to be displayed.
-            path (str, optional): The source file that image was decoded from,
-                if any. None for plugin-supplied in-memory images and SVG
-                thumbnails, which have no cheap higher-resolution re-decode.
-                Kept so a later composed layout that needs more resolution
-                than the fitted copy retains can re-decode from source instead
-                of upscaling a blurry copy.
-            fill_mode (str, optional): The mode for filling the image. Defaults to "cover".
-            size (float, optional): The size of the image. Defaults to 1.
-            valign (float, optional): The vertical alignment of the image. Defaults to 0. Ranges from -1 to 1.
-            halign (float, optional): The horizontal alignment of the image. Defaults to 0. Ranges from -1 to 1.
-        """
+        """Create an image asset and retain its source path for larger re-decodes.
+        In-memory and SVG images use None and can only upscale the retained copy."""
         super().__init__(controller_input)
         image = image.convert("RGBA")
 
-        # One-time enhancement at load. This constructor runs once per page or
-        # state load, well before per-frame label compositing, and covers key
-        # and dial static media. At the default factor the enhance call is
-        # skipped. It applies to the raw media layer only. The caller
-        # composites labels on top of get_raw_image(), so text is never
-        # re-tinted. Store the factor, because _ensure_fits_composed()
-        # reapplies it to a fresh decode.
+        # Apply display saturation once to raw media before label compositing.
+        # Retain the factor for later source re-decodes.
         self._saturation = self.deck_controller.get_display_saturation()
         if abs(self._saturation - 1.0) > 0.001:
             image = ImageEnhance.Color(image).enhance(self._saturation)
 
         self.path = path
-        # Native size of the source file, captured on the first re-decode in
-        # _ensure_fits_composed(). It is None until then, because the
-        # constructor's image argument may already be a fitted copy, whose
-        # size is not the source's.
+        # Capture native source size on the first re-decode; the input can be fitted.
         self._source_native_size: tuple[int, int] | None = None
-        # close() clears this to None and then deletes it. Every reader guards
-        # on both hasattr and None.
+        # Readers guard both None and deletion after close().
         self.image: Image.Image | None = self._fit_to_budget(image)
 
     def _budget_size(self) -> "tuple[int, int] | None":
-        """The largest resolution this class retains without a later re-decode.
-
-        None means there is no visual target, e.g. a dial input_image on a
-        non-touch deck, where get_image_size() is (0, 0). A fit to a near-zero
-        budget there loses resolution and saves no memory, so those stay unfit.
-        """
+        """Return the largest retained resolution before a later re-decode.
+        Return None without a visual target to avoid a lossy near-zero fit."""
         tile_w, tile_h = self.controller_input.get_image_size()
         if tile_w <= 0 or tile_h <= 0:
             return None
@@ -93,21 +58,13 @@ class InputImage(SingleKeyAsset):
         if budget is None:
             return image
         if image.width > budget[0] or image.height > budget[1]:
-            # thumbnail() mutates in place, keeps the aspect ratio, and does
-            # nothing when the image already fits. The width and height guard
-            # above only avoids the call and the draft probe in the common
-            # case.
+            # thumbnail() mutates in place and preserves the aspect ratio.
             image.thumbnail(budget, Image.Resampling.LANCZOS)
         return image
 
     def _ensure_fits_composed(self) -> None:
-        """Re-decodes from path when the composed layout outgrows the image.
-
-        set_action_layout() and set_media() can change the layout after
-        __init__, and both take an unvalidated size float with no upper bound.
-        Does nothing when there is no source file, e.g. an in-memory or SVG
-        image. Those keep upscaling the retained copy at composite time.
-        """
+        """Re-decode when an unbounded composed layout outgrows the image.
+        Without a source path, in-memory and SVG images upscale the retained copy."""
         if not self.path:
             return
         if not hasattr(self, "image") or self.image is None:
@@ -122,18 +79,8 @@ class InputImage(SingleKeyAsset):
         size = layout.size if layout.size is not None else 1
         needed_w = int(tile_w * max(size, 0))
         needed_h = int(tile_h * max(size, 0))
-        # Clamp the ask to what the source delivers. When the source is
-        # smaller than the composed size (a 64px icon on 72px tiles, or an
-        # image whose fitted minor dimension is sub-tile), no re-decode can
-        # satisfy it, and every composite re-runs Image.open, convert and
-        # enhance from disk. That is per-frame disk I/O on background-video
-        # pages.
-        #
-        # The native size is memoized from the first re-decode. If something
-        # replaces the file at self.path with a larger image, this clamp keeps
-        # serving the old resolution. A given path is a stable source, which
-        # the whole re-decode-from-path fallback already relies on. A real
-        # media change builds a new InputImage, not an in-place file swap.
+        # Clamp to memoized native size so undersized sources do not re-decode each frame.
+        # Source paths must remain stable; media changes create a new InputImage.
         if self._source_native_size is not None:
             needed_w = min(needed_w, self._source_native_size[0])
             needed_h = min(needed_h, self._source_native_size[1])
@@ -151,20 +98,14 @@ class InputImage(SingleKeyAsset):
         if abs(self._saturation - 1.0) > 0.001:
             fresh = ImageEnhance.Color(fresh).enhance(self._saturation)
 
-        # Re-fit against a budget sized to the layout that asked for more, not
-        # to the constructor's fixed 200% assumption. A plugin that requests
-        # 500% must not force full source resolution on every later tick, and
-        # the retained copy still tracks what is live with the same 2x
-        # headroom as the initial fit.
+        # Refit for the requesting layout with 2x headroom.
+        # Large plugin scales must not retain full source resolution unnecessarily.
         budget = (needed_w * 2, needed_h * 2)
         if fresh.width > budget[0] or fresh.height > budget[1]:
             fresh.thumbnail(budget, Image.Resampling.LANCZOS)
 
-        # Do not close the swapped-out image. The media thread may still be
-        # compositing the reference that get_raw_image() handed it, and a
-        # close raises "Operation on closed image" under load. Drop the
-        # reference instead. The collector frees it once the last composite
-        # releases it.
+        # Do not close the old image while the media thread can still composite it.
+        # Drop the reference so collection waits for the last composite.
         self.image = fresh
 
     @override

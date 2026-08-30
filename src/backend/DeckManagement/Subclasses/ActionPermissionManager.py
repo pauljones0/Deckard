@@ -68,18 +68,13 @@ class ActionPermissionManager:
         self.reload_pages(reload_pages, reload_self)
 
     ## Input dict
-    # deck_controller.active_page is optional, because no page is loaded yet
-    # or a page load failed. Every accessor below binds it once and stops on
-    # None. A read degrades to the empty dict that the .get(..., default)
-    # callers handle. A write is dropped, because there is nothing to persist
-    # it to.
+    # Reads return empty data and writes are dropped when no active page exists.
     def get_input_dict(self) -> dict[str, Any]:
         active_page = self.deck_controller.active_page
         if active_page is None:
             log.warning(f"No active page on deck {self.deck_controller.serial_number()}; returning empty input dict")
             return {}
-        # get_dict answers None for an input the page does not carry, and the
-        # readers below walk the result, so an absent input reads as empty.
+        # Treat an input absent from the page as empty.
         return self.input_identifier.get_dict(active_page.dict) or {}
 
     def set_input_dict(self, new_input_dict: dict[str, Any]) -> None:

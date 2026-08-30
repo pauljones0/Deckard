@@ -50,26 +50,17 @@ if TYPE_CHECKING:
 
 
 def apply_rotation(controller: "DeckController", value: int) -> None:
-    """Turn the deck to value degrees and rebuild what the old orientation
-    owned. DeckController.set_rotation is the only caller, and it runs on the
-    main loop."""
+    """Set rotation and rebuild orientation-owned state on the main loop."""
     controller.deck.set_rotation(value)
-    # Both native cache keys hold the rotation, so nothing stale can be
-    # served. This clear is memory hygiene, because every entry encoded for
-    # the old rotation is dead as soon as the rotation changes.
+    # Rotation in native cache keys prevents stale reads; clear dead old-orientation entries.
     controller.clear_encoded_key_caches()
 
-    # Under the page lock, so a page load cannot interleave with the swap and
-    # load a page into a set that is half replaced. The page load below runs
-    # outside it: load_page takes the same lock itself, and its plugin-facing
-    # tail marshals onto the main loop.
+    # Swap under the page lock so no load observes a partial input set.
+    # Call load_page outside because it takes the same lock and marshals plugin work.
     with controller._load_page_lock:
         _swap_input_set(controller)
 
-    # The window rebuilds its key grid for the new geometry, from the input
-    # set the swap just published. This is synchronous on the main loop,
-    # where the only caller runs, so the load below repaints into the new
-    # grid and not the transposed old one.
+    # Rebuild the window synchronously from the published inputs before page repaint.
     ui_port.get().on_deck_layout_changed(controller)
 
     if not controller.get_alive():
@@ -78,38 +69,16 @@ def apply_rotation(controller: "DeckController", value: int) -> None:
 
 
 def _swap_input_set(controller: "DeckController") -> None:
-    """Publish a fresh input set for the new layout and retire the old one.
-
-    This is the pattern ScreenSaver.show() uses to confiscate an input set,
-    for the same reasons. A gesture in flight dies with the retired input:
-    the physical release lands on the replacement, so a retired key's hold
-    timer would otherwise fire into its pinned down-time snapshot after the
-    finger left, and pin that page's action objects for good. The touchscreen
-    keeps no gesture state, because its events arrive pre-classified and
-    single-shot.
-
-    The retired set is released on the media thread as a control message, and
-    never closed here. A tick that began just before the swap still renders
-    against the retired objects, through the key images and videos they hold,
-    so the sole writer is what serializes the release against that render. A
-    control message carries no page affinity, so the page load that follows
-    cannot drop it.
-    """
+    """Publish a complete new input set, cancel retired gestures, and defer release to the media thread.
+    The sole writer must serialize release with any tick still rendering retired media."""
     retired = controller.inputs
     for key in retired.get(Input.Key, []):
         key.cancel_gesture()
     for dial in retired.get(Input.Dial, []):
         dial.cancel_gesture()
 
-    # Drop the pending window markers with the set they name. Each marker is
-    # an identifier of the old grid, and the window's own grid indexes its
-    # button array by those coordinates. At a quarter turn the array
-    # transposes, so a marker left here sends KeyGrid.load_from_changes past
-    # the end of it. The raise escapes the turn after the old grid was
-    # already removed, and the window is left with no key grid at all.
-    # Nothing is lost by dropping them: every marker names a position the
-    # deck no longer has, and the page load that ends the turn repaints the
-    # whole new grid.
+    # Drop old-grid window markers because quarter-turn coordinates can exceed the new array.
+    # The following page load repaints the complete new grid.
     controller.ui_image_changes_while_hidden.clear()
 
     # init_inputs builds then swaps, so the concurrent media writer sees the

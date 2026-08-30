@@ -23,21 +23,15 @@ import globals as gl
 
 @lru_cache(maxsize=128)
 def _load_font(font_path: str, font_size: float, encoding: str) -> ImageFont.FreeTypeFont:
-    # ImageFont.truetype re-reads the file and re-parses the FreeType face on
-    # every call. LabelManager._draw_static_label caches the rasterized label
-    # per composed label, so this is off the per-frame path. get_font() still
-    # runs per label per composite to build that cache key, and the scroll
-    # path measures through it.
+    # Cache parsed FreeType faces for per-composite keys and scroll measurements.
+    # Rasterized static labels use a separate cache.
     return ImageFont.truetype(font_path, font_size, encoding=encoding)
 
 
 @lru_cache(maxsize=128)
 def _is_symbol_font(font_path: str) -> bool:
-    """Check if font uses symbol encoding (e.g., Webdings, Wingdings).
-
-    A symbol font has a cmap table with platformID=3 (Windows) and
-    platEncID=0 (Symbol encoding). The lru_cache holds the results.
-    """
+    """Return whether the font has a Windows symbol-encoding cmap table.
+    Cache results by font path."""
     try:
         font = TTFont(font_path)
         for table in font['cmap'].tables:
@@ -54,14 +48,10 @@ if TYPE_CHECKING:
 
 @dataclass
 class KeyLabel:
-    # The owning input, of any kind. Dial labels pass a ControllerDial, and
-    # LabelManager is typed on the base, so the declaration names the shared
-    # base and not ControllerKey. This class carries the value and never
-    # reads it.
+    # Use the shared input base because keys and dials both own labels.
     controller_input: "ControllerInput[Any]"
     text: str | None = None
-    # Pango sizes are 1024ths, so a chooser hands back a fractional size
-    # and the persisted settings keep it.
+    # Persist the fractional size returned from Pango's 1024th-unit scale.
     font_size: float | None = None
     font_name: str | None = None
     font_weight: int | None = None
@@ -76,9 +66,8 @@ class KeyLabel:
         if font_name is None or font_name == "":
             font_name = gl.fallback_font
 
-        # font_resolver.resolve() carries its own lru_cache on these
-        # attributes. Size does not affect which file it picks, so size is not
-        # part of the key. It returns None only when fontconfig is unreachable.
+        # Resolution is cached by file-selection attributes; size does not select a file.
+        # None means fontconfig is unavailable.
         return font_resolver.resolve(font_name, self.font_weight, self.style)
 
     def clear_values(self) -> None:
@@ -96,11 +85,8 @@ class KeyLabel:
         font_path = self.get_font_path()
         font_size = self.font_size
         if font_path is None or font_size is None:
-            # Rasterizing needs a resolved file and a size.
-            # DeckController.inject_defaults fills in font_size before
-            # anything renders. A missing path means fontconfig is
-            # unreachable, with no libfontconfig and no fc-match binary. Raise
-            # here instead of failing inside PIL's truetype loader.
+            # Defaults provide size before rendering; a missing path means fontconfig failed.
+            # Raise here instead of failing inside PIL's loader.
             raise RuntimeError(
                 f"cannot load a font for this label (path={font_path!r}, size={font_size!r})")
         encoding = "symb" if _is_symbol_font(font_path) else "unic"
