@@ -1,12 +1,4 @@
-"""
-A BaseException from on_ready must not lose the redraw.
-
-Page._run_ready_callbacks catches Exception around on_ready and opens the ready
-gate in a finally, but runs the redraw (on_update) after the try. A BaseException
--- which the except does not catch -- then unwinds past the redraw, so the action
-never repaints even though its gate is open. on_update belongs in the finally, so
-it runs whatever on_ready raised.
-"""
+"""Run the redraw and open the ready gate when on_ready raises BaseException."""
 
 # fixtures must import first: it points argv at an isolated data dir.
 import fixtures

@@ -1,24 +1,5 @@
-"""
-The loader pool tells a wedged load task from one that never left the queue.
-
-The batch deadline makes both look the same: neither future has a result when
-it expires. They are not the same failure. A task that started and did not
-return holds a worker of the loader pool, and every later page load queues
-behind it, so its pool has to go. A task still queued behind that one is only
-late, and cancelling it, which is what replacing the pool used to do to the
-whole queue, would leave that input unloaded for the life of the page, because
-nobody re-submits it.
-
-So the deadline sweep asks the executor which futures are running: it names
-only the started-and-overdue tasks, replaces the executor for those, and lets
-the queue drain onto the abandoned executor instead of cancelling it. The
-drain also has to respect a page switch, and the refused-submit path has to
-say so when an input never reaches the pool at all.
-
-The mechanism sits in DeadlinePool and the wiring in load_all_inputs. This
-scenario drives the pair through the controller, which is the shape a page
-load has.
-"""
+"""Distinguish wedged loader tasks from queued tasks at the batch deadline.
+Replace only for running overdue work, preserve the old queue, and report refusals."""
 import fixtures  # noqa: F401  (import first: sets up the isolated data dir)
 
 import threading
@@ -46,12 +27,8 @@ STUCK_HINT = "a plugin callback is likely blocked"
 
 
 def wedged_loader_pool(boot_pool, prefix: str) -> DeadlinePool:
-    """A one-worker stand-in for the deck's loader pool, worded like it.
-
-    One worker is what makes exactly one task start and the rest stay queued.
-    The wording comes from the pool the controller built, so the report lines
-    this scenario reads are the ones a user gets.
-    """
+    """Build a one-worker pool so one task runs while all others stay queued.
+    Reuse the controller pool's wording so checks inspect user-visible reports."""
     return DeadlinePool(
         max_workers=1,
         thread_name_prefix=prefix,
@@ -61,11 +38,7 @@ def wedged_loader_pool(boot_pool, prefix: str) -> DeadlinePool:
 
 
 class LogCapture:
-    """Collect loguru messages for the with block.
-
-    The wedge path reports itself only through the log, and which inputs it
-    names is the behaviour under test.
-    """
+    """Collect log messages that identify wedged, late, and refused inputs."""
 
     def __init__(self, level: str = "INFO"):
         self._level = level
@@ -83,11 +56,8 @@ class LogCapture:
         return "".join(self.records)
 
     def listed(self, tail: str) -> str:
-        """Return the bracketed input list of the line ending in tail.
-
-        Empty when no such line was logged. An identifier holds ", " itself,
-        so callers count "Input(" rather than splitting the region.
-        """
+        """Return the bracketed input list for a matching report line.
+        Input identifiers contain commas, so callers count ``Input(`` entries."""
         head = "Loading inputs ["
         for record in self.records:
             start = record.find(head)
@@ -106,12 +76,8 @@ def submit_order(controller) -> list:
 
 
 def quiesce(counter, quiet: float = 0.25, timeout: float = 5.0) -> None:
-    """Wait until counter() holds still for quiet seconds.
-
-    The controller's own boot load is still in flight when __init__ returns.
-    A case that armed its fake loader into that batch would wedge the wrong
-    one.
-    """
+    """Wait until a counter stays unchanged for the requested quiet period.
+    This keeps the fake loader out of the controller's in-flight boot load."""
     deadline = time.monotonic() + timeout
     last = counter()
     steady_since = time.monotonic()
@@ -152,9 +118,8 @@ class FakeLoader:
 
 
 def case_wedge_names_only_the_started_task() -> None:
-    """A started-and-overdue task is named, counted and costs the pool. The
-    tasks queued behind it are neither named nor cancelled, and they load once
-    the wedge clears."""
+    """Replace for one started overdue task without cancelling queued tasks.
+    Only the running task is wedged; queued tasks load after it clears."""
     controller = make_headless_controller(serial="load-wedge-1")
     try:
         order = submit_order(controller)
@@ -181,11 +146,8 @@ def case_wedge_names_only_the_started_task() -> None:
             controller.load_all_inputs(controller.active_page)
             stall = time.monotonic() - began
 
-        # The media-player thread waits out the deadline and no more. The
-        # deadline covers the batch and not the task: a wait spent per task
-        # would multiply the stall by the number of overdue inputs, and this
-        # is the sole writer's thread, so the ceiling has to be a small
-        # multiple of one deadline and never a fraction of the hang.
+        # The sole writer waits for one batch deadline, not one deadline per task.
+        # Allow a small scheduling margin but not a fraction of the hang duration.
         assert DEADLINE <= stall < 3 * DEADLINE, (
             f"load_all_inputs stalled {stall:.2f}s while loading {len(order)} inputs; "
             f"one batch-absolute {DEADLINE}s deadline is the whole budget, and a "
@@ -268,9 +230,7 @@ def case_healthy_batch_keeps_its_pool() -> None:
             f"expected every input loaded, got {len(loader.finished)} of {len(order)}")
         assert not capture.listed("did not finish within"), (
             f"a healthy batch must log no wedge. Log was:\n{capture.text()}")
-        # An empty bucket must not reach the log at all. A report line naming
-        # nobody is noise on every page switch, and it trains a reader to
-        # skip the line that names somebody.
+        # Empty report buckets must stay silent.
         assert not capture.listed("had not started within"), (
             f"a healthy batch has no late input, so it must log no late line. "
             f"Log was:\n{capture.text()}")
@@ -284,14 +244,8 @@ def case_healthy_batch_keeps_its_pool() -> None:
 
 
 class RefusingExecutor:
-    """Wraps an executor and refuses one input's submit with a given
-    RuntimeError.
-
-    Thread exhaustion and a shut-down pool both raise RuntimeError out of
-    submit, and they mean opposite things to the caller. The refusal sits in
-    the executor, which is where the real one comes from, so the pool's own
-    split runs.
-    """
+    """Refuse one executor submission with a selected RuntimeError.
+    This distinguishes thread exhaustion from routine pool shutdown."""
 
     def __init__(self, inner, refuse_on: str, error: RuntimeError) -> None:
         self._inner = inner
@@ -323,10 +277,8 @@ def refusing_loader_pool(boot_pool, width: int, refuse_on: str, error: RuntimeEr
 
 
 def case_a_refused_submit_is_reported_but_a_closing_pool_is_not() -> None:
-    """An input the pool would not take never reaches the deadline sweep, so
-    the sweep can neither wait for it nor name it. Thread exhaustion says so
-    in the log; a pool shutting down under close() is routine and says
-    nothing."""
+    """Report thread-exhaustion refusals but keep shutdown refusals silent.
+    A refused input never enters the deadline sweep."""
     controller = make_headless_controller(serial="load-wedge-refuse")
     try:
         order = submit_order(controller)
@@ -376,13 +328,8 @@ def case_a_refused_submit_is_reported_but_a_closing_pool_is_not() -> None:
 
 
 def case_page_switch_during_the_drain_loads_nothing() -> None:
-    """The late drain runs on a pool the controller no longer owns, against a
-    page that may already be gone. Every drained task re-checks the page
-    generation, so a switch while the wedge holds the pool lands nothing.
-
-    Keeping the queue instead of cancelling it is what makes this reachable:
-    before, those tasks were cancelled and could not paint anything.
-    """
+    """Require late queued tasks to recheck the page generation before loading.
+    A page switch while a wedge holds the old pool must make the drain inert."""
     controller = make_headless_controller(serial="load-wedge-gen")
     try:
         order = submit_order(controller)
@@ -393,9 +340,7 @@ def case_page_switch_during_the_drain_loads_nothing() -> None:
         loader.install(controller)
         loader.armed.set()
 
-        # Count the tasks that reach the generation guard, separately from the
-        # ones that get past it into the load. The first number says the
-        # drain ran and finished; the second says what it was allowed to do.
+        # Count guard entries separately from loads to prove the drain ran but loaded nothing.
         reached: list[str] = []
         guard = controller._load_input_if_current
 
@@ -421,9 +366,8 @@ def case_page_switch_during_the_drain_loads_nothing() -> None:
         assert loader.started == [str(hung.identifier)], (
             f"only the hung task can have started so far, got {loader.started}")
 
-        # Switch pages the way load_page does, under the same lock. A full
-        # load_page here would queue its own batch onto the media thread and
-        # race the drain this case is watching.
+        # Advance the generation under the same lock as load_page.
+        # A full load would queue another batch and race the drain under test.
         with controller._page_gen_lock:
             controller._page_load_generation += 1
 
@@ -441,14 +385,8 @@ def case_page_switch_during_the_drain_loads_nothing() -> None:
 
 
 def case_the_action_pool_takes_the_lifecycle_only() -> None:
-    """The deck's other pool is wired without the deadline and without the
-    replacement, and a wedged action callback must leave it exactly as it is.
-
-    A ready callback that a pool operation cancelled never runs the finally
-    that opens its action's tick and update gates, so that action is dead for
-    the life of the page. The wedge policy here is the per-input stuck-tick
-    warning instead, and it needs the pool to keep every callback it took.
-    """
+    """Keep the action pool unchanged when one callback wedges.
+    Cancelling queued ready callbacks would prevent their tick and update gates from opening."""
     controller = make_headless_controller(serial="action-pool-1")
     hang = threading.Event()
     try:
@@ -465,9 +403,7 @@ def case_the_action_pool_takes_the_lifecycle_only() -> None:
         assert pool.submit(lambda: ran.append("queued")) is not None, (
             "the action pool must take a second callback")
 
-        # Long enough that a deadline of the loader pool's order would have
-        # expired several times over, and a page load runs a whole batch on
-        # the other pool meanwhile.
+        # Wait through multiple loader deadlines while the separate loader pool runs a batch.
         controller.LOAD_INPUTS_TIMEOUT = DEADLINE
         controller.load_all_inputs(controller.active_page)
         time.sleep(DEADLINE * 2)

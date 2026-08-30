@@ -1,13 +1,7 @@
-"""
-Regression test for a first launch behind a dead or rate-limited store.
+"""Require onboarding and missing-action UI to recover from an unavailable store."""
 
-StoreBackend.get_all_plugins answers an Err when every store is unreachable.
-Both legs run unbound over duck-typed selves.
-"""
-
-# PluginRecommendations.load shows the error state instead of iterating that
-# Err, and an onboarding install failure reaches an error toast on the
-# surviving main window.
+# Recommendations must show the error state for Err results.
+# Onboarding install failures must reach the surviving main window.
 import types
 
 import fixtures  # noqa: F401  (isolates DATA_PATH before src imports)
@@ -89,9 +83,7 @@ def check_recommendations_offline() -> None:
 
 
 def check_get_plugin_for_id_offline() -> None:
-    """A headless backend check over an unreachable store. get_all_plugins
-    answers an Err, and get_plugin_for_id narrows it to None. Iterating that
-    Err raises TypeError, which each caller's @log.catch swallows."""
+    """Require get_plugin_for_id to convert an unavailable-store Err to None."""
     from src.backend.Store.StoreBackend import StoreBackend
     from src.backend.Store.store_result import Err, ErrReason
 
@@ -129,11 +121,7 @@ class _SpinnerRecorder:
 
 
 def check_missing_row_spinner_recovers() -> None:
-    """The real MissingRow.install over a backend whose store is unreachable.
-
-    The failure must reach the failed label and the error styling. A raise
-    inside install lands in its @log.catch, which leaves the label on the
-    installing text and the spinner turning."""
+    """Require MissingRow failure styling and stop its spinner when offline."""
     import types as _types
 
     from src.backend import timer_wheel
@@ -187,11 +175,8 @@ def check_missing_row_spinner_recovers() -> None:
 
 
 def check_missing_row_names_the_failed_dependency_class() -> None:
-    """MissingRow installs a plugin and whatever its manifest names. When a
-    pack it pulled in is what failed, the row label alone says nothing about
-    which item failed or that anything landed, so a detailed notification
-    fires and it names the class of the item that actually failed, not the
-    plugin the user clicked."""
+    """Name the actual failed dependency class in MissingRow notifications.
+    A pack failure must not be reported as failure of the selected plugin."""
     import types as _types
 
     from src.backend import timer_wheel
@@ -325,9 +310,7 @@ def check_install_failures_toast() -> None:
         loading_box=loading_box,
         recommendations=types.SimpleNamespace(get_selected_plugins=lambda: [plugin_data]),
         close=lambda: None,
-        # The real onboarding page is a dialog, and the install prompts hang
-        # on the window presenting it. Nothing presents this stand-in, which
-        # is the None a real unpresented dialog also answers.
+        # Match an unpresented onboarding dialog, whose root is None.
         get_root=lambda: None,
     )
     fake_self = types.SimpleNamespace(onboarding_window=onboarding_window)

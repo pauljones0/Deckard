@@ -1,10 +1,5 @@
-"""
-The default on_update does not re-enter on_ready.
-
-ActionCore's default on_update calls on_ready for compatibility. It skips that
-call, and logs a debug line, while the initial on_ready is still in flight.
-After on_ready_finished is set, the compat call runs on every on_update again.
-"""
+"""Gate the default on_update compatibility call while initial on_ready runs.
+After readiness, each on_update must call on_ready again."""
 
 # An action that overrides on_update keeps its own body.
 import fixtures  # noqa: F401  (import first: sets up the isolated data dir)
@@ -22,9 +17,7 @@ COMPAT_SKIP_MARKER = "on_update compat on_ready skipped"
 
 
 class _LogCapture:
-    """Adds a capturing loguru sink for the with block, so the assertions can
-    read the skip line. A silent skip looks like a hung on_ready to a plugin
-    author."""
+    """Capture the debug line that explains a skipped compatibility call."""
 
     def __init__(self, level: str = "DEBUG"):
         self._level = level
@@ -43,9 +36,7 @@ class _LogCapture:
 
 
 class CompatAction(ActionCore):
-    """Does not override on_update, so the compat default is the code under
-    test. on_ready blocks on a gate and records entries and peak
-    concurrency."""
+    """Use the compatibility on_update while recording blocked on_ready concurrency."""
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -146,9 +137,8 @@ def check_compat_call_gated() -> int:
             print(f"FAIL(a): {action.ready_concurrent_max} concurrent on_ready bodies across the whole sequence")
             return 1
 
-        # The compat path runs per call once the ready completed. The
-        # comparison allows extra calls, because the controller's background
-        # dispatch lands its own updates here.
+        # Require one compatibility call per explicit update after readiness.
+        # Allow extra calls from the controller's background dispatch.
         before = action.ready_entries
         action.on_update()
         action.on_update()
@@ -211,9 +201,7 @@ def _prefix_on_update(self):
 
 
 def check_mutation_proof() -> int:
-    """Puts the ungated body back on the real class and repeats the mid-ready
-    probe. The observation must flip; a leg that survives its own mutation
-    pins nothing."""
+    """Restore the ungated body and require the mid-ready result to reverse."""
     saved_on_update = ActionCore.on_update
     ActionCore.on_update = _prefix_on_update
 

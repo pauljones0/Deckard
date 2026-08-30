@@ -1,23 +1,5 @@
-"""Regression test for the window loaders that moved to the background pool.
-
-The store tabs, the onboarding plugin list, the page importer and the custom
-asset chooser once each spawned a raw one-off thread for their load work. They
-now submit that work through run_in_background, so the shared pool logs any
-failure and the quit path bounds the wait.
-
-This scenario proves the properties the conversion relies on:
-  - run_in_background runs the work OFF the caller thread, on a pool worker,
-    and hands back at once. A caller on the GTK main thread is not blocked.
-  - a failure inside pool work is logged, not swallowed.
-  - the worker still reaches the main loop through GLib.idle_add, and the idle
-    callback runs once.
-  - the real StorePage.ensure_loaded and PluginRecommendations.on_retry_clicked
-    call sites submit their load to the pool, not to a raw thread.
-
-The importer and the custom asset chooser build their windows the same way,
-through run_in_background(method), but a construction of either needs a
-display, so the shared pattern and the two real call sites below cover them.
-"""
+"""Check StorePage and PluginRecommendations use the shared background pool.
+Pool work runs off-thread, returns promptly, logs failures, and marshals one callback."""
 import threading
 import types
 
@@ -135,9 +117,7 @@ def test_worker_reaches_main_once() -> None:
 
 
 def test_store_page_ensure_loaded_uses_the_pool() -> None:
-    """The real StorePage.ensure_loaded submits the load to the pool. It binds
-    the real methods to a duck-typed self, because this harness builds no GTK
-    widget."""
+    """Bind StorePage methods to a stub and require pool-based loading without GTK."""
     from src.windows.Store.StorePage import StorePage
 
     ran_on: list[str] = []

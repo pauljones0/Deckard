@@ -1,18 +1,5 @@
-"""One locale-selection policy serves both locale managers.
-
-The resolver owns the selection ladder; the managers are storage adapters
-that delegate to it. These checks pin:
-
-  (1) The ladder: an exact match wins, a sibling of the primary language
-      code beats the fallback, and the fallback closes it, including on an
-      empty availability list.
-  (2) The OS-default path selects the fallback when the OS reports no
-      locale, and the OS locale when it reports one.
-  (3) Real delegation: both managers answer best-match questions through
-      the shared resolver function, the legacy manager applies it inside
-      set_language, and the modern manager's set_language deliberately
-      does not resolve, which is its long-standing contract.
-"""
+"""Select exact, language-sibling, then fallback locales, including empty availability.
+OS absence falls back; both managers delegate matches, while only legacy set resolves."""
 import fixtures  # noqa: F401  (import first: isolated --data tempdir)
 
 import json

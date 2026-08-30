@@ -1,11 +1,5 @@
-"""One corrupt file must not abort the whole migration or startup.
-
-Each migrator iterated pages, decks and plugins with a bare json.load, so one
-corrupt file raised and stopped the rest, and an unhandled raise in one
-migrator aborted startup. Now each item is isolated: a corrupt or unreadable
-file is left in place and logged, the good files still migrate, and a
-migrator that raises leaves itself pending without taking down the run.
-"""
+"""Keep corrupt or unreadable items unchanged and logged while good files migrate.
+A failing migrator stays pending without aborting startup."""
 import json
 import os
 import shutil

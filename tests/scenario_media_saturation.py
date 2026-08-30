@@ -1,10 +1,5 @@
-"""
-Unit-tier scenario for the display-saturation factor on two media paths.
-
-KeyGIF decodes and fits every frame at construction, so it bakes the factor
-into each frame there. The touchscreen fitted-background memo keys on the
-factor. _read_display_saturation validates the persisted value.
-"""
+"""Check display saturation for GIF frames and touchscreen backgrounds.
+Persisted factors must be finite and the fitted-background cache must key on them."""
 
 # Both paths run through the production classes with stubs for the surface each
 # one reads.
@@ -53,8 +48,7 @@ class _StubControllerKey:
 
 
 def _make_test_gif(path: str, size=(96, 96), n_frames: int = 4) -> None:
-    """Animated GIF with a transparent background and a vivid opaque disc per
-    frame. The colors make a 1.3 boost and any alpha loss both measurable."""
+    """Create vivid transparent GIF frames that expose saturation and alpha changes."""
     frames = []
     colors = [(220, 30, 30, 255), (30, 200, 40, 255), (40, 60, 220, 255), (230, 210, 20, 255)]
     for i in range(n_frames):
@@ -131,9 +125,7 @@ class _StubControllerTouch:
 
 
 def _make_touch_state(saturation: float) -> ControllerTouchScreenState:
-    """Build the state through __new__ with only the attributes
-    _get_fitted_background_image reads. The full __init__ needs a real deck
-    graph."""
+    """Build only the state used by _get_fitted_background_image, without a deck graph."""
     state = ControllerTouchScreenState.__new__(ControllerTouchScreenState)
     state.controller_touch = _StubControllerTouch(saturation)
     state._fitted_background_cache = (None, None)
@@ -169,9 +161,8 @@ def check_touchscreen_background_saturation() -> None:
         f"saturation measurably: default={sat_plain:.2f} boosted={sat_boosted:.2f}"
     )
 
-    # The memo key carries the factor. With the factor flipped between calls,
-    # the second call must not serve the first call's cached enhancement. A
-    # key of path, mtime and size alone would serve it.
+    # Changing the factor must miss the fitted-background memo.
+    # A key containing only path, mtime, and size would serve stale enhancement.
     state = _make_touch_state(1.0)
     first = state._get_fitted_background_image(bg_path, strip_size)
     state.controller_touch.deck_controller.saturation = 1.3
@@ -218,9 +209,8 @@ def check_read_saturation_validates() -> None:
     lo = DeckController.MIN_DISPLAY_SATURATION
     hi = DeckController.MAX_DISPLAY_SATURATION
 
-    # float() accepts "nan" and "inf" without raising. A non-finite factor
-    # must not reach ImageEnhance or a cache key. Such a key never matches,
-    # so the cache re-enhances every composite.
+    # Non-finite float values must not reach ImageEnhance or cache keys.
+    # A non-matching NaN key would re-enhance every composite.
     for poison in ("nan", "inf", "-inf"):
         got = _read_sat({"display": {"saturation": poison}})
         assert got == default, f"{poison!r} setting must fall back to default {default}, got {got}"

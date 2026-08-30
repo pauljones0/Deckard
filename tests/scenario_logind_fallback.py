@@ -1,8 +1,4 @@
-"""Detector selection for the systemd-logind fallback.
-
-LockScreenManager.setup() matches components of XDG_CURRENT_DESKTOP, and an
-else branch picks the logind detector for a desktop no branch matches.
-"""
+"""Require unmatched or unset desktops to select the systemd-logind detector."""
 import os
 
 import fixtures  # must be first; isolates DATA_PATH

@@ -1,12 +1,5 @@
-"""The shared on-map drain runs queued work in order, then clears the queue.
-
-Several main-window rows defer a thumbnail load or a first paint until the
-widget is on screen. Each queues that work in on_map_tasks and drains it on the
-map signal through one shared mixin, LazyMapTasks. This locks the drain
-contract: the tasks run in the order they were queued, the queue is cleared so
-a second map runs nothing, and a task that raises stops the drain and leaves
-the rest of the queue in place.
-"""
+"""Drain lazy on-map tasks in order and clear the queue after success.
+A raising task must stop the drain and preserve the queue."""
 
 import fixtures  # noqa: F401  (must be first: isolates DATA_PATH before globals)
 
@@ -50,9 +43,7 @@ def test_second_map_runs_nothing() -> None:
 
 
 def test_raising_task_aborts_and_keeps_queue() -> None:
-    # The prior behaviour, locked: a task that raises stops the drain, the
-    # tasks after it never run, and the clear never happens, so the queue
-    # survives for a later map. The error reaches the caller.
+    # A raising task stops later tasks, preserves the queue, and propagates its error.
     widget = _Widget()
     runs: list[str] = []
 

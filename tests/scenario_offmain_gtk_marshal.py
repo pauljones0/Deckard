@@ -1,12 +1,7 @@
-"""
-Integration scenario for framework GTK construction at plugin registration.
+"""Marshal plugin-registration GTK construction from installer workers to main."""
 
-The store-install path runs a plugin's whole __init__ on the installer thread.
-"""
-
-# GTK4 is main-thread-only, so the ActionHolder default icon,
-# add_css_stylesheet and get_selector_icon all construct on the main thread,
-# and stay inline when the caller already runs on main.
+# ActionHolder icons, stylesheets, and selector icons must construct on main.
+# Calls that start on main must remain inline.
 
 # No GTK main loop runs here, so the scenario pumps the default
 # GLib.MainContext itself.
@@ -82,9 +77,7 @@ _gdk_shim = types.SimpleNamespace(
 
 
 def _install_shims() -> None:
-    # The code under test resolves Gtk and Gdk through its module globals at
-    # call time, so swapping the names records the construction thread
-    # without real widgets.
+    # Swap call-time Gtk and Gdk globals to record threads without real widgets.
     action_holder_module.Gtk = _gtk_shim
     plugin_base_module.Gtk = _gtk_shim
     plugin_base_module.Gdk = _gdk_shim

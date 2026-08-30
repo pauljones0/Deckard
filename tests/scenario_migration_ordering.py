@@ -1,13 +1,7 @@
-"""
-Regression scenario for migrator order against the nested key shape.
+"""Require beta.5 nesting before final 1.5.0 key-shape rewrites."""
 
-MigrationManager sorts Migrator_1_5_0_beta_5 before Migrator_1_5_0, so the keys
-are nested under states.0 first.
-"""
-
-# Migrator_1_5_0 must apply its asset-id renames and label normalizations
-# inside the nested shape and inside a flat page, and must leave the other
-# state fields alone.
+# Apply asset and label rewrites to flat and nested keys.
+# Non-label and non-media state fields must stay unchanged.
 import json
 import os
 import shutil
@@ -134,9 +128,8 @@ def check_flat_shape_rewritten() -> None:
 
 
 def check_other_state_fields_untouched() -> None:
-    """The rename pass touches only labels and media. The other state fields
-    survive verbatim. A states-shaped key with a stray top-level media has
-    that media renamed too."""
+    """Keep unrelated state fields unchanged while renaming all media paths.
+    This includes stray top-level media beside a states mapping."""
     _reset()
     page_path = _write_page("StatesShaped", {"keys": {"2x2": {
         "states": {"0": {
