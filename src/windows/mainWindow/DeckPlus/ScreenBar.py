@@ -21,6 +21,7 @@ from loguru import logger as log
 
 from PIL import Image
 
+from src.backend.DeckManagement.deck_events import TouchscreenEvent
 from src.backend.DeckManagement.InputIdentifier import Input
 from src.backend.DeckManagement.ImageHelpers import image2pixbuf
 
@@ -183,14 +184,14 @@ class ScreenBar(Gtk.Frame):
                 "y_out": y
             }
             # controller.touchscreen_event_callback(controller.deck, TouchscreenEventType.DRAG, value)
-            controller.event_callback(self.identifier, TouchscreenEventType.DRAG, value)
+            controller.event_callback(self.identifier, TouchscreenEvent(kind=TouchscreenEventType.DRAG, value=value))
             return
         
         if time.time() - drag_start_time >= self.long_press_treshold:
-            controller.event_callback(self.identifier, TouchscreenEventType.LONG, {"x": x, "y": y})
+            controller.event_callback(self.identifier, TouchscreenEvent(kind=TouchscreenEventType.LONG, value={"x": x, "y": y}))
         
         else:
-            controller.event_callback(self.identifier, TouchscreenEventType.SHORT, {"x": x, "y": y})
+            controller.event_callback(self.identifier, TouchscreenEvent(kind=TouchscreenEventType.SHORT, value={"x": x, "y": y}))
 
     def parse_xy(self, x: float, y: float) -> tuple[int, int]:
         width = self.image.get_width()

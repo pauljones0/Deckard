@@ -17,6 +17,7 @@ import time
 import math
 import gi
 
+from src.backend.DeckManagement.deck_events import DialEvent
 from StreamDeck.Devices.StreamDeck import DialEventType
 
 from src.backend.DeckManagement.InputIdentifier import Input
@@ -202,7 +203,7 @@ class Dial(Gtk.Frame):
 
         controller = services.require_main_window().get_active_controller()
         if controller is not None:
-            controller.event_callback(self.identifier, DialEventType.TURN, value)
+            controller.event_callback(self.identifier, DialEvent(kind=DialEventType.TURN, value=value))
 
         self.last_scroll = time.time()
 
@@ -234,9 +235,9 @@ class Dial(Gtk.Frame):
             # Simulate key press
             controller = services.require_main_window().get_active_controller()
             if controller is not None:
-                controller.event_callback(self.identifier, DialEventType.PUSH, 1)
+                controller.event_callback(self.identifier, DialEvent(kind=DialEventType.PUSH, value=1))
                 # Release after 100ms
-                GLib.timeout_add(100, controller.event_callback, self.identifier, DialEventType.PUSH, 0)
+                GLib.timeout_add(100, controller.event_callback, self.identifier, DialEvent(kind=DialEventType.PUSH, value=0))
             pass
 
         elif gesture.get_current_button() == 3 and n_press == 1:
@@ -327,14 +328,14 @@ class Dial(Gtk.Frame):
         """Turn the knob one step to the left in software"""
         controller = services.require_main_window().get_active_controller()
         if controller is not None:
-            controller.event_callback(self.identifier, DialEventType.TURN, -1)
+            controller.event_callback(self.identifier, DialEvent(kind=DialEventType.TURN, value=-1))
         return False
 
     def on_turn_right(self, *args: Any) -> bool:
         """Turn the knob one step to the right in software"""
         controller = services.require_main_window().get_active_controller()
         if controller is not None:
-            controller.event_callback(self.identifier, DialEventType.TURN, 1)
+            controller.event_callback(self.identifier, DialEvent(kind=DialEventType.TURN, value=1))
         return False
 
     def on_copy(self, *args: Any) -> bool:

@@ -19,6 +19,7 @@ SMOKE_SCENARIOS = [
     "scenario_background_wait_yield.py",
     "scenario_writer_survival.py",
     "scenario_runner_timeout_descendants.py",
+    "scenario_floor_import.py",
     "scenario_scenario_list.py",
 ]
 

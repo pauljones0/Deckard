@@ -49,6 +49,7 @@ from src.backend.DeckManagement.Subclasses.KeyVideo import InputVideo
 from src.backend.DeckManagement.Subclasses.media_pipeline_profiler import media_prof
 from src.backend.DeckManagement.deck_controller import cover_cache, press_look
 from src.backend.DeckManagement.deck_controller.gif_pipeline import KeyGIF
+from src.backend.DeckManagement.deck_events import DialEvent, KeyEvent, TouchscreenEvent
 from src.backend.DeckManagement.deck_controller.input_latency import mark_render_started, mirror_input_image
 from src.backend.DeckManagement.deck_controller.input_state import PersistedState
 from src.backend.DeckManagement.deck_controller.input_state_classes import (
@@ -92,6 +93,11 @@ if TYPE_CHECKING:
 #: state type at every get_active_state() call.
 StateT = TypeVar("StateT", bound=ControllerInputState)
 
+#: The deck-event kind an input consumes; the Any default keeps
+#: state-only annotations valid. Local: Generic[] needs a real TypeVar.
+EventT = TypeVar("EventT", default=Any)
+
+
 #: The share of a key tile an overlay covers. An overlay marks a transient
 #: condition, so it is drawn inside the picture it covers rather than over all
 #: of it, and the margin keeps the key's own content readable behind it.
@@ -118,7 +124,7 @@ def _build_page_video_media(controller_input: "ControllerInput[Any]", path: str,
                       loop=media.loop, fps=media.fps, natural_speed=True)
 
 
-class ControllerInput(Generic[StateT]):
+class ControllerInput(Generic[StateT, EventT]):
     # What this input's device slot shows, and what is on its way to it. A
     # key and the touchscreen own a slot and assign one in their own
     # __init__, the key narrowing this type because its paint path reads the
@@ -263,7 +269,7 @@ class ControllerInput(Generic[StateT]):
             actions=gesture_actions,
         )
 
-    def event_callback(self, *args: Any, **kwargs: Any) -> None:
+    def event_callback(self, event: EventT) -> None:
         pass
 
     def start_hold_timer(self) -> None:
@@ -556,7 +562,7 @@ class ControllerInput(Generic[StateT]):
         # override this, so the base never answers.
         raise NotImplementedError
 
-class ControllerKey(ControllerInput["ControllerKeyState"]):
+class ControllerKey(ControllerInput["ControllerKeyState", KeyEvent]):
     # The narrowing the base declaration describes. It sits here, and not on
     # the __init__ assignment, because an assignment annotation leaves a
     # reader of the attribute on the base declaration, which owns no key index.
@@ -701,23 +707,20 @@ class ControllerKey(ControllerInput["ControllerKeyState"]):
 
         # Decide on an update from the content type.
         if state.key_video is not None and state.key_video.frame_due(now):
-            # InputVideo and KeyGIF pick their current frame from their own
-            # timeline. The deadline recomposites only when that timeline
-            # can hold a new frame, not on every loop tick.
+            # Recomposite only when the source's timeline can hold a frame.
             needs_update = True
         elif scroll_moved:
             needs_update = True
         elif bg_frame_new and self.deck_controller.background.video is not None:
-            # An opaque background color hides the video tile, as
-            # get_current_image shows, so that key cannot change per frame,
-            # and no key changes on a tick the background rendered no frame.
+            # An opaque color hides the video tile; no bg frame, no change.
             if state.background_manager.get_composed_color()[-1] < 255:
                 needs_update = True
 
         if needs_update:
             self.update()
 
-    def event_callback(self, press_state: bool) -> None:
+    def event_callback(self, event: KeyEvent) -> None:
+        press_state = event.pressed
         screensaver_was_showing = self.deck_controller.screen_saver.showing
         if press_state:
             # Only on key down. This lets a plugin control the screensaver
@@ -1083,7 +1086,7 @@ class ControllerKey(ControllerInput["ControllerKeyState"]):
     def get_image_size(self) -> tuple[int, int]:
         return self.deck_controller.get_key_image_size()
 
-class ControllerTouchScreen(ControllerInput["ControllerTouchScreenState"]):
+class ControllerTouchScreen(ControllerInput["ControllerTouchScreenState", TouchscreenEvent]):
     def __init__(self, deck_controller: "DeckController", ident: InputIdentifier):
         super().__init__(deck_controller, ControllerTouchScreenState, ident)
         self.present_state = TouchscreenPresentState()
@@ -1131,12 +1134,10 @@ class ControllerTouchScreen(ControllerInput["ControllerTouchScreenState"]):
         return self.get_screen_dimensions()
 
     def on_media_player_tick(self, now: float) -> bool:
-        # A per-touchscreen background video advances on the media tick, as
-        # dial content does, and the caller re-composites the shared
-        # touchscreen once per frame. The screensaver owns the strip while it
-        # shows. The state decides the rate-capped render under its
-        # background-video lock, so a concurrent _release_background_video()
-        # cannot race the read of the video or its deadline.
+        # A per-touchscreen background video advances on the media tick, and
+        # the caller re-composites the shared strip once per frame. The
+        # screensaver owns the strip while it shows; the state gates the
+        # render under its background-video lock against a racing release.
         if self.deck_controller.screen_saver.showing:
             return False
         return self.get_active_state().tick_background_video(now)
@@ -1180,7 +1181,8 @@ class ControllerTouchScreen(ControllerInput["ControllerTouchScreenState"]):
         active_state = self.get_active_state()
         return active_state.get_current_image()
 
-    def event_callback(self, event_type: TouchscreenEventType, value: "dict[str, int]") -> None:
+    def event_callback(self, event: TouchscreenEvent) -> None:
+        event_type, value = event.kind, event.value
         screensaver_was_showing = self.deck_controller.screen_saver.showing
         if event_type in (TouchscreenEventType.SHORT, TouchscreenEventType.LONG, TouchscreenEventType.DRAG):
             self.deck_controller.screen_saver.on_key_change()
@@ -1217,13 +1219,13 @@ class ControllerTouchScreen(ControllerInput["ControllerTouchScreenState"]):
                 dial_active_state = dial.get_active_state()
                 if dial_active_state is not None:
 
-                    event = Input.Dial.Events.SHORT_TOUCH_PRESS
+                    action_event = Input.Dial.Events.SHORT_TOUCH_PRESS
                     if event_type == TouchscreenEventType.LONG:
-                        event = Input.Dial.Events.LONG_TOUCH_PRESS
+                        action_event = Input.Dial.Events.LONG_TOUCH_PRESS
 
                     touch_actions = dial_active_state.get_own_actions()
                     dial_active_state.own_actions_event_callback_threaded(
-                        event,
+                        action_event,
                         data={"x": value['x'], "y": value['y']},
                         show_notifications=True,
                         actions=touch_actions
@@ -1239,7 +1241,7 @@ class ControllerTouchScreen(ControllerInput["ControllerTouchScreenState"]):
     def get_screen_dimensions(self) -> tuple[int, int]:
         return self.deck_controller.get_touchscreen_image_size()
 
-class ControllerDial(ControllerInput["ControllerDialState"]):
+class ControllerDial(ControllerInput["ControllerDialState", DialEvent]):
     HOLD_START_EVENT = Input.Dial.Events.HOLD_START
 
     def __init__(self, deck_controller: "DeckController", ident: InputIdentifier):
@@ -1252,7 +1254,8 @@ class ControllerDial(ControllerInput["ControllerDialState"]):
     def Available_Identifiers(deck: "BetterDeck") -> "Iterable[str]":
         return map(str, range(deck.dial_count()))
 
-    def event_callback(self, event_type: DialEventType, value: int) -> None:
+    def event_callback(self, event: DialEvent) -> None:
+        event_type, value = event.kind, event.value
         screensaver_was_showing = self.deck_controller.screen_saver.showing
         if event_type == DialEventType.TURN:
             self.deck_controller.screen_saver.on_key_change()
@@ -1437,10 +1440,8 @@ class ControllerDial(ControllerInput["ControllerDialState"]):
         return super().get_active_state()
 
     def on_media_player_tick(self, now: float) -> bool:
-        # Report whether a redraw is needed instead of painting. A dial has no
-        # slot of its own, so the caller renders the shared touchscreen once
-        # per frame rather than once per dial. The video's own deadline
-        # decides whether this tick can show a new frame.
+        # Report a needed redraw instead of painting: the caller renders
+        # the shared strip once per frame; the video's deadline gates it.
         state, scroll_moved = self._tick_animation_clocks()
         video_due = state.video is not None and state.video.frame_due(now)
         return video_due or scroll_moved

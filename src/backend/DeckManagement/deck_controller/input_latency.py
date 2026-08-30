@@ -18,7 +18,8 @@ from collections.abc import Callable
 from loguru import logger as log
 from StreamDeck.Devices.StreamDeck import DialEventType
 
-from src.backend.DeckManagement.InputIdentifier import Input, InputIdentifier
+from src.backend.DeckManagement.InputIdentifier import InputIdentifier
+from src.backend.DeckManagement.deck_events import DeckEvent, DialEvent, KeyEvent, TouchscreenEvent
 
 
 _STAGES = (
@@ -406,44 +407,40 @@ def mirror_input_image(controller: Any, identifier: InputIdentifier, image: Any,
     return True
 
 
-def _dispatch_physical_event(controller: Any, identifier: InputIdentifier,
-                             args: tuple[Any, ...], kwargs: dict[str, Any]) -> None:
+def _is_physical(event: "DeckEvent") -> bool:
+    """Whether this event is a measurable physical edge. A key press, a
+    dial turn, a dial push-down, and every touchscreen gesture start a
+    latency sample; releases and push-ups pass through untracked."""
+    match event:
+        case KeyEvent(pressed=pressed):
+            return pressed
+        case DialEvent(kind=kind, value=value):
+            return kind == DialEventType.TURN or (
+                kind == DialEventType.PUSH and bool(value))
+        case TouchscreenEvent():
+            return True
+    return False
+
+
+def dispatch_deck_event(controller: Any, identifier: InputIdentifier,
+                        event: "DeckEvent") -> None:
+    """Route one typed deck event through the latency seam. A physical
+    edge runs the controller funnel under a fresh correlated sample, so
+    everything the event triggers stamps against the input that caused
+    it."""
+    if not _is_physical(event):
+        controller.event_callback(identifier, event)
+        return
     tracker = getattr(controller, "input_latency", None)
     if tracker is None:
-        controller.event_callback(identifier, *args, **kwargs)
+        controller.event_callback(identifier, event)
         return
     sample = tracker.input_received()
     if sample is None:
-        controller.event_callback(identifier, *args, **kwargs)
+        controller.event_callback(identifier, event)
         return
     with tracker.correlation(sample):
-        controller.event_callback(identifier, *args, **kwargs)
-
-
-def dispatch_key_callback(controller: Any, key: int, args: tuple[Any, ...],
-                          kwargs: dict[str, Any]) -> None:
-    coords = controller.index_to_coords(key)
-    identifier = Input.Key(f"{coords[0]}x{coords[1]}")
-    if args and args[0] is True:
-        _dispatch_physical_event(controller, identifier, args, kwargs)
-    else:
-        controller.event_callback(identifier, *args, **kwargs)
-
-
-def dispatch_dial_callback(controller: Any, dial: Any, args: tuple[Any, ...],
-                           kwargs: dict[str, Any]) -> None:
-    identifier = Input.Dial(str(dial))
-    event = args[0] if args else None
-    value = args[1] if len(args) > 1 else None
-    if event == DialEventType.TURN or (event == DialEventType.PUSH and bool(value)):
-        _dispatch_physical_event(controller, identifier, args, kwargs)
-    else:
-        controller.event_callback(identifier, *args, **kwargs)
-
-
-def dispatch_touchscreen_callback(controller: Any, args: tuple[Any, ...],
-                                  kwargs: dict[str, Any]) -> None:
-    _dispatch_physical_event(controller, Input.Touchscreen("sd-plus"), args, kwargs)
+        controller.event_callback(identifier, event)
 
 
 def write_input_latency_report(controller: Any) -> None:

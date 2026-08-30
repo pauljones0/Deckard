@@ -7,13 +7,14 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from src.backend.DeckManagement.deck_controller.input_latency import (
-    dispatch_key_callback,
+    dispatch_deck_event,
     InputLatencyTracker,
     InputLatencyRun,
     make_input_latency_tracker,
     mirror_input_image,
     write_input_latency_report,
 )
+from src.backend.DeckManagement.deck_events import KeyEvent
 from src.backend.DeckManagement.InputIdentifier import Input
 from src.backend.DeckManagement.deck_controller.media_tasks import MediaPlayerSetTouchscreenImageTask
 from src.backend.DeckManagement.deck_controller.media_writer import ClearMsg
@@ -121,26 +122,56 @@ def main() -> None:
             self.input_latency = tracker
             self.seen: list = []
 
-        def index_to_coords(self, key):
-            return (key, 0)
-
-        def event_callback(self, identifier, *args, **kwargs):
+        def event_callback(self, identifier, event):
             self.seen.append(
-                (identifier, args, self.input_latency.current_sample()))
+                (identifier, event, self.input_latency.current_sample()))
 
     hid_tracker = InputLatencyTracker(clock=Clock(15.0))
     hid_controller = _HidController(hid_tracker)
-    dispatch_key_callback(hid_controller, 0, (True,), {})
-    dispatch_key_callback(hid_controller, 0, (False,), {})
+    dispatch_deck_event(hid_controller, Input.Key("0x0"), KeyEvent(pressed=True))
+    dispatch_deck_event(hid_controller, Input.Key("0x0"), KeyEvent(pressed=False))
     assert len(hid_controller.seen) == 2, "both edges must reach event_callback"
-    press_ident, press_args, press_sample = hid_controller.seen[0]
-    assert press_args == (True,) and press_sample is not None, (
+    press_ident, press_event, press_sample = hid_controller.seen[0]
+    assert press_event == KeyEvent(pressed=True) and press_sample is not None, (
         "a physical press must run under a fresh correlated sample")
     assert press_sample.input_at is not None, (
         "the sample must be stamped at the HID callback")
-    _release_ident, release_args, release_sample = hid_controller.seen[1]
-    assert release_args == (False,) and release_sample is None, (
+    _release_ident, release_event, release_sample = hid_controller.seen[1]
+    assert release_event == KeyEvent(pressed=False) and release_sample is None, (
         "a release is not a measured input and must pass through untracked")
+
+    # Construction parity: the three deck adapters build exactly the
+    # typed events the injection paths (control plane, emulation, the
+    # deck-plus widgets) construct, and the key adapter still maps the
+    # library's key index into the logical identifier.
+    from src.backend.DeckManagement.deck_events import DialEvent, TouchscreenEvent
+    from StreamDeck.Devices.StreamDeck import DialEventType, TouchscreenEventType
+
+    from types import MethodType
+
+    from src.backend.DeckManagement.deck_controller.controller import DeckController
+
+    parity_controller, _pw, _pm = fixtures.make_stub_controller(n_keys=2)
+    for name in ("key_event_callback", "dial_event_callback",
+                 "touchscreen_event_callback", "index_to_coords"):
+        setattr(parity_controller, name,
+                MethodType(getattr(DeckController, name), parity_controller))
+    funneled: list = []
+    parity_controller.event_callback = lambda ident, event: funneled.append((ident, event))
+    parity_controller.key_event_callback(object(), 1, True)
+    parity_controller.dial_event_callback(object(), 0, DialEventType.TURN, -1)
+    parity_controller.touchscreen_event_callback(
+        object(), TouchscreenEventType.SHORT, {"x": 3, "y": 4})
+    assert funneled == [
+        (Input.Key("1x0"), KeyEvent(pressed=True)),
+        (Input.Dial("0"), DialEvent(kind=DialEventType.TURN, value=-1)),
+        (Input.Touchscreen("sd-plus"),
+         TouchscreenEvent(kind=TouchscreenEventType.SHORT,
+                          value={"x": 3, "y": 4})),
+    ], (
+        f"the adapters funneled {funneled}; they must construct the same "
+        f"event objects the injection paths construct, with the key index "
+        f"mapped into the logical identifier")
 
     # Writer latest-wins keeps the selected paint's token. The displaced frame
     # is counted instead of disappearing from the percentile funnel.
