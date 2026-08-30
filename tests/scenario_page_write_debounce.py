@@ -14,14 +14,13 @@ import ast
 import gc
 import json
 import os
-import shutil
 import threading
 import time
 
 from fixtures import make_headless_controller, seed_page, start_watchdog, teardown
 
 import globals as gl
-from src.backend.PageManagement import page_flush
+from src.backend.PageManagement import page_document, page_flush, PageManagerBackend
 
 WATCHDOG_SECONDS = 60
 
@@ -186,19 +185,20 @@ def install_write_recorder() -> None:
 def install_backup_recorder() -> None:
     """Counts the copies into pages/backups/.
 
-    The hook sits on shutil.copy2 rather than Page.make_backup, because half
-    of what the checks assert is a copy that must not happen. make_backup is
-    entered for a corrupt primary and then declines.
+    The hook sits on the atomic copy the backup seam calls, not on
+    back_up_page_file itself, because half of what the checks assert is a
+    copy that must not happen. back_up_page_file is entered for a corrupt
+    primary and then declines before the copy.
     """
-    real_copy2 = shutil.copy2
+    real_copy = page_document.atomic_copy_file
     backups_dir = os.path.join("pages", "backups")
 
-    def recording_copy2(src, dst, *args, **kwargs):
+    def recording_copy(src, dst, *args, **kwargs):
         if os.path.dirname(str(dst)).endswith(backups_dir):
             BACKUPS.append((str(src), str(dst)))
-        return real_copy2(src, dst, *args, **kwargs)
+        return real_copy(src, dst, *args, **kwargs)
 
-    shutil.copy2 = recording_copy2
+    page_document.atomic_copy_file = recording_copy
 
 
 def backup_path_of(path: str) -> str:
@@ -558,14 +558,16 @@ def check_move_flushes_then_discards(controller) -> None:
     edit(page, "carried-across")
 
     # A save landing mid-move, keyed under the path the move is about to
-    # remove. The hook sits on the copy, between the move's flush and its
-    # json_path re-point, which is the only window where a mark can still
-    # take the old key. Without it the move's discard has nothing to discard.
+    # remove. The hook sits on the move's fill copy, between the move's
+    # flush and its json_path re-point, which is the only window where a
+    # mark can still take the old key. Without it the move's discard has
+    # nothing to discard. It patches the name the page manager imported, so
+    # the backup seam's own atomic copy stays unhooked.
     raced = {"landed": False}
-    real_copy2 = shutil.copy2
+    real_fill = PageManagerBackend.atomic_copy_file
 
-    def copy2_then_race(src, dst, *args, **kwargs):
-        result = real_copy2(src, dst, *args, **kwargs)
+    def fill_then_race(src, dst, *args, **kwargs):
+        result = real_fill(src, dst, *args, **kwargs)
         if not raced["landed"]:
             raced["landed"] = True
             page.dict["raced-edit"] = "marked-mid-move"
@@ -573,11 +575,11 @@ def check_move_flushes_then_discards(controller) -> None:
         return result
 
     new_path = os.path.join(gl.page_manager.PAGE_PATH, "Moved.json")
-    shutil.copy2 = copy2_then_race
+    PageManagerBackend.atomic_copy_file = fill_then_race
     try:
         gl.page_manager.move_page(old_path, new_path)
     finally:
-        shutil.copy2 = real_copy2
+        PageManagerBackend.atomic_copy_file = real_fill
 
     assert raced["landed"], "the mid-move save never ran -- the check is vacuous"
     assert written_paths() == [old_path], (

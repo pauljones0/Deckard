@@ -14,10 +14,9 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 """
 import datetime
 import os
-import shutil
 import threading
 import zipfile
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from typing import cast, Any, Iterator, TypedDict, TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -35,7 +34,7 @@ from src.backend.PageManagement.page_flush import canonical_path
 from src.backend.PageManagement.page_document import PageDocument
 from src.backend.PageManagement.page_pins import PagePins
 from src.backend.DeckManagement.HelperMethods import natural_sort_by_filenames
-from src.backend.atomic_json import atomic_write_json, require_containment
+from src.backend.atomic_json import atomic_copy_file, atomic_write_json, require_containment
 from src.backend import settings_store
 
 import globals as gl
@@ -387,27 +386,33 @@ class PageManagerBackend:
         require_containment(self.PAGE_PATH, old_path)
         require_containment(self.PAGE_PATH, new_path)
 
-        # Claim the destination atomically and refuse an existing one, so the
-        # copy never overwrites another page even if a second writer wins the
-        # gap after a caller's own existence check. O_EXCL is the reservation;
-        # copy2 then fills the reserved file.
-        try:
-            fd = os.open(new_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-        except FileExistsError as error:
-            raise ValueError(f"{new_path!r} already exists") from error
-        os.close(fd)
+        # Refuse an existing destination before the discard below can drop a
+        # rival page's pending edits. This check is not the guarantee, only
+        # the common-case refusal; the publish below refuses atomically.
+        if os.path.exists(new_path):
+            raise ValueError(f"{new_path!r} already exists")
 
         # Read barrier. The copy below reads the old file, so its pending
         # edits go to disk first, or the renamed page arrives without them.
         page_flush.get().flush_path(old_path)
 
-        # The copy replaces the destination wholesale, so an edit pending for
-        # that path lands after the copy and undoes the rename. This mirrors
-        # the source discard below. It is a no-op unless the new name held a
-        # page already.
+        # The copy replaces the destination wholesale, so an edit pending
+        # for that path lands after the copy and undoes the rename. This
+        # mirrors the source discard below. It is a no-op unless the new
+        # name held a page already.
         page_flush.get().discard_path(new_path)
 
-        shutil.copy2(old_path, new_path)
+        # The copy fills a temp file and publishes it with os.link, which
+        # creates the destination name with its whole content in one atomic
+        # step and refuses an existing name. No claim file exists at any
+        # point: a failure or a hard kill anywhere in the copy leaves no
+        # destination behind, only a temp the stale-temp reaper removes, and
+        # a writer that wins the race to the name loses nothing to this
+        # move.
+        try:
+            atomic_copy_file(old_path, new_path, overwrite=False)
+        except FileExistsError as error:
+            raise ValueError(f"{new_path!r} already exists") from error
 
         # The content follows the file, before the loop below. The loop asks
         # for the page under its old name, which mints a Page and a document
@@ -453,7 +458,11 @@ class PageManagerBackend:
         # path.
         page_flush.get().discard_path(old_path)
 
-        os.remove(old_path)
+        # The move is complete here, so a source another actor already
+        # deleted is finished work, not a failure. remove_page guards its
+        # removal the same way.
+        with suppress(FileNotFoundError):
+            os.remove(old_path)
         self.refresh_window_watch_state()
 
     def remove_page(self, page_path: str) -> None:
@@ -779,6 +788,11 @@ class PageManagerBackend:
             healed, backup_corrupt = self.settings_manager.load_settings_reporting_corruption(backup_path)
             if not backup_corrupt:
                 data = healed
+                # The load already quarantined the primary when it could, and
+                # logged where the damaged bytes went. This names the content
+                # actually served; the file itself is rewritten by the next
+                # save, not here.
+                log.warning(f"Corrupt page {path}: serving its content from backup {backup_path}")
         return data
 
     def set_page_data(self, path: str, data: dict[str, Any], reload_brightness: bool = True, reload_screensaver: bool = True, reload_background: bool = True, reload_inputs: bool = True) -> None:

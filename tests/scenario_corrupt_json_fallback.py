@@ -11,6 +11,7 @@ from unittest import mock
 
 import globals as gl
 from fixtures import seed_page, start_watchdog
+from loguru import logger as log
 from src.backend.PageManagement import page_flush
 
 
@@ -29,13 +30,23 @@ def check_page_backup_heal() -> int:
         json.dump(marker, f)
 
     corrupt(path)
-    data = gl.page_manager.get_page_data(path)
+    records: list[str] = []
+    sink = log.add(lambda m: records.append(str(m)), level="WARNING")
+    try:
+        data = gl.page_manager.get_page_data(path)
+    finally:
+        log.remove(sink)
 
     if data.get("background", {}).get("marker") != "from-backup":
         print(f"FAIL(1): corrupt page did not heal from backup, got: {data}")
         return 1
     if not os.path.exists(path + ".corrupt"):
         print("FAIL(1): corrupt original was not preserved at .corrupt")
+        return 1
+    backup_path = os.path.join(backup_dir, os.path.basename(path))
+    if not any("Corrupt page" in r and path in r and backup_path in r for r in records):
+        print("FAIL(1): the heal logged no warning naming the primary and the "
+              "backup it served from")
         return 1
     print("PASS: corrupt page heals from backup; original quarantined")
     return 0

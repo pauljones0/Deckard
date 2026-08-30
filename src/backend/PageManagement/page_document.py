@@ -26,7 +26,6 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
 import threading
 from contextlib import contextmanager
 from typing import cast, Any, Iterator
@@ -36,6 +35,7 @@ from loguru import logger as log
 import globals as gl
 from src.backend.DeckManagement.InputIdentifier import Input
 from src.backend.PageManagement import page_flush
+from src.backend.atomic_json import atomic_copy_file
 
 
 def snapshot_json_tree(value: Any) -> Any:
@@ -110,7 +110,9 @@ def back_up_page_file(src_path: str) -> None:
         log.error(f"Invalid json in {src_path}: {e}")
         return
 
-    shutil.copy2(src_path, dst_path)
+    # The copy is the heal source for a corrupt primary, so it must never be
+    # a torn file itself: the atomic copy publishes whole or not at all.
+    atomic_copy_file(src_path, dst_path)
 
 
 def _apply(data: dict[str, Any], content: dict[str, Any]) -> None:
