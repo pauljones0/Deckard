@@ -154,7 +154,6 @@ class CallbackRegistry:
                 live_callbacks.append(live)
             self._entries = kept
         # Log outside the lock so a sink cannot re-enter the locked registry.
-        # Racing snapshots can log one dead entry twice without corrupting state.
         for description in pruned:
             log.debug(
                 f"CallbackRegistry: pruning dead callback {description} "

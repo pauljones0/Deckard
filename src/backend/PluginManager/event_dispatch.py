@@ -92,8 +92,8 @@ _WEDGE_REWARN_S = 30.0
 _MONITOR_INTERVAL_S = 5.0
 _BACKLOG_WARN_THRESHOLD = 100
 
-# Cap retained batches and drop the oldest first when a wedged lane reaches it.
-# The cap exceeds the warning threshold so ordinary bursts do not drop work.
+# Cap queued batches and drop the oldest first; any burst can reach this limit.
+# The limit exceeds the warning threshold and bounds objects retained by a stalled lane.
 _QUEUE_MAX = 1000
 
 # Reap an idle runner and its loop after this interval.
@@ -159,8 +159,8 @@ def _monitor_loop() -> None:
         try:
             _monitor_tick()
         except Exception:
-            # Keep the monitor alive after lane failures or pre-3.14 GC removal races outside the lock.
-            # A failed tick costs one interval and must not stop reports for other lanes.
+            # Keep the monitor alive after lane failures or pre-3.14 GC removal races
+            # outside the lock. A failed tick costs one interval, not later reports.
             log.opt(exception=True).error("event dispatch watchdog tick failed")
 
 

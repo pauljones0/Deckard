@@ -43,7 +43,8 @@ class EventHolder:
 
     def add_listener(self, callback: Callable[..., Any]) -> None:
         if not self.observers.add(callback):
-            # Name callable objects without breaking the connection warning.
+            # The eager default evaluates repr before getattr checks __name__.
+            # A raising repr escapes this duplicate-listener warning.
             name = getattr(callback, "__name__", repr(callback))
             log.warning(f"Callback {name} is already subscribed to: {self.event_id}")
 
@@ -51,8 +52,8 @@ class EventHolder:
         self.observers.remove(callback)
 
     def trigger_event(self, *args: Any, **kwargs: Any) -> None:
-        """Queue observers in registration order and return before they run; other holders are unordered and isolated.
-        During backend connection, hold unobserved events for later subscribers; dispatch observed events now."""
+        """Queue observers in registration order and return; lanes run later, isolated, unordered.
+        Hold unobserved events until backend registration; dispatch observed events immediately."""
         # Prepend event_id as the observers' first positional argument.
         payload = (self.event_id, *args)
 

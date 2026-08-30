@@ -1,5 +1,5 @@
-"""Hold unobserved events in a nonextending backend-connect window; coalesce newest per holder key, drop expired data, and let live dispatch supersede it.
-A relaunch drops the prior generation; release re-reads observers and only queues delivery, but late on_ready subscribers and earlier values under one key can miss data."""
+"""Hold newest unobserved event per holder key until registration or timeout; live dispatch wins.
+Relaunch drops data; the rpyc service thread re-reads listeners, queues only, and does no GTK."""
 
 import threading
 from collections.abc import Callable
