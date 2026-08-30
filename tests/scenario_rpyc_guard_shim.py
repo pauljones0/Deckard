@@ -1,10 +1,5 @@
-"""The injected guard rebinds a hostname-less rpyc server to loopback.
-
-A child interpreter with the guard directory on PYTHONPATH imports it via
-sitecustomize at startup. rpyc resolves a missing server hostname to the
-wildcard address, so an unguarded backend serves every interface. The guard
-rewrites exactly that case and leaves explicit arguments alone.
-"""
+"""Rebind hostname-less rpyc servers to loopback through the injected guard.
+Keep explicit bind arguments and add peer-UID authentication."""
 import json
 import os
 import subprocess
@@ -109,9 +104,8 @@ def main() -> None:
     assert guarded["default_auth"] == "loopback_uid_authenticator", guarded
     print("PASS: with the guard the same construction binds 127.0.0.1 with the peer-uid authenticator")
 
-    # An explicit hostname is left as the caller wrote it, but the peer-uid
-    # authenticator still goes on: an explicit wildcard bind is LAN-reachable
-    # without it, so the gate must not depend on the hostname.
+    # Keep explicit hostnames but add peer-UID authentication because an
+    # explicit wildcard remains reachable from the LAN.
     assert guarded["explicit_bind"] == "0.0.0.0", guarded
     assert guarded["explicit_auth"] == "loopback_uid_authenticator", guarded
     print("PASS: an explicit hostname keeps its bind but still gets the peer-uid authenticator")

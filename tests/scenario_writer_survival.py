@@ -1,10 +1,5 @@
-"""
-The sole-writer media thread must survive a render-path exception.
-
-A guard around the loop body keeps the thread alive, rate-limits its
-tracebacks, and still honors stop(). A failed device write mid-batch arms a
-full repaint, so the surviving keys repaint.
-"""
+"""Keep the sole-writer thread alive, stoppable, and rate-limited after exceptions.
+Arm a full repaint when a failed mid-batch write drops sibling frames."""
 
 # The control-queue drain runs first in the tick, so a stage that keeps
 # failing ahead of it starves no control message.
@@ -110,12 +105,8 @@ def leg_guard_survival() -> None:
 
 
 def leg_batch_recovery() -> None:
-    """A caught tick exception mid-batch must not strand the batch's sibling
-    frames.
-
-    perform_media_player_tasks pops image_tasks before it runs them, so the
-    guard's except path must arm the pending full repaint.
-    """
+    """Repaint sibling frames dropped by a caught mid-batch tick exception.
+    The guard must re-arm after perform_media_player_tasks pops the full batch."""
     # Only a TransportError is handled at the task level, so when key 1's
     # write raises anything else, key 2's already-popped frame is gone.
     controller, media_player, deck_manager = fixtures.make_stub_controller(n_keys=3)
@@ -123,9 +114,8 @@ def leg_batch_recovery() -> None:
     page = controller.active_page
     gen = controller._page_load_generation
 
-    # Poison exactly one write to key 1 with something other than a
-    # TransportError, which the task classes catch. Anything else escapes
-    # into the guard.
+    # Raise a non-TransportError once so the exception escapes task handling
+    # and reaches the loop guard.
     real_set_key_image = deck.set_key_image
     poison = {"armed": True, "hits": 0}
 
@@ -138,9 +128,7 @@ def leg_batch_recovery() -> None:
 
     deck.set_key_image = poisoned_set_key_image
 
-    # Queue the whole multi-key batch before the loop starts, so one tick
-    # drains it as a single perform_media_player_tasks batch. In dict
-    # insertion order key 0 lands, key 1 raises, and key 2 is dropped.
+    # Queue one ordered batch so key 0 lands, key 1 raises, and key 2 is dropped.
     for i in range(3):
         media_player.add_image_task(
             i, fixtures.make_native_image(fill=10 + i), page=page, config_gen=gen)
@@ -151,10 +139,8 @@ def leg_batch_recovery() -> None:
         assert media_player.is_alive(), (
             "writer thread died on a mid-batch non-TransportError"
         )
-        # The recovery contract. The guard scheduled a full repaint, and the
-        # repaint's re-enqueue painted the dropped sibling. Nothing else can
-        # repaint key 2 here, because its task was popped with the failed
-        # batch and the stub's inputs run no animation tick.
+        # Only the guard's full repaint can restore key 2 because its task was
+        # popped with the failed batch and the stub has no animation tick.
         assert wait_until(lambda: deck.last_op_for("key:2") is not None, timeout=3.0), (
             "sibling frame dropped by the failed batch must be repainted via "
             "the guard's scheduled full repaint (except path must call "
@@ -176,12 +162,8 @@ def leg_batch_recovery() -> None:
 
 
 def leg_control_drain() -> None:
-    """The control-queue drain must run before anything in the tick that can
-    raise.
-
-    A stage that keeps failing must not starve SetBrightnessMsg, and the
-    terminal ClearAndCloseMsg must still blank and close the deck.
-    """
+    """Drain controls before any tick stage that can raise.
+    Persistent failure must not starve brightness or terminal close messages."""
     # A poisoned check_resume_gap stands in for that stage, because an order
     # that ran it ahead of the drain is what starves the control queue.
     controller, media_player, deck_manager = fixtures.make_stub_controller(n_keys=2)
@@ -210,9 +192,8 @@ def leg_control_drain() -> None:
         )
         assert deck.last_op_for("brightness")[2] == "set_brightness"
 
-        # The terminal message is the quit path. Under a persistent failure
-        # ClearAndCloseMsg must still blank the device, close it and stop the
-        # loop, or a quit leaves the deck lit and open.
+        # ClearAndCloseMsg must blank and close the deck and stop the loop
+        # even while every later tick stage fails.
         media_player.submit_control(ClearAndCloseMsg())
         assert wait_until(lambda: deck.last_op_for("device") is not None, timeout=3.0), (
             "ClearAndCloseMsg starved: the deck was never closed"
@@ -230,13 +211,8 @@ def leg_control_drain() -> None:
 
 
 def leg_released_ticket_refused() -> None:
-    """A task that already wrote must refuse to run a second time.
-
-    The write releases the ticket's bytes as the frame reaches the device. A
-    second run would then write an empty frame and record it as presented,
-    which leaves the device blank and the dedup state agreeing with the
-    blank.
-    """
+    """Refuse a second run after a write releases the ticket payload.
+    Reuse would write an empty frame and incorrectly mark it as presented."""
     controller, media_player, deck_manager = fixtures.make_stub_controller(n_keys=1)
     deck = controller.deck
     key = controller.inputs[Input.Key][0]

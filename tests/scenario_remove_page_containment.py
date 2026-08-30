@@ -1,11 +1,5 @@
-"""Page removal must stay inside the pages directory.
-
-The external API's RemovePage builds a target filename from an untrusted name,
-so a crafted name that carries a parent reference must not delete a file
-outside the pages tree. remove_page refuses such a path and a normal in-tree
-page removal still works. Two seams are covered: the backend remove_page and
-the DBus RemovePage handler that reaches it.
-"""
+"""Keep backend and DBus page removal inside the pages directory.
+Refuse parent traversal while normal in-tree removal continues to work."""
 import fixtures  # noqa: F401  (must be first: isolates DATA_PATH)
 
 import json
@@ -37,7 +31,7 @@ def main() -> int:
     backend_secret = os.path.join(gl.DATA_PATH, "evil_backend.json")
     dbus_secret = os.path.join(gl.DATA_PATH, "evil_dbus.json")
 
-    # --- Part A: backend remove_page --------------------------------------
+    # Backend remove_page
     _write_secret(backend_secret)
     traversal = os.path.join(pages_dir, "..", "evil_backend.json")
     try:
@@ -57,14 +51,13 @@ def main() -> int:
     if os.path.exists(good):
         failures.append("remove_page: a normal in-tree page was not removed")
 
-    # --- Part B: DBus RemovePage handler ----------------------------------
+    # DBus RemovePage handler
     from src.api import DeckardAPI
     api = DeckardAPI()
 
     _write_secret(dbus_secret)
-    # The handler builds <pages>/<name>.json, so "../evil_dbus" resolves to the
-    # secret one level above the pages directory. The file exists, so the
-    # handler reaches remove_page, which must refuse it.
+    # The handler resolves "../evil_dbus" to an existing file above pages,
+    # which remove_page must refuse.
     api.RemovePage("../evil_dbus")
     if not os.path.exists(dbus_secret):
         failures.append(

@@ -1,20 +1,5 @@
-"""The page-background decode owns a worker the application pool cannot starve.
-
-Store tab loads, importers, window grabbing, and chooser builds share the
-eight-worker application background pool. A page load submits its
-background decode to the deck's own single-worker executor instead, so a
-burst that saturates the shared pool cannot queue the decode and stutter a
-page switch. The checks pin:
-
-  (1) With the shared pool fully saturated, the decode still starts
-      promptly, on the deck's own named worker thread.
-  (2) A superseding page load cancels a decode that queued behind both
-      busy workers before either starts it. Two workers, not one, so a
-      rapid page switch starts its decode while the superseded page's
-      decode still runs instead of inheriting its time.
-  (3) close() shuts the executor down, so a late submission cannot revive
-      a closed deck's decode.
-"""
+"""Use named deck workers while all eight shared application workers are busy.
+Cancel queued superseded work and reject submissions after deck close."""
 import fixtures  # noqa: F401  (import first: isolated --data tempdir)
 
 import threading
@@ -85,9 +70,8 @@ def check_superseding_load_cancels_queued_decode() -> None:
 
         controller.load_background = recording_load_background
 
-        # Occupy both workers, so the first page load's decode queues and
-        # the superseding load's cancel hits it before it starts. This is
-        # the real load_page supersession path, not a bare Future.
+        # Occupy both workers so superseding load_page cancels a queued decode
+        # before it starts.
         entered = threading.Barrier(3)
         release = threading.Event()
         for _ in range(2):

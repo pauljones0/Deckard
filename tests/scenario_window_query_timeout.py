@@ -1,11 +1,5 @@
-"""A stuck window-query helper is killed within its deadline.
-
-The KDE window queries ran Popen.communicate() with no timeout, which parks
-the caller forever on a stuck compositor helper. communicate_bounded gives
-every one-shot query a deadline, terminates and kills a helper that overruns
-it, reaps the child, and returns None. This drives it against a real hanging
-subprocess and a normal one.
-"""
+"""Terminate a stuck helper at its deadline, then wait up to one second.
+Kill it if still running, reap it, and return None; preserve normal output."""
 import fixtures  # noqa: F401  (must be first: isolates DATA_PATH before globals)
 
 import subprocess  # noqa: E402
@@ -20,7 +14,7 @@ def main() -> int:
     start_watchdog(30, "window_query_timeout")
     failures: list[str] = []
 
-    # --- A hanging helper is killed within the deadline and returns None.
+    # A hanging helper times out, is terminated, then is killed after one second if needed.
     hung = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(600)"],
                             stdout=subprocess.PIPE)
     began = time.monotonic()
@@ -35,7 +29,7 @@ def main() -> int:
         hung.kill()
         failures.append("the hanging helper was not killed and reaped")
 
-    # --- A normal helper returns its output.
+    # A normal helper returns its output.
     ok = subprocess.Popen([sys.executable, "-c", "print('hello')"],
                           stdout=subprocess.PIPE)
     out = communicate_bounded(ok, "test ok", timeout_s=5)

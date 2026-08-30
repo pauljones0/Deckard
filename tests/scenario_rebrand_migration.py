@@ -1,13 +1,7 @@
-"""
-Regression test for the one-time rename migration in rebrand_migration.py.
+"""Move the pre-rename application tree and leave a compatibility symlink."""
 
-The whole pre-rename var-app tree moves to the new id and leaves a compat
-symlink behind.
-"""
-
-# The migration never merges when both roots hold real files, heals a crash
-# between the rename and the symlink through the pending marker, and aborts on
-# a foreign symlink or a live pre-rename instance.
+# Refuse conflicting roots, foreign links, and live old instances.
+# A pending marker repairs interruption between rename and symlink creation.
 import os
 import shutil
 import sys
@@ -85,9 +79,7 @@ rm.migrate(old, new, argv=["main.py"])
 assert not os.path.lexists(old) and not os.path.lexists(new)
 print("1. fresh install no-op: OK")
 
-# 2. The normal move. The stale-autostart cleanup lives in
-# autostart.remove_legacy_autostart_entries, covered by
-# scenario_autostart_disable.py.
+# 2. The normal move; autostart cleanup has separate coverage.
 old, new = fresh_roots()
 make_old_tree(old)
 rm.migrate(old, new, argv=["main.py"])

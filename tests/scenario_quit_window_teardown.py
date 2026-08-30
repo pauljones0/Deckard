@@ -1,9 +1,5 @@
-"""App._destroy_main_window must not abort on an unrealized window.
-
-GTK 4.22 segfaults on the dispose path of a window that was never realized. In
-background mode on_activate builds main_win but never presents it, so a
-destroy() in on_quit kills the process before terminate_all_backends runs.
-"""
+"""Do not destroy an unrealized main window because GTK 4.22 can segfault.
+Background mode leaves it unrealized, and an abort would prevent backend termination."""
 
 # GTK windows need a display, so this scenario skips cleanly without one.
 
@@ -45,12 +41,8 @@ def check_missing_window_noop():
 
 
 def _run_in_app(body, app_id):
-    """Drive body(app) from inside a running GtkApplication.
-
-    A bare Gtk.ApplicationWindow with no application and no main loop does not
-    reproduce the abort. The abort needs a window bound to a running
-    GtkApplication, which is what on_activate builds.
-    """
+    """Run body(app) inside a GtkApplication.
+    The abort requires a bound window and an active application loop."""
     app = Adw.Application(application_id=app_id)
     result = {}
 
@@ -64,9 +56,8 @@ def _run_in_app(body, app_id):
 
 
 def check_unrealized_window_survives():
-    """Without the guard this SIGSEGVs the whole interpreter, which
-    run_all.py reports as a failed scenario. No Python-level exception exists
-    to assert on, so reaching the print is the assertion."""
+    """Reach the final assertion without the interpreter receiving SIGSEGV.
+    The failure has no Python exception to inspect."""
     for cls, label in ((Gtk.ApplicationWindow, "Gtk"), (Adw.ApplicationWindow, "Adw")):
         def body(app, result, cls=cls):
             win = cls(application=app)  # built exactly as on_activate does

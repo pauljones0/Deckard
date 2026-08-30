@@ -1,11 +1,5 @@
-"""
-The window-based auto-page-switch machinery must survive edge cases.
-
-WindowGrabber.on_active_window_changed must guard active_page, which is
-legitimately None mid-startup or mid-hotplug, or a window change in that window
-aborts routing for every remaining deck. The GNOME integration must ask for its
-shell extension by a bare uuid string.
-"""
+"""Guard active_page during startup or hotplug so one deck cannot abort routing.
+Pass the GNOME shell extension UUID as the bare string required by D-Bus."""
 
 import fixtures  # noqa: F401  (must be imported first: isolates DATA_PATH)
 
@@ -69,9 +63,8 @@ class StubWGDeckController:
 def check_pageless_deck_routing() -> None:
     deck_manager = fixtures.install_stub_globals()
 
-    # First in the list is a deck mid-startup or mid-hotplug. It has no page
-    # yet, and an earlier auto-load left page_auto_loaded set, so an unguarded
-    # body walks into the stay-on-page branch and derefs active_page.json_path.
+    # Put a pageless, auto-loaded deck first so an unguarded stay-on-page branch
+    # dereferences active_page before routing the healthy deck.
     pageless = StubWGDeckController("HOTPLUG", active_page=None,
                                     page_auto_loaded=True)
     healthy = StubWGDeckController("GOOD",
@@ -108,15 +101,9 @@ def check_pageless_deck_routing() -> None:
 # Part 1b. The None-guard itself, isolated from the per-deck try/except
 
 def check_pageless_guard_is_noop() -> None:
-    """The None-guard on its own, isolated from the per-deck try and except.
-
-    This calls _apply_auto_change directly. That method is the per-deck body
-    with no surrounding handler. A pageless deck is therefore a clean no-op,
-    and an unguarded deref raises straight out to here.
-    """
-    # Part 1 routes through on_active_window_changed, whose per-deck handler
-    # swallows that same deref, so Part 1 alone stays green with the guard
-    # removed and cannot red-test it.
+    """Call the per-deck body directly so its active_page guard must return first."""
+    # Direct invocation avoids the outer per-deck exception handler that would
+    # hide a missing None guard.
     deck_manager = fixtures.install_stub_globals()
 
     pageless = StubWGDeckController("HOTPLUG", active_page=None,
@@ -135,10 +122,7 @@ def check_pageless_guard_is_noop() -> None:
     grabber = WindowGrabber.__new__(WindowGrabber)
 
     try:
-        # No try/except around this. Only the None-guard can keep it from
-        # raising AttributeError: 'NoneType' object has no attribute
-        # 'json_path' (both at the match branch's active_page.json_path and
-        # in the stay-on-page restore branch reached via page_auto_loaded).
+        # The top guard returns before either active_page.json_path branch.
         grabber._apply_auto_change(pageless, Window("firefox", "Mozilla Firefox"))
     except Exception as e:
         raise AssertionError(
@@ -152,17 +136,9 @@ def check_pageless_guard_is_noop() -> None:
 
 
 def check_gnome_install_extension_uuid() -> None:
-    """The GNOME integration must ask for its shell extension by bare uuid.
-
-    A uuid wrapped in a list does not marshal against InstallRemoteExtension's
-    "(s)" signature. It also never equals an entry of
-    get_installed_extensions, so the already-installed short-circuit cannot
-    fire.
-    """
-    # The method never touches self, so no D-Bus proxy is built here.
-    # The method has no call site today, because onboarding drives
-    # gl.gnome_extensions directly, which is why it needs a guard. The next
-    # caller to wire it up must not inherit a method that cannot work.
+    """Use a bare UUID for the GNOME InstallRemoteExtension '(s)' signature.
+    The same string must match entries returned by get_installed_extensions."""
+    # The method does not use self, so this check builds no D-Bus proxy.
     import types
 
     from src.backend.WindowGrabber.Integrations.Gnome import Gnome

@@ -1,13 +1,5 @@
-"""Remote Decks: every endpoint requires the token, and a failed bind
-commits nothing.
-
-Two legs. The handler leg runs the real handler class on a loopback server
-with a recording stand-in manager, and proves that a request without the
-token, or with a wrong one, gets 401 and drives no key event and leaks no
-image, while the same request with the token succeeds. The manager leg
-occupies a port first and proves start() reports failure, keeps _is_running
-false, and stays retryable.
-"""
+"""Require a valid token on every endpoint without events or image leaks on failure.
+Reject oversized bodies; a failed bind must keep the manager stopped and retryable."""
 import fixtures  # noqa: F401  (must be first: isolates DATA_PATH before globals)
 
 import http.client  # noqa: E402

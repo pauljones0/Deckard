@@ -1,10 +1,5 @@
-"""
-run_on_main's timeout path cancels the queued GLib idle source.
-
-Exactly one of the caller's timeout path and the idle callback proceeds.
-Otherwise a retry above it, such as GenerativeUI._ensure_built, builds twice
-and leaves duplicate widgets.
-"""
+"""Cancel a queued GLib idle source when run_on_main times out.
+Only the timeout path or idle callback can proceed, which prevents duplicate work."""
 
 # No GTK main loop runs here, and leaving the default GLib.MainContext unpumped
 # is what stalls the loop for a timeout.
@@ -21,9 +16,8 @@ from gi.repository import GLib
 import src.backend.main_loop as main_loop
 from src.backend.main_loop import run_on_main
 
-# Shrink the marshalling bound so a timeout arrives fast. run_on_main reads
-# it at call time. The knob lives in main_loop, and GtkHelper only re-exports
-# the functions, so a patch there would be a dead write.
+# Shorten the bound in main_loop, where run_on_main reads it at call time.
+# GtkHelper only re-exports the function.
 main_loop.RUN_ON_MAIN_TIMEOUT_S = 0.4
 
 

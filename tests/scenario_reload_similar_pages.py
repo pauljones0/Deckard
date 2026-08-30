@@ -1,11 +1,7 @@
-"""
-reload_similar_pages must reload each sibling controller's own Page object.
-"""
+"""Reload each sibling controller with its own Page object."""
 
-# Passing self to another controller's load_page bleeds this controller's page
-# onto other decks. get_pages_with_same_json must also snapshot
-# controller.active_page once, because another thread clears it to None while a
-# controller connects or disconnects.
+# Never pass one controller's Page to another controller.
+# Snapshot active_page because connect or disconnect can clear it concurrently.
 import fixtures  # noqa: F401  (must be first: isolates DATA_PATH)
 
 import globals as gl
@@ -62,9 +58,7 @@ def main() -> int:
 
     # An active_page that flips to None mid-scan must not raise AttributeError.
     class FlippingController:
-        """active_page reads non-None once, which passes the guard, then None
-        on the next read. That is the connect and disconnect race. A per-check
-        re-read then derefs None.json_path, and a single snapshot does not."""
+        """Return a page once and then None to model concurrent deck removal."""
         def __init__(self, serial, page):
             self.deck = FaultyFakeDeck(serial_number=serial)
             self._page = page
