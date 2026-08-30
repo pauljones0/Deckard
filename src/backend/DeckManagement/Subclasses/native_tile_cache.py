@@ -50,4 +50,4 @@ def native_tile_cache_max_bytes() -> int:
 
 class NativeTileCache(ByteLRUCache):
     """Cache native background tiles by finite frame identity with first-sighting admission.
-    Separate identity keys from pixel hashes to prevent collisions and independent sizing."""
+    Keep it separate from pixel-hash caches to prevent collisions and permit independent sizing."""

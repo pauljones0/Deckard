@@ -81,7 +81,7 @@ class InputVideo(SingleKeyAsset, FrameScheduled):
                     # A zero base replays non-looping video or jumps looping video.
                     self._play_start = now - (self.active_frame + 1) / playback_fps
                 elif self._last_frame_tick is not None and now - self._last_frame_tick > 1.0:
-            # Shift across inactive-page gaps so playback resumes without fast-forwarding.
+                    # Shift across inactive-page gaps so playback resumes without fast-forwarding.
                     self._play_start += (now - self._last_frame_tick) - 1.0 / playback_fps
                 self._last_frame_tick = now
                 elapsed = now - self._play_start

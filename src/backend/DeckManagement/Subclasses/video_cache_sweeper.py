@@ -156,8 +156,7 @@ def collect_referenced_video_hashes() -> set[str]:
 
 
 def collect_active_sat_suffixes() -> set[str]:
-    """Collect active display-saturation suffixes plus the default empty suffix.
-    Remove other variants of referenced videos to prevent permanent disk growth."""
+    """Collect active display-saturation suffixes plus the default empty suffix."""
     suffixes = {""}
     decks_dir = os.path.join(gl.DATA_PATH, "settings", "decks")
     if not os.path.isdir(decks_dir):

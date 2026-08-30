@@ -55,8 +55,8 @@ _STRIP_GEOMETRY_MISSING = (
 
 def gif_render_rate(fps: "int | None", fastest_frame_rate: float,
                     total_delay: float) -> float:
-    """Return a GIF rate bounded by loop rate, page cap, and fastest frame.
-    Read at least twice per animation loop; zero cap uses loop rate."""
+    """Return a GIF read rate capped by the media loop rate.
+    Honor page and frame caps unless two reads per loop need a higher rate."""
     cap = max(1.0, float(fps or MEDIA_LOOP_FPS))
     rate = min(MEDIA_LOOP_FPS, cap, fastest_frame_rate)
     if total_delay > 0:
@@ -72,7 +72,7 @@ class GifBudgetExceeded(Exception):
 # Over-budget backgrounds use the bounded opaque cv2 route.
 GIF_BG_BUDGET_MB = 128
 
-# Retain under-budget alpha GIFs; opaque and over-budget GIFs use O(1) MP4-reader memory.
+# With video caching, retain under-budget alpha and cache opaque or over-budget GIFs.
 GIF_KEY_BUDGET_MB = 32
 
 # Separate alpha-dropped over-budget artifacts from lossless GIF cache files.
@@ -85,7 +85,7 @@ _warned_gif_budget_values: "set[str]" = set()
 
 def gif_key_budget_bytes() -> int:
     """Read the per-key retained-frame ceiling from DECKARD_GIF_KEY_BUDGET_MB.
-    Nonpositive uses bounded MP4; malformed uses default, and values below 1 MiB warn."""
+    With video caching, nonpositive selects MP4; malformed and small values warn."""
     raw = os.environ.get("DECKARD_GIF_KEY_BUDGET_MB")
     if raw is None:
         return GIF_KEY_BUDGET_MB * 1024 * 1024
@@ -288,7 +288,7 @@ class GifBackground(FrameScheduled):
         self.strip_size: "tuple[int, int] | None" = None
         self._strip_box: "tuple[int, int, int, int] | None" = None
         if canvas_size is None:
-        # Compute BackgroundVideoCache canvas boxes once for the immutable frame list.
+            # Compute BackgroundVideoCache canvas boxes once for the immutable frame list.
             key_rows, key_cols = deck.key_layout()
             self.key_count = deck.key_count()
             key_w, key_h = deck.key_image_format()['size']
@@ -364,8 +364,8 @@ class GifBackground(FrameScheduled):
         self._last_frame_tick = now
 
         elapsed = now - self._play_start
-        # Treat fps as a sampling cap over the GIF delay timeline, not playback speed.
-        # Read it once; omit loop-rate-or-higher caps to preserve exact uncapped picks.
+        # Use fps as a sampling target; two reads per loop can exceed the page cap.
+        # Omit loop-rate-or-higher values to preserve exact uncapped picks.
         cap = max(1.0, float(self.fps or MEDIA_LOOP_FPS))
         # Read every pass at least twice, or a cap whose period is the whole
         # animation freezes it on one frame instead of running slowly.
@@ -685,8 +685,8 @@ class KeyGIF(SingleKeyAsset, FrameScheduled):
         self._last_frame_tick = now
 
         elapsed = now - self._play_start
-        # Use fps as a sampling cap that limits frame changes without changing playback speed.
-        # Read it once; omit loop-rate-or-higher caps to preserve exact uncapped picks.
+        # Use fps as a sampling target; two reads per loop can exceed the page cap.
+        # Omit loop-rate-or-higher values to preserve exact uncapped picks.
         cap = max(1.0, float(self.fps or MEDIA_LOOP_FPS))
         # Sample each loop at least twice so a long cap period cannot freeze one position.
         cap = max(cap, 2.0 / total_delay)
