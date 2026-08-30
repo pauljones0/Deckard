@@ -120,6 +120,13 @@ bundle as a release asset.
 
 ### Changed
 
+- Animated media now renders at its own frame rate instead of on every pass
+  of the 30 Hz render loop. A 24 fps video used to be composited 30 times a
+  second and a 12 fps one 15 times; each now renders exactly at its own
+  rate, and keys shown over a background video repaint only when the video
+  produces a new frame. Idle CPU drops on any page with videos or GIFs below
+  30 fps, and playback timing no longer moves when the system clock is
+  adjusted.
 - On an X11 session, the app now learns of a focused-window change from the X
   server's event stream, not from five xprop processes started every fifth of a
   second. It reads the window only when the focused window or its title

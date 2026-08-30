@@ -33,6 +33,7 @@ import time
 from PIL import Image, ImageEnhance, ImageOps
 from loguru import logger as log
 
+from src.backend.DeckManagement.media_loop import MEDIA_LOOP_FPS
 from src.backend.DeckManagement.HelperMethods import is_video
 from src.backend.DeckManagement.InputIdentifier import Input, InputEvent
 from src.backend.DeckManagement.Subclasses.ActionPermissionManager import ActionPermissionManager
@@ -399,8 +400,6 @@ class ControllerTouchScreenState(ControllerInputState):
         # the video across a saturation change keeps serving frames enhanced
         # at the old factor.
         self._background_video_saturation: float | None = None
-        # Timestamp gate for the fps render cap in on_media_player_tick.
-        self._last_background_video_render: float = 0.0
 
         # Media set on this touchscreen through set_image/set_video, the
         # touchscreen twin of the key and dial slots. get_current_image
@@ -489,9 +488,9 @@ class ControllerTouchScreenState(ControllerInputState):
         self._fitted_background_cache = (key, fitted)
         return fitted.copy() if fitted is not None else None
 
-    def _get_background_video_frame(self, path: str, fps: int = 30, loop: bool = True) -> Image.Image | None:
+    def _get_background_video_frame(self, path: str, fps: int = MEDIA_LOOP_FPS, loop: bool = True) -> Image.Image | None:
         # The InputVideo owns a strip-sized shared frame cache. It picks
-        # frames by wall clock, clamps a gap, and runs at the source fps, so
+        # frames by the media clock, clamps a gap, and runs at the source fps, so
         # neither the composite rate nor the fps setting changes playback
         # speed. fps and loop come from the page's background settings. loop
         # wraps playback, and fps only caps the strip's re-render rate; see
@@ -577,25 +576,20 @@ class ControllerTouchScreenState(ControllerInputState):
                 self.background_video.close()
                 self.background_video = None
 
-    def tick_background_video(self, media_player_fps: int) -> bool:
+    def tick_background_video(self, now: float) -> bool:
         """Whether the strip needs a re-composite for the background video this
-        media tick. The read of background_video and the read-and-write of the
-        fps-cap timestamp both run under _background_video_lock, so a
-        concurrent _release_background_video() cannot null the video between the
-        check and the timestamp, and two ticks cannot tear the timestamp."""
+        media tick. The read of background_video and the deadline advance both
+        run under _background_video_lock, so a concurrent
+        _release_background_video() cannot null the video between the check
+        and the advance, and two ticks cannot tear the deadline."""
         with self._background_video_lock:
             bg_video = self.background_video
             if bg_video is None:
                 return False
-            # The configured fps is a render cap. The playback position follows
-            # the wall clock at the source's native fps, so a skipped tick here
-            # drops a frame and does not slow the video down.
-            cap_fps = min(media_player_fps, max(1, bg_video.fps or 30))
-            now = time.time()
-            if now - self._last_background_video_render < 1.0 / cap_fps:
-                return False
-            self._last_background_video_render = now
-            return True
+            # The video's own deadline paces the re-composite. The playback
+            # position follows the clock at the source's native rate, so a
+            # skipped tick drops a frame and does not slow the video down.
+            return bg_video.frame_due(now)
 
     def get_current_image(self) -> Image.Image:
         screen_width, screen_height = self.controller_touch.get_screen_dimensions()

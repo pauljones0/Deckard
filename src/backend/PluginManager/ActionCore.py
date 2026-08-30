@@ -20,6 +20,7 @@ import subprocess
 import os
 from PIL import Image
 
+from src.backend.DeckManagement.media_loop import MEDIA_LOOP_FPS
 from src.backend.PluginManager.EventManager import EventManager
 from src.backend.PluginManager.EventAssigner import EventAssigner
 
@@ -202,7 +203,7 @@ class ActionCore(rpyc.Service):
             return
         self.on_ready() # backward compatibility
 
-    def set_media(self, image: "Image.Image | None" = None, media_path: "str | None" = None, size: float | None = None, valign: float | None = None, halign: float | None = None, fps: int = 30, loop: bool = True, update: bool = True) -> None:
+    def set_media(self, image: "Image.Image | None" = None, media_path: "str | None" = None, size: float | None = None, valign: float | None = None, halign: float | None = None, fps: int = MEDIA_LOOP_FPS, loop: bool = True, update: bool = True) -> None:
         self.raise_error_if_not_ready()
 
         if type(self.input_ident) not in [Input.Key, Input.Dial, Input.Touchscreen]:

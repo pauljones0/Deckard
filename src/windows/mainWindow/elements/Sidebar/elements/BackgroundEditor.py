@@ -25,6 +25,7 @@ if TYPE_CHECKING:
     from src.backend.PageManagement.Page import Page
 from src.backend.DeckManagement.HelperMethods import is_video
 from src.backend.DeckManagement.ImageHelpers import image2pixbuf
+from src.backend.DeckManagement.media_loop import MEDIA_LOOP_FPS
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
@@ -361,12 +362,11 @@ class VideoLoopRow(Adw.PreferencesRow):
 
 
 class VideoFpsRow(Adw.PreferencesRow):
-    # The spinner's range. 30 is MediaPlayerThread.FPS, the render ceiling of
-    # the loop, and the same range every other fps spinner in the app offers.
-    # A cap at the ceiling caps nothing, which is what a page with no fps key
-    # loads under.
+    # The spinner's range. The top is the loop's render ceiling, the same
+    # range every other fps spinner in the app offers. A cap at the ceiling
+    # caps nothing, which is what a page with no fps key loads under.
     MIN_FPS = 1
-    MAX_FPS = 30
+    MAX_FPS = MEDIA_LOOP_FPS
 
     # How long a chosen rate must hold before the revert control appears. The
     # spinner emits value-changed on every step, and its arrow repeats about

@@ -27,11 +27,13 @@ from loguru import logger as log
 
 from src.backend.DeckManagement.HelperMethods import is_video
 from src.backend.DeckManagement.Subclasses.background_video_cache import BackgroundVideoCache
+from src.backend.DeckManagement import media_loop
+from src.backend.DeckManagement.media_loop import MEDIA_LOOP_FPS, FrameScheduled
 from src.backend.DeckManagement.deck_controller.gif_pipeline import GifBackground, GifBudgetExceeded
 from src.backend.DeckManagement.deck_controller.slideshow import IN_ORDER, Slideshow
 from src.backend.DeckManagement.deck_controller.strip_band import band_layout, clamp_box
 
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, cast, override
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
@@ -295,7 +297,7 @@ class Background:
                 self._touchscreen_slice = image.get_touchscreen_image()
             return self._touchscreen_slice
 
-    def prebuild_from_path(self, path: str | None, fps: int = 30, loop: bool = True,
+    def prebuild_from_path(self, path: str | None, fps: int = MEDIA_LOOP_FPS, loop: bool = True,
                            allow_keep: bool = True) -> "tuple[str, BackgroundVideo | GifBackground | BackgroundImage | str | None]":
         """Build the new background object lock-free, without a touch on
         self.video, self.image or the deck. apply_prebuilt() swaps it in.
@@ -356,7 +358,7 @@ class Background:
                 "Failed to close an orphaned prebuilt background payload during close()"
             )
 
-    def apply_prebuilt(self, kind: str, payload: "BackgroundVideo | GifBackground | BackgroundImage | str | None", fps: int = 30, loop: bool = True, update: bool = True) -> None:
+    def apply_prebuilt(self, kind: str, payload: "BackgroundVideo | GifBackground | BackgroundImage | str | None", fps: int = MEDIA_LOOP_FPS, loop: bool = True, update: bool = True) -> None:
         """Apply the result of prebuild_from_path(). The screensaver
         transition calls this under _background_load_lock, after it re-checks
         the generation. This does no file I/O; it assigns the objects and
@@ -390,7 +392,7 @@ class Background:
         else:  # "blank"
             self.set_image_to_blank(update=update)
 
-    def set_from_path(self, path: str | None, fps: int = 30, loop: bool = True, update: bool = True, allow_keep: bool = True) -> None:
+    def set_from_path(self, path: str | None, fps: int = MEDIA_LOOP_FPS, loop: bool = True, update: bool = True, allow_keep: bool = True) -> None:
         """Prebuild and apply in one call, for a caller that does not need
         the lock-free split. Those callers are load_background, which already
         holds _background_load_lock, and the ScreenSaver setters that act
@@ -645,8 +647,8 @@ class BackgroundImage:
 
         return tiles
 
-class BackgroundVideo(BackgroundVideoCache):
-    def __init__(self, deck_controller: "DeckController", video_path: str, loop: bool = True, fps: int = 30, extend_touchscreen: bool = False) -> None:
+class BackgroundVideo(BackgroundVideoCache, FrameScheduled):
+    def __init__(self, deck_controller: "DeckController", video_path: str, loop: bool = True, fps: int = MEDIA_LOOP_FPS, extend_touchscreen: bool = False) -> None:
         self.deck_controller = deck_controller
         self.video_path = video_path
         self.loop = loop
@@ -655,7 +657,7 @@ class BackgroundVideo(BackgroundVideoCache):
         self.page: Page | None = self.deck_controller.active_page
 
         self.active_frame: int = -1
-        self._play_start: float | None = None  # wall-clock playback start, set on the first real-time frame
+        self._play_start: float | None = None  # playback start on the media clock, set on the first real-time frame
         self._last_frame_tick: float | None = None  # last real-time frame pick, for gap clamping
         # True after the tile cache min-age moves to this video's loop period.
         # The first tick past cache completion sets it. Before that, playback
@@ -663,6 +665,17 @@ class BackgroundVideo(BackgroundVideoCache):
         self._min_age_synced: bool = False
 
         super().__init__(video_path, deck_controller=deck_controller, extend_touchscreen=extend_touchscreen)
+
+    @override
+    def _render_rate(self) -> float:
+        """Playback advances at the source rate once the reader knows it;
+        the page's fps key only caps rendering, and nothing renders above
+        the loop rate. A 0 or None cap plays at loop rate. While the cache
+        still builds, the source rate is unknown and playback advances one
+        frame per render, so the cap alone paces the build."""
+        cap = self.fps or MEDIA_LOOP_FPS
+        source = self.get_source_fps() or MEDIA_LOOP_FPS
+        return min(MEDIA_LOOP_FPS, cap, source)
 
     def get_next_tiles(self) -> "tuple[list[Image.Image | None], tuple[str, int] | None]":
         """(tiles, identity) for the frame this tick lands on. identity is
@@ -673,17 +686,17 @@ class BackgroundVideo(BackgroundVideoCache):
             if not self._min_age_synced:
                 # First tick past cache completion. Until now the clamp
                 # maximum shielded the frame set, because sequential build
-                # playback has no loop period. From here the wall clock picks
+                # playback has no loop period. From here the clock picks
                 # frames at source fps, so the real loop period applies.
                 self._min_age_synced = True
                 self.deck_controller.refresh_tile_cache_min_age(self)
-            # A full cache makes any frame a free lookup. Pick by wall clock so
-            # a slow media loop drops frames instead of playing in slow motion.
+            # A full cache makes any frame a free lookup. Pick by the clock
+            # so a slow media loop drops frames instead of playing in slow motion.
             # Playback runs at the source fps. The page fps setting limits
             # how often the media loop renders a frame, and must not change
             # the speed.
-            playback_fps = float(self.get_source_fps() or self.fps or 30)
-            now = time.time()
+            playback_fps = float(self.get_source_fps() or self.fps or MEDIA_LOOP_FPS)
+            now = media_loop.now()
             if self._play_start is None:
                 # Seed the timebase from the current position. The cache
                 # completes mid-play, and a zero base replays a non-looping
@@ -698,8 +711,8 @@ class BackgroundVideo(BackgroundVideoCache):
             self.active_frame = frame % self.n_frames if self.loop else min(frame, self.n_frames - 1)
         else:
             # The cache is still decoding, so advance sequentially and let
-            # the decoder read every frame. A wall-clock jump leaves a gap and
-            # forces an expensive seek.
+            # the decoder read every frame. A clock-driven jump leaves a gap
+            # and forces an expensive seek.
             self.active_frame += 1
             if self.active_frame >= self.n_frames and self.loop:
                 self.active_frame = 0

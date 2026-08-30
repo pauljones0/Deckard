@@ -14,8 +14,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 The GIF pipeline holds the one PIL compositor in the app, the budget ladder
 that bounds what a GIF retains, and the two providers on them. GifBackground
-draws a deck or strip canvas; KeyGIF draws one key. This module imports
-nothing from its sibling modules in the deck_controller package.
+draws a deck or strip canvas; KeyGIF draws one key.
 """
 import bisect
 import contextlib
@@ -23,7 +22,6 @@ import itertools
 import math
 import os
 import threading
-import time
 from dataclasses import dataclass
 
 from PIL import Image, ImageEnhance, ImageOps, ImageSequence
@@ -31,12 +29,14 @@ from loguru import logger as log
 
 from src.backend.DeckManagement.Subclasses import cache_budget
 from src.backend.DeckManagement.Subclasses import mp4_tile_cache
+from src.backend.DeckManagement import media_loop
+from src.backend.DeckManagement.media_loop import MEDIA_LOOP_FPS, FrameScheduled
 from src.backend.DeckManagement.Subclasses.SingleKeyAsset import SingleKeyAsset
 from src.backend.DeckManagement.Subclasses.mp4_tile_cache import get_video_md5
 from src.backend.DeckManagement.deck_controller.strip_band import band_layout
 
 from collections.abc import Generator
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, cast, override
 if TYPE_CHECKING:
     from src.backend.DeckManagement.deck_controller.controller import DeckController
     from src.backend.DeckManagement.deck_controller.inputs import ControllerInput
@@ -49,6 +49,19 @@ if TYPE_CHECKING:
 _STRIP_GEOMETRY_MISSING = (
     "extend_touchscreen is set but the strip geometry was never computed"
 )
+
+
+def gif_render_rate(fps: "int | None", fastest_frame_rate: float,
+                    total_delay: float) -> float:
+    """A GIF's render rate: no faster than its own timeline can change and
+    no slower than two reads per animation loop, with the page's fps key as
+    a cap between them. A 0 or None cap plays at loop rate; an unknown
+    timeline leaves the cap alone."""
+    cap = max(1.0, float(fps or MEDIA_LOOP_FPS))
+    rate = min(MEDIA_LOOP_FPS, cap, fastest_frame_rate)
+    if total_delay > 0:
+        rate = max(rate, min(MEDIA_LOOP_FPS, 2.0 / total_delay))
+    return rate
 
 
 class GifBudgetExceeded(Exception):
@@ -74,23 +87,6 @@ GIF_KEY_BUDGET_MB = 32
 # under budget must not read it back and lose its transparency. A separate
 # variant stops the two renderings from sharing a file.
 BOUNDED_TILE_VARIANT = ".bounded"
-
-# The media loop's own tick ceiling. A cap at or above it slows nothing down,
-# because no tick runs faster, so KeyGIF leaves its timeline untouched there
-# and a GIF that carries no cap plays exactly as it did before caps existed.
-# The number is repeated here rather than read from the loop, because this
-# module imports nothing from its sibling modules in the package.
-#
-# Five declarations hold this number independently, and they must move
-# together. MediaPlayerThread.FPS in media_writer.py is the authority, the
-# rate the loop actually ticks at. The other four follow it: this constant,
-# Page.DEFAULT_MEDIA_FPS (what a page with no fps key reads as),
-# MediaConfig.fps with its from_dict default (what a page load builds with),
-# and VideoFpsRow.MAX_FPS (the top of the sidebar range). Raising the loop
-# alone leaves the other four capping media the loop could now draw faster.
-# Scattered `or 30` fallbacks in KeyVideo.py and background_media.py spell
-# the same number for a falsy fps and follow the same rule.
-MEDIA_LOOP_FPS = 30
 
 # Raw DECKARD_GIF_KEY_BUDGET_MB values that already have a warning logged. A
 # bad or very small setting then costs one log line per distinct value for
@@ -176,7 +172,7 @@ def normalize_gif_delay(raw: "int | None") -> int:
 
 def cumulative_gif_delays(delays_ms: "list[int]") -> "list[float]":
     """A delay list in ms as a cumulative timeline in seconds. Element i is
-    the wall-clock time at which frame i's display window ends. A pick for
+    the timeline instant at which frame i's display window ends. A pick for
     elapsed time t is then one bisect instead of a per-tick loop."""
     return list(itertools.accumulate(d / 1000.0 for d in delays_ms))
 
@@ -184,7 +180,7 @@ def cumulative_gif_delays(delays_ms: "list[int]") -> "list[float]":
 @dataclass(frozen=True, slots=True)
 class GifTimeline:
     """A GIF's playback timeline and geometry, with no decoded frame: the
-    frame count, the per-frame delays, the cumulative wall-clock edges and
+    frame count, the per-frame delays, the cumulative timeline edges and
     the source size. A KeyGIF uses it when the pixels come from a tile cache
     that PIL wrote earlier. Timing authority stays here, never in the video
     container."""
@@ -313,7 +309,7 @@ def decode_gif_frames(path: str, max_size: "tuple[int, int] | None" = None,
     return frames, delays_ms, cumulative_gif_delays(delays_ms)
 
 
-class GifBackground:
+class GifBackground(FrameScheduled):
     """RGBA GIF provider for deck and strip backgrounds.
 
     It meets the BackgroundVideo contract. get_next_tiles() returns
@@ -336,7 +332,7 @@ class GifBackground:
     """
 
     def __init__(self, deck_controller: "DeckController", gif_path: str, loop: bool = True,
-                 fps: int = 30, extend_touchscreen: bool = False,
+                 fps: int = MEDIA_LOOP_FPS, extend_touchscreen: bool = False,
                  canvas_size: "tuple[int, int] | None" = None) -> None:
         self.deck_controller = deck_controller
         self.video_path = gif_path
@@ -403,16 +399,27 @@ class GifBackground:
         self.video_md5 = get_video_md5(gif_path)
 
         self.active_frame: int = -1
-        # Wall-clock timeline state. See _pick_frame.
+        # Clock timeline state. See _pick_frame.
         self._play_start: float | None = None
         self._last_frame_tick: float | None = None
         # (frame index, entries) of the last cropped frame. Most ticks land
         # on the frame already cut, because a 10fps GIF under a 30Hz tick
         # re-uses each crop set about 3 times. The caller always gets copies.
         self._tiles_memo: "tuple[int | None, list[Image.Image] | None]" = (None, None)
+        # The fastest rate a new frame can appear at, from the shortest
+        # delay in the timeline. Sampling at this rate misses no frame of an
+        # irregular GIF. Computed once: the timeline never changes until
+        # close() empties it.
+        shortest_ms = min(self.frame_delays) if self.frame_delays else 0
+        self._fastest_frame_rate: float = (
+            1000.0 / shortest_ms if shortest_ms > 0 else MEDIA_LOOP_FPS)
+
+    @override
+    def _render_rate(self) -> float:
+        return gif_render_rate(self.fps, self._fastest_frame_rate, self._total_delay)
 
     def _pick_frame(self, now: float | None = None) -> int:
-        """Wall-clock frame index for now, from a bisect over the cumulative
+        """Clock frame index for now, from a bisect over the cumulative
         delay timeline plus the away-gap clamp. KeyGIF.get_next_frame runs
         the same arithmetic; see its comments for each branch."""
         # Snapshot the timeline once, because close() swaps frames,
@@ -429,7 +436,7 @@ class GifBackground:
             return 0
 
         if now is None:
-            now = time.time()
+            now = media_loop.now()
 
         if self._play_start is None:
             self._play_start = now
@@ -439,7 +446,7 @@ class GifBackground:
 
         elapsed = now - self._play_start
         # fps is a render cap, matching KeyGIF.get_next_frame: the GIF's own
-        # delay timeline still decides where the wall clock lands, and the cap
+        # delay timeline still decides where the clock lands, and the cap
         # only coarsens how finely that position is read, so the picked frame
         # advances at most fps times per second and the owner's hash dedup
         # drops the redundant recomposite inside one cap window. A cap at or
@@ -512,7 +519,7 @@ class GifBackground:
 
     def set_playback(self, fps: int, loop: bool) -> None:
         """fps sets only the owner's render cap. The playback position
-        follows the wall clock over the GIF's own delay timeline, as
+        follows the clock over the GIF's own delay timeline, as
         InputVideo does at natural speed, so no timebase rebase runs."""
         self.fps = fps
         self.loop = loop
@@ -528,7 +535,7 @@ class GifBackground:
         self._tiles_memo = (None, None)
 
 
-class KeyGIF(SingleKeyAsset):
+class KeyGIF(SingleKeyAsset, FrameScheduled):
     """Animated-GIF provider for one key, playing its own per-frame delay
     timeline.
 
@@ -557,7 +564,7 @@ class KeyGIF(SingleKeyAsset):
     With performance.cache-videos off there is no disk cache to route to, so
     every GIF stays on the frame list and no GIF reaches the registry.
 
-    Either way the timeline is PIL's, from wall-clock picking over the
+    Either way the timeline is PIL's, from clock picking over the
     cumulative per-frame delays, so an irregular GIF plays at its own rhythm
     instead of
     a constant fps. On the video route the picked index goes to the reader
@@ -568,7 +575,7 @@ class KeyGIF(SingleKeyAsset):
     # never take the video route.
     video_cache: "mp4_tile_cache.KeyVideoCache | None" = None
 
-    def __init__(self, controller_key: "ControllerInput[Any]", gif_path: str, fps: int = 30, loop: bool = True):
+    def __init__(self, controller_key: "ControllerInput[Any]", gif_path: str, fps: int = MEDIA_LOOP_FPS, loop: bool = True):
         # Typed as the shared input, not ControllerKey: a dial hosts a KeyGIF
         # too (its page-media loader builds one), and SingleKeyAsset only reads
         # deck_controller off it. The name stays for the key call sites.
@@ -611,6 +618,9 @@ class KeyGIF(SingleKeyAsset):
         self.frame_delays: "list[int]" = []
         self._cum_delays: "list[float]" = []
         self._total_delay: float = 0.0
+        # No rate constraint until _adopt_timeline learns the delays; the
+        # page's fps cap alone paces rendering meanwhile.
+        self._fastest_frame_rate: float = float("inf")
 
         # With no disk cache there is nothing to route to. Every GIF keeps
         # its frame list and the registry never sees a GIF. A reader with no
@@ -670,12 +680,19 @@ class KeyGIF(SingleKeyAsset):
         else:
             self._cold_retained_walk(fit_size, saturation, out_size)
 
+    @override
+    def _render_rate(self) -> float:
+        return gif_render_rate(self.fps, self._fastest_frame_rate, self._total_delay)
+
     def _adopt_timeline(self, delays_ms: "list[int]") -> None:
         """Install the per-frame delays as this object's playback timeline.
         One place, so no route can install a timeline the others could not."""
         self.frame_delays = list(delays_ms)
         self._cum_delays = cumulative_gif_delays(self.frame_delays)
         self._total_delay = self._cum_delays[-1] if self._cum_delays else 0.0
+        shortest_ms = min(self.frame_delays) if self.frame_delays else 0
+        if shortest_ms > 0:
+            self._fastest_frame_rate = 1000.0 / shortest_ms
 
     def _composited_walk(self, fit_size: "tuple[int, int]", saturation: float,
                          delays_out: "list[int]", alpha_out: "list[bool]") -> "Generator[Image.Image, None, None]":
@@ -852,7 +869,7 @@ class KeyGIF(SingleKeyAsset):
             return self._frame_at(0)
 
         if now is None:
-            now = time.time()
+            now = media_loop.now()
 
         if self._play_start is None:
             self._play_start = now
@@ -866,7 +883,7 @@ class KeyGIF(SingleKeyAsset):
 
         elapsed = now - self._play_start
         # fps is a render cap here, never a playback rate. The GIF's own delay
-        # timeline still decides where in the animation the wall clock lands;
+        # timeline still decides where in the animation the clock lands;
         # the cap only coarsens how finely that position is read, so the
         # picked frame advances at most fps times per second. Inside one cap
         # window every tick picks the same frame, so the owner's hash dedup
@@ -925,7 +942,7 @@ class KeyGIF(SingleKeyAsset):
     def set_playback(self, fps: int, loop: bool) -> None:
         """A new render cap and loop flag for a GIF that is already playing.
 
-        No timebase rebase runs. The position follows the wall clock over the
+        No timebase rebase runs. The position follows the clock over the
         GIF's own delay timeline whatever fps says, so a new cap changes only
         how often the picked frame advances. InputVideo needs the rebase
         because without natural_speed its fps is the playback rate itself.

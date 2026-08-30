@@ -41,6 +41,8 @@ from loguru import logger as log
 from src.backend.DeckManagement.fair_lock import FairLock
 from src.backend.DeckManagement.InputIdentifier import Input, InputIdentifier
 from src.backend.DeckManagement.Subclasses.media_pipeline_profiler import media_prof
+from src.backend.DeckManagement import media_loop
+from src.backend.DeckManagement.media_loop import MEDIA_LOOP_FPS
 from src.backend.DeckManagement.deck_controller.loop_metrics import WorkRateMonitor
 from src.backend.DeckManagement.deck_controller.paint_protocol import PaintTicket
 from src.backend.PageManagement.Page import Page
@@ -378,7 +380,7 @@ class MediaPlayerThread(threading.Thread):
             _serial = "unknown"
         super().__init__(name=f"MediaPlayerThread-{_serial}", daemon=True)
         self.deck_controller: DeckController = deck_controller
-        self.FPS = 30 # Max refresh rate of the internal displays
+        self.FPS = MEDIA_LOOP_FPS  # the loop's declared rate; media_loop owns it
 
         # Cap how often a background video repaints the device. The FIFO
         # transport lock keeps the HID read poll from starving, because the
@@ -559,11 +561,12 @@ class MediaPlayerThread(threading.Thread):
         render ticks, and never more than GATE_WINDOW_MAX_S of wall clock
         however busy the task queues stay. Writer thread only."""
         self._gate_render_ticks = self.GATE_SETTLE_TICKS
-        self._gate_window_deadline = time.monotonic() + self.GATE_WINDOW_MAX_S
+        self._gate_window_deadline = media_loop.now() + self.GATE_WINDOW_MAX_S
 
     def _run_one_tick(self) -> bool:
         """One iteration of the writer loop. Returns False to stop."""
-        start = time.time()
+        # Monotonic: gates, deadlines and waits must not follow wall steps.
+        start = media_loop.now()
 
         # Drain the control queue fully and first on every wake, ahead of the
         # resume-gap check, the pending-repaint hook, any animation tick or
@@ -636,7 +639,7 @@ class MediaPlayerThread(threading.Thread):
                 # survived the suspend.
                 self._open_gate_window()
             if self._gate_render_ticks > 0:
-                if time.monotonic() >= self._gate_window_deadline:
+                if media_loop.now() >= self._gate_window_deadline:
                     # Wall-clock stop from GATE_WINDOW_MAX_S. The window was
                     # open long enough. It closes here whatever the queue
                     # state below says, because a steady producer holds that
@@ -646,9 +649,9 @@ class MediaPlayerThread(threading.Thread):
                     gated = False
                     gate_window_open = True
                     self.gate_window_ticks += 1
-                    # The pass must paint. The video block's source-fps tick
-                    # divider otherwise skips this single frame on any video
-                    # whose fps is below the loop's. The same deadline bounds
+                    # The pass must paint. The video block's frame deadline
+                    # otherwise skips this single frame on any video whose
+                    # rate is below the loop's. The window deadline bounds
                     # that bypass, because it applies only while this window
                     # is open, so no video runs above its own frame rate for
                     # longer than GATE_WINDOW_MAX_S.
@@ -666,6 +669,8 @@ class MediaPlayerThread(threading.Thread):
 
         bg_strip_dirty = False
         video_repaint = False
+        # True only on a tick the background rendered a new frame.
+        bg_frame_new = False
 
         # Snapshot once, because Background.set_video(None) from another
         # thread must not null this between the check and the reads.
@@ -680,17 +685,12 @@ class MediaPlayerThread(threading.Thread):
                 if start - self._last_video_write >= min_gap:
                     video_repaint = True
                     self._last_video_write = start
-                # Guard the tick divider against an fps of 0 or None, which
-                # raises ZeroDivisionError, and against an fps above FPS. A 0
-                # or a None plays at loop FPS. force_render bypasses this
-                # divider so the gate's settle pass paints, and
-                # GATE_WINDOW_MAX_S bounds that bypass, so a video below the
-                # loop fps never runs above its own rate for longer than the
-                # window lasts.
-                video_fps = video.fps or self.FPS
-                video_each_nth_frame = max(1, self.FPS // min(self.FPS, video_fps))
-                if video_repaint and (force_render or self.media_ticks % video_each_nth_frame == 0):
+                # The video's own frame deadline paces the render, so a
+                # swapped video renders at once and a slow source pays
+                # nothing between frames. force_render = settle pass paints.
+                if video_repaint and (force_render or video.frame_due(start)):
                     self.deck_controller.background.update_tiles()
+                    bg_frame_new = True
                     # A video extended onto the strip needs the shared
                     # touchscreen re-composited for the new frame.
                     bg_strip_dirty = self.deck_controller.background.get_touchscreen_image() is not None
@@ -705,7 +705,7 @@ class MediaPlayerThread(threading.Thread):
             self.deck_controller.background.slideshow_tick()
 
         # Iterate the keys only when animated content needs an update.
-        if not gated and (video_repaint or self._needs_key_ticks()):
+        if not gated and (bg_frame_new or self._needs_key_ticks()):
             # Snapshot the dict and use .get, because the screensaver swaps
             # the whole inputs dict from another thread. init_inputs builds
             # then swaps, so every dict this sees is complete, but read
@@ -714,7 +714,7 @@ class MediaPlayerThread(threading.Thread):
             inputs = self.deck_controller.inputs
             #TODO: generalize
             for key in inputs.get(Input.Key, []):
-                cast("ControllerKey", key).on_media_player_tick()
+                cast("ControllerKey", key).on_media_player_tick(start, bg_frame_new)
 
             # The dials and any per-touchscreen background video share one
             # touchscreen. Render it at most once per frame, not once per
@@ -723,10 +723,10 @@ class MediaPlayerThread(threading.Thread):
             touchscreens = inputs.get(Input.Touchscreen, [])
             touchscreen_dirty = False
             for dial in dials:
-                if cast("ControllerDial", dial).on_media_player_tick():
+                if cast("ControllerDial", dial).on_media_player_tick(start):
                     touchscreen_dirty = True
             for touchscreen in touchscreens:
-                if cast("ControllerTouchScreen", touchscreen).on_media_player_tick():
+                if cast("ControllerTouchScreen", touchscreen).on_media_player_tick(start):
                     touchscreen_dirty = True
             if (touchscreen_dirty or bg_strip_dirty) and touchscreens:
                 cast("ControllerTouchScreen", touchscreens[0]).update()
@@ -735,7 +735,7 @@ class MediaPlayerThread(threading.Thread):
 
         self.media_ticks += 1
 
-        end = time.time()
+        end = media_loop.now()
 
         if media_prof:
             media_prof.add("tick", end - start)
@@ -1166,7 +1166,7 @@ class MediaPlayerThread(threading.Thread):
             # producer, so a frame can wait one window against a different
             # stream; a bg-video frame that arrives right after a scroll-label
             # write is re-queued and waits.
-            now = time.time()
+            now = media_loop.now()
             min_gap = 1.0 / self._video_write_hz if self._video_write_hz > 0 else 0
             if min_gap and now - self._last_touch_write < min_gap:
                 # Locked check-then-set. A producer that assigns a newer
