@@ -69,12 +69,11 @@ def _reap_stale_tmp_siblings(dir_path: str, target_basename: str) -> None:
 
 
 def quarantine_corrupt_file(file_path: str) -> tuple[bool, str]:
-    """Move corrupt data to the first free .corrupt[.n] atomically; return (moved, path).
-    Read-only, permission, or race failures keep source; recovery survives sidecar races."""
+    """Atomically move corrupt data to a bounded .corrupt[.n] path; return (moved, path).
+    Failure can leave the source in place or mean another actor already moved it."""
     candidate = file_path + ".corrupt"
     n = 0
-    # Bounded probe for a free sidecar name. If every slot is taken, keep the
-    # plain name, where os.replace overwrites the oldest sidecar.
+    # Probe through .corrupt.10000. If that last path exists, os.replace overwrites it.
     while os.path.exists(candidate) and n < 10000:
         n += 1
         candidate = f"{file_path}.corrupt.{n}"
@@ -82,8 +81,8 @@ def quarantine_corrupt_file(file_path: str) -> tuple[bool, str]:
         os.replace(file_path, candidate)
         return True, candidate
     except OSError:
-        # The rename failed, or a concurrent quarantine took the source. The
-        # caller recovers from a backup either way.
+        # A rename error can mean a concurrent quarantine already moved the source.
+        # The caller uses the corrupt-read result to decide whether to recover.
         return False, file_path
 
 

@@ -1,6 +1,8 @@
 """
-Flush before get_page_data, asset-sweep reads, page exports, duplicate reads, and page-move copies.
-Boot backup zip and video-cache sweep flush; replacing importers discard; calls are thread-safe.
+Every disk reader must flush pending page edits before it reads page data.
+Current readers are get_page_data, asset sweeps, exports, duplicate reads, and page-move copies.
+Boot backup zip and video-cache sweep also flush. Replacing importers discard pending edits.
+Calls are thread-safe.
 """
 from __future__ import annotations
 
@@ -37,8 +39,8 @@ class PageContent(Protocol):
         ...
 
 
-# One second absorbs a typed label before synchronous actions flush; five seconds
-# bounds continuous edits that a trailing timer would otherwise defer forever.
+# One second absorbs a typed label before synchronous actions flush. Five seconds
+# bounds deferral before a write attempt; failed writes can remain dirty past it.
 DEBOUNCE_S = 1.0
 MAX_DIRTY_AGE_S = 5.0
 # Retry transient failures without spinning on a stuck filesystem; a short outage
@@ -62,7 +64,7 @@ _save_locks_guard = threading.Lock()
 
 def save_lock(path: str) -> threading.Lock:
     """Return the canonical lock shared by content edits and writes for one file.
-    Only file I/O, _pending_guard, or timer locks may nest below this leaf lock."""
+    Acquire it before _pending_guard when both are needed; never use the reverse order."""
     # Canonicalize here because trusting raw caller spelling would silently give
     # one file two locks; the page cache lock is never held across this lock.
     with _save_locks_guard:
@@ -124,15 +126,16 @@ class PageFlush:
         # Back up once per path per session; only discard removes the record when
         # another writer takes the file, and the user's page count bounds the set.
         self._backed_up: set[str] = set()
-        # Guard both registries alone or inside a save lock, never outside one;
-        # file writes and backup copies stay outside so marks do not wait on I/O.
+        # Take this guard alone, or after a save lock when both are needed. Never
+        # acquire a save lock under it; file writes and backup copies stay outside it.
         self._pending_guard = threading.Lock()
         self._scheduler: Scheduler = scheduler if scheduler is not None else TimerWheelScheduler()
         self._clock: Callable[[], float] = clock if clock is not None else time.monotonic
 
     def mark_dirty(self, source: PageContent) -> None:
         """Record the latest shared source and arm a write without doing file I/O.
-        Re-arm at DEBOUNCE_S; first_marked makes mid-write marks stop at MAX_DIRTY_AGE_S."""
+        Re-arm at DEBOUNCE_S; first_marked caps deferral before an attempt at MAX_DIRTY_AGE_S.
+        Write failures can retain edits beyond that age."""
         # One entry per file is sufficient because every Page and its document
         # share one dictionary; a clean completed write starts the next age window.
         with self._pending_guard:
@@ -161,8 +164,8 @@ class PageFlush:
 
     def _fire(self, key: str) -> None:
         """Timer dispatch. It logs a failure, because it has no caller."""
-        # Timer-thread fsync keeps GTK responsive; crashes lose at most DEBOUNCE_S
-        # or MAX_DIRTY_AGE_S during continuous edits, without risking the file.
+        # Timer-thread fsync keeps GTK responsive. Without write failures, crashes
+        # lose at most DEBOUNCE_S or MAX_DIRTY_AGE_S of pending edits.
         try:
             self.flush_path(key)
         except Exception:

@@ -312,7 +312,8 @@ class SettingsStore:
 
     def read_reporting_corruption(self, spec: SurfaceSpec, key: str | None = None) -> tuple[Any, bool]:
         """Return content and whether this read found an existing unparseable or wrong-root file.
-        Missing, {}, later, and cached reads are false; do not cache or depend on quarantine."""
+        Missing, {}, and cached reads are false.
+        A later disk read is false only if quarantine moved the bad file."""
         path = spec.path(key)
         if not spec.cached:
             return self.load_file(path, root=spec.root)

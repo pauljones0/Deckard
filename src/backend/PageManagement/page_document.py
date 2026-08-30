@@ -50,8 +50,8 @@ def move_key_to_end(dictionary: dict[str, Any], key: str) -> None:
 
 
 def back_up_page_file(src_path: str) -> None:
-    """Copy a valid page to pages/backups/ as the corrupt-primary heal source.
-    Missing or invalid primaries leave backups unchanged but allow replacement writes."""
+    """Copy parseable JSON to pages/backups/ as the corrupt-primary heal source.
+    Missing or unparseable primaries leave backups unchanged but allow replacement writes."""
     os.makedirs(os.path.join(gl.DATA_PATH, "pages", "backups"), exist_ok=True)
     dst_path = os.path.join(gl.DATA_PATH, "pages", "backups", os.path.basename(src_path))
 
@@ -135,7 +135,7 @@ class PageDocument:
 
     def refresh_from_disk(self) -> None:
         """Refresh through the page manager's read barrier and corrupt-file recovery.
-        A marked edit between load and swap can be lost because the read takes the file lock."""
+        The unlocked read-to-adopt gap can lose an edit that starts after the disk read."""
         # External writers include full-page imports, pre-manager migrations, and
         # recreation of a deleted page under a document's retained name.
         with self._load_guard:
