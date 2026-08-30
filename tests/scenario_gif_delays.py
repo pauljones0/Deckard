@@ -1,4 +1,4 @@
-"""Check GIF delay normalization: values below 20 ms become 100 ms.
+"""Check GIF delays: missing values and values below 20 ms become 100 ms.
 
 Other values remain unchanged without centisecond multiplication.
 """

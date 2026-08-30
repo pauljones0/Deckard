@@ -1,6 +1,6 @@
 """Check source-rate deadlines, drift, stall recovery, and away-gap resync.
 
-A fake clock keeps the checks independent of wall-clock scheduling.
+With a fake clock, stalls up to RESYNC_GAP_S catch up once; longer gaps resync.
 """
 import fixtures  # noqa: F401  (import first: isolated --data tempdir)
 
@@ -72,7 +72,7 @@ def check_catch_up_without_burst() -> None:
     try:
         deadline = FrameDeadline(24.0)
         run_loop(deadline, clock, seconds=0.5)
-        # A short stall owes one recovery render, not a burst of missed frames.
+        # A 0.2 s stall below RESYNC_GAP_S owes one render, not a missed-frame burst.
         clock.advance(0.2)
         assert deadline.due(media_loop.now()), (
             "the first tick after a stall must render")
@@ -97,7 +97,7 @@ def check_away_gap_resync() -> None:
     try:
         deadline = FrameDeadline(12.0)
         run_loop(deadline, clock, seconds=0.5)
-        # An away gap renders once, then re-seeds the next deadline from return.
+        # A 10 s gap above RESYNC_GAP_S renders once, then re-seeds from return.
         clock.advance(10.0)
         assert deadline.due(media_loop.now()), (
             "the first tick after an away gap must render")

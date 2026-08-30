@@ -316,7 +316,7 @@ def check_a_model_refuses_a_shape_that_cannot_work() -> None:
 def check_model_selection_rules() -> None:
     """Check layout precedence with and without a named model.
 
-    Persisted layout wins without one; explicit layout wins with one.
+    No model: persisted, key_layout, default. Model: key_layout, model; ignore persisted.
     """
     serial = "layout-persisted"
     gl.settings_manager.save_deck_settings(serial, {"key-layout": [3, 5]})

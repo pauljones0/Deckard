@@ -290,10 +290,7 @@ def test_download_leaves_no_partial_file(server, base) -> None:
 
 
 def test_download_rejects_error_status(server, base) -> None:
-    """An HTTP error body is never persisted as if it were the asset.
-
-    The older download helper wrote 404 pages straight into the asset cache.
-    """
+    """Reject HTTP error bodies instead of persisting them as assets."""
     target = os.path.join(_SCRATCH, "missing.bin")
 
     raised = None

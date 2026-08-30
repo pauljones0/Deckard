@@ -14,15 +14,15 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PACKAGE_DIR = os.path.join(_REPO_ROOT, "src", "backend", "DeckManagement", "deck_controller")
 COMPAT_SHIM = os.path.join(_REPO_ROOT, "src", "backend", "DeckManagement", "DeckController.py")
 
-# Modules outside the package that are part of the engine import closure
+# Modules outside the package with engine-closure or distinct floor-path contracts
 EXTRA_MODULES = (
     # The app-ready deferral protocol imports globals and stdlib only.
     os.path.join(_REPO_ROOT, "src", "backend", "startup_queue.py"),
     # Control plane imported by the deck controller
     os.path.join(_REPO_ROOT, "src", "backend", "control_plane.py"),
-    # CLI forwarding path executed before the application imports
+    # CLI forwarding is a distinct deployment-floor path, not part of the engine closure.
     os.path.join(_REPO_ROOT, "src", "backend", "cli_forward.py"),
-    # CLI fast path executed before all other main imports
+    # CLI fast path is distinct; main imports some modules before reaching it.
     os.path.join(_REPO_ROOT, "src", "backend", "cli_fast_path.py"),
     # Typed global accessors with TYPE_CHECKING-only application types
     os.path.join(_REPO_ROOT, "src", "backend", "services.py"),
