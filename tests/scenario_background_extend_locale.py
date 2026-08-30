@@ -1,14 +1,7 @@
-"""
-Regression test for the deck background "extend to touchscreen" label.
+"""Verify the localized deck-background extend-to-touchscreen label.
+LocaleManager.get returns a missing key before fallback, which exposes the raw key in the UI."""
 
-LocaleManager.get resolves an absent key to the key itself, before it looks at
-the caller's fallback. A label whose key is missing from locales.csv therefore
-renders the raw key in the UI.
-"""
-
-# The key the background group asks for must exist in locales.csv for every
-# shipped locale. Removing the CSV row makes get() return the raw key, which is
-# what the assertions below reject.
+# The background-group key must exist for every shipped locale, or get() exposes the raw key.
 import os
 
 import fixtures  # noqa: F401  (isolated --data tempdir; import first)
@@ -66,10 +59,8 @@ def test_background_group_asks_for_that_key() -> None:
 
 APOSTROPHE_KEY = "background-editor.color.dialog.title"
 
-# Keys whose translation holds a markup-significant character, split by the
-# renderer they reach. A markup consumer needs the character escaped or the
-# parse fails; a plain renderer shows the escape sequence verbatim, so it must
-# get the raw character.
+# Split keys with markup characters by renderer: markup consumers need escapes to parse,
+# while plain renderers need raw characters to avoid showing escape sequences.
 MARKUP_CONSUMED_KEYS = {
     "settings.performance.header",   # Adw.PreferencesGroup title, markup
     "onboarding.extension.hint",     # Gtk.Label with use_markup

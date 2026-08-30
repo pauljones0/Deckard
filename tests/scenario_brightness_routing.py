@@ -1,8 +1,5 @@
-"""The set_brightness device write must land on the media thread.
-
-submit_control(SetBrightnessMsg(...)) routes it there, and the owner
-assertion of BetterDeck must record zero violations across the scenario.
-"""
+"""Route set_brightness device writes to the media thread through submit_control.
+BetterDeck must record no owner violations during the scenario."""
 import os
 import threading
 
@@ -39,9 +36,7 @@ def main() -> None:
             f"thread {media_thread_name!r}: {entry}"
         )
 
-    # The owner-assertion detector of BetterDeck logs and never raises. It must
-    # show zero violations for the whole scenario, including the bootstrap
-    # clear and the page-load writes.
+    # BetterDeck logs owner violations; require zero across bootstrap clear and page-load writes.
     violations = controller.deck.owner_violations
     assert violations == [], f"owner violations recorded: {violations}"
 

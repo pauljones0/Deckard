@@ -1,9 +1,5 @@
-"""Backup retention keeps exactly MAX_BACKUPS, not one fewer.
-
-remove_old_backups returned at a count of MAX_BACKUPS and deleted from index
-MAX_BACKUPS-1, so a directory that reached the cap was pruned to one below it.
-It now keeps the newest MAX_BACKUPS and deletes only the rest.
-"""
+"""Keep the newest MAX_BACKUPS entries and delete only entries beyond the cap.
+Directories at or below the cap must remain unchanged."""
 import fixtures  # noqa: F401  (must be first: isolates DATA_PATH before globals)
 
 import os  # noqa: E402
