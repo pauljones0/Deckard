@@ -1,20 +1,5 @@
-"""One resolver and adapter serve both private Adw list containers.
-
-BetterExpander and BetterPreferencesGroup keep their rows in list boxes
-that libadwaita does not expose. The shared adapter owns the private tree
-walks and the operations over the resolved box, and these checks pin the
-contract per supported widget:
-
-  (1) Resolution: each resolver finds a real Gtk.ListBox under its widget.
-  (2) Operations: rows listing, sorting, filtering, clear-then-refill
-      without duplication, and removal work through the facades.
-  (3) Policies: a mismatched tree under the expander no-ops (clear warns
-      once), and under the preferences group raises a LookupError naming
-      the walk; get_rows keeps its None answer on both.
-
-Widget construction needs a display; without one the widget checks skip,
-matching scenario_widget_rows.
-"""
+"""Resolve, list, sort, filter, clear/refill, and remove rows in both private lists.
+Missing expanders skip/warn, groups raise, and both return no rows; widget checks need a display."""
 import fixtures  # noqa: F401  (import first: isolated --data tempdir)
 
 from loguru import logger
@@ -129,10 +114,8 @@ def check_widgets() -> None:
     assert target not in (expander.get_rows() or []), (
         "remove_child left the row in the listing")
 
-    # The raise policy on a real group, driven through the public
-    # get_list_box override: the adapter resolves through that method, so a
-    # subclass steers every operation, and a tree it reports missing fails
-    # loud with the named walk.
+    # The adapter resolves through the public get_list_box override.
+    # A subclass-reported missing tree must raise with the named walk.
     class _BlindGroup(BetterPreferencesGroup):
         def get_list_box(self):
             return None

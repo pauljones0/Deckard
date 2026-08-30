@@ -1,11 +1,5 @@
-"""
-Regression scenario for Migrator_1_5_0_beta_5.migrate_plugin_settings.
-
-The migrator writes each plugin's settings.json to the new path before it
-removes the old file. The write is atomic. The migrator never clobbers
-settings that already sit at the new path. A re-run after a crash finishes
-the remainder.
-"""
+"""Require atomic plugin-settings migration without clobbering current data.
+A rerun after interruption must finish pending plugins."""
 import json
 import os
 import shutil
@@ -89,9 +83,8 @@ def check_existing_settings_not_clobbered() -> None:
 
 
 def check_partial_crash_rerun_idempotent() -> None:
-    """set_migrated fires once at the end of migrate(), so a crash between
-    plugins re-runs the whole pass. Plugin A sits at the new path and plugin B
-    at the old one. The re-run migrates B and leaves A intact."""
+    """Rerun the full pass with one migrated plugin and one pending plugin.
+    The current destination must win while the pending source moves."""
     for name in ("com_example_A", "com_example_B"):
         shutil.rmtree(os.path.join(gl.PLUGIN_DIR, name), ignore_errors=True)
         shutil.rmtree(os.path.join(gl.DATA_PATH, "settings", "plugins", name), ignore_errors=True)
@@ -113,9 +106,8 @@ def check_partial_crash_rerun_idempotent() -> None:
 
 
 def check_atomic_write_survives_death() -> None:
-    """A death at fsync leaves the target absent or complete, and keeps the
-    old file for the re-run; os.remove runs only after os.replace. A child
-    process dies at fsync through os._exit(9)."""
+    """Kill a child at fsync and require the source to remain complete.
+    The destination must stay absent until os.replace publishes it."""
     child_code = (
         "import fixtures, os, json\n"
         "import globals as gl\n"
@@ -157,11 +149,8 @@ def check_atomic_write_survives_death() -> None:
             "new settings path exists though the write died before os.replace -- "
             "the write was not atomic"
         )
-        # A death before os.replace leaves the temp file behind. Its
-        # ".save-<basename>." prefix proves the write went through
-        # atomic_write_json. The next atomic_write_json for the same target
-        # reaps stale siblings. realpath is needed because atomic_write_json
-        # resolves the destination before it picks the temp directory.
+        # A pre-replace death leaves a .save-<basename> temp from atomic_write_json.
+        # Resolve the target directory because the atomic writer resolves its destination.
         import glob
         target_dir = os.path.realpath(os.path.dirname(new))
         orphans = glob.glob(os.path.join(target_dir, ".save-settings.json.*.tmp"))

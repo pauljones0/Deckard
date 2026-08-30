@@ -1,14 +1,5 @@
-"""A named page that does not build must never blank a deck.
-
-get_page() answers None where a page path resolves and the page behind it
-does not build, such as a page whose file was removed from disk after a list
-was filled. load_page(None) clears the deck, so any surface that forwards
-that None takes the user's keys away and reports nothing.
-
-Three forward surfaces are covered: the header page selector, the automatic
-window switch, and the restore back to the manually chosen page. Each must
-keep the page the deck already shows, and each must say why it did nothing.
-"""
+"""Keep the current deck page when a named page cannot be built.
+Selectors, automatic switches, and restores must not forward None to load_page."""
 import fixtures  # noqa: F401  (import first: isolates DATA_PATH)
 
 import os
@@ -43,11 +34,7 @@ class FakeDeck:
 
 
 class FakeController:
-    """The controller reduced to the page state these surfaces touch.
-
-    load_page records every call, including a call with None, because a None
-    reaching the real controller is the whole defect.
-    """
+    """Record all page loads, including an invalid None load."""
 
     def __init__(self, serial: str, active_page: FakePage | None):
         self.deck = FakeDeck(serial)
@@ -66,11 +53,7 @@ class FakeController:
 
 
 class FakePageManager:
-    """A page manager whose named pages resolve and do not build.
-
-    missing holds the paths get_page() answers None for, which is the state a
-    deleted page file leaves behind.
-    """
+    """Resolve names while returning None for paths whose page file is missing."""
 
     def __init__(self, page_dir: str):
         self.page_dir = page_dir
@@ -92,11 +75,7 @@ class FakePageManager:
         return self.auto_change.get(page_path, {})
 
     def find_matching_page_path(self, name: str) -> str | None:
-        """A full page path resolves to itself, and nothing else resolves.
-
-        The control plane asks this before it loads. The real one also matches
-        a bare page name, which no check here needs.
-        """
+        """Resolve full page paths only; these checks do not use bare names."""
         if name.startswith(self.page_dir):
             return name
         return None
@@ -115,11 +94,7 @@ class RecordingNotify:
 
 
 def check_selector_keeps_the_page(page_manager: FakePageManager) -> None:
-    """Picking a page whose file went away must leave the deck alone.
-
-    change_page is bound to a stand-in holding the one field it reads, so the
-    check needs no display: the defect is in the forwarding, not in the list.
-    """
+    """Require a missing selected page to leave the deck unchanged and report failure."""
     from src.windows.mainWindow.elements.PageSelector import PageSelector
 
     held = FakePage(page_manager.path_of("home"))
@@ -209,13 +184,8 @@ def check_auto_switch_keeps_the_page(page_manager: FakePageManager) -> None:
 
 def check_hand_pick_ends_the_automatic_mark(
         page_manager: FakePageManager) -> None:
-    """A page picked by hand must end the deck's automatic state.
-
-    Nothing outside the window grabber clears the mark. A deck left marked
-    after the user picks a page of their own is taken back to the page it
-    left the next time no rule matches, which is a page the user already
-    walked away from.
-    """
+    """End automatic state when the user selects a page.
+    The selected page becomes the next automatic restore destination."""
     from src.windows.mainWindow.elements.PageSelector import PageSelector
 
     gl.page_manager = page_manager
@@ -275,16 +245,8 @@ def check_hand_pick_ends_the_automatic_mark(
 
 def check_a_command_switch_ends_the_automatic_mark(
         page_manager: FakePageManager) -> None:
-    """A page named by a command must end the deck's automatic state.
-
-    The CLI and D-Bus both reach the deck through the control plane, and the
-    page they name is the user's own choice. A deck left marked after such a
-    switch is taken back to the page it left the next time no rule matches,
-    which is a page the user already walked away from.
-
-    The refusals keep their shape here: a page that does not build and a page
-    already on the deck both leave the mark exactly as they found it.
-    """
+    """End automatic state for successful control-plane page commands.
+    Failed and already-active commands must preserve the existing mark."""
     from src.backend import control_plane
 
     gl.page_manager = page_manager
@@ -361,11 +323,8 @@ def check_a_command_switch_ends_the_automatic_mark(
         f"the deck must come back to the page the command named, it points "
         f"at {controller.last_manual_loaded_page_path}")
 
-    # An automatic switch landing while the command's page loads must record
-    # the page the command named, not the one still on the deck. The deck
-    # shows the page it is leaving for the whole load, so a clear of the mark
-    # on its own is not enough: the claim is what tells the switch which page
-    # the deck is on its way to.
+    # A switch during a command load must record the commanded destination.
+    # The pending claim identifies it while the deck still shows the old page.
     second_path = page_manager.path_of("auto-second")
     page_manager.auto_change[second_path] = {
         "enable": True, "decks": ["CMD"], "wm-class": SECOND.wm_class,
@@ -398,12 +357,8 @@ def check_a_command_switch_ends_the_automatic_mark(
 
 def check_a_load_that_raises_keeps_the_mark(
         page_manager: FakePageManager) -> None:
-    """A page load that raises must leave the deck's mark as it found it.
-
-    A deck torn down mid-call takes the load down with it. The deck still
-    shows the automatic page, so a deck left with the mark off has the next
-    automatic switch write that page down as the user's own choice.
-    """
+    """Restore the automatic mark when a manual page load raises.
+    The deck still shows the automatic page and must not record it as manual."""
     gl.page_manager = page_manager
     auto_page = FakePage(page_manager.path_of("auto"))
     manual_path = page_manager.path_of("manual")
@@ -453,9 +408,8 @@ def check_a_load_that_raises_keeps_the_mark(
     print("PASS: a page load that raises leaves the deck's mark and its way "
           "back as they were")
 
-    # Two kinds of load claim a deck, the restore and a pick by hand. One
-    # that retired the other's claim would take the guard off a load still
-    # running, so a claim only retires on its own token.
+    # Restore and manual loads can claim the same deck concurrently.
+    # A claim must retire only with its own token.
     with grabber.manual_page_load(controller, picked_path):
         grabber._end_manual_load(controller, object())
         assert grabber._pending_manual_path(controller) == picked_path, (
@@ -467,13 +421,8 @@ def check_a_load_that_raises_keeps_the_mark(
 
 def check_switch_during_a_restore_keeps_the_way_back(
         page_manager: FakePageManager) -> None:
-    """An automatic switch landing during a restore must not record its page.
-
-    The restore clears the automatic mark and then loads, and the load
-    marshals onto the GTK main thread, so the deck shows the automatic page
-    for the whole of it. A switch that reads the deck there sees an automatic
-    page with no mark on it and writes that page down as the user's choice.
-    """
+    """Keep the manual destination when an automatic switch lands during restore.
+    The restore claim disambiguates the still-visible automatic page."""
     gl.page_manager = page_manager
     auto_page = FakePage(page_manager.path_of("auto"))
     manual_path = page_manager.path_of("manual")
@@ -554,13 +503,8 @@ def check_failed_restore_keeps_the_way_back(page_manager: FakePageManager,
                                             controller: FakeController,
                                             auto_page: FakePage,
                                             manual_path: str) -> None:
-    """A restore that does not build must leave the deck able to try again.
-
-    The deck sits on an automatically loaded page it could not leave. Marking
-    it as no longer automatic there strands it: no later window change carries
-    the restore, and the next automatic switch reads the stranded page as the
-    user's own choice and overwrites the remembered path with it.
-    """
+    """Keep the automatic mark and manual path when a restore cannot build.
+    A later window change must be able to retry the restore."""
     grabber = WindowGrabber.__new__(WindowGrabber)
     grabber._dispatch_lock = threading.RLock()
 
@@ -571,9 +515,7 @@ def check_failed_restore_keeps_the_way_back(page_manager: FakePageManager,
         f"the failed restore must keep the way back, it holds "
         f"{controller.last_manual_loaded_page_path}")
 
-    # Focus moves to a second matching window, so the deck switches from one
-    # automatic page to another. A deck wrongly marked as manual here has the
-    # page it could not leave written down as the user's own choice.
+    # Switch between automatic pages without recording either as the manual choice.
     second_path = page_manager.path_of("auto-second")
     page_manager.auto_change[second_path] = {
         "enable": True, "decks": ["REST"], "wm-class": SECOND.wm_class,

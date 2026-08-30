@@ -1,11 +1,5 @@
-"""Reverting the media frame rate must clear the page's fps key.
-
-An explicit rate lives under media/fps and reaches playing media at once. A
-revert removes the key instead of storing the current default, so the page
-reads as one the rate never reached, and a default that later changes still
-reaches it. The sidebar then shows the rate the media itself runs at, which
-the pipeline that decoded it reports.
-"""
+"""Require a frame-rate revert to remove the persisted key and update live media.
+Native rate reads must come from the active decoding pipeline."""
 
 # Timers stay disarmed, so every write here is one a check asks for by name.
 import fixtures  # noqa: F401  (must be first: isolates DATA_PATH)
@@ -46,12 +40,7 @@ def fresh_flush() -> None:
 
 
 class FakeVideo:
-    """Playing media, as the page seam sees it.
-
-    It records every cap the seam pushes, and reports a native rate. It is
-    well-behaved for the controller's live media loop, which composites
-    active-state videos while the scenario runs.
-    """
+    """Record playback caps and report a native rate through the page seam."""
 
     def __init__(self, native=None):
         self.loop = True
@@ -108,9 +97,8 @@ class StubKeyVideoCache:
 
 
 def section(content: dict, name: str) -> dict:
-    """One section of key 0x0 state 0, or {} while the page carries none. A
-    seeded page starts with no key entry at all, which is the state a revert
-    must leave the file in."""
+    """Return one section of key 0x0 state 0, or an empty mapping when absent.
+    A revert must restore this initially absent shape."""
     state = content.get("keys", {}).get("0x0", {}).get("states", {}).get("0", {})
     return state.get(name, {})
 
@@ -150,9 +138,7 @@ def check_absent_key_reads_uncapped(page) -> int:
 def check_set_then_revert_round_trip(page) -> int:
     """A rate persists; a revert removes the key from memory and from the
     file, and leaves the rest of the media section exactly as it was."""
-    # Give the section real siblings first. Without them a revert that wiped
-    # the whole media section would look identical to one that removed the
-    # single key, and the check below would prove nothing.
+    # Seed sibling fields so removing the whole media section cannot pass unnoticed.
     page.set_media_path(IDENT, 0, "/nonexistent/clip.gif", update=False)
     page.set_media_size(IDENT, 0, 0.75, update=False)
     page.set_media_halign(IDENT, 0, -0.5, update=False)
@@ -270,11 +256,7 @@ def check_native_rate_read_back(controller) -> int:
 
 
 def check_video_side_unchanged() -> int:
-    """A video's own frame-rate behaviour must not move.
-
-    native_fps reads the container's rate through the tile cache, and
-    set_playback still rebases the timebase when fps is the playback rate.
-    """
+    """Keep native-rate reads and playback-rate timebase rebasing unchanged."""
     video = InputVideo.__new__(InputVideo)
     video.fps = 10
     video.loop = True
@@ -318,9 +300,7 @@ def check_clear_is_safe_on_odd_pages(page) -> int:
     page.set_media_fps(IDENT, 0, None, update=False)
     states = page.dict["keys"]["0x0"]["states"]
 
-    # A second revert, on a media section that exists and carries siblings but
-    # no rate of its own. Nothing is there to remove, so the setter must stop
-    # before the removal rather than reach for a key that is not there.
+    # A second revert must preserve an existing media section with no rate key.
     siblings = dict(media_dict(page))
     try:
         page.set_media_fps(IDENT, 0, None, update=False)
@@ -339,10 +319,8 @@ def check_clear_is_safe_on_odd_pages(page) -> int:
               "the branch")
         return 1
 
-    # A media section that is not a mapping, as a hand-edited page can hold.
-    # The text carries the key's own name, because a walk with no type check
-    # finds "fps" inside the string, reads that as the key being present, and
-    # reaches a delete the string cannot take.
+    # A hand-edited media section can be non-mapping data.
+    # The walk must stop before treating an ``fps`` substring as a removable key.
     saved = states["0"].get("media")
     states["0"]["media"] = "fps was here"
     try:

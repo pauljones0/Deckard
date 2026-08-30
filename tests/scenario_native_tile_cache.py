@@ -1,10 +1,5 @@
-"""
-Unit and integration scenario for the frame-identity native tile cache.
-
-NativeTileCache keys the encoded bytes by frame identity, not by composited
-pixels. A looping video therefore encodes once, and every later loop is a dict
-lookup.
-"""
+"""Cache native bytes by frame identity instead of composited pixels.
+Looping videos encode each bare-key frame once; later loops use dictionary lookups."""
 
 # A key with a visible label keeps the pixel-hash path, and a background swap
 # empties the cache before the next frame reaches the device.
@@ -115,9 +110,8 @@ def check_env_knob() -> None:
             "a malformed DECKARD_NATIVE_TILE_CACHE_MB must fall back to the default"
         )
 
-        # float() accepts these values but int() raises on them, and nan
-        # passes the sign test because every nan comparison is False. They
-        # take the same degrade path as a typo.
+        # Non-finite float values cannot convert to a valid byte cap.
+        # They must use the same default path as malformed text.
         for hostile in ("nan", "inf", "-inf", "1e400"):
             os.environ["DECKARD_NATIVE_TILE_CACHE_MB"] = hostile
             assert native_tile_cache_max_bytes() == DEFAULT_MAX_MB * 1024 * 1024, (
@@ -137,9 +131,7 @@ def check_env_knob() -> None:
 
 
 def _make_test_mp4(path: str, base_green: int, size=(320, 240), n_frames=6, fps=15) -> str:
-    """A tiny video with a moving two-axis gradient, so every (frame, key)
-    pair crops to different pixels. Solid frames would let the pixel-hash memo
-    share one native. base_green shifts the palette, so two files differ."""
+    """Create gradients with distinct pixels for each frame, key crop, and palette."""
     import cv2
     import numpy as np
     os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -158,9 +150,7 @@ def _make_test_mp4(path: str, base_green: int, size=(320, 240), n_frames=6, fps=
 
 
 class _EncodeCounter:
-    """Counts encode_native_key calls through deck_controller.native_encode.
-    Both paint paths call it as a module global there, so the patch belongs in
-    that namespace."""
+    """Count encode_native_key calls in the namespace used by both paint paths."""
 
     def __init__(self):
         self.calls = 0
@@ -208,11 +198,7 @@ def _record_cached_keys(controller) -> list:
 
 
 def _settle(controller) -> None:
-    """Waits out the page load.
-
-    load_page and load_all_inputs rebuild each state's managers on worker
-    threads, so a label staged before that lands is discarded.
-    """
+    """Wait for page-load workers to finish rebuilding input state managers."""
     # One of those threads ends in Background.set_video(None) and evicts a
     # video installed too early, which leaves the tile cache build unfinished.
     assert fixtures.wait_until(lambda: controller.active_page is not None, timeout=15), \
@@ -228,11 +214,8 @@ def _settle(controller) -> None:
         timeout=15), \
         "fixture sanity: the media player never drained its page-load tasks"
 
-    # Empty queues mean dequeued, not done. perform_media_player_tasks pops
-    # the whole batch and only then runs it, so load_all_inputs can still run
-    # while tasks reads empty. Wait for a marker on the same path instead.
-    # Tasks run in order, so a marker that ran means everything queued ahead
-    # of it finished.
+    # Empty queues can contain a dequeued batch that is still running.
+    # An ordered marker proves all earlier media tasks finished.
     ran = threading.Event()
     controller.media_player.add_task(ran.set)
     assert ran.wait(timeout=15), (
@@ -242,10 +225,8 @@ def _settle(controller) -> None:
 
 
 def _start_video(controller, path: str) -> "BackgroundVideo":
-    """Installs path as the deck background, detached from the media thread,
-    so only the scenario advances frames. Call _settle() first. The media
-    thread ticks a video whose page is the active page. Before a page loads,
-    that predicate matches page None and drives the build."""
+    """Install a detached background video that only this scenario advances.
+    Call _settle first because page None would match before page loading finishes."""
     assert controller.active_page is not None, (
         "fixture sanity: _start_video needs a loaded page -- with active_page "
         "still None, `video.page = None` matches the media thread's tick "
@@ -254,10 +235,8 @@ def _start_video(controller, path: str) -> "BackgroundVideo":
     video = BackgroundVideo(controller, path, loop=True, fps=30)
     video.page = None
     controller.background.set_video(video, update=False)
-    # Playing straight through builds the tile cache. After that, frames are
-    # picked by wall clock, which _show_frame drives. The deadline bounds a
-    # starved runner. The tick budget catches a re-seek or a re-decode per
-    # tick. A clean build spends one tick per frame, so 10x is generous.
+    # A clean cache build uses one tick per frame; allow ten times that count.
+    # The deadline bounds runner starvation while the tick budget catches repeated decoding.
     max_ticks = video.n_frames * 10
     deadline = time.monotonic() + 30.0
     ticks = 0
@@ -285,20 +264,16 @@ def _start_video(controller, path: str) -> "BackgroundVideo":
     return video
 
 
-# Retry budget for _show_frame. A clean run needs zero retries, and one
-# deschedule longer than a frame period costs one. A higher count means the
-# landing has stopped following the timebase, and an unbounded retry hides
-# that behind green contract asserts.
+# Allow three retries for frame-period descheduling across the scenario.
+# More retries mean frame selection no longer follows the timebase reliably.
 _MAX_ATTEMPTS_PER_CALL = 3
 _MAX_TOTAL_RETRIES = 3
 _frame_retries = 0
 
 
 def _show_frame(video, controller, index: int) -> None:
-    """Advances the background to one named frame. get_next_tiles picks by
-    wall clock once the cache is complete. This rewinds the timebase to put
-    index at now, and clears _last_frame_tick. That clear stops the resume-gap
-    clamp from moving it."""
+    """Rewind the timebase so the selected cached frame lands at the current time.
+    Clear the last tick to prevent the resume-gap clamp from changing it."""
     # A budgeted retry absorbs one deschedule between the two wall-clock
     # reads, which costs one frame at the 15fps source.
     global _frame_retries
@@ -357,9 +332,7 @@ def check_second_loop_encode_free() -> None:
                 for frame_index in range(video.n_frames):
                     _show_frame(video, controller, frame_index)
                     for key in keys:
-                        # Count per key. The labeled key keeps encoding on
-                        # the pixel path. Only the bare keys go quiet once
-                        # their frames are cached.
+                        # Count by key because labelled keys keep using the pixel path.
                         before = counter.calls
                         key.update()
                         if key is not labeled:
@@ -407,9 +380,7 @@ def check_swap_drops_stale_natives() -> None:
 
     controller = fixtures.make_headless_controller(serial="native-tile-2")
     try:
-        # Settle before reading the controller. load_all_inputs rebuilds the
-        # inputs, and the page background load ends in set_video(None), which
-        # would evict the video installed below.
+        # Settle before installing video because page loading ends with set_video(None).
         _settle(controller)
         keys = sorted(controller.inputs[Input.Key], key=lambda k: k.index)
         probe = keys[0]

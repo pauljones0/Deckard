@@ -1,8 +1,4 @@
-"""D-Bus mechanics of the logind detector, driven through the bus seam.
-
-A fake connection stands in, so no real system bus is touched. The session
-path resolves, Lock and Unlock flip the manager, and a GLib.Error stays inert.
-"""
+"""Check logind session resolution, lock signals, and inert bus failures."""
 import os
 
 import fixtures  # must be first; isolates DATA_PATH
@@ -23,10 +19,7 @@ class RecordingManager:
 
 
 class FakeBus:
-    """Duck-types the two Gio.DBusConnection methods the detector uses.
-
-    The signatures match positionally.
-    """
+    """Provide positional call_sync and signal_subscribe bus methods."""
 
     def __init__(self, session_path="/org/freedesktop/login1/session/_31",
                  fail=False):

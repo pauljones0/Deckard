@@ -1,10 +1,4 @@
-"""
-Regression test for mutable default arguments.
-
-Python evaluates a list or dict default once, at definition time, and shares it
-with every caller that omits the argument. Media declares layers with
-field(default_factory=list), so two instances hold separate lists.
-"""
+"""Reject mutable default arguments and require independent Media layer lists."""
 
 # Media also sets eq=False, which keeps identity == and hashability.
 import ast
@@ -75,10 +69,7 @@ def find_offenders() -> tuple[list[tuple[str, int, str]], int]:
     return offenders, scanned
 
 
-# Tripwire against a vacuous pass. Path filtering that matches a segment of
-# the checkout's own absolute path degrades the scan to main.py alone. The
-# tree holds about 220 scannable files; a much lower count means the walk
-# broke.
+# Require enough files to detect path filtering that reduces the scan to main.py.
 MIN_SCANNED = 100
 
 

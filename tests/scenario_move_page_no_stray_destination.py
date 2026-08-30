@@ -1,15 +1,5 @@
-"""An aborted page rename leaves no destination file behind.
-
-move_page once claimed the destination with O_EXCL, a 0-byte file, and then
-filled it in place. A failure between the claim and the fill stranded that
-empty file under a real page name, which the loader quarantines as a corrupt
-page at the next load, and a kill mid-copy left a truncated page. The fill
-now goes through a temp file that os.link publishes as the destination in
-one atomic step, so no destination name exists until the whole content
-does. This injects a failing and a partially-writing copy into the rename
-and asserts no destination and no strays remain and the source survives,
-and that a successful rename lands the whole content.
-"""
+"""Require aborted page renames to preserve the source and leave no destination.
+Successful renames must atomically publish complete content without temp files."""
 import fixtures  # noqa: F401  (must be first: isolates DATA_PATH)
 
 import json
@@ -29,11 +19,7 @@ def _pages_dir() -> str:
 
 
 def _strays() -> list[str]:
-    """Every empty page file and every leftover temp in the pages folder.
-
-    os.listdir, not glob: the temps are dot-prefixed and glob patterns skip
-    dotfiles, which would make this scan blind to the exact files it is for.
-    """
+    """List empty pages and temp files, including dot-prefixed files skipped by glob."""
     found = []
     for name in os.listdir(_pages_dir()):
         path = os.path.join(_pages_dir(), name)
@@ -52,13 +38,10 @@ def main() -> int:
     os.makedirs(_pages_dir(), exist_ok=True)
     failures: list[str] = []
 
-    # The injection sits inside atomic_copy_file, so it exercises that
-    # helper's own failure cleanup, not just move_page's handling. The pages
-    # seeded here carry no pending edits, so the backup seam declines before
-    # its copy and the fill is the only copyfileobj call in the move.
+    # Inject inside atomic_copy_file to exercise its cleanup.
+    # With no pending edits, the destination fill is the only copyfileobj call.
     real_copyfileobj = shutil.copyfileobj
 
-    # --- Part A: the copy raises before writing anything -------------------
     src_a = fixtures.seed_page("StrayMoveSrcA")
     dst_a = os.path.join(_pages_dir(), "StrayMoveDstA.json")
 
@@ -81,7 +64,6 @@ def main() -> int:
     if not os.path.exists(src_a):
         failures.append("a failed copy lost the source page")
 
-    # --- Part B: the copy writes half the page, then dies -------------------
     src_b = fixtures.seed_page("StrayMoveSrcB")
     dst_b = os.path.join(_pages_dir(), "StrayMoveDstB.json")
 
@@ -108,7 +90,6 @@ def main() -> int:
     for name in _strays():
         failures.append(f"stray file after the aborted renames: {name}")
 
-    # --- Part C: a normal rename lands whole, with nothing left over --------
     src_c = fixtures.seed_page("StrayMoveSrcC")
     with open(src_c) as f:
         seeded = json.load(f)

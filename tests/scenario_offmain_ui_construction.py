@@ -1,10 +1,4 @@
-"""
-Onboarding and store loaders must not build GTK on worker threads.
-
-GLib.idle_add(section.append_child, XPreview(...)) marshals the append but
-builds the widget as its argument, on the loader thread. Stubs record the
-constructing thread.
-"""
+"""Require onboarding and store loader widgets to construct on the main thread."""
 
 # The four sites here are store previews, recommendation rows, the onboarding
 # selection read and the custom-asset chooser build.
@@ -174,10 +168,8 @@ def check_selection_read() -> int:
         close=lambda *a: None,
         destroy=lambda *a: None,
     )
-    # The tail after the install loop touches more window state. The last
-    # line is GLib.idle_add(gl.app.main_win.show), and gl.app is None here.
-    # An empty selection reaches it and raises. This check asserts only where
-    # the selection read ran, so the worker swallows that raise.
+    # The stub has no app, so the worker can raise after reading the selection.
+    # Suppress that tail failure because this check records only the read thread.
     def _drive_worker():
         with contextlib.suppress(Exception):
             holder._on_start_button_click(obj)
@@ -240,9 +232,8 @@ def check_chooser() -> int:
     try:
         worker = threading.Thread(target=page.build, daemon=True)
         worker.start()
-        # build() blocks on run_on_main. The worker parks until the main
-        # thread pumps its idle callback. Keep pumping while the worker runs.
-        # A join first deadlocks, because each thread waits on the other.
+        # Pump while run_on_main blocks the worker on its idle callback.
+        # Joining first would deadlock the worker and main thread.
         pump_until(lambda: not worker.is_alive() and page.build_finished, 8,
                    "build never finished via the main loop")
         worker.join(timeout=5)

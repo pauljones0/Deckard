@@ -1,13 +1,7 @@
-"""
-Regression test for natural sort keys built from non-decimal digit characters.
+"""Keep non-decimal digit characters as text in natural-sort keys."""
 
-A page or file name can hold a character that str.isdigit() accepts but int()
-rejects, for example the superscript two. The key builder must not raise there.
-"""
-
-# natural_keys gates the int() conversion on str.isdecimal(), which is the exact
-# set int() accepts. The sort helpers and the page-selector comparator all build
-# their keys through it, so one gate covers every caller.
+# Convert only decimal runs accepted by int().
+# All sort helpers and the page selector use this shared key builder.
 import fixtures  # noqa: F401  (isolated --data tempdir; import first)
 
 from src.backend.DeckManagement.HelperMethods import (
@@ -61,9 +55,7 @@ def test_sorting_survives_and_stays_stable() -> None:
 
 
 def test_page_selector_comparator() -> None:
-    # The selector's comparator sorts whole key lists; a superscript name must
-    # order deterministically against a numbered one without raising, and the
-    # superscript run stays text, so it sorts after the converted number.
+    # Superscript runs stay text and sort after converted numeric runs.
     ordered = sorted(["page²", "page2", "page10"], key=natural_keys)
     assert ordered == ["page2", "page10", "page²"], (
         f"superscript names must sort as text after numbered ones: {ordered}")
