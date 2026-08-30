@@ -55,7 +55,16 @@ def hides_background(image: Image.Image, left: int, top: int,
 
 
 def image2pixbuf(img: Image.Image, force_transparency: bool = False) -> "GdkPixbuf.Pixbuf | None":
-    """Convert an image to GdkPixbuf, or return None when GdkPixbuf rejects it."""
+    """
+    Converts an image to a GdkPixbuf.Pixbuf object.
+
+    Args:
+        img (PIL.Image.Image): The image to convert.
+
+    Returns:
+        GdkPixbuf.Pixbuf: The converted GdkPixbuf.Pixbuf object, or None when
+        the image is not one GdkPixbuf accepts, which is usually a non-RGB one.
+    """
     from gi.repository import GLib, GdkPixbuf
 
     img = img.convert("RGBA")

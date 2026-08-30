@@ -68,7 +68,19 @@ def sha256(text: str) -> str:
 
 
 def file_in_dir(file_path: str, directory: str) -> bool | None:
-    """Return whether the directory contains the file, or None if directory is invalid."""
+    """
+    Check if a file is present in a directory.
+
+    Args:
+        file_path (str): The path of the file to check.
+        dir (str, optional): The directory to check. Defaults to None.
+
+    Returns:
+        bool: True if the file is present in the directory, False otherwise;
+            None if directory names something that is not a directory.
+            Callers use the result in a boolean context, where that reads
+            as "not present".
+    """
     if not os.path.isdir(directory) and directory is not None:
         return None
 
@@ -200,8 +212,22 @@ def get_file_name_from_url(url: str) -> str:
 
 
 def download_file(url: str, path: str = "", file_name: str | None = None) -> str:
-    """Download the URL and return its final path.
-    Network, HTTP, and file errors propagate without leaving a partial destination."""
+    """
+    Downloads a file from the specified URL and saves it to the specified path.
+
+    Args:
+        url (str): The URL of the file to be downloaded.
+        path (str): The path of the directory where the file will be saved. If a directory is provided, the filename will be extracted from the URL and appended to the path.
+
+    Returns:
+        path (str): The path of the downloaded file.
+
+    Raises:
+        requests.RequestException: on a network failure or an HTTP error
+            status. Nothing is left on disk in either case.
+        OSError: when the directory, the temporary file the download fills, or
+            the rename onto the returned path fails.
+    """
 
     # Import lazily to keep requests out of startup imports.
     from src.backend import http_client

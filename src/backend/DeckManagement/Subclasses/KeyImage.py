@@ -25,8 +25,23 @@ class InputImage(SingleKeyAsset):
     MAX_LAYOUT_SCALE = 2.0
 
     def __init__(self, controller_input: "ControllerInput[Any]", image: Image.Image, path: str | None = None):
-        """Create an image asset and retain its source path for larger re-decodes.
-        In-memory and SVG images use None and can only upscale the retained copy."""
+        """
+        Initialize the class with the given controller key, image, fill mode, size, vertical alignment, and horizontal alignment.
+
+        Parameters:
+            controller_key (ControllerKey): The key of the controller.
+            image (Image.Image): The image to be displayed.
+            path (str, optional): The source file that image was decoded from,
+                if any. None for plugin-supplied in-memory images and SVG
+                thumbnails, which have no cheap higher-resolution re-decode.
+                Kept so a later composed layout that needs more resolution
+                than the fitted copy retains can re-decode from source instead
+                of upscaling a blurry copy.
+            fill_mode (str, optional): The mode for filling the image. Defaults to "cover".
+            size (float, optional): The size of the image. Defaults to 1.
+            valign (float, optional): The vertical alignment of the image. Defaults to 0. Ranges from -1 to 1.
+            halign (float, optional): The horizontal alignment of the image. Defaults to 0. Ranges from -1 to 1.
+        """
         super().__init__(controller_input)
         image = image.convert("RGBA")
 

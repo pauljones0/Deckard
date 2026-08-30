@@ -22,8 +22,20 @@ class ImageLayer:
 
     @classmethod
     def from_image_path(cls, media_path: str, size: float = 1.0, halign: float = 0.0, valign: float = 0.0) -> "ImageLayer | None":
-        """Load an image or SVG layer with the specified scale and alignment.
-        Return None when media_path is neither an image nor an SVG."""
+        """
+        Creates an ImageLayer from a media path.
+
+        Args:
+            media_path (str): The full path to the image.
+            size (float, optional): Size of the image as a percentage. Defaults to 1.0.
+            halign (float, optional): Horizontal offset for image alignment. Negative for left, positive for right. Defaults to 0.0.
+            valign (float, optional): Vertical offset for image alignment. Negative for top, positive for bottom. Defaults to 0.0.
+
+        Returns:
+            ImageLayer: An instance of the ImageLayer class with the loaded
+                image, or None when media_path is neither an image nor an
+                SVG.
+        """
         if is_image(media_path):
             with Image.open(media_path) as img:
                 image = img.copy()

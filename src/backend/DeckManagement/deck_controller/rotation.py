@@ -69,7 +69,7 @@ def apply_rotation(controller: "DeckController", value: int) -> None:
 
 
 def _swap_input_set(controller: "DeckController") -> None:
-    """Publish a complete new input set, cancel retired gestures, and defer release to the media thread.
+    """Publish new inputs, cancel retired gestures, and defer release to the media thread.
     The sole writer must serialize release with any tick still rendering retired media."""
     retired = controller.inputs
     for key in retired.get(Input.Key, []):

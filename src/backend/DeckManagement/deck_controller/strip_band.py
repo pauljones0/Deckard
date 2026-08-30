@@ -37,7 +37,7 @@ PLUS_CANVAS_WIDTH = 828
 
 def strip_band_geometry(deck_controller: "DeckController", canvas_width: int) -> tuple[int, int, int, int]:
     """Return strip gap, span, offset, and height for the canvas.
-    Use calibrated SD+ geometry only at its exact width; otherwise warn and derive from strip aspect."""
+    Use SD+ calibration only at its exact width; otherwise warn and derive geometry."""
     if getattr(deck_controller, "is_plus", False):
         if canvas_width == PLUS_CANVAS_WIDTH:
             return PLUS_BAND

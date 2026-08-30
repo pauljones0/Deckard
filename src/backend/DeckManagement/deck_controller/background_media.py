@@ -169,7 +169,7 @@ class Background:
     def set_slideshow(self, paths: "Sequence[str]", interval: float, order: str = IN_ORDER,
                       update: bool = True, now: "float | None" = None,
                       views: "Sequence[tuple[float, float, float]] | None" = None) -> None:
-        """Install a still rotation with aligned views and seed after the first frame.
+        """Install an ordered or shuffled still rotation with aligned views.
         Fewer than two listed paths installs one still or clears after a failed load."""
         show = Slideshow(paths, interval, order=order)
         # Bind to page identity so a stale worker result cannot advance on a new active page.
@@ -214,7 +214,7 @@ class Background:
         show = self.slideshow
         if show is None:
             return False
-        # Advance only for the active page because background reload follows page change on a worker.
+        # Advance only for the active page because reload follows page change on a worker.
         # A stale due rotation must not place its next image on the new page.
         if show.page is not self.deck_controller.active_page:
             return False
@@ -389,14 +389,14 @@ class Background:
     def apply_prebuilt(self, kind: str, payload: "BackgroundVideo | GifBackground | BackgroundImage | str | None", fps: int = MEDIA_LOOP_FPS, loop: bool = True, update: bool = True) -> None:
         """Apply a prebuilt payload without file I/O and update all inputs.
         Screensaver transitions call this under their load lock after generation validation."""
-        # Reject payloads after closing starts because the resource sweep cannot release a late attachment.
+        # Reject payloads after closing starts; the resource sweep cannot release a late attachment.
         if getattr(self.deck_controller, "_closing", False):
             self._discard_prebuilt(kind, payload)
             return
         if kind == "noop":
             return
         if kind == "keep":
-            # Recheck lock-free keep against the current path to avoid changing a raced-in video's settings.
+            # Recheck lock-free keep so it cannot change a raced-in video's settings.
             if self.video is not None and self.video.video_path == payload:
                 self.video.page = self.deck_controller.active_page
                 self.video.fps = fps
@@ -415,7 +415,7 @@ class Background:
 
     def set_from_path(self, path: str | None, fps: int = MEDIA_LOOP_FPS, loop: bool = True, update: bool = True, allow_keep: bool = True,
                       view: "tuple[float, float, float]" = DEFAULT_VIEW) -> None:
-        """Prebuild and apply for callers already serialized by background loading or screensaver state."""
+        """Prebuild and apply for callers serialized by background or screensaver loading."""
         kind, payload = self.prebuild_from_path(
             path, fps=fps, loop=loop, allow_keep=allow_keep, view=view)
         self.apply_prebuilt(kind, payload, fps=fps, loop=loop, update=update)
@@ -464,7 +464,7 @@ class Background:
                 new_tiles = [self.deck_controller.generate_alpha_key() for _ in range(self.deck_controller.deck.key_count())]
             with self._render_state_lock:
                 if self._source_epoch != epoch:
-                    # Discard a frame rendered across a source swap so it cannot replace newer content.
+                    # Discard a frame rendered across a source swap; do not replace newer content.
                     return
                 self.tiles = new_tiles
                 if wrote_strip:

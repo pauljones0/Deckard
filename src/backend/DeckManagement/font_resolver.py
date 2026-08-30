@@ -105,7 +105,7 @@ def _escape_fc_value(value: str) -> str:
 
 class _FontConfig:
     """Lazily load the required fontconfig bindings and one process FcConfig.
-    Serialize matches because label rendering is threaded and shared-config safety is unspecified."""
+    Serialize matches because shared-config thread safety is unspecified."""
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
@@ -257,8 +257,8 @@ def _resolve_pattern(family: str, weight: int | None, style: str | None) -> dict
 
 @functools.lru_cache(maxsize=256)
 def resolve(family: str | None, weight: int | None = 400, style: str | None = "normal") -> str | None:
-    """Resolve family, Pango/CSS weight, and normal, italic, or oblique style to a font file.
-    Replace None with defaults and return None only when library and fc-match are unavailable."""
+    """Resolve a family and Pango/CSS weight to a font file.
+    Style is normal, italic, or oblique; return None without a matcher or file field."""
     if weight is None:
         weight = 400
     if style is None:

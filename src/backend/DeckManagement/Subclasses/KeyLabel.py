@@ -30,8 +30,11 @@ def _load_font(font_path: str, font_size: float, encoding: str) -> ImageFont.Fre
 
 @lru_cache(maxsize=128)
 def _is_symbol_font(font_path: str) -> bool:
-    """Return whether the font has a Windows symbol-encoding cmap table.
-    Cache results by font path."""
+    """Check if font uses symbol encoding (e.g., Webdings, Wingdings).
+
+    A symbol font has a cmap table with platformID=3 (Windows) and
+    platEncID=0 (Symbol encoding). The lru_cache holds the results.
+    """
     try:
         font = TTFont(font_path)
         for table in font['cmap'].tables:
@@ -67,7 +70,7 @@ class KeyLabel:
             font_name = gl.fallback_font
 
         # Resolution is cached by file-selection attributes; size does not select a file.
-        # None means fontconfig is unavailable.
+        # None means no matcher is available or the match has no file field.
         return font_resolver.resolve(font_name, self.font_weight, self.style)
 
     def clear_values(self) -> None:
@@ -85,7 +88,7 @@ class KeyLabel:
         font_path = self.get_font_path()
         font_size = self.font_size
         if font_path is None or font_size is None:
-            # Defaults provide size before rendering; a missing path means fontconfig failed.
+            # Defaults provide size before rendering; a missing path means no matched file.
             # Raise here instead of failing inside PIL's loader.
             raise RuntimeError(
                 f"cannot load a font for this label (path={font_path!r}, size={font_size!r})")

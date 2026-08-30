@@ -104,9 +104,9 @@ PayloadT = TypeVar("PayloadT")
 
 class Mp4FrameCache(Generic[PayloadT]):
     """Build or reuse one MP4 per source, output size, and saturation without retaining frames.
-    Builders atomically promote temporary files; readers decode the cache or source without writing."""
+    Builders promote temporary files atomically; readers never write."""
 
-    # Decode and discard through forward jumps up to this threshold because it is cheaper than seeking.
+    # Decode and discard through short forward jumps because it is cheaper than seeking.
     # Seek for larger or backward jumps.
     MAX_DECODE_AHEAD = 30
 
@@ -127,7 +127,7 @@ class Mp4FrameCache(Generic[PayloadT]):
         # The viewport baked into every cached frame; it joins the file name
         # like the saturation, so a view change builds a new cache.
         self.view, self._view_suffix = view, view_suffix(view)
-        # Background video combines builder and consumer; key video separates one builder from its readers.
+        # Background video combines builder and reader; key video separates them.
         self.is_builder = is_builder
 
         self.video_md5 = get_video_md5(source_path)
@@ -221,7 +221,7 @@ class Mp4FrameCache(Generic[PayloadT]):
 
     def _writer_enabled(self) -> bool:
         """Return whether a builder opens its writer.
-        Key registries gate at acquisition; self-contained background caches override for live settings."""
+        Key registries gate at acquisition; background caches override for live settings."""
         return True
 
     def _open_cache_capture(self) -> cv2.VideoCapture:
@@ -241,7 +241,7 @@ class Mp4FrameCache(Generic[PayloadT]):
                          self.out_size[1] - self.out_size[1] % 2)
         if n_frames <= 0 or cached_size != writable_size:
             # A size mismatch means render geometry changed and crop coordinates are stale.
-            # Delete only when this instance can rebuild; otherwise decode the source and retain the file.
+            # Delete only when this instance can rebuild; otherwise retain it and decode the source.
             cap.release()
             can_rebuild = self.is_builder and self._writer_enabled()
             if n_frames <= 0:
@@ -292,7 +292,7 @@ class Mp4FrameCache(Generic[PayloadT]):
                 payload = self._get_cached_frame(n)
             else:
                 payload = self._decode_source_frame(n)
-            # Publish under the close lock so an in-flight decode cannot retain a frame after teardown.
+            # Publish under the close lock so an active decode cannot retain a frame after teardown.
             if payload is not None:
                 self.last_payload = payload
                 # Claim the clamped index only when _last_entry contains this exact payload.
@@ -346,7 +346,7 @@ class Mp4FrameCache(Generic[PayloadT]):
         with _registry_lock:
             entry.ready = False
             # Keep a live builder handle to enforce one builder per key.
-            # Clear only finished handles; attached consumers otherwise remain uncached until detachment.
+            # Clear only finished handles; attached consumers stay uncached until detachment.
             if entry.builder_thread is not None and not entry.builder_thread.is_alive():
                 entry.builder_thread = None
         # Return this reader's reference now; release will find it detached.
@@ -372,7 +372,7 @@ class Mp4FrameCache(Generic[PayloadT]):
                 return None
             self._cache_pos += 1
         if frame is None:
-            # Seek position guarantees one read, but keep a cheap media-thread guard instead of an assertion.
+            # Seek position guarantees one read; keep a cheap guard instead of an assertion.
             return None
         # cv2's stubs erase the dtype; a decoded video frame is uint8 BGR.
         payload = self._payload_from_bgr(cast("npt.NDArray[np.uint8]", frame))
@@ -653,7 +653,7 @@ def acquire(source_path: str, out_size: tuple[int, int], saturation: float = 1.0
 
 def release(reader: KeyVideoCache) -> None:
     """Close and detach one acquired reader.
-    At zero references, signal its builder and drop the entry for later disk discovery or rebuild."""
+    At zero references, signal its builder and drop the entry."""
     reader.close()
 
     key = getattr(reader, "_registry_key", None)
@@ -684,7 +684,7 @@ def _detach_entry(key: tuple[str, tuple[int, int], float, str], entry: "_TileCac
 # GIF pixels must come from PIL because FFmpeg differs on disposal and partial frames.
 # External entry points cache caller-composited frames and never demux GIFs here.
 
-# This rate supplies required container timestamps only; consumers select indices on their own timelines.
+# This rate supplies container timestamps only; consumers use their own timelines.
 EXTERNAL_TILE_FPS = 15.0
 
 

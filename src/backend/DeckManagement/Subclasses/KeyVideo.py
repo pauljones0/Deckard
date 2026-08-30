@@ -37,7 +37,7 @@ class InputVideo(SingleKeyAsset, FrameScheduled):
         # Otherwise fps controls playback speed for key and dial media.
         self.natural_speed = natural_speed
 
-        # Each instance owns a reader but shares the cache file and builder by source, size, and saturation.
+        # Each instance owns a reader; source, size, and saturation share the file and builder.
         # release() detaches this reader without necessarily removing the shared file.
         self.video_cache: mp4_tile_cache.KeyVideoCache | None = mp4_tile_cache.acquire(
             video_path,
@@ -81,7 +81,7 @@ class InputVideo(SingleKeyAsset, FrameScheduled):
                     # A zero base replays non-looping video or jumps looping video.
                     self._play_start = now - (self.active_frame + 1) / playback_fps
                 elif self._last_frame_tick is not None and now - self._last_frame_tick > 1.0:
-                    # Shift across inactive-page gaps so playback resumes instead of fast-forwarding.
+            # Shift across inactive-page gaps so playback resumes without fast-forwarding.
                     self._play_start += (now - self._last_frame_tick) - 1.0 / playback_fps
                 self._last_frame_tick = now
                 elapsed = now - self._play_start

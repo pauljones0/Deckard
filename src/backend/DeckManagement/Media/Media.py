@@ -89,7 +89,13 @@ class Media:
         self.layers = result
 
     def get_final_media(self) -> Image.Image | None:
-        """Compose the layers into an image, or return None when there are no layers."""
+        """
+        Transforms the layers list into a final image. The result of this image should be used sparingly because it takes some processing power and could be slow.
+
+        Returns:
+            Image: The final image that can be displayed by using set_media,
+                or None when there are no layers to compose.
+        """
         if not self.layers or len(self.layers) <= 0:
             return None
 

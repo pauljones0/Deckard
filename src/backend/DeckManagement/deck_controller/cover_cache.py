@@ -146,7 +146,7 @@ def _stamp(state: "ControllerKeyState") -> "tuple[object, ...]":
 
 def precheck(key: "ControllerKey", state: "ControllerKeyState") -> "tuple[bool, tuple[object, ...]]":
     """Return the gate verdict and stamp that a completed composite must match.
-    Bare or proven-uncovered media rejects early; layout-only coverage changes settle one composite later."""
+    Bare media rejects early; layout-only coverage changes settle one composite later."""
     image = state.key_image
     if image is None or state.layout_manager.foreground_proved_bare(image):
         return NO_STORE
@@ -174,7 +174,7 @@ class CoveredComposite:
         self._entry: "_Covered | None" = None
 
     def invalidate(self) -> None:
-        """Drop the retained composite during teardown, reset, media change, detach, or bare presentation.
+        """Drop retained data during teardown, reset, media change, detach, or bare presentation.
         Release by reference only because a concurrent reuse can still encode the image."""
         self._entry = None
 
@@ -193,8 +193,8 @@ class CoveredComposite:
 
     def remember(self, key: "ControllerKey", state: "ControllerKeyState",
                  image: Image.Image, pre: "tuple[bool, tuple[object, ...]]") -> Image.Image:
-        """Retain a copy only when precheck allowed it, foreground covers, and the stamp is unchanged.
-        NO_STORE captures transient gates seen only during composition; return the caller-owned image."""
+        """Retain a copy only when precheck allowed it, foreground covers, and the stamp is stable.
+        NO_STORE captures transient composition gates; return the caller-owned image."""
         gates_were_clear, pre_stamp = pre
         if not gates_were_clear:
             self._entry = None
