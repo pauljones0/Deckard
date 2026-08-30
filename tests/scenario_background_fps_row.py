@@ -1,5 +1,5 @@
-"""Verify GIF row visibility, explicit-rate-only delayed revert, key clearing to the native rate, and signal continuity with duck-typed GTK stand-ins.
-A delayed reveal must re-read its binding after a hidden-row transition, and both completion and cancellation must clear the source ID."""
+"""Verify GIF FPS visibility, explicit-rate-only revert, native-rate restore, and signal continuity.
+Delayed reveal re-reads hidden bindings; completion and cancellation clear its source ID."""
 
 import fixtures  # noqa: F401  (must be first: isolates DATA_PATH before globals)
 
@@ -26,7 +26,7 @@ ROW_MODULE = sys.modules[VideoFpsRow.__module__]
 
 class FakeGLib:
     """Hold row reveal timeouts until a check advances the main loop.
-    Reject removal of an unarmed source because GLib would warn and leave the intended timer active."""
+    Reject unarmed source removal because GLib warns and leaves the intended timer active."""
 
     SOURCE_REMOVE = False
     SOURCE_CONTINUE = True
@@ -262,7 +262,7 @@ def install(page) -> None:
 
 def check_gif_media_shows_the_row() -> int:
     """Show the video row for a key GIF but not a dial GIF.
-    Dial page loading cannot build GIF media, so a rate there would edit media that never reaches the dial."""
+    Dials cannot load GIF media, so a rate would edit media that never reaches the dial."""
     cases = [
         (KEY, "clip.gif", True, "a GIF on a key"),
         (KEY, "clip.mp4", True, "an mp4 on a key"),
@@ -408,7 +408,7 @@ def check_the_arrow_waits_for_the_delay() -> int:
 
 def check_the_delay_outlasts_a_burst_of_steps() -> int:
     """Keep the reveal delay between 150 and 500 ms.
-    It must outlast 50 ms spinner repeats and a 150 ms range pass without becoming detached from the edit."""
+    It must outlast 50 ms repeats and a 150 ms pass, but stay tied to the edit."""
     if not 150 <= VideoFpsRow.REVEAL_DELAY_MS <= 500:
         print(f"FAIL(delay-value): the reveal delay is "
               f"{VideoFpsRow.REVEAL_DELAY_MS} ms; under 150 ms it fires inside "
@@ -431,7 +431,8 @@ def check_a_quick_pass_reveals_nothing() -> int:
 
     for value in (29, 28, 27, 28, 29, FakeFpsRow.MAX_FPS):
         row.spinner.set_value(value)
-        # Each step must cancel the prior reveal; cancelling a stale ID warns and leaves the current reveal active.
+        # Each step cancels the prior reveal.
+        # A stale ID warns and leaves the current reveal active.
         try:
             row.spinner.fire()
         except AssertionError as e:
@@ -455,8 +456,8 @@ def check_a_quick_pass_reveals_nothing() -> int:
 
 
 def hidden_row_after_an_edit(rate_survives):
-    """Arm a reveal, then hide the row without rebinding it as the expander does for an input with no video.
-    rate_survives selects whether the retained binding still has a rate when the reveal runs."""
+    """Arm a reveal, then hide the row without rebinding, as for an input with no video.
+    rate_survives selects whether the retained binding still has a rate at reveal time."""
     glib = install_glib()
     page = FakePage(media_path=media_file("clip.gif"), native=9.6)
     install(page)

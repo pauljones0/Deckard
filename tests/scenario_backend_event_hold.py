@@ -1,5 +1,5 @@
-"""Hold pre-registration backend events for a bounded window and release them when the backend registers.
-The hold keeps the newest per holder and event ID; live dispatch and relaunch supersede entries, and expiry drops the rest with one log."""
+"""Hold backend events until backend registration, within a bounded launch window.
+Keep newest by holder/event ID; live dispatch/relaunch supersedes; expiry logs and drops rest."""
 
 import threading
 import time
@@ -9,7 +9,7 @@ import fixtures  # noqa: F401  (isolated --data tempdir; import first)
 
 import globals as gl  # noqa: E402
 
-# Stub only the registries touched by launch and teardown; a real PluginManager loads the plugin ecosystem.
+# Stub launch and teardown registries; a real PluginManager loads the plugin ecosystem.
 gl.plugin_manager = types.SimpleNamespace(backends=[], backend_processes=[])
 
 from src.backend.PluginManager import PluginBase as plugin_base_module  # noqa: E402
@@ -108,7 +108,8 @@ def check_coalescing_and_multiple_ids() -> None:
     hold.release()
 
     assert recorder_a.got.wait(10) and recorder_b.got.wait(10), "a held event was lost"
-    # Per-holder lanes are serialized; after one delivery, allow time for an erroneous second delivery before asserting the count.
+    # Per-holder lanes serialize delivery.
+    # After the first, wait briefly to detect an erroneous second delivery.
     assert not _wait_until(lambda: len(recorder_a.calls) > 1, timeout=0.5), (
         f"the hold replayed every trigger of one event id: {recorder_a.calls}"
     )
@@ -233,7 +234,8 @@ def check_generation_guard_across_reconnect() -> None:
         f"{superseded_recorder.calls}"
     )
 
-    # Relaunch must clear payloads; a generation check alone prevents delivery but pins data and hides the drop.
+    # Relaunch must clear payloads.
+    # A generation check blocks delivery but pins data and hides the drop.
     pinned = _holder(hold, "test::generation-pinned")
     hold.arm()
     pinned.trigger_event("pinned")
@@ -252,7 +254,8 @@ def check_generation_guard_across_reconnect() -> None:
     assert fresh_recorder.got.wait(10), "the new connection's held event was not delivered"
     assert fresh_recorder.calls[0][0] == ("test::generation-fresh", "second-attempt")
 
-    # Entry generation blocks stale delivery when release races a relaunch, even while the window is open.
+    # Entry generation blocks stale delivery if release races a relaunch,
+    # even while the window stays open.
     stamped = _holder(hold, "test::generation-stamped")
     stamped_recorder = _Recorder()
     hold.arm()

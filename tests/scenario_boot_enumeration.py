@@ -97,7 +97,7 @@ def phase_pickup_exactly_once() -> None:
     assert ok, "rescan never re-enumerated"
     assert not manager.deck_controller, "controller appeared from an empty enumeration"
 
-    # Race simulated USB-monitor connect_new_decks against the next rescan after the deck becomes enumerable.
+    # Race USB-monitor connect_new_decks against the next rescan after enumeration.
     # phase_concurrent_callers_exactly_once supplies the deterministic same-window race.
     deck = FaultyFakeDeck(serial_number="boot-rescan-1", deck_type="Fake Deck")
     ScriptedDeviceManager.results = [deck]
@@ -134,7 +134,7 @@ def phase_pickup_exactly_once() -> None:
 
 def phase_flaky_open_still_registered() -> None:
     """Continue rescanning when an enumerated deck fails to open.
-    Retry within a round, leave a fully failed round unregistered, and stop only after registration."""
+    Retry within each round; only registration, not enumeration, stops rescanning."""
     gl.deck_manager = manager = make_deck_manager()
     # Enough rounds after the deck appears for a fully failed pickup round,
     # which runs three in-round open retries, plus the round that succeeds.
@@ -146,7 +146,7 @@ def phase_flaky_open_still_registered() -> None:
     manager.load_hardware_decks()
     assert manager._boot_rescan_thread.is_alive()
 
-    # Three failures exhaust the first round's open retries, so only a later rescan can register the deck.
+    # Three failures exhaust first-round retries, so only a later rescan can register.
     # This covers both in-round retry and the registration-based stop condition.
     deck = FlakyOpenDeck(serial_number="flaky-open-1", deck_type="Fake Deck", fail_opens=3)
     ScriptedDeviceManager.results = [deck]

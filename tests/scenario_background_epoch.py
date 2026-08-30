@@ -1,5 +1,5 @@
 """Prevent a stale unlocked video render from overwriting a newer still background.
-The gated interleaving verifies the epoch check because a still image has no later tick to repair stale tiles."""
+A gate forces the race; a still image has no later tick to repair stale tiles."""
 import fixtures  # noqa: F401  (must be first: isolates DATA_PATH before globals)
 
 import os  # noqa: E402

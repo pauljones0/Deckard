@@ -69,7 +69,7 @@ def main() -> None:
             concurrent_load_elapsed["dt"] = time.monotonic() - t0
 
         def probe_lock():
-            # Time a bare lock acquisition while the handler sleeps; this thread calls no transition method,
+            # Time bare lock acquisition while the handler sleeps; this thread calls no transition,
             # so it cannot retrigger the handler and distort timing like do_concurrent_load.
             ok = fixtures.wait_until(handler_started.is_set, timeout=10)
             if not ok:
@@ -100,7 +100,7 @@ def main() -> None:
         assert "dt" in hide_elapsed, "hide() thread did not record completion"
         assert "dt" in concurrent_load_elapsed, "concurrent load_page() thread did not record completion"
 
-        # hide() should take about HANDLER_SLEEP because its phase-3 load_page tail calls the synchronous slow handler.
+        # hide() takes about HANDLER_SLEEP through the synchronous phase-3 handler.
         # The lock probe is the regression assertion.
         assert hide_elapsed["dt"] >= HANDLER_SLEEP * 0.9, (
             "fixture sanity: hide()'s phase-3 load_page() did not appear to "
@@ -109,8 +109,8 @@ def main() -> None:
         assert "error" not in lock_probe_elapsed, lock_probe_elapsed.get("error")
         assert lock_probe_elapsed.get("got"), "the lock probe never acquired _load_page_lock"
 
-        # During post-lock ChangePage dispatch, another thread must acquire _load_page_lock within one second.
-        # Dispatch inside the lock would block this probe for the remaining HANDLER_SLEEP.
+        # During ChangePage dispatch, another thread must acquire _load_page_lock within one second.
+        # Dispatch under the lock would block it for the remaining HANDLER_SLEEP.
         assert lock_probe_elapsed["dt"] < 1.0, (
             f"acquiring _load_page_lock took {lock_probe_elapsed['dt']:.2f}s while "
             f"a ChangePage handler was sleeping -- the transition is holding the "
@@ -126,7 +126,7 @@ def main() -> None:
 
     finally:
         gl.signal_manager.trigger_signal = real_trigger_signal
-        # Permit a deck stack without disconnect_signal; a retained handler is harmless in the per-scenario subprocess.
+        # Permit no disconnect_signal; the scenario subprocess discards the retained handler.
         disconnect = getattr(gl.signal_manager, "disconnect_signal", None)
         if disconnect is not None:
             disconnect(ChangePage, slow_change_page_handler)

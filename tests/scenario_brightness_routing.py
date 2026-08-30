@@ -36,7 +36,7 @@ def main() -> None:
             f"thread {media_thread_name!r}: {entry}"
         )
 
-    # BetterDeck logs owner violations instead of raising; include bootstrap clear and page-load writes in the zero count.
+    # BetterDeck logs owner violations; require zero across bootstrap clear and page-load writes.
     violations = controller.deck.owner_violations
     assert violations == [], f"owner violations recorded: {violations}"
 

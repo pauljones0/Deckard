@@ -1,5 +1,5 @@
 """Rebuild once when a backend venv interpreter cannot start, but keep usable cross-version venvs.
-Rebuilds use the install gate and argv steps; unattended launches run them only under the "always" policy."""
+Use the install gate and argv steps; unattended launch runs them only with "always"."""
 
 import os
 import sys
@@ -79,7 +79,7 @@ class _Steps:
 
 def _with_stub_gate(steps: _Steps, call) -> None:
     """Run a call with the gate's subprocess seam and bwrap probe stubbed.
-    Disabling bwrap records host-independent command argv; scenario_install_script_gate covers confinement."""
+    Disable bwrap for host-independent argv; scenario_install_script_gate covers confinement."""
     real_execute = install_script._execute
     real_bwrap = install_script._bwrap_works
     install_script._execute = steps
@@ -99,7 +99,8 @@ def check_version_tag_reading() -> None:
     _make_venv(matching, RUNNING_TAG)
     assert venv_python_tag(matching) == RUNNING_TAG
 
-    # Newer venvs can write version_info; only the config exposes the old version when directories name the running version.
+    # Newer venvs can use version_info.
+    # Only config shows the old version when directories name the current one.
     info_only = os.path.join(base, "info")
     _make_venv(info_only, RUNNING_TAG)
     with open(os.path.join(info_only, "pyvenv.cfg"), "w") as f:
@@ -252,7 +253,7 @@ def check_rebuild_runs_once_per_process() -> None:
 
 def check_ask_policy_runs_nothing_unattended() -> None:
     """Run no install script at launch under the default "ask" policy.
-    An unattended launch has no consent result, including for plugins installed before consent records existed."""
+    Unattended launch has no consent, including for plugins installed before consent records."""
     plugin_dir = _plugin("com_test_ask")
     venv_path = os.path.join(plugin_dir, "backend", ".venv")
     _make_venv(venv_path, OLD_TAG, marker=True, stale=True)
@@ -320,7 +321,7 @@ def check_a_raising_rebuild_puts_the_venv_back() -> None:
 
 def check_rebuild_takes_the_short_timeout() -> None:
     """Give launch-time rebuilds less time than store installs.
-    Rebuilds run inline on the serial warm-up thread, so one plugin must not block all later on_app_ready calls."""
+    Rebuilds run on the serial warm-up thread, so one plugin must not block later hooks."""
     plugin_dir = _plugin("com_test_timeout")
     venv_path = os.path.join(plugin_dir, "backend", ".venv")
     _make_venv(venv_path, OLD_TAG, stale=True)
@@ -350,7 +351,7 @@ def check_rebuild_takes_the_short_timeout() -> None:
 
 def check_a_second_launcher_waits_for_the_rebuild() -> None:
     """Make concurrent launchers of one venv wait for its rebuild.
-    A launcher that sees the tree moved aside treats it as non-stale and tries to launch an absent path."""
+    Seeing the tree moved aside looks non-stale and would launch an absent path."""
     plugin_dir = _plugin("com_test_concurrent")
     venv_path = os.path.join(plugin_dir, "backend", ".venv")
     _make_venv(venv_path, OLD_TAG, stale=True)

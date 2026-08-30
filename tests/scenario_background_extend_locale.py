@@ -1,5 +1,5 @@
 """Verify the localized deck-background extend-to-touchscreen label.
-LocaleManager.get returns an absent key itself before fallback, which would expose the raw key in the UI."""
+LocaleManager.get returns a missing key before fallback, which exposes the raw key in the UI."""
 
 # The background-group key must exist for every shipped locale, or get() exposes the raw key.
 import os

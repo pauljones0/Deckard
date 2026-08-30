@@ -1,5 +1,5 @@
-"""Verify BetterDeck key, strip, touch, dial, and reader-callback rotation mappings; all three async setters must delegate to the wrapped deck.
-Model presets supply the Stream Deck + strip/dials and Original 3-by-5 key grid; reorder writes out[logical(p)] = orig[p]."""
+"""Verify key, strip, touch, dial, and callback maps; all three async setters delegate to its deck.
+Use Plus strip/dials and Original 3x5 keys; reorder uses out[logical(p)] = orig[p]."""
 import fixtures  # noqa: F401  (import first: sets up the isolated data dir)
 
 
@@ -14,8 +14,8 @@ ORIGINAL = FAKE_DECK_MODELS["original"]
 N_DIALS = PLUS.dial_count
 STRIP_SIZE = PLUS.touchscreen_image.size
 
-# Device-read oracle for a row-major 2-by-4 grid: at 90 degrees (row, column) maps to (column, rows - 1 - row), so physical 0 becomes logical 1 and physical 4 becomes 0.
-# Rotation 270 turns the other way and 180 reverses the grid; using an external table catches two formulas that agree in the wrong direction.
+# Device oracle, row-major 2x4: 90 maps (r,c)->(c,rows-1-r); p0->l1 and p4->l0.
+# 270 turns opposite; 180 reverses, catching formulas that agree in the wrong direction.
 DIRECTION_ROWS, DIRECTION_COLS = 2, 4
 DIRECTION_TABLE = {
     0: [0, 1, 2, 3, 4, 5, 6, 7],
@@ -59,7 +59,7 @@ def check_rotation() -> int:
                 return 1
 
     # For a 3-by-5 grid at 90 degrees, get_logical_index(0) = 2, so orig[0] must land at out[2].
-    # This literal checks placement, while check_rotation_direction uses a device-read table to check turn direction.
+    # The literal checks placement; check_rotation_direction uses the device table for direction.
     better.set_rotation(90)
     out = better.reorder_physical_for_rotation(physical)
     if out[2] != 0:
@@ -130,7 +130,7 @@ def check_rotation_direction() -> int:
 
 def check_strip_turn() -> int:
     """Turn the strip end for end only at 180 degrees.
-    At 90 and 270 the unchanged device-buffer shape cannot hold a rotated upright composite without squashing it."""
+    At 90/270 the fixed buffer shape would squash a rotated upright composite."""
     deck = FaultyFakeDeck(serial_number="rot-strip", model="plus")
     better = BetterDeck(deck)
 

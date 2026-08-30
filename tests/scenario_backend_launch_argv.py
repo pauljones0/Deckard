@@ -1,5 +1,5 @@
 """Launch plugin and action backends with argv lists and a usable interpreter.
-The command preserves spaces and quotes, selects venv Python or sys.executable, and validates paths."""
+Preserve spaces and quotes, select venv Python or sys.executable, and validate paths."""
 import os
 import sys
 import threading
@@ -10,7 +10,8 @@ import fixtures  # noqa: F401  (import first: sets up the isolated data dir)
 
 import globals as gl
 
-# Stub the registries touched by launch and registration before importing ActionCore; a real PluginManager loads the plugin ecosystem.
+# Stub launch and registration registries before importing ActionCore.
+# A real PluginManager loads the plugin ecosystem.
 gl.plugin_manager = types.SimpleNamespace(backends=[], backend_processes=[])
 
 from src.backend.PluginManager.ActionCore import ActionCore  # noqa: E402
@@ -126,8 +127,8 @@ def check_argv_shape(backend_path: str) -> None:
     )
     print("PASS: terminal form passes paths as bash positional parameters")
 
-    # DECKARD_TERMINAL is a complete prefix: gnome-terminal uses --, konsole, alacritty, and xterm use -e,
-    # while kitty uses a positional command; one hard-coded separator cannot serve all terminals.
+    # DECKARD_TERMINAL is a complete prefix: gnome-terminal uses --;
+    # konsole/alacritty/xterm use -e; kitty uses positional, so no separator serves all.
     for spec, expected_prefix in (
         ("kitty", ["kitty"]),
         ("konsole -e", ["konsole", "-e"]),
@@ -172,8 +173,8 @@ def check_path_validation(backend_path: str) -> None:
     else:
         raise AssertionError("a missing venv_path did not raise")
 
-    # A native Python upgrade can leave a dangling bin/python; reject it with ValueError naming the interpreter,
-    # rather than exposing Popen's FileNotFoundError from launch_backend.
+    # A Python upgrade can leave a dangling bin/python.
+    # Raise ValueError naming it instead of exposing Popen's FileNotFoundError.
     broken_venv = os.path.join(gl.DATA_PATH, "broken venv")
     os.makedirs(os.path.join(broken_venv, "bin"), exist_ok=True)
     dangling = os.path.join(broken_venv, "bin", "python")
@@ -236,8 +237,8 @@ def check_end_to_end_spaced_path(backend_path: str) -> None:
         )
         print("PASS: the live launch installs the authenticator and the guard binds the child to loopback")
     finally:
-        # Keep the handle before _release_backend_resources clears it; otherwise the stdout-inheriting stub can outlive this process
-        # while SIGTERM runs on a daemon thread, which blocks run_all.py on the pipe.
+        # Keep the handle before resource release clears it and sends SIGTERM on a daemon thread.
+        # Otherwise the stdout-inheriting stub can outlive us and block run_all.py's pipe.
         process = action.backend_process
         action.on_disconnect(None)
         # Guarded, because launch_backend may have raised and left no process.

@@ -1,5 +1,5 @@
 """Frontend rpyc servers accept only same-UID loopback peers.
-Authentication precedes the protocol, so refusal exchanges no protocol data and legitimate backend children need no cooperation."""
+Authentication precedes rpyc, so refusal exchanges no protocol data; valid backends pass unaided."""
 import os
 import threading
 import time
@@ -45,13 +45,14 @@ def main() -> None:
                             authenticator=frontend_authenticator)
     threading.Thread(target=server.start, name="test_frontend", daemon=True).start()
 
-    # A same-UID backend must pass; retry because a busy host can schedule the daemon accept loop late.
+    # Retry a same-UID backend because a busy host can schedule the daemon accept loop late.
     connection = _connect(server.port)
     assert connection.root.marker() == "frontend-alive"
     connection.close()
     print("PASS: a same-uid loopback client connects through the authenticator")
 
-    # Substitute a foreign UID because the suite has one real UID; refusal must close before the protocol and appear client-side.
+    # Substitute a foreign UID because the suite has one real UID.
+    # Refusal must close before rpyc and appear on the client.
     real = guard.uid_of_peer
     guard.uid_of_peer = lambda s: os.getuid() + 1
     try:

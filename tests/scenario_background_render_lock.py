@@ -1,5 +1,5 @@
-"""Guard Background.tiles, _video_strip, _touchscreen_slice, and _identified_tiles across media, GTK, load, and screensaver threads.
-Their render-state lock prevents torn sets; the video-state lock prevents release from clearing video during a touchscreen tick."""
+"""Guard Background.tiles, _video_strip, _touchscreen_slice, and _identified_tiles across threads.
+Media writes; GTK/load/screensaver swap. Render/video locks stop tears and mid-read release."""
 
 # Run real swap and read paths under contention; no thread may raise or publish inconsistent state.
 import os
@@ -34,7 +34,7 @@ def check_touchscreen_tick_lock(controller) -> None:
     touch = controller.get_input(Input.Touchscreen("sd-plus"))
     state = touch.get_active_state()
 
-    # The tick method must read the video and advance its frame deadline under the background-video lock.
+    # Read video and advance its frame deadline under the background-video lock.
     check("touchscreen state exposes tick_background_video",
           hasattr(state, "tick_background_video"))
     if not hasattr(state, "tick_background_video"):
@@ -73,7 +73,8 @@ def check_background_lock_stress(controller) -> None:
 
     background.set_extend_to_touchscreen(True, update=False)
 
-    # update_tiles converts a torn video read into a rate-limited error, so contention must produce neither that log nor a raised error.
+    # update_tiles turns a torn video read into a rate-limited error.
+    # Contention must produce neither that log nor a raised error.
     tile_errors: list[str] = []
     sink = log.add(lambda m: tile_errors.append(str(m)), level="ERROR",
                    filter=lambda r: "update background tiles" in r["message"].lower())
