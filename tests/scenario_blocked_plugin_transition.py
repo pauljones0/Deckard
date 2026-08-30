@@ -126,7 +126,7 @@ def main() -> None:
 
     finally:
         gl.signal_manager.trigger_signal = real_trigger_signal
-        # Permit no disconnect_signal; the scenario subprocess discards the retained handler.
+        # Permit a missing disconnect_signal; the scenario subprocess discards the retained handler.
         disconnect = getattr(gl.signal_manager, "disconnect_signal", None)
         if disconnect is not None:
             disconnect(ChangePage, slow_change_page_handler)
