@@ -1,21 +1,5 @@
-"""The shrink a pressed key draws is a setting. The store refusal is not.
-
-A held key draws its picture smaller, centred on a transparent margin, so the
-background shows at the edges. general.shrink-on-press turns that off, for a
-page whose keys carry one picture between them and whose seams the margin
-breaks. The default keeps the shrink, so a deck that nothing configures
-presses as it always has.
-
-What the setting must not reach is the covered-key cache. A press keeps a
-composite out of that cache whatever the picture ends up looking like, because
-the branch that draws a gated look is the branch that decides the store. This
-file drives both halves: the pixels, from real composites of a real key, and
-the kept entry, from the cache the render path stores into.
-
-Nothing here sleeps or reloads a page. The setting is written the way the
-settings dialog writes it, and the next composite reads it, which is what
-proves a change needs no restart.
-"""
+"""Verify shrink-on-press controls centered press pixels but not cache admission.
+The default shrinks; setting changes apply on the next press without a page reload or restart."""
 import fixtures  # noqa: F401  (import first: isolated data dir + sys.path)
 
 import threading
@@ -37,8 +21,6 @@ TILE_COLORS = [
     (10, 200, 10, 255),
 ]
 
-
-# --- fixtures -------------------------------------------------------------
 
 def _settle(controller) -> None:
     """Wait out the page load, which rebuilds every state's managers on
@@ -64,9 +46,8 @@ def _settle(controller) -> None:
 
 
 def _disarm_repaint_retry(controller) -> None:
-    """Clear the armed full repaint. A failed device write arms one, and the
-    media loop fires it two seconds later: it repaints the whole deck, which
-    stores a kept composite this file did not ask for."""
+    """Clear a failed-write repaint that would fire after two seconds.
+    Its full-deck repaint would store composites outside this check."""
     controller._full_repaint_pending = False
 
 
@@ -120,10 +101,8 @@ def _composite(key) -> Image.Image:
     return key.get_current_image()
 
 
-# --- checks ---------------------------------------------------------------
-
 def check_default_shrinks(controller) -> None:
-    """The setting absent means the press feedback the app has always given."""
+    """Verify an absent setting enables press feedback."""
     assert gl.settings_manager.app().shrink_on_press is True, \
         "the shrink must default to on, or a deck nobody configured changes behaviour"
 
@@ -153,18 +132,8 @@ def check_default_shrinks(controller) -> None:
 
 
 def check_shrink_is_centred(controller) -> None:
-    """The shrunken picture sits in the middle of the transparent margin.
-
-    The margin is what lets the background show at the edges of a held key. An
-    off-centre paste puts the whole margin on two sides, so the key looks as if
-    it slid rather than shrank, and a page whose keys carry one picture between
-    them tears along one seam only. The check reads the opaque region's box. It
-    allows a one-pixel difference between the two margins, because an odd tile
-    or an odd shrunken size cannot split its leftover margin evenly, and a
-    centred paste then leaves one more pixel on one side. An off-centre paste,
-    which piles the whole margin on one side, is many pixels out and still
-    fails.
-    """
+    """Verify the opaque region is centered within the transparent press margin.
+    Opposite margins may differ by at most one pixel when dimensions are odd."""
     key = _key(controller, 0)
     source = Image.new("RGBA", controller.get_key_image_size(), OPAQUE)
     shrunk = key.shrink_image(source, factor=0.5)
@@ -188,11 +157,7 @@ def check_shrink_is_centred(controller) -> None:
 
 
 def check_setting_stops_the_shrink(controller) -> None:
-    """The setting off means a pressed key draws exactly what it drew at rest.
-
-    Byte equality is the whole claim of the feature, so the check is on the
-    bytes and not on the size of anything.
-    """
+    """Verify disabling shrink makes pressed and resting image bytes equal."""
     key = _key(controller, 1)
     _give_media(key, _opaque_source())
     _set_tiles(controller, TILE_COLORS[1])
@@ -213,9 +178,8 @@ def check_setting_stops_the_shrink(controller) -> None:
             "apart by identity"
         )
 
-        # Back on, with no page reload and no restart. This composites the held
-        # key by hand. The app enqueues no paint for a key that is already
-        # down, so on a deck the new look shows from the next press.
+        # Re-enable without reload; an already-held key has no queued paint,
+        # so the device applies the new look on its next press.
         _set_shrink(True)
         pressed_again = _composite(key)
         assert pressed_again.tobytes() != at_rest.tobytes(), (
@@ -232,14 +196,8 @@ def check_setting_stops_the_shrink(controller) -> None:
 
 
 def check_press_keeps_no_composite(controller) -> None:
-    """A press stores nothing even when it draws nothing.
-
-    The covered-key cache keeps one composite per key state and reuses it
-    while its inputs hold. A pressed look must never be the picture it keeps,
-    and with the shrink off that look is byte-identical to the resting one,
-    which is exactly the case a store decided by comparing pictures would get
-    wrong.
-    """
+    """Keep pressed composites out of the covered-key cache when shrink is off.
+    Cache admission must follow the press branch, not byte equality with the resting image."""
     _set_shrink(False)
     _disarm_repaint_retry(controller)
     key = _key(controller, 2)
@@ -279,14 +237,8 @@ def check_press_keeps_no_composite(controller) -> None:
 
 
 def check_press_inside_composite_stores_nothing(controller) -> None:
-    """A press that lands and leaves inside one composite window, shrink off.
-
-    This is the case the store cannot reason its way out of. The read before
-    the composite says not pressed, the read after says not pressed again, and
-    with the shrink off the picture in between carries no evidence either: it
-    is the resting picture, byte for byte. Only the branch that ran while the
-    key was held knows, so that branch records the refusal itself.
-    """
+    """Reject cache storage when a shrink-disabled press starts and ends during composition.
+    Both outer reads and the image match rest, so only the executed press branch can reject it."""
     _set_shrink(False)
     _disarm_repaint_retry(controller)
     key = _key(controller, 3)
@@ -340,12 +292,8 @@ def check_press_inside_composite_stores_nothing(controller) -> None:
 
 
 def check_setting_round_trip() -> None:
-    """The choice survives the settings store, and its absence reads as on.
-
-    The stored value is put back to on first, and by the raw path. A check
-    that writes the value the file already holds proves nothing about the
-    write: a setter that dropped it on the floor would read back the same.
-    """
+    """Verify the choice round-trips through storage and absence reads as enabled.
+    Seed the opposite value first so a dropped setter cannot pass unchanged."""
     _set_shrink(True)
     assert gl.settings_manager.app_snapshot().shrink_on_press is True, \
         "fixture sanity: the file does not hold the value this check writes over"

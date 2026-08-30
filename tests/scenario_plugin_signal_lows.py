@@ -1,13 +1,8 @@
-"""
-Unit-tier scenario for grouped plugin, signal and GtkHelper fixes.
+"""Verify low-level plugin and signal behavior without decks or widgets.
+Signal dispatch forwards kwargs once, and helper paths tolerate partial, slotted, and null values."""
 
-SignalManager.trigger_signal forwards kwargs and runs a truthy handler once. No
-deck, no widgets.
-"""
-
-# EventHolder dedupes a functools.partial listener, CallbackRegistry accepts a
-# __slots__ owner, launch_backend validates its path, get_own_key resolves
-# through get_input, and a null action id survives removal.
+# Event listeners deduplicate partials, registries accept slotted owners, backend
+# paths validate early, key lookup uses get_input, and null action ids survive removal.
 import functools
 import threading
 import weakref
@@ -22,9 +17,8 @@ from src.Signals.weak_callbacks import CallbackRegistry
 
 
 def pump_main_context(max_iterations: int = 25) -> int:
-    """Dispatch pending sources on the default main context. The bound stops
-    a forever-rescheduling idle from hanging the scenario. Returns the number
-    of iterations that dispatched something."""
+    """Dispatch at most max_iterations sources from the default main context.
+    The bound prevents a repeating idle source from hanging the scenario."""
     ctx = GLib.MainContext.default()
     dispatched = 0
     for _ in range(max_iterations):
@@ -186,9 +180,8 @@ def check_get_own_key_via_get_input():
 def check_remove_actions_survives_null_id():
     from src.backend.PageManagement.Page import Page
 
-    # An action with an explicit null id, one with no id at all, and a normal
-    # one belonging to the plugin being removed. A None id that reaches
-    # .split("::") raises AttributeError and aborts the whole removal.
+    # Explicit null and missing ids must survive removal beside normal actions;
+    # passing None to .split("::") would abort the operation.
     page_dict = {
         "keys": {
             "0x0": {

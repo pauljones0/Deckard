@@ -1,12 +1,5 @@
-"""Permission toggles must write the action's own filtered index.
-
-On a key with a failed-to-load action, load_for_actions set ActionRow.index
-from an enumerate that counts the None slot, so the image and background
-toggles wrote an index one too high and the toggle did not stick. The writers
-now use the action's own filtered index via _control_index_for_toggle, which
-also refuses a -1 or None index (the screensaver showing, or the action
-absent) rather than store a slot the readers never match.
-"""
+"""Verify permission toggles use each action's filtered index.
+Enable writes valid own indices, disable writes None, and -1 or None indices are refused."""
 import fixtures  # noqa: F401  (must be first: isolates DATA_PATH before globals)
 
 import types  # noqa: E402
@@ -34,9 +27,8 @@ def main() -> int:
     start_watchdog(30, "permission_toggle_index")
     failures: list[str] = []
 
-    # Turning a control on writes the action's own filtered index, not a raw
-    # enumerate index. On a key with a failed sibling at slot 0, the second
-    # real action's own index is 1 while its raw row index was 2.
+    # A failed sibling at slot 0 makes the second real action's filtered index
+    # 1 while its raw row index is 2; enabling must write the filtered index.
     write, value = _toggle(own_index=1, active=True)
     if not (write and value == 1):
         failures.append(f"active with own_index 1 should write 1, got ({write}, {value})")

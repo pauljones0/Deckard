@@ -1,10 +1,5 @@
-"""
-The PresenceMonitor quiescence rule and its wake fan-out.
-
-The monitor alone can make DeckController.animations_gated true. Mode
-"screensaver" never gates. Mode "system-idle" gates on lock and on the logind
-idle hint. A deck press outranks the lock for a grace period.
-"""
+"""Verify PresenceMonitor gating and wake fan-out.
+Screensaver mode never gates; system-idle uses lock and logind idle, with a deck-press grace period."""
 
 # Every transition wakes every deck. No deck, no GTK and no real bus run here.
 import fixtures  # noqa: F401  (isolates gl.DATA_PATH before anything reads it)
@@ -83,10 +78,8 @@ def check_lock_gates_and_unlock_clears() -> None:
     monitor = make_monitor()
     assert monitor.is_quiescent() is False
 
-    # Assert the wake increment a transition must produce, not an exact running
-    # total. Every monitor fans out over the one gl.deck_manager.deck_controller
-    # list, so a prior monitor's timer deadline can fire late under load and add
-    # a wake to this test's decks. Only the increment is the invariant.
+    # Check only the transition increment because prior monitor deadlines can
+    # add late wakes through the shared controller list under load.
     aw, bw = a.media_player.wakes, b.media_player.wakes
     set_locked(monitor, True)
     assert monitor.is_quiescent() is True, "lock must gate in system-idle mode"
@@ -112,9 +105,8 @@ def check_lock_gates_and_unlock_clears() -> None:
 
 
 def check_unlock_counts_as_activity() -> None:
-    """IdleHint is a hint the desktop maintains, and many setups only ever
-    set it. An idle agent with no resume command leaves it true across the
-    unlock, so the unlock itself must count as presence."""
+    """Treat unlock as activity when the desktop leaves IdleHint set.
+    Otherwise a stale idle hint keeps the deck gated across unlock."""
     monitor = make_monitor(minutes=1)
     monitor.on_idle_hint_changed(True, idle_since=time.time() - 600)
     set_locked(monitor, True)
@@ -187,17 +179,14 @@ def check_deck_activity_clears_and_rearms() -> None:
 
 
 def check_deck_activity_outranks_lock() -> None:
-    """With lock-on-lock-screen off the deck stays live and usable while the
-    screen is locked. A recent press therefore outranks the lock, and the gate
-    re-engages on its own once the grace expires."""
+    """Let recent deck activity outrank lock until its grace expires.
+    The gate must re-engage without another lock or idle event."""
     (a,) = install_controllers(StubController())
     monitor = make_monitor()
     monitor.DECK_ACTIVITY_GRACE_S = 0.4  # the shipped 30s, tightened
 
-    # With no press observed, _last_deck_activity is 0.0 and a lock gates at
-    # once. This is the startup case, where a process start is not activity.
-    # Assert the wake increment, not an exact total: a prior monitor's late
-    # deadline can fan out through the shared controller list under load.
+    # With no observed press, startup lock gates immediately; check only the
+    # wake increment because prior deadlines can add wakes under load.
     aw = a.media_player.wakes
     set_locked(monitor, True)
     assert monitor.is_quiescent() is True, (
@@ -213,10 +202,8 @@ def check_deck_activity_outranks_lock() -> None:
     )
     assert a.media_player.wakes > aw, "un-gating must wake the deck"
 
-    # It re-gates on the grace's own deadline, with no further input. Nothing
-    # else calls back, because the lock is steady and logind cannot see deck
-    # presses. The deadline sets quiescent on the timer thread and only then
-    # fans out, so wait for the wake to land rather than reading it at once.
+    # The grace deadline re-gates without further input and sets quiescence
+    # before its timer thread fans out, so wait separately for the wake.
     aw = a.media_player.wakes
     assert fixtures.wait_until(monitor.is_quiescent, timeout=3.0), (
         "the grace expired but the gate never re-engaged -- its deadline was "
@@ -304,9 +291,8 @@ def check_constructor_seeds_from_settings() -> None:
 
 
 def check_fan_out_snapshot_and_contained() -> None:
-    """remove_controller mutates gl.deck_manager.deck_controller from unplug
-    and close threads, and a torn-down controller can raise out of wake().
-    Neither may strand the rest of the fan-out."""
+    """Contain list mutation and wake failures during controller fan-out.
+    Unplug and close threads can mutate the list while torn-down controllers raise."""
     survivor = StubController()
     exploder = StubController(raises=True)
 
@@ -342,9 +328,8 @@ def check_fan_out_snapshot_and_contained() -> None:
 # logind IdleHint detector over a fake system bus.
 
 class FakeSystemBus:
-    """The three Gio.DBusConnection methods LogindIdleDetector uses. Records
-    every call, so the resolver's method and argument choice are
-    assertable."""
+    """Record the three Gio.DBusConnection methods used by LogindIdleDetector.
+    Calls expose the selected resolver method and arguments."""
 
     def __init__(self, idle_hint: bool = False, idle_since: float = 0.0,
                  fail_on: set = None):
@@ -400,9 +385,8 @@ def with_session_id(value):
 
 
 def check_detector_built_lazily() -> None:
-    """The default pause mode reads nothing from logind, so it must not touch
-    the system bus at all. The detector is built on the opt-in instead, and
-    exactly once however often the mode is toggled."""
+    """Build the logind detector only after system-idle mode is selected.
+    Repeated mode toggles must reuse the same detector and subscription."""
     bus = FakeSystemBus(idle_hint=False)
     previous = with_session_id("31")
     try:
@@ -422,9 +406,8 @@ def check_detector_built_lazily() -> None:
         )
         calls = len(bus.calls)
 
-        # A toggle back keeps the detector, which is inert in that mode. A
-        # rebuild per toggle would churn the bus, and opting in again reuses
-        # it.
+        # The detector stays inert in screensaver mode and is reused when
+        # system-idle mode is selected again.
         monitor.set_mode(MODE_SCREENSAVER)
         monitor.set_mode(MODE_SYSTEM_IDLE, 1)
         assert monitor.idle_detector is detector, "the detector was rebuilt"
@@ -439,9 +422,8 @@ def check_detector_built_lazily() -> None:
 
 
 def check_detector_resolves_by_session_id() -> None:
-    """An already-idle session must gate at construction. The detector reads
-    IdleHint and IdleSinceHint up front, rather than waiting for a
-    PropertiesChanged that may never come."""
+    """Seed gating from IdleHint and IdleSinceHint during construction.
+    An already-idle session must not wait for a later PropertiesChanged signal."""
     bus = FakeSystemBus(idle_hint=True, idle_since=time.time() - 600)
     previous = with_session_id("31")
     try:
@@ -468,9 +450,8 @@ def check_detector_resolves_by_session_id() -> None:
 
 
 def check_detector_falls_back_to_caller_pid() -> None:
-    """Without XDG_SESSION_ID the resolver asks logind to resolve the caller,
-    pid 0 from the bus credentials. Under flatpak os.getpid() is a
-    sandbox-namespace number that the host logind reads as a host PID."""
+    """Resolve the caller through logind with PID 0 when XDG_SESSION_ID is absent.
+    A sandbox PID from os.getpid() does not identify the host session."""
     bus = FakeSystemBus(idle_hint=False)
     previous = with_session_id(None)
     try:
@@ -529,9 +510,8 @@ def check_detector_dispatches_property_changes() -> None:
 
 
 def check_detector_inert_on_dbus_failure() -> None:
-    """A detector that cannot reach its bus logs once and stays inert. It
-    must not raise out of the constructor, and the lock input must keep
-    working."""
+    """Keep the detector inert when D-Bus resolution fails.
+    Construction must return, and lock-based gating must continue to work."""
     bus = FakeSystemBus(fail_on={"GetSession", "GetSessionByPID"})
     previous = with_session_id("31")
     try:

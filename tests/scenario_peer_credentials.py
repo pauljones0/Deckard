@@ -1,9 +1,5 @@
-"""deckard_rpyc_guard attributes loopback peers through the socket table.
-
-The guard reads /proc/net/tcp{,6} because loopback TCP carries no peer
-credentials. Fixture text pins the decode of the kernel's hex rows; a live
-socket pair pins the end-to-end attribution against this process.
-"""
+"""Verify loopback peer attribution through /proc/net/tcp and /proc/net/tcp6.
+Fixture rows test kernel decoding, and a live socket pair tests attribution to this process."""
 import os
 import socket
 
