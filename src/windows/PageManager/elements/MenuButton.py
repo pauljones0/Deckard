@@ -179,26 +179,19 @@ class MenuButton(Gtk.MenuButton):
         selected_file = self.selected_file
         source_path = selected_file.get_path() if selected_file is not None else None
         if not source_path:
-            # No file left to read: either the chooser handed back a location
-            # with no local path, or a second callback arrived after the first
-            # cleared the slot below.
+            # The chooser had no local path, or an earlier callback cleared it.
             log.error("Page import has no source file to read")
             return
-        # A read barrier. On the duplicate path this file is a live page, so
-        # its pending edits must reach the disk before the copy reads it. A
-        # duplicate must match what the screen shows. This does nothing for a
-        # real import, whose source is not a page of this app.
+        # Flush pending edits when duplicating a live page so the copy matches
+        # the screen; external import paths have nothing to flush.
         page_flush.get().flush_path(source_path)
         with open(source_path, "r") as f:
             import_dict = json.load(f)
 
         self.selected_file = None
 
-        # Both callers already pass the page name. The direct path passes the
-        # basename without the extension, and the rename dialog passes the
-        # text that the user typed. Use it unchanged. A splitext call here
-        # truncates a typed name at its first dot, so "backup.v2" becomes
-        # "backup". add_page appends the .json extension itself.
+        # Keep the supplied basename or typed name unchanged; add_page adds the
+        # extension, and splitting here would truncate names such as backup.v2.
         page_name = name
         try:
             page_path = services.require_page_manager().add_page(page_name, import_dict)

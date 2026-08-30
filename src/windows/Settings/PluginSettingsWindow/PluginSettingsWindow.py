@@ -46,10 +46,7 @@ class PluginSettingsPage(Adw.PreferencesPage):
         self.settings_window = settings_window
         self.plugin_base = plugin_base
 
-        # The tile-click handler id, or None while it is disconnected. A
-        # tracked id keeps connect and disconnect idempotent: a disconnect
-        # while already off cannot raise, and a reconnect cannot stack a
-        # second handler.
+        # Track the tile-click handler so connect and disconnect stay idempotent.
         self._flow_box_handler: int | None = None
 
         self.build()
@@ -77,11 +74,7 @@ class PluginSettingsPage(Adw.PreferencesPage):
         scrolled_window.set_child(self.flow_box)
 
     def connect_flow_box(self, callback: Callable[..., Any]) -> None:
-        """Wire callback to a click on a tile, once.
-
-        A second call while the handler is on does nothing, so a repeated
-        wire cannot make one click open two dialogs.
-        """
+        """Connect one tile-click handler and ignore repeated calls."""
         if self._flow_box_handler is None:
             self._flow_box_handler = self.flow_box.connect("child-activated", callback)
 
@@ -248,9 +241,7 @@ class IconPage(PluginSettingsPage):
 
         icon_asset = self.plugin_base.asset_manager.icons.get_asset(preview.name)
         if icon_asset is None or icon_asset._path is None or icon_asset._icon is None:
-            # A custom icon whose file the user deleted keeps its settings
-            # entry with the path and the media both None, so there is
-            # nothing for the editor to open.
+            # A deleted custom icon can retain an entry with no path or media.
             log.warning(f"No editable icon behind the asset {preview.name}")
             return
 

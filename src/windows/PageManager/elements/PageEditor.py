@@ -136,16 +136,9 @@ class PageEditor(Adw.NavigationPage):
         self.main_stack.set_visible_child_name("no-page")
 
     def require_active_page_path(self) -> str:
-        """The path of the page the editor holds. It raises when there is none.
+        """Return the active page path or raise before any override write.
 
-        Every override row writes through this. A None reaches canonical_path()
-        inside the page manager and raises TypeError there, naming neither the
-        editor nor the row. An override row is reachable only once the stack
-        leaves its no-page child.
-
-        The readers do not come through here. get_page_data answers {} for a
-        None path, and a group builds its rows before load_for_page binds one,
-        so the reads must keep tolerating the absence.
+        Readers must still accept no path while groups build on the no-page view.
         """
         path = self.active_page_path
         if path is None:
@@ -174,17 +167,9 @@ class PageEditor(Adw.NavigationPage):
         self.page_manager.remove_page_by_path(self.active_page_path)
 
     def teardown(self) -> None:
-        """Releases the editor before its window destroys it.
+        """Commit pending text, then disconnect row handlers before destruction.
 
-        A row handler that outlives the window fires while the widgets go
-        away, and what it starts, such as the matching-window refresh, lands
-        on an idle later still. Nothing disconnects the rows otherwise: the
-        groups drop their handlers when another page loads, and a window that
-        closes loads no further page.
-
-        Text the user typed and never applied is written first. The entries
-        are the last place it exists, and the handler that would commit it is
-        about to go.
+        This order preserves unapplied text and prevents callbacks on dead widgets.
         """
         self.auto_change_group.commit_pending_patterns()
         for group in self.groups:
@@ -194,10 +179,8 @@ class PageEditorGroup(Adw.PreferencesGroup):
     def __init__(self, page_editor: PageEditor, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self.page_editor = page_editor
-        # The handler id per binding key, absent while that binding is
-        # disconnected. Tracked ids keep connect and disconnect idempotent: a
-        # disconnect while already off cannot raise, and a reconnect cannot
-        # stack a second handler that writes the loaded value back to the page.
+        # Track one handler per binding key so repeated connect and disconnect
+        # operations neither stack callbacks nor disconnect an absent handler.
         self._handlers: dict[str, int] = {}
         self.build()
 
@@ -205,11 +188,9 @@ class PageEditorGroup(Adw.PreferencesGroup):
         pass
 
     def _signal_bindings(self) -> list[tuple[str, GObject.Object, str, Callable[..., Any]]]:
-        """The rows this group wires, as (key, widget, signal, callback).
+        """Return bindings as (key, widget, signal, callback).
 
-        Each entry names the widget that carries the handler. A row wrapper
-        that holds the real widget, such as ScaleRow, must give the inner
-        widget here, or the handler goes on one object and comes off another.
+        Each widget must be the object that owns the connected handler.
         """
         return []
 
@@ -326,9 +307,7 @@ class DefaultPageGroup(PageEditorGroup):
         if not state:
             path = None
 
-        # None clears the default page of the deck. See
-        # PageManagerBackend.get_all_default_page_serial_numbers, which skips
-        # a falsy entry.
+        # None clears the default page; default-page lookups skip falsy entries.
         gl.page_manager.set_default_page(serial_number, path)
 
 class AutoChangeGroup(PageEditorGroup):
@@ -358,10 +337,8 @@ class AutoChangeGroup(PageEditorGroup):
         self.wm_class_entry = Adw.EntryRow(title=gl.lm.get("page-manager.page-editor.change-group.wm-class-regex"), text="", show_apply_button=True)
         self.add(self.wm_class_entry)
 
-        # An entry row commits its text on Enter or on the apply button. Text
-        # the user typed and then left behind, by clicking elsewhere or by
-        # closing the window, would otherwise stay in the widget alone and the
-        # page would keep the pattern it had.
+        # Commit on focus leave too, or text abandoned by a click or window
+        # close remains only in the widget.
         self.title_focus = Gtk.EventControllerFocus()
         self.title_entry.add_controller(self.title_focus)
 
@@ -429,10 +406,8 @@ class AutoChangeGroup(PageEditorGroup):
 
     def on_title_focus_left(self, *args: object) -> None:
         if self.is_stored_pattern("title", self.title_entry.get_text()):
-            # Nothing to write, and the re-check runs anyway. The focus
-            # leaving is often the window the rule names coming to the front,
-            # and a user who committed the pattern with Enter would otherwise
-            # see nothing happen at the moment it can finally match.
+            # Recheck even without a write because focus can move to the window
+            # that the already-committed rule must now match.
             self.recheck_active_window()
             return
         self.on_title_entry_applied()
@@ -444,12 +419,9 @@ class AutoChangeGroup(PageEditorGroup):
         self.on_wm_class_entry_applied()
 
     def commit_pending_patterns(self) -> None:
-        """Writes the entry text the page does not carry yet.
+        """Write pending entry text before teardown removes its widgets.
 
-        The editor's teardown calls this. A window that closes takes the
-        entries with it, and this is the last place the text exists. It writes
-        the page settings alone, and leaves the matching-window list, whose
-        refresh lands on an idle after the widgets are gone.
+        Skip list refresh during teardown, but still recheck the active window.
         """
         page_manager = gl.page_manager
         path = self.page_editor.active_page_path
@@ -471,15 +443,9 @@ class AutoChangeGroup(PageEditorGroup):
             self.recheck_active_window()
 
     def is_stored_pattern(self, key: str, text: str) -> bool:
-        """Whether the page already carries this pattern.
+        """Return whether the page stores this pattern, with absent as empty.
 
-        A focus leave arrives on every click elsewhere in the window, and
-        almost none of those carry an edit. A write for each one would re-gate
-        the window watcher and re-apply every rule for nothing. An absent
-        pattern reads as the empty one, which is what the entry shows for it.
-
-        It answers True while no page is loaded, because there is nothing to
-        write the text to.
+        Return True when no page is loaded to prevent writes without a target.
         """
         page_manager = gl.page_manager
         path = self.page_editor.active_page_path
@@ -488,12 +454,9 @@ class AutoChangeGroup(PageEditorGroup):
         return (page_manager.get_auto_change_settings(path).get(key) or "") == text
 
     def recheck_active_window(self) -> None:
-        """Applies the edited rules to the window that is in front now.
+        """Apply edited rules to the current window without waiting for a change.
 
-        An edit otherwise takes effect at the next window change alone, so a
-        rule written for the window the user is looking at appears to do
-        nothing. The window grabber does the work on a background thread,
-        because it can load a page.
+        The window grabber runs in the background because it can load a page.
         """
         window_grabber = gl.window_grabber
         if window_grabber is None:
@@ -978,18 +941,12 @@ class MatchingWindowExpander(BetterExpander):
             self.add_row(Adw.ActionRow(title=window.title, subtitle=window.wm_class, use_markup=False))
 
     def update_matching_windows(self, *args: object) -> None:
-        # Read the regexes here, on the main thread, because they come from
-        # widgets. The query itself must not run here. A window listing calls
-        # a subprocess once per window on most desktops, and the first call
-        # builds the integration of the window grabber, which probes for a
-        # helper binary. On the main thread that stalls the UI that it
-        # updates.
+        # Read widget regexes on the main thread, but run window discovery in
+        # the background because its subprocess and integration probe can stall.
         class_regex = self.auto_change_group.wm_class_entry.get_text()
         title_regex = self.auto_change_group.title_entry.get_text()
 
-        # Each refresh click and each regex apply queues its own query, and
-        # they can finish out of order, so only the newest one replaces the
-        # list.
+        # Stamp each query so out-of-order results cannot replace a newer list.
         self._query_generation += 1
         run_in_background(self._load_matching_windows, class_regex, title_regex,
                           self._query_generation)
