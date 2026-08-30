@@ -303,7 +303,7 @@ def check_validation_is_syntax_only() -> None:
 
 
 def check_large_decks_not_pre_rejected() -> None:
-    """Pass large coordinates and state numbers to the device for validation."""
+    """Pass large coordinates and states to the running-instance recorder."""
     argv = ["--change-state", "deck-a", "Alpha", "9,9", "19",
             "--change-state", "deck-b", "Beta", "14,7", "31"]
 

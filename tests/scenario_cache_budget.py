@@ -467,7 +467,7 @@ def check_bound_under_concurrent_load() -> None:
 def main() -> None:
     fixtures.start_watchdog(60, label="scenario_cache_budget")
 
-    # Run deterministic checks before any fill wakes the budget daemon.
+    # Run the exact-pick check before any fill wakes the budget daemon.
     check_mid_pass_clear_is_noticed()
     check_cross_cache_lru_order()
     check_min_age_and_floor()

@@ -1,4 +1,4 @@
-"""Verify synchronous input generation stamps during page loads."""
+"""Verify that load_page stamps every input under one page-generation lock."""
 import fixtures
 import globals as gl
 
@@ -7,7 +7,7 @@ def main() -> None:
     fixtures.start_watchdog(30, label="scenario_config_gen_stamp")
     controller = fixtures.make_headless_controller(serial="cfggen-1")
     try:
-        # Disable the async stamp path so only load_page can advance config_gen.
+        # Disable the async rebuild path to isolate load_page's lock-held stamps.
         controller.load_all_inputs = lambda *a, **k: None
 
         seed_path = fixtures.seed_page("CfgGenPage")

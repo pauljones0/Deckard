@@ -7,7 +7,7 @@ from src.backend.DeckManagement.DeckManager import close_all_controllers
 
 
 def _settle_and_clear(controller, deck) -> None:
-    """Clear the journal after the boot paint and trailing brightness write."""
+    """Wait for boot paint, permit a trailing brightness write, then clear."""
     fixtures.wait_until(lambda: deck.last_op_for("key:0") is not None, timeout=3)
     time.sleep(0.1)
     deck.clear_journal()

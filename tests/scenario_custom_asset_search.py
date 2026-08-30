@@ -367,7 +367,7 @@ def repo_class_defs() -> list[tuple[str, ast.ClassDef]]:
 
 
 def subclasses_in_tree(root_name: str) -> list[type]:
-    """Import source-visible descendants of a named base to a fixed point."""
+    """Import source descendants to a fixed point, skipping nested or renamed ones."""
     class_defs = repo_class_defs()
     sites: set[tuple[str, str]] = set()
     names = {root_name}
