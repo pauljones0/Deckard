@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Measure SD+ strip mapping with a dial-controlled marker.
-Deckard must not run; dials move and record, keys undo; args: [SY GAP]."""
+"""With Deckard stopped, align marker and lit key edge to a straightedge.
+Record eight key edges left to right with dial presses; keys undo."""
 
 import contextlib
 import sys

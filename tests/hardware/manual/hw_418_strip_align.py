@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Align SD+ key and strip geometry with a color test card.
-No Deckard instance can run; args: [IMAGE] [SX SY GAP SPAN [XOFF [BANDH]]]."""
+"""With Deckard stopped, align SD+ geometry by color family.
+Warm diagonals show gap/sy/bandh; cool verticals show span/xoff."""
 
 import json
 import os

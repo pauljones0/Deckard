@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Run hardware performance captures against isolated scratch data.
-Preflight enforces exclusive ownership and restores a stopped instance."""
+Preflight checks D-Bus ownership and USB; it cannot enforce all ownership."""
 
 import argparse
 import json
@@ -190,8 +190,8 @@ def find_serial() -> str:
 
 
 def repoint_default_pages(scratch: str) -> dict:
-    """Repoint absolute default pages to scratch and return moved entries.
-    Keep scratch paths; copy a missing target before repointing."""
+    """Repoint every absolute default-page path into scratch.
+    Keep scratch paths; copy missing targets; return moved entries."""
     pages_file = os.path.join(scratch, "settings", "pages.json")
     if not os.path.isfile(pages_file):
         return {}
@@ -216,8 +216,8 @@ def repoint_default_pages(scratch: str) -> dict:
 
 def make_scratch_data(video: str, serial: str, scenario: str,
                       blank_page: bool = False) -> str:
-    """Copy isolated data, repoint pages, set video, and disable screensaver.
-    blank_page makes all keys use the tile-passthrough path."""
+    """Copy data, repoint all absolute page paths, and set video.
+    Disable screensaver; blank_page makes all keys use tile passthrough."""
     scratch = os.path.join(WORK_ROOT, "data", scenario)
     shutil.rmtree(scratch, ignore_errors=True)
     os.makedirs(scratch, exist_ok=True)
@@ -413,7 +413,7 @@ def eval_soak(parsed, rss, clean, duration):
     st = steady(wins)
     fps_first = w_med(wins[:max(3, len(wins) // 10)], lambda w: w.get("loop_fps"))
     fps_last = w_med(st, lambda w: w.get("loop_fps"))
-    # Active loops emit a window about every 5 seconds; a missing tail fails
+    # Window presence checks total absence, not tail freshness
     rss_delta = (rss[-1] - rss[0]) if len(rss) >= 2 else 0
     rate_mb_h = rss_delta / (duration / 3600) if duration else 0
     rows = [
