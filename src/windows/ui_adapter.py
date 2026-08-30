@@ -12,7 +12,8 @@ and its docstring says why.
 # in the rotation path.
 import threading
 import time
-from typing import Any, Generic, Protocol, TYPE_CHECKING, TypeVar, cast, override
+from dataclasses import dataclass
+from typing import Any, Callable, Generic, Protocol, TYPE_CHECKING, TypeVar, cast, override
 
 if TYPE_CHECKING:
     from PIL import Image
@@ -20,6 +21,7 @@ if TYPE_CHECKING:
 
     from src.backend.DeckManagement.deck_controller.controller import DeckController
     from src.backend.DeckManagement.InputIdentifier import InputIdentifier
+    from src.backend.DeckManagement.deck_controller.input_latency import LatencySample
     from src.windows.mainWindow.DeckPlus.ScreenBar import ScreenBar
     from src.windows.mainWindow.elements.DeckStackChild import DeckStackChild
     from src.windows.mainWindow.elements.KeyGrid import KeyGrid
@@ -57,7 +59,28 @@ def mark_dirty(controller: "DeckController", identifier: "InputIdentifier") -> N
         log.opt(exception=True).debug("Could not record a dropped preview frame")
 
 
+def _discard_mirror_frame(controller: "DeckController", frame: object | None,
+                          reason: str) -> None:
+    if not isinstance(frame, _MirrorFrame):
+        return
+    tracker = getattr(controller, "input_latency", None)
+    if tracker is not None:
+        tracker.drop(frame.latency_sample, reason)
+
+
 _PayloadT = TypeVar("_PayloadT")
+
+
+@dataclass(frozen=True, slots=True)
+class _MirrorFrame:
+    """One raw preview frame and the exact physical input that produced it.
+
+    The image stays unconverted in the slot; the drain converts only the
+    frame that wins, on the widget it re-resolves, and the sample lets the
+    latency tracker account for every superseded or dropped frame."""
+
+    image: object
+    latency_sample: "LatencySample | None"
 
 
 class MirrorWidget(Protocol, Generic[_PayloadT]):
@@ -95,7 +118,8 @@ class _MirrorSlot:
         # Infinitely far in the past, so the first frame paints at once.
         self._last_drain: float = float("-inf")
 
-    def offer(self, payload: object) -> float | None:
+    def offer(self, payload: object,
+              on_superseded: "Callable[[object], None] | None" = None) -> float | None:
         """Producer side, any thread. Makes payload the frame to paint.
 
         It replaces a frame that no callback painted yet. Returns the seconds
@@ -103,11 +127,16 @@ class _MirrorSlot:
         callback then takes this payload, which keeps the callback count at one.
         """
         with self._lock:
+            displaced = self._pending
             self._pending = payload
             if self._armed:
-                return None
-            self._armed = True
-            return max(0.0, self._interval - (time.monotonic() - self._last_drain))
+                delay = None
+            else:
+                self._armed = True
+                delay = max(0.0, self._interval - (time.monotonic() - self._last_drain))
+        if displaced is not None and on_superseded is not None:
+            on_superseded(displaced)
+        return delay
 
     def take(self) -> object | None:
         """Main loop. Returns the frame to paint and disarms the slot.
@@ -130,6 +159,13 @@ class _MirrorSlot:
         """
         with self._lock:
             self._armed = False
+
+    def discard(self) -> object | None:
+        """Drop the pending frame when its controller or window goes away."""
+        with self._lock:
+            payload, self._pending = self._pending, None
+            self._armed = False
+            return payload
 
 
 class GtkUIAdapter(ui_port.UIPort):
@@ -206,6 +242,8 @@ class GtkUIAdapter(ui_port.UIPort):
         self._window = None
         self._window_mapped = False
         self._children.clear()
+        for (controller, _identifier), slot in list(self._mirror_slots.items()):
+            _discard_mirror_frame(controller, slot.discard(), "ui_window_detached")
         self._mirror_slots.clear()
         self._page_sync_queued.clear()
 
@@ -250,7 +288,9 @@ class GtkUIAdapter(ui_port.UIPort):
         # snapshot can be gone already. A raise here leaves on_deck_removed,
         # skips close(), and strands the media thread and the USB handle.
         for key in [k for k in list(self._mirror_slots) if k[0] is controller]:
-            self._mirror_slots.pop(key, None)
+            slot = self._mirror_slots.pop(key, None)
+            if slot is not None:
+                _discard_mirror_frame(controller, slot.discard(), "ui_unbound")
 
     def _on_window_map(self, *args: Any) -> None:
         self._window_mapped = True
@@ -299,7 +339,7 @@ class GtkUIAdapter(ui_port.UIPort):
     # Render mirror
 
     @override
-    def push_input_image(self, controller: "DeckController", identifier: "InputIdentifier", image: "Image.Image | None") -> bool:
+    def push_input_image(self, controller: "DeckController", identifier: "InputIdentifier", image: "Image.Image | None", latency_sample: "LatencySample | None" = None) -> "bool | ui_port.InputImageDropRecorded":
         try:
             if image is None or not self._window_mapped:
                 return False
@@ -322,7 +362,12 @@ class GtkUIAdapter(ui_port.UIPort):
                             else KEY_UI_INTERVAL_S)
                 slot = self._mirror_slots.setdefault(key, _MirrorSlot(interval))
 
-            delay_s = slot.offer(image)
+            frame = _MirrorFrame(image, latency_sample)
+
+            def record_superseded_drop(displaced: object) -> None:
+                _discard_mirror_frame(controller, displaced, "ui_slot_superseded")
+
+            delay_s = slot.offer(frame, on_superseded=record_superseded_drop)
             if delay_s is None:
                 # A drain is already armed and now carries this frame.
                 return True
@@ -337,10 +382,19 @@ class GtkUIAdapter(ui_port.UIPort):
                     GLib.timeout_add(int(delay_s * 1000) + 1, self._drain_mirror,
                                      controller, identifier,
                                      priority=GLib.PRIORITY_DEFAULT_IDLE)
-            except BaseException:
+            except Exception:
                 # No callback drains this slot now, and an armed slot freezes
                 # the input.
-                slot.disarm()
+                _discard_mirror_frame(controller, slot.discard(), "ui_schedule_failed")
+                mark_dirty(controller, identifier)
+                log.warning(f"Could not schedule the {identifier} mirror frame")
+                return ui_port.InputImageDropRecorded()
+            except BaseException:
+                # An exiting exception still cleans the slot, and keeps
+                # exiting: SystemExit and KeyboardInterrupt must not be
+                # swallowed on the media tick.
+                _discard_mirror_frame(controller, slot.discard(), "ui_schedule_failed")
+                mark_dirty(controller, identifier)
                 raise
             return True
         except Exception:
@@ -359,9 +413,10 @@ class GtkUIAdapter(ui_port.UIPort):
         slot = self._mirror_slots.get((controller, identifier))
         if slot is None:
             return False
-        image = slot.take()
-        if image is None:
+        payload = slot.take()
+        if payload is None:
             return False
+        frame = payload if isinstance(payload, _MirrorFrame) else _MirrorFrame(payload, None)
         try:
             # Resolve again here instead of a capture at push time. The bind
             # uses deck-stack-child identity, and a grid that rebuilds in the
@@ -371,22 +426,30 @@ class GtkUIAdapter(ui_port.UIPort):
                 # The unbind landed between the push and this paint, so drop
                 # the slot too. A push that races unbind() makes a new one, and
                 # a slot keyed by a dead controller pins its whole graph.
-                self._mirror_slots.pop((controller, identifier), None)
+                orphaned = self._mirror_slots.pop((controller, identifier), None)
+                if orphaned is not None:
+                    _discard_mirror_frame(
+                        controller, orphaned.discard(), "ui_unbound")
             widget = None if child is None else self._mirror_widget(child, identifier)
             if not self._window_mapped or widget is None:
                 # The adapter accepted and then dropped this frame.
                 # push_input_image already returned True, so nothing else
                 # records it. The dropped frame was never converted.
                 mark_dirty(controller, identifier)
+                _discard_mirror_frame(controller, frame, "ui_unavailable")
                 return False
             # Only the winning frame reaches this conversion; every frame
-            # the slot superseded was dropped as a raw image, and one armed
-            # drain serves any number of pushes.
+            # the slot superseded was dropped unconverted with its sample
+            # recorded, and one armed drain serves any number of pushes.
             widget.paint_mirror_frame(
-                widget.prepare_mirror_frame(cast("Image.Image", image)))
+                widget.prepare_mirror_frame(cast("Image.Image", frame.image)))
+            tracker = getattr(controller, "input_latency", None)
+            if tracker is not None:
+                tracker.gtk_painted(frame.latency_sample)
         except Exception:
             log.opt(exception=True).warning(f"Failed to paint the {identifier} mirror")
             mark_dirty(controller, identifier)
+            _discard_mirror_frame(controller, frame, "ui_paint_failed")
         return False
 
     # Deck sync

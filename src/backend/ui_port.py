@@ -15,8 +15,10 @@ ScreenBar.load_from_changes call controller.get_input(...).get_current_image()
 themselves. A UI that reads pure engine state is legal in-process, and it has
 the shape a later "recomposite request" IPC message takes.
 
-This module imports typing only, so any module can import it without a cycle.
+This module imports only the standard library, so any engine module can use it
+without a UI dependency cycle.
 """
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -24,6 +26,7 @@ if TYPE_CHECKING:
 
     from src.backend.DeckManagement.deck_controller.controller import DeckController
     from src.backend.DeckManagement.InputIdentifier import InputIdentifier
+    from src.backend.DeckManagement.deck_controller.input_latency import LatencySample
 
 
 class UIPort:
@@ -44,14 +47,17 @@ class UIPort:
 
     def push_input_image(self, controller: "DeckController",
                          identifier: "InputIdentifier",
-                         image: "Image.Image") -> bool:
+                         image: "Image.Image",
+                         latency_sample: "LatencySample | None" = None) -> "bool | InputImageDropRecorded":
         """Mirror a freshly composed input image into the UI.
 
         True means accepted or pending. The implementation converts on the
-        thread of its choice and idles and throttles the paint. False means the
-        UI does not show it (no window, unmapped, grid mid-rebuild) and the
-        caller dirty-marks. This never raises. An internal exception or a
-        refusal returns False.
+        thread of its choice and idles and throttles the paint. False means
+        the UI did not accept the frame (no window, unmapped, grid
+        mid-rebuild) and the caller dirty-marks. InputImageDropRecorded
+        means the implementation already recorded a terminal drop and
+        dirty-marked the frame, so the caller must not count it again.
+        This never raises.
 
         The implementation writes the dirty marker itself when it drops an
         accepted frame later (an unmap mid-throttle, a widget orphaned by a
@@ -144,6 +150,13 @@ class UIPort:
         """Show a user-facing notice. The engine reports through this hook
         instead of the notification backend, so headless runs and the null
         port drop it silently."""
+
+
+@dataclass(frozen=True, slots=True)
+class InputImageDropRecorded:
+    """A push failure whose adapter already accounted for the frame drop."""
+
+    recorded_drop: bool = True
 
 
 # The process-wide null port. install(None) restores this one instance, so a

@@ -49,6 +49,7 @@ from src.backend.DeckManagement.Subclasses.KeyVideo import InputVideo
 from src.backend.DeckManagement.Subclasses.media_pipeline_profiler import media_prof
 from src.backend.DeckManagement.deck_controller import cover_cache, press_look
 from src.backend.DeckManagement.deck_controller.gif_pipeline import KeyGIF
+from src.backend.DeckManagement.deck_controller.input_latency import mark_render_started, mirror_input_image
 from src.backend.DeckManagement.deck_controller.input_state import PersistedState
 from src.backend.DeckManagement.deck_controller.input_state_classes import (
     ControllerDialState,
@@ -607,6 +608,7 @@ class ControllerKey(ControllerInput["ControllerKeyState"]):
             self._paint(force)
 
     def _paint(self, force: bool) -> None:
+        mark_render_started(self.deck_controller)
         # Capture the page and the generation before the render, so a switch
         # mid-render invalidates this paint at the write boundary.
         page = self.deck_controller.active_page
@@ -1063,7 +1065,7 @@ class ControllerKey(ControllerInput["ControllerKeyState"]):
         if image is None:
             return
 
-        if not ui_port.get().push_input_image(self.deck_controller, self.identifier, image):
+        if not mirror_input_image(self.deck_controller, self.identifier, image, ui_port.get().push_input_image):
             # The port refused the push, because there is no UI, the window
             # is unmapped or the grid is mid-rebuild, or the push raised. Mark
             # the input dirty only. KeyGrid.load_from_changes recomposites a
@@ -1102,6 +1104,7 @@ class ControllerTouchScreen(ControllerInput["ControllerTouchScreenState"]):
             self._paint()
 
     def _paint(self) -> None:
+        mark_render_started(self.deck_controller)
         page = self.deck_controller.active_page  # capture at render start (see ControllerKey.update)
         config_gen = self.config_gen
         image = self.get_current_image()
@@ -1166,7 +1169,7 @@ class ControllerTouchScreen(ControllerInput["ControllerTouchScreenState"]):
         return Image.new("RGBA", (screen_width // n_dials, screen_height), (0, 0, 0, 0))
 
     def set_ui_image(self, image: Image.Image) -> None:
-        if not ui_port.get().push_input_image(self.deck_controller, self.identifier, image):
+        if not mirror_input_image(self.deck_controller, self.identifier, image, ui_port.get().push_input_image):
             # Mark the input dirty only. ScreenBar.load_from_changes
             # recomposites a fresh image on map instead of replaying this one.
             # The adapter owns the preview throttle and its tail flush, which
@@ -1451,4 +1454,3 @@ class ControllerDial(ControllerInput["ControllerDialState"]):
         # means no visual target. KeyImage._budget_size keys off exactly it.
         return (0, 0)
     
-
