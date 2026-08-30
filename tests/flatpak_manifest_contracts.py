@@ -105,7 +105,9 @@ def check_ci_contract(root: Path) -> None:
     assert manifest_test["rules"] == build["rules"][: len(manifest_test["rules"])]
 
     script = manifest_test["script"]
-    system_deps = next(i for i, command in enumerate(script) if "libgirepository" in command)
+    system_deps = next(
+        i for i, command in enumerate(script) if "libgirepository1.0-dev" in command
+    )
     tool_install = next(i for i, command in enumerate(script) if "pip install" in command)
     generation = next(i for i, command in enumerate(script) if "--check" in command)
     payload = next(i for i, command in enumerate(script) if "check_python_payload.py" in command)
