@@ -40,6 +40,10 @@ from src.backend import settings_store
 import globals as gl
 
 
+# "Argument not given", for a setter whose None already means "clear the key".
+_UNSET: Any = object()
+
+
 class PageEntry(TypedDict):
     """One cached page slot, with the Page object and its LRU stamp."""
     page: "Page"
@@ -1172,12 +1176,18 @@ class PageManagerBackend:
                 "extend-to-touchscreen": extend_to_touchscreen
             }
 
-    def overwrite_background_settings(self, path: str, overwrite: bool | None = None, show: bool | None = None, fps: int | None = None, loop: bool | None = None, media_path: str | None = None, extend_to_touchscreen: bool | None = None) -> None:
+    def overwrite_background_settings(self, path: str, overwrite: bool | None = None, show: bool | None = None, fps: int | None = None, loop: bool | None = None, media_path: str | None = None, extend_to_touchscreen: bool | None = None, view: "dict[str, float] | None | object" = _UNSET) -> None:
+        """Write the given keys; a default argument changes nothing. view=None
+        clears the stored viewport, so _UNSET is its leave-alone default."""
         with self.edit_page_settings(path) as settings:
             background_settings = settings.setdefault("background", {})
 
             if overwrite is not None:
                 background_settings["overwrite"] = overwrite
+            if view is not _UNSET:
+                background_settings.pop("view", None)
+                if view is not None:
+                    background_settings["view"] = view
             if show is not None:
                 background_settings["show"] = show
             if fps is not None:

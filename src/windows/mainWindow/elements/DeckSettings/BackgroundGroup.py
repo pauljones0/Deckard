@@ -40,18 +40,10 @@ from src.backend.DeckManagement.deck_controller.background_media import (
     background_canvas_size, resolve_background_entries,
 )
 from src.backend.DeckManagement.deck_controller.viewport import (
-    is_default_view, media_entries, normalize_view,
+    media_entries, normalize_view, view_as_setting,
 )
 from src.windows.mainWindow.elements.ViewportDialog import ViewportDialog
 from src.windows.mainWindow.lazy_map import LazyMapTasks
-
-
-def _view_as_setting(view: "tuple[float, float, float]") -> "dict[str, float] | None":
-    """The stored shape of a view: a dict, or None for the default view so
-    an untouched background keeps its pre-view settings file."""
-    if is_default_view(view):
-        return None
-    return {"x": view[0], "y": view[1], "scale": view[2]}
 
 
 def _slideshow_summary_text(image_count: int) -> str:
@@ -265,37 +257,6 @@ class BackgroundMediaRow(LazyMapTasks, Adw.PreferencesRow):
             # wired, or every later change to this row is dropped silently.
             self.connect_signals()
 
-    def load_defaults_from_page(self) -> None:
-        # The early return below disables this method, so the unguarded
-        # active_page.dict["background"] reads that follow never run. Guard
-        # them before anything calls this method again. The dead body stays
-        # as the record of what that guard has to cover.
-        return
-        if not hasattr(self.settings_page.deck_page.deck_controller, "active_page"):
-            return
-        if self.settings_page.deck_page.deck_controller.active_page is None:
-            return
-        
-        original_values = None
-        if "background" in self.settings_page.deck_page.deck_controller.active_page:
-            original_values = self.settings_page.deck_page.deck_controller.active_page.dict["background"]
-
-        overwrite = self.settings_page.deck_page.deck_controller.active_page.dict["background"].setdefault("overwrite", False)
-        show = self.settings_page.deck_page.deck_controller.active_page.dict["background"].setdefault("show", False)
-        file_path = self.settings_page.deck_page.deck_controller.active_page.dict["background"].setdefault("media-path", None)
-
-        # Save if changed
-        if original_values != self.settings_page.deck_page.deck_controller.active_page:
-            self.settings_page.deck_page.deck_controller.active_page.save()
-
-        self.overwrite_switch.set_active(overwrite)
-        self.enable_switch.set_active(show)
-
-        # Set config box state
-        self.config_box.set_visible(overwrite)
-
-        self.set_thumbnail(file_path)
-
     def on_toggle_enable(self, toggle_switch: Gtk.Switch, state: bool) -> None:
         config = gl.settings_manager.deck(self.deck_serial_number)
         config.set("background", "enable", state)
@@ -423,12 +384,12 @@ class BackgroundMediaRow(LazyMapTasks, Adw.PreferencesRow):
             rewritten: "list[Any]" = []
             for entry_path, entry_view in list_entries:
                 use = view if entry_path == path else entry_view
-                as_dict = _view_as_setting(use)
+                as_dict = view_as_setting(use)
                 rewritten.append(entry_path if as_dict is None
                                  else {"path": entry_path, "view": as_dict})
             settings.set("background", "media-paths", rewritten)
         else:
-            settings.set("background", "view", _view_as_setting(view))
+            settings.set("background", "view", view_as_setting(view))
         settings.save()
 
         if not self._deck_background_shows():

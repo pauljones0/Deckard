@@ -170,11 +170,6 @@ class Page:
         # reorders a dict that no write reads.
         page_document.move_key_to_end(dictionary, key)
 
-    def set_background(self, file_path: str) -> None:
-        self.dict.setdefault("background", {})
-        self.dict["background"]["path"] = file_path
-        self.save()
-
     def load_action_objects(self) -> None:
         # The import is function-scoped, because deck_controller/controller.py
         # imports this module and a module-level import here closes a cycle.
