@@ -1,28 +1,5 @@
-"""Importing an icon pack from a zip archive or a folder.
-
-The import writes the layout the store writes, so the pack chooser reads an
-imported pack through the code path it already has. Every leg here ends by
-asking the icon-pack manager what it can see, which is the reader the window
-uses.
-
-Four defects sit under this scenario:
-
-  * An archive member that names a path outside the folder it unpacks into.
-    One such member fails the whole archive, and nothing from it is written.
-
-  * A pack that is registered before its files are there. A kill in the middle
-    of an import would then leave a pack folder that the chooser trusts and
-    that holds some of its icons. The import builds under a hidden name and
-    renames once, so a leftover is invisible and no half pack exists.
-
-  * A pack with no thumbnail. The pack reader marks such a pack invalid and
-    the chooser drops it, so an import that wrote no thumbnail would produce
-    a pack that cannot be seen.
-
-  * Files the pack reader cannot reach. It lists the asset folder and the
-    folders one level inside it and stops, so an import that kept a deeper
-    tree would copy icons that never show.
-"""
+"""Import icon packs into the store layout from archives and folders.
+Covers containment, staging, visibility, and reader-compatible assets."""
 import fixtures  # noqa: F401  (must be first: see fixtures.py docstring)
 
 import os  # noqa: E402
@@ -47,14 +24,10 @@ PACKS_ROOT = os.path.join(gl.DATA_PATH, IconPackManager.DATA_DIR)
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CSV_PATH = os.path.join(REPO_ROOT, "locales", "locales.csv")
 
-# The two files whose labels the import UI asks for by key.
 UI_SOURCES = (
     os.path.join(REPO_ROOT, "src", "windows", "AssetManager", "IconPacks", "ImportDialog.py"),
     os.path.join(REPO_ROOT, "src", "windows", "AssetManager", "IconPacks", "PackChooser.py"),
 )
-
-
-# Fixtures
 
 
 def scratch(name: str) -> str:
@@ -103,16 +76,8 @@ def clear_packs() -> None:
     shutil.rmtree(PACKS_ROOT, ignore_errors=True)
 
 
-# What the import accepts
-
-
 def check_extensions_are_what_the_app_renders() -> None:
-    """The copied formats are formats the app already shows.
-
-    A format that the app cannot render fills a pack with entries whose
-    previews stay blank, so this pins the claim against the app's own lists
-    rather than against a second copy of them.
-    """
+    """Require import formats to come from the app's renderable format lists."""
     extensions = pack_import.importable_extensions()
     assert extensions == {"png", "jpg", "jpeg", "svg", "gif"}, (
         f"the importable set drifted: {sorted(extensions)}"
@@ -155,9 +120,6 @@ def check_resolved_within() -> None:
         "a sibling whose name starts with the base name is outside it"
     )
     print("PASS: the write check compares whole path components")
-
-
-# Archive imports
 
 
 def check_archive_with_nested_folders() -> None:
@@ -217,11 +179,7 @@ def check_wrapper_folder_is_stripped() -> None:
 
 
 def check_flat_archive_keeps_its_one_picture() -> None:
-    """One picture at the top of an archive is not a wrapper folder.
-
-    The wrapper rule reads the one top entry every member shares. A single
-    file at the top is that entry, and stripping it would leave nothing.
-    """
+    """Keep a top-level picture because it is not a wrapper folder."""
     clear_packs()
     archive = make_zip("flat.zip", {"only.png": png_bytes()})
     folder = pack_import.import_icon_pack(archive, "Flat Pack")
@@ -249,11 +207,7 @@ def check_oversized_archive_is_refused() -> None:
 
 
 def check_write_target_is_checked() -> None:
-    """The last check before a write refuses a destination outside the pack.
-
-    Every destination this module builds is inside already. This guard is what
-    keeps that true when the way a destination is chosen changes.
-    """
+    """Refuse a write destination outside the pack at the final guard."""
     assets_dir = scratch("target-check")
     inside = pack_import._checked_target(assets_dir, os.path.join("arrows", "a.png"))
     assert inside.startswith(assets_dir), inside
@@ -338,9 +292,6 @@ def check_lying_member_size_is_refused() -> None:
     print("PASS: a member that unpacks past its declared size fails the import")
 
 
-# Folder imports
-
-
 def check_folder_import() -> None:
     clear_packs()
     source = scratch("plain-folder")
@@ -391,16 +342,8 @@ def check_banner_is_used_when_given() -> None:
     print("PASS: the chosen banner becomes the pack thumbnail")
 
 
-# Names and collisions
-
-
 def check_folder_import_skips_a_symlinked_file() -> None:
-    """A link inside a folder is not followed, so no file outside is copied.
-
-    os.walk with followlinks off stops a descent into a linked directory, but
-    a linked file is still listed, and a plain copy of it would read whatever
-    it points at, including a file above the chosen folder.
-    """
+    """Do not follow linked files, which os.walk lists with followlinks disabled."""
     clear_packs()
     outside = write_png(os.path.join(scratch("outside"), "secret.png"), colour=(7, 7, 7, 255))
     with open(os.path.join(scratch("secret-text"), "secret.txt"), "w") as handle:
@@ -462,13 +405,7 @@ def check_folder_import_refuses_a_special_file() -> None:
 
 
 def check_folder_import_refuses_a_hardlink_out() -> None:
-    """A hardlink to a file outside the folder is refused, not copied in.
-
-    A hardlink is a second name for one inode, so it is a regular file and no
-    symlink, yet its bytes are the outside file's bytes. Copying it would put
-    a file the user did not put under the folder into the pack, so the whole
-    import is refused.
-    """
+    """Refuse hardlinks because a regular-file check cannot contain their data."""
     clear_packs()
     secret = os.path.join(scratch("hardlink-secret"), "private.png")
     write_png(secret, colour=(2, 2, 2, 255))
@@ -494,8 +431,7 @@ def check_folder_import_refuses_a_hardlink_out() -> None:
         os.remove(linked)
 
     assert pack_folders() == [], f"the refused import left {pack_folders()}"
-    # Prove the invariant the docstring states: the secret's bytes reached no
-    # pack folder anywhere under the packs root.
+    # Verify that no pack file contains the outside inode's data.
     for dirpath, _dirs, files in os.walk(PACKS_ROOT):
         for name in files:
             with open(os.path.join(dirpath, name), "rb") as handle:
@@ -525,13 +461,7 @@ def check_folder_import_refuses_over_budget() -> None:
 
 
 def check_damaged_archive_is_refused() -> None:
-    """A damaged archive raises the import contract's error, not a raw one.
-
-    The central directory stays intact, so is_zipfile accepts the file and the
-    plan reads the member table, but a member's stored bytes are corrupt, so
-    the read of it fails a check inside zipfile. That must reach the user as
-    the import contract's error, never as a raw zlib or zip error.
-    """
+    """Wrap a corrupt member read in PackImportError while the index stays valid."""
     clear_packs()
     good = make_zip("whole.zip", {"a.png": png_bytes()})
     damaged = os.path.join(scratch("zips"), "damaged.zip")
@@ -582,15 +512,8 @@ def check_undecodable_banner_falls_back() -> None:
     print("PASS: an undecodable banner is dropped for a real icon")
 
 
-# Staging
-
-
 def check_staging_is_unique_per_run() -> None:
-    """Two staging directories from two runs never share a path.
-
-    A shared path lets a second import delete the first's tree mid-write. A
-    random name per run keeps the two apart.
-    """
+    """Give each import a staging path that another import cannot delete."""
     os.makedirs(PACKS_ROOT, exist_ok=True)
     first = pack_import._new_staging(PACKS_ROOT)
     second = pack_import._new_staging(PACKS_ROOT)
@@ -628,12 +551,7 @@ def check_sweep_spares_a_live_tree() -> None:
 
 
 def check_wedged_leftover_does_not_block_a_new_import() -> None:
-    """A leftover that cannot be removed does not wedge a name.
-
-    A read-only leftover survives the sweep, but the new import builds in a
-    directory of its own with a random name, so it still succeeds and the pack
-    is valid.
-    """
+    """Use a unique staging path when a read-only leftover survives the sweep."""
     clear_packs()
     os.makedirs(PACKS_ROOT, exist_ok=True)
     folder_name = pack_import.folder_name_for("Wedged Pack")
@@ -656,11 +574,7 @@ def check_wedged_leftover_does_not_block_a_new_import() -> None:
 
 
 def check_reload_removes_the_old_grid() -> None:
-    """reload rebuilds the pack grid and removes the old one first.
-
-    Two grids would show every pack twice, which is the exact defect an import
-    reload can reintroduce, so this drives reload over a light stand-in.
-    """
+    """Remove the old pack grid before reload builds its replacement."""
     from src.windows.AssetManager.GenericAssetChooser import GenericPackChooserPage
 
     removed: list = []
@@ -793,9 +707,6 @@ def check_missing_source_is_refused() -> None:
     print("PASS: a missing source and a lone file are refused")
 
 
-# Nothing half made
-
-
 def check_a_failed_import_registers_no_pack() -> None:
     """A failure part way through leaves no pack and no staging tree."""
     clear_packs()
@@ -831,11 +742,7 @@ def check_a_failed_import_registers_no_pack() -> None:
 
 
 def check_a_killed_import_leaves_no_visible_pack() -> None:
-    """What a kill in the middle leaves is invisible, and the next import sweeps it.
-
-    A kill runs no cleanup, so the staging tree stays. It carries a dot, which
-    is what the pack scanner skips, so no reader ever sees a half pack.
-    """
+    """Keep an interrupted staging tree hidden until the next import sweeps it."""
     clear_packs()
     os.makedirs(PACKS_ROOT, exist_ok=True)
     folder_name = pack_import.folder_name_for("Killed Pack")
@@ -861,10 +768,7 @@ def check_a_killed_import_leaves_no_visible_pack() -> None:
 
 
 def check_import_writes_the_store_layout() -> None:
-    """The files on disk are the layout the store installs.
-
-    A second layout would need a second reader in the chooser.
-    """
+    """Write the store layout so the chooser needs only one reader."""
     clear_packs()
     source = scratch("layout-folder")
     write_png(os.path.join(source, "a.png"))
@@ -892,11 +796,8 @@ class _Bag:
 
 
 def check_every_label_key_is_filled() -> None:
-    """Every key the import UI asks for has a label in every shipped locale.
-
-    LocaleManager answers an absent key with the key itself, so a missing row
-    puts a raw key on a button and nothing else says so.
-    """
+    """Require every import UI key in each shipped locale.
+    LocaleManager otherwise displays the untranslated key."""
     keys = set()
     for source_path in UI_SOURCES:
         with open(source_path) as source_file:
@@ -916,13 +817,7 @@ def check_every_label_key_is_filled() -> None:
 
 
 def check_the_import_dialog_builds() -> None:
-    """The dialog builds, and its import response waits for both answers.
-
-    The rows are real libadwaita widgets, so only a display proves the calls
-    exist. The import gate itself is plain logic, and it must hold: a dialog
-    that lets the import run with no name or no source fails behind itself,
-    after the user has already closed it.
-    """
+    """Build the real dialog and require a name and source before import."""
     if not fixtures.has_usable_display():
         print("SKIP: no usable display; the import dialog is not built")
         return
@@ -995,13 +890,7 @@ def check_the_import_dialog_builds() -> None:
 
 
 def _check_finish_guards_a_closed_window(window) -> None:
-    """A finish after the window closed touches none of its widgets.
-
-    The worker's completion lands on the main loop after the user may have
-    closed the asset manager, and a reload of a disposed grid warns or raises.
-    The finish must see that gl.asset_manager is no longer this window and
-    return without touching it.
-    """
+    """Do not touch disposed widgets when worker completion follows window close."""
     from src.windows.AssetManager.IconPacks.ImportDialog import ImportPackDialog
 
     reloaded: list = []
@@ -1024,7 +913,6 @@ def _check_finish_guards_a_closed_window(window) -> None:
             "the finish left the in-flight flag set"
         )
 
-        # With the window still current, the finish reloads.
         gl.asset_manager = window
         dialog._finish_import(None)
         assert reloaded == [True], "the finish did not reload on the live window"

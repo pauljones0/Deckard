@@ -1,13 +1,5 @@
-"""Pins the emulated input press in src/backend/control_plane.py.
-
-An emulated press is the deck's own input path with no finger on it. What it
-must produce is what a finger produces: the same events, to the same actions,
-off the same kind of thread, with the release far enough behind the press to
-mean what it says, and on the page the request named rather than whichever one
-the deck drifted to. Everything here drives the real DeckController, Page,
-ControllerKey and ActionCore machinery, so a press that stopped reaching them
-fails here rather than on a desk.
-"""
+"""Drive emulated presses through the physical input path.
+Preserve event, thread, release timing, and requested-page semantics."""
 import fixtures  # noqa: F401  (must be first: isolates DATA_PATH before globals)
 
 import threading  # noqa: E402
@@ -19,9 +11,7 @@ from src.backend import control_plane  # noqa: E402
 from src.backend.DeckManagement.deck_events import KeyEvent
 from src.backend.DeckManagement.InputIdentifier import Input  # noqa: E402
 
-# The recording action and the stub plugin manager behind it, shared rather
-# than copied. Importing that scenario only defines them, because its own legs
-# run under its __main__ guard.
+# Reuse the recording action and plugin manager without running that scenario.
 import scenario_input_pipeline as pipeline  # noqa: E402
 
 WATCHDOG_SECONDS = 90
@@ -48,15 +38,8 @@ timer_wheel_real = control_plane.timer_wheel
 
 
 class StubWheel:
-    """The timer wheel with the clock in this scenario's hand.
-
-    A job whose name is in fire_at_once runs on a thread of its own as soon as
-    it is scheduled, which is what the real wheel does with a job that is due
-    at once. Every other job waits for a leg to fire it, so a delay is read
-    rather than waited out. log keeps every job in the order it was scheduled,
-    and jobs holds the ones still pending. The control plane keeps no handle,
-    so None is a whole answer.
-    """
+    """Record scheduled jobs and run selected due jobs on worker threads.
+    Other jobs wait for explicit firing so tests can inspect their delays."""
 
     def __init__(self, fire_at_once: "tuple[str, ...]" = ()) -> None:
         self.log: list[tuple[float, str]] = []
@@ -98,12 +81,8 @@ class StubWheel:
 
 def press_on_a_worker(plane, controller, wheel, page_ref="EmuMain", coords=COORDS,
                       event="press"):
-    """Start a press on another thread and wait until it reaches the wheel.
-
-    The caller blocks until the press is taken or refused, so a leg that wants
-    to change the deck in that gap cannot be the caller. Returns the thread and
-    a dict that carries the answer once it comes back.
-    """
+    """Start a press on a worker and wait until it reaches the wheel.
+    Return the blocked thread and the dict that later receives its result."""
     answer: dict = {}
 
     def call() -> None:
@@ -141,14 +120,8 @@ def key_input(controller, ident: str = KEY):
 
 
 def keys_are_idle(controller) -> bool:
-    """Whether no key on this deck is holding a gesture.
-
-    A key holds one from its DOWN until its release. The snapshot is dropped
-    last, after the release dispatched every event it owes, so a key that
-    holds none has handed all of them to the pool. The hold timer is read as
-    well: each path that ends a gesture cancels it, so a timer still alive
-    means none of them has run yet.
-    """
+    """Return whether all keys released their gesture snapshots and timers.
+    Snapshot removal follows release dispatch, so idle keys owe no events."""
     for c_input in controller.inputs[Input.Key]:
         if c_input.down_start_time is not None or c_input._gesture is not None:
             return False
@@ -159,29 +132,16 @@ def keys_are_idle(controller) -> bool:
 
 
 def key_is_holding(c_input) -> bool:
-    """Whether this key has taken a press, and finished taking it.
-
-    The DOWN branch sets the gesture clock, resolves the snapshot, arms the
-    hold timer and dispatches, in that order, and resolving the snapshot is a
-    real call. A leg that waits on the clock alone acts on a press the key is
-    still in the middle of taking: it reads a snapshot that is not there yet,
-    or cancels a hold timer that is armed a moment after it.
-    """
+    """Return whether the key completed press setup.
+    The clock alone can precede snapshot resolution and timer creation."""
     return (c_input.down_start_time is not None
             and c_input._gesture is not None
             and c_input.hold_start_timer is not None)
 
 
 def drain_action_pool(controller, timeout: float = 10.0) -> None:
-    """Return once every action callback already queued has run.
-
-    The deck hands each input event to a pool of worker threads, so the order
-    the events are recorded in is not the order they were dispatched in: a
-    DOWN handed to a busy worker is recorded after an UP handed to a free one.
-    One job per worker, all waiting at the same barrier, holds the whole pool
-    at once. The pool has no worker left over for a job queued before them, so
-    every one of those has finished by the time the barrier trips.
-    """
+    """Wait until every queued action callback runs.
+    A barrier job on each worker drains earlier work from the whole pool."""
     pool = controller.action_executor
     assert pool is not None, "the deck has no action pool to drain"
     workers = pool._max_workers
@@ -198,20 +158,8 @@ def drain_action_pool(controller, timeout: float = 10.0) -> None:
 
 
 def settle(controller) -> None:
-    """Leave the deck owing nothing to whatever runs next.
-
-    A leg proves the events it waited for, and nothing else. Two things
-    outlive it otherwise. A release armed on the real wheel runs once the leg
-    has returned, and the pool records an event dispatched earlier later,
-    because it hands each one to whichever worker is free. Both land in the
-    next leg, which cleared the recorder on its way in, and read there as
-    events that leg produced: a key that went down twice, or a release with no
-    press in front of it.
-
-    So a leg ends here. First no key is holding a gesture, which is what a
-    release drops last and therefore proof that it dispatched. Then the pool
-    is drained, which is proof that what it dispatched was recorded.
-    """
+    """Wait for releases, then drain callbacks before the next leg.
+    This order prevents delayed releases or recordings from crossing legs."""
     assert fixtures.wait_until(lambda: keys_are_idle(controller), timeout=10.0), (
         "a key is still holding the gesture this leg started, so its release "
         "would land in the leg after it")
@@ -219,29 +167,15 @@ def settle(controller) -> None:
 
 
 def stub_wheel(fire_at_once: "tuple[str, ...]" = ()) -> StubWheel:
-    """Put a stub wheel in front of the control plane. The caller restores.
-
-    The input's own hold timer keeps the real wheel, because it is reached
-    through the module the inputs import and not through this one. A leg that
-    swaps here therefore drives the press and leaves the hold semantics alone.
-    """
+    """Replace only the control-plane wheel; the input hold timer stays real."""
     wheel = StubWheel(fire_at_once=fire_at_once)
     control_plane.timer_wheel = wheel
     return wheel
 
 
-# 1. What reaches the wheel, and in which order
-
 def leg_wheel_choreography(plane, controller) -> None:
-    """The press is a wheel job, and the release is a second one behind it.
-
-    A stub wheel makes each leg an explicit step, so the claims are about the
-    order and the delays rather than about how fast a machine happened to be.
-    The delays are written out here as numbers. Comparing them against the
-    module's own constants would pass whatever those constants became, and one
-    of them is load-bearing: the release cancels the input's hold timer, so a
-    margin at or near zero cancels HOLD_START before it can fire.
-    """
+    """Require fixed press and release wheel jobs in order.
+    The long-press margin must let HOLD_START fire before release cancels it."""
     load(controller, "EmuMain")
     controller.hold_time = 10.0
     pipeline._reset_delivered()
@@ -273,10 +207,7 @@ def leg_wheel_choreography(plane, controller) -> None:
         assert UP not in events_on(KEY), (
             f"the release ran without being fired: {events_on(KEY)}")
 
-        # The press ran where the wheel put it, and not on the thread that
-        # asked for it. Only the press leg is judged here: the release below is
-        # fired by this leg, so its thread is this scenario's doing. The real
-        # wheel runs both, which the leg after this one covers.
+        # Judge only the press thread because this leg fires the release itself.
         assert dispatched_on and dispatched_on[0] is not threading.main_thread(), (
             f"the press reached the input path on the caller's own thread: "
             f"{dispatched_on[0].name} -- a hardware press never does")
@@ -286,9 +217,7 @@ def leg_wheel_choreography(plane, controller) -> None:
             f"the release job delivered no key up: {events_on(KEY)}")
         assert wheel.pending() == [], f"the press left work behind: {wheel.pending()}"
 
-        # A long press differs in one number: the deck's own hold time plus the
-        # margin the input's hold timer needs to fire before the release
-        # cancels it.
+        # Add a margin to the deck hold time before a long-press release.
         pipeline._reset_delivered()
         wheel.log.clear()
         assert plane.emulate_input(SERIAL, "EmuMain", COORDS, "long-press").ok
@@ -296,9 +225,7 @@ def leg_wheel_choreography(plane, controller) -> None:
         assert wheel.log == [(0.0, "EmulatedPress"), (10.25, "EmulatedRelease")], (
             f"a long press on a deck whose hold time is 10s must hold for "
             f"10.25s, and this was {wheel.log}")
-        # End the gesture through the real path, so nothing stays held for the
-        # legs below. Which release event it produces is the stub clock's doing
-        # and no claim of this leg.
+        # End through the real path so later legs inherit no held gesture.
         wheel.fire_next()
         assert fixtures.wait_until(lambda: UP in events_on(KEY)), events_on(KEY)
     finally:
@@ -309,14 +236,8 @@ def leg_wheel_choreography(plane, controller) -> None:
 
 
 def leg_short_press_clamps_to_the_hold_time(plane, controller) -> None:
-    """A short press on a deck with a very short hold time stays short.
-
-    The press holds for a twentieth of a second, which is longer than some
-    people set the hold time to. Held for that long against a hold time of
-    0.05s, an emulated press would come out as a hold, and the word asked for
-    was press. The hold is halved against the deck's own hold time for that,
-    and the number below is the halved one.
-    """
+    """Clamp a short press below a shorter deck hold threshold.
+    A 0.05-second threshold requires the 0.025-second release below."""
     load(controller, "EmuMain")
     controller.hold_time = 0.05
     pipeline._reset_delivered()
@@ -337,14 +258,8 @@ def leg_short_press_clamps_to_the_hold_time(plane, controller) -> None:
     print("PASS: a short press is halved against a deck's own short hold time")
 
 
-# 2. What an action sees
-
 def leg_short_press_semantics(plane, controller) -> None:
-    """A short press delivers DOWN, then SHORT_UP and UP, off the main thread.
-
-    The deck's hold time is set well above the press, so a release that lands
-    inside it is the case under test rather than a race with the hold timer.
-    """
+    """Deliver DOWN, SHORT_UP, and UP off-main before the hold threshold."""
     load(controller, "EmuMain")
     controller.hold_time = 2.0
     pipeline._reset_delivered()
@@ -364,9 +279,7 @@ def leg_short_press_semantics(plane, controller) -> None:
     finally:
         del controller.event_callback
 
-    # The UP this leg waited for says nothing about the events in front of it,
-    # which the pool may still be holding. Read the whole press only once they
-    # are all recorded.
+    # Drain the pool because UP can be recorded before earlier events.
     settle(controller)
     delivered = events_on(KEY)
     assert SHORT_UP in delivered, (
@@ -389,11 +302,7 @@ def leg_short_press_semantics(plane, controller) -> None:
 
 
 def leg_long_press_semantics(plane, controller) -> None:
-    """A long press outlasts the hold time: HOLD_START, then HOLD_STOP and UP.
-
-    The hold time is shrunk so the wheel's own fire is quick. It stays real
-    time, and far under the watchdog.
-    """
+    """Deliver HOLD_START, HOLD_STOP, and UP after a shortened real hold time."""
     load(controller, "EmuMain")
     controller.hold_time = 0.2
     pipeline._reset_delivered()
@@ -417,15 +326,9 @@ def leg_long_press_semantics(plane, controller) -> None:
     print("PASS: a long press delivers hold start, hold stop and up")
 
 
-# 3. The page the press lands on
-
 def leg_press_switches_page_first(plane, controller) -> None:
-    """A press on a page that is not showing switches to it and lands there.
-
-    The second page carries its action on a key the first page leaves empty, so
-    an event recorded on that key can only have come from the page this request
-    named.
-    """
+    """Switch to the requested page before delivering its press.
+    Its action uses a key that is empty on the initial page."""
     load(controller, "EmuMain")
     controller.hold_time = 2.0
     pipeline._reset_delivered()
@@ -445,14 +348,8 @@ def leg_press_switches_page_first(plane, controller) -> None:
 
 
 def leg_press_waits_for_the_rebuild(plane, controller) -> None:
-    """The press waits for the input rebuild the page switch queued.
-
-    A switch hands load_all_inputs to the media thread and returns before it
-    runs, so a press dispatched straight after reaches inputs that still carry
-    the outgoing page's actions. On a fake deck that rebuild is over in under a
-    millisecond, which is why this leg holds it: without the hold, a press that
-    skipped the barrier would land correctly by luck and prove nothing.
-    """
+    """Wait for the asynchronous input rebuild queued by the page switch.
+    Holding the fast fake-deck rebuild makes a skipped barrier observable."""
     load(controller, "EmuMain")
     controller.hold_time = 2.0
     pipeline._reset_delivered()
@@ -496,27 +393,15 @@ def leg_press_waits_for_the_rebuild(plane, controller) -> None:
 
 
 def leg_press_refuses_a_page_that_moved(plane, controller) -> None:
-    """A page switch between the request and the deck cancels the press.
-
-    The press is validated against the page the request named and delivered a
-    moment later, on a wheel shared with every other delay in the process.
-    Anything can switch the page in that gap: a plugin action, a window rule,
-    the screensaver, another transport. A press that went ahead would run the
-    actions of the page now showing, which nobody asked for, and report success
-    for a page it never touched.
-
-    The third page carries an action on the same key as the first, so a press
-    that went ahead is visible rather than merely wrong.
-    """
+    """Cancel a press when the active page changes before delivery.
+    The replacement page shares the key, so an incorrect delivery is visible."""
     load(controller, "EmuMain")
     controller.hold_time = 2.0
     pipeline._reset_delivered()
 
     answer: dict = {}
     wheel = stub_wheel()
-    # The caller waits while this leg loads a whole page in the gap, which is
-    # longer than the wait a press is given in the field. Widen it for the leg,
-    # so what is under test is the decision and not the clock.
+    # Widen the wait so the page-moved decision, not the test clock, wins.
     saved_wait = control_plane._PRESS_START_WAIT_S
     control_plane._PRESS_START_WAIT_S = 30.0
     try:
@@ -556,13 +441,7 @@ def leg_press_refuses_a_page_that_moved(plane, controller) -> None:
 
 
 def leg_press_survives_a_reload_of_the_same_page(plane, controller) -> None:
-    """A page rebuilt in the gap is still the page the request named.
-
-    A cache eviction and a save in the page editor both build a new Page object
-    for the same file. The deck is showing what it was asked for either way, so
-    a press judged on the object rather than on the file is refused with a
-    failure that names one page on both sides of itself.
-    """
+    """Accept a new Page object loaded from the same requested file."""
     load(controller, "EmuMain")
     controller.hold_time = 2.0
     pipeline._reset_delivered()
@@ -602,14 +481,8 @@ def leg_press_survives_a_reload_of_the_same_page(plane, controller) -> None:
 
 
 def leg_locked_in_the_gap_refuses_the_press(plane, controller) -> None:
-    """A session that locks in the gap refuses the press at the deck.
-
-    The caller checks before it arms and the deck checks again before the key
-    goes down, because the lock arrives from logind whenever it arrives. Only
-    the second check can be true when it matters: the deck's own entry point
-    drops every event while interaction is off, so a press that went ahead
-    would be reported as made and dropped without a word.
-    """
+    """Refuse a press when the session locks between request and delivery.
+    The deck must recheck because disabled interaction drops input silently."""
     load(controller, "EmuMain")
     pipeline._reset_delivered()
 
@@ -638,13 +511,8 @@ def leg_locked_in_the_gap_refuses_the_press(plane, controller) -> None:
 
 
 def leg_press_gives_up_when_the_wheel_stalls(plane, controller) -> None:
-    """A caller whose wait runs out takes the press with it.
-
-    The two threads settle who owns the press under one lock. Without that, a
-    caller that reports a failure leaves a job that presses the key anyway,
-    which is the same false answer in the other direction: a person told the
-    press was not made, and a deck that made it.
-    """
+    """Cancel the wheel job when its caller times out.
+    Ownership must prevent a reported failure from pressing the key later."""
     load(controller, "EmuMain")
     pipeline._reset_delivered()
 
@@ -673,18 +541,9 @@ def leg_press_gives_up_when_the_wheel_stalls(plane, controller) -> None:
     print("PASS: a press the caller gave up on is not made by the job behind it")
 
 
-# 4. What the deck is left holding
-
 def leg_release_arms_when_the_press_raises(plane, controller) -> None:
-    """A press that raises on the way down is still released.
-
-    The wheel swallows what a job raises, so a release armed only after a clean
-    return would never be armed at all. The input would keep the gesture it
-    took on the way down, with its hold timer running and its press state set:
-    a key held for the life of the process, a HOLD_START into a snapshot no
-    finger is on, and the next physical release dispatched to a page that has
-    moved on.
-    """
+    """Release a key even when press dispatch raises.
+    The wheel swallows job errors, so release must not depend on clean return."""
     load(controller, "EmuMain")
     controller.hold_time = 2.0
     pipeline._reset_delivered()
@@ -708,10 +567,7 @@ def leg_release_arms_when_the_press_raises(plane, controller) -> None:
         del controller.event_callback
 
     assert seen == [(KeyEvent(pressed=True),), (KeyEvent(pressed=False),)], f"the deck saw {seen}"
-    # The release clears the gesture clock first and drops the snapshot last,
-    # with a dispatch between the two. A wait on the clock alone reads the
-    # snapshot while the release is still running, and reports a press that
-    # held on to it when what it caught was this leg's own timing.
+    # Wait for snapshot removal because the gesture clock clears before dispatch.
     assert fixtures.wait_until(lambda: keys_are_idle(controller), timeout=5.0), (
         f"the release never finished: gesture clock "
         f"{c_input.down_start_time!r}, snapshot still held "
@@ -728,15 +584,8 @@ def leg_release_arms_when_the_press_raises(plane, controller) -> None:
 
 
 def leg_swallowed_press_arms_no_release(plane, controller) -> None:
-    """A DOWN the deck swallows leaves no release behind it.
-
-    The deck drops a DOWN without a word in more than one state, and this leg
-    uses the one it can produce on demand: the addressed input is gone by the
-    time the job runs, which a rebuild of the input set does. Nothing is held
-    down afterwards, so a release armed anyway would land on whatever the key
-    is doing later. A finger on that key would have its own press ended under
-    it, and then its own release swallowed as the stray it looks like.
-    """
+    """Arm no release when a rebuilt input set swallows DOWN.
+    A later release could otherwise end an unrelated physical press."""
     load(controller, "EmuMain")
     pipeline._reset_delivered()
 
@@ -767,14 +616,8 @@ def leg_swallowed_press_arms_no_release(plane, controller) -> None:
 
 
 def leg_release_only_ends_its_own_gesture(plane, controller) -> None:
-    """A release ends the press it made, and never the one it finds.
-
-    A screensaver sweep, a rebuild of the inputs, or a finger that takes the
-    key all end the gesture an emulated press took. The release that was armed
-    for it must not then end whatever is on the key instead: that cuts a
-    finger's press short while the finger is still down, and the finger's own
-    release afterwards delivers nothing, because the key is already up.
-    """
+    """End only the gesture created by the matching emulated press.
+    A stale release must not end a later physical press on the same key."""
     load(controller, "EmuMain")
     controller.hold_time = 1.0
     pipeline._reset_delivered()
@@ -788,10 +631,7 @@ def leg_release_only_ends_its_own_gesture(plane, controller) -> None:
         assert fixtures.wait_until(lambda: key_is_holding(c_input)), (
             "the emulated press never reached the key")
 
-        # The emulated gesture ends without its release, which is what the
-        # screensaver's own sweep does to every input it confiscates. It is
-        # cancelled once the key has finished taking the press, because a
-        # cancel inside that would leave the hold timer armed behind it.
+        # Cancel after press setup, as the screensaver sweep does.
         c_input.cancel_gesture()
         pipeline._reset_delivered()
 
@@ -802,9 +642,7 @@ def leg_release_only_ends_its_own_gesture(plane, controller) -> None:
         finger_gesture = c_input._gesture
         assert finger_gesture is not None
 
-        # The release armed for the emulated press arrives now. It is not the
-        # finger's to end. fire_next runs the callback on this thread, so the
-        # state below is settled by the time it returns.
+        # fire_next settles the stale release on this thread before inspection.
         wheel.fire_next()
         assert c_input._gesture is finger_gesture, (
             "the stale release ended the finger's press")
@@ -825,12 +663,8 @@ def leg_release_only_ends_its_own_gesture(plane, controller) -> None:
 
 
 def leg_second_press_on_a_held_key_is_refused(plane, controller) -> None:
-    """A press on a key that is already held is refused, not stacked.
-
-    Two presses that overlap deliver DOWN, DOWN and then one release for both,
-    which is a shape no hardware makes. An action that latches on the way down
-    stays latched, and the second long press comes back as a short one.
-    """
+    """Refuse a second press while the key is held.
+    Hardware cannot produce overlapping DOWN events with one shared release."""
     load(controller, "EmuMain")
     controller.hold_time = 1.0
     pipeline._reset_delivered()
@@ -856,15 +690,8 @@ def leg_second_press_on_a_held_key_is_refused(plane, controller) -> None:
     print("PASS: a press on a key that is already held is refused")
 
 
-# 5. What a bad request answers
-
 def leg_bad_event_word_moves_nothing(plane, controller) -> None:
-    """An event word this build does not know is refused before the switch.
-
-    It is judged without a device, so nothing about it needs the page it names
-    to be loaded first, and a deck left on another page is a side effect of a
-    request that was never carried out.
-    """
+    """Refuse an unknown event word before changing the page."""
     load(controller, "EmuMain")
     pipeline._reset_delivered()
 
@@ -888,11 +715,7 @@ def leg_bad_event_word_moves_nothing(plane, controller) -> None:
 
 
 def leg_failures_match_the_state_verb(plane, controller) -> None:
-    """The coordinates are read by one rule, so both verbs refuse alike.
-
-    A copy per verb drifts, and the person who typed the command then reads two
-    different sentences about one mistake.
-    """
+    """Return the same coordinate failures for press and state-change verbs."""
     load(controller, "EmuMain")
 
     for coords in ("nope", "0,0,0", "", "x,y", "-1,0", "99,0"):
@@ -920,12 +743,7 @@ def leg_failures_match_the_state_verb(plane, controller) -> None:
 
 
 def leg_locked_session_refuses_the_press(plane, controller) -> None:
-    """A deck that is not taking input says so rather than swallow the press.
-
-    The lock screen turns interaction off for as long as the session is locked,
-    and the deck's own entry point drops every event while it is off. A press
-    reported as done and dropped there is indistinguishable from one that ran.
-    """
+    """Report blocked input instead of sending a press into a locked session."""
     load(controller, "EmuMain")
     pipeline._reset_delivered()
 
@@ -945,23 +763,13 @@ def leg_locked_session_refuses_the_press(plane, controller) -> None:
     print("PASS: a locked session refuses the press instead of dropping it")
 
 
-# 6. The device's own geometry
-
 def leg_bounds_follow_the_rotation(plane) -> None:
-    """The bounds come from the deck's layout as rotated, not as built.
-
-    A rotated deck reports its key layout the other way round, and both verbs
-    read it from the same place. Read from the raw device instead, a request
-    for a key that exists is refused and one for a key that does not is
-    accepted, on every deck a person has turned.
-    """
+    """Bound both verbs against the rotated logical layout, not raw geometry."""
     controller = fixtures.make_headless_controller(serial=ROTATED_SERIAL)
     try:
         rows_before, cols_before = controller.deck.key_layout()
         controller.deck.set_rotation(90)
-        # The identifiers are built from the layout, so they are rebuilt here
-        # as they are in the field, where the rotation is set before the inputs
-        # are created.
+        # Rebuild identifiers after rotation, matching controller initialization.
         controller.init_inputs()
         rows, cols = controller.deck.key_layout()
         assert (rows, cols) == (cols_before, rows_before), (
@@ -1013,9 +821,7 @@ def main() -> None:
     plane = control_plane.get()
     controller = fixtures.make_headless_controller(serial=SERIAL)
     try:
-        # Every leg is settled before the next one starts, whether or not it
-        # left anything behind: see settle. Driving that from here rather than
-        # from each leg keeps a leg added later from having to know.
+        # Settle centrally so each leg starts without pending input work.
         for leg in (
             leg_wheel_choreography,
             leg_short_press_clamps_to_the_hold_time,

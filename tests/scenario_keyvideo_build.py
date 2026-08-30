@@ -1,8 +1,5 @@
-"""InputVideo.get_next_frame() must advance sequentially while the cache builds.
-
-Wall-clock picking engages only once the cache reports complete, because a
-jumped index makes a building cache walk every frame in between.
-"""
+"""Advance InputVideo sequentially until its cache completes.
+Wall-clock jumps during a build would decode each skipped intermediate frame."""
 import threading
 
 import fixtures
@@ -10,11 +7,7 @@ from src.backend.DeckManagement.Subclasses.KeyVideo import InputVideo
 
 
 class StubKeyVideoCache:
-    """Mimics the KeyVideoCache surface InputVideo reads.
-
-    That is n_frames, is_cache_complete() and get_frame(n). It counts how many
-    times each frame index is decoded, so amplification is directly assertable.
-    """
+    """Count calls to the KeyVideoCache surface that InputVideo uses."""
 
     def __init__(self, n_frames: int):
         self.n_frames = n_frames
@@ -52,9 +45,7 @@ def main() -> None:
     fixtures.start_watchdog(60, label="scenario_keyvideo_build")
     T0 = 1_000_000.0
 
-    # Building phase. Sequential advance by one, with one get_frame call per
-    # get_next_frame() call, however large the wall-clock jump between ticks
-    # is, which models a slow media loop.
+    # Advance one frame and decode once per build tick despite clock jumps.
     v = make_video(n_frames=5, fps=10.0, loop=True)
 
     ticks = [T0, T0 + 0.01, T0 + 50.0, T0 + 50.02, T0 + 9000.0]  # erratic, to stress the sequential advance
@@ -67,9 +58,7 @@ def main() -> None:
         )
         assert v.active_frame == expected_sequence[i]
 
-    # No amplification. Exactly one decode per tick and one per frame index,
-    # never more. The failure mode is a jump that causes extra get_frame calls
-    # to walk through the skipped intermediate indices.
+    # Clock jumps must not decode skipped intermediate frame indexes.
     assert len(v.video_cache.call_log) == len(ticks), (
         f"expected exactly {len(ticks)} get_frame calls (one per tick), "
         f"got {len(v.video_cache.call_log)}: {v.video_cache.call_log}"
@@ -99,11 +88,8 @@ def main() -> None:
 
     t0 = T0 + 20000.0
     first_complete = v.get_next_frame(now=t0)
-    # The seed formula is _play_start = now - (active_frame + 1) / fps, so the
-    # first wall-clock pick continues one frame past where sequential advance
-    # left off. Tolerate a one-frame float wobble at the exact boundary, because
-    # reconstructing that term is not bit-exact at large wall-clock magnitudes.
-    # BackgroundVideo uses the same formula unmodified.
+    # Seed from the next build frame and allow one-frame boundary float error.
+    # BackgroundVideo uses the same play-start formula.
     expected_first = (pre_switch_active_frame + 1) % v.video_cache.n_frames
     acceptable = {expected_first, (expected_first - 1) % v.video_cache.n_frames}
     assert first_complete in acceptable, (
@@ -111,9 +97,7 @@ def main() -> None:
         f"expected one of {acceptable}, got {first_complete}"
     )
 
-    # A wall-clock jump now genuinely jumps the frame, with no amplification
-    # concern once complete, because get_frame is a free lookup. 0.7 s at fps 10
-    # is 7 frames ahead, wrapping modulo 5.
+    # After completion, jump seven frames for 0.7 seconds at 10 fps.
     jumped = v.get_next_frame(now=t0 + 0.7)
     # Compute directly from the wall-clock formula rather than re-deriving the
     # frame arithmetic by hand, so frame = int((now - play_start) * fps).
@@ -137,9 +121,7 @@ def main() -> None:
         f"{v._play_start} != {expected_play_start}"
     )
 
-    # natural_speed. Playback runs at the source fps, and fps is only a render
-    # cap that quantizes the pick, so composites re-triggered by other animated
-    # content within a cap window return the same frame.
+    # Natural speed uses source fps; configured fps only quantizes render picks.
     vn = make_video(n_frames=100, fps=5.0, loop=True)  # cap=5
     vn.natural_speed = True
     vn.video_cache.source_fps = 20.0  # native speed, 4x the cap

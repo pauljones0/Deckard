@@ -1,13 +1,5 @@
-"""The gate in front of a plugin's install steps.
-
-decide_install_scripts answers whether the steps may run, from the policy
-and an optional consent prompt, before anything is downloaded.
-run_install_steps then runs or skips them. This drives real hook
-subprocesses through the gate and pins the decision, the timeout's
-process-group kill on the unconfined tier, the loopback-guard
-re-injection, the poisoned environment, and, where bwrap operates, the
-filesystem confinement of both the hook and the pip step.
-"""
+"""Gate plugin install steps by policy and consent before download.
+Cover timeout, environment, loopback guard, and optional bwrap confinement."""
 
 import fixtures  # noqa: F401  (isolated --data tempdir; import first)
 import globals as gl  # noqa: F401  (import order; the gate reads settings later)
@@ -112,11 +104,8 @@ def test_failing_hook_reports_failed() -> None:
 
 
 def test_timeout_kills_the_process_group() -> None:
-    """On the unconfined tier a hung hook and its group-sharing children
-    die at the deadline instead of parking the install thread forever.
-    Run with use_bwrap=False, because that is the tier where killpg is the
-    only teardown; under bwrap the pid namespace does it and the host pids
-    are not the gate's to signal."""
+    """Kill a timed-out unconfined hook and its process-group children.
+    bwrap uses its PID namespace instead, so this test disables it."""
     plugin_dir = _plugin_dir("com_test_Hangs")
     _write_hook(plugin_dir, """
         import os, subprocess, sys, time
@@ -149,9 +138,7 @@ def test_timeout_kills_the_process_group() -> None:
 
 
 def test_env_is_poisoned_and_stripped() -> None:
-    """The session-bus address is invalid, not merely absent, and the
-    display keys are dropped, so a step cannot reach the desktop session
-    through them."""
+    """Poison the session bus address and remove display environment keys."""
     plugin_dir = _plugin_dir("com_test_Env")
     os.environ["DISPLAY"] = ":0"
     os.environ["XAUTHORITY"] = "/home/x/.Xauthority"
@@ -173,10 +160,7 @@ def test_env_is_poisoned_and_stripped() -> None:
 
 
 def test_pip_step_is_confined_and_poisoned() -> None:
-    """The requirements step routes through _execute; under confinement it
-    carries a bwrap prefix that binds the interpreter prefix writable, so
-    a payload moved into requirements.txt cannot escape the sandbox
-    either."""
+    """Route requirements through bwrap with a writable interpreter prefix."""
     plugin_dir = _plugin_dir("com_test_Reqs")
     req = os.path.join(plugin_dir, "requirements.txt")
     with open(req, "w") as f:
@@ -202,10 +186,8 @@ def test_pip_step_is_confined_and_poisoned() -> None:
 
 
 def test_bwrap_confines_the_hook_via_production_path() -> None:
-    """The production path is use_bwrap=None, which consults _bwrap_works.
-    Where bwrap operates, a hook run through that path cannot write outside
-    the plugin dir and sees no session bus socket. Where it does not, the
-    arm is skipped rather than passing vacuously."""
+    """Confine hooks through automatic bwrap detection when bwrap works.
+    The sandbox must hide the session bus and deny writes outside the plugin."""
     if not install_script._bwrap_works():
         print("  (bwrap unavailable here; confinement arm not exercised)")
         return

@@ -1,12 +1,5 @@
-"""Page imports must stay inside the pages directory.
-
-Each importer builds a target filename from the untrusted content of an
-export file. A crafted page name or deck serial that carries a parent
-reference must not push a write outside the pages tree, while a normal name
-must still import. Three seams are covered: the StreamController importer, the
-single-page add_page seam behind the menu and the external API, and the
-StreamDeck-UI importer's deck serial.
-"""
+"""Contain untrusted page names and deck serials in the pages directory.
+Covers StreamController, add_page, and StreamDeck-UI import seams."""
 import fixtures  # noqa: F401  (must be first: isolates DATA_PATH)
 
 import json
@@ -44,9 +37,6 @@ def main() -> int:
 
     failures: list[str] = []
 
-    # --- Part A: StreamController importer -------------------------------
-    # One traversal key that resolves one level above the pages directory,
-    # and one plain key that must still import.
     sc_export = {
         "../sc_escape": ESCAPE_MARKER,
         "GoodSCPage": {"keys": {}, "dials": {}, "touchscreens": {}},
@@ -69,7 +59,6 @@ def main() -> int:
                 failures.append("StreamController: imported page content is wrong")
     _no_escape(failures, "StreamController")
 
-    # --- Part B: add_page seam (menu import, external API, dialogs) ------
     try:
         gl.page_manager.add_page("../add_escape", ESCAPE_MARKER)
     except ValueError:
@@ -82,9 +71,6 @@ def main() -> int:
     if not os.path.isfile(good_add):
         failures.append("add_page: the plain page was not created")
 
-    # --- Part C: StreamDeck-UI importer deck serial ---------------------
-    # One traversal deck serial and one plain serial. The plain deck imports
-    # one page; the traversal deck must write nothing, settings or page.
     sdui_export = {
         "state": {
             "../../outside/sdui_escape": {

@@ -1,8 +1,5 @@
-"""InputVideo.close() racing a concurrent get_next_frame().
-
-A per-instance lock serializes the two, so close() waits for an in-flight
-frame and no frame starts against a released reader.
-"""
+"""Serialize InputVideo.close() with concurrent frame reads.
+Close waits for in-flight work, and new reads cannot use a released cache."""
 import os
 import threading
 import time
@@ -17,11 +14,7 @@ from src.backend.DeckManagement.Subclasses.KeyVideo import InputVideo
 
 
 class RacyStubCache:
-    """Mimics the KeyVideoCache surface InputVideo reads, with sleeps.
-
-    The sleeps inside the accessors make a concurrent close() land
-    mid-get_next_frame with high probability. It records use after release.
-    """
+    """Delay KeyVideoCache accessors and record access after release."""
 
     def __init__(self, n_frames: int = 10):
         self._n_frames = n_frames
@@ -95,13 +88,9 @@ def check_close_race_hammer(rounds: int = 150) -> None:
         t.join(timeout=5.0)
         assert not t.is_alive(), f"round {r}: render thread wedged (deadlock?)"
 
-        # The historical failure was an AttributeError on NoneType.
         assert not errors, f"round {r}: get_next_frame raised under concurrent close: {errors[0]!r}"
 
-        # Serialization, not just crash avoidance. Once close() released the
-        # reader, no cache access may happen, because a straggler get_frame on
-        # a released reader can resurrect and leak a capture through
-        # _maybe_adopt_shared_cache.
+        # Forbid cache access after release, which can re-adopt and leak a capture.
         assert cache.calls_after_release == 0, (
             f"round {r}: {cache.calls_after_release} cache accesses after "
             f"release -- close() and get_next_frame() are not serialized"
@@ -120,10 +109,7 @@ class _StubDeckControllerReal:
 
 
 class _StubControllerInputReal:
-    """Exactly what InputVideo.__init__ reads.
-
-    Those are .deck_controller, through SingleKeyAsset, and get_image_size().
-    """
+    """Provide the deck controller and image size that InputVideo reads."""
 
     def __init__(self):
         self.deck_controller = _StubDeckControllerReal()
@@ -143,9 +129,7 @@ def _make_test_video(path: str, n_frames: int = 20, size=(64, 64)) -> None:
 
 
 def check_real_inputvideo_close() -> None:
-    # The registry and cv2 tier. __init__ must wire the lock itself, where the
-    # hammer above hand-sets it, and close() must run the real release path
-    # while a ticker is mid-frame.
+    # Require __init__ to wire the lock and close through the real cv2 registry.
     fixtures.install_stub_globals()
 
     video_path = os.path.join(gl.DATA_PATH, "close_race_source.mp4")
@@ -187,14 +171,8 @@ def live_tile_cache_builders() -> list[threading.Thread]:
 
 
 def wait_for_builders_at_most(limit: int, timeout: float = 3.0) -> list[threading.Thread]:
-    """Poll until at most limit builders are alive, or the timeout runs out.
-
-    The inline join a detach runs is bounded, so a builder that misses its
-    0.5 s under load ends a moment later on its own. A count taken the instant
-    the detach returns therefore measures machine load as much as the
-    discipline under test. This waits for the settled count instead, and it
-    returns as soon as the count is right, so the passing run costs nothing.
-    """
+    """Poll for a settled builder count after the bounded inline join.
+    A loaded builder can finish shortly after the 0.5-second join expires."""
     deadline = time.monotonic() + timeout
     alive = live_tile_cache_builders()
     while len(alive) > limit and time.monotonic() < deadline:
@@ -204,14 +182,8 @@ def wait_for_builders_at_most(limit: int, timeout: float = 3.0) -> list[threadin
 
 
 def assert_no_tile_cache_builders(context: str) -> None:
-    """No detached tile-cache builder may outlive the release that signalled it.
-
-    release() sets the stop event and joins the builder, so this needs no wait
-    of its own. A survivor here is a thread still inside cv2 with nothing left
-    to join it: when the release is followed by process exit, the C++ runtime
-    is destroyed under a live decode and the process aborts with "terminate
-    called without an active exception" after every check has passed.
-    """
+    """Require release to join each detached tile-cache builder.
+    A live cv2 decode during interpreter exit can abort the process."""
     alive = live_tile_cache_builders()
     assert not alive, (
         f"{len(alive)} tile-cache-builder thread(s) still decoding after "
@@ -225,13 +197,8 @@ def _enable_video_cache() -> None:
 
 
 def check_release_joins_builder() -> None:
-    """A release while the builder is mid-build joins it before it returns.
-
-    The source is long enough that the build cannot finish inside the acquire,
-    so the builder is provably still decoding at release time. Without the
-    join in the detach path the thread is still alive the instant release()
-    returns.
-    """
+    """Join a builder when its final release occurs during decoding.
+    The long source keeps the builder active until release."""
     _enable_video_cache()
     from src.backend.DeckManagement.Subclasses import mp4_tile_cache
 
@@ -271,15 +238,8 @@ def check_release_joins_builder() -> None:
 
 
 def check_acquire_returns_refcount_on_reader_failure() -> None:
-    """A reader constructor that raises must not strand the reference.
-
-    acquire() bumps the refcount and can start a builder before it builds the
-    reader. The constructor stats the source and makes the cache directory, so
-    a source deleted since the hash, or an ENOSPC, raises there. An unbalanced
-    bump leaves the entry pinned above zero forever: nothing ever signals its
-    builder, which then decodes the whole source for a consumer that does not
-    exist.
-    """
+    """Return the acquired reference when reader construction raises.
+    Otherwise the entry and builder remain pinned for a missing consumer."""
     _enable_video_cache()
     from src.backend.DeckManagement.Subclasses import mp4_tile_cache
 
@@ -289,10 +249,7 @@ def check_acquire_returns_refcount_on_reader_failure() -> None:
     real_cls = mp4_tile_cache.KeyVideoCache
 
     class FailingReader(real_cls):
-        """Fails exactly like a reader constructor does, and leaves the builder
-        alone. Patching the class outright would break the builder too, and
-        then a dead builder could not tell an unbalanced refcount from a
-        working one."""
+        """Fail consumer construction while leaving builder construction intact."""
 
         def __init__(self, *args, is_builder: bool = True, **kwargs):
             if is_builder:
@@ -323,21 +280,8 @@ def check_acquire_returns_refcount_on_reader_failure() -> None:
 
 
 def check_adoption_give_up_keeps_one_builder() -> None:
-    """Giving up on an unusable shared cache must not double the builder.
-
-    The registry can claim a cache file is ready while the file is gone, e.g.
-    an external cleanup of the cache dir. A reader then fails to adopt it,
-    gives up after MAX_ADOPT_FAILURES and detaches. The builder that produced
-    the unusable file is still decoding at that point. If the give-up drops the
-    builder handle, the next acquire() of the same key starts a second builder,
-    and two threads decode the same source at once for as long as the first one
-    takes.
-
-    A second consumer stays attached across the give-up on purpose. It holds
-    the entry above zero, so the give-up cannot end the builder by dropping the
-    entry, and the handle rule is the only thing between the re-acquire and a
-    duplicate.
-    """
+    """Keep one builder when a reader gives up on a missing shared cache file.
+    A second consumer retains the entry while a new acquire tests handle reuse."""
     _enable_video_cache()
     from src.backend.DeckManagement.Subclasses import mp4_tile_cache
 
@@ -378,10 +322,7 @@ def check_adoption_give_up_keeps_one_builder() -> None:
     # The re-acquire is what a page switch back onto this key does.
     second = mp4_tile_cache.acquire(video_path, out_size)
     try:
-        # The count is taken while the first builder is provably still
-        # decoding, so it does not depend on any join winning a race. Load
-        # makes that window longer and never shorter, and no amount of load
-        # invents a second builder.
+        # Count while the first builder is active so join timing cannot hide duplicates.
         alive = live_tile_cache_builders()
         assert first_builder.is_alive(), (
             "the first builder ended before the re-acquire -- the source is "
