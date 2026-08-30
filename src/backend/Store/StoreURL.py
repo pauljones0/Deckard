@@ -15,28 +15,18 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 from typing import NamedTuple
 
-# Stored urls carry both spellings. The settings UI and the store catalogs
-# hold github.com urls. build_url rewrites those to raw.githubusercontent.com
-# before a fetch, and the rewritten urls come back through the cache keys.
+# Parse both catalog URLs and their raw-content form.
 _REPO_DOMAINS = ("github.com", "raw.githubusercontent.com")
 
 
 class RepoRef(NamedTuple):
-    """The owner and repository pair that every store url reduces to. It
-    drives the API urls, the download urls, the cache keys and the displayed
-    author."""
+    """The owner and repository identity of a store URL."""
     user: str
     repo: str
 
 
 def parse_repo_url(repo_url: object) -> RepoRef | None:
-    """The single definition of "a usable store repository url".
-
-    Returns None, and does not raise, for an empty field, a half-typed entry,
-    a non-GitHub host, or a url with an owner but no repository. The settings
-    UI refuses such an entry and the store paths skip it. Both sides must
-    agree on "parseable", so neither side reimplements this function.
-    """
+    """Parse a complete GitHub or raw-content repository URL without raising."""
     if not isinstance(repo_url, str):
         return None
 

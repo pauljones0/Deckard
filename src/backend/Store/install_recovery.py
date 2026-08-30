@@ -1,14 +1,4 @@
-"""Crash recovery for the store's install swap.
-
-An install stages a new tree, then swaps it into place with two renames: the
-old install moves to a dot-prefixed sibling, and the new tree moves onto the
-destination. A power loss or a kill between those renames can leave the
-destination absent with the old tree parked under its dot name. This module
-finds those leftovers at startup and restores the destination.
-
-The scanners for plugins and packs skip a dot-prefixed entry, so a leftover
-never reads as a real install; recovery finds them by these suffixes.
-"""
+"""Transactional install swaps and startup recovery for interrupted renames."""
 import contextlib
 import os
 import shutil
@@ -19,10 +9,7 @@ from loguru import logger as log
 SWAP_NEW_SUFFIX = ".deckard-new"
 SWAP_OLD_SUFFIX = ".deckard-old"
 
-# One lock per install destination. Two installs of the same asset run from the
-# UI install and update threads, and the swap's fixed staging names would
-# otherwise let them interfere. The lock serializes the swap for one
-# destination; different destinations never share names.
+# Serialize UI and update swaps for one destination; different destinations use separate names.
 _swap_locks: dict[str, threading.Lock] = {}
 _swap_locks_guard = threading.Lock()
 
@@ -35,19 +22,8 @@ def _swap_lock(directory: str) -> threading.Lock:
 
 
 def swap_into_place(staging_tree: str, directory: str) -> None:
-    """Replace directory with the fully staged tree, and delete the old install
-    only after the new one is in place.
-
-    This first moves the staged tree next to the destination. That move is the
-    one step that can cross a filesystem, because an environment variable can
-    put an install dir on another device. It runs while the old install stays
-    intact. The two renames that follow share a parent and are atomic, and each
-    is followed by a directory fsync so the rename survives a power loss. The
-    transient siblings carry a dot prefix, so the plugin and pack scanners never
-    read a crash leftover as a real install, and recover_interrupted_installs
-    restores one at startup. The next install of the same asset sweeps a
-    leftover.
-    """
+    """Move staging beside the destination while the old install remains intact.
+    Fsync the same-parent renames and keep dot-prefixed leftovers recoverable after interruption."""
     parent = os.path.dirname(os.path.abspath(directory))
     name = os.path.basename(os.path.normpath(directory))
     os.makedirs(parent, exist_ok=True)
@@ -66,25 +42,20 @@ def swap_into_place(staging_tree: str, directory: str) -> None:
                 moved_old_aside = True
             os.replace(new_tree, directory)
         except Exception:
-            # Put the old install back, then report the failure.
+            # Restore the previous install before propagating swap failure.
             if moved_old_aside and not os.path.lexists(directory):
                 os.replace(old_tree, directory)
             shutil.rmtree(new_tree, ignore_errors=True)
             fsync_dir(parent)
             raise
-        # Persist the rename before the old tree goes away. A crash after this
-        # fsync leaves the destination in place; a crash before it, if the
-        # rename had not reached disk, leaves the old tree parked under its dot
-        # name, and recover_interrupted_installs restores it.
+        # Persist the new destination before removing the recoverable old tree.
         fsync_dir(parent)
         _remove_leftover(old_tree)
         fsync_dir(parent)
 
 
 def fsync_dir(path: str) -> None:
-    """Flush a directory entry change to disk, so a rename survives a power
-    loss. Best effort: a filesystem that cannot fsync a directory must not
-    fail the install."""
+    """Best-effort flush a directory entry change without failing the install."""
     try:
         fd = os.open(path, os.O_RDONLY)
     except OSError:
@@ -121,7 +92,6 @@ def _recover_dir(parent: str) -> None:
         log.warning(f"Could not scan {parent} for interrupted installs: {e}")
         return
 
-    # The destination names that have a parked new or old tree.
     names: set[str] = set()
     for entry in entries:
         if not entry.startswith("."):
@@ -136,9 +106,7 @@ def _recover_dir(parent: str) -> None:
         old_tree = os.path.join(parent, f".{name}{SWAP_OLD_SUFFIX}")
         try:
             if not os.path.lexists(directory):
-                # The destination is gone. Prefer the previous install, the
-                # known-good tree; fall back to the fully staged new tree only
-                # when no old tree survives.
+                # Restore the known-good old tree, or use staging if no old tree survives.
                 if os.path.lexists(old_tree):
                     os.replace(old_tree, directory)
                     fsync_dir(parent)
@@ -147,8 +115,7 @@ def _recover_dir(parent: str) -> None:
                     os.replace(new_tree, directory)
                     fsync_dir(parent)
                     log.warning(f"Recovered an interrupted install: completed the staged {name!r}")
-            # Sweep whatever leftovers remain, whether the destination was
-            # restored above or already stood in place.
+            # Remove leftovers after recovery or when the destination already exists.
             _remove_leftover(old_tree)
             _remove_leftover(new_tree)
             fsync_dir(parent)
