@@ -30,7 +30,7 @@ GRANDFATHER: dict[str, int] = {
     # Subclasses must declare the narrowed state at class level for attribute readers.
     "src/backend/DeckManagement/deck_controller/controller.py": 1298,
     "src/backend/DeckManagement/deck_controller/inputs.py": 1247,
-    "src/backend/Store/StoreBackend.py": 1948,
+    "src/backend/Store/StoreBackend.py": 1410,
 }
 
 
