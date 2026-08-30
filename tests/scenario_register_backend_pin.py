@@ -1,5 +1,5 @@
-"""Authenticate callers and use only a loopback port owned by the launched backend.
-Pin its listening socket through /proc/<pid>/fd to reject lure ports."""
+"""Authenticate callers and require the normal-launch child PID to own the loopback socket.
+Terminal launches accept same-UID loopback because the service reparents them."""
 import socket
 import subprocess
 import sys

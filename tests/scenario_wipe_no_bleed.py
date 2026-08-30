@@ -1,7 +1,6 @@
 """Clear action-owned media when switching to a page with no action in that slot."""
 
-# A cross-page load builds a different action object, so the stash-and-restore,
-# which gates on action identity, never restores into it.
+# The destination has no action or media owner, so identity-gated restore has no match.
 import os
 
 import fixtures  # noqa: F401  (import first: sets up the isolated data dir)
@@ -61,8 +60,8 @@ def main() -> None:
                 "-- the no-bleed check that follows would be vacuous"
             )
 
-            # A cross-page load creates a different action, so the empty slot
-            # must not restore media owned by the prior action.
+            # The destination slot has no action or matching media owner,
+            # so media owned by the prior action must clear.
             controller.load_page(empty_page, allow_reload=True)
             cleared = wait_until(lambda: active_image() is None, timeout=5)
             if not cleared:

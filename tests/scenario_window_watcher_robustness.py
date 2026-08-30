@@ -101,7 +101,7 @@ def check_pageless_deck_routing() -> None:
 # Part 1b. The None-guard itself, isolated from the per-deck try/except
 
 def check_pageless_guard_is_noop() -> None:
-    """Call the per-deck body directly so only its None guard can make a no-op."""
+    """Call the per-deck body directly so its active_page guard must return first."""
     # Direct invocation avoids the outer per-deck exception handler that would
     # hide a missing None guard.
     deck_manager = fixtures.install_stub_globals()
@@ -122,7 +122,7 @@ def check_pageless_guard_is_noop() -> None:
     grabber = WindowGrabber.__new__(WindowGrabber)
 
     try:
-        # Exercise both active_page.json_path branches without an outer handler.
+        # The top guard returns before either active_page.json_path branch.
         grabber._apply_auto_change(pageless, Window("firefox", "Mozilla Firefox"))
     except Exception as e:
         raise AssertionError(

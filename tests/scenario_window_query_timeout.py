@@ -1,5 +1,5 @@
-"""Terminate, kill, and reap a stuck one-shot window helper within its deadline.
-Return None on timeout and preserve normal helper output."""
+"""Terminate a stuck helper at its deadline, then wait up to one second.
+Kill it if still running, reap it, and return None; preserve normal output."""
 import fixtures  # noqa: F401  (must be first: isolates DATA_PATH before globals)
 
 import subprocess  # noqa: E402
@@ -14,7 +14,7 @@ def main() -> int:
     start_watchdog(30, "window_query_timeout")
     failures: list[str] = []
 
-    # A hanging helper is killed within the deadline and returns None.
+    # A hanging helper times out, is terminated, then is killed after one second if needed.
     hung = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(600)"],
                             stdout=subprocess.PIPE)
     began = time.monotonic()

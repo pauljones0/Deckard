@@ -493,7 +493,7 @@ def test_the_attempt_cap_gives_a_flapping_deck_up() -> None:
             watchdog.sweep()
         assert supervisor.attempts_started == reader_supervisor.MAX_CONSECUTIVE_ATTEMPTS, (
             "a given-up deck was retried again")
-        # Keep a producer active because direct producers can storm a closed handle.
+        # Inject image tasks to model scroll labels, key video, and set_media producers.
         # Full repaints check the deck first and are not the write source here.
         quiet_from = len(deck.journal())
         attempts_from = deck.write_attempts
