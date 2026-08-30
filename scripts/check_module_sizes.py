@@ -91,7 +91,7 @@ GRANDFATHER: dict[str, int] = {
     # must state at class level for a reader of the attribute to see it.
     "src/backend/DeckManagement/deck_controller/controller.py": 1670,
     "src/backend/DeckManagement/deck_controller/inputs.py": 1457,
-    "src/backend/Store/StoreBackend.py": 1948,
+    "src/backend/Store/StoreBackend.py": 1384,
 }
 
 
