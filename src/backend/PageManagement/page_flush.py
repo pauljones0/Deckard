@@ -1,8 +1,6 @@
 """
-Every disk reader must flush pending page edits before it reads page data.
-Current readers are get_page_data, asset sweeps, exports, duplicate reads, and page-move copies.
-Boot backup zip and video-cache sweep also flush. Replacing importers discard pending edits.
-Calls are thread-safe.
+Disk readers must flush first: get_page_data, asset sweeps, exports, duplicates, page moves,
+boot backup zip, and video cache. Replacing importers discard; all calls are thread-safe.
 """
 from __future__ import annotations
 
@@ -63,8 +61,8 @@ _save_locks_guard = threading.Lock()
 
 
 def save_lock(path: str) -> threading.Lock:
-    """Return the canonical lock shared by content edits and writes for one file.
-    Acquire it before _pending_guard when both are needed; never use the reverse order."""
+    """Return the per-file lock below page-load/document-load locks and outside cache locks.
+    It may nest I/O, _pending_guard, or timer locks; external timer callbacks must not take it."""
     # Canonicalize here because trusting raw caller spelling would silently give
     # one file two locks; the page cache lock is never held across this lock.
     with _save_locks_guard:
@@ -133,9 +131,8 @@ class PageFlush:
         self._clock: Callable[[], float] = clock if clock is not None else time.monotonic
 
     def mark_dirty(self, source: PageContent) -> None:
-        """Record the latest shared source and arm a write without doing file I/O.
-        Re-arm at DEBOUNCE_S; first_marked caps deferral before an attempt at MAX_DIRTY_AGE_S.
-        Write failures can retain edits beyond that age."""
+        """Record the latest shared source and re-arm at DEBOUNCE_S without file I/O.
+        MAX_DIRTY_AGE_S bounds deferral before an attempt; failed writes can exceed it."""
         # One entry per file is sufficient because every Page and its document
         # share one dictionary; a clean completed write starts the next age window.
         with self._pending_guard:

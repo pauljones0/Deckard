@@ -93,11 +93,8 @@ DECK_DEFAULTS: dict[str, Any] = {
         # Two or more still paths form a slideshow that overrides media-path;
         # fewer fall back to media-path, and an empty default preserves old backgrounds.
         "media-paths": [],
-        # The pan-and-zoom viewport for the single media-path, as
-        # {"x": ..., "y": ..., "scale": ...} with a normalized center and a
-        # zoom factor. None means the default view, the centered cover crop
-        # every background rendered with before views existed. A slideshow
-        # entry carries its own view inside its media-paths object instead.
+        # The media-path viewport; None selects a centered cover crop.
+        # Slideshow entries own their views inside media-paths objects.
         "view": None,
         # Seconds one slideshow image shows before the next. A non-positive
         # value holds the first image rather than flickering.
@@ -312,8 +309,7 @@ class SettingsStore:
 
     def read_reporting_corruption(self, spec: SurfaceSpec, key: str | None = None) -> tuple[Any, bool]:
         """Return content and whether this read found an existing unparseable or wrong-root file.
-        Missing, {}, and cached reads are false.
-        A later disk read is false only if quarantine moved the bad file."""
+        Missing, {}, and cache hits are false; later reads are false if quarantine succeeded."""
         path = spec.path(key)
         if not spec.cached:
             return self.load_file(path, root=spec.root)

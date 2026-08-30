@@ -391,8 +391,8 @@ class AppSettings(SchemaView):
 
 
 class PluginSettings:
-    """Manage plugin "settings" in an app envelope that retains "assets"; OSError reads empty.
-    Quarantine decode failures, preserve manifest.json/about.json, and use PluginBase's lock."""
+    """Retain assets, quarantine decode failures, preserve source files, and read OSError empty.
+    No lock here; only PluginBase get/set hold an outer per-plugin lock around store work."""
 
     def __init__(self, settings_path: str) -> None:
         self.path: str = settings_path

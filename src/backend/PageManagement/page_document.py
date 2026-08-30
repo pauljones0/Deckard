@@ -1,5 +1,5 @@
-"""Keep one permanent canonical document and save lock per page after manager startup.
-Before manager startup, a Page gets a private document because it has no registry or sibling."""
+"""Keep one permanent document and save lock per page; each retains tens of kilobytes.
+Dropping one in use gives the next Page a duplicate content copy; pre-manager Pages stay private."""
 from __future__ import annotations
 
 import json

@@ -88,8 +88,8 @@ def quarantine_corrupt_file(file_path: str) -> tuple[bool, str]:
 
 def prune_corrupt_sidecars(primary_path: str, keep: int = CORRUPT_SIDECAR_KEEP,
                            protect: "str | list[str] | tuple[str, ...] | None" = None) -> list[str]:
-    """Prune one primary's regular .corrupt[.numeric] files by mtime, then name.
-    Protected paths count toward keep; unrelated names and directories stay; errors are ignored."""
+    """Prune oldest regular .corrupt[.numeric] sidecars by mtime; name breaks ties; ignore errors.
+    Protect the new sidecar since rename keeps old mtime; it remains and counts toward keep."""
     keep = max(keep, 0)
     if protect is None:
         protected = set()
