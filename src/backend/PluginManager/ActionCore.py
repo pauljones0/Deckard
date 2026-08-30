@@ -44,8 +44,8 @@ import globals as gl
 
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, TypedDict, cast, override
-# One label keyed by position; functional TypedDict syntax supports the
-# hyphenated field names written by set_label.
+# One label keyed by position; set_label writes every declared field.
+# Functional TypedDict syntax supports the hyphenated field names.
 ActionLabel = TypedDict("ActionLabel", {
     "text": "str | None",
     "color": "list[int] | None",

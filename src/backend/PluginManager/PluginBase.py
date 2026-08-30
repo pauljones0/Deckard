@@ -73,8 +73,8 @@ class PluginBase(rpyc.Service):
 
     @property
     def backend_event_hold(self) -> "BackendEventHold":
-        """Lazy after skipped super(); holds EventHolder events only while backend connects.
-        Launch/register/teardown use it; class name replaces folder label without PATH."""
+        """Bounded buffer for observerless EventHolder events, only while backend connects.
+        Lazy if no super(); launch/register/teardown use it; class name fallback without PATH."""
         hold = self._backend_event_hold
         if hold is not None:
             return hold
@@ -279,8 +279,8 @@ class PluginBase(rpyc.Service):
                 log.error(f"Plugin: {self.plugin_name}: Plugin already exists")
                 return
             
-        # Invalid version metadata must disable the plugin visibly,
-        # not unwind __init__ and leave it absent from both registries.
+        # Compatibility-check exceptions visibly disable the plugin; they do not unwind __init__.
+        # This keeps it in disabled_plugins instead of absent from both registries.
         version_check_failed = False
         try:
             app_version_matching = self.is_app_version_matching()
