@@ -105,10 +105,10 @@ class Page:
 
     @contextmanager
     def edit(self) -> Iterator[_Dict[str, Any]]:
-        """Apply one atomic page edit and mark it for writing.
+        """Group page mutations under one document lock and mark them for writing.
         The block must not read a page file, reload a deck, or marshal to GTK."""
-        # The document lock prevents writes from observing a partial compound edit.
-        # It is a leaf lock; perform reads, reloads, and main-thread marshaling after release.
+        # The lock hides partial groups from writers but does not roll mutations back on error.
+        # It is a leaf lock; read files, reload decks, and marshal to GTK after release.
         with self._document.edit() as data:
             yield data
 
@@ -330,8 +330,8 @@ class Page:
                     # the enumerate() walk skips the next entry.
                     to_remove = [
                         i for i, action in enumerate(actions)
-                    # Actions here are raw JSON dicts, not action objects.
-                    # The fallback also handles an explicit null id.
+                        # Actions here are raw JSON dicts, not action objects.
+                        # The fallback also handles an explicit null id.
                         if (action.get("id") or "").split("::")[0] == plugin_id
                     ]
                     for i in reversed(to_remove):
@@ -524,7 +524,7 @@ class Page:
             executor.submit(self._run_ready_callbacks, action)
         except RuntimeError as error:
             # A live pool can refuse when the process has no available threads.
-            # The action then stays unready until the page loads again.
+            # The action then stays unready for this Page's lifetime.
             log.warning(
                 f"The action pool refused the ready callback for "
                 f"{getattr(action, 'action_id', action)}: {error!r}. That "

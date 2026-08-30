@@ -592,7 +592,7 @@ class PageManagerBackend:
 
     def get_page_data(self, path: str | None, use_backup: bool = True) -> dict[str, Any]:
         """Read one page file, using a backup for a missing primary when requested.
-        A corrupt primary always uses a valid backup; other I/O errors propagate."""
+        A corrupt primary uses a valid backup when available; other I/O errors propagate."""
         if path is None:
             return {}
 
@@ -608,8 +608,8 @@ class PageManagerBackend:
 
         data, corrupt = self.settings_manager.load_settings_reporting_corruption(path)
 
-        # Use a valid backup for every corrupt primary, regardless of use_backup
-        # or quarantine success. An empty result could erase the page on save.
+        # Use a valid backup for a corrupt primary when available, regardless of use_backup.
+        # Quarantine success is irrelevant; an empty result could erase the page on save.
         if corrupt and path != backup_path and os.path.exists(backup_path):
             healed, backup_corrupt = self.settings_manager.load_settings_reporting_corruption(backup_path)
             if not backup_corrupt:
@@ -767,10 +767,8 @@ class PageManagerBackend:
             yield settings
 
     def set_page_settings(self, path: str | None, settings: dict[str, Any]) -> None:
-        """
-        :param path: Path to the file
-        :return: None
-        """
+        """Replace the complete settings section; a None path skips the write.
+        settings supplies the complete replacement mapping."""
         if path is None:
             return
 
