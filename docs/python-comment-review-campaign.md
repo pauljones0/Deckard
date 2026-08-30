@@ -210,10 +210,13 @@ For every prose-only change:
 3. Compare the normalized syntax trees.
 4. Require equality for files with no deliberate code change.
 5. Inspect the diff for lost conditions, bounds, qualifiers, and enumerations.
-6. Run `.venv/bin/python tests/run_all.py`.
-7. Run `ruff check .`.
-8. Run `ty check`.
-9. Run `python scripts/check_module_sizes.py`.
+6. Run `ruff check .`.
+7. Run `ty check`.
+8. Run `python scripts/check_module_sizes.py`.
+
+Do not run scenario or unit tests on the local host for prose-only changes.
+Normalized syntax-tree equality is the runtime-behavior proof for those diffs.
+Run tests for inventory-tool code on the serialized Hugo test host.
 
 The campaign does not change runtime behavior. A partition that needs a code
 fix must move that fix to a separate defect issue and merge request.

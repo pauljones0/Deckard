@@ -134,16 +134,15 @@ class GitRepository:
             line_counts[path] = len(source.splitlines())
             all_units.extend(extract_units(path, source))
 
-        paths_with_units = sorted({unit.path for unit in all_units})
         with ThreadPoolExecutor(max_workers=max(1, jobs)) as executor:
             blame_maps = dict(
                 zip(
-                    paths_with_units,
+                    paths,
                     executor.map(
                         lambda path: self.blame(
                             boundary, revision, path, line_counts[path]
                         ),
-                        paths_with_units,
+                        paths,
                     ),
                     strict=True,
                 )

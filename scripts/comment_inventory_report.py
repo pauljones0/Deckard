@@ -22,6 +22,7 @@ def summary(inventory: Inventory, partitions: dict[str, list[Unit]]) -> dict[str
         "boundary": inventory.boundary,
         "tracked_python_files": len(inventory.tracked_files),
         "parsed_python_files": len(inventory.tracked_files),
+        "blamed_python_files": len(inventory.tracked_files),
         "files_with_any_units": len({unit.path for unit in inventory.all_units}),
         "pre_attribution_units": len(inventory.all_units),
         "attributed_units": len(units),
