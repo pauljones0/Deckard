@@ -100,10 +100,8 @@ class HeaderHamburgerMenuButton(Gtk.MenuButton):
 
     def get_contributer_list(self) -> "list[Any]":
         try:
-            # Use the shared session. api.github.com rate-limits by IP, and
-            # the store calls the same endpoint, so a fetch through
-            # http_client retries a 429 and reuses a pooled connection.
-            # raise_for_status sends a non-2xx answer to the except below.
+            # Use the shared session to pool connections and retry IP-wide 429 responses.
+            # raise_for_status sends other non-2xx responses to the failure path.
             response = http_client.get("https://api.github.com/repos/StreamController/StreamController/contributors", timeout=10)
             response.raise_for_status()
             data = response.json()
@@ -119,10 +117,8 @@ class HeaderHamburgerMenuButton(Gtk.MenuButton):
             return []
 
     def _fetch_contributors_async(self, about: Adw.AboutDialog) -> None:
-        """Runs on a worker thread: fetches the contributor list and, when it
-        arrives, adds the credit section on the main loop. On network failure
-        (offline, rate-limited, black-holed connection) the dialog simply
-        stays up without a contributors section."""
+        """Fetch contributors on a worker and add credits on the main loop.
+        Leave the dialog without that section on offline, rate-limit, or timeout failure."""
         contributors = self.get_contributer_list()
         if not contributors:
             return
@@ -209,10 +205,8 @@ class HeaderHamburgerMenuButton(Gtk.MenuButton):
         
         self.about.present(services.require_app().get_active_window())
 
-        # The contributor list comes from the GitHub API. A fetch on this
-        # thread freezes the whole UI for one network round trip, and it hangs
-        # without limit on a dropped connection. Present the dialog at once,
-        # and fill the section when the data arrives.
+        # Fetch contributors off the main thread so network delay cannot freeze the UI.
+        # Present the dialog immediately and add the section when data arrives.
         threading.Thread(
             target=self._fetch_contributors_async,
             args=(self.about,),

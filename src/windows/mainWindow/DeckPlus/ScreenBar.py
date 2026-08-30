@@ -119,10 +119,8 @@ class ScreenBar(Gtk.Frame):
         self.load_from_changes()
 
     def load_from_changes(self) -> None:
-        # Apply the changes that arrived before this widget existed, or while
-        # the window was hidden. Each entry is a dirty marker and not a stored
-        # PIL image, so this composites the current frame again and pushes it
-        # through the set-image path that a live update uses.
+        # Replay changes received before this widget existed or while the window was hidden.
+        # Each entry is a dirty marker, so composite the current frame through the live path.
         if not hasattr(self.deck_controller, "ui_image_changes_while_hidden"):
             return
         tasks = self.deck_controller.ui_image_changes_while_hidden
@@ -238,10 +236,8 @@ class ScreenBar(Gtk.Frame):
         if state_key not in self.identifier.get_states(active_page):
             return
 
-        # The removal of the state is the save. The block holds the page
-        # lock, so a write in flight cannot snapshot the removal half done,
-        # and the exit marks the page once. Read the dict again inside the
-        # block, because the check above read it without the lock.
+        # Remove the state under the page lock so a writer cannot snapshot a partial edit.
+        # Read it again in the block; the earlier check did not hold the lock.
         with active_page.edit():
             self.identifier.get_states(active_page).pop(state_key, None)
 
@@ -264,11 +260,8 @@ class ScreenBarImage(LazyMapTasks, Gtk.Picture):
         self.on_map_tasks = []
         self.connect("map", self.on_map)
 
-        # next() on a count is atomic, so two frames never take the same id,
-        # and the producers are threads. The publish is a plain store, so two
-        # producers can land their ids out of order and the older one wins the
-        # check in set_pixbuf_and_del. The next frame corrects that, and one
-        # producer per screenbar is the normal case.
+        # next() gives producer threads unique IDs, but the latest-ID store can publish out of order.
+        # A later frame corrects a stale paint; one producer is the normal case.
         self.task_ids = itertools.count()
         # None until the first frame is queued.
         self.latest_task_id: int | None = None
@@ -277,33 +270,20 @@ class ScreenBarImage(LazyMapTasks, Gtk.Picture):
         return next(self.task_ids)
 
     def set_image(self, image: Image.Image) -> None:
-        # Callable from any thread. This is the map-time replay path. A live
-        # frame arrives through the UI adapter, which calls the same two
-        # halves and coalesces the paints into one per input. The idle takes
-        # the default priority, because a high-priority pixbuf update on every
-        # frame starves the layout and draw of the main loop.
+        # Callable from any thread for map replay and coalesced live frames.
+        # Use default idle priority so frame updates do not starve main-loop layout and drawing.
         GLib.idle_add(self.paint_mirror_frame, self.prepare_mirror_frame(image))
 
     def prepare_mirror_frame(self, image: Image.Image) -> MirrorFrame:
-        """The paint-ready payload for paint_mirror_frame.
-
-        Any thread may call it. The thumbnail and every conversion use only PIL
-        and GdkPixbuf, so they run on the caller. For a live frame that is
-        the adapter's drain on the main loop, after the latest-wins slot
-        decided the frame; the map-time replay calls it from its own thread.
-        The mapped check lives in set_pixbuf_and_del, because widget state
-        needs the main thread.
-        """
+        """Build the paint payload on any caller thread with PIL and GdkPixbuf.
+        set_pixbuf_and_del checks mapped widget state on the main thread."""
         width = 385 #TODO: Find a better way to do this
         thumbnail = image.copy()
         thumbnail.thumbnail((width, width/8))
 
         pixbuf = image2pixbuf(thumbnail.convert("RGBA"), force_transparency=True)
-        # The task id travels with the pixbuf, so a paint that lost the race
-        # to a newer frame drops out in set_pixbuf_and_del. The stamp goes on
-        # the widget this prepare ran against, so it decides only between
-        # frames of one widget: a replaced screenbar takes its ids with it,
-        # and the replacement stamps its own frames from its own counter.
+        # Carry the task ID with the pixbuf so set_pixbuf_and_del drops older frames.
+        # The widget-local counter prevents a replacement screenbar from sharing its ordering.
         self.latest_task_id = self.get_new_task_id()
         task_id = self.latest_task_id
 
@@ -325,14 +305,8 @@ class ScreenBarImage(LazyMapTasks, Gtk.Picture):
         return False
 
     def _prepare_dial_preview(self, image: Image.Image) -> DialPreview:
-        """The icon preview of the sidebar for a selected dial.
-
-        The crop comes out of this same strip frame and travels in the
-        payload of the strip, because the crop matches the frame it came
-        from. One payload keeps the two in step and costs no second
-        callback. A direct call to IconSelector.set_image would add one
-        uncoalesced idle per frame.
-        """
+        """Build the selected dial preview from the same strip frame.
+        Keep it in the strip payload to preserve frame alignment without another idle callback."""
         sidebar = services.sidebar()
         if sidebar is None:
             return None
@@ -340,10 +314,8 @@ class ScreenBarImage(LazyMapTasks, Gtk.Picture):
         identifier = sidebar.active_identifier
         if not isinstance(identifier, Input.Dial):
             return None
-        # Use the own controller, not the visible deck. This widget belongs
-        # to one deck, and the map-time replay path runs this off the main
-        # loop, where a lookup through the deck stack is an off-main GTK
-        # read.
+        # Use this widget's controller because map replay can run off the main loop.
+        # Looking up the visible deck there would read GTK state from the wrong thread.
         touch_screen = self.screenbar.deck_controller.get_input(Input.Touchscreen("sd-plus"))
         if touch_screen is None:
             return None
@@ -351,10 +323,8 @@ class ScreenBarImage(LazyMapTasks, Gtk.Picture):
         icon_selector = sidebar.key_editor.icon_selector
         dial_image = image.crop(touch_screen.get_dial_image_area(identifier))
         pixbuf = image2pixbuf(dial_image.convert("RGBA"), force_transparency=True)
-        # The same read-modify-write as the screenbar stamp. This frame reads
-        # the id back after the store, so with two producers it can read the
-        # id of a newer frame, and this frame drops in set_pixbuf_and_del. The
-        # next frame corrects that, and one producer per screenbar is normal.
+        # Reading the ID after its store can pick up a newer producer's ID and drop this frame.
+        # The next frame corrects it; one producer per screenbar is normal.
         icon_selector.latest_task_id = icon_selector.get_new_task_id()
         return icon_selector, pixbuf, icon_selector.latest_task_id
 
@@ -367,9 +337,8 @@ class ScreenBarImage(LazyMapTasks, Gtk.Picture):
         # because a paint on a disposed widget crashes GTK.
         try:
             if not self.get_mapped():
-                # Replay this pixbuf on the map. This is a second net. The
-                # dirty-mark path composites a fresh frame when the window
-                # returns, and that repaints the preview.
+                # Replay this pixbuf on map as a fallback.
+                # The dirty-marker path also composites a fresh frame when the window returns.
                 self.on_map_tasks = [lambda: self.set_pixbuf_and_del(pixbuf)]
                 return
             self.set_pixbuf(pixbuf)

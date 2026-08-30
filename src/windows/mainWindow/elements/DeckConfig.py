@@ -39,9 +39,8 @@ class DeckConfig(Gtk.Box):
                          halign=Gtk.Align.CENTER, valign=Gtk.Align.CENTER)
         self.page_settings_page = page_settings_page
 
-        # A KeyButton, a DialWidget or a ScreenBar, whichever holds focus.
-        # The three share set_border_active and no base class, and their
-        # signatures are not annotated yet, so a protocol would not bind.
+        # The focused KeyButton, Dial, or ScreenBar; all provide set_border_active.
+        # They share no base class or annotated signature for a protocol.
         self.active_widget: Any = None
         self.build()
 

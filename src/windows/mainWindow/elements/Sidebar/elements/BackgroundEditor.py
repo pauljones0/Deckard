@@ -60,14 +60,8 @@ class _InputBoundRow(Protocol):
 
 
 def _page_and_input(row: _InputBoundRow) -> "tuple[Page, InputIdentifier, int] | None":
-    """The page and the input a row writes to, or None when there is no pair.
-
-    MainWindow.get_active_page answers None between the deck selection and
-    the first page load, which its own docstring calls the normal state. A row
-    carries no identifier and no state until load_for_identifier binds them.
-    Every Page setter below keys its write by all three, and Page reads
-    identifier.input_type to build the dict path.
-    """
+    """Return the page, identifier, and state that a row writes, or None.
+    All three must be bound because Page setters use them to select the dict path."""
     page = services.require_main_window().get_active_page()
     identifier = row.active_identifier
     state = row.active_state
@@ -149,12 +143,8 @@ class BackgroundExpanderRow(Adw.ExpanderRow):
         self.update_video_rows()
 
     def update_video_rows(self) -> bool:
-        # The loop and FPS rows exist only while a video is configured. For
-        # the touchscreen that video is its background image. For a key or a
-        # dial it is its media, and only the FPS row applies there, because
-        # the media loop stays a page-dict and plugin concern. A GIF on a key
-        # takes the FPS row too: it keeps its own delay timeline, and the row
-        # caps how often that timeline is read.
+        # Show loop and FPS for touchscreen background video, but only FPS for key or dial media.
+        # Key GIFs also use FPS because the row caps reads of their delay timeline.
         show_loop = False
         show_fps = False
         active_page = services.require_main_window().get_active_page()
@@ -172,9 +162,8 @@ class BackgroundExpanderRow(Adw.ExpanderRow):
                 path = active_page.get_media_path(identifier=identifier, state=state)
                 show_fps = bool(path and is_video(path))
                 if isinstance(identifier, Input.Dial) and str(path).lower().endswith(".gif"):
-                    # A dial keeps the GIF exclusion. Its page load cannot
-                    # build a GIF at all yet, so a rate offered here would
-                    # edit media that never reaches the dial.
+                    # Keep GIF FPS unavailable for dials because their page load cannot build GIFs.
+                    # Do not offer a rate for media that cannot reach the dial.
                     show_fps = False
         self.video_loop_row.set_visible(show_loop)
         self.video_fps_row.set_visible(show_fps)
@@ -194,9 +183,8 @@ class ColorRow(Adw.PreferencesRow):
         # Unset until load_for_identifier binds a row to an input.
         self.active_identifier: InputIdentifier | None = None
         self.active_state: int | None = None
-        # The colour handler id, or None while it is disconnected. A tracked id
-        # keeps connect and disconnect idempotent: a disconnect while already
-        # off cannot raise, and a reconnect cannot stack a second handler.
+        # Colour-handler ID, or None while disconnected.
+        # Tracking keeps connect and disconnect idempotent.
         self._color_handler: int | None = None
         self.build()
 
@@ -362,20 +350,13 @@ class VideoLoopRow(Adw.PreferencesRow):
 
 
 class VideoFpsRow(Adw.PreferencesRow):
-    # The spinner's range. The top is the loop's render ceiling, the same
-    # range every other fps spinner in the app offers. A cap at the ceiling
-    # caps nothing, which is what a page with no fps key loads under.
+    # Use the common FPS range with the media-loop ceiling as its top.
+    # A value at the ceiling means no cap, like a page with no FPS key.
     MIN_FPS = 1
     MAX_FPS = MEDIA_LOOP_FPS
 
-    # How long a chosen rate must hold before the revert control appears. The
-    # spinner emits value-changed on every step, and its arrow repeats about
-    # twenty times a second while held, so a pass down the range and back, or
-    # one flick of the scroll wheel, would otherwise show the control and take
-    # it away again within a few frames. The control also shares a linked box
-    # with the spinner, so each appearance shifts the spinner sideways under
-    # the pointer. A quarter of a second outlasts a burst of steps and still
-    # reads as the answer to the edit rather than as a later event.
+    # Wait 250 ms before revealing revert so rapid spinner steps do not flicker or shift the control.
+    # The delay outlasts an input burst while still appearing tied to the edit.
     REVEAL_DELAY_MS = 250
 
     def __init__(self, sidebar: "Sidebar", expander: BackgroundExpanderRow, **kwargs: Any) -> None:
@@ -388,10 +369,8 @@ class VideoFpsRow(Adw.PreferencesRow):
         # The change handler id, or None while it is disconnected. A tracked id
         # keeps connect and disconnect idempotent across early-return loads.
         self._change_handler: int | None = None
-        # The pending reveal below, None while none is armed. Every path that
-        # touches it runs on the GTK main thread: the spinner and revert
-        # handlers arrive there, and the loads run from the sidebar or from an
-        # idle callback. One thread means the id needs no lock.
+        # Pending reveal source, or None; all access occurs on the GTK main thread.
+        # Spinner, revert, sidebar-load, and idle paths therefore need no lock.
         self._reveal_source: int | None = None
         self.build()
 
@@ -414,9 +393,8 @@ class VideoFpsRow(Adw.PreferencesRow):
         self.revert_button.set_visible(False)
         self.button_box.append(self.revert_button)
 
-        # The revert click stays wired for the life of the row. Only the
-        # spinner handler toggles, so it alone is disconnected while a load
-        # writes values into the widget.
+        # Keep the revert click connected for the row's lifetime.
+        # Disconnect only the spinner handler while a load writes widget values.
         self.revert_button.connect("clicked", self.on_revert)
         self.connect_signals()
 
@@ -430,28 +408,15 @@ class VideoFpsRow(Adw.PreferencesRow):
             self._change_handler = None
 
     def cancel_reveal(self) -> None:
-        """Drop a pending reveal, and answer for one that never existed.
-
-        Both ends of a reveal clear the id: this one and the fire below. An id
-        that outlives its source makes the next cancel remove a source the main
-        loop has already dropped, which it answers with a warning and nothing
-        else, leaving the reveal that cancel was meant to drop still running.
-        """
+        """Cancel a pending reveal and clear its source ID.
+        A fired source must not leave an ID that can make a later cancel target the wrong source."""
         if self._reveal_source is not None:
             GLib.source_remove(self._reveal_source)
             self._reveal_source = None
 
     def _reveal_revert(self) -> bool:
-        """Show the arrow if the row's input still carries a rate.
-
-        The armed source holds this bound method, and the method holds the row,
-        so a pending reveal cannot reach a widget that is gone. What it can
-        reach is a row whose input moved on: the expander hides this row
-        without loading it when the next input carries no video, which leaves
-        the row bound to the input before it. Reading the page again here is
-        what makes that harmless. The arrow then states what the input carries
-        now, rather than what an edit decided a quarter of a second ago.
-        """
+        """Reveal revert only if the row's currently bound input still has an FPS override.
+        Re-read the page because a hidden row can remain bound to an earlier input."""
         self._reveal_source = None
         target = _page_and_input(self)
         if target is not None:
@@ -459,18 +424,8 @@ class VideoFpsRow(Adw.PreferencesRow):
         return GLib.SOURCE_REMOVE
 
     def _request_revert(self, show: bool) -> None:
-        """Take the revert control away at once, and bring it back late.
-
-        A rate that goes away leaves nothing to revert, so the control must go
-        with it. A rate that arrives waits REVEAL_DELAY_MS, and each further
-        step restarts that wait, so a burst of steps reveals nothing until the
-        rate settles. A control already on screen stays where it is.
-
-        Only the reveal waits. The top of the range is a hard stop, so a pass
-        can leave it and come back at most once per direction, and a delayed
-        hide would answer that with an arrow still on screen for a rate that is
-        already gone. A late arrow is a small surprise; a stale one is wrong.
-        """
+        """Hide revert immediately when no override exists, or reveal it after the rate settles.
+        Restart delayed reveals on each step, but never delay a hide or move an already visible control."""
         self.cancel_reveal()
         if not show:
             self.revert_button.set_visible(False)
@@ -502,14 +457,8 @@ class VideoFpsRow(Adw.PreferencesRow):
         return active_page.get_background_fps(identifier=identifier, state=state)
 
     def _has_override(self, active_page: "Page", identifier: InputIdentifier, state: int) -> bool:
-        """Does the page carry a cap that caps anything?
-
-        A stored value at the ceiling caps nothing, because no tick runs that
-        fast, so the row treats it as no cap at all: no revert control, and
-        the media's own rate on show. That keeps one meaning for the top of
-        the spinner's range whether a page reaches it through an old write or
-        through the range's top today.
-        """
+        """Return whether the page stores an effective FPS cap.
+        Treat a value at the render ceiling as uncapped, including older stored values."""
         if self._uses_media_fps():
             stored = active_page.has_media_fps(identifier=identifier, state=state)
         else:
@@ -517,14 +466,8 @@ class VideoFpsRow(Adw.PreferencesRow):
         return stored and self._stored_fps(active_page, identifier, state) < self.MAX_FPS
 
     def _displayed_fps(self, active_page: "Page", identifier: InputIdentifier, state: int) -> int:
-        """The number the spinner shows.
-
-        A cap that caps something shows itself. With no such cap the media
-        runs at its own rate, so the row shows THAT rate, rounded into the
-        spinner's range, and not a stored number. It falls back to the
-        ceiling when no pipeline reports a rate, which is where an uncapped
-        page sits anyway.
-        """
+        """Return the effective cap, or the media's native FPS within the spinner range.
+        Use the ceiling when an uncapped pipeline reports no native rate."""
         if self._has_override(active_page, identifier, state):
             return self._stored_fps(active_page, identifier, state)
         if self._uses_media_fps():
@@ -539,9 +482,8 @@ class VideoFpsRow(Adw.PreferencesRow):
             return
         active_page, identifier, state = target
         fps = int(self.spinner.get_value())
-        # The top of the range caps nothing, so store no key for it. Choosing
-        # it then means what the revert control means, and no page ever
-        # carries a cap with no effect.
+        # Store no key for the uncapped top of the range.
+        # Choosing it has the same meaning as revert and avoids ineffective caps.
         stored = None if fps >= self.MAX_FPS else fps
         self._write_fps(active_page, identifier, state, stored)
         self._request_revert(stored is not None)
@@ -569,10 +511,8 @@ class VideoFpsRow(Adw.PreferencesRow):
 
     def load_for_identifier(self, identifier: InputIdentifier, state: int) -> None:
         self.disconnect_signals()
-        # A load states the arrow for the input it binds, so a reveal armed
-        # before it has nothing left to answer. Drop it here, ahead of every
-        # early return, or the arrow can still move a quarter of a second after
-        # a selection that already settled it.
+        # Cancel an earlier reveal before binding and before every possible early return.
+        # The old source must not change the arrow after this load settles it.
         self.cancel_reveal()
         try:
             self.active_identifier = identifier
@@ -649,9 +589,8 @@ class ImageRow(Adw.PreferencesRow):
             return
         active_page, identifier, state = target
         active_page.set_background_image(identifier=identifier, state=state, path=file_path, update=True)
-        # This can run off the main thread, because the custom-assets chooser
-        # delivers a selection on a callback thread, so a widget change must
-        # marshal onto the GTK main loop.
+        # The custom-assets chooser can call from a worker thread.
+        # Marshal widget changes onto the GTK main loop.
         GLib.idle_add(self.clear_button.set_visible, True)
         GLib.idle_add(self.expander.update_video_rows)
         self.update_preview(file_path)
@@ -667,9 +606,8 @@ class ImageRow(Adw.PreferencesRow):
         self.update_preview(None)
 
     def update_preview(self, image_path: str | None) -> None:
-        # Safe from any thread. The thumbnail decode runs here, which can be
-        # off the main thread, and the widget updates marshal onto the GTK
-        # main loop.
+        # Safe from any thread; decode the thumbnail on the caller.
+        # Marshal widget updates onto the GTK main loop.
         GLib.idle_add(self._apply_preview, image_path, build_preview_pixbuf(image_path))
 
     def _apply_preview(self, image_path: str | None, pixbuf: "GdkPixbuf.Pixbuf | None") -> bool:

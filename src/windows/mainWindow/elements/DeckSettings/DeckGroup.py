@@ -58,25 +58,16 @@ class DeckGroup(Adw.PreferencesGroup):
 
 
 class DeckName(Adw.EntryRow):
-    """What the user calls this deck, shown by the switcher of the header bar.
-
-    An empty row means no chosen name, and the deck then shows the model name
-    that the device reports. Surrounding space goes at the write, so a name of
-    spaces cannot leave the switcher blank.
-
-    The row writes when the user applies it, which is the apply button or the
-    Enter key, and the write is the whole of the work. It holds no pending
-    timeout, so a settings page that goes away leaves nothing armed behind it.
-    """
+    """Set the deck name shown in the header switcher; an empty value uses the model name.
+    Apply or Enter writes a trimmed value immediately without a pending timeout."""
 
     def __init__(self, settings_page: "DeckSettingsPage", deck_serial_number: str) -> None:
         super().__init__(title=gl.lm.get("deck.deck-group.name"), show_apply_button=True)
         self.settings_page = settings_page
         self.deck_serial_number = deck_serial_number
 
-        # The apply-handler id, or None while it is disconnected. A tracked id
-        # keeps connect and disconnect idempotent: a disconnect while already
-        # off cannot raise, and a reconnect cannot stack a second handler.
+        # Apply-handler ID, or None while disconnected.
+        # Tracking keeps connect and disconnect idempotent.
         self._apply_handler: int | None = None
 
         # The switcher does not shorten a long label, so the row refuses what
@@ -98,13 +89,8 @@ class DeckName(Adw.EntryRow):
             self._apply_handler = None
 
     def deck_stack(self) -> Any:
-        """The deck stack this settings page sits in, or None.
-
-        The settings page takes its parent as an untyped argument, and a
-        window rebuild can leave a row whose page has no parent, so each step
-        is guarded. A missing stack costs the live retitle and nothing else:
-        the name is already saved, and the next build of the stack reads it.
-        """
+        """Return this settings page's deck stack, or None when it is detached.
+        A missing stack skips only the live retitle because the name is already saved."""
         stack_child = getattr(self.settings_page, "deck_stack_child", None)
         return getattr(stack_child, "deck_stack", None)
 
@@ -125,9 +111,8 @@ class DeckName(Adw.EntryRow):
             deck_stack.refresh_page_title(self.settings_page.deck_controller)
 
     def load_default(self, *args: object) -> None:
-        # Read only, and with the handler off, for the reason Brightness below
-        # gives. This runs at every open of the page, and a set that the apply
-        # handler saw would write a name that nobody chose.
+        # Load without the handler so opening the page cannot write an unchanged name.
+        # The read must not persist a value that the user did not choose.
         self.disconnect_signal()
         try:
             name = gl.settings_manager.deck(self.deck_serial_number).get("name")
@@ -144,9 +129,8 @@ class Rotation(Adw.PreferencesRow):
         self.settings_page = settings_page
         self.deck_serial_number = deck_serial_number
 
-        # The active-handler id, or None while it is disconnected. A tracked id
-        # keeps connect and disconnect idempotent: a disconnect while already
-        # off cannot raise, and a reconnect cannot stack a second handler.
+        # Active-handler ID, or None while disconnected.
+        # Tracking keeps connect and disconnect idempotent.
         self._rotation_handler: int | None = None
 
         self.build()
@@ -207,9 +191,8 @@ class Rotation(Adw.PreferencesRow):
         self.settings_page.deck_controller.set_rotation(rot)
 
     def load_default(self, *args: object) -> None:
-        # The handler stays off across the read and the set. A set that the
-        # handler sees saves and applies a rotation that nobody changed, once
-        # more per open of the page.
+        # Keep the handler off across the read and widget update.
+        # Opening the page must not save and apply an unchanged rotation.
         self.disconnect_signal()
         try:
             rot = gl.settings_manager.deck(self.deck_serial_number).get("rotation")
@@ -226,10 +209,8 @@ class Brightness(LazyMapTasks, Adw.PreferencesRow):
         self.settings_page = settings_page
         self.deck_serial_number = deck_serial_number
 
-        # The value-changed handler id, or None while it is disconnected. A
-        # tracked id keeps connect and disconnect idempotent: a disconnect
-        # while already off cannot raise, and a reconnect cannot stack a second
-        # handler.
+        # Value-changed handler ID, or None while disconnected.
+        # Tracking keeps connect and disconnect idempotent.
         self._scale_handler: int | None = None
 
         self.build()
@@ -240,9 +221,8 @@ class Brightness(LazyMapTasks, Adw.PreferencesRow):
         self.on_map_tasks = []
         self.connect("map", self.on_map)
 
-        # One handler, always: load_default defers itself at construction (an
-        # unparented row is never mapped), and the tracked id makes this
-        # connect a no-op if it ever ran first.
+        # Keep one handler; construction defers load_default until the row maps.
+        # The tracked ID makes an earlier connection a no-op.
         self.load_default()
         self.connect_signal()
 
@@ -285,11 +265,8 @@ class Brightness(LazyMapTasks, Adw.PreferencesRow):
             self.on_map_tasks.append(lambda: self.load_default())
             return
 
-        # Read only, and with the handler off. This runs at every open of the
-        # page. A write of the missing key here persists a brightness that
-        # nobody chose, and a load that the scale handler sees saves that
-        # value and pushes it to the physical deck. An open of a settings page
-        # is not a decision to change the deck.
+        # Load with the handler off so opening the page does not persist a missing default.
+        # It must not send an unchanged brightness to the physical deck.
         self.disconnect_signal()
         try:
             self.scale.set_value(gl.settings_manager.deck(self.deck_serial_number).get("brightness", "value"))
@@ -309,26 +286,16 @@ class Brightness(LazyMapTasks, Adw.PreferencesRow):
 
 
 class Saturation(LazyMapTasks, Adw.PreferencesRow):
-    """Per-deck display saturation boost, a PIL ImageEnhance.Color factor.
-
-    It lives in the deck settings under display and saturation, and its default
-    of 1.0 changes nothing.
-    """
-    # Brightness has a live per-frame setter, and this factor has none, because
-    # the media takes the factor at load time and at cache-build time. A change
-    # therefore reloads the active page through
-    # DeckController.set_display_saturation, which enhances the static media at
-    # once and rebuilds the video cache under the cache filename of the new
-    # factor at the next playthrough.
+    """Set the per-deck PIL ImageEnhance.Color factor; 1.0 changes nothing."""
+    # Media takes saturation at load and cache-build time, so changes reload the active page.
+    # Static media updates immediately; video rebuilds its factor-specific cache on the next playthrough.
     def __init__(self, settings_page: "DeckSettingsPage", deck_serial_number: str) -> None:
         super().__init__()
         self.settings_page = settings_page
         self.deck_serial_number = deck_serial_number
 
-        # The value-changed handler id, or None while it is disconnected. A
-        # tracked id keeps connect and disconnect idempotent: a disconnect
-        # while already off cannot raise, and a reconnect cannot stack a second
-        # handler.
+        # Value-changed handler ID, or None while disconnected.
+        # Tracking keeps connect and disconnect idempotent.
         self._scale_handler: int | None = None
 
         self.build()
@@ -356,10 +323,8 @@ class Saturation(LazyMapTasks, Adw.PreferencesRow):
         self.main_box.append(self.scale)
 
     def on_value_changed(self, scale: Gtk.Scale) -> None:
-        # A trailing debounce. value-changed fires on every drag step, and an
-        # apply of the saturation is a full page reload, plus a cache rebuild
-        # for a video background. Apply once, 300 ms after the drag stops,
-        # instead of about ten times across one drag.
+        # Debounce drag updates for 300 ms because each apply reloads the page.
+        # A video background also rebuilds its cache.
         if self._apply_source is not None:
             GLib.source_remove(self._apply_source)
         self._apply_source = GLib.timeout_add(300, self._apply_value)
@@ -368,9 +333,7 @@ class Saturation(LazyMapTasks, Adw.PreferencesRow):
         self._apply_source = None
         value = round(self.scale.get_value(), 2)
 
-        # This persists to the deck settings, refreshes the cached value in
-        # DeckController, and reloads the active page. See
-        # DeckController.set_display_saturation.
+        # Persist the setting, refresh the controller cache, and reload the active page.
         self.settings_page.deck_controller.set_display_saturation(value)
         return GLib.SOURCE_REMOVE
 
@@ -380,9 +343,8 @@ class Saturation(LazyMapTasks, Adw.PreferencesRow):
             self.on_map_tasks.append(lambda: self.load_default())
             return
 
-        # Read only, and with the handler off, for the reason that Brightness
-        # above gives. An open of the page must not write the file, and must
-        # not reload the page behind a factor that nobody changed.
+        # Load with the handler off so opening the page does not write the file.
+        # It must not reload the page for an unchanged factor.
         self.disconnect_signal()
         try:
             self.scale.set_value(gl.settings_manager.deck(self.deck_serial_number).get("display", "saturation"))
@@ -407,10 +369,8 @@ class Screensaver(LazyMapTasks, Adw.PreferencesRow):
         self.settings_page = settings_page
         self.deck_serial_number = deck_serial_number
 
-        # The handler id per widget key, absent while that widget is
-        # disconnected. Tracked ids keep connect and disconnect idempotent: a
-        # disconnect while already off cannot raise, and a reconnect cannot
-        # stack a second handler.
+        # Handler ID by widget key, absent while disconnected.
+        # Tracking keeps connect and disconnect idempotent.
         self._handlers: dict[str, int] = {}
 
         self.build()
@@ -518,12 +478,10 @@ class Screensaver(LazyMapTasks, Adw.PreferencesRow):
     def load_defaults(self) -> None:
         self.disconnect_signals()
         try:
-            # One read, and read only. A missing key shows the default from the
-            # deck-settings schema and reaches no file. A write here pins the
-            # current default onto every deck whose settings page a user opened.
+            # Read one section without persisting missing schema defaults.
+            # Opening a settings page must not pin current defaults to the deck.
             config = gl.settings_manager.deck(self.deck_serial_number).section("screensaver")
 
-            # Update ui
             self.enable_switch.set_active(config["enable"])
             self.config_box.set_visible(config["enable"])
             self.time_spinner.set_value(config["time-delay"])
@@ -618,8 +576,7 @@ class Screensaver(LazyMapTasks, Adw.PreferencesRow):
         settings.save()
 
         deck_controller = self.settings_page.deck_controller
-        # No active page, which happens right after a connect and with zero
-        # pages, leaves nothing to reload the screensaver against.
-        # load_screensaver reads page.dict, so a None here raises.
+        # A deck can have no active page just after connection or when it has zero pages.
+        # Do not call load_screensaver without a page because it reads page.dict.
         if deck_controller.active_page is not None:
             deck_controller.load_screensaver(deck_controller.active_page)

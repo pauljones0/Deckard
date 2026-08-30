@@ -101,9 +101,8 @@ class CommentGroup(Adw.PreferencesGroup):
         self.parent = parent
         self.action: ActionCore = None  # ty: ignore[invalid-assignment]  # late-init: load_for_action
         self.index: int = None  # ty: ignore[invalid-assignment]  # late-init: load_for_action
-        # The changed-handler id, or None while it is disconnected. A tracked id
-        # keeps connect and disconnect idempotent: a disconnect while already
-        # off cannot raise, and a reconnect cannot stack a second handler.
+        # Changed-handler ID, or None while disconnected.
+        # Tracking keeps connect and disconnect idempotent.
         self._comment_handler: int | None = None
         self.build()
 
@@ -319,7 +318,6 @@ class RemoveButton(Gtk.Button):
         # Reload configurator
         self.configurator.sidebar.update()
 
-        # Decide whether the key needs a reload
         load = not page.has_key_an_image_controlling_action(action.input_ident, action.state)
         load = True # TODO
         if load:
@@ -407,8 +405,7 @@ class EventAssignerUI(BetterPreferencesGroup):
         self.load_for_action(self.action)
 
     def on_clear_all(self, button: Gtk.Button) -> None:
-        # set_all_events_to_null does the whole job. The map this used to
-        # build fed a set_event_assignments call that is commented out below.
+        # set_all_events_to_null clears every assignment.
         self.action.set_all_events_to_null()
         # self.action.set_event_assignments(assignments)
         self.load_for_action(self.action)
@@ -446,9 +443,8 @@ class EventAssignerRow(Adw.ComboRow):
         self.event = event
         self.available_events: list[EventAssigner] = []
 
-        # The selection-handler id, or None while it is disconnected. A tracked
-        # id keeps connect and disconnect idempotent: a disconnect while already
-        # off cannot raise, and a reconnect cannot stack a second handler.
+        # Selection-handler ID, or None while disconnected.
+        # Tracking keeps connect and disconnect idempotent.
         self._selected_handler: int | None = None
 
         # Create the item list factory

@@ -361,14 +361,11 @@ class Dial(Gtk.Frame):
         return False
 
     def on_paste(self, *args: Any) -> bool:
-        # No is_local() check on the clipboard. Refusing a clipboard this
-        # instance does not own breaks copy and paste on KDE under Wayland,
-        # where ownership reads as foreign. Telling the two apart needs the
-        # value itself, through read_value_async.
+        # Do not reject foreign ownership; KDE Wayland reports valid copied data as foreign.
+        # Only read_value_async can distinguish the value.
 
-        # Remove the old action objects. Several actions can share one action
-        # base, and nothing else tells those actions apart. A dial the deck
-        # does not carry stops the paste here, before the page write below.
+        # Remove existing action objects because shared bases do not identify individual actions.
+        # Stop before the page write when the deck has no such dial.
         if self._get_dial() is None:
             return False
         self.on_remove()
@@ -393,11 +390,8 @@ class Dial(Gtk.Frame):
         return False
 
     def _get_dial(self) -> "ControllerDial | None":
-        """The live dial for this box, or None when the deck has no such dial.
-
-        on_cut and on_paste ask first, because on_remove answers None by
-        returning and the paste would otherwise carry on to its page write.
-        """
+        """Return the live dial, or None when the deck has no such dial.
+        Cut and paste use this guard because remove can return before their later work."""
         if gl.app is None:
             return None
         controller = gl.app.main_win.get_active_controller()
@@ -424,10 +418,8 @@ class Dial(Gtk.Frame):
         if state_key not in self.identifier.get_states(active_page):
             return
 
-        # The removal of the state is the save. The block holds the page
-        # lock, so a write in flight cannot snapshot the removal half done,
-        # and the exit marks the page once. Read the dict again inside the
-        # block, because the check above read it without the lock.
+        # Remove the state under the page lock so a writer cannot snapshot a partial edit.
+        # Read it again in the block; the earlier check did not hold the lock.
         with active_page.edit():
             self.identifier.get_states(active_page).pop(state_key, None)
 
@@ -487,10 +479,8 @@ class DialContextMenu(Gtk.PopoverMenu):
         super().popup()
 
     def on_close(self, *args: Any, **kwargs: Any) -> None:
-        # Unparent on an idle, not here. This code runs inside the closed
-        # signal emission, and an unparent of the popover during that emission
-        # can dispose the emitter under GTK. The guard keeps fast repeated
-        # right-clicks from queueing one unparent each.
+        # Unparent on idle because doing it during the closed signal can dispose its emitter.
+        # The guard prevents repeated right-clicks from queuing multiple unparents.
         if self._unparenting:
             return
         self._unparenting = True

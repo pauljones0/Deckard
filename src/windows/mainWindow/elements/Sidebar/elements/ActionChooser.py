@@ -83,9 +83,8 @@ class ActionChooser(Gtk.Box):
         self.search_entry.connect("search-changed", self.on_search_changed)
         self.main_box.append(self.search_entry)
 
-        # Create this before the PluginGroup. Its update() refreshes this
-        # label through update_empty_state(), and that update runs from the
-        # PluginGroup constructor and at every store install and uninstall.
+        # Create this before PluginGroup because its constructor updates the empty state.
+        # Store install and uninstall updates use the same label.
         self.empty_state_label = Gtk.Label(
             wrap=True,
             justify=Gtk.Justification.CENTER,
@@ -102,11 +101,8 @@ class ActionChooser(Gtk.Box):
         self.main_box.append(self.open_store_button)
 
     def update_empty_state(self, n_plugins: int) -> None:
-        """Explains an empty action list instead of leaving a blank page.
-
-        It distinguishes 'plugins failed to load', 'plugins disabled by the
-        version gate' and 'nothing installed'. Main-thread only (called from
-        PluginGroup.update, which store code dispatches via GLib.idle_add)."""
+        """Explain an empty list as failed, version-disabled, or absent plugins.
+        Main-thread only; store code dispatches PluginGroup.update through GLib.idle_add."""
         if n_plugins > 0:
             self.empty_state_label.set_visible(False)
             return
@@ -240,10 +236,8 @@ class PluginGroup(BetterPreferencesGroup):
             # Show all
             return True
 
-        # Compare the rounded score. rapidfuzz returns a float, and a ratio
-        # of exactly 20 comes back as 19.999999999999996, one unit in the last
-        # place below the threshold. The round keeps such a match visible. The
-        # sort still uses the unrounded scores, which rank more finely.
+        # Round for the threshold because rapidfuzz can return 19.999999999999996 for 20.
+        # Sorting keeps the unrounded score for finer ranking.
         if round(expander.highest_fuzz_score) >= MIN_ACTION_FUZZY_SCORE:
             return True
 
@@ -406,9 +400,6 @@ class PluginExpander(ActionChooserExpander):
         self.invalidate_filter()
 
     def set_group_identifier(self, input_type: InputIdentifier, group: ActionHolderGroup, row: "ActionGroupExpander") -> bool:
-        # A later option can hide groups here, through
-        # group.get_min_input_compatibility(input_type) against
-        # ActionInputSupport.UNSUPPORTED and row.hide().
         return True
 
 class ActionGroupExpander(ActionChooserExpander):
@@ -449,9 +440,8 @@ class ActionGroupExpander(ActionChooserExpander):
         # in the expanded state. The code below sets the icon.
         image = self.get_arrow_image()
         if image is None:
-            # The internal expander tree of libadwaita does not match the
-            # shape that get_arrow_image walks, so the arrow keeps its default
-            # state.
+            # libadwaita's internal tree can differ from the shape get_arrow_image walks.
+            # Keep the default arrow state when the image is unavailable.
             return
         if self.get_expanded():
             image.set_css_classes(["expander-arrow-activated"])

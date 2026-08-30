@@ -112,9 +112,8 @@ class LabelRow(Adw.PreferencesRow):
         self.state: int = 0
         self.label_index = label_index
         self.key_name = key_name
-        # The (widget, handler-id) pairs while wired, empty while disconnected.
-        # Tracked ids keep connect and disconnect idempotent: a disconnect while
-        # already off is a no-op, and a reconnect cannot stack a second handler.
+        # Widget and handler-ID pairs while connected; empty while disconnected.
+        # Tracking keeps connect and disconnect idempotent.
         self._handler_ids: list[tuple[Gtk.Widget, int]] = []
         self.build()
 
@@ -292,8 +291,7 @@ class LabelRow(Adw.PreferencesRow):
             self.set_alignment(composed_label.alignment)
 
             # self.font_chooser_button.button.set_font_desc(Pango.FontDescription.from_string(f"{composed_label.font_name} {composed_label.style} {composed_label.font_size}px"))
-            # A font description needs all four; an incompletely composed label
-            # leaves the chooser showing whatever it had.
+            # A complete font description requires family, size, style, and weight; otherwise keep the chooser value.
             font_name = composed_label.font_name
             font_size = composed_label.font_size
             style = composed_label.style
@@ -337,15 +335,8 @@ class LabelRow(Adw.PreferencesRow):
         self.alignment_buttons.set_alignment(alignment)
 
     def _page_and_identifier(self) -> "tuple[Page, InputIdentifier] | None":
-        """The page and the input this row writes to, or None when there is
-        no pair to write.
-
-        MainWindow.get_active_page answers None between the deck selection
-        and the first page load, which its own docstring calls the normal
-        state. active_identifier stays None until load_for_identifier binds
-        one. Every setter below keys its write by both, and Page keys its
-        dict path off identifier.input_type, so neither may be None.
-        """
+        """Return the page and identifier that this row writes, or None.
+        Both must be bound because each setter uses the identifier to select the page dict path."""
         page = services.require_main_window().get_active_page()
         identifier = self.active_identifier
         if page is None or identifier is None:
