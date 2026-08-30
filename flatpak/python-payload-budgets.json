@@ -1,0 +1,14 @@
+{
+  "metric": "sum-uncompressed-archive-file-bytes",
+  "headroom_percent": 5,
+  "architectures": {
+    "x86_64": {
+      "baseline_bytes": 296246665,
+      "budget_bytes": 311427072
+    },
+    "aarch64": {
+      "baseline_bytes": 221461432,
+      "budget_bytes": 232783872
+    }
+  }
+}

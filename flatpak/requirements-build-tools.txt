@@ -1,0 +1,7 @@
+# Build backends for native Python source archives in the Flatpak manifest.
+meson==1.7.0
+meson-python==0.17.1
+packaging==24.2
+patchelf==0.17.2.1
+setuptools==80.9.0
+wheel==0.45.1

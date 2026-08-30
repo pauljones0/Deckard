@@ -187,6 +187,10 @@ bundle as a release asset.
 
 ### Fixed
 
+- Flatpak releases now ship the locked runtime Python dependency set, including
+  headless OpenCV, instead of a stale development environment with the full
+  OpenCV build. Release builds also reject dependency drift and unexpected
+  growth in either architecture's Python payload.
 - A wallpaper extended onto the Stream Deck + touchscreen now lines up with
   the keys. The strip's view was placed and scaled from an assumed key
   spacing, and the device does not follow that arithmetic: the real gaps
