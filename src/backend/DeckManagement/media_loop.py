@@ -1,6 +1,17 @@
-"""Provide the shared loop rate, monotonic clock, and per-source frame deadlines.
+"""The media loop's declared rate, its clock, and per-source frame deadlines.
 
-All consumers use MEDIA_LOOP_FPS; resume-gap checks use the replaceable monotonic clock.
+This is a leaf module: it imports only the standard library, so every layer
+that needs the loop rate can import it without a cycle. Every follower of
+the rate reads MEDIA_LOOP_FPS from here: the writer's loop, the media and
+page defaults, the sidebar's fps range, and the scroll cadence. The number
+was previously declared independently at each of those sites.
+
+The clock is monotonic. Deadlines, durations, and rate gates must not move
+when the wall clock steps, so wall time stays out of scheduling entirely.
+The one deliberate exception is the writer's resume-gap check, which keeps
+wall time because the monotonic clock stops across a system suspend. Tests
+install a controllable clock through install_clock(), which is the
+deterministic seam the frame-deadline scenarios run on.
 """
 import time
 from collections.abc import Callable

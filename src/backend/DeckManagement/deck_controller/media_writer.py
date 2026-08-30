@@ -297,8 +297,9 @@ class MediaPlayerThread(threading.Thread):
         # Clear uses it to detect later paint attempts that ran before its blanks.
         self._max_executed_seq: int = -1
 
-        # Seed before the first tick; later resume-gap checks use media_loop.now().
-        # A gap of at least 5 s schedules a repaint.
+        # Wall-clock gap detection. A gap much larger than the loop's own
+        # wait interval means the process suspended on a system sleep and then
+        # resumed. See check_resume_gap().
         self._last_iter_ts: float = time.time()
 
         # Per-tick work-rate window and low-FPS warning state; loop_metrics
@@ -338,8 +339,8 @@ class MediaPlayerThread(threading.Thread):
                         self._suppressed_tick_errors = 0
                     else:
                         self._suppressed_tick_errors += 1
-                    # A mid-batch exception loses every paint popped for that tick;
-                    # schedule the 2-second-rate-limited repaint to restore siblings.
+                    # A paint exception loses its failing paint and unrun siblings,
+                    # not completed earlier paints; schedule the 2 s rate-limited repaint.
                     self.deck_controller._schedule_full_repaint()
                     # Back off for 250 ms without delaying stop; re-wait because
                     # producers also set _wake_event and could drive retry rate.
@@ -526,9 +527,9 @@ class MediaPlayerThread(threading.Thread):
         return True
 
     def drain_control_queue(self) -> bool:
-        """Run all control messages FIFO, returning False after terminal clear-and-close.
+        """Run controls FIFO until terminal ClearAndClose runs, then return False.
 
-        The separate method permits use without a running writer thread.
+        Later messages stay undrained; this also works without a running writer.
         """
         while self.control_q:
             msg = self.control_q.popleft()
@@ -576,10 +577,12 @@ class MediaPlayerThread(threading.Thread):
         stashed_inputs.clear()
 
     def check_resume_gap(self, now: float | None = None) -> bool:
-        """Detect a media-loop clock gap of at least 5 s and report whether it occurred.
-
-        The tick path passes media_loop.now(); repaint scheduling remains rate-limited.
-        """
+        """Detect a wall-clock gap of 5s or more between media-loop
+        iterations, which is the signature of a process suspend and resume
+        cycle. It is split out of run() so a unit-tier scenario drives it
+        without a running thread, as drain_control_queue is. Returns whether
+        it detected a gap, and not whether a repaint fired, because
+        _schedule_full_repaint() applies its own rate limit."""
         if now is None:
             now = time.time()
         gap = now - self._last_iter_ts
