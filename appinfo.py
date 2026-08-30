@@ -2,7 +2,7 @@
 Do not import globals or src here because rebrand migration imports this module before globals."""
 
 # Derive D-Bus, Ayatana, and dotted forms from APP_ID.
-# An identity change then needs one edit.
+# An application-ID change then needs one edit.
 APP_ID = "io.github.nazbert.Deckard"
 APP_NAME = "Deckard"
 

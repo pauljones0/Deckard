@@ -57,8 +57,7 @@ class TrailingDebouncer(Generic[HandleT]):
         # Each trigger must reach exactly one callback per burst.
         # No equality check, dirty flag, or early return can drop it.
         self._pending: Optional[HandleT] = None
-        # trigger() and the callback use the scheduler thread, which is GTK's
-        # main thread in production.
+        # trigger() and callbacks share the scheduler thread, GTK's main thread in production.
         # The pending handle therefore needs no lock.
         self._owner_thread: Optional[int] = None
 

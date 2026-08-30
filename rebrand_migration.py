@@ -353,7 +353,7 @@ def _finish_copy(old_root: str, new_root: str, marker_path: str) -> None:
 def _copy_migrate_locked(old_root: str, new_root: str, marker_path: str,
                          running_check: Callable[[], bool]) -> None:
     """Cross-filesystem variant of _migrate_locked.
-    Stage, fsync, mark, and publish the copy before source removal; ignore running_check.
+    Stage, mark, fsync, and publish the copy before source removal; ignore running_check.
     """
     # Before publish, a crash leaves old_root for a repeated copy.
     # After publish, the pending marker lets _finish_copy complete cleanup.

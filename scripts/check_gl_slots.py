@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Pin globals.py names/gl stores; reject missing/unreadable/unparseable/hidden input or imports.
-Reject computed/deleted slots; skip reads/mutations/dynamic/laundered aliases/exemptions."""
+"""Pin globals.py names/gl stores; reject invalid input/imports and computed/deleted slots.
+Skip reads/mutations/dynamic/laundered aliases and per-file module-type exemptions."""
 from __future__ import annotations
 
 import ast

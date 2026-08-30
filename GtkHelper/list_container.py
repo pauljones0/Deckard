@@ -1,5 +1,5 @@
 """Resolve private list boxes for expander and preferences-group facades.
-Expanders skip but warn before refill; groups raise LookupError; owner overrides steer calls."""
+Expanders skip; only clear warns before refill. Groups raise LookupError; overrides steer calls."""
 from collections.abc import Callable
 from typing import Any, Literal
 

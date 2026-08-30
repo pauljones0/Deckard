@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Allow bare json.load/dump only in named files; otherwise use healing and atomic writes.
-Reject hidden imports/stale/other entries/missing/unparseable/hidden files; skip strings/aliases."""
+"""Allow json.load/dump only in named files; reject hidden imports, stale entries, or invalid input.
+Detect direct import aliases; skip json.loads/dumps and dynamic/laundered aliases."""
 from __future__ import annotations
 
 import ast

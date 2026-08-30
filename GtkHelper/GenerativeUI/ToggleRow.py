@@ -83,9 +83,7 @@ class ToggleRow(GenerativeUI[int]):
     @override
     def reset_value(self) -> None:
         """Reset the active toggle to its default.
-        An unbuilt row stores the default and skips the callback because it
-        cannot resolve toggle objects.
-        """
+        An unbuilt row stores it and skips callbacks because no toggle objects exist."""
         if self._widget is None:
             self.set_value(self._default_value)
             return

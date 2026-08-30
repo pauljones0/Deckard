@@ -345,10 +345,8 @@ class GenerativeUI[T](ABC):
         run_on_main(_do)
 
     def destroy(self) -> None:
-        """Disconnect the signals, unparent the widget, and unregister.
-        Repeated calls do nothing; do not dispose live Adw composites because
-        GTK logs critical errors.
-        """
+        """Disconnect signals, unparent the widget, and unregister; repeated calls do nothing.
+        Do not dispose live Adw composites because GTK logs critical errors."""
         from GtkHelper.GtkHelper import run_on_main
 
         def _do() -> None:

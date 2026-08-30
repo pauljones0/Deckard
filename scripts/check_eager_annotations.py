@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Find NameError and stdlib AttributeError from eager Python 3.13 annotations.
-Run on deployment Python, not 3.14; skip strings/future modules and non-runtime imports."""
+"""Find eager NameError/stdlib AttributeError on deployment 3.13; skip strings/future modules.
+Do not use 3.14; ast.walk sees direct import aliases at any depth except top-level TYPE_CHECKING."""
 from __future__ import annotations
 
 import ast
@@ -13,7 +13,7 @@ SKIP_DIRS = {".git", ".venv", "__pycache__", "aur-deckard-git", ".claude"}
 
 
 def module_level_runtime_bindings(tree: ast.Module) -> set[str]:
-    """Names bound at module scope at runtime, TYPE_CHECKING blocks excluded."""
+    """Names ast.walk sees under top-level statements, excluding top-level TYPE_CHECKING."""
     names: set[str] = set()
 
     def is_type_checking(test: ast.expr) -> bool:
@@ -43,10 +43,8 @@ def module_level_runtime_bindings(tree: ast.Module) -> set[str]:
 
 
 def annotations_of(tree: ast.Module) -> list[tuple[int, ast.expr]]:
-    """Only the annotations the interpreter actually evaluates.
-    Include parameters, returns, and module or class AnnAssign nodes; exclude
-    function-body AnnAssign nodes under PEP 526.
-    """
+    """Parameters, returns, and module/class AnnAssign nodes evaluated by the interpreter.
+    Exclude function-body AnnAssign nodes under PEP 526."""
     out: list[tuple[int, ast.expr]] = []
 
     def walk_body(body: list[ast.stmt], in_function: bool) -> None:
