@@ -1,6 +1,6 @@
 """Check terminal clear-and-close during shutdown.
 
-close_all submits one control message per controller and joins within 2s.
+close_all gives each controller's media thread a separate 2s join.
 """
 
 # The journal ends with the blank writes and one close(), the thread exits

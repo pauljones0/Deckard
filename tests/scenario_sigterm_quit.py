@@ -1,6 +1,6 @@
 """Check SIGTERM and SIGHUP routing through App.on_quit.
 
-Backends use start_new_session=True, so only terminate_all_backends reaches them.
+Backend sessions evade app-group killpg, so SIGTERM must call terminate_all_backends.
 """
 
 # The checks drive the real methods unbound on stub objects, because
@@ -502,7 +502,7 @@ def drive_on_quit(signal_manager, store_cache=None, watchdog=None) -> Obj:
 def check_appquit_handlers_isolated() -> None:
     """Isolate failures among synchronous AppQuit observers.
 
-    The process exits before asynchronous fan-out could complete.
+    Async fan-out may complete before exit, but completion is not guaranteed.
     """
     # Cover Exception, SystemExit, unnameable netref failure, and weak bound method.
     import sys

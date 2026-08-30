@@ -172,11 +172,11 @@ def check_atomic_ready_claim(controller) -> int:
 
 
 def check_atomic_ready_claim_reload_path(controller) -> int:
-    """Check ready claims through the active-page reload entry point.
+    """Repeat the concurrent ready-claim check through a second probe.
 
-    Page.load calls initialize_actions to pick up new actions.
+    Both worker threads call initialize_actions on the same active page.
     """
-    # A reload racing direct initialization must yield one claim for the shared action.
+    # Two direct calls must yield one claim for the shared action.
     page = controller.active_page
     barrier = threading.Barrier(2)
     action = _make_claim_probe(barrier)
@@ -185,11 +185,11 @@ def check_atomic_ready_claim_reload_path(controller) -> int:
     submits = []
     page._submit_ready_callbacks = lambda a: submits.append(a)
 
-    # Race reload and direct initialization through _ready_claim_lock.
-    controller.active_page = page  # so load()'s active_page gate passes
+    # Race two initialize_actions calls through _ready_claim_lock.
+    controller.active_page = page  # keep the probe page active
 
     def reload_entry():
-        # Reinject the probe after load rebuilds action_objects.
+        # Present the same probe action to both calls.
         page.get_all_actions = lambda: [action]
         page.initialize_actions()
 
