@@ -1,17 +1,5 @@
-"""
-The action tick clears its re-entrancy flag on every path that leaves its window.
-
-own_actions_tick_threaded arms a per-state flag, then submits the tick onto the
-action pool, and the submitted work clears the flag when it completes. Between
-the arming and the submit there is a window. A raise inside that window used to
-leave the flag armed with nothing left to clear it, and that one input never
-ticked again for the life of the page: its animated actions froze while the
-tick loop, whose guard contains the raise, kept walking every other input.
-
-The window has exactly one owner per outcome. A submit that reaches the
-completion callback hands the flag to it. Every other way out of the window,
-a raise or a submit that took no worker, clears the flag on the spot.
-"""
+"""Verify that each action tick clears its re-entrancy flag exactly once on
+completion, submission failure, or an exception before submission."""
 
 import os
 import threading
@@ -42,12 +30,7 @@ HOLD_SECONDS = 5
 
 
 class FlagProbe:
-    """Counts tick-thread submits and flag clears, per input and state.
-
-    Both patches sit on the class, not on a state object, because a page load
-    builds fresh state objects. Counts are keyed by identifier and state index
-    for the same reason.
-    """
+    """Count tick-thread submissions and flag clears across rebuilt states."""
 
     def __init__(self, controller):
         self.lock = threading.Lock()
@@ -106,10 +89,7 @@ class FlagProbe:
             self.marks = 0
 
     def windows(self) -> int:
-        # tick_actions brackets each iteration between a False call and a True
-        # call of mark_page_ready_to_clear, so two marks make one iteration.
-        # Minus one, because the probe can install midway through an iteration
-        # and see a lone True call first.
+        # Two marks bracket an iteration; exclude a possible partial first one.
         with self.lock:
             return max(0, self.marks // 2 - 1)
 
@@ -167,12 +147,7 @@ def give_action(controller, identifier, action_id):
 
 
 def raise_in_the_window_leaves_no_stranded_flag(controller, probe, identifier) -> None:
-    """A raise between the flag write and the submit must not silence the input.
-
-    The submit is made to raise, which is the window the flag has no other
-    owner in. The tick loop guards each input, so the loop survives either
-    way; what this leg reads is whether the input it raised on ticks again.
-    """
+    """A raise between the flag write and submit must not silence the input."""
     state = give_action(controller, identifier, fixtures.STUB_ACTION_ID)
 
     probe.raise_for = identifier.json_identifier
@@ -206,12 +181,7 @@ def raise_in_the_window_leaves_no_stranded_flag(controller, probe, identifier) -
 
 
 def the_normal_path_clears_once_and_not_early(controller, probe, identifier) -> None:
-    """A submitted tick keeps the flag until its own completion clears it.
-
-    The worker is held, and the flag is read while it is in flight. A clear
-    added ahead of the completion would read False there, and a second owner
-    would show as more than one clear for one submit.
-    """
+    """A submitted tick keeps its flag until one completion callback clears it."""
     state = give_action(controller, identifier, fixtures.STUB_ACTION_ID)
 
     release = threading.Event()
@@ -245,11 +215,7 @@ def the_normal_path_clears_once_and_not_early(controller, probe, identifier) -> 
     assert wait_until(lambda: state._tick_running is False, timeout=WAIT_SECONDS), (
         f"the tick worker for {identifier} finished and left the re-entrancy "
         f"flag set -- that input never ticks again")
-    # Let the loop keep walking, then read the clears against the submits. The
-    # loop's own submits count too, so the two numbers have to move together.
-    # Read at a settle point rather than an instant: a submit counted just
-    # before an instantaneous read whose worker completes just after would
-    # show clears one behind and fail a correct tree.
+    # Wait for a settled point so an in-flight worker cannot skew the counters.
     deadline = time.monotonic() + 2.0
     while time.monotonic() < deadline:
         time.sleep(0.1)

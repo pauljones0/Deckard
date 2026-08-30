@@ -1,9 +1,5 @@
-"""
-Integration scenario for two fake decks stormed at once.
-
-Two independent headless controllers, each over its own FaultyFakeDeck, are
-switched concurrently from separate threads.
-"""
+"""Verify independent journals, dedup state, and final content while two fake
+deck controllers switch pages concurrently."""
 
 # Each deck's journal must reflect only its own controller's pages, with no
 # sequence counter, journal or dedup state leaking across controller instances.
@@ -16,9 +12,7 @@ import globals as gl
 
 
 def _settle_on(controller, deck, page, key_count):
-    """Loads one page alone, waits for every key to repaint, returns the
-    per-key hash signature (see scenario_switch_storm's helper of the same
-    shape)."""
+    """Load a page, wait for all keys, and return their hash signature."""
     deck.clear_journal()
     controller.load_page(page, allow_reload=True)
 
@@ -70,9 +64,7 @@ def main() -> None:
             f"key {k}: controller1 and controller2 produced overlapping hashes"
         )
 
-    # Reset each to a neutral page before storming (see scenario_switch_storm
-    # for why. The dedup guard would otherwise no-op a repeat of already-
-    # displayed content).
+    # Neutral pages prevent deduplication of an already displayed storm target.
     d1_neutral = gl.page_manager.get_page(fixtures.seed_page("D1Neutral"), controller1)
     d2_neutral = gl.page_manager.get_page(fixtures.seed_page("D2Neutral"), controller2)
     _settle_on(controller1, deck1, d1_neutral, key_count1)

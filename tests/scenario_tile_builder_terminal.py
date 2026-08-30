@@ -1,10 +1,5 @@
-"""
-The tile-cache builder thread must terminate when a build cannot complete.
-
-_run_builder funnels every non-completing outcome through one terminal seam,
-is_build_terminal, and returns. A promote failure at end-of-source, a
-VideoWriter that never opens and a truncated source each drive that seam.
-"""
+"""Verify that is_build_terminal ends tile-cache builders after promotion,
+writer-open, or truncated-source failures."""
 
 # A bounded join detects a builder that busy-spins instead of returning.
 import fixtures  # noqa: F401  (import first: sets up the isolated data dir)
@@ -44,9 +39,7 @@ def make_entry(cache_path: str):
 
 
 def run_builder_and_join(entry, source, out_size=(72, 72), saturation=1.0):
-    """Start the real _run_builder on its own thread and bound-join it. A
-    builder that busy-spins on a terminal build never returns, so is_alive
-    after the join catches it directly."""
+    """Start _run_builder and use a bounded join to detect a terminal spin."""
     t = threading.Thread(
         target=mtc._run_builder,
         args=(entry, source, out_size, saturation),
@@ -57,9 +50,7 @@ def run_builder_and_join(entry, source, out_size=(72, 72), saturation=1.0):
     return t
 
 
-# Leg 1. A promote failure. The cache path is a directory, so the os.replace
-# at end-of-source raises OSError and the capture is released without
-# completion, which is the terminal state.
+# A directory at the cache path makes end-of-source promotion fail.
 def leg_promote_failure() -> int:
     source = make_mp4(os.path.join(gl.DATA_PATH, "source_promote.mp4"))
 
@@ -80,9 +71,7 @@ def leg_promote_failure() -> int:
     return 0
 
 
-# Leg 2. A VideoWriter that never opens. _end_of_source then runs with
-# _writer None and promotes nothing, so the cache never completes and the
-# source capture is released. A stub whose isOpened is False forces it.
+# A writer that never opens leaves no cache to promote.
 class _DeadWriter:
     def isOpened(self):
         return False
@@ -104,9 +93,7 @@ def leg_writer_open_fail() -> int:
     real_video_writer = mtc.cv2.VideoWriter
 
     def fake_video_writer(*a, **k):
-        # Only the builder's write-cache VideoWriter goes through this call
-        # site in _open_source; return a never-opened writer so _writer stays
-        # None (the real "could not open tile cache writer" branch).
+        # Keep the builder's cache writer unopened.
         return _DeadWriter()
 
     mtc.cv2.VideoWriter = fake_video_writer
@@ -130,19 +117,9 @@ def leg_writer_open_fail() -> int:
     return 0
 
 
-# Leg 3. A truncated source. The container metadata promises N frames but the
-# file delivers fewer. Byte-truncating an mp4v file is all-or-nothing here
-# (the moov atom sits in the trailing bytes, so any truncation that drops
-# sample data also drops the frame-count metadata, so the file does not open
-# and takes the n_frames path this file already covers rather than the
-# terminal seam). The truncation is modelled at the capture seam. A capture
-# that opens and reports a positive CAP_PROP_FRAME_COUNT but whose read fails
-# at once, as a source truncated to its header does. _end_of_source then
-# releases the capture with nothing written and nothing promoted, which is
-# the terminal state.
+# Model a source whose metadata promises frames but whose first read fails.
 class _TruncatedCapture:
-    """A cv2.VideoCapture stand-in for a source whose metadata over-promises.
-    It opens and reports PROMISED frames, and read() never succeeds."""
+    """Report promised frames from an open capture whose reads always fail."""
 
     PROMISED = 60
 
@@ -184,9 +161,7 @@ def leg_truncated_source() -> int:
     def fake_capture(*a, **k):
         return _TruncatedCapture()
 
-    # The writer would open fine, but with zero readable source frames nothing
-    # is ever written; still, stub it so no real encoder file is touched and
-    # The _frames_written branch of _end_of_source is provably not taken.
+    # Avoid a real encoder file and keep the written-frame count at zero.
     mtc.cv2.VideoCapture = fake_capture
     mtc.cv2.VideoWriter = lambda *a, **k: _DeadWriter()
     try:
@@ -212,10 +187,7 @@ def leg_truncated_source() -> int:
 
 
 def leg_failed_builder_is_retryable() -> int:
-    # A builder whose KeyVideoCache constructor raises must clear the entry's
-    # builder handle, so a later acquire() can start another one instead of
-    # leaving the key uncached for every remaining consumer. The failure also
-    # paces the retry with a cooldown.
+    # Construction failure must clear the handle and apply a retry cooldown.
     source = make_mp4(os.path.join(gl.DATA_PATH, "source_retry.mp4"))
     out_size = (72, 72)
     real_ctor = mtc.KeyVideoCache

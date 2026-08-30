@@ -1,22 +1,5 @@
-"""A deck that only a USB reset revives takes exactly one, and only where it
-can be told apart from every healthy device.
-
-The reset itself is one ioctl on a usbfs node, which no scenario can issue: a
-regular file answers it with ENOTTY and there is no deck on the bus. What every
-leg here drives for real is everything around that one call. The bus is a
-directory tree laid out the way the kernel lays sysfs and usbfs out, with a
-device descriptor at the head of every node, the production code walks it,
-matches the device, builds the node path, opens it and reads the identity back
-from it, and a recorder stands in for the ioctl and says which node the
-descriptor it was handed belongs to. One leg runs the shipped seam instead, to
-prove the call reaches that descriptor at all.
-
-Two production paths reach the reset and both are driven here: the reader
-supervisor's give-up latch, which resets and then asks for one more round of
-reopen attempts, and the deck-open retry, which resets after a round of
-transport errors and constructs once more. Each is latched, and a leg spends
-the latch twice to prove the second reset never happens.
-"""
+"""Verify one-shot USB reset recovery for reader give-up and deck-open retry,
+with exact identity, node revalidation, sandbox degradation, and the ioctl seam."""
 import errno
 import gc
 import os
@@ -49,15 +32,7 @@ OTHER_VENDOR = 0x1D6B
 
 
 class Enumeration:
-    """The transport object hidapi hangs the enumeration strings on.
-
-    A deck that will not open still answers with the serial the USB
-    enumeration read, and the deck-open retry has no other serial to match on:
-    its controller never got far enough to read one.
-
-    The mutex is the attribute the fair transport lock is installed on. A
-    transport without it is library drift, and the installer says so.
-    """
+    """Provide the enumerated serial and transport mutex before a controller exists."""
 
     def __init__(self, serial: str):
         self._serial = serial
@@ -68,11 +43,7 @@ class Enumeration:
 
 
 class ElgatoFakeDeck(FaultyFakeDeck):
-    """A fake deck that reports the Elgato vendor.
-
-    FakeDeck reports vendor 0, which the reset refuses, so a deck that models
-    the field incident has to say what a real deck says.
-    """
+    """Report the Elgato identity required by reset validation."""
 
     def vendor_id(self) -> int:
         return usb_reset.ELGATO_VENDOR_ID
@@ -82,13 +53,7 @@ class ElgatoFakeDeck(FaultyFakeDeck):
 
 
 class WedgedOpenDeck(ElgatoFakeDeck):
-    """A deck whose open() fails with a transport error a set number of times.
-
-    That is the field state the deck-open retry gives up on: the device
-    enumerates, its identity reads, and every open of the HID interface fails.
-    It starts closed, because a deck that reports itself open is never opened
-    by the retry at all.
-    """
+    """Start closed and fail a configured number of HID opens with transport errors."""
 
     def __init__(self, *args, transport_failures: int = 0, enumerated_serial=None, **kwargs):
         super().__init__(*args, **kwargs)
@@ -107,12 +72,7 @@ class WedgedOpenDeck(ElgatoFakeDeck):
 
 
 class ResetRecorder:
-    """Stands in for the reset ioctl and records which node it was asked for.
-
-    The descriptor is the whole contract: the production code opens the node it
-    matched and hands that descriptor over, so the inode behind it names the
-    device that would have been reset.
-    """
+    """Record reset targets by the device and inode behind each descriptor."""
 
     def __init__(self) -> None:
         self.calls: list[tuple[int, int]] = []
@@ -140,12 +100,7 @@ def _write_bytes(path: str, data: bytes) -> None:
 
 
 def device_descriptor(vendor_id: int, product_id: int) -> bytes:
-    """The 18-byte USB device descriptor a usbfs node carries at offset zero.
-
-    Only the two ids are read back, at offsets 8 and 10; the rest is a
-    plausible full-speed device, so the length the reader insists on is the
-    real one.
-    """
+    """Build a full 18-byte USB descriptor with ids at offsets 8 and 10."""
     return bytes([
         18, 1,                                      # bLength, bDescriptorType
         0x00, 0x02,                                 # bcdUSB 2.00
@@ -159,21 +114,8 @@ def device_descriptor(vendor_id: int, product_id: int) -> bytes:
 
 
 class FakeBus:
-    """A sysfs listing and a usbfs node tree, with the module pointed at them.
-
-    devices are (name, vendor_id, product_id, busnum, devnum, serial) tuples,
-    and a serial of None writes no serial attribute, which is a device that
-    reports none.
-
-    Every node carries the device descriptor of its entry, the way usbfs does,
-    because the reset reads the identity back from the node it opened before it
-    issues the ioctl. write_descriptor() puts another identity behind a node,
-    which is the device that took the bus and device number of a deck that left.
-
-    The tree also carries the two sysfs entries that are not devices: an
-    interface, which has no idVendor, and a root hub of another vendor. A walk
-    that took either for a device would reset the wrong thing.
-    """
+    """Build descriptor-backed sysfs and usbfs entries from name, ids, bus,
+    device, and optional serial tuples, plus an interface and foreign root hub."""
 
     def __init__(self, name: str, devices) -> None:
         root = os.path.join(gl.DATA_PATH, name)
@@ -210,12 +152,7 @@ class FakeBus:
 
     def write_descriptor(self, busnum: int, devnum: int,
                          vendor_id: int, product_id: int) -> None:
-        """Put another device behind a node the sysfs listing still names.
-
-        A deck that leaves the bus gives its bus and device number back, and
-        the next device to arrive takes them. The sysfs walk then names a node
-        that belongs to a stranger.
-        """
+        """Replace a node identity while its sysfs listing remains unchanged."""
         _write_bytes(self.node(busnum, devnum), device_descriptor(vendor_id, product_id))
 
     def restore(self) -> None:
@@ -237,12 +174,7 @@ def make_controller(serial: str):
 
 
 def drive_to_give_up(supervisor, label: str) -> None:
-    """Submit reopen attempts until the give-up latch fires.
-
-    The attempts are not what these legs measure. The reader scenario owns the
-    recovery policy, and a give-up needs a run of attempts to reach, so this
-    submits them directly rather than modeling a reader that dies five times.
-    """
+    """Submit reopen attempts directly until the give-up latch fires."""
     for _ in range(reader_supervisor.MAX_CONSECUTIVE_ATTEMPTS + 1):
         if not supervisor.request_reopen():
             return
@@ -257,12 +189,7 @@ def warnings_sink(records: list):
 
 
 def test_a_give_up_resets_the_deck_once() -> None:
-    """The give-up latch resets the deck's own node and asks for one more round.
-
-    The reset is the whole point of the escalation, and the round behind it is
-    what makes the reset worth issuing: without it the deck stays given up and
-    the reset revives a device the app has stopped driving.
-    """
+    """Give-up resets the matched node once and grants one fresh attempt round."""
     bus = FakeBus("usb-escalate", [
         ("3-1", ELGATO, PRODUCT_ID, 3, 7, "ESCALATE-SERIAL"),
         # A second Elgato deck of another model, on the same bus. The match must
@@ -318,12 +245,7 @@ def test_a_give_up_resets_the_deck_once() -> None:
 
 
 def test_an_ambiguous_device_is_never_reset() -> None:
-    """Two decks of one model, and no serial to tell them apart: reset neither.
-
-    A wedged deck can refuse the serial read that would name it. Resetting a
-    second, healthy deck of the same model because it is the same model takes
-    a working deck down, which is worse than leaving the wedged one down.
-    """
+    """Do not reset either of two same-model devices without usable serials."""
     bus = FakeBus("usb-ambiguous", [
         ("3-1", ELGATO, PRODUCT_ID, 3, 7, None),
         ("3-2", ELGATO, PRODUCT_ID, 3, 8, None),
@@ -346,9 +268,7 @@ def test_an_ambiguous_device_is_never_reset() -> None:
         assert any("cannot be told from the healthy ones" in r for r in records), (
             "the skipped reset left no line saying why the deck was not reset")
 
-        # A give-up that reset nothing spent nothing. Hand the deck another
-        # round the way a reset would, and the next give-up has to try the
-        # match again: the healthy twin can have left the bus by then.
+        # A refused reset spends no latch, so a later give-up must retry matching.
         supervisor.allow_one_more_round()
         drive_to_give_up(supervisor, "ambiguous-again")
         assert len([r for r in records if "cannot be told from the healthy ones" in r]) == 2, (
@@ -364,12 +284,7 @@ def test_an_ambiguous_device_is_never_reset() -> None:
 
 
 def test_the_open_retry_resets_and_tries_once_more() -> None:
-    """A round of transport errors buys one reset and one more round.
-
-    This is the field incident: the deck enumerates, every open fails, and the
-    app skips it for the session. The serial comes from the USB enumeration
-    here, because the controller that would have read one never got built.
-    """
+    """A full transport-error round buys one reset and one more open round."""
     bus = FakeBus("usb-boot", [
         ("3-1", ELGATO, PRODUCT_ID, 3, 4, "BOOT-SERIAL"),
         ("3-2", ELGATO, PRODUCT_ID, 3, 5, "OTHER-SERIAL"),
@@ -381,10 +296,7 @@ def test_the_open_retry_resets_and_tries_once_more() -> None:
         fixtures.seed_page("Main")
         deck = WedgedOpenDeck(serial_number="boot-reset", deck_type="Fake Deck",
                               transport_failures=2, enumerated_serial="BOOT-SERIAL")
-        # The opens the device had taken when the reset was issued. The count
-        # says the reset comes after a whole round and not inside one, without
-        # naming how many opens one attempt makes: a controller opens the
-        # handle again itself.
+        # Record the open count when reset occurs to prove the first round ended.
         opens_at_reset: list[int] = []
         recorder = bus.recorder
 
@@ -409,9 +321,7 @@ def test_the_open_retry_resets_and_tries_once_more() -> None:
             "the device was never opened again after the reset, so the reset bought no "
             "round at all")
 
-        # A second wedged deck of the same identity gets no second reset. The
-        # boot rescan and every hotplug event run this retry again, and a reset
-        # per round is a reset loop.
+        # Repeated retries of one device identity must not form a reset loop.
         again = WedgedOpenDeck(serial_number="boot-reset-2", deck_type="Fake Deck",
                                transport_failures=99, enumerated_serial="BOOT-SERIAL")
         assert DeckManager._init_deck_controller_with_retry(
@@ -431,13 +341,7 @@ def test_the_open_retry_resets_and_tries_once_more() -> None:
 
 
 def test_a_reset_the_app_could_not_reach_spends_nothing() -> None:
-    """A round that reached no device leaves the deck its one reset.
-
-    The deck-open retry runs again on every rescan round and every hotplug
-    event, and the reason a reset was refused can be gone by the next one: a
-    sandbox is not, but a bus that changed under the match is. A latch that
-    counted a refusal would burn the reset of a device the app never reached.
-    """
+    """Failure to reach usbfs spends no reset latch for later retry rounds."""
     bus = FakeBus("usb-refused", [("3-1", ELGATO, PRODUCT_ID, 3, 9, "REFUSED-SERIAL")])
     records: list = []
     sink_id = warnings_sink(records)
@@ -472,12 +376,7 @@ def test_a_reset_the_app_could_not_reach_spends_nothing() -> None:
 
 
 def test_a_failure_that_is_not_transport_resets_nothing() -> None:
-    """A deck another process holds is not a deck a reset revives.
-
-    The retired boot-time sweep reset every Elgato device it could find. The
-    recovery that replaced it fires on one arm only, and this is the arm next
-    to it.
-    """
+    """A non-transport open failure does not retry or reset the device."""
     bus = FakeBus("usb-generic", [("3-1", ELGATO, PRODUCT_ID, 3, 4, "GENERIC-SERIAL")])
     try:
         fixtures.seed_page("Main")
@@ -503,13 +402,7 @@ def test_a_failure_that_is_not_transport_resets_nothing() -> None:
 
 
 def test_a_device_of_another_vendor_is_never_reset() -> None:
-    """Only an Elgato device is reset, whatever asks.
-
-    A fake deck and a remote deck reach the same give-up arms and neither has
-    a USB node behind it, and the bus carries devices this app drives nothing
-    of. The device of another vendor here sits on the bus with a serial that
-    matches, so nothing but the vendor keeps the reset off it.
-    """
+    """Reject reset requests for non-Elgato devices even when serial and product match."""
     bus = FakeBus("usb-vendor", [
         ("3-1", ELGATO, PRODUCT_ID, 3, 4, "VENDOR-SERIAL"),
         ("3-3", OTHER_VENDOR, PRODUCT_ID, 3, 6, "OTHER-VENDOR-SERIAL"),
@@ -529,11 +422,7 @@ def test_a_device_of_another_vendor_is_never_reset() -> None:
 
 
 def test_two_devices_with_one_serial_are_never_reset() -> None:
-    """Two devices that report the same serial name no single device.
-
-    A serial that matches twice is no better than no serial at all, and the
-    single-device rule below it does not apply either: there are two.
-    """
+    """A serial reported by two devices is ambiguous and resets neither."""
     bus = FakeBus("usb-twins", [
         ("3-1", ELGATO, PRODUCT_ID, 3, 4, "TWIN-SERIAL"),
         ("3-2", ELGATO, PRODUCT_ID, 3, 5, "TWIN-SERIAL"),
@@ -554,13 +443,7 @@ def test_two_devices_with_one_serial_are_never_reset() -> None:
 
 
 def test_a_node_that_changed_device_is_never_reset() -> None:
-    """The node is re-checked against the device behind it, not against sysfs.
-
-    A wedged deck can leave the bus between the sysfs walk and the open, and
-    the kernel gives its bus and device number to the next device that
-    arrives. The node the match named then belongs to a stranger, and the
-    reset would take that stranger down.
-    """
+    """Revalidate an opened node so bus-number reuse cannot reset a stranger."""
     bus = FakeBus("usb-stranger", [("3-1", ELGATO, PRODUCT_ID, 3, 7, "STRANGER-SERIAL")])
     records: list = []
     sink_id = warnings_sink(records)
@@ -590,12 +473,7 @@ def test_a_node_that_changed_device_is_never_reset() -> None:
 
 
 def test_a_node_with_a_short_descriptor_is_never_reset() -> None:
-    """A node that cannot answer with a whole device descriptor is left alone.
-
-    The two ids sit early enough that a truncated read still carries them, and
-    reading them from a device that stopped answering mid-descriptor says
-    nothing about what that device is now.
-    """
+    """Reject a node that returns ids but not a complete device descriptor."""
     bus = FakeBus("usb-short", [("3-1", ELGATO, PRODUCT_ID, 3, 7, "SHORT-SERIAL")])
     records: list = []
     sink_id = warnings_sink(records)
@@ -618,13 +496,7 @@ def test_a_node_with_a_short_descriptor_is_never_reset() -> None:
 
 
 def test_the_escalation_hook_belongs_to_its_watchdog() -> None:
-    """The hook holds its watchdog weakly, and one teardown clears one hook.
-
-    The hook lives in a module-level slot for the life of the process. A strong
-    reference there pins the watchdog, the manager behind it and every
-    controller that manager registered, and a teardown that cleared whatever
-    it found would take down the hook of a manager built after it.
-    """
+    """The escalation hook holds its owner weakly and only that owner can clear it."""
     bus = FakeBus("usb-hook", [("3-1", ELGATO, PRODUCT_ID, 3, 7, "HOOK-SERIAL")])
     controller = make_controller("HOOK-SERIAL")
     first = DeckReaderWatchdog(gl.deck_manager)
@@ -662,12 +534,7 @@ def test_the_escalation_hook_belongs_to_its_watchdog() -> None:
 
 
 def test_the_ioctl_seam_reaches_the_descriptor_it_is_handed() -> None:
-    """The shipped seam issues the ioctl on the descriptor, not on a path.
-
-    Every other leg records the seam instead of running it. This one runs the
-    shipped function against a regular file, where the kernel answers an ioctl
-    with ENOTTY: the error proves the call reached the descriptor.
-    """
+    """The shipped ioctl seam reaches its descriptor, proven by ENOTTY on a file."""
     path = os.path.join(gl.DATA_PATH, "usb-seam-node")
     _write_bytes(path, device_descriptor(ELGATO, PRODUCT_ID))
     fd = os.open(path, os.O_RDWR)
@@ -690,12 +557,7 @@ def test_the_ioctl_seam_reaches_the_descriptor_it_is_handed() -> None:
 
 
 def test_a_sandbox_without_usb_nodes_degrades() -> None:
-    """No /dev/bus/usb, no reset, and one line that says so.
-
-    A flatpak sandbox without USB device access carries no usbfs tree. The
-    recovery then degrades to what the app did before it: it asks the user to
-    replug.
-    """
+    """Missing usbfs access performs no reset and logs the reason once."""
     bus = FakeBus("usb-sandbox", [("3-1", ELGATO, PRODUCT_ID, 3, 4, "SANDBOX-SERIAL")])
     records: list = []
     sink_id = warnings_sink(records)
@@ -717,12 +579,7 @@ def test_a_sandbox_without_usb_nodes_degrades() -> None:
 
 
 def test_the_reset_request_number_is_the_kernel_one() -> None:
-    """USBDEVFS_RESET is _IO('U', 20).
-
-    The scenarios record the ioctl instead of issuing it, so nothing else here
-    would notice the day this number is edited, and an ioctl with the wrong
-    request number on a real device does something else.
-    """
+    """USBDEVFS_RESET equals the kernel _IO('U', 20) request."""
     assert usb_reset.USBDEVFS_RESET == (ord("U") << 8) | 20, (
         f"the reset request number is {usb_reset.USBDEVFS_RESET}, which is not "
         f"_IO('U', 20) from linux/usbdevice_fs.h")

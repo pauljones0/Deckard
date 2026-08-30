@@ -1,10 +1,5 @@
-"""
-Regression test for the main-window toast methods.
-
-MainWindow.show_error_toast exists and is defined exactly once, because a
-second definition would shadow the first. The methods run unbound over a duck-
-typed self.
-"""
+"""Verify one definition per main-window toast method and main-context
+marshalling when the unbound methods run over a duck-typed window."""
 
 # Both toast methods, called from a worker thread as update_assets does, touch
 # the overlay only through the GLib main context.

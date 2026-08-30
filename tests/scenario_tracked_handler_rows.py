@@ -1,15 +1,5 @@
-"""Rows that disconnect and reconnect must track the handler id they wire.
-
-A disconnect that swallowed every failure hid a wrong argument: the handler
-stayed on the widget, and every later load added another one, so one edit was
-saved as many times as the row had ever been loaded. A tracked id makes the
-pair exact, and makes it idempotent in both directions: a disconnect while
-already off cannot raise, and a reconnect cannot stack a second handler.
-
-This harness builds no real GTK widget. It drives the real connect, disconnect
-and load methods on duck-typed stand-ins, the same pattern
-scenario_editor_reconnect uses.
-"""
+"""Verify idempotent handler-id connection and disconnection on duck-typed row
+widgets, including failed updates and repeated loads."""
 
 import fixtures  # noqa: F401  (must be first: isolates DATA_PATH before globals)
 
@@ -31,11 +21,7 @@ from src.windows.Settings.PluginSettingsWindow.PluginSettingsWindow import (
 
 
 class FakeWidget:
-    """A widget that records its handlers by id, as GTK does.
-
-    disconnect_by_func fails loudly. Every row here must reach its handler
-    through the id it tracked, never through the function it passed.
-    """
+    """Record handlers by id and reject function-based disconnection."""
 
     def __init__(self) -> None:
         self._handlers: dict[int, object] = {}
@@ -102,11 +88,7 @@ class FakeToggleWidget(FakeWidget):
 
 
 def _make_gen_row(cls, widget):
-    """A built generative-ui row with no ActionCore behind it.
-
-    The row is never constructed, so it registers nothing and builds nothing.
-    Only the wiring state the connect and disconnect paths read is filled in.
-    """
+    """Build only the wiring state required by generative row signal methods."""
     row = object.__new__(cls)
     row._signal_handlers = {}
     row._widget = widget
@@ -163,9 +145,7 @@ def test_generative_rows_wire_once_and_unwire_once() -> None:
 
 
 def test_spin_row_tracks_both_of_its_widgets() -> None:
-    """The spin row wires the adjustment and the row itself, under two keys.
-
-    One shared key would leave the second widget wired forever."""
+    """The spin row tracks its adjustment and row handlers separately."""
     row = _make_gen_row(SpinRow, FakeWidget())
     row._adjustment = FakeWidget()
 
@@ -181,11 +161,7 @@ def test_spin_row_tracks_both_of_its_widgets() -> None:
 
 
 def test_entry_row_reset_leaves_one_handler() -> None:
-    """The cursor-preserving reset disconnects, writes, and reconnects.
-
-    The reconnect once ran unconditionally on top of the reconnect the
-    set_ui_value wrapper had already done, so every filtered keystroke added
-    another handler."""
+    """A cursor-preserving reset reconnects once, including after a failed write."""
     widget = FakeWidget()
     row = _make_gen_row(EntryRow, widget)
     row.filter_func = None
@@ -273,10 +249,7 @@ def _make_screensaver_group():
 
 
 def test_page_editor_group_wires_once_per_load() -> None:
-    """Repeated page loads must leave one handler per row.
-
-    A duplicate here writes the brightness the row just showed back to the
-    page, and applies it to the deck again, once per page the user selected."""
+    """Repeated page loads leave one handler on each row."""
     group = _make_screensaver_group()
     group.load_config_settings = lambda page_path: None
 

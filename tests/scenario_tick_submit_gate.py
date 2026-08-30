@@ -1,19 +1,8 @@
-"""
-The action tick submits pool work only for an input the worker would run.
+"""Verify that action ticks submit only for live ActionCore entries to prevent
+permanent pool growth, and fail open when the action table changes concurrently."""
 
-tick_actions walks every input on the deck once a second. The pool behind
-own_actions_tick_threaded retires no worker, so a submit for an input the
-worker finds nothing to run on grows that pool for nothing. The worker keeps
-only ActionCore entries, and the gate ahead of the submit matches that.
-"""
-
-# A missing or outdated plugin leaves a truthy placeholder in the page's action
-# table, so an emptiness test alone would still submit for those inputs.
-#
-# The gate reads the action table without a lock, and that read raises while
-# another thread edits the table. The loop's guard would then cost this input
-# its tick and write a record for a page edit that is no fault, so the gate
-# fails open and never leans on the guard.
+# Missing plugins leave truthy placeholders, so an emptiness check is not enough.
+# Concurrent edits can make the unlocked gate read raise, so it must fail open.
 import os
 import threading
 
@@ -28,9 +17,7 @@ from src.backend.PluginManager.ActionCore import ActionCore
 # The whole scenario stays well inside run_all.py's per-scenario timeout, so a
 # failing leg reports its own assertion instead of being killed from outside.
 WATCHDOG_SECONDS = 75
-# Budget for one wait. Only one wait per run can time out, because the assert
-# that follows it raises, so the worst path is the settling time of the legs
-# before it plus this.
+# Budget for one wait; the first timeout ends the run.
 WAIT_SECONDS = 15
 # Complete tick iterations to observe before a no-submit count is read.
 OBSERVED_WINDOWS = 2
@@ -42,12 +29,7 @@ MISSING_ACTION_ID = "dev_test_MissingPlugin"
 
 
 class TickProbe:
-    """Counts tick-thread submits per input, and tick iterations.
-
-    The submit patch sits on the class, not on a state object, because
-    create_n_states builds fresh state objects on every page load. Counts are
-    keyed by identifier and state index for the same reason.
-    """
+    """Count tick-thread submissions and iterations across rebuilt states."""
 
     def __init__(self, controller):
         self.lock = threading.Lock()
@@ -87,10 +69,7 @@ class TickProbe:
             self.marks = 0
 
     def windows(self) -> int:
-        # tick_actions brackets each iteration between a False call and a True
-        # call of mark_page_ready_to_clear, so two marks make one iteration.
-        # Minus one, because the probe can install midway through an iteration
-        # and see a lone True call first.
+        # Two marks bracket an iteration; exclude a possible partial first one.
         with self.lock:
             return max(0, self.marks // 2 - 1)
 
@@ -126,11 +105,7 @@ def actions_for(controller, identifier) -> list:
 
 
 def set_page_actions(controller, identifier, action_ids) -> None:
-    """Rewrite one input's action list, the shape the action sidebar writes.
-
-    The state dict is re-read on every call, because a reload from file
-    replaces the page's dict.
-    """
+    """Rewrite one input's actions and re-read the state dict after each reload."""
     page = controller.active_page
     state_dict = identifier.ensure_state_dict(page, 0)
     state_dict["actions"] = [{"id": action_id, "settings": {}}
@@ -154,9 +129,7 @@ def running_flags(controller) -> list:
 
 def empty_page_submits_nothing(controller, probe) -> None:
     """No input on the seeded page carries an action, so nothing is submitted."""
-    # The tick loop skips every input while a screensaver shows, and its
-    # bracket runs either way, so a showing screensaver would satisfy the
-    # count below without the gate doing anything.
+    # A visible screensaver would skip all inputs and make this count invalid.
     assert not controller.screen_saver.showing, (
         "a screensaver is showing, and the tick loop skips every input while "
         "it does -- the count below would pass with no gate at all")
@@ -168,9 +141,7 @@ def empty_page_submits_nothing(controller, probe) -> None:
         f"iterations on a page with no action anywhere ({probe.busiest()}) -- "
         f"every one of them occupies a pool worker that is never retired")
 
-    # The gate returns before the re-entrancy flag is stored. A gate that
-    # returned after would leave the flag set on every input it skipped, and
-    # that input would never tick again.
+    # The gate must return before setting the re-entrancy flag.
     stranded = running_flags(controller)
     assert not stranded, (
         f"the tick's re-entrancy flag is still set on {stranded} after "
@@ -181,12 +152,7 @@ def empty_page_submits_nothing(controller, probe) -> None:
 
 
 def placeholder_only_submits_nothing(controller, probe, identifier) -> None:
-    """A placeholder is not work: it draws no submit until it resolves.
-
-    An action id no holder resolves loads as NoActionHolderFound. It is truthy
-    in the page's action table, and the worker discards it, so the gate must
-    discard it too.
-    """
+    """A truthy unresolved-action placeholder draws no submit until it resolves."""
     set_page_actions(controller, identifier, [MISSING_ACTION_ID])
     assert wait_until(lambda: len(actions_for(controller, identifier)) == 1,
                       timeout=WAIT_SECONDS), (
@@ -250,10 +216,7 @@ def raising_gate_still_submits(controller, probe, identifier) -> None:
     real_get_own_actions = state.get_own_actions
 
     def raising_gate(*args, **kwargs):
-        # Raise on the tick thread only. The gate is that thread's single
-        # caller of get_own_actions, while the pool, the media thread and the
-        # input callbacks reach the same state through other callers, where a
-        # raise says nothing about the gate.
+        # Raise only for the gate's tick-thread call to get_own_actions.
         if threading.current_thread().name == TICK_THREAD:
             raise RuntimeError("a gate read blew up")
         return real_get_own_actions(*args, **kwargs)
@@ -281,18 +244,8 @@ def raising_gate_still_submits(controller, probe, identifier) -> None:
 
 
 def shut_down_pool_leaves_the_tick_quiet(controller, probe, identifier) -> None:
-    """A pool that is shut down but still attached must drop the tick, quietly.
-
-    That pair is a real state of this deck, not a contrivance. The failed-init
-    teardown shuts both pools down and never nulls them, and close() shuts
-    down before it nulls, so every tick in between meets a live attribute over
-    a dead pool. The pool answers such a submit with None instead of raising,
-    and the tick has to read that: the loop's guard costs the raising input its
-    tick and writes a record, and the input it raised on keeps its re-entrancy
-    flag set, which silences that input for good.
-
-    This leg runs last. It leaves the deck without a usable action pool.
-    """
+    """A shut-down but attached pool drops ticks without raising or stranding
+    re-entrancy flags; this final check leaves the pool unusable."""
     controller_input = controller.get_input(identifier)
     assert controller_input is not None, f"fixture sanity: no input {identifier}"
     state = controller_input.get_active_state()

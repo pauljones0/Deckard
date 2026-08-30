@@ -1,20 +1,5 @@
-"""The strip composite reaches the device in the device's orientation.
-
-The keys are turned on the producer side, in _to_rotated_rgb, before the
-JPEG encode. The strip is turned in the same place, in _encode_strip_native,
-so what the media thread writes is already what the device expects and no
-consumer below it holds a second copy of the rule.
-
-The legs encode a strip with a bright block in one corner, decode the bytes
-back and ask which of the four corners the block came out in. The block is
-shorter than the strip is tall, so a half turn moves it on both axes: a
-mirror on one axis alone lands it in a corner the checks call wrong. JPEG is
-lossy, so each leg compares corner means with a wide margin instead of exact
-pixels.
-
-Deck shape, stated once so a configurable fake deck can adopt it later: an
-800 by 100 strip, which is the Stream Deck + shape the fake deck models.
-"""
+"""Verify native strip orientation with a non-symmetric 800 by 100 image and
+loss-tolerant corner brightness checks."""
 import fixtures  # noqa: F401  (import first: sets up the isolated data dir)
 
 import io
@@ -28,10 +13,7 @@ from src.backend.DeckManagement.deck_controller.native_encode import _encode_str
 
 ROTATIONS = (0, 90, 180, 270)
 STRIP_SIZE = (800, 100)
-# The bright block, and the corner box each leg averages over. The box is the
-# block, so a correct turn puts the whole block inside exactly one box. The
-# block is deliberately not as tall as the strip: a block of full height
-# cannot tell a half turn from a left-to-right mirror.
+# A short block distinguishes a half turn from a horizontal mirror.
 BLOCK_W, BLOCK_H = 100, 40
 
 
@@ -112,11 +94,7 @@ def check_strip_pixels(mode: str) -> int:
         decoded.close()
         strip.close()
 
-        # At 180 the block belongs in the opposite corner of the device's own
-        # strip, moved on both axes, because the deck is upside down under
-        # the user's hand. A mirror on one axis alone puts it in the
-        # top-right or the bottom-left, which the dark checks below refuse.
-        # Everywhere else the composite goes to the device as it was drawn.
+        # A 180-degree turn moves the block on both axes; other values leave it.
         lit = "bottom_right" if rotation == 180 else "top_left"
         if not means[lit] > 200:
             print(f"FAIL({mode}): rotation {rotation}: the block should sit "
@@ -138,9 +116,7 @@ def check_strip_pixels(mode: str) -> int:
 def main() -> int:
     start_watchdog(60, "touchscreen_rotation")
     fixtures.install_stub_globals()
-    # Both composite modes: a page with transparency composites RGBA, a
-    # background video hands over RGB. The RGB leg is the one that must not
-    # close the caller's own image.
+    # Cover transparent RGBA composites and RGB video frames.
     rc = check_strip_pixels("RGBA")
     rc |= check_strip_pixels("RGB")
     return rc

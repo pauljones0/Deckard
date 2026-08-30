@@ -1,10 +1,5 @@
-"""
-Unit-tier scenario for the file-level tile-cache registry.
-
-Two consumers that acquire the same (md5, size, saturation) share one cache
-file and one builder thread, each with its own VideoCapture. Releasing both
-drops the entry.
-"""
+"""Verify that equal md5, size, and saturation keys share one cache and builder
+with per-reader captures, and that final release drops the registry entry."""
 
 # The detached builder promotes the cache while a consumer plays from the
 # source, and the consumer switches over on its next get_frame.
@@ -54,9 +49,7 @@ def check_shared_file_one_builder() -> None:
         assert r1 is not r2, "each consumer must get its own reader instance"
         assert r1._registry_entry is r2._registry_entry, "both readers must share one registry entry"
         assert r1.cache_path == r2.cache_path == entry.path, "both readers must target the same cache file"
-        # Each consumer owns its own VideoCapture, or None before the open,
-        # so one consumer's seeks and reads cannot move the other's decode
-        # position.
+        # Separate captures prevent one reader's seek from moving another.
         assert r1.cap is not r2.cap or r1.cap is None, "consumers must not share a VideoCapture"
 
         assert entry.builder_thread is not None, "first acquire with no promoted cache must start a builder"
@@ -94,9 +87,7 @@ def check_builder_promotes_during_playback() -> None:
         key = mp4_tile_cache._registry_key(video_path, size, 1.0)
         entry = mp4_tile_cache._registry[key]
 
-        # Drive the consumer from frame 0 at once. Unless the builder raced
-        # ahead and promoted, this comes from the consumer's own source
-        # decode rather than a cache file that does not exist yet.
+        # Read from source unless the builder already promoted the cache.
         first_frame = reader.get_frame(0)
         assert first_frame is not None
         if not entry.ready:
@@ -107,9 +98,7 @@ def check_builder_promotes_during_playback() -> None:
 
         assert fixtures.wait_until(lambda: entry.ready, timeout=10.0), "builder never promoted the cache file"
 
-        # The consumer's own instance may not have noticed yet, because it
-        # checks on the next get_frame call. Drive one more frame and confirm
-        # it switched over.
+        # The reader adopts the promoted cache on its next frame request.
         reader.get_frame(1)
         assert reader.is_cache_complete(), "consumer must adopt the promoted cache on its next get_frame() call"
         assert reader.cap is None, "the now-unneeded source capture must be released on switch-over"
@@ -120,19 +109,10 @@ def check_builder_promotes_during_playback() -> None:
 
 
 def check_plays_from_source_forced_window() -> None:
-    """A from-source read inside a window where the build cannot promote.
-
-    A wrapper around _run_builder blocks on a barrier until a from-source read
-    has run, then runs the real builder, so entry.ready is False throughout.
-    """
-    # The sibling check guards its from-source assertion behind a ready test,
-    # and on a fast machine the tiny-frame builder promotes first, which skips
-    # that assertion. Here it always runs.
+    """Force a source read while the builder is blocked before promotion."""
+    # Block promotion so the source-read assertion always runs.
     fixtures.install_stub_globals()
-    # A distinctive frame count and size, so this source's md5, and its
-    # cache filename, cannot collide with another check's video in the shared
-    # data dir. A byte-identical video would md5 to an already-promoted cache
-    # path, leaving entry.ready True and starting no builder to hold.
+    # Distinct content prevents reuse of another check's promoted cache.
     video_path = os.path.join(gl.DATA_PATH, "forced_window.mp4")
     _make_test_video(video_path, n_frames=57, size=(176, 132))
     size = (56, 56)
@@ -142,9 +122,7 @@ def check_plays_from_source_forced_window() -> None:
     builder_entered = threading.Event()  # the builder reports that it holds
 
     def _held_run_builder(entry, source_path, out_size, saturation):
-        # Announce the builder thread before it promotes, then block, so the
-        # consumer sees entry.ready False for its first reads. The wait is
-        # bounded, so a defect cannot wedge the suite.
+        # Block before promotion with a bounded wait.
         builder_entered.set()
         if not hold.wait(timeout=15):
             return  # never released, so the assertions report it
@@ -161,9 +139,7 @@ def check_plays_from_source_forced_window() -> None:
             # Inside the window, so nothing is promoted yet.
             assert entry.ready is False, "forced window invariant: builder must not have promoted yet"
 
-            # These from-source assertions run unconditionally. The consumer
-            # must decode straight from the source and must not have adopted
-            # a cache that does not exist yet.
+            # The consumer must decode from source before promotion.
             first_frame = reader.get_frame(0)
             assert first_frame is not None, "consumer must decode from source inside the forced window"
             assert not reader.is_cache_complete(), (
@@ -217,9 +193,7 @@ def check_release_to_zero_closes_captures() -> None:
     assert key not in mp4_tile_cache._registry, "registry entry must be dropped once refcount reaches 0"
     assert r2.cap is None and r2._cache_cap is None, "a released reader's captures must be closed"
 
-    # A fresh acquire after a full release must work cleanly, with no stale
-    # state behind. It finds the earlier builder's promoted file or starts a
-    # fresh builder.
+    # A fresh acquire must use a promoted file or start a new builder.
     r3 = mp4_tile_cache.acquire(video_path, size, 1.0)
     try:
         assert r3.get_frame(0) is not None
@@ -239,9 +213,7 @@ def check_decode_failure_clamps_and_releases() -> None:
     builder = mp4_tile_cache.KeyVideoCache(video_path, size, 1.0, cache_path=cache_path, is_builder=True)
     try:
         assert builder.n_frames == 0, "an unreadable source must report zero frames, not raise"
-        # Force a decode attempt, as _run_builder does once more before it
-        # notices n_frames is not positive. It must clamp and release, and
-        # must never raise or hang.
+        # Force the final decode attempt before the builder observes zero frames.
         payload = builder.get_frame(0)
         assert payload is None
         assert not builder.is_cache_complete()
@@ -279,10 +251,7 @@ def check_disabled_cache_starts_no_builder() -> None:
 
 
 def check_saturation_key_and_path_agree() -> None:
-    """The registry key's saturation component and the cache-file suffix must
-    be pure functions of one rounding. Two roundings let two acquires share
-    one entry while the second reader targets a file the builder never
-    writes. That costs uncached playback and a per-frame stat."""
+    """Registry saturation buckets and cache suffixes use the same rounding."""
     fixtures.install_stub_globals()
     video_path = os.path.join(gl.DATA_PATH, "sat_agreement.mp4")
     _make_test_video(video_path, n_frames=10, size=(120, 90))
@@ -322,10 +291,8 @@ def check_saturation_key_and_path_agree() -> None:
 
 
 def check_missing_shared_cache_self_heals() -> None:
-    """When the registry claims a shared cache is ready but the file cannot
-    be opened, the reader keeps playing from the source. After a bounded
-    number of failed adoptions it invalidates the entry, so a later acquire
-    starts a fresh builder, and detaches from the missing file."""
+    """A missing ready cache falls back to source and invalidates after bounded
+    adoption failures so a later acquire can rebuild it."""
     fixtures.install_stub_globals()
     video_path = os.path.join(gl.DATA_PATH, "vanishing.mp4")
     _make_test_video(video_path, n_frames=20, size=(120, 90))
@@ -362,10 +329,7 @@ def check_missing_shared_cache_self_heals() -> None:
 
 
 class _HandoffLock:
-    """A drop-in for Mp4FrameCache.lock that widens the race window. When the
-    designated frame thread releases the lock, it blocks until close() has
-    run on another thread. A payload published outside the lock then
-    re-retains the frame close() just dropped."""
+    """Hold the frame thread after lock release until concurrent close completes."""
 
     def __init__(self):
         self._inner = threading.Lock()
@@ -386,9 +350,7 @@ class _HandoffLock:
 
 
 def check_close_drops_last_payload() -> None:
-    """get_frame must publish last_payload under the lock. A publish after
-    the release lets a close() in that window have its None overwritten.
-    That retains one decoded frame for the life of the closed cache."""
+    """get_frame publishes last_payload under the lock so close leaves none."""
     fixtures.install_stub_globals()
     video_path = os.path.join(gl.DATA_PATH, "close_race.mp4")
     _make_test_video(video_path, n_frames=10, size=(120, 90))

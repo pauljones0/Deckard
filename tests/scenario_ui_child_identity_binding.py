@@ -1,10 +1,5 @@
-"""
-A controller's UI child must be resolved by object identity.
-
-A lookup that re-reads the device serial and matches it against the
-stack-child name misses forever once the two disagree. The preview push then
-dirty-marks instead of painting. GtkUIAdapter binds by object.
-"""
+"""Verify identity-based UI child binding, rescans, replacement, mirror pushes,
+and window-attachment reconciliation."""
 
 # The binding lands at DeckStack.add_page and lifts at remove_page. The fakes
 # below carry no name information at all, so a name-matching lookup fails.
@@ -34,9 +29,7 @@ def _pump(duration: float = 0.1) -> None:
 
 class _FakeStack:
     def __init__(self, children):
-        # A None among the children models GTK's ListModel race. Iteration
-        # snapshots len once, so a page removed mid-scan yields None for a
-        # trailing index.
+        # Model a trailing None from a ListModel removal during iteration.
         self._pages = [
             None if c is None else SimpleNamespace(get_child=lambda c=c: c)
             for c in children
@@ -48,9 +41,7 @@ class _FakeStack:
         return list(self._pages)
 
     def get_child_by_name(self, name):
-        # A name lookup must miss cleanly on these name-free fakes, so a
-        # name-based reimplementation fails the assertions below rather than
-        # crashing on a missing API.
+        # Name-free fakes make name-based lookup miss cleanly.
         return None
 
     def add_page(self, controller):
@@ -85,18 +76,13 @@ def _fake_child(controller, grid):
     return SimpleNamespace(
         deck_controller=controller,
         page_settings=SimpleNamespace(deck_config=SimpleNamespace(grid=grid)),
-        # The controller's FPS-warning path pokes this on whatever child it
-        # resolves, so a harmless sink keeps a background tick from logging
-        # noise.
+        # Absorb background low-FPS updates.
         low_fps_banner=SimpleNamespace(set_revealed=lambda *_: None),
     )
 
 
 def _fake_window(deck_stack):
-    # attach_window needs get_mapped and connect. Without them it takes its
-    # except branch and skips nothing else, and the real path is worth
-    # exercising. The rescan reaches the stack through the window's typed
-    # accessor, so the fake exposes get_deck_stack.
+    # Expose the mapped, signal, and typed stack access used by attach_window.
     return SimpleNamespace(
         get_deck_stack=lambda: deck_stack,
         get_mapped=lambda: False,
@@ -122,9 +108,7 @@ def main() -> None:
             "the key grid did not resolve through the bound child"
         )
 
-        # 2. Cold resolution. attach_window's rescan binds by identity. The
-        # fakes carry no serial and no name, so name-based matching comes up
-        # empty here and every preview then only dirty-marks.
+        # Cold resolution must bind name-free children by controller identity.
         adapter.unbind(controller)
         assert adapter.query_deck_widget(controller, "deck_stack_child") is None
         adapter._window = _fake_window(_FakeStack([child]))
@@ -143,18 +127,14 @@ def main() -> None:
             "the rescan matched a child belonging to another controller"
         )
 
-        # 3b. Mid-scan stack mutation. A trailing None page, left by a
-        # ListModel len snapshot after a main-thread removal, must end the
-        # scan cleanly rather than raise.
+        # A trailing None from mid-scan removal must not raise.
         adapter._window = _fake_window(_FakeStack([stranger, None]))
         adapter.rescan_children()
         assert adapter.query_deck_widget(controller, "deck_stack_child") is None, (
             "a scan over a mutating stack did not terminate cleanly"
         )
 
-        # 4. A widget-tree replacement heals through the re-bind add_page
-        # does on a rebuilt window. The adapter must serve the new grid,
-        # never the orphaned old one.
+        # Rebinding after a widget-tree replacement must serve the new grid.
         new_grid = _fake_grid()
         new_child = _fake_child(controller, new_grid)
         adapter.bind(controller, new_child)
@@ -163,9 +143,7 @@ def main() -> None:
             "orphaned old widget tree"
         )
 
-        # 5. A mirror push reaches the bound grid's button, and reaches
-        # nothing once unbound, so the engine dirty-marks instead and
-        # load_from_changes replays that marker.
+        # Bound mirror pushes paint; unbound pushes return False for replay.
         identifier = Input.Key("0x0")
         adapter._window_mapped = True
         assert adapter.push_input_image(controller, identifier, object()) is True, (
@@ -192,12 +170,7 @@ def main() -> None:
         )
         assert len(new_grid.buttons[0][0].prepared) == 1, "an unbound push still reached the button"
 
-        # 6. A hotplug during MainWindow construction. The adapter installs
-        # before the constructor and attach_window sets _window after it, so
-        # on_deck_added and on_deck_removed do nothing for the whole build. A
-        # deck registered in that window gets no stack child, because the
-        # rescan only re-binds a child that exists, and a dropped one leaves
-        # a stale child. attach_window reconciles in both directions.
+        # Attachment reconciles hotplug events missed during window construction.
         assert controller in gl.deck_manager.deck_controller, "fixture invariant"
 
         # 6a. A missed add. The deck is live and the stack was built without
@@ -213,9 +186,7 @@ def main() -> None:
         )
         assert stack.removed == [], "attach_window removed a live deck's page"
 
-        # 6b. A stale child, bound to a controller the deck manager does not
-        # know, after an unplug during construction. It is removed and
-        # unbound.
+        # Remove and unbind a stale child after an unplug during construction.
         ghost = object()
         ghost_child = _fake_child(ghost, _fake_grid())
         stack = _FakeStack([ghost_child])
@@ -245,9 +216,7 @@ def main() -> None:
             f"manager: {stack.removed}"
         )
 
-        # 6c. Steady state. A stack that already matches the deck manager
-        # must produce no churn, because attach_window runs on every window
-        # rebuild.
+        # A stack that matches the deck manager must not churn on attachment.
         settled_child = _fake_child(controller, _fake_grid())
         stack = _FakeStack([settled_child])
         adapter.attach_window(_fake_window(stack))

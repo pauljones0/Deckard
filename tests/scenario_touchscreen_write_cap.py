@@ -1,15 +1,7 @@
-"""
-Regression test for uncapped touchscreen writes.
+"""Verify perform_media_player_tasks applies the shared _video_write_hz cap,
+latest-wins deferral, and the zero-hz disable contract at the write point."""
 
-Every touchscreen write is rate-capped at the write point in
-perform_media_player_tasks, on the shared _video_write_hz budget with
-latest-wins semantics.
-"""
-
-# Without that cap, a back-to-back write flood out-races the 20Hz HID read
-# poll on the transport's single mutex and starves input. An over-budget frame
-# goes back into the single task slot, so content is delayed by at most one
-# budget window and never lost.
+# Over-budget frames return to the latest-wins slot to avoid starving HID reads.
 import time
 
 import fixtures
@@ -17,8 +9,7 @@ from faulty_fake_deck import _hash_bytes
 
 
 def flood(media_player, controller, touch, n_frames: int, spacing_s: float) -> float:
-    """Enqueues n_frames distinct touchscreen frames, calling the writer's
-    drain after each, spaced ~spacing_s apart. Returns the elapsed time."""
+    """Enqueue distinct frames with a drain and delay after each one."""
     start = time.time()
     for i in range(n_frames):
         payload = bytes([i % 256]) * 64

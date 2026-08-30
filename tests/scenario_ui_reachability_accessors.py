@@ -1,16 +1,5 @@
-"""
-Pins the typed UI-reachability accessors that replaced the dotted-string
-recursive_hasattr guards.
-
-MainWindow.get_deck_stack, MainWindow.get_sidebar and PageManager
-.get_page_selector each return the target when the chain is built and None
-while a build is still in flight. get_active_controller is a representative
-converted guard: it skips when the deck stack is absent and runs when present.
-
-Every check drives the real method through an unbound call with an attribute
-bag for self, so a mutant that drops a None guard, and lets a broken chain
-dereference and raise, fails a leg here.
-"""
+"""Verify get_deck_stack, get_sidebar, get_page_selector, and
+get_active_controller return built targets or None for incomplete chains."""
 
 import fixtures  # noqa: F401  (import first: sets up the isolated data dir)
 
@@ -31,9 +20,7 @@ def check_get_deck_stack() -> None:
         "a built window must hand back leftArea.deck_stack itself"
     )
 
-    # leftArea absent: the whole window is mid-build. The dotted string read
-    # False here; the typed access raises AttributeError and the method must
-    # convert that to None. A mutant that drops the guard raises instead.
+    # A missing first segment must return None.
     no_left_area = SimpleNamespace()
     assert MainWindow.get_deck_stack(no_left_area) is None, (
         "a window with no leftArea must read None, not raise"
@@ -63,9 +50,7 @@ def check_get_sidebar() -> None:
 
 
 def check_get_active_controller() -> None:
-    # The deck stack is absent: the converted guard must skip and return None.
-    # A mutant that drops the deck_stack None check calls get_visible_child on
-    # None and raises.
+    # A missing deck stack must return None before visible-child access.
     no_stack = SimpleNamespace(get_deck_stack=lambda: None)
     assert MainWindow.get_active_controller(no_stack) is None, (
         "no deck stack means no active controller"
