@@ -73,8 +73,8 @@ class PluginBase(rpyc.Service):
 
     @property
     def backend_event_hold(self) -> "BackendEventHold":
-        """Bound backend events for every event holder, launch, registration, and teardown.
-        Create lazily after skipped super(); the folder labels it before register() sets the id."""
+        """Lazy after skipped super(); holds EventHolder events only while backend connects.
+        Launch/register/teardown use it; class name replaces folder label without PATH."""
         hold = self._backend_event_hold
         if hold is not None:
             return hold
@@ -812,7 +812,7 @@ class PluginBase(rpyc.Service):
     def _release_backend_resources(self) -> None:
         """Detach and tear down the rpyc server, connection, and process.
         Concurrent callers are safe and idempotent, as in ActionCore."""
-        # Detach before close or terminate can block a worker for 5 seconds.
+        # Detach first: rpyc close can wait; process termination can take 5 seconds.
         # Keep GTK and relaunch free; cancel holds that unregistered backends cannot release.
         self.backend_event_hold.cancel()
 
@@ -1031,8 +1031,8 @@ class PluginBase(rpyc.Service):
         pass
 
     def on_app_ready(self) -> None:
-        """Start backend or long work after startup; __init__ blocks and on_ready needs a deck.
-        This runs on a background thread; do not access GTK."""
+        """Start backend or long work once per plugin instance after startup.
+        This runs off-main; do not access GTK. __init__ blocks, and on_ready needs a deck."""
         pass
 
     def ping(self) -> bool:

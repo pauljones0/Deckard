@@ -177,8 +177,8 @@ class ActionCore(rpyc.Service):
 
     def on_update(self) -> None:
         """The app calls this when the action must redraw itself."""
-        # Delay the compatibility call until on_ready finishes to avoid duplicate resources.
-        # The ready sequence supplies the skipped update.
+        # Skip compatibility on_ready to avoid duplicate resources; this invocation returns.
+        # The ready sequence supplies the update after the initial call finishes.
         if not self.on_ready_finished:
             log.debug(f"{self.action_id}: on_update compat on_ready skipped, on_ready has not finished")
             return
