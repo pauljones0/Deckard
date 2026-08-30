@@ -10,7 +10,12 @@ if TYPE_CHECKING:
     from src.backend.PluginManager.ActionCore import ActionCore
 
 class SwitchRow(GenerativeUI[bool]):
-    """Boolean switch row."""
+    """
+    A class that represents a switch row widget, allowing the user to toggle between two states: on (True) or off (False).
+
+    Attributes:
+        active (bool): The current state of the switch (True for on, False for off).
+    """
 
     def __init__(self, action_core: "ActionCore",
                  var_name: str,
@@ -74,7 +79,13 @@ class SwitchRow(GenerativeUI[bool]):
             self.set_value(active)
 
     def get_active(self) -> bool:
-        """Return the switch or settings state without forcing a build."""
+        """
+        Return the switch state, or the stored value while unbuilt.
+        A value read must not force a build.
+
+        Returns:
+            bool: The current state of the switch (True for on, False for off).
+        """
         if self._widget is None:
             return self.get_value()
         return cast(bool, self.widget.get_active())

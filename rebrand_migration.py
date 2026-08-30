@@ -1,5 +1,5 @@
-"""Crash-safe var-app move with a marker, lock, and compatibility symlink; never merge or discard user data and stop if both roots contain non-skeleton files.
-Autostart cleanup is separate and runs at every launch."""
+"""Crash-safe var-app move; never merge or discard data, and stop on non-skeleton conflicts.
+Use markers, locks, and compatibility links; autostart cleanup runs separately each launch."""
 
 # Import only side-effect-free standard-library modules, appinfo, and cli_args.
 # migrate runs before globals, so every dependency must be safe that early.
@@ -55,7 +55,7 @@ def _read_marker(marker_path: str) -> str | None:
 
 def _write_marker(marker_path: str, state: str) -> bool:
     """Write the marker durably: fsync the file, replace it, then fsync the directory.
-    Return True on success; a durable truncated marker matches no state and can strand data without a symlink.
+    Return True on success; a durable truncated marker can strand data without a link.
     """
     tmp_path = marker_path + ".tmp"
     try:
@@ -121,7 +121,7 @@ def _old_instance_running() -> bool:
 
 def _data_override_active(argv: list[str]) -> bool:
     """True if argv holds a --data override.
-    Use the globals parser so abbreviations match; parse errors report no override to avoid stranding data.
+    Use globals parser abbreviations; parse errors report no override to avoid stranding data.
     """
     import cli_args
     try:
@@ -276,7 +276,7 @@ def _xdg_root() -> str:
 
 def _same_filesystem(src: str, dest: str) -> bool:
     """True if src and the place for dest share one filesystem.
-    Probe the nearest existing destination ancestor; unknown results try rename and report its failure.
+    Probe the nearest existing ancestor; unknown results try rename and report its failure.
     """
     probe = dest
     while probe and not os.path.exists(probe):
@@ -353,7 +353,7 @@ def _finish_copy(old_root: str, new_root: str, marker_path: str) -> None:
 def _copy_migrate_locked(old_root: str, new_root: str, marker_path: str,
                          running_check: Callable[[], bool]) -> None:
     """Cross-filesystem variant of _migrate_locked.
-    Copy to a staged sibling, fsync and mark it, publish it, then remove the source; ignore running_check.
+    Stage, fsync, mark, and publish the copy before source removal; ignore running_check.
     """
     # Before publish, a crash leaves old_root for a repeated copy.
     # After publish, the pending marker lets _finish_copy complete cleanup.
@@ -405,7 +405,7 @@ def _copy_migrate_locked(old_root: str, new_root: str, marker_path: str,
         _log(f"copy migration: copying {old_root} failed ({e}); the app keeps using "
              f"{old_root}, will retry next start")
         return
-    # Write the pending marker into staging last so a published marker proves a complete durable copy.
+    # Write the pending marker last so publication proves a complete durable copy.
     # _finish_copy checks it before deleting old_root.
     if not _write_marker(os.path.join(staging, os.path.basename(marker_path)), _STATE_PENDING):
         _safe_rmtree(staging)

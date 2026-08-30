@@ -1,5 +1,5 @@
-"""Resolve libadwaita's private list boxes for thin expander and preferences-group facades.
-Expanders skip mismatches but warn on clear to prevent refill duplicates; preferences groups raise LookupError, and owner get_list_box overrides steer all operations."""
+"""Resolve private list boxes for expander and preferences-group facades.
+Expanders skip but warn before refill; groups raise LookupError; owner overrides steer calls."""
 from collections.abc import Callable
 from typing import Any, Literal
 

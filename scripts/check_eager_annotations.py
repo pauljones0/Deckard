@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Find NameError and stdlib AttributeError failures from eagerly evaluated Python 3.13 annotations; run with the deployment interpreter, not Python 3.14.
-Skip string annotations and modules using future annotations; TYPE_CHECKING-only and function-local imports do not create module runtime bindings."""
+"""Find NameError and stdlib AttributeError from eager Python 3.13 annotations.
+Run on deployment Python, not 3.14; skip strings/future modules and non-runtime imports."""
 from __future__ import annotations
 
 import ast
@@ -44,7 +44,8 @@ def module_level_runtime_bindings(tree: ast.Module) -> set[str]:
 
 def annotations_of(tree: ast.Module) -> list[tuple[int, ast.expr]]:
     """Only the annotations the interpreter actually evaluates.
-    Include parameters, returns, and module or class AnnAssign nodes; exclude function-body AnnAssign nodes under PEP 526.
+    Include parameters, returns, and module or class AnnAssign nodes; exclude
+    function-body AnnAssign nodes under PEP 526.
     """
     out: list[tuple[int, ast.expr]] = []
 

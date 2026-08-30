@@ -82,7 +82,12 @@ def setup_autostart(enable: bool = True) -> None:
 
 
 def setup_autostart_flatpak(enable: bool = True, generation: int | None = None) -> None:
-    """Set Flatpak autostart through the background portal."""
+    """Set the flatpak autostart through the background portal.
+
+    https://libportal.org/method.Portal.request_background.html
+    https://libportal.org/method.Portal.request_background_finish.html
+    https://docs.flatpak.org/de/latest/portal-api-reference.html#gdbus-org.freedesktop.portal.Background
+    """
     def request_background_callback(portal: Xdp.Portal, result: Gio.AsyncResult, user_data: Any) -> None:
         try:
             success = portal.request_background_finish(result)

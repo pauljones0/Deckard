@@ -1,5 +1,5 @@
-"""Trailing debounce for expensive GTK handlers.
-The Settings font rows otherwise start overlapping full-page reloads for each rapid change."""
+"""Trailing debounce for four Settings font rows that start full-page reloads.
+Family, size, or color changes can overlap three reloads; one color drag fires several."""
 import threading
 from typing import Callable, Generic, Optional, Protocol, TypeVar, cast
 
@@ -57,7 +57,8 @@ class TrailingDebouncer(Generic[HandleT]):
         # Each trigger must reach exactly one callback per burst.
         # No equality check, dirty flag, or early return can drop it.
         self._pending: Optional[HandleT] = None
-        # trigger() and the callback run on the scheduler thread, which is GTK's main thread in production.
+        # trigger() and the callback use the scheduler thread, which is GTK's
+        # main thread in production.
         # The pending handle therefore needs no lock.
         self._owner_thread: Optional[int] = None
 

@@ -13,7 +13,18 @@ if TYPE_CHECKING:
 from GtkHelper.ScaleRow import ScaleRow as Scale
 
 class ScaleRow(GenerativeUI[float]):
-    """Slider row with optional text entry and configurable range, step, and precision."""
+    """
+    A class that represents a scale row widget, which allows the user to select a numeric value from a range
+    using a slider. The widget can be configured with various properties such as min, max, step, and the display of
+    a text entry field for manual value input.
+
+    Attributes:
+        value (float): The current value of the scale.
+        min (float): The minimum allowed value for the scale.
+        max (float): The maximum allowed value for the scale.
+        step (float): The step size for adjusting the scale value.
+        digits (int): The number of digits to display for the scale value.
+    """
 
     def __init__(self, action_core: "ActionCore",
                  var_name: str,
@@ -33,8 +44,28 @@ class ScaleRow(GenerativeUI[float]):
                  auto_add: bool = True,
                  complex_var_name: bool = False
                  ):
-        """Initialize the slider range, step, precision, value display, and optional text entry.
-        A round_digits value of -1 disables rounding."""
+        """
+        Initializes the ScaleRow widget, setting up the scale UI component with the specified properties.
+
+        Args:
+            action_core (ActionCore): The base action associated with the scale row.
+            var_name (str): The variable name associated with this scale row.
+            default_value (float): The default value for the scale.
+            min (float): The minimum value for the scale.
+            max (float): The maximum value for the scale.
+            title (str, optional): The title to display for the scale row.
+            subtitle (str, optional): The subtitle to display below the scale row.
+            step (float, optional): The step size for the scale. Defaults to 0.1.
+            digits (int, optional): The number of digits to display for the scale value. Defaults to 2.
+            draw_value (bool, optional): Whether to display the current value next to the scale. Defaults to True.
+            round_digits (int, optional): Decimal places for slider rounding; -1 disables
+                rounding. Defaults to 1.
+            add_text_entry (bool, optional): Whether to add a text entry field for manual input of the scale value. Defaults to False.
+            text_entry_max_length (int, optional): The maximum length of the text entry if enabled. Defaults to 6.
+            on_change (callable, optional): A callback function to call when the scale value changes.
+            can_reset (bool, optional): Whether the scale value can be reset. Defaults to True.
+            auto_add (bool, optional): Whether to automatically add the scale row to the UI. Defaults to True.
+        """
         def build() -> None:
             self._widget: Scale | None = Scale(
                 title=self.get_translation(title, title),
@@ -64,6 +95,10 @@ class ScaleRow(GenerativeUI[float]):
 
     @override
     def disconnect_signals(self) -> None:
+        """
+        Disconnects the signal handler for the 'value-changed' signal.
+
+        """
         self._track_disconnect("value-changed", self.widget.scale)
 
     def set_number(self, number: float, update_setting: bool = False) -> None:
@@ -80,7 +115,13 @@ class ScaleRow(GenerativeUI[float]):
             self.set_value(number)
 
     def get_number(self) -> float:
-        """Return the scale or settings value without forcing a build."""
+        """
+        Return the scale value, or the stored value while unbuilt.
+        A value read must not force a build.
+
+        Returns:
+            float: The current value of the scale.
+        """
         if self._widget is None:
             return self.get_value()
         return cast(float, self.widget.scale.get_value())

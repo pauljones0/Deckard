@@ -11,7 +11,18 @@ if TYPE_CHECKING:
     from src.backend.PluginManager.ActionCore import ActionCore
 
 class SpinRow(GenerativeUI[float]):
-    """Spin row with configurable range, step, and precision."""
+    """
+    A class that represents a spin row widget, allowing the user to increment or decrement a numeric value
+    using spin buttons. The widget can be customized with properties such as minimum, maximum, step size, and
+    the number of digits displayed.
+
+    Attributes:
+        value (float): The current value of the spin row.
+        min (float): The minimum allowed value for the spin row.
+        max (float): The maximum allowed value for the spin row.
+        step (float): The step size for incrementing/decrementing the value.
+        digits (int): The number of digits to display for the value.
+    """
 
     # build() creates it beside the widget.
     _adjustment: Gtk.Adjustment
@@ -96,7 +107,13 @@ class SpinRow(GenerativeUI[float]):
             self.set_value(number)
 
     def get_number(self) -> float:
-        """Return the spin or settings value without forcing a build."""
+        """
+        Return the spin value, or the stored value while unbuilt.
+        A value read must not force a build.
+
+        Returns:
+            float: The current value of the spin row.
+        """
         if self._widget is None:
             return self.get_value()
         return cast(float, self.widget.get_value())

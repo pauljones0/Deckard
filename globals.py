@@ -12,8 +12,8 @@ from loguru import logger as log
 from cli_args import argparser as argparser
 
 MAIN_PATH: str
-# Flatpak uses ~/.var/app/<id>; native installs use $XDG_DATA_HOME/deckard or ~/.local/share/deckard.
-# A failed native move keeps the old root active so the app does not start empty.
+# Flatpak uses ~/.var/app/<id>; native installs use $XDG_DATA_HOME/deckard
+# or ~/.local/share/deckard. A failed move keeps the old root active.
 if os.path.isfile("/.flatpak-info"):
     VAR_APP_PATH = os.path.join(os.path.expanduser("~"), ".var", "app", appinfo.APP_ID)
 else:
@@ -86,17 +86,19 @@ if TYPE_CHECKING:
 
 
 top_level_dir:str = os.path.dirname(__file__)
-# Use X | None only when readers observe startup or teardown None through a real branch.
-# Use a concrete late-init type when None is unobserved, which avoids union errors at every use site.
+# Use X | None only when readers branch on startup or teardown None.
+# Otherwise use a concrete late-init type to avoid union errors at each use.
 lm:"LocaleManager" = None  # ty: ignore[invalid-assignment]  # late-init: main.create_global_objects
 media_manager:"MediaManager" = None  # ty: ignore[invalid-assignment]  # late-init: main.create_global_objects
 asset_manager_backend:"AssetManagerBackend" = None  # ty: ignore[invalid-assignment]  # late-init: main.create_global_objects
 asset_manager: "AssetManager | None" = None # Only while the window is open
 page_manager_window: "PageManager | None" = None # Only if opened
-page_manager:"PageManagerBackend | None" = None # None-checked during DeckController teardown and by the D-Bus API
+# None-checked during DeckController teardown and by the D-Bus API.
+page_manager:"PageManagerBackend | None" = None
 gnome_extensions:"GnomeExtensions" = None  # ty: ignore[invalid-assignment]  # late-init: main.create_global_objects
 settings_manager:"SettingsManager" = None  # ty: ignore[invalid-assignment]  # late-init: main.create_global_objects
-app:"App | None" = None # Absent until App.on_activate; notifications and plugins defer tasks while it is None
+# Absent until App.on_activate; notifications and plugins defer tasks while None.
+app:"App | None" = None
 deck_manager:"DeckManager | None" = None # None-checked in the DBus API
 plugin_manager:"PluginManager | None" = None # None-checked in ActionChooser's load-health readout
 video_extensions = ["mp4", "mov", "MP4", "MOV", "mkv", "MKV", "webm", "WEBM", "gif", "GIF"]

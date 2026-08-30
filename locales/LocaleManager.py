@@ -88,5 +88,5 @@ class LocaleManager:
 
     def get_markup(self, key: str, fallback: str | None = None) -> str:
         """Escape plain translation text for Pango markup without escaping quotes.
-        Quotes are significant only in tag attributes; escaping them would show entities in plain renderers."""
+        Quotes matter only in attributes; escaping them shows entities in plain renderers."""
         return html.escape(self.get(key, fallback), quote=False)

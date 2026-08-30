@@ -15,8 +15,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 import os
 import sys
 
-# Set glibc arena limits before heavy imports; libc reads them at startup, so an unset launcher value requires re-exec.
-# SC_REEXEC prevents a loop, sys.orig_argv preserves interpreter flags, and this must precede D-Bus calls because execve replaces the process.
+# Set glibc arena limits before imports and D-Bus because execve replaces the process.
+# libc reads them at startup; SC_REEXEC stops loops and sys.orig_argv preserves flags.
 if "MALLOC_ARENA_MAX" not in os.environ and "SC_REEXEC" not in os.environ:
     os.environ["MALLOC_ARENA_MAX"] = "2"
     os.environ["MALLOC_TRIM_THRESHOLD_"] = "131072"
@@ -45,8 +45,8 @@ _rebrand_migrate()
 # the XDG data dir, after the rename, so the renamed tree lands first.
 _xdg_migrate()
 
-# Handle running-instance CLI requests before globals and expensive imports with the shared cli_args parser; other invocations continue unchanged.
-# This module-level path has no exception hooks or log sink, so report unexpected errors here while SystemExit preserves argparse exits.
+# Handle running-instance requests before globals; other invocations continue unchanged.
+# Use the shared parser; preserve argparse exits and print errors before hooks or logs exist.
 from cli_args import argparser as _cli_argparser
 from src.backend import cli_fast_path as _cli_fast_path
 
@@ -115,7 +115,7 @@ DEFAULT_DATA_PATH = os.path.expanduser(f"~/.var/app/{appinfo.APP_ID}/data")
 # Rotated files kept per log sink, oldest deleted first. loguru keeps every
 # rotation without this bound, so the log directory grows without limit.
 LOG_RETENTION_FILES = 10
-# Files and the ring default to DEBUG; the console defaults to INFO because TRACE grows files quickly.
+# Files and the ring use DEBUG; the console uses INFO because TRACE grows files quickly.
 # Exact SC_LOG_TRACE=1 enables TRACE for all sinks, and this boot-only setting is read at import.
 LOG_TRACE = os.environ.get("SC_LOG_TRACE") == "1"
 FILE_LOG_LEVEL = "TRACE" if LOG_TRACE else "DEBUG"
@@ -135,7 +135,7 @@ def config_logger():
     # The surrounding log.catch then has a handler for its diagnostic.
     log.add(sys.stderr, level=CONSOLE_LOG_LEVEL)
     log.add(write_logs, level=FILE_LOG_LEVEL)
-    # Omit inert backtrace and diagnose flags because redaction clears the exception and embeds a scrubbed traceback.
+    # Omit inert backtrace/diagnose; redaction clears exceptions and embeds a scrubbed traceback.
     # Isolate the file sink so an unwritable path does not discard stderr and ring sinks.
     try:
         log.add(os.path.join(gl.DATA_PATH, "logs/logs.log"), rotation="3 days",
@@ -404,8 +404,10 @@ def handle_listing_commands():
     return False
 
 def make_api_calls():
-    """Forward change-page, change-state, and input requests from argv.
-    Return whether a running instance handled them; absent or parked requests boot, but an unserviceable press exits with its reason."""
+    """Forward argv requests and return whether a running instance handled them.
+    Absent or parked requests boot; an unserviceable press exits with its reason.
+
+    """
     verdict = cli_forward.forward_cli_requests(gl.argparser.parse_args())
     for line in verdict.output:
         print(line)
@@ -497,8 +499,8 @@ def main():
     gl.deck_manager = DeckManager()
     gl.deck_manager.load_decks()
 
-    # Install after deck_manager exists because on_quit reads it unguarded; an earlier TERM would abort and latch teardown.
-    # Install before run() so PyGObject sees the custom SIGINT handler and does not register its fallback.
+    # Install after deck_manager; on_quit reads it unguarded and earlier TERM latches teardown.
+    # Install before run() so PyGObject does not register its SIGINT fallback.
     app.register_signal_handlers()
 
     # Publish just before the loop so boot-time reports queue while the slot is None.
@@ -507,7 +509,7 @@ def main():
     app.run(gl.argparser.parse_args().app_args)
 
 if __name__ == "__main__":
-    # Log unexpected startup errors once and exit nonzero so supervisors cannot treat failure as success.
+    # Log unexpected startup errors once; exit nonzero so supervisors see failure.
     # Preserve SystemExit codes for known abort paths.
     try:
         main()

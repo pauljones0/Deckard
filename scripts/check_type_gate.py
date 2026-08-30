@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Require every ty include path to exist, every first-party module to be included or excluded with a reason, and reject both coded and bare mypy suppressions in checked comments.
-Fail closed on missing or malformed configuration and unreadable or untokenizable modules; use reasoned # ty: ignore[rule] comments instead."""
+"""Require ty paths and reasoned first-party coverage; reject mypy ignores in checked comments.
+Fail on missing/malformed config or unreadable/untokenizable files; use reasoned ty ignores."""
 from __future__ import annotations
 
 import re

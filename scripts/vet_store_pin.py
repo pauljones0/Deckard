@@ -1,5 +1,5 @@
-"""Usage: vet_store_pin.py OLD_SHA NEW_SHA [--manifests] [--app-version X]; report catalog additions, removals, repins, unlisted owners, and require immutable SHAs by plugin-branch, flat-hash, then newest commits-map precedence.
-With --manifests, check every manifest pinned at NEW_SHA against globals.py or --app-version; missing, unparseable, unfetchable, movable, or incompatible data fails instead of passing silently."""
+"""Diff OLD/NEW adds/removes/repins/owners; resolve branch/hash/newest map; require SHA pins.
+--manifests vets every manifest vs app version; fail absent/bad/unfetched/movable/incompatible."""
 
 import json
 import re

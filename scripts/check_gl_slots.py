@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Freeze globals.py declarations and governed gl attribute stores against explicit tables; fail closed on missing, unreadable, unparseable, symlink-hidden, or unsupported-import input.
-Reject computed or deleted slots, but do not police reads, slot-content mutation, dynamic imports, laundered aliases, or behavior behind per-file module-type exemptions."""
+"""Pin globals.py names/gl stores; reject missing/unreadable/unparseable/hidden input or imports.
+Reject computed/deleted slots; skip reads/mutations/dynamic/laundered aliases/exemptions."""
 from __future__ import annotations
 
 import ast
@@ -159,7 +159,7 @@ def parse(path: Path, failures: list[str]) -> ast.Module | None:
 
 def declared_names(tree: ast.Module) -> set[str]:
     """Names that tree binds at module scope, minus the ones it deletes.
-    Enter compound statements, stop at local-scope boundaries, and include global declarations and literal globals() cache writes.
+    Enter compounds but not local scopes; include global and literal globals() writes.
     """
     bound: set[str] = set()
     deleted: set[str] = set()
@@ -204,7 +204,7 @@ def declared_names(tree: ast.Module) -> set[str]:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             bound.add(node.name)
             # Function and class bodies bind locals.
-            # Decorators, defaults, annotations, and bases evaluate here and can bind module walruses.
+            # Decorators, defaults, annotations, and bases can bind module walruses.
             walrus(node)
             return
 

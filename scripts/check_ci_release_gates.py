@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Verify that release and tag writers cannot bypass static CI gates.
-Normalize quoted keys, flow mappings, aliases, and merges with duplicate-safe YAML; reject external includes that an offline check cannot verify."""
+Handle quoted keys, flow maps, aliases, and merges; reject duplicates and external includes."""
 from __future__ import annotations
 
 import copy

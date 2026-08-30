@@ -12,7 +12,13 @@ if TYPE_CHECKING:
 
 
 class PasswordEntryRow(GenerativeUI[str]):
-    """Password entry row that stores values as base64 text."""
+    """
+    A class that represents a password entry row widget, which allows the user to input and manage passwords.
+    This widget includes functionality for setting, getting, and securely handling passwords, with encoding for storage.
+
+    Attributes:
+        password (str): The currently entered password, encoded and decoded as needed for storage.
+    """
 
     def __init__(self, action_core: "ActionCore",
                  var_name: str,
@@ -56,6 +62,12 @@ class PasswordEntryRow(GenerativeUI[str]):
 
     @override
     def disconnect_signals(self) -> None:
+        """
+        Disconnects the signal handler for the 'changed' signal.
+
+        Use it when the widget must stop handling password changes
+        or when the signals should be stopped.
+        """
         self._track_disconnect("changed", self.widget)
 
     def set_password(self, password: str, update_setting: bool = False) -> None:
@@ -72,7 +84,13 @@ class PasswordEntryRow(GenerativeUI[str]):
             self.set_value(password)
 
     def get_password(self) -> str:
-        """Return the widget password or the decoded setting without forcing a build."""
+        """
+        Return the password, or the decoded stored value while unbuilt.
+        A value read must not force a build.
+
+        Returns:
+            str: The current password entered in the widget.
+        """
         if self._widget is None:
             return self.get_value()
         return cast(str, self.widget.get_text())
@@ -107,7 +125,14 @@ class PasswordEntryRow(GenerativeUI[str]):
 
     @override
     def set_value(self, value: str) -> None:
-        """Store the password as base64 text in settings."""
+        """
+        Encodes and sets the new password value in the settings.
+
+        This method encodes the password to base64 for secure storage and updates the settings with the new value.
+
+        Args:
+            value (str): The new password to store, encoded in base64.
+        """
         # A local annotation, not a cast. ActionCore.get_settings declares a
         # return type of dir, a typo for dict, so this file cannot use it.
         settings: dict[str, Any] = self._action_core.get_settings()

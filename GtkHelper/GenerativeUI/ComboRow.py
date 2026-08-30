@@ -11,8 +11,14 @@ from GtkHelper.GtkHelper import on_main
 
 
 class ComboRow(GenerativeUI[BaseComboRowItem | str | None]):
-    """Combo row whose widget uses items and value layer stores strings.
-    None represents no selection."""
+    """
+    A UI element representing a combo box (drop-down menu) with selectable items,
+    linked to an ActionCore. Widget values are BaseComboRowItem; stored values
+    are str or None, so the type parameter is a union.
+
+    Attributes:
+        _widget (Combo): The ComboRow widget instance.
+    """
 
     def __init__(self,
                  action_core: "ActionCore",

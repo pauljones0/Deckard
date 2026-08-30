@@ -23,7 +23,18 @@ _Params = ParamSpec("_Params")
 _Return = TypeVar("_Return")
 
 class GenerativeUI[T](ABC):
-    """Base class for lazily built UI elements linked to an ActionCore."""
+    """
+       Abstract base for dynamic UI elements linked to an ActionCore.
+
+       Attributes:
+           _action_core (ActionCore): The action this UI element is associated with.
+           _var_name (str): The key used to store the value in the action's settings.
+           _default_value (T): The default value for this UI element.
+           on_change (Callable[[Gtk.Widget, T, T], None]): Function called when the value changes.
+           _widget (Gtk.Widget): The GTK widget representing the UI element.
+           _can_reset (bool): Whether the UI element can be reset to its default value.
+           _auto_add (bool): Whether the UI element is automatically added to the action.
+       """
     _action_core: "ActionCore"
     _var_name: str # name of the key in the actions settings
     _default_value: T # default value of the key
@@ -43,8 +54,20 @@ class GenerativeUI[T](ABC):
                  auto_add: bool = True, complex_var_name: bool = False,
                  on_change: Callable[[Any, T, T], None] | None = None,
                  build: Callable[[], None] | None = None):
-        """Initialize the value layer without building the widget.
-        The first .widget access runs build, failed builds can retry, and unopened config sidebars allocate no Adw row tree."""
+        """
+        Initialize without building; first .widget access builds it.
+        Failed builds can retry, and unopened config sidebars allocate no Adw row tree.
+
+        Args:
+            action_core (ActionCore): The action this UI element is associated with.
+            var_name (str): The key used to store the value in the action's settings.
+            default_value (T): The default value for this UI element.
+            can_reset (bool, optional): Whether the UI element can be reset. Defaults to True.
+            auto_add (bool, optional): Whether the UI element is automatically added to the action. Defaults to True.
+            on_change (Callable[[Gtk.Widget, T, T], None], optional): Function called when the value changes. Defaults to None.
+            build (Callable[[], None], optional): Builds self._widget and subclass
+                widget-only state on first access.
+        """
         self._action_core = action_core
         self._var_name = var_name
         self._default_value = default_value
@@ -66,8 +89,8 @@ class GenerativeUI[T](ABC):
     def _ensure_built(self) -> None:
         """Build on first access; off-main access uses the 30-second main-loop bound.
         Access before the config opens forces an eager build and logs once per class."""
-        # Flip the flag under the lock but run build_fn outside it on the main thread; this prevents recursive .widget access without deadlocking re-entry.
-        # Before a marshalled build starts, another main-thread reader can see _built with no widget; current readers run later or guard None.
+        # The early flag stops recursion; build_fn stays outside the lock to avoid deadlock.
+        # Before marshal, a main-thread reader can see no widget; callers run later or guard None.
         with self._build_flag_lock:
             if self._built:
                 return
@@ -298,7 +321,16 @@ class GenerativeUI[T](ABC):
         self.set_ui_value(value)
 
     def get_translation(self, key: str | None, fallback: str | None = None) -> str:
-        """Return the translated key, its fallback, or "" for a falsy key."""
+        """
+        Retrieves a translated string for the given key.
+
+        Args:
+            key (str | None): The translation key. A falsy key answers "".
+            fallback (str, optional): The fallback text if translation is not found.
+
+        Returns:
+            str: The translated string.
+        """
         return self._action_core.get_translation(key, fallback) if key else ""
 
     def unparent(self) -> None:
@@ -314,7 +346,8 @@ class GenerativeUI[T](ABC):
 
     def destroy(self) -> None:
         """Disconnect the signals, unparent the widget, and unregister.
-        Repeated calls do nothing; do not dispose live Adw composites because GTK logs critical errors.
+        Repeated calls do nothing; do not dispose live Adw composites because
+        GTK logs critical errors.
         """
         from GtkHelper.GtkHelper import run_on_main
 

@@ -13,7 +13,13 @@ if TYPE_CHECKING:
 from GtkHelper.GtkHelper import BetterExpander
 
 class ExpanderRow(GenerativeUI[bool]):
-    """Expander row that manages expansion state and child widgets."""
+    """
+    A class that represents a UI expander row widget with additional functionality
+    to manage its expansion state and to add child widgets.
+
+    Attributes:
+        expanded (bool): Whether the expander is currently expanded or collapsed.
+    """
 
     def __init__(self, action_core: "ActionCore",
                  var_name: str,
@@ -71,6 +77,12 @@ class ExpanderRow(GenerativeUI[bool]):
 
     @override
     def disconnect_signals(self) -> None:
+        """
+        Disconnects the signal handler for the 'notify::enable-expansion' signal.
+
+        Use it when the widget must stop handling expansion changes
+        or when the signals should be stopped.
+        """
         self._track_disconnect("enable-expansion", self.widget)
 
     def set_enable_expansion(self, enable_expansion: bool, update_setting: bool = False) -> None:
@@ -87,7 +99,13 @@ class ExpanderRow(GenerativeUI[bool]):
             self.set_value(enable_expansion)
 
     def get_enable_expansion(self) -> bool:
-        """Return expansion state from the widget or settings without forcing a build."""
+        """
+        Return the expansion state, or the stored value while unbuilt.
+        A value read must not force a build.
+
+        Returns:
+            bool: The current state of the expander's enabled expansion.
+        """
         if self._widget is None:
             return self.get_value()
         return cast(bool, self.widget.get_enable_expansion())

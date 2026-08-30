@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Cap physical lines in src and GtkHelper with a default cap, shrink-only grandfather caps that tighten after TIGHTEN_SLACK and return to default at DEFAULT_CAP, plus a hard cap for the re-export-only deck-controller shim.
-Fail when roots, grandfather files, or the shim are missing or outside coverage, or when symlinked directories hide modules; count a final unterminated line."""
+"""Cap src/GtkHelper with defaults, shrink-only caps past TIGHTEN_SLACK, and hard export cap.
+End at DEFAULT_CAP; reject missing/out-of-scope/hidden input and count an unterminated last line."""
 from __future__ import annotations
 
 import os

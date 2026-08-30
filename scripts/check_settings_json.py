@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Allow bare json.load and json.dump only in named files; all settings access otherwise uses the healing store and atomic writer.
-Fail closed on hidden from-json imports, stale or out-of-scope allowlist entries, missing or unparseable inputs, and symlink-hidden code; json.loads, json.dumps, and dynamic aliases are out of scope."""
+"""Allow bare json.load/dump only in named files; otherwise use healing and atomic writes.
+Reject hidden imports/stale/other entries/missing/unparseable/hidden files; skip strings/aliases."""
 from __future__ import annotations
 
 import ast

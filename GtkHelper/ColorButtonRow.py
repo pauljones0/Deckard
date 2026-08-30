@@ -5,7 +5,26 @@ gi.require_version("Adw", "1")
 from gi.repository import Gtk, Adw, Gdk
 
 class ColorButtonRow(Adw.ActionRow):
-    """Row with an RGBA color button."""
+    """
+        Initializes a ColorButtonRow widget with a color button and optional title and subtitle.
+
+        Parameters:
+            title (str, optional): The title to display in the row.
+            subtitle (str, optional): The subtitle to display below the title.
+            default_color (tuple[int, int, int, int], optional): The default color to set for the color button in
+                                                                RGBA format (default is black with full opacity).
+
+        Description:
+            This constructor creates a new ColorButtonRow widget. It sets up a Gtk.ColorButton for selecting
+            a color and assigns it to the row. The initial color is set based on the provided default_color
+            tuple, which represents the color in RGBA format (each value ranges from 0 to 255).
+
+            The color-set signal triggers the _on_color_changed
+            method when the color is modified. The color is stored internally as a tuple of integers representing
+            the RGBA values.
+
+            The row is set up with a title and subtitle if provided.
+    """
     def __init__(self,
                  title: str | None = None,
                  subtitle: str | None = None,

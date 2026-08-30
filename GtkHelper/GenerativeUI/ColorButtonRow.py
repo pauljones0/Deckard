@@ -82,7 +82,13 @@ class ColorButtonRow(GenerativeUI[tuple[int, int, int, int]]):
             self.set_value(color)
 
     def get_color(self) -> tuple[int, int, int, int]:
-        """Return the selected color from the widget or settings without forcing a build."""
+        """
+        Return the selected color, or the stored value while unbuilt.
+        A color read must not force a build.
+
+        Returns:
+            tuple[int, int, int, int]: The RGBA color tuple.
+        """
         if self._widget is None:
             return self.get_value()
         return cast(tuple[int, int, int, int], self.widget.color)

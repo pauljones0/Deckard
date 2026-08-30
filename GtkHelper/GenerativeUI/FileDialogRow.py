@@ -11,7 +11,15 @@ if TYPE_CHECKING:
     from src.backend.PluginManager.ActionCore import ActionCore
 
 class FileDialogRow(GenerativeUI[str]):
-    """File-selection row with filters and persisted path values."""
+    """
+    A class that represents a file dialog row widget that allows the user to select a file
+    from the file system. It includes functionality to display a dialog with filters and
+    manage the file selection.
+
+    Attributes:
+        selected_file (Gio.File | None): The file selected in the dialog, or
+            None while the dialog has returned none.
+    """
 
     def __init__(self, action_core: "ActionCore",
                  var_name: str,
@@ -73,7 +81,13 @@ class FileDialogRow(GenerativeUI[str]):
             self.set_value(path)
 
     def get_file(self) -> Gio.File:
-        """Return the selected file or persisted path without forcing a build."""
+        """
+        Return the selected file, or the stored path while unbuilt.
+        A value read must not force a build.
+
+        Returns:
+            Gio.File: The selected file in the file dialog.
+        """
         if self._widget is None:
             return Gio.File.new_for_path(self.get_value())
         selected_file = self.widget.selected_file

@@ -284,7 +284,12 @@ class EntryDialog(Gtk.ApplicationWindow):
             self.set_dialog_status(1)
 
     def set_dialog_status(self, status: int) -> None:
-        """Set status: 0 for empty, 1 for already used, or 2 for valid."""
+        """
+        Sets the status of the dialog
+
+        Args:
+            status (int): 0 for no name, 1 for already in use, 2 for ok
+        """
         if status == 0:
             # Label
             if self.main_box.get_last_child() is not self.warning_label:
@@ -397,8 +402,8 @@ class EntryRowWithoutTitle(Adw.EntryRow):
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
 
-        # Walk Adw's internal tree to hide the title.
-        # A missing step leaves the title unchanged.
+        # Make title invisible
+        # Walk Adw's internal tree; a missing step leaves the title unchanged.
         child = self.get_child()
         prefix_box = child.get_first_child() if child is not None else None
         gizmo = prefix_box.get_next_sibling() if prefix_box is not None else None
