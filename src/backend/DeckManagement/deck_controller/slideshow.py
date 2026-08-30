@@ -18,7 +18,7 @@ class Slideshow:
 
     def __init__(self, paths: Sequence[str], interval: float, order: str = IN_ORDER,
                  rng: "random.Random | None" = None) -> None:
-        # Keep only nonempty strings so the render path never loads invalid frames.
+        # Remove only non-string and empty entries; the render path checks files later.
         self.paths: list[str] = [p for p in paths if isinstance(p, str) and p]
         self.interval: float = max(0.0, float(interval))
         self.order: str = order if order in (IN_ORDER, SHUFFLE) else IN_ORDER

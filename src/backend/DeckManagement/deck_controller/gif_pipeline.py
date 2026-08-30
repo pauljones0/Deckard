@@ -168,7 +168,7 @@ def gif_header_geometry(path: str) -> "tuple[int, tuple[int, int]]":
 
 
 def probe_gif_timeline(path: str) -> GifTimeline:
-    """Decode only enough to collect PIL frame delays in O(1) retained memory.
+    """Collect PIL delays with O(1) decoded pixel memory and O(n) timeline metadata.
     Do not convert, fit, or saturate pixels; propagate corrupt-file errors."""
     gif = Image.open(path)
     try:
