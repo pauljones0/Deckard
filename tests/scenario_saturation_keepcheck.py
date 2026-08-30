@@ -1,13 +1,9 @@
-"""
-Unit-tier scenario for the touchscreen background-video keep-check.
+"""Check that touchscreen background-video reuse includes saturation.
 
-An InputVideo bakes the display saturation into its shared tile cache at
-construction, and set_playback updates only fps and loop.
+InputVideo bakes saturation at construction; set_playback changes only fps and loop.
 """
 
-# The keep-check therefore tracks the factor the strip video was built at and
-# rebuilds when that factor diverges, so the strip never serves frames baked at
-# the old one.
+# Rebuild when the factor changes so the strip cannot serve stale baked frames.
 import os
 import threading
 import types
@@ -24,11 +20,10 @@ WATCHDOG_SECONDS = 30
 
 
 class _SpyInputVideo:
-    """Stands in for InputVideo at deck_controller.input_state_classes scope.
+    """Record the saturation that InputVideo would bake into its tile cache.
 
-    Records the display saturation it would bake into its tile cache, read
-    the way the real InputVideo.__init__ reads it, and tracks reuse through
-    set_playback."""
+    Track reuse through set_playback.
+    """
 
     instances: list = []
 
@@ -60,9 +55,10 @@ class _SpyInputVideo:
 
 
 def _make_touch_state(saturation_holder) -> ControllerTouchScreenState:
-    """Build the state through __new__ with only the attributes
-    _get_background_video_frame reads. get_display_saturation stays live on
-    saturation_holder, so a flip between calls reaches a fresh InputVideo."""
+    """Build only the state that _get_background_video_frame reads.
+
+    Keep saturation_holder live so changes reach a new InputVideo.
+    """
     deck_controller = types.SimpleNamespace(
         get_display_saturation=lambda: saturation_holder["value"]
     )
@@ -104,9 +100,7 @@ def check_keepcheck_reacquires_on_sat_change() -> None:
         state._get_background_video_frame(video_path, fps=30, loop=True)
 
         current = state.background_video
-        # The strip video must now reflect factor 1.3, through a rebuild or
-        # an in-place re-acquire. A reuse branch that compares the path alone
-        # keeps the 1.0-baked video and calls set_playback only.
+        # Rebuild or reacquire at 1.3; path-only reuse keeps the 1.0-baked video.
         assert current.baked_saturation == 1.3, (
             f"after a saturation change the reused strip video still bakes "
             f"{current.baked_saturation} (expected 1.3): the keep-check at "

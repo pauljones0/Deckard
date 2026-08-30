@@ -1,9 +1,6 @@
-"""
-The settings Data path Open button opens through Gio, not a subprocess.
+"""Open the expanded settings data path as a Gio file URI.
 
-DataPathGroup.on_open_data_path_button_clicked expanduser's the entry text and
-launches it as a file:// URI through Gio.AppInfo.launch_default_for_uri, which
-the portal routes under flatpak.
+The portal handles Gio.AppInfo.launch_default_for_uri under Flatpak.
 """
 
 # A raising launcher stays inside the handler, and a missing display makes this
@@ -58,7 +55,6 @@ def main() -> None:
 
     settings_mod.Gio = FakeGio
     try:
-        # 1. The tilde expands and the scheme is file://.
         group.data_path.set_text("~/deckard-open-probe")
         group.on_open_data_path_button_clicked()
 
@@ -72,7 +68,6 @@ def main() -> None:
         assert "~" not in launched[-1], "the ~ must be expanded before launching"
         print("PASS: Open launches the expanduser'd path as a file:// URI")
 
-        # 2. A raising launcher stays contained.
         def raising_launch(uri, ctx=None):
             raise GLib.Error("simulated: no handler for the URI")
 

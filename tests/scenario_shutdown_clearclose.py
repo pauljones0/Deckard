@@ -1,8 +1,6 @@
-"""
-Integration scenario for the terminal clear-and-close on shutdown.
+"""Check terminal clear-and-close during shutdown.
 
-DeckManager.close_all submits a ClearAndClose control message per controller
-and joins each media thread with a 2s bound.
+close_all gives each controller's media thread a separate 2s join.
 """
 
 # The journal ends with the blank writes and one close(), the thread exits
@@ -63,9 +61,7 @@ def main() -> None:
     controller.keep_actions_ticking = False
     controller.delete()
     delete_elapsed = time.monotonic() - t0
-    # A liveness ceiling. 1.5s stays below the 2s stop timeout, so it still
-    # catches a full fresh stop wait, and it leaves headroom for a loaded
-    # runner.
+    # A 1.5s ceiling catches a fresh 2s stop wait with loaded-runner headroom.
     assert delete_elapsed < 1.5, f"delete() took too long after shutdown: {delete_elapsed:.2f}s"
 
     if controller in gl.deck_manager.deck_controller:

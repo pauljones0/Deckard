@@ -1,9 +1,6 @@
-"""
-A page change requested while the screensaver shows must be deferred.
+"""Defer page changes while the screensaver shows.
 
-load_page records the requested page as pending and leaves active_page alone,
-because the media player gates the screensaver's background video on
-background.video.page is active_page. hide() loads the pending page on dismiss.
+Keep active_page for video gating; hide loads the pending page.
 """
 
 # Distinct per-page backgrounds make a leak detectable by hash.
@@ -63,14 +60,10 @@ def main() -> None:
     for k in range(key_count):
         assert sig_ss[k] != sig_b[k], f"fixture: screensaver and page B produced the same hash for key {k}"
 
-    # The change. Switch to page B while the screensaver is showing.
     deck.clear_journal()
     controller.load_page(page_b, allow_reload=True)
 
-    # It must be recorded as pending and not painted, and active_page must
-    # stay on the screensaver's page. The media player gates the screensaver's
-    # background video on background.video.page is active_page, so a change
-    # here would freeze that video. hide() loads the pending page on dismiss.
+    # Keep active_page for video gating and record page B for hide() to load.
     assert controller.active_page is page_a, (
         "a page change during the screensaver must NOT change active_page (that "
         "freezes the screensaver's background video)"
