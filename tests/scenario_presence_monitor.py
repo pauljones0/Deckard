@@ -1,5 +1,6 @@
 """Verify PresenceMonitor gating and wake fan-out.
-Screensaver mode never gates; system-idle uses lock and logind idle, with a deck-press grace period."""
+Screensaver never gates; system-idle uses lock and logind idle with deck-press grace.
+"""
 
 # Every transition wakes every deck. No deck, no GTK and no real bus run here.
 import fixtures  # noqa: F401  (isolates gl.DATA_PATH before anything reads it)
@@ -179,14 +180,14 @@ def check_deck_activity_clears_and_rearms() -> None:
 
 
 def check_deck_activity_outranks_lock() -> None:
-    """Let recent deck activity outrank lock until its grace expires.
+    """With lock-on-lock-screen off, let deck activity outrank lock until grace expires.
     The gate must re-engage without another lock or idle event."""
     (a,) = install_controllers(StubController())
     monitor = make_monitor()
     monitor.DECK_ACTIVITY_GRACE_S = 0.4  # the shipped 30s, tightened
 
-    # With no observed press, startup lock gates immediately; check only the
-    # wake increment because prior deadlines can add wakes under load.
+    # With _last_deck_activity at 0.0, startup lock gates immediately; check
+    # wake increments because prior deadlines can add wakes under load.
     aw = a.media_player.wakes
     set_locked(monitor, True)
     assert monitor.is_quiescent() is True, (
@@ -510,8 +511,8 @@ def check_detector_dispatches_property_changes() -> None:
 
 
 def check_detector_inert_on_dbus_failure() -> None:
-    """Keep the detector inert when D-Bus resolution fails.
-    Construction must return, and lock-based gating must continue to work."""
+    """When D-Bus resolution fails, log once and keep the detector inert.
+    Construction returns, and lock-based gating continues."""
     bus = FakeSystemBus(fail_on={"GetSession", "GetSessionByPID"})
     previous = with_session_id("31")
     try:

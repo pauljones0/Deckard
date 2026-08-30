@@ -1,5 +1,6 @@
 """Verify low-level plugin and signal behavior without decks or widgets.
-Signal dispatch forwards kwargs once, and helper paths tolerate partial, slotted, and null values."""
+Signal dispatch forwards kwargs once; helpers accept partials, slotted owners, and null ids.
+"""
 
 # Event listeners deduplicate partials, registries accept slotted owners, backend
 # paths validate early, key lookup uses get_input, and null action ids survive removal.
@@ -17,7 +18,7 @@ from src.Signals.weak_callbacks import CallbackRegistry
 
 
 def pump_main_context(max_iterations: int = 25) -> int:
-    """Dispatch at most max_iterations sources from the default main context.
+    """Dispatch at most max_iterations default-context sources and return the count.
     The bound prevents a repeating idle source from hanging the scenario."""
     ctx = GLib.MainContext.default()
     dispatched = 0

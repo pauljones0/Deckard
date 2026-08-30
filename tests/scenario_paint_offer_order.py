@@ -1,5 +1,6 @@
 """Verify key and touch-strip paint locks preserve compose-to-offer order.
-A stalled old composite must not replace a newer offer, and dispatch must receive released locks."""
+A stalled old composite cannot replace a newer offer; locks release before callback dispatch.
+"""
 import threading
 import time
 

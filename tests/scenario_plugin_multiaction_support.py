@@ -1,5 +1,6 @@
-"""Verify multi-action counts use the action state and support filters use an InputIdentifier.
-Two states with one action are single; one state with two is multi; missing support is UNSUPPORTED."""
+"""Verify state-scoped multi counts and input-identifier support filtering.
+Two one-action states are single; one two-action state is multi; no entry is UNSUPPORTED.
+"""
 import sys
 
 import fixtures  # noqa: F401  (import first: sets up the isolated data dir)

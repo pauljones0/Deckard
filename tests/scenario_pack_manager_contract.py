@@ -1,5 +1,6 @@
-"""Verify discovery and attribution for icon, wallpaper, and SD+ bar packs.
-Invalid manifests are dropped; fallback order and family-specific leaf keys are preserved."""
+"""Verify icon, wallpaper, and SD+ pack discovery and default/general/generic fallback.
+Drop invalid packs; key icons by basename and wallpapers by relpath.
+"""
 import fixtures  # noqa: F401  (import first: sets up the isolated data dir)
 
 import json
@@ -263,7 +264,7 @@ def check_leaf_attribution_fallback() -> int:
 
 def check_leaf_attribution_key() -> int:
     """Verify icons use basenames and wallpapers use pack-relative paths.
-    One attribution file carries both keys and a default to reveal the selected key."""
+    One file carries both keys and a default so the selected key or a miss is visible."""
     rc = 0
     asset_rel_path = os.path.join("sub", "logo.png")
     basename_key = os.path.basename(asset_rel_path)

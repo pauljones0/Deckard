@@ -236,7 +236,7 @@ def check_migrator_oserror_not_corruption(migrator) -> None:
 
 def check_asset_manager_quarantines(plugin) -> None:
     """Verify asset load and save quarantine their shared settings file.
-    load_assets reads during initialization, and save_assets replaces the file."""
+    load_assets reads during initialization; save_assets replaces it from five UI call sites."""
     path = plugin.settings_path
     am = plugin.asset_manager
     os.makedirs(os.path.dirname(path), exist_ok=True)

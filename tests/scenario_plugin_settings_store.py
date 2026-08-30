@@ -1,5 +1,6 @@
-"""Verify all four plugin-settings entry points use the settings store.
-Corrupt files are quarantined, and unreadable files return empty content without raising."""
+"""Verify get_settings, set_settings, load_assets, and save_assets use one settings store.
+Corrupt files quarantine; unreadable files return empty content without raising.
+"""
 
 # The file-version envelope round-trips, and the per-plugin lock serializes
 # each read-modify-write.
@@ -267,8 +268,8 @@ def check_assets_share_file() -> None:
 
 
 def check_serialized_and_lock_order() -> None:
-    """Verify each plugin accessor serializes its own read-modify-write cycle.
-    Asset callbacks take no outer lock because they can call get_settings again."""
+    """Serialize each accessor cycle, not multiple calls, for parallel on_ready actions.
+    Asset methods take no lock because callbacks can re-enter get_settings."""
     from src.backend import settings_store
 
     plugin, _am = make_plugin("com_test_serialized")
