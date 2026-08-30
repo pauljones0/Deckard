@@ -80,7 +80,13 @@ def create_handler(remote_deck_manager: "RemoteDeckManager", token: str) -> "typ
 
         @classmethod
         def send_button_image(cls, button_id: int, image: "Image.Image") -> None:
-            """Store a button image for the browser."""
+            """
+            Store a PIL image for a specific button to be sent to the browser.
+
+            Args:
+                button_id: The button identifier (e.g., row * 5 + col)
+                image: PIL Image object
+            """
             # Convert PIL image to base64-encoded JPEG
             buffered = BytesIO()
             image.save(buffered, format="JPEG")

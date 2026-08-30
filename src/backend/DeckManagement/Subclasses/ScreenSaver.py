@@ -151,7 +151,8 @@ class ScreenSaver:
 
             self.deck_controller.set_brightness(self.brightness)
 
-            # expects_repaint is True, because the paints that install the screensaver background follow immediately below.
+            # expects_repaint is True, because the paints that install the screensaver background
+            # follow immediately below.
             self.deck_controller.clear(expects_repaint=True)
             # ClearMsg omits generic tasks, which can still hold work from the old page.
             # The page lock prevents this generation from being superseded during the wipe.
@@ -176,7 +177,7 @@ class ScreenSaver:
             # Snapshot the stash under the lock before queued release.
             stashed_inputs = self.original_inputs
 
-        # Release stashed input media through the writer after any tick using it.
+        # Queue release after ticks that can still use the page-affined stashed media.
         # Keep original_background because it aliases the live screensaver background.
         if stashed_inputs:
             # Import lazily to keep the controller package dependency one-way.

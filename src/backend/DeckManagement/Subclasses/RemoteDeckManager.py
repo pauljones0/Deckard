@@ -115,6 +115,12 @@ class RemoteDeckManager:
                 raw_deck.key_callback(raw_deck, key, state)
 
     def send_button_image(self, button_id: int, image: "Image.Image") -> None:
-        """Send a button image to the browser."""
+        """
+        Send a PIL image for a specific button to the browser.
+
+        Args:
+            button_id: The button identifier (e.g., row * 5 + col)
+            image: PIL Image object
+        """
         if self.handler_class:
             self.handler_class.send_button_image(button_id, image)

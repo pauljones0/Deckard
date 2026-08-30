@@ -41,7 +41,7 @@ class SurfaceFormat:
 @dataclass(frozen=True)
 class FakeDeckModel:
     """Device geometry, surfaces, controls, and USB identity for a fake deck.
-    Validation forbids Elgato vendor IDs and non-positive visual surface sizes."""
+    Validation rejects Elgato IDs and missing key or touchscreen sizes for enabled features."""
 
     name: str
     key_layout: tuple[int, int]
