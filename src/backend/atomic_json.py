@@ -19,6 +19,7 @@ from typing import Any
 import contextlib
 import json
 import os
+import shutil
 import stat
 import tempfile
 import time
@@ -254,6 +255,48 @@ def atomic_write_json(file_path: str, data: Any, indent: int | None = 4) -> None
             mode = 0o666 & ~_process_umask()
         os.chmod(tmp_path, mode)
         os.replace(tmp_path, file_path)
+        # fsync the directory so the rename itself becomes durable.
+        try:
+            dir_fd = os.open(dir_path, os.O_RDONLY)
+            try:
+                os.fsync(dir_fd)
+            finally:
+                os.close(dir_fd)
+        except OSError:
+            pass
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.remove(tmp_path)
+        raise
+
+
+def atomic_copy_file(src_path: str, dst_path: str) -> None:
+    """Copy src_path over dst_path atomically and durably.
+
+    The content lands in a temp file in the destination's real directory,
+    fsyncs, and moves in with os.replace(), like atomic_write_json above. A
+    reader sees the old destination or the whole copy, never a truncated one,
+    and a failure leaves the destination as it was. The copy carries the
+    source's permission bits and timestamps, as shutil.copy2 does.
+    """
+    dst_path = os.path.realpath(dst_path)
+    dir_path = os.path.dirname(dst_path) or "."
+
+    basename = os.path.basename(dst_path)
+    _reap_stale_tmp_siblings(dir_path, basename)
+
+    fd, tmp_path = tempfile.mkstemp(dir=dir_path, prefix=f".save-{basename}.", suffix=".tmp")
+    try:
+        os.close(fd)
+        # copy2 follows the mkstemp create, so the temp holds the source's
+        # mode and times before the rename publishes it.
+        shutil.copy2(src_path, tmp_path)
+        read_fd = os.open(tmp_path, os.O_RDONLY)
+        try:
+            os.fsync(read_fd)
+        finally:
+            os.close(read_fd)
+        os.replace(tmp_path, dst_path)
         # fsync the directory so the rename itself becomes durable.
         try:
             dir_fd = os.open(dir_path, os.O_RDONLY)

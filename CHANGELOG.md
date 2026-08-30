@@ -191,6 +191,11 @@ bundle as a release asset.
 
 ### Fixed
 
+- A page rename or copy that fails partway no longer leaves an empty, broken
+  page file under the new name. The content now moves into place in one step,
+  so an interrupted rename leaves either the old state or the finished one.
+- When a damaged page file is restored from its automatic backup, the log now
+  names the page and the backup it was restored from.
 - Flatpak releases now ship the locked runtime Python dependency set, including
   headless OpenCV, instead of a stale development environment with the full
   OpenCV build. Release builds also reject dependency drift and unexpected
