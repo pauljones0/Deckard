@@ -42,9 +42,7 @@ class Migrator_1_5_0_beta_5(Migrator):
             if not page_path.endswith(".json"):
                 continue
             page_path = os.path.join(pages_dir, page_path)
-            # Isolate each page. A corrupt or unreadable one is left in place
-            # and logged, so the remaining pages still migrate rather than one
-            # bad file aborting the whole run.
+            # Leave a corrupt or unreadable page unchanged so the remaining pages still migrate.
             try:
                 with open(page_path, "r") as f:
                     page = json.load(f)
@@ -77,24 +75,16 @@ class Migrator_1_5_0_beta_5(Migrator):
                 with open(old_settings_path, "r") as f:
                     settings = json.load(f)
             except (OSError, ValueError) as e:
-                # Log rather than swallow silently. The old file is left in
-                # place, so the read is retryable, and the migration proceeds
-                # with the other plugins instead of skipping this one unseen.
+                # Leave an unreadable old file in place for retry and continue with other plugins.
                 log.warning(f"Skipping plugin settings during migration, left unchanged: {old_settings_path}: {e}")
                 continue
 
             new_settings_path = os.path.join(gl.DATA_PATH, "settings", "plugins", plugin_dir_name, "settings.json")
-            # Write the migrated copy to the new path first, and remove the old
-            # file only after that copy is on disk. An existing new path holds
-            # the current settings, so leave it alone rather than overwrite it
-            # with the stale pre-beta.5 copy.
+            # Write the new copy before removal; an existing destination contains current settings.
+            # Never overwrite it with the stale pre-beta.5 copy.
             if not os.path.exists(new_settings_path):
-                # atomic_write_json commits through a same-directory temp file,
-                # an fsync and an os.replace, and it creates the parent
-                # directory. A crash leaves the old file whole or the new file
-                # complete. A write failure propagates and keeps os.remove
-                # below out of reach.
+                # The atomic write creates parents and publishes a complete file after fsync.
+                # A failure propagates before the old file can be removed.
                 atomic_write_json(new_settings_path, settings)
 
-            # The new path now holds a complete copy, so remove the old file.
             os.remove(old_settings_path)
