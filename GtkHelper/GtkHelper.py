@@ -20,6 +20,11 @@ from typing_extensions import deprecated
 import gi
 
 from src.backend.DeckManagement.HelperMethods import open_web
+from GtkHelper.list_container import (
+    ListContainerAdapter,
+    resolve_expander_list_box,
+    resolve_preferences_group_list_box,
+)
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
@@ -70,81 +75,41 @@ def better_unparent(widget: Gtk.Widget) -> None:
 
 # Helper Classes
 class BetterExpander(Adw.ExpanderRow):
+    # A facade over the shared list-container adapter, which owns the
+    # private-tree walk and the operations. The expander uses the skip
+    # policy: a mismatched Adw layout no-ops here (clear still warns).
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         # Subclasses that track their rows replace this. Empty here, so
         # get_index_of_child raises the ValueError it documents rather than
         # an AttributeError on a subclass that never set it.
         self.actions: list[Any] = []
+        self._list_container = ListContainerAdapter(
+            self.get_list_box, missing="skip", owner_label="Expander")
 
     def set_sort_func(self, *args: Any, **kwargs: Any) -> None:
-        revealer_list_box = self.get_list_box()
-        if revealer_list_box is None:
-            return
-        revealer_list_box.set_sort_func(*args, **kwargs)
+        self._list_container.set_sort_func(*args, **kwargs)
 
     def set_filter_func(self, *args: Any, **kwargs: Any) -> None:
-        revealer_list_box = self.get_list_box()
-        if revealer_list_box is None:
-            return
-        revealer_list_box.set_filter_func(*args, **kwargs)
+        self._list_container.set_filter_func(*args, **kwargs)
 
     def invalidate_filter(self) -> None:
-        list_box = self.get_list_box()
-        if list_box is None:
-            return
-        list_box.invalidate_filter()
+        self._list_container.invalidate_filter()
 
     def invalidate_sort(self) -> None:
-        list_box = self.get_list_box()
-        if list_box is None:
-            return
-        list_box.invalidate_sort()
+        self._list_container.invalidate_sort()
 
     def get_rows(self) -> Any:
         # The rows are per-subclass widgets that callers read duck-typed
         # attributes off, so the checker sees dynamic here, as with
         # BetterPreferencesGroup.get_list_box.
-        revealer_list_box = self.get_list_box()
-        if revealer_list_box is None:
-            return
-
-        rows = []
-        child = revealer_list_box.get_first_child()
-        while child is not None:
-            rows.append(child)
-            child = child.get_next_sibling()
-
-        return rows
+        return self._list_container.rows()
 
     def get_list_box(self) -> Gtk.ListBox | None:
-        expander_box = self.get_first_child()
-        if expander_box is None:
-            return None
-
-        expander_list_box = expander_box.get_first_child()
-        if expander_list_box is None:
-            return None
-
-        revealer = expander_list_box.get_next_sibling()
-        if revealer is None:
-            return None
-
-        revealer_list_box = revealer.get_first_child()
-        if not isinstance(revealer_list_box, Gtk.ListBox):
-            return None
-
-        return revealer_list_box
+        return resolve_expander_list_box(self)
 
     def clear(self) -> None:
-        list_box = self.get_list_box()
-        if list_box is None:
-            # add_row() appends through libadwaita's own pointer and does not
-            # use this walk, so a silent clear here lets a caller that clears
-            # and refills duplicate every row. Say it rather than hide it.
-            log.warning("Expander has no list box to clear; the Adw layout this walk expects has changed")
-            return
-        list_box.remove_all()
+        self._list_container.clear()
 
     def reorder_child_after(self, child: Gtk.Widget, after: Gtk.Widget) -> None:
         childs = self.get_rows()
@@ -168,10 +133,7 @@ class BetterExpander(Adw.ExpanderRow):
             self.add_row(child)
 
     def remove_child(self, child:Gtk.Widget) -> None:
-        list_box = self.get_list_box()
-        if list_box is None:
-            return
-        list_box.remove(child)
+        self._list_container.remove(child)
 
     def get_index_of_child(self, child: Any) -> int:
         for i, action in enumerate(self.actions):
@@ -205,55 +167,39 @@ class BetterExpander(Adw.ExpanderRow):
         return image if isinstance(image, Gtk.Image) else None
 
 class BetterPreferencesGroup(Adw.PreferencesGroup):
+    # A facade over the shared list-container adapter, on the raise policy:
+    # a mismatched Adw layout raises a LookupError that names the walk, so
+    # a toolkit change surfaces at the call site instead of hiding, and a
+    # clear can never silently skip while add_row still appends. Row
+    # listing answers None on a mismatched tree under both policies.
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
+        self._list_container = ListContainerAdapter(
+            self.get_list_box, missing="raise",
+            owner_label="PreferencesGroup")
 
     def clear(self) -> None:
-        list_box = self.get_list_box()
-        list_box.remove_all()
+        self._list_container.clear()
 
     def set_sort_func(self, *args: Any, **kwargs: Any) -> None:
-        list_box = self.get_list_box()
-        list_box.set_sort_func(*args, **kwargs)
+        self._list_container.set_sort_func(*args, **kwargs)
 
     def set_filter_func(self, *args: Any, **kwargs: Any) -> None:
-        list_box = self.get_list_box()
-        list_box.set_filter_func(*args, **kwargs)
+        self._list_container.set_filter_func(*args, **kwargs)
 
     def invalidate_filter(self) -> None:
-        list_box = self.get_list_box()
-        list_box.invalidate_filter()
+        self._list_container.invalidate_filter()
 
     def invalidate_sort(self) -> None:
-        list_box = self.get_list_box()
-        list_box.invalidate_sort()
+        self._list_container.invalidate_sort()
 
     def get_rows(self) -> Any:
-        # Dynamic for the same reason as get_list_box below: the rows are
-        # per-subclass widgets read duck-typed by the callers.
-        list_box = self.get_list_box()
-        if list_box is None:
-            return
+        # Dynamic on purpose: the rows are per-subclass widgets read
+        # duck-typed by the callers.
+        return self._list_container.rows()
 
-        rows = []
-        child = list_box.get_first_child()
-        while child is not None:
-            rows.append(child)
-            child = child.get_next_sibling()
-
-        return rows
-
-    def get_list_box(self) -> Any:
-        # Every step walks Adw's internal tree, so any of them can answer
-        # None. Only get_rows below checks for that: the other callers
-        # dereference the result, so a layout that does not match surfaces
-        # there as an AttributeError. Do not add a guard to clear() without
-        # reading the note on BetterExpander.clear. A silent clear that the
-        # matching add_row does not skip duplicates every row.
-        first_box = self.get_first_child()
-        second_box = first_box.get_first_child() if first_box is not None else None
-        third_box = second_box.get_next_sibling() if second_box is not None else None
-        return third_box.get_first_child() if third_box is not None else None
+    def get_list_box(self) -> Gtk.ListBox | None:
+        return resolve_preferences_group_list_box(self)
 
 class AttributeRow(Adw.PreferencesRow):
     # The row draws its own two labels, so the caption and the value live in
