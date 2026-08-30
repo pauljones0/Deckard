@@ -35,9 +35,9 @@ KEY_UI_INTERVAL_S = 0.0
 
 
 def mark_dirty(controller: "DeckController", identifier: "InputIdentifier") -> None:
-    """Mark an accepted frame dropped after push_input_image returned True.
+    """Mark an input after an accepted drop or a scheduling or replay failure.
 
-    load_from_changes recomposites the marked input when the window maps again.
+    The controller marker lets load_from_changes retry it when the window maps.
     """
     # The markers dict lives on the controller, so a detached UI client can
     # ask the engine to composite again.
@@ -74,7 +74,7 @@ class _MirrorFrame:
 class MirrorWidget(Protocol, Generic[_PayloadT]):
     """Convert and paint one input frame with a widget-specific payload.
 
-    The drain converts only the latest frame; replay prepares off-loop and idles the paint.
+    Replay can convert synchronously on its caller or the main thread.
     """
 
     def prepare_mirror_frame(self, image: "Image.Image") -> _PayloadT: ...
@@ -103,7 +103,7 @@ class _MirrorSlot:
               on_superseded: "Callable[[object], None] | None" = None) -> float | None:
         """Replace the pending frame from any thread.
 
-        Return the drain delay, or None when the one callback is already armed.
+        Record displacement now; return delay or None when a callback is armed.
         """
         with self._lock:
             displaced = self._pending
@@ -378,8 +378,8 @@ class GtkUIAdapter(ui_port.UIPort):
                 mark_dirty(controller, identifier)
                 _discard_mirror_frame(controller, frame, "ui_unavailable")
                 return False
-            # Convert only the winning frame; superseded samples were recorded
-            # as unconverted drops by the one armed drain.
+            # offer records superseded drops synchronously; only its winning
+            # frame reaches conversion, and one armed drain serves all pushes.
             widget.paint_mirror_frame(
                 widget.prepare_mirror_frame(cast("Image.Image", frame.image)))
             tracker = getattr(controller, "input_latency", None)

@@ -184,7 +184,7 @@ class StreamDeckUIImporter:
                                 except (TypeError, ValueError):
                                     page_path = None
                                 if page_path is None:
-                                    # Use the fallback filename when the export has no target page.
+                                    # Use the fallback for missing or malformed targets.
                                     page_path = os.path.join(gl.DATA_PATH, "pages", f"ui_{deck}_{export_switch_page}.json")
                                 action: dict[str, Any] = {
                                     "id": "com_core447_DeckPlugin::ChangePage",
@@ -264,6 +264,7 @@ class StreamDeckUIImporter:
                 page_flush.get().discard_path(page_path)
                 self.save_json(page_path, page)
                 # gl.signal_manager.trigger_signal(Signals.PageAdd, page_path) # We don't trigger the action to save ressources
+                # time.sleep(0.005) # Otherwise the app can't hold up - The problem is the signal call, but is is necessary to
 
                 page_manager = services.require_page_manager()
                 page_manager.refresh_document(page_path)

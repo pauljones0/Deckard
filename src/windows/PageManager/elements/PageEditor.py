@@ -421,7 +421,7 @@ class AutoChangeGroup(PageEditorGroup):
     def commit_pending_patterns(self) -> None:
         """Write pending entry text before teardown removes its widgets.
 
-        Update only page settings because list refreshes can outlive the widgets.
+        Skip list refresh during teardown, but still recheck the active window.
         """
         page_manager = gl.page_manager
         path = self.page_editor.active_page_path
