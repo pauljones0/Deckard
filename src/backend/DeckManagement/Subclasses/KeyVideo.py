@@ -13,18 +13,19 @@ You should have received a copy of the GNU General Public License
 along with this program. If not, see <https://www.gnu.org/licenses/>.
 """
 import threading
-import time
 
 from src.backend.DeckManagement.Subclasses.SingleKeyAsset import SingleKeyAsset
 from src.backend.DeckManagement.Subclasses import mp4_tile_cache
+from src.backend.DeckManagement import media_loop
+from src.backend.DeckManagement.media_loop import MEDIA_LOOP_FPS, FrameScheduled
 from PIL import Image
 
 from typing import Any, TYPE_CHECKING, override
 if TYPE_CHECKING:
     from src.backend.DeckManagement.deck_controller.inputs import ControllerInput
 
-class InputVideo(SingleKeyAsset):
-    def __init__(self, controller_input: "ControllerInput[Any]", video_path: str, fps: int = 30, loop: bool = True,
+class InputVideo(SingleKeyAsset, FrameScheduled):
+    def __init__(self, controller_input: "ControllerInput[Any]", video_path: str, fps: int = MEDIA_LOOP_FPS, loop: bool = True,
                  natural_speed: bool = False):
         super().__init__(
             controller_input=controller_input,
@@ -58,10 +59,10 @@ class InputVideo(SingleKeyAsset):
         self._close_lock = threading.Lock()
 
         self.active_frame: int = -1
-        # Wall-clock picking state. It mirrors BackgroundVideo.get_next_tiles
+        # Clock-picking state. It mirrors BackgroundVideo.get_next_tiles
         # in DeckController.py, and both branches are live (see
         # docs/presenter-migration-plan.md).
-        self._play_start: float | None = None  # wall-clock playback start, set on first real-time frame
+        self._play_start: float | None = None  # playback start on the media clock, set on first real-time frame
         self._last_frame_tick: float | None = None  # last real-time frame pick, for gap clamping
 
     def get_next_frame(self, now: float | None = None) -> Image.Image | None:
@@ -80,7 +81,7 @@ class InputVideo(SingleKeyAsset):
                 return None
 
             if now is None:
-                now = time.time()
+                now = media_loop.now()
 
             # A degenerate source, e.g. a corrupt file or bad metadata,
             # reports 0 frames. That makes is_cache_complete() trivially true,
@@ -89,10 +90,10 @@ class InputVideo(SingleKeyAsset):
                 return None
 
             if cache.is_cache_complete():
-                # The cache is built, so any frame is a free lookup. Pick it by
-                # wall clock, so a slow media loop drops frames and stays
-                # real-time instead of playing the video in slow motion.
-                playback_fps = float(self.fps or 30)
+                # The cache is built, so any frame is a free lookup. Pick
+                # it by the clock, so a slow media loop drops frames and
+                # stays real-time instead of playing in slow motion.
+                playback_fps = float(self.fps or MEDIA_LOOP_FPS)
                 if self.natural_speed:
                     playback_fps = float(cache.get_source_fps() or playback_fps)
                 if self._play_start is None:
@@ -117,21 +118,38 @@ class InputVideo(SingleKeyAsset):
                     # per-owner tick gates never see that. Inside one cap
                     # window the pick is identical, so the owner's hash dedup
                     # drops the redundant device write.
-                    cap = max(1.0, float(self.fps or 30))
+                    cap = max(1.0, float(self.fps or MEDIA_LOOP_FPS))
                     elapsed = int(elapsed * cap) / cap
                 frame = int(elapsed * playback_fps)
                 n_frames = cache.n_frames
                 self.active_frame = frame % n_frames if self.loop else min(frame, n_frames - 1)
             else:
                 # The decode into the cache is still running. Advance
-                # sequentially, so every frame gets decoded. A wall-clock jump
-                # leaves gaps and forces expensive seeks and decode-on-demand
-                # under the cache lock (docs/presenter-migration-plan.md).
+                # sequentially, so every frame gets decoded. A clock-driven
+                # jump leaves gaps and forces expensive seeks and
+                # decode-on-demand under the cache lock.
                 self.active_frame += 1
                 if self.active_frame >= cache.n_frames and self.loop:
                     self.active_frame = 0
 
             return cache.get_frame(self.active_frame)
+
+    @override
+    def _render_rate(self) -> float:
+        """Non-natural playback advances at the page's fps; natural playback
+        advances at the source rate with fps as a pick cap. Nothing renders
+        above the loop rate, and a 0 or None fps plays at loop rate. While
+        the cache still builds, the sequential decode advances one frame per
+        render pass, so a rate cap would slow the decode itself; the build
+        runs at loop rate, as the per-tick composite always did."""
+        cache = self.video_cache
+        if cache is not None and not cache.is_cache_complete():
+            return MEDIA_LOOP_FPS
+        cap = max(1.0, float(self.fps or MEDIA_LOOP_FPS))
+        if not self.natural_speed:
+            return min(MEDIA_LOOP_FPS, cap)
+        source = self.native_fps() or cap
+        return min(MEDIA_LOOP_FPS, cap, source)
 
     def native_fps(self) -> float | None:
         """The rate this video runs at with no cap, in frames per second, as
@@ -147,13 +165,13 @@ class InputVideo(SingleKeyAsset):
     def set_playback(self, fps: int, loop: bool) -> None:
         """Applies a new fps and loop to a playing video, at the same position.
 
-        Without natural_speed, wall-clock picking computes frame = elapsed *
+        Without natural_speed, clock picking computes frame = elapsed *
         fps. A change of fps with no rebase of the start time then jumps the
         position by the whole elapsed factor. With natural_speed the timebase
         runs on the source fps, and fps is only the owner's render cap.
         """
-        if not self.natural_speed and (self.fps or 30) != (fps or 30) and self._play_start is not None:
-            self._play_start = time.time() - (self.active_frame + 1) / float(fps or 30)
+        if not self.natural_speed and (self.fps or MEDIA_LOOP_FPS) != (fps or MEDIA_LOOP_FPS) and self._play_start is not None:
+            self._play_start = media_loop.now() - (self.active_frame + 1) / float(fps or MEDIA_LOOP_FPS)
         self.fps = fps
         self.loop = loop
 

@@ -22,6 +22,7 @@ from typing import Any, TYPE_CHECKING, cast
 
 import globals as gl
 
+from src.backend.DeckManagement.media_loop import MEDIA_LOOP_FPS
 from src.backend.DeckManagement.InputIdentifier import Input, InputIdentifier
 from src.backend import timer_wheel
 if TYPE_CHECKING:
@@ -56,7 +57,7 @@ class ScreenSaver:
         # runs, the value must degrade to the documented default and not to a
         # fifth number nothing else knows.
         self.brightness: int = 30
-        self.fps: int = 30
+        self.fps: int = MEDIA_LOOP_FPS
         self.loop: bool = True
         # Non-None only while armed, that is enabled and not showing. See
         # set_time and set_enable.

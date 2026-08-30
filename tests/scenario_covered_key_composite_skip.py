@@ -18,11 +18,12 @@ import fixtures  # noqa: F401  (import first: isolated data dir + sys.path)
 
 import os
 import threading
-import time
 
 from PIL import Image, ImageDraw
 
 import globals as gl
+
+from src.backend.DeckManagement import media_loop
 from fixtures import start_watchdog, teardown
 
 from src.backend.DeckManagement.ImageHelpers import hides_background
@@ -1031,14 +1032,14 @@ def check_capped_gif_background(controller) -> None:
 
     def _advance(frame_index: int) -> None:
         background._last_frame_tick = None
-        background._play_start = time.time() - (background._cum_delays[frame_index - 1]
-                                                if frame_index else 0.0) - 0.001
+        background._play_start = media_loop.now() - (background._cum_delays[frame_index - 1]
+                                                     if frame_index else 0.0) - 0.001
         controller.background.update_tiles()
 
     try:
         with _CompositeCounter(key) as composites:
             _advance(0)
-            key.on_media_player_tick()
+            key.on_media_player_tick(media_loop.now(), bg_frame_new=True)
             assert composites.count == 1, "fixture sanity: the first tick must composite"
             assert state.cover_cache._entry is not None, (
                 "fixture sanity: the key over the GIF background did not settle into the skip"
@@ -1050,7 +1051,7 @@ def check_capped_gif_background(controller) -> None:
             for step in range(12):
                 _advance(step % frames)
                 seen.add(background.active_frame)
-                key.on_media_player_tick()
+                key.on_media_player_tick(media_loop.now(), bg_frame_new=True)
             assert len(seen) > 1, (
                 "fixture sanity: the GIF background never advanced, so the check proved nothing"
             )
@@ -1064,7 +1065,7 @@ def check_capped_gif_background(controller) -> None:
             before = composites.count
             for step in range(4):
                 _advance(step % frames)
-                key.on_media_player_tick()
+                key.on_media_player_tick(media_loop.now(), bg_frame_new=True)
             assert composites.count == before + 4, (
                 f"a foreground that stopped covering must put every tick back on the "
                 f"composite; {composites.count - before} of 4 ran"

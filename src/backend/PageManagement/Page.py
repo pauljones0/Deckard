@@ -27,6 +27,7 @@ import globals as gl
 
 from src.backend.PluginManager.ActionCore import ActionCore
 from src.backend.DeckManagement.InputIdentifier import Input, InputEvent, InputIdentifier
+from src.backend.DeckManagement.media_loop import MEDIA_LOOP_FPS
 from typing import cast, Any, Iterator, TYPE_CHECKING
 if TYPE_CHECKING:
     from src.backend.DeckManagement.deck_controller.controller import DeckController
@@ -42,7 +43,7 @@ _Dict = dict
 # The frame-rate cap a state's media and background load under when the page
 # carries no fps key: the media loop's own tick ceiling, so no cap at all.
 # MediaConfig.from_dict applies the same default when it reads the page dict.
-DEFAULT_MEDIA_FPS = 30
+DEFAULT_MEDIA_FPS = MEDIA_LOOP_FPS
 
 # The action-objects registry: input type -> json identifier -> state ->
 # index -> the action, a placeholder for an unresolved or outdated one, or

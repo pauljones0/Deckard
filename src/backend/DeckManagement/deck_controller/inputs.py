@@ -693,21 +693,22 @@ class ControllerKey(ControllerInput["ControllerKeyState"]):
     def get_active_state(self) -> "ControllerKeyState":
         return super().get_active_state()
 
-    def on_media_player_tick(self) -> None:
+    def on_media_player_tick(self, now: float, bg_frame_new: bool) -> None:
         state, scroll_moved = self._tick_animation_clocks()
         needs_update = False
 
         # Decide on an update from the content type.
-        if state.key_video is not None:
-            # InputVideo and KeyGIF both pick their current frame from their
-            # own wall-clock timeline, so the tick asks for whatever frame is
-            # current and computes no GIF frame delay of its own.
+        if state.key_video is not None and state.key_video.frame_due(now):
+            # InputVideo and KeyGIF pick their current frame from their own
+            # timeline. The deadline recomposites only when that timeline
+            # can hold a new frame, not on every loop tick.
             needs_update = True
         elif scroll_moved:
             needs_update = True
-        elif self.deck_controller.background.video is not None:
+        elif bg_frame_new and self.deck_controller.background.video is not None:
             # An opaque background color hides the video tile, as
-            # get_current_image shows, so that key cannot change per frame.
+            # get_current_image shows, so that key cannot change per frame,
+            # and no key changes on a tick the background rendered no frame.
             if state.background_manager.get_composed_color()[-1] < 255:
                 needs_update = True
 
@@ -1126,17 +1127,16 @@ class ControllerTouchScreen(ControllerInput["ControllerTouchScreenState"]):
         # that is the full strip.
         return self.get_screen_dimensions()
 
-    def on_media_player_tick(self) -> bool:
+    def on_media_player_tick(self, now: float) -> bool:
         # A per-touchscreen background video advances on the media tick, as
         # dial content does, and the caller re-composites the shared
         # touchscreen once per frame. The screensaver owns the strip while it
-        # shows. The state decides the fps-capped render under its
+        # shows. The state decides the rate-capped render under its
         # background-video lock, so a concurrent _release_background_video()
-        # cannot race the read of the video or the timestamp.
+        # cannot race the read of the video or its deadline.
         if self.deck_controller.screen_saver.showing:
             return False
-        return self.get_active_state().tick_background_video(
-            self.deck_controller.media_player.FPS)
+        return self.get_active_state().tick_background_video(now)
 
     def get_dial_image_area(self, identifier: Input.Dial) -> tuple[int, int, int, int]:
         width, height = self.get_screen_dimensions()
@@ -1433,12 +1433,14 @@ class ControllerDial(ControllerInput["ControllerDialState"]):
     def get_active_state(self) -> "ControllerDialState":
         return super().get_active_state()
 
-    def on_media_player_tick(self) -> bool:
+    def on_media_player_tick(self, now: float) -> bool:
         # Report whether a redraw is needed instead of painting. A dial has no
         # slot of its own, so the caller renders the shared touchscreen once
-        # per frame rather than once per dial.
+        # per frame rather than once per dial. The video's own deadline
+        # decides whether this tick can show a new frame.
         state, scroll_moved = self._tick_animation_clocks()
-        return state.video is not None or scroll_moved
+        video_due = state.video is not None and state.video.frame_due(now)
+        return video_due or scroll_moved
 
     def get_image_size(self) -> tuple[int, int]:
         if self.deck_controller.deck.is_touch():

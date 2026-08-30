@@ -16,6 +16,7 @@ import threading
 import time
 
 import src.backend.DeckManagement.deck_controller.native_encode as native_encode_module
+from src.backend.DeckManagement import media_loop
 from src.backend.DeckManagement.DeckController import BackgroundVideo
 from src.backend.DeckManagement.InputIdentifier import Input
 from src.backend.DeckManagement.Subclasses.KeyLabel import KeyLabel
@@ -314,7 +315,7 @@ def _show_frame(video, controller, index: int) -> None:
                 f"is not frame-accurate"
             )
         video._last_frame_tick = None
-        video._play_start = time.time() - index / playback_fps
+        video._play_start = media_loop.now() - index / playback_fps
         controller.background.update_tiles()
         if video.active_frame == index:
             return

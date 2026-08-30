@@ -26,6 +26,7 @@ if TYPE_CHECKING:
 from loguru import logger as log
 
 from src.Signals import Signals
+from src.backend.DeckManagement.media_loop import MEDIA_LOOP_FPS
 from src.backend.DeckManagement.deck_controller.controller import DeckController
 
 from src.backend.PageManagement.Page import Page
@@ -1091,7 +1092,7 @@ class PageManagerBackend:
         page_settings = self.get_page_settings(path)
         return cast(dict[str, Any], page_settings.get("screensaver", {}))
 
-    def set_screensaver_settings(self, path: str, overwrite: bool = False, enable: bool = False, time_delay: int = 5, loop: bool = True, fps: int = 30, brightness: float = 30, media_path: str = "") -> None:
+    def set_screensaver_settings(self, path: str, overwrite: bool = False, enable: bool = False, time_delay: int = 5, loop: bool = True, fps: int = MEDIA_LOOP_FPS, brightness: float = 30, media_path: str = "") -> None:
         with self.edit_page_settings(path) as settings:
             settings["screensaver"] = {
                 "overwrite": overwrite,
@@ -1146,7 +1147,7 @@ class PageManagerBackend:
         page_settings = self.get_page_settings(path)
         return cast(dict[str, Any], page_settings.get("background", {}))
 
-    def set_background_settings(self, path: str, overwrite: bool = False, show: bool = False, fps: int = 30, loop: bool = False, media_path: str = "", extend_to_touchscreen: bool = False) -> None:
+    def set_background_settings(self, path: str, overwrite: bool = False, show: bool = False, fps: int = MEDIA_LOOP_FPS, loop: bool = False, media_path: str = "", extend_to_touchscreen: bool = False) -> None:
         with self.edit_page_settings(path) as settings:
             settings["background"] = {
                 "overwrite": overwrite,

@@ -26,6 +26,7 @@ from copy import copy
 from PIL import Image, ImageDraw, ImageOps, ImageFont
 from loguru import logger as log
 
+from src.backend.DeckManagement.media_loop import MEDIA_LOOP_FPS
 from src.backend.DeckManagement.ImageHelpers import hides_background
 from src.backend.DeckManagement.InputIdentifier import Input
 from src.backend.DeckManagement.Subclasses.KeyLabel import KeyLabel
@@ -521,12 +522,17 @@ class LabelManager:
     def get_has_scroll_labels(self) -> bool:
         return bool(self.get_scroll_label_widths())
 
-    # The scroll cadence in wall time, not loop iterations. At the nominal
-    # 30 FPS it advances 1px per two ticks and holds for scroll_wait ticks.
-    # Wall clock keeps the speed stable when event wakes push the loop past
-    # its nominal rate.
-    _NOMINAL_TICK_RATE = 30.0
-    SCROLL_STEP_SECONDS = 2.0 / _NOMINAL_TICK_RATE
+    # The scroll cadence in real time, not loop iterations. At the loop
+    # rate it advances 1px per two ticks and holds for scroll_wait ticks.
+    # Real time keeps the speed stable when event wakes push the loop past
+    # its nominal rate. A plain name only: the import-floor check runs this
+    # class body with stubbed imports, so no arithmetic can run here; the
+    # step derives in the methods instead.
+    _NOMINAL_TICK_RATE = MEDIA_LOOP_FPS
+
+    @property
+    def SCROLL_STEP_SECONDS(self) -> float:
+        return 2.0 / self._NOMINAL_TICK_RATE
 
     def _scroll_hold_start_seconds(self) -> float:
         return self.scroll_wait * 2.0 / self._NOMINAL_TICK_RATE

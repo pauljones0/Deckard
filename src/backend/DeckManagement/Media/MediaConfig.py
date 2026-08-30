@@ -1,6 +1,8 @@
 from dataclasses import dataclass
 from typing import Any
 
+from src.backend.DeckManagement.media_loop import MEDIA_LOOP_FPS
+
 
 @dataclass(slots=True)
 class MediaConfig:
@@ -15,7 +17,7 @@ class MediaConfig:
     Args:
         path (str, optional): The path to the media file. Defaults to None.
         loop (bool, optional): Whether video media loops. Defaults to True.
-        fps (int, optional): The video frame rate. Defaults to 30.
+        fps (int, optional): The video frame rate. Defaults to the media-loop rate.
         fill_mode (str, optional): How the media fills the input. Defaults to None.
         size (float, optional): The size of the media. Defaults to None.
         valign (float, optional): The vertical alignment of the media. Defaults to None.
@@ -23,7 +25,7 @@ class MediaConfig:
     """
     path: str | None = None
     loop: bool = True
-    fps: int = 30
+    fps: int = MEDIA_LOOP_FPS
     fill_mode: str | None = None
     size: float | None = None
     valign: float | None = None
@@ -44,7 +46,7 @@ class MediaConfig:
         return cls(
             path=d.get("path"),
             loop=d.get("loop", True),
-            fps=d.get("fps", 30),
+            fps=d.get("fps", MEDIA_LOOP_FPS),
             fill_mode=d.get("fill-mode"),
             size=d.get("size"),
             valign=d.get("valign"),
