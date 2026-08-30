@@ -1,13 +1,5 @@
-"""Boot-phase deferral for work asked of something that does not exist yet.
-
-This module owns two handshakes for the whole process. Leg A defers a call
-until the App runs, and App.on_activate drains it. Legs B and C park a CLI
-request, named by deck serial, until that deck appears. The controller for
-the serial claims it on its first default-page load.
-
-This module imports globals and nothing else first-party, so any layer,
-including the render engine's import closure, imports it without a cycle.
-"""
+"""Defer callbacks until App readiness and CLI requests until their deck appears.
+Import only globals so every layer can use these process-wide handshakes without cycles."""
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -19,48 +11,22 @@ if TYPE_CHECKING:
     from typing import Any
 
 
-# No locks. The GIL-atomic list and dict operations, plus the operation
-# orders in the methods below, are the synchronization. A lock cannot make the
-# ownership more exclusive, and it puts a boot-phase acquire in front of every
-# notification from every thread and in front of every page load.
+# GIL-atomic list and dict operations synchronize ownership without locks.
+# The operation order in each method is part of that synchronization.
 class StartupQueue:
-    """The boot-phase deferral protocols.
-
-    This holds no state. Every method reads the gl slot it works on, per call,
-    and caches nothing. A test that swaps gl.app_loading_finished_tasks
-    therefore keeps working, and so does plugin code that appends to it.
-    """
+    """Apply boot deferral without local state or cached globals slots.
+    Each call observes slot rebinding and direct plugin appends."""
 
     # Leg A. Deliveries that wait on the running App.
 
     def when_app_ready(self, task: Callable[[], Any]) -> bool:
-        """True when the caller owns the delivery and must run its work now.
-        False when the queue holds task and the drain runs it.
-
-        Safe from any thread. task takes no argument, and nothing reads its
-        return value. A True answer does not mean that task ran. The caller
-        delivers as it likes, and the notification facade re-enters itself
-        through GLib.idle_add rather than call the queued lambda.
-
-        Readiness is gl.app is not None, and no internal flag. gl.app
-        publishes in Main.__init__ before app.run(), and again in
-        App.on_activate right before the drain. A call that lands in that
-        window must skip the queue and marshal itself onto the main loop that
-        starts next. A ready flag flipped at on_activate prevents that.
-
-        The append races the drain. on_activate can publish gl.app and finish
-        popping the queue between the None check and the append, which strands
-        the task. So the order is append, then re-check, then remove. A list
-        append, pop and remove are atomic under the GIL, so exactly one side
-        owns the task. Another order strands it again.
-        """
+        """Return whether the caller owns task now; otherwise queue it until gl.app exists.
+        Thread-safe ownership requires GIL-atomic append, recheck, and remove in this order."""
         if gl.app is None:
             gl.app_loading_finished_tasks.append(task)
             if gl.app is None:
                 return False
-            # The docstring's append-recheck-remove race: on_activate can
-            # publish gl.app between the two checks, which narrowing cannot
-            # see, so this recovery path is live.
+            # Recover if gl.app publishes between append and the second check.
             try:
                 gl.app_loading_finished_tasks.remove(task)
             except ValueError:
@@ -69,22 +35,8 @@ class StartupQueue:
         return True
 
     def drain_app_ready(self) -> None:
-        """Run every queued task on the calling thread. Main thread only.
-        App.on_activate calls it once gl.app publishes.
-
-        Drain by atomic pop, and never iterate and then clear. A background
-        thread races its append against this drain, and a clear drops a task
-        appended mid-iteration unrun. pop(0) gives every task to exactly one
-        side, this loop or the appender's reclaim after its append. A task
-        that appends further tasks while it runs gets those drained too.
-
-        Nothing reads a return value. This skips an entry that is not callable
-        rather than raise on it. Plugin code reaches the list. An append of
-        f() where f was meant must therefore not end the drain. A task that
-        raises is another case, and nothing catches it. The exception
-        propagates out of the drain and the tasks behind it stay queued. A
-        catch here hides a failure on the activation path.
-        """
+        """Drain callable tasks by atomic pop on the main thread, including new appends.
+        Skip non-callables; exceptions propagate and leave later tasks queued."""
         while gl.app_loading_finished_tasks:
             task = gl.app_loading_finished_tasks.pop(0)
             if callable(task):
@@ -93,97 +45,38 @@ class StartupQueue:
     # Leg B. --change-page requests that wait for their deck.
 
     def park_page_request(self, serial_number: str, page_name: str) -> None:
-        """Park a page change for a deck that has not appeared yet.
-
-        The last write wins per serial, so two --change-page pairs for one
-        serial leave the second. A request that names a serial which never
-        connects stays parked for the life of the process, and nothing sweeps
-        it. page_name stores as the user typed it, and the claimer resolves it
-        to a path, because no page store exists at parking time.
-
-        The pre-boot CLI phase calls this on the main thread, before any deck
-        exists.
-        """
+        """Park a raw page name until its deck appears; the last write per serial wins.
+        Called pre-boot on main; unswept requests persist for process life and resolve when claimed."""
         gl.api_page_requests[serial_number] = page_name
 
     def claim_page_request(self, serial_number: str) -> str | None:
-        """This serial's parked page name, removed as it hands it over, or
-        None when nothing is parked for it.
-
-        Pop it rather than read it. A --change-page request applies once. Left
-        in place, it re-applies itself on every later load_default_page() call
-        for this serial. That covers every unplug and replug and every "no
-        page found" fallback. A state request instead peeks and resolves, so
-        it survives a raise; see peek_state_request.
-
-        The lookup and the removal are one dict operation, so two threads that
-        race the same serial up cannot both hold the request. Nearly every
-        thread in the process reaches this, which is why it is one operation.
-        The main thread claims on the boot path, and the GTK main thread
-        claims on the no-pages fallback. The boot rescan thread and the USB
-        hotplug monitor claim too. A deck's HID reader thread claims through
-        a screensaver dismissal, and a plugin or action thread claims through
-        Page.update_input.
-        """
+        """Atomically remove this serial's one-shot page request, or return None.
+        Callers include main, GTK, rescan, USB, HID, plugin, and action threads."""
         return gl.api_page_requests.pop(serial_number, None)
 
     # Leg C. --change-state requests that wait for their deck.
 
     def park_state_request(self, serial_number: str, request: dict[str, Any]) -> None:
-        """Park a state change for a deck that has not appeared yet.
-
-        The last write wins per serial. The request stores as given. The CLI
-        parser owns the argument validation and the state-number conversion.
-        It is the one layer that can still report a bad argument to the person
-        who typed it.
-        """
+        """Park a validated state request until its deck appears; last write per serial wins.
+        The CLI parser owns validation and state-number conversion."""
         gl.api_state_requests[serial_number] = request
 
     def peek_state_request(self, serial_number: str) -> dict[str, Any] | None:
-        """This serial's parked state request, left parked, or None.
-
-        A peek rather than a claim lets the request survive an exception
-        thrown while something applies it. Applying it loads the page it
-        names, resolves the coordinates and sets the state. The next
-        load_default_page() for this serial sees it again and retries. One
-        claim in place of the peek and the resolve turns that retry into a
-        drop, which is why a page request claims and a state request does not.
-
-        Every peek that goes on to process the request must call
-        resolve_state_request() afterwards.
-        """
+        """Return the parked state request without removal so application failures can retry it.
+        Every processing caller must resolve it after success."""
         return gl.api_state_requests.get(serial_number)
 
     def resolve_state_request(self, serial_number: str) -> None:
-        """Drop this serial's parked state request, which is now processed.
-
-        Call it once the processing that peek_state_request handed out ends. A
-        call before that turns the retry above into a drop. Idempotent, and a
-        serial with nothing parked is no error.
-        """
+        """Idempotently drop a state request after processing succeeds.
+        Resolving before processing removes the retry after a failure."""
         gl.api_state_requests.pop(serial_number, None)
 
     # Legs B and C. The whole parking, for a process that leaves.
 
     def claim_parked_requests(self) -> tuple[list[tuple[str, str]],
                                              list[tuple[str, dict[str, Any]]]]:
-        """Everything parked, removed as it hands it over.
-
-        This claims rather than peeks. The caller is a launch that lost the
-        race for the application name and passes its requests to the instance
-        that won (see src/backend/cli_forward.py). This process applies none
-        of them. A copy left behind serves a retry that never runs, and a
-        retry that did run applies them twice.
-
-        The insertion order is the argv order within each kind. The CLI parks
-        pages and states in the order it read the flags, and the forwarder
-        sends every page change and then every state change, each group in
-        that order. Each removal is one dict operation, the same discipline
-        the per-serial claim keeps.
-
-        The pre-boot CLI phase calls this, single-threaded and before any deck
-        exists, which is the phase the parking happens in.
-        """
+        """Remove all pages then states, preserving insertion order within each kind.
+        Use during single-threaded pre-boot handoff to the instance that won the name race."""
         pages = [(serial, gl.api_page_requests.pop(serial))
                  for serial in list(gl.api_page_requests)]
         states = [(serial, gl.api_state_requests.pop(serial))
@@ -191,8 +84,7 @@ class StartupQueue:
         return pages, states
 
 
-# The process-wide queue. A module singleton rather than a gl slot. A named
-# protocol should shrink what lives on the shared namespace.
+# Process-wide singleton outside globals to keep the shared namespace small.
 _queue = StartupQueue()
 
 

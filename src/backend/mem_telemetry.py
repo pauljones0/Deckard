@@ -26,16 +26,12 @@ from loguru import logger as log
 import globals as gl
 from src.backend.DeckManagement.Subclasses import cache_budget
 
-# Never sample faster than this. A read of /proc/self/smaps_rollup measured
-# 6.4ms median and 20ms maximum on the live process at 6.1GB of VmData, and
-# that walk holds mmap_lock for read (docs/memory-footprint-plan.md).
+# Keep smaps_rollup sampling at 60 seconds; each read holds mmap_lock.
+# Measured cost reached 20 ms at 6.1 GB of VmData.
 SAMPLE_INTERVAL = 60.0
 
-# The malloc_trim gate. Probe only while no page switch happened recently,
-# and once per window at most. With MALLOC_ARENA_MAX=2 a trim holds the shared
-# arena lock that every allocating thread passes through, so it must never run
-# on a hot path. It runs from here alone, and only while the deck looks
-# idle.
+# Trim only after 120 idle seconds and 600 seconds after the previous trim.
+# MALLOC_ARENA_MAX=2 makes trimming hold a shared allocation lock.
 IDLE_SECONDS = 120.0
 MIN_TRIM_INTERVAL = 600.0
 
@@ -48,11 +44,8 @@ CSV_HEADER = (
 
 
 class _PageSwitchCounter:
-    """A monotonic counter. DeckController.load_page raises it from any
-    thread, and the sampler thread reads it. itertools.count().__next__ is one
-    C-level operation that holds the GIL for its whole call, so a bump needs
-    no lock. The paired timestamp is a plain rebind, which is atomic under the
-    GIL too. A torn read costs a diagnostic one stale tick and no more."""
+    """Count page switches lock-free across threads under the GIL.
+    A torn counter and timestamp read affects only one diagnostic sample."""
 
     def __init__(self) -> None:
         self._counter = itertools.count(1)
@@ -109,17 +102,8 @@ def _fd_count() -> int:
 
 
 def _image_cache_fields() -> tuple[int, int, int, int, int]:
-    """Returns the evictable image-cache kB, the cumulative evictions, the
-    cumulative evicted kB, the video-reader kB and the GIF-frame kB, from the
-    image-cache budget.
-
-    This attributes the memory, which is why it stays on by default. The
-    ceiling tunes against the field from the CSV. The CSV says how much image
-    RAM the process holds, how hard the ceiling bites, and how much of the
-    rest sits in holders that the ceiling does not govern. Those holders are
-    the video readers and above all the GIF frame lists, which carry no byte
-    cap. Every value is a cheap sum of per-cache counters, and nothing walks a
-    cache."""
+    """Return cache kB, eviction count and kB, video-reader kB, and GIF-frame kB.
+    Values are cheap counters; video readers and GIF frames are outside the ceiling."""
     try:
         totals = cache_budget.totals()
         evictions, evicted_bytes = cache_budget.eviction_stats()
@@ -139,9 +123,7 @@ _libc = None
 
 
 def _malloc_trim() -> None:
-    """Calls malloc_trim(0) in libc through ctypes. Call it from the idle and
-    interval gate in MemTelemetrySampler alone; see the note above
-    IDLE_SECONDS."""
+    """Call libc malloc_trim(0) only through the sampler idle and interval gate."""
     global _libc
     if _libc is None:
         _libc = ctypes.CDLL(ctypes.util.find_library("c") or "libc.so.6")
@@ -149,16 +131,8 @@ def _malloc_trim() -> None:
 
 
 class MemTelemetrySampler(threading.Thread):
-    """The process memory sampler, and the idle malloc_trim.
-
-    The trim side always runs. An overnight A/B measured 64 trims at 0 to 3ms
-    each, with no arena-lock stall under MALLOC_ARENA_MAX=2. The trims
-    reclaimed 2 to 5MB each and pulled a post-burst high-water down by about
-    29MB. That cost is small, so the trim is on by default, and
-    SC_MALLOC_TRIM=0 turns it off. The CSV recording stays opt-in through
-    SC_MEM_TELEMETRY=1. Without it the loop skips the smaps walk and reads
-    /proc/self/status alone, which costs microseconds, to log the trim deltas.
-    """
+    """Sample memory and run idle malloc_trim unless SC_MALLOC_TRIM=0.
+    CSV needs SC_MEM_TELEMETRY; without it, cheap status reads log trim deltas."""
 
     def __init__(self) -> None:
         super().__init__(name="mem_telemetry", daemon=True)
@@ -173,13 +147,8 @@ class MemTelemetrySampler(threading.Thread):
             self._ensure_header()
 
     def _ensure_header(self) -> None:
-        """Writes the header into a new or empty CSV.
-
-        An existing file whose header predates a schema change rotates once
-        to <path>.old, and a fresh file starts. Wider rows appended under a
-        narrower header misalign every column for every reader of the file,
-        which are tests/soak/mem_census.py, the hw_verify.py soak, and any
-        spreadsheet."""
+        """Write the header, rotating a nonempty file with another schema to .old.
+        This prevents wider rows from misaligning existing columns."""
         try:
             if os.path.exists(self.csv_path) and os.path.getsize(self.csv_path) > 0:
                 with open(self.csv_path) as f:
@@ -252,10 +221,8 @@ _sampler: MemTelemetrySampler | None = None
 
 
 def start_if_enabled() -> None:
-    """Start the sampler thread. Always runs (for the default-on idle
-    malloc_trim) unless SC_MALLOC_TRIM=0 *and* SC_MEM_TELEMETRY is unset;
-    CSV recording additionally requires SC_MEM_TELEMETRY=1. No-op if
-    already started (safe to call more than once)."""
+    """Start once unless trimming is disabled and CSV telemetry is unset.
+    CSV recording additionally requires SC_MEM_TELEMETRY."""
     global _sampler
     if _sampler is not None:
         return

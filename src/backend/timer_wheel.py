@@ -12,27 +12,8 @@ This programm comes with ABSOLUTELY NO WARRANTY!
 You should have received a copy of the GNU General Public License
 along with this program. If not, see <https://www.gnu.org/licenses/>.
 """
-# One daemon scheduler thread for the ported delays: the screensaver reset per
-# keypress, the overlay hide, and the key-hold delay. A min-heap and a
-# Condition keep exactly one thread asleep, whatever the number of outstanding
-# delays.
-#
-# The handles match threading.Timer, so a cancel-and-recreate call site needs
-# only an import change:
-#   - schedule(delay_s, callback) arms at once and returns a handle.
-#   - handle.cancel() is idempotent and safe after the callback fired. It
-#     cannot un-fire the callback, the same as Timer.cancel().
-#
-# The scheduler thread pops due handles and hands them off. It never runs a
-# callback inline, because a callback is expensive. ScreenSaver.show() hashes
-# the source file and can open a video capture before it takes a lock, and an
-# inline run delays every other pending timer in the process. Each fire gets
-# its own short-lived daemon thread, not main_loop's shared @background pool.
-# That pool holds 8 workers for I/O-bound plugin and asset work, and these
-# fires would contend with it. A fire here is rare (one reset per keypress,
-# one overlay hide, one hold timer), so a fresh daemon thread per fire is
-# cheap. It also keeps this module on stdlib and loguru, with no GLib, which
-# the headless test harness needs.
+# One Condition-backed heap provides Timer-compatible handles for screensaver, overlay, and key-hold delays.
+# Due work uses separate daemon threads, not the scheduler or shared pool, so slow callbacks cannot block timers.
 import heapq
 import itertools
 import threading
@@ -73,14 +54,11 @@ class TimerHandle:
 
 
 class TimerWheel:
-    """One daemon scheduler thread behind any number of independent delays.
-    Any thread can share it, because schedule() and cancel() hold the wheel's
-    own lock for a short time only."""
+    """Schedule any number of delays behind one daemon thread.
+    Any thread can schedule or cancel through the wheel's short-held lock."""
 
-    # Do not compact a small heap, and compact only once the cancelled share
-    # of it is large. A long-lived early timer keeps every later cancelled
-    # handle at the front's back until it fires, so without this the heap, and
-    # the closures the cancelled handles hold, grow with the cancel rate.
+    # Compact only heaps of at least 64 entries with at least half cancelled.
+    # Otherwise a long-lived early timer retains later handles and closures.
     _COMPACT_MIN_HEAP = 64
 
     def __init__(self, name: str = "TimerWheel"):
@@ -108,14 +86,11 @@ class TimerWheel:
             if handle._fired or handle._cancelled:
                 return
             handle._cancelled = True
-            # Drop the closure now, so a cancelled handle that lingers in the
-            # heap behind a long-lived timer holds nothing but its own small
-            # record until compaction or the front drop reclaims it.
+            # Drop the closure while a cancelled handle remains in the heap.
+            # Compaction or front removal later reclaims its small record.
             handle._callback = _NOOP
-            # _run drops the handle once it reaches the front of the heap. A
-            # scan-and-remove per cancel() costs more, and a late removal
-            # changes nothing. When the cancelled share of the heap grows
-            # large, compact in one pass rather than wait out an early timer.
+            # Avoid a scan on each cancel; _run drops front entries.
+            # Compact once the cancelled share reaches half of a large heap.
             self._cancelled_pending += 1
             if (len(self._heap) >= self._COMPACT_MIN_HEAP
                     and self._cancelled_pending * 2 >= len(self._heap)):

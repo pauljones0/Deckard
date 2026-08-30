@@ -3,12 +3,8 @@ from typing import Any
 
 from loguru import logger
 
-# Every level method goes through log_method, one frame below the plugin that
-# called it, so loguru must read module, function and line one frame up.
-# depth=1 reads that frame with sys._getframe; inspect.stack() instead builds
-# the full stack and reads a source line per frame, on paths that log at the
-# media tick rate. One instance serves all of them. opt() copies the options only, and the
-# core keeps its sinks and patcher by reference, so later sinks still apply.
+# depth=1 reports the plugin caller without inspecting the full stack.
+# This derived logger shares sinks and patchers with later configuration.
 _CALLER_LOGGER = logger.opt(depth=1)
 
 @dataclass
@@ -25,8 +21,7 @@ class LoggerConfig:
     log_file_path: str
     base_log_level: str
     rotation: str
-    # How many rotated files to keep. loguru deletes the oldest first. A file
-    # sink without this bound keeps every rotation forever.
+    # Maximum rotated files to retain; without it, loguru keeps every rotation.
     retention: int
     compression: str
 
@@ -44,8 +39,6 @@ class Logger:
         self.add_sink()
 
     def add_log_level(self, log_level: Loglevel) -> None:
-        # Resolve this once rather than per call. The level name is fixed for
-        # the life of this logger.
         level_name = f"{self.name}_{log_level.name}"
         logger.level(
             name=level_name,
@@ -53,17 +46,14 @@ class Logger:
             color=f"{log_level.color}")
 
         def log_method(self: Any, message: str, *args: Any, **kwargs: Any) -> None:
-            # Forward the formatting arguments. loguru applies brace formatting
-            # only when args or kwargs are present, so a plain message keeps
-            # its literal braces as before, while log.info("x={}", x) now
-            # formats instead of dropping x silently.
+            # Loguru formats braces only when formatting arguments are present.
+            # A plain message therefore keeps its literal braces.
             _CALLER_LOGGER.log(level_name, message, *args, **kwargs)
 
         setattr(self, log_level.method_name, log_method.__get__(self))
 
     def add_sink(self) -> None:
-        # Build the prefix once. The filter runs for every record this handler
-        # is offered, and not for the accepted ones alone.
+        # Build once because the filter checks every offered record.
         level_prefix = f"{self.config.name}_"
 
         def log_filter(record: Any) -> bool:
@@ -83,13 +73,8 @@ class Logger:
         )
 
     def remove_sink(self) -> None:
-        """Detach this sink and release its resources.
-
-        add_sink passes enqueue=True, so loguru backs the sink with a
-        multiprocessing queue and unlinks its POSIX semaphores only on removal.
-        The quit path must call this before any os._exit, which skips loguru's
-        cleanup and leaves the resource_tracker to report leaked semaphores.
-        """
+        """Detach the queued sink and release its POSIX semaphores.
+        Call before os._exit(), which skips loguru cleanup."""
         if self.sink_id is not None:
             logger.remove(self.sink_id)
             self.sink_id = None

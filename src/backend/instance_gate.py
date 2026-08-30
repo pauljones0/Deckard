@@ -1,42 +1,12 @@
-"""Uniqueness, decided once, before this launch does anything exclusive.
-
-Nothing can import main.py. Its module body re-execs the process and runs
-the rename migration against the real user directories. A uniqueness
-decision that lives there is therefore untestable. main.py keeps the argv
-read, the wiring and the exit. The decision lives here, where a scenario
-drives it against a real bus daemon, and establish() states the order it
-decides in.
-
-Why nothing here claims the name first
-
-A claim on the application name up front, before the expensive work, settles a
-race earlier, and this module does not take that shape. A connection that owns
-the application name makes GApplication's own register() find the name taken.
-Then register() demotes the process that holds it to a remote instance. A
-pre-claim therefore defeats the mechanism it means to help. A claim on a
-different name works, and that is the second owner of uniqueness this module
-replaced. It meant two names to keep in step, and a winner that held one of
-them while the other stayed unowned for a whole boot. What stays is an ask rather than a
-claim. A NameHasOwner probe and a release poll own nothing, which leaves
-register() as the one claim in the tree and its verdict as the only one.
-
-The upgrade window
-
-A build that predates this ordering owns nothing until its main loop starts,
-so a launch of this build that lands while such a build still boots sees an
-unowned name and becomes the primary. Two primaries then run on one machine
-for a moment. It needs a version change and a launch inside one boot window,
-and the next start of either build ends it.
-"""
+"""Let GApplication.register make the sole name claim before exclusive work; probes own no names.
+Do not import main; a legacy build can overlap only during its pre-registration boot window."""
 from __future__ import annotations
 
 import time
 from enum import Enum
 from typing import cast, Callable, Protocol
 
-# This module imports gi, so it stays off the floor import list. Only main.py
-# and the scenarios that drive it consume it, and it runs in the one process
-# that already loaded the toolkit.
+# This GI-dependent module stays off the floor import list and runs after toolkit load.
 from gi.repository import Gio, GLib
 
 from loguru import logger as log
@@ -44,17 +14,12 @@ from loguru import logger as log
 import appinfo
 from src.backend.cli_forward import DBUS_CALL_TIMEOUT_MS
 
-# How long --close-running waits for the instance it asked to quit to drop the
-# application name, and how often it asks. The wait is bounded because the
-# alternative is a launch that hangs on an instance which never exits; 10s is
-# the same grace the retiring launch lock used, and it covers a teardown that
-# has to flush pages and terminate plugin backends first.
+# Give --close-running 10 seconds for page flush and plugin-backend teardown.
+# Poll every 0.2 seconds so a stuck instance cannot hang the launch.
 CLOSE_GRACE_SECONDS = 10.0
 RELEASE_POLL_SECONDS = 0.2
 
-# How long a single dispatch probe waits for its answer. Short because it is
-# asked repeatedly on the poll cadence, and a dispatching instance answers it
-# in microseconds.
+# Bound each repeated dispatch probe at one second.
 DISPATCH_PROBE_TIMEOUT_MS = 1000
 
 
@@ -70,41 +35,21 @@ class Decision(Enum):
 
 
 class LaunchAborted(Exception):
-    """This launch ends here, with nothing started and a non-zero exit.
-
-    This raises rather than returns, because these are no kinds of launch.
-    Every Decision value means "carry on, this way", and these mean "stop".
-    The caller prints the message and exits.
-    """
+    """Abort before startup with a caller-reported message and nonzero exit."""
 
 
 class CloseRunningFailed(LaunchAborted):
-    """--close-running was asked for and the running instance is still there.
-
-    A launch that was told to close what is running, and did not, must not
-    report success. It must not boot a second instance next to the one it
-    failed to close.
-    """
+    """Report that --close-running left the instance alive.
+    The new launch must not report success or boot beside it."""
 
 
 class HandoffFailed(LaunchAborted):
-    """Another instance owns the name and registration could not join it.
-
-    A registration as a remote is no local operation. It needs an answer from
-    the process that owns the name, and a mid-boot instance gives that answer
-    once its main loop starts to dispatch. Past the bus timeout this launch
-    cannot become the remote it is. A boot instead puts a second instance on
-    the same decks, which costs more than a failure.
-    """
+    """Report failure to join the instance that owns the name.
+    Never boot locally after the bus timeout because that would share its decks."""
 
 
 class Application(Protocol):
-    """What the gate needs from the application it decides for.
-
-    A structural protocol, so a scenario drives establish() with a plain
-    Gio.Application and a test-scoped id. That gives the real registration
-    machinery without a display and without the app's own construction.
-    """
+    """Structural application interface required by the instance gate."""
 
     def get_application_id(self) -> str | None: ...
 
@@ -118,22 +63,12 @@ class Application(Protocol):
 
 
 def object_path_for(app_id: str) -> str:
-    """The object path where an application with app_id exports its actions.
-
-    GApplication derives the path from the id by this rule, and appinfo
-    derives it the same way for the app's own id. A derivation here lets a
-    test-scoped id bring its own path, rather than need a second table kept in
-    step.
-    """
+    """Derive the GApplication action object path from app_id."""
     return "/" + app_id.replace(".", "/")
 
 
 def name_has_owner(session_bus: Gio.DBusConnection, name: str) -> bool:
-    """Does anything own name on the session bus right now?
-
-    This asks the bus daemon, and passes NO_AUTO_START, which keeps the probe
-    a probe. A call addressed to a well-known name activates it over D-Bus.
-    """
+    """Probe whether the session bus name has an owner without activating it."""
     return cast(bool, session_bus.call_sync(
         "org.freedesktop.DBus",
         "/org/freedesktop/DBus",
@@ -164,24 +99,15 @@ def activate_action(session_bus: Gio.DBusConnection, name: str, object_path: str
 
 
 def is_no_reply(error: GLib.Error) -> bool:
-    """The peer took the call and never answered.
-
-    Two shapes carry that meaning, a NoReply the bus hands back, and
-    the timeout GDBus raises client-side when the reply never lands. Both
-    leave the caller in the same position, so both are matched here.
-    """
+    """Match both remote NoReply and client-side timeout errors."""
     if Gio.DBusError.get_remote_error(error) == "org.freedesktop.DBus.Error.NoReply":
         return True
     return cast(bool, error.matches(Gio.io_error_quark(), Gio.IOErrorEnum.TIMED_OUT))
 
 
 def _session_bus() -> Gio.DBusConnection | None:
-    """The shared session connection, or None if there is no bus to be had.
-
-    The same connection the application registers on and the API publishes
-    on. That is what lets step 2 and step 3 of establish() be about one
-    thing.
-    """
+    """Return the session connection used for application registration and API publication.
+    Return None when no session bus is available."""
     try:
         return Gio.bus_get_sync(Gio.BusType.SESSION, None)
     except GLib.Error as e:
@@ -192,22 +118,15 @@ def _session_bus() -> Gio.DBusConnection | None:
 
 def _wait_for_release(session_bus: Gio.DBusConnection, name: str,
                       grace_seconds: float) -> bool:
-    """Poll until nothing owns name. True when the owner released it inside
-    the grace.
-
-    This reads the monotonic clock and not the wall clock. The loop runs at
-    login, which is when NTP steps the wall clock and collapses or stretches
-    the grace.
-    """
+    """Poll until name is free within the grace, using monotonic time.
+    Wall-clock steps at login must not change the grace."""
     deadline = time.monotonic() + grace_seconds
     while True:
         try:
             if not name_has_owner(session_bus, name):
                 return True
         except GLib.Error as e:
-            # A probe that cannot complete reads as "nobody home", like every
-            # other failed probe here. A continue costs less than a refusal
-            # over one bus error.
+            # Treat one failed release probe as no owner instead of refusing launch.
             log.debug(f"Could not probe {name}: {e}")
             return True
         if time.monotonic() >= deadline:
@@ -216,17 +135,8 @@ def _wait_for_release(session_bus: Gio.DBusConnection, name: str,
 
 
 def _is_dispatching(session_bus: Gio.DBusConnection, app_id: str) -> bool:
-    """Does the owner of app_id dispatch its main loop right now?
-
-    This asks the owner's action group. The process-level probes,
-    org.freedesktop.DBus.Peer.Ping and Introspect, answer from the GDBus
-    worker thread. An instance that registered and has not reached its main
-    loop answers both at once, which measurement confirms. Neither answer
-    says whether it is live. The same action group that receives a quit
-    request dispatches DescribeAll, so an answer says more than "the process
-    exists". It says that a quit sent now gets acted on rather than queued
-    behind a boot.
-    """
+    """Probe the owner's action group to confirm its main loop is dispatching.
+    Peer Ping and Introspect can answer on a worker before the quit action is ready."""
     try:
         session_bus.call_sync(
             app_id,
@@ -257,24 +167,8 @@ def _wait_until_dispatching(session_bus: Gio.DBusConnection, app_id: str) -> boo
 
 
 def _close_running_instance(session_bus: Gio.DBusConnection, app_id: str) -> None:
-    """Ask whatever owns app_id to quit, and wait for it to let go.
-
-    Raises CloseRunningFailed when the instance is still there after the
-    grace, and leaves it unasked when it never got far enough to hear the
-    question.
-
-    The order carries weight. An instance that still boots owns the name and
-    dispatches nothing, so it refuses no quit sent at it. That quit waits in
-    the incoming queue. It gets acted on once that instance starts its main
-    loop, usually after this process gave up and exited. Nothing then runs at
-    all, which costs more than either outcome the flag can produce. So this
-    asks only once the target can hear, and it leaves a target that never
-    answers alone and reports it.
-
-    Each wait gets its own grace. An instance that took most of one grace to
-    start dispatching must not then get a quit and a failure report a moment
-    later. That is the same "asked, dying, reported as never started" shape.
-    """
+    """Wait one grace for dispatch, ask the owner to quit, then wait a new grace for release.
+    Leave a non-dispatching owner unasked; otherwise raise CloseRunningFailed if it remains."""
     log.info("Checking if another instance is running")
     try:
         running = name_has_owner(session_bus, app_id)
@@ -282,16 +176,12 @@ def _close_running_instance(session_bus: Gio.DBusConnection, app_id: str) -> Non
         log.debug(f"Could not probe for a running instance: {e}")
         return
     if not running:
-        # Expected path when --close-running is passed to a fresh boot.
         log.info("No other instance running, continuing")
         return
 
     if not _wait_until_dispatching(session_bus, app_id):
-        # Two kinds of instance answer nothing, and this code cannot tell
-        # them apart. One still boots, and one is up with a blocked main loop.
-        # The handling suits both, because an instance that cannot hear the
-        # question must not die from it, so the message names both rather than
-        # assert the one it cannot know.
+        # A booting instance and a blocked main loop both fail this probe.
+        # Leave either unasked and report both possible causes.
         raise CloseRunningFailed(
             f"The running instance did not answer within "
             f"{CLOSE_GRACE_SECONDS:.0f}s -- it is still starting up, or it is "
@@ -303,10 +193,7 @@ def _close_running_instance(session_bus: Gio.DBusConnection, app_id: str) -> Non
         activate_action(session_bus, app_id, object_path_for(app_id), "quit")
     except GLib.Error as e:
         if is_no_reply(e):
-            # An instance that quits ends its process inside the handler, so
-            # no reply comes. That reads as success here rather than a
-            # failure, and it is why this branch does not end the launch. Only
-            # the release poll below knows the outcome.
+            # Quitting inside the handler gives no reply; only release confirms success.
             log.debug(f"The running instance did not answer the quit request: {e}")
         else:
             log.warning(f"Could not ask the running instance to quit: {e}")
@@ -319,20 +206,8 @@ def _close_running_instance(session_bus: Gio.DBusConnection, app_id: str) -> Non
 
 
 def _shoo_pre_rename_instance(session_bus: Gio.DBusConnection) -> None:
-    """Ask a still-running pre-rename instance to quit, before any deck opens.
-
-    A build from before the rename owns the old bus name. This launch's own
-    name says nothing about that name. Without this call the launch opens
-    decks that the other instance holds. Probe with NameHasOwner, and never
-    address the old name directly. A plain call to a well-known name
-    activates it. For the old id, that starts an upstream install through its
-    D-Bus service file. This call prevents that race. A NameHasOwner of False
-    is the normal case and is also the end state. Once nothing owns the old
-    name, this check costs one cheap round trip per launch.
-
-    The primary alone runs this, and only after registration. A launch that
-    hands off to another instance must send nothing away.
-    """
+    """After primary registration, stop an owner of the old name before opening decks.
+    Probe first to avoid D-Bus activation; remote launches must not send this request."""
     try:
         if not name_has_owner(session_bus, appinfo.OLD_APP_ID):
             return
@@ -349,25 +224,13 @@ def _shoo_pre_rename_instance(session_bus: Gio.DBusConnection) -> None:
         # An instance that quits inside the handler never replies. That is
         # what success looks like here, and the reason to run the poll below.
         log.debug(f"The pre-rename instance did not answer the quit request: {e}")
-    # Bounded poll for it to drop the name, rather than a flat sleep.
     _wait_for_release(session_bus, appinfo.OLD_APP_ID, CLOSE_GRACE_SECONDS)
 
 
 def _registration_failed(app: Application, session_bus: Gio.DBusConnection | None,
                          app_id: str | None, error: GLib.Error) -> Decision:
-    """Decide what a failed register() means, and never guess "primary".
-
-    The case that fails here is a launch that becomes the remote of a running
-    application. A join of the owner takes a round trip to it. An owner that
-    registered and has not reached its main loop answers nothing until it
-    does. Past the bus's own timeout the launch has no options left. It must
-    not decide that it is the primary, because the instance it could not
-    reach holds the decks.
-
-    A failure while nothing owns the name is another case, such as a daemon
-    that refuses the request. Nothing runs then, so a degraded boot beats no
-    boot.
-    """
+    """Abort when registration failed to join an owner; never guess primary.
+    If no owner exists, set NON_UNIQUE and allow a degraded boot."""
     owner = False
     if session_bus is not None and app_id is not None:
         try:
@@ -387,32 +250,8 @@ def _registration_failed(app: Application, session_bus: Gio.DBusConnection | Non
 
 def establish(app: Application, *, publish: Callable[[], None],
               close_running: bool) -> Decision:
-    """Decide what this launch is, and leave the application registered.
-
-    GApplication's own register() claims the application name, and nothing
-    else in the tree does. Everything expensive or exclusive runs after that
-    call returns, on the primary alone. That covers the migrations, the
-    plugin load and the deck open. A launch that loses the race performs
-    nothing that collides with the winner. This function therefore does four
-    things, in this order.
-
-    1. --close-running first, because a process registers once. An
-       application that registered as a remote can never register as the
-       primary. The ask to quit, and the wait for the release, must therefore
-       happen before this process registers anything. That step is a probe
-       and a wait, and it never requests the name.
-    2. publish() before register(), so the moment the daemon grants the name,
-       the object set behind it already answers.
-    3. register(), which fails open where that is safe. See
-       _registration_failed for the one case it must never call primary.
-    4. The verdict. A remote hands off to the primary and exits. The primary
-       sends a pre-rename instance off the Stream Deck before it opens a deck.
-
-    This calls publish once, before registration. publish must contain its
-    own failures, as the app's API service does, and nothing here reads its
-    result. The caller passes close_running rather than let this module read
-    the parsed arguments, so this module holds no process state.
-    """
+    """Close if requested, publish once, register once, then return remote or prepare the primary.
+    publish contains its failures; registration fails open only without an owner."""
     session_bus = _session_bus()
     app_id = app.get_application_id()
 
@@ -420,36 +259,16 @@ def establish(app: Application, *, publish: Callable[[], None],
         _close_running_instance(session_bus, app_id)
 
     if session_bus is None:
-        # Record this before the registration, because afterwards nothing
-        # can. An application registered without a bus reports itself as the
-        # primary, and looks the same as one that owns the name.
-        #
-        # g_application_set_flags asserts on an application that already
-        # registered. It emits a CRITICAL and keeps the old flags, so
-        # NON_UNIQUE only sets while registration has not happened or has
-        # failed. This module therefore probes the bus itself up front, rather
-        # than catch an error out of register(). GApplication answers an
-        # unreachable session bus by proceeding as a non-unique application,
-        # and it returns True and raises nothing.
+        # Set NON_UNIQUE before registration, which otherwise asserts and keeps old flags.
+        # GApplication reports successful primary registration even without a bus.
         app.set_flags(app.get_flags() | Gio.ApplicationFlags.NON_UNIQUE)
 
-    # Publish the objects first. From the moment the daemon grants the name
-    # below, everything behind it already answers a call. GDBus keeps a
-    # registration per object path and interface, so the application's own
-    # org.gtk.* interfaces and the API's interface share one path in either
-    # order.
+    # Publish before the name grant so every exported object already answers.
+    # GDBus permits the application and API interfaces on the same object path.
     publish()
 
-    # register() emits the application's startup signal, so the toolkit's own
-    # startup chain runs here, before the globals exist, which is the point of
-    # registering first. The app overrides nothing on that path, and anything
-    # that starts to override it must hold that constraint or move.
-    #
-    # It also makes this process reachable before it answers. A launch that
-    # arrives while this one still boots joins it as a remote, and that join
-    # takes an answer that arrives once this process starts to dispatch its
-    # main loop. That launch waits out the boot, bounded by the measured 25s
-    # default of the bus, and then presents the window, rather than fail early.
+    # register emits toolkit startup before globals exist; overrides must preserve that.
+    # A remote waits for main-loop dispatch under the bus timeout while this process boots.
     try:
         app.register()
     except GLib.Error as e:
@@ -461,16 +280,12 @@ def establish(app: Application, *, publish: Callable[[], None],
         return Decision.PRIMARY_UNREGISTERED
 
     if app.get_is_remote():
-        # The objects published above sit on this connection's unique name,
-        # which nothing addresses. This process exits next and takes the whole
-        # connection, and its objects, with it.
+        # Remote-only objects use an unaddressed unique name and leave with this connection.
         log.info("Another instance owns the application name; handing off to it")
         return Decision.REMOTE
 
     log.info("This launch owns the application name")
-    # The primary arm alone runs this. A launch that reached
-    # PRIMARY_UNREGISTERED with a working bus, after a daemon refused the name
-    # request, boots without a check for a pre-rename instance, and shares
-    # the decks with one.
+    # Only a registered primary checks the old name.
+    # A degraded primary with a working but refusing daemon can share those decks.
     _shoo_pre_rename_instance(session_bus)
     return Decision.PRIMARY
