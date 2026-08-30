@@ -1,10 +1,5 @@
-"""
-Deleting a controller's screensaver-pending page clears the pending request.
-
-remove_page must clear the pending slot and drop the page's cache entry.
-Otherwise hide() loads a page whose file is gone, and the first save resurrects
-it.
-"""
+"""Verify deleting a screensaver-pending page clears its request and cache entry.
+Otherwise hide() loads the deleted file and the next save recreates it."""
 
 # A page object that outlives the delete must not mark the path back into place
 # over a page created under the same name.
@@ -20,12 +15,8 @@ WATCHDOG_SECONDS = 30
 
 
 class NoTimers:
-    """A timer source that arms nothing.
-
-    The straggler mark below must still be outstanding when the page is
-    re-created. A one-second timer would make the check a race with the
-    machine's load instead of a statement about the barrier.
-    """
+    """Keep the straggler write pending while the page is recreated.
+    A real one-second timer would make the barrier check depend on machine load."""
 
     def schedule(self, delay_s, callback):
         return object()
@@ -53,9 +44,8 @@ def check_recreated_page_is_new(controller) -> None:
         gl.page_manager.remove_page(path)
         assert not os.path.exists(path), "remove_page must delete the file"
 
-        # The object survived the delete, because it is not this
-        # controller's active page, and it saves again. A widget, a pending
-        # slot or a plugin thread mid-save marks the path, not the object.
+        # The inactive object survives deletion and saves again; widgets,
+        # pending slots, and plugin threads mark the path rather than the object.
         straggler.dict["marked-after-the-delete"] = True
         straggler.save()
         assert page_flush.get().pending_source(path) is not None, (

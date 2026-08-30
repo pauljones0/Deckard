@@ -1,15 +1,5 @@
-"""PresentState.offer must judge a paint against both of its hashes.
-
-The pair is an AND with two independent halves, and each half covers a case
-the other cannot. The presented hash alone goes stale when a paint is
-dropped at the write boundary, and the enqueued hash alone goes stale when a
-paint in flight is superseded. A skip on either half alone therefore
-swallows the repaint that would have corrected the device.
-
-This drives the present state directly, with a recording stand-in for the
-writer, because no rendered content can put the pair into either of those
-states on purpose.
-"""
+"""Verify PresentState.offer skips only when presented and enqueued hashes match.
+Independent dropped-paint and superseded-paint states must still enqueue a corrective repaint."""
 import fixtures  # noqa: F401  (must be first: isolates DATA_PATH before globals)
 
 from src.backend.DeckManagement.deck_controller.paint_protocol import KeyPresentState  # noqa: E402
@@ -71,9 +61,8 @@ def main() -> None:
         "paint in flight would otherwise leave its own content on the device"
     )
 
-    # Dropped paint. H was enqueued and never presented, because the write
-    # boundary judged it stale; the device holds A. The correcting repaint of
-    # H must reach the device.
+    # H was enqueued but dropped as stale while the device kept A, so a new
+    # offer of H must still reach the device.
     state, writer = new_state()
     state.last_enqueued_hash = H
     state.last_presented_hash = A
@@ -97,7 +86,7 @@ def main() -> None:
         "half, and skipping it is the point of the hash pair"
     )
 
-    # force paints whatever the hashes say.
+    # Force bypasses both hash checks.
     enqueued, encodes = offer(state, writer, H, force=True)
     assert enqueued and encodes == 1, "force must paint through an agreeing pair"
 

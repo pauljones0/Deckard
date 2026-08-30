@@ -1,10 +1,5 @@
-"""
-Corrupt-JSON quarantine on the plugin file set, with sidecar retention.
-
-A corrupt settings.json moves to a .corrupt sidecar and the read falls back to
-{}, so a later set_settings cannot overwrite the last copy. Retention keeps
-three sidecars per file and prunes the oldest. An OSError is not corruption.
-"""
+"""Verify corrupt plugin settings are quarantined with three retained sidecars.
+Reads fall back to {}, while source JSON and files that raise OSError remain in place."""
 
 # A plugin source file, a manifest or an about.json, is never moved.
 import fixtures  # noqa: F401  (isolated --data tempdir; import first)
@@ -132,9 +127,8 @@ def check_prior_sidecar_not_clobbered(plugin) -> None:
 
 
 def check_retention(path: str, corrupting_read, label: str) -> None:
-    """Five successive corruptions of path must leave exactly three sidecars,
-    with the oldest pruned. corrupting_read is the loader call that
-    quarantines, one per wired call site."""
+    """Verify five corruptions retain the newest three sidecars.
+    corrupting_read selects one wired loader call site."""
     os.makedirs(os.path.dirname(path), exist_ok=True)
     for n in range(1, 6):
         corrupt(path, f"gen{n}")
@@ -155,9 +149,8 @@ def check_retention(path: str, corrupting_read, label: str) -> None:
 
 
 def check_fresh_sidecar_survives_prune(plugin) -> None:
-    """os.replace carries the primary's mtime onto the new sidecar. A corrupt
-    file that is old on disk therefore produces a fresh forensic copy that
-    looks older than every sidecar already there. The prune must keep it."""
+    """Keep a newly created sidecar even when os.replace preserves an old mtime.
+    Pruning must remove the next-oldest existing sidecar instead."""
     path = plugin.settings_path
     os.makedirs(os.path.dirname(path), exist_ok=True)
 
@@ -190,9 +183,8 @@ def check_fresh_sidecar_survives_prune(plugin) -> None:
 
 
 def check_garbage_bytes_are_corruption(plugin, migrator) -> None:
-    """Undecodable bytes raise UnicodeDecodeError, which is a ValueError but
-    not a JSONDecodeError. A handler that names the JSON error lets the
-    crudest corruption of all straight through."""
+    """Treat undecodable bytes as corruption in plugin and migration settings.
+    UnicodeDecodeError is a ValueError but not a JSONDecodeError."""
     path = plugin.settings_path
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "wb") as f:
@@ -216,9 +208,8 @@ def check_garbage_bytes_are_corruption(plugin, migrator) -> None:
 
 
 def check_migrator_oserror_not_corruption(migrator) -> None:
-    """The Migrator must not quarantine on OSError. Renaming away a healthy
-    but momentarily unreadable migrations.json reports every migrator as
-    pending and re-runs the lot."""
+    """Leave migrations.json in place when a read raises OSError.
+    Quarantining a healthy unreadable file would report and rerun all migrations."""
     path = migrator.SETTINGS_DIR
     migrator.set_migrated(True)
     before = read(path)
@@ -244,9 +235,8 @@ def check_migrator_oserror_not_corruption(migrator) -> None:
 
 
 def check_asset_manager_quarantines(plugin) -> None:
-    """The asset manager reads and rewrites the same settings.json.
-    load_assets is the earliest reader of all, inside PluginBase.__init__, and
-    save_assets replaces the file wholesale from five live UI call sites."""
+    """Verify asset load and save quarantine their shared settings file.
+    load_assets reads during initialization; save_assets replaces it from five UI call sites."""
     path = plugin.settings_path
     am = plugin.asset_manager
     os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -324,10 +314,8 @@ def check_manifest_degrades_like_missing(pm, PluginBase, corrupt_dir, missing_di
         f"{sorted(PluginBase.plugins)}, errors={pm.load_errors}"
     )
 
-    # The manifest lives in the plugin's source tree, which the app never
-    # writes, so it must stay exactly where it is. A rename would mutate the
-    # developer's git working tree, because dev plugins are symlinks into
-    # ~/dev. Nothing overwrites it either, so nothing needs protection.
+    # Manifests are read-only source files and can be symlinked from a developer
+    # tree, so quarantine must not move or modify them.
     manifest_path = os.path.join(corrupt_dir, "manifest.json")
     assert os.path.isfile(manifest_path), (
         "the corrupt manifest was moved out of the plugin's source tree"
@@ -369,9 +357,8 @@ def main() -> None:
     from src.backend.PluginManager.PluginBase import PluginBase
     from src.backend.PluginManager.PluginManager import PluginManager
 
-    # Real SettingsManager and PageManagerBackend. The page loader delegates
-    # its corrupt-read handling to SettingsManager, which drives the second
-    # wired call site end to end.
+    # Use real settings and page managers so the page loader exercises its
+    # delegated corrupt-read path end to end.
     fixtures._install_integration_globals()
 
     write_plugin("com_test_q_settings", "QSettingsPlugin", manifest_json("com_test_q_settings"))

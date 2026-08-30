@@ -1,9 +1,5 @@
-"""
-Plugin settings on the settings store.
-
-All four entry points, get_settings, set_settings, load_assets and save_assets,
-heal a corrupt file through the store's quarantine. An unreadable file reads as
-empty rather than raising.
+"""Verify get_settings, set_settings, load_assets, and save_assets use one settings store.
+Corrupt files quarantine; unreadable files return empty content without raising.
 """
 
 # The file-version envelope round-trips, and the per-plugin lock serializes
@@ -168,7 +164,6 @@ def check_unreadable_not_fatal() -> None:
             f"{sidecars(path)}"
         )
 
-        # Five live UI paths reach this call.
         am.colors.add_override("accent", Color(color=(1, 2, 3, 4)), skip_asset_check=True)
         am.save_assets()
 
@@ -238,9 +233,8 @@ def check_envelope_round_trip() -> None:
     )
     assert len(sidecars(path)) == 1
 
-    # Valid JSON that is not an object is the wrong root type, so it heals the
-    # same way corrupt bytes do: it reads as empty and is quarantined aside,
-    # rather than left in place to reach the schema accessors where it raises.
+    # A non-object root is quarantined like corrupt bytes and reads as empty,
+    # rather than reaching object schema accessors.
     write_raw(path, '["not", "an", "object"]')
     assert plugin.get_settings() == {}
     assert not os.path.exists(path), (
@@ -274,10 +268,8 @@ def check_assets_share_file() -> None:
 
 
 def check_serialized_and_lock_order() -> None:
-    """The per-plugin lock makes each accessor's own read-modify-write of the
-    file indivisible, because actions of one plugin run on_ready in parallel.
-    The lock does not span two calls. The asset manager's methods take no
-    lock, because their observer callbacks reach back into get_settings."""
+    """Serialize each accessor cycle, not multiple calls, for parallel on_ready actions.
+    Asset methods take no lock because callbacks can re-enter get_settings."""
     from src.backend import settings_store
 
     plugin, _am = make_plugin("com_test_serialized")

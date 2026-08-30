@@ -1,10 +1,5 @@
-"""The plugin logger wrapper must forward formatting arguments.
-
-The per-level wrapper accepted *args and **kwargs but forwarded only the
-message, so a plugin calling log.info("x={}", x) got literal braces and any
-context was dropped. It now forwards them, and loguru formats only when
-arguments are present, so a plain message keeps its literal braces.
-"""
+"""Verify plugin loggers forward positional and keyword formatting arguments.
+Messages without arguments must keep literal braces unchanged."""
 import fixtures  # noqa: F401  (must be first: isolates DATA_PATH before globals)
 
 import os  # noqa: E402
@@ -32,11 +27,8 @@ def main() -> int:
 
     failures: list[str] = []
     try:
-        # Positional formatting argument: must be applied, not dropped.
         plugin_log.info("x={}", 42)
-        # Keyword formatting argument.
         plugin_log.info("host={host}", host="10.0.0.2")
-        # A plain message with literal braces and no args: stays literal.
         plugin_log.info("nothing to format {here}")
     finally:
         logger.remove(sink_id)
