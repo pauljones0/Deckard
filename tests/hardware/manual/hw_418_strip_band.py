@@ -135,8 +135,8 @@ def main() -> int:
         deck.set_dial_callback(on_dial)
         deck.set_key_callback(on_key)
 
-        print("dials: 1=sx 2=sy 3=gap 4=span; keys 1-4=xoff, 5/8=print, "
-              "6/7=bandh; dial press=print; Ctrl+C ends", flush=True)
+        print("dials: 1=sx 2=sy 3=gap 4=span; top keys nudge xoff (-8/-2/+2/+8); "
+              "bottom keys or dial press print values; Ctrl+C ends", flush=True)
         while True:
             params.dirty.wait()
             params.dirty.clear()
