@@ -34,8 +34,11 @@ from src.backend import services
 import globals as gl
 
 # Import own modules
+from src.backend.DeckManagement.HelperMethods import is_image
 from src.backend.DeckManagement.ImageHelpers import image2pixbuf
-from src.backend.DeckManagement.deck_controller.background_media import background_canvas_size
+from src.backend.DeckManagement.deck_controller.background_media import (
+    background_canvas_size, resolve_background_entries,
+)
 from src.backend.DeckManagement.deck_controller.viewport import (
     is_default_view, media_entries, normalize_view,
 )
@@ -351,9 +354,13 @@ class BackgroundMediaRow(LazyMapTasks, Adw.PreferencesRow):
         services.require_app().let_user_select_asset(default_path=media_path, callback_func=self.update_image)
 
     def update_image(self, file_path: "str | None") -> None:
-        self.set_thumbnail(file_path)   
+        self.set_thumbnail(file_path)
         settings = gl.settings_manager.deck(self.deck_serial_number)
         settings.set("background", "media-path", file_path)
+        # A view belongs to the image it was framed on, not to the slot: a
+        # new wallpaper starts from the default crop instead of inheriting
+        # the previous one's zoom into a corner.
+        settings.set("background", "view", None)
         settings.save()
 
         controller = self.settings_page.deck_controller
@@ -367,17 +374,24 @@ class BackgroundMediaRow(LazyMapTasks, Adw.PreferencesRow):
         if page is not None:
             controller.load_background(page=page)
 
+    def _deck_background_shows(self) -> bool:
+        """False while the active page overrides the deck background: the
+        deck's view then edits settings the deck is not rendering, so the
+        live push and the reload stay off and only the file changes."""
+        page = self.settings_page.deck_controller.active_page
+        if page is None:
+            return True
+        page_background = page.dict.get("settings", {}).get("background", {})
+        return not (page_background.get("overwrite", False) and page_background.get("show", False))
+
     def on_adjust_view(self, button: Gtk.Button) -> None:
         settings = gl.settings_manager.deck(self.deck_serial_number)
-        config = settings.section("background")
-        entries = media_entries(config["media-paths"])
-        if len(entries) < 2:
-            # No rotation: the single media-path with its own view is the one
-            # entry. With nothing selected there is nothing to adjust.
-            single = config["media-path"]
-            if not single:
-                return
-            entries = [(single, normalize_view(config["view"]))]
+        # The same resolution the loader applies, so the dialog adjusts the
+        # file the deck shows: the list when it holds a real image, else the
+        # single media-path. With nothing to render there is nothing to aim.
+        entries = resolve_background_entries(settings.section("background"))
+        if not entries:
+            return
 
         controller = self.settings_page.deck_controller
         dialog = ViewportDialog(
@@ -391,22 +405,23 @@ class BackgroundMediaRow(LazyMapTasks, Adw.PreferencesRow):
         dialog.present(self)
 
     def on_view_live(self, path: str, view: "tuple[float, float, float]") -> None:
-        """The drag preview: swap the showing image's view in place. A video
-        or a slideshow image that is not the current frame skips the live
-        push; the commit reloads it instead."""
-        controller = self.settings_page.deck_controller
-        image = controller.background.image
-        if image is not None and image.path == path:
-            controller.background.update_view(view)
+        """The drag preview: swap the showing image's view in place. A video,
+        a slideshow image that is not the current frame, or a page override
+        on the deck skips the live push; the commit settles those."""
+        background = self.settings_page.deck_controller.background
+        if self._deck_background_shows() and background.showing_path() == path:
+            background.update_view(view)
 
     def on_view_commit(self, path: str, view: "tuple[float, float, float]") -> None:
         settings = gl.settings_manager.deck(self.deck_serial_number)
-        entries = media_entries(settings.get("background", "media-paths"))
-        if len(entries) >= 2:
-            # Rewrite the list in order. A default-view entry stays a plain
-            # string, so an untouched slideshow keeps its pre-view shape.
+        list_entries = [(p, v) for p, v in media_entries(settings.get("background", "media-paths"))
+                        if is_image(p)]
+        if list_entries:
+            # Rewrite the list in order, the same entries the loader renders.
+            # A default-view entry stays a plain string, so an untouched
+            # slideshow keeps its pre-view shape.
             rewritten: "list[Any]" = []
-            for entry_path, entry_view in entries:
+            for entry_path, entry_view in list_entries:
                 use = view if entry_path == path else entry_view
                 as_dict = _view_as_setting(use)
                 rewritten.append(entry_path if as_dict is None
@@ -416,14 +431,20 @@ class BackgroundMediaRow(LazyMapTasks, Adw.PreferencesRow):
             settings.set("background", "view", _view_as_setting(view))
         settings.save()
 
-        # A still that is showing already carries the new view through the
-        # live path. Anything else, a video or GIF whose view bakes into its
-        # frame cache, or a slideshow frame not on screen, needs the reload.
-        controller = self.settings_page.deck_controller
-        image = controller.background.image
-        applied_live = (image is not None and image.path == path
-                        and controller.background.update_view(view))
-        if not applied_live:
+        if not self._deck_background_shows():
+            return
+        background = self.settings_page.deck_controller.background
+        if background.showing_path() == path:
+            # The still on screen: re-crop in place, no decode, no reload.
+            background.update_view(view)
+        elif background.set_slideshow_view(path, view):
+            # A rotation frame not on screen: the rotation renders it through
+            # the new view when it returns; a reload would rebuild the
+            # rotation at its first frame and jump the deck off the current one.
+            return
+        else:
+            # A video or GIF bakes the view into its frame cache; only a full
+            # reload rebuilds that.
             self._reload_background()
 
     def on_add_image(self, button: Gtk.Button) -> None:
@@ -438,10 +459,14 @@ class BackgroundMediaRow(LazyMapTasks, Adw.PreferencesRow):
         if not paths:
             # Seed the rotation from the single background already set, so the
             # first added image joins it rather than starting a fresh list of
-            # one that hides the existing image.
+            # one that hides the existing image. Its view travels with it as
+            # a list-entry view; the single-media view key is then spent.
             current = settings.get("background", "media-path")
             if current:
-                paths.append(current)
+                current_view = _view_as_setting(normalize_view(settings.get("background", "view")))
+                paths.append(current if current_view is None
+                             else {"path": current, "view": current_view})
+                settings.set("background", "view", None)
         paths.append(file_path)
         settings.set("background", "media-paths", paths)
         settings.save()

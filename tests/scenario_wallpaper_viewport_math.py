@@ -14,6 +14,7 @@ from fixtures import start_watchdog
 from src.backend.DeckManagement.deck_controller import viewport
 from src.backend.DeckManagement.deck_controller.viewport import (
     DEFAULT_VIEW,
+    canonical_view,
     normalize_view,
     render_viewport,
     view_suffix,
@@ -47,6 +48,20 @@ def main() -> int:
         failures.append("clamping did not apply to out-of-range values")
     if normalize_view({"scale": 2.0}) != (0.5, 0.5, 2.0):
         failures.append("a partial dict did not fill missing keys from the default")
+    if normalize_view({"scale": float("nan")}) != DEFAULT_VIEW:
+        failures.append("NaN slipped through the clamp; json.load produces it")
+    if normalize_view({"x": float("inf")}) != DEFAULT_VIEW:
+        failures.append("Infinity slipped through the clamp")
+
+    # --- canonical_view: the stored center is the rendered center ---------
+    # 1000x500 onto 200x100 at scale 2: the rect is 500 wide, so any center
+    # below 0.25 renders the left-edge crop, and canonical_view says so.
+    if canonical_view((1000, 500), (200, 100), (0.0, 0.5, 2.0)) != (0.25, 0.5, 2.0):
+        failures.append("a pushed-past-the-edge center did not canonicalize to the edge")
+    if canonical_view((1000, 500), (200, 100), (0.83, 0.5, 1.0)) != (0.5, 0.5, 1.0):
+        failures.append("at scale 1 on a matching aspect every center must read as default")
+    if canonical_view((1000, 500), (200, 100), (0.6, 0.5, 2.0)) != (0.6, 0.5, 2.0):
+        failures.append("a center inside the honored range must not move")
 
     # --- view_suffix: default is empty, non-default is stable ---------------
     if view_suffix(DEFAULT_VIEW) != "":
@@ -109,17 +124,13 @@ def main() -> int:
         if out.getpixel((100, 50))[3] != 255:
             failures.append("zoom-out center must show the source")
 
-    # --- fully off-image rect renders fully transparent ---------------------
-    # x=0, extreme zoom-in on a huge source: rect stays inside (clamped), so
-    # force the off-image case through the renderer's intersection guard
-    # directly with a hand-made rect via a zoomed-out pan to a corner.
+    # --- a corner-panned zoom-out keeps part of the source on the canvas ----
     out2 = render_viewport(gradient_image(100, 100), (200, 100), (0.0, 0.0, 0.25))
     opaque = sum(1 for yy in range(100) for xx in range(200)
                  if out2.getpixel((xx, yy))[3] == 255)
-    if opaque == 0:
-        failures.append("a corner-panned zoom-out lost the source entirely")
-    if opaque == 200 * 100:
-        failures.append("a corner-panned zoom-out letterboxed nothing")
+    if not 0 < opaque < 200 * 100:
+        failures.append(f"a corner-panned zoom-out must show part of the source "
+                        f"and letterbox the rest, got {opaque} opaque of {200 * 100}")
 
     if failures:
         for failure in failures:

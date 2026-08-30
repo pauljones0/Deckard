@@ -114,6 +114,23 @@ def main() -> int:
             if background.image is None or background.image.view != (0.8, 0.5, 2.0):
                 failures.append("the first slideshow frame did not render "
                                 "through its own view")
+            # A live swap on the showing frame must land in the rotation's
+            # own view table, or the frame reverts when the rotation returns.
+            background.update_view((0.3, 0.5, 2.0))
+            if show.views.get(two_tone) != (0.3, 0.5, 2.0):
+                failures.append(f"update_view left the rotation's stored view "
+                                f"stale: {show.views.get(two_tone)}")
+            # A view for a frame not on screen is stored without touching the
+            # frame that is, so the deck does not jump.
+            showing_before = background.image
+            if not background.set_slideshow_view(second, (0.6, 0.5, 3.0)):
+                failures.append("set_slideshow_view did not find the rotation entry")
+            if background.image is not showing_before:
+                failures.append("set_slideshow_view swapped the showing frame")
+            if show.views.get(second) != (0.6, 0.5, 3.0):
+                failures.append(f"set_slideshow_view did not store: {show.views.get(second)}")
+            if background.set_slideshow_view("/not/in/rotation.png", (0.5, 0.5, 2.0)):
+                failures.append("set_slideshow_view claimed a path the rotation lacks")
 
         # --- E: the page override carries its own view ----------------------
         deck_config.set("background", "enable", False)

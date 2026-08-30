@@ -52,8 +52,8 @@ from loguru import logger as log
 from src.backend.DeckManagement.BetterDeck import BetterDeck, open_device_handle
 from src.backend.DeckManagement.InputIdentifier import Input, InputIdentifier
 from src.backend.DeckManagement.Subclasses import cache_budget
-from src.backend.DeckManagement.HelperMethods import is_image
-from src.backend.DeckManagement.deck_controller.viewport import media_entries, normalize_view
+from src.backend.DeckManagement.deck_controller.background_media import resolve_background_entries
+from src.backend.DeckManagement.deck_controller.viewport import DEFAULT_VIEW
 from src.backend.DeckManagement.Subclasses.ScreenSaver import ScreenSaver
 from src.backend.DeckManagement.Subclasses.encoded_image_cache import EncodedImageCache
 from src.backend.DeckManagement.Subclasses.native_tile_cache import NativeTileCache, native_tile_cache_max_bytes
@@ -813,9 +813,9 @@ class DeckController:
             # rotation of stills and one playing video cannot both show.
             # Fewer than two fall back to the single media-path. Only real,
             # existing image files count; a deleted or video entry drops out
-            # here rather than blank a frame later. media_entries reads both
-            # stored entry shapes, each path with its own viewport.
-            pairs = [(p, v) for p, v in media_entries(config.get("media-paths")) if is_image(p)]
+            # rather than blank a frame later. resolve_background_entries is
+            # the one reading of that rule, shared with the settings UI.
+            pairs = resolve_background_entries(config)
             if len(pairs) >= 2:
                 self.background.set_slideshow(
                     [p for p, _view in pairs],
@@ -825,8 +825,7 @@ class DeckController:
                     views=[v for _path, v in pairs],
                 )
             else:
-                single, single_view = pairs[0] if pairs else (
-                    config.get("media-path"), normalize_view(config.get("view")))
+                single, single_view = pairs[0] if pairs else (None, DEFAULT_VIEW)
                 self.background.set_from_path(
                     path=single, update=update, view=single_view,
                     loop=config.get("loop", False),

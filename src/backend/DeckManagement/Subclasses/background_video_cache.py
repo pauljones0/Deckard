@@ -28,7 +28,7 @@ class BackgroundVideoCache(Mp4FrameCache[list[Image.Image]]):
     """
 
     def __init__(self, video_path: str, deck_controller: "DeckController", extend_touchscreen: bool = False,
-                 view: "tuple[float, float, float] | None" = None) -> None:
+                 view: "tuple[float, float, float]" = DEFAULT_VIEW) -> None:
         self.deck_controller = deck_controller
 
         self.key_layout = self.deck_controller.deck.key_layout()
@@ -59,8 +59,7 @@ class BackgroundVideoCache(Mp4FrameCache[list[Image.Image]]):
         self._legacy_cache_path: str | None = None  # set by _default_cache_path()
 
         saturation = deck_controller.get_display_saturation()
-        super().__init__(video_path, out_size=self._canvas_size(), saturation=saturation,
-                         view=view if view is not None else DEFAULT_VIEW)
+        super().__init__(video_path, out_size=self._canvas_size(), saturation=saturation, view=view)
 
     # Geometry and cache-path hooks.
 

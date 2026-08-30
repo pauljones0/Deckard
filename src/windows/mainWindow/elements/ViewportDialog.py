@@ -28,7 +28,7 @@ import globals as gl
 from src.backend.DeckManagement.HelperMethods import is_image
 from src.backend.DeckManagement.ImageHelpers import image2pixbuf
 from src.backend.DeckManagement.deck_controller.viewport import (
-    DEFAULT_VIEW, MAX_SCALE, MIN_SCALE, viewport_rect,
+    DEFAULT_VIEW, MAX_SCALE, MIN_SCALE, canonical_view, viewport_rect,
 )
 
 from typing import Any, Callable
@@ -155,6 +155,11 @@ class ViewportDialog(Adw.Dialog):
         except Exception:
             log.opt(exception=True).warning(f"Viewport preview failed to load {path}")
         if self._source is not None:
+            # Every consumer of the source is a ratio: the crop rectangle is
+            # scale-invariant and the drag maps through width and height
+            # ratios. A preview-sized copy renders the same box for a
+            # fraction of the memory and per-draw paint cost of a photo.
+            self._source.thumbnail((PREVIEW_W * 2, PREVIEW_H * 2), Image.Resampling.LANCZOS)
             self._pixbuf = image2pixbuf(self._source)
         self._loading = True
         try:
@@ -232,6 +237,13 @@ class ViewportDialog(Adw.Dialog):
     # -- interaction ---------------------------------------------------------
 
     def _apply_view(self, view: ViewTuple, live: bool) -> None:
+        # Store the view the renderer honors, not the raw pointer position:
+        # past the clamped range a drag changes nothing on screen, and the
+        # stored value must say so, or every release commits a distinct view
+        # for one identical crop.
+        canvas = self.canvas_size()
+        if self._source is not None and canvas is not None:
+            view = canonical_view((self._source.width, self._source.height), canvas, view)
         self.view = view
         self.entries[self.index] = (self.current_path(), view)
         self.preview.queue_draw()
@@ -241,7 +253,8 @@ class ViewportDialog(Adw.Dialog):
                 self._last_live = now
                 self.on_live(self.current_path(), view)
         else:
-            self.on_live(self.current_path(), view)
+            # The commit applies the final view itself; a live push first
+            # would run the whole recomposite chain twice per release.
             self.on_commit(self.current_path(), view)
 
     def on_drag_begin(self, gesture: Gtk.GestureDrag, x: float, y: float) -> None:
@@ -265,17 +278,19 @@ class ViewportDialog(Adw.Dialog):
         if self._drag_anchor is None:
             return
         self._drag_anchor = None
+        # A press with no movement is a drag-begin/drag-end pair too; it
+        # changes nothing and must not commit.
+        if self._source is None or (dx == 0 and dy == 0):
+            return
         self._apply_view(self.view, live=False)
 
     def on_scale_changed(self, spinner: Gtk.SpinButton) -> None:
-        if self._loading:
+        if self._loading or self._source is None:
             return
-        view = (self.view[0], self.view[1], float(spinner.get_value()))
-        self.view = view
-        self.entries[self.index] = (self.current_path(), view)
-        self.preview.queue_draw()
-        self.on_live(self.current_path(), view)
-        # Commit once the spinner settles, not per click of a held button.
+        # A held spin button repeats at about 20 Hz; the live push takes the
+        # same rate cap as a drag, and the commit waits for the value to
+        # settle instead of firing per click.
+        self._apply_view((self.view[0], self.view[1], float(spinner.get_value())), live=True)
         if self._scale_commit_handle is not None:
             GLib.source_remove(self._scale_commit_handle)
         self._scale_commit_handle = GLib.timeout_add(
@@ -294,6 +309,8 @@ class ViewportDialog(Adw.Dialog):
                 self.on_commit(self.current_path(), self.view)
 
     def on_reset(self, button: Gtk.Button) -> None:
+        if self._source is None:
+            return
         self._cancel_scale_commit(commit_now=False)
         self._loading = True
         try:

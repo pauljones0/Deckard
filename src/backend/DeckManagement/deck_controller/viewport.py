@@ -11,6 +11,7 @@ single reader of the persisted dict shape, so every consumer sees clamped
 floats and a missing or malformed setting degrades to the default view
 instead of raising out of a render.
 """
+import math
 from typing import Any
 
 from PIL import Image
@@ -44,6 +45,10 @@ def normalize_view(raw: Any) -> tuple[float, float, float]:
         y = float(raw.get("y", DEFAULT_VIEW[1]))
         scale = float(raw.get("scale", DEFAULT_VIEW[2]))
     except (TypeError, ValueError):
+        return DEFAULT_VIEW
+    # json.load accepts NaN and Infinity, and min/max pass NaN through, so
+    # the finite check is what keeps a bad file from reaching a renderer.
+    if not (math.isfinite(x) and math.isfinite(y) and math.isfinite(scale)):
         return DEFAULT_VIEW
     x = min(max(x, 0.0), 1.0)
     y = min(max(y, 0.0), 1.0)
@@ -81,10 +86,18 @@ def render_viewport_rgb(image: Image.Image, canvas_size: tuple[int, int],
                         resample: Image.Resampling = Image.Resampling.LANCZOS) -> Image.Image:
     """render_viewport flattened onto black, for an opaque frame format.
 
-    A zoomed-out view letterboxes with transparency; a consumer that writes
+    A rectangle inside the source resizes the RGB frame straight from its
+    box, byte-identical to the RGBA path and without its three extra
+    full-frame copies, which matters at one call per source video frame. A
+    zoomed-out view letterboxes with transparency; a consumer that writes
     opaque frames (the video tile cache's mp4) composites that onto black
     here, which is also what the deck shows behind a background.
     """
+    if image.mode != "RGB":
+        image = image.convert("RGB")
+    left, top, right, bottom = viewport_rect(image.size, canvas_size, view)
+    if left >= 0 and top >= 0 and right <= image.width and bottom <= image.height:
+        return image.resize(canvas_size, resample, box=(left, top, right, bottom))
     framed = render_viewport(image, canvas_size, view, resample)
     out = Image.new("RGB", canvas_size)
     out.paste(framed, mask=framed)
@@ -152,6 +165,24 @@ def viewport_rect(source_size: tuple[int, int], canvas_size: tuple[int, int],
     return (left, top, left + rect_w, top + rect_h)
 
 
+def canonical_view(source_size: tuple[int, int], canvas_size: tuple[int, int],
+                   view: tuple[float, float, float]) -> tuple[float, float, float]:
+    """The view whose center is the center of the rectangle actually
+    rendered.
+
+    viewport_rect clamps the rectangle inside the source, so a center pushed
+    past the honored range renders the same crop as the edge center. Storing
+    the pushed value would persist a view the renderer ignores, make two
+    pixel-identical crops read as different views (and name two video cache
+    files), and leave a drag dead zone at each edge. Reading the center back
+    from the clamped rectangle removes all three; at scale 1.0 with matching
+    aspect it collapses every center to the default view.
+    """
+    left, top, right, bottom = viewport_rect(source_size, canvas_size, view)
+    source_w, source_h = source_size
+    return ((left + right) / 2 / source_w, (top + bottom) / 2 / source_h, view[2])
+
+
 def render_viewport(image: Image.Image, canvas_size: tuple[int, int],
                     view: tuple[float, float, float],
                     resample: Image.Resampling = Image.Resampling.LANCZOS) -> Image.Image:
@@ -160,7 +191,9 @@ def render_viewport(image: Image.Image, canvas_size: tuple[int, int],
     A rectangle fully inside the source resizes straight from its float box,
     the same operation the centered cover crop performed. An overhanging
     rectangle (zoomed out) composites the visible part of the source onto a
-    transparent canvas, and the caller's base shows through the rest.
+    transparent canvas, and the caller's base shows through the rest. With
+    the center clamped to the source and the scale bounded below, the
+    rectangle always overlaps the source, so the visible part is never empty.
     """
     if image.mode != "RGBA":
         image = image.convert("RGBA")
@@ -174,8 +207,6 @@ def render_viewport(image: Image.Image, canvas_size: tuple[int, int],
     inner_t = max(top, 0.0)
     inner_r = min(right, float(image.width))
     inner_b = min(bottom, float(image.height))
-    if inner_r <= inner_l or inner_b <= inner_t:
-        return out
 
     to_canvas_x = canvas_size[0] / (right - left)
     to_canvas_y = canvas_size[1] / (bottom - top)

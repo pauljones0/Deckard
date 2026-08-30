@@ -25,18 +25,20 @@ import time
 from PIL import Image, ImageEnhance
 from loguru import logger as log
 
-from src.backend.DeckManagement.HelperMethods import is_video
+from src.backend.DeckManagement.HelperMethods import is_image, is_video
 from src.backend.DeckManagement.Subclasses.background_video_cache import BackgroundVideoCache
 from src.backend.DeckManagement import media_loop
 from src.backend.DeckManagement.media_loop import MEDIA_LOOP_FPS, FrameScheduled
 from src.backend.DeckManagement.deck_controller.gif_pipeline import GifBackground, GifBudgetExceeded
 from src.backend.DeckManagement.deck_controller.slideshow import IN_ORDER, Slideshow
 from src.backend.DeckManagement.deck_controller.strip_band import band_layout, clamp_box
-from src.backend.DeckManagement.deck_controller.viewport import DEFAULT_VIEW, render_viewport
+from src.backend.DeckManagement.deck_controller.viewport import (
+    DEFAULT_VIEW, media_entries, normalize_view, render_viewport,
+)
 
-from typing import TYPE_CHECKING, cast, override
+from typing import TYPE_CHECKING, Any, cast, override
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Mapping, Sequence
 
     from src.backend.DeckManagement.deck_controller.controller import DeckController
     from src.backend.PageManagement.Page import Page
@@ -60,6 +62,25 @@ def background_canvas_size(deck_controller: "DeckController", extend_touchscreen
         canvas_width, canvas_height, _grid_x, _band = \
             band_layout(deck_controller, canvas_width, canvas_height)
     return (canvas_width, canvas_height)
+
+
+def resolve_background_entries(config: "Mapping[str, Any]") -> "list[tuple[str, tuple[float, float, float]]]":
+    """The (path, view) entries a background config renders, in order.
+
+    The media-paths list wins when it holds at least one real image file,
+    with each entry's own view; otherwise the single media-path with the
+    config's view; otherwise nothing. The loader and the settings UI both
+    resolve through this, so the dialog adjusts the file the deck shows and
+    counts the same entries the renderer plays. A deleted file or a video in
+    the list drops out here for both.
+    """
+    pairs = [(p, v) for p, v in media_entries(config.get("media-paths")) if is_image(p)]
+    if pairs:
+        return pairs
+    single = config.get("media-path")
+    if isinstance(single, str) and single:
+        return [(single, normalize_view(config.get("view")))]
+    return []
 
 
 class Background:
@@ -203,8 +224,11 @@ class Background:
         # Each image carries its own viewport, aligned by position with
         # paths. A rotation with the same file twice shares one view, which
         # the path-keyed lookup makes explicit.
-        show.views = ({p: v for p, v in zip(paths, views)}
-                      if views is not None and len(views) == len(paths) else {})
+        if views is not None and len(views) != len(paths):
+            log.warning(f"Slideshow views ({len(views)}) do not align with paths ({len(paths)}); "
+                        "rendering every frame through the default view")
+            views = None
+        show.views = {p: v for p, v in zip(paths, views)} if views is not None else {}
         # Drop the current rotation before installing the first frame below.
         # The install runs off the lock, and a media tick during it would
         # otherwise advance the old rotation and overwrite the frame installed
@@ -311,9 +335,15 @@ class Background:
         """
         with self._render_state_lock:
             image = self.image
+            show = self.slideshow
         if image is None:
             return False
         image.set_view(view)
+        # The rotation renders each frame through its own stored view when
+        # it returns to it, so the swap lands there too, or the frame reverts
+        # to the old crop one interval later.
+        if show is not None and image.path is not None and image.path in show.views:
+            show.views[image.path] = view
         with self._render_state_lock:
             self._source_epoch += 1
             self._touchscreen_slice = None
@@ -324,6 +354,27 @@ class Background:
         self.update_tiles()
         self.deck_controller.update_all_inputs()
         return True
+
+    def set_slideshow_view(self, path: str, view: "tuple[float, float, float]") -> bool:
+        """Store a view for one slideshow image without touching the frame on
+        screen. Returns True when a rotation holds that image; the rotation
+        renders through the new view when it next returns to it. The caller
+        uses update_view for the showing frame and this for the others, so an
+        edit to an image that is not on screen never reloads the rotation and
+        never jumps it back to its first frame."""
+        with self._render_state_lock:
+            show = self.slideshow
+        if show is None or path not in show.views:
+            return False
+        show.views[path] = view
+        return True
+
+    def showing_path(self) -> "str | None":
+        """The file path of the still on screen, or None for a video, a GIF
+        or a blank background."""
+        with self._render_state_lock:
+            image = self.image
+        return image.path if image is not None else None
 
     def set_extend_to_touchscreen(self, extend: bool, update: bool = True) -> None:
         if extend == self.extend_to_touchscreen:
@@ -561,6 +612,8 @@ class BackgroundImage:
         # _ensure_fits_canvas() does not re-open a file that simply has no
         # more pixels than the retained copy, once per compose.
         self._native_size: tuple[int, int] = image.size
+        # Set by _fit_to_canvas; the budget the retained copy was fitted for.
+        self._fitted_budget: tuple[int, int] = image.size
         # close() sets this to None. _ensure_fits_canvas() and
         # create_full_deck_sized_image() both handle the released state.
         self.image: Image.Image | None = self._fit_to_canvas(image, self._extend_effective())
@@ -614,30 +667,47 @@ class BackgroundImage:
         """
         return min(max(self.view[2], 1.0), 4.0)
 
+    def _budget(self, canvas: tuple[int, int]) -> tuple[int, int]:
+        multiplier = 2 * self._budget_multiplier()
+        return (int(canvas[0] * multiplier), int(canvas[1] * multiplier))
+
     def _fit_to_canvas(self, image: Image.Image, extend_touchscreen: bool) -> Image.Image:
         canvas = self._canvas_size(extend_touchscreen)
         if canvas is None:
             return image
-        multiplier = 2 * self._budget_multiplier()
-        budget = (int(canvas[0] * multiplier), int(canvas[1] * multiplier))
+        budget = self._budget(canvas)
         if image.width > budget[0] or image.height > budget[1]:
             image.thumbnail(budget, Image.Resampling.LANCZOS)
+        # The budget this copy was fitted for. _ensure_fits_canvas compares
+        # against it instead of against the copy's pixels: a thumbnail keeps
+        # the source aspect, so on an aspect-mismatched source one axis can
+        # never reach its per-axis demand, and a pixel comparison re-decoded
+        # the file on every compose.
+        self._fitted_budget = budget
         return image
 
     def _ensure_fits_canvas(self, extend_touchscreen: bool) -> None:
         """Re-decode from path when the current canvas and zoom need more
-        resolution than the retained image holds. The canvas grows when the
-        user toggles touchscreen-extend at runtime, and the demand grows when
-        set_view() zooms in, both with no fresh page load."""
+        resolution than the retained image was fitted for, and shrink the
+        retained copy back when the zoom no longer needs it. The canvas grows
+        when the user toggles touchscreen-extend at runtime, and the demand
+        moves when set_view() zooms, both with no fresh page load. At most
+        one decode per growth step; a shrink is a thumbnail of what is held."""
         if not self.path or self.image is None:
             return
         canvas = self._canvas_size(extend_touchscreen)
         if canvas is None:
             return
-        multiplier = self._budget_multiplier()
-        demand_w = min(canvas[0] * multiplier, self._native_size[0])
-        demand_h = min(canvas[1] * multiplier, self._native_size[1])
-        if demand_w <= self.image.width and demand_h <= self.image.height:
+        budget = self._budget(canvas)
+        fitted = self._fitted_budget
+        if budget[0] <= fitted[0] and budget[1] <= fitted[1]:
+            if budget != fitted:
+                self.image = self._fit_to_canvas(self.image, extend_touchscreen)
+            return
+        # The source has no more pixels than the fitted copy already holds,
+        # so a decode would produce the same image again.
+        if self._native_size[0] <= fitted[0] and self._native_size[1] <= fitted[1]:
+            self._fitted_budget = budget
             return
         try:
             with Image.open(self.path) as fresh:
@@ -646,10 +716,10 @@ class BackgroundImage:
             return
         fresh = self._prepare_image(fresh)
         self._native_size = fresh.size
-        old_image = self.image
+        # The old copy is dropped, not closed: a compose on the media thread
+        # can still hold it, and close() under it raises mid-render. With no
+        # file behind it, dropping the reference frees the pixels the same.
         self.image = self._fit_to_canvas(fresh, extend_touchscreen)
-        if old_image is not None:
-            old_image.close()
 
     def close(self) -> None:
         """Release the retained source-resolution PIL image."""
