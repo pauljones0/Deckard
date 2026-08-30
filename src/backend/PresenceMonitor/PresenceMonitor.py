@@ -119,7 +119,7 @@ class PresenceMonitor:
 
     def notify_activity(self) -> None:
         """Record key, dial, or touch input that the compositor and lock state cannot observe.
-        This activity outranks a locked screen for DECK_ACTIVITY_GRACE_S."""
+        Reset the effective idle deadline and outrank lock for DECK_ACTIVITY_GRACE_S."""
         self._last_deck_activity = time.time()
         # The default mode never gates, so input needs no lock or timer-wheel work.
         # set_mode atomically replaces the mode and performs its own evaluation.

@@ -41,8 +41,8 @@ from src.api import notify_foreground_window_changed
 
 
 def select_integration_class(environment_components: list[str], server: str | None) -> type[Integration] | None:
-    """Select a window integration from individual XDG_CURRENT_DESKTOP components, or return None.
-    Wayland takes priority; X11 precedes KDE so KDE on Xorg avoids kdotool."""
+    """Select an integration from individual XDG_CURRENT_DESKTOP components.
+    Hyprland, GNOME, and Sway precede X11; KDE follows X11 for KDE on Xorg."""
     if "hyprland" in environment_components:
         return Hyprland
     if "gnome" in environment_components:
@@ -456,7 +456,7 @@ class WindowGrabber:
 
     def _auto_page_to_leave(self, deck_controller: "DeckController", page_path: str) -> "Page | None":
         """Return the page to leave, or None for no page or the target page.
-        Stay read-only until the next page build succeeds to preserve ownership."""
+        State changes after successful construction; same-page sets page_auto_loaded without one."""
         with self._dispatch_lock:
             active_page = deck_controller.active_page
             if active_page is None:

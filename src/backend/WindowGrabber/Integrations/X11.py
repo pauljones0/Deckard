@@ -37,8 +37,8 @@ if TYPE_CHECKING:
 # stop writes the wake pipe and does not wait for this timeout.
 WATCH_SELECT_TIMEOUT_S = 1.0
 
-# Repeated readable drains with no event indicate an EOF socket that would spin at full CPU.
-# Permit one empty partial read before treating the connection as dead.
+# Repeated empty readable drains indicate EOF and would spin at full CPU.
+# One empty drain can be a partial read, so require two in succession.
 _MAX_EMPTY_READABLE_DRAINS = 2
 
 # _NET_ACTIVE_WINDOW names focus; _NET_WM_NAME carries the preferred UTF-8 title.
@@ -383,8 +383,8 @@ class WatchForActiveWindowChange(threading.Thread):
                 return True
 
             if drained == 0:
-                # A repeated readable drain with no event is the library's zero-read EOF case.
-                # Stop before select spins, but permit one partial read to complete.
+                # Repeated empty readable drains indicate EOF; one can be a partial read.
+                # Stop before select spins on a dead socket.
                 empty_readable_drains += 1
                 if empty_readable_drains >= _MAX_EMPTY_READABLE_DRAINS:
                     log.warning("The X connection reached end of file; the X11 active window watcher stops")
@@ -395,8 +395,8 @@ class WatchForActiveWindowChange(threading.Thread):
         return False
 
     def _drain_events(self, display, root) -> int:
-        """Read all queued events and return the count; zero on a readable connection indicates EOF.
-        Propagate ConnectionClosedError, but isolate each event's decode and routing failure."""
+        """Return the queued event count; isolate decode errors but propagate connection loss.
+        Repeated zero counts on a readable connection indicate EOF; one can be partial."""
         count = 0
         while display.pending_events():
             event = display.next_event()
