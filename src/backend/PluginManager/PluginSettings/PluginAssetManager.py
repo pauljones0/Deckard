@@ -15,12 +15,8 @@ if TYPE_CHECKING:
 
 
 class AssetManager:
-    """The icon and colour overrides a plugin's settings file carries.
-
-    They live beside the plugin's own settings, in one file, under an assets
-    key the app owns. Both halves read and write that file through the
-    settings-store surface, which handles a corrupt file in one place.
-    """
+    """Manage plugin icon and colour overrides in the app-owned assets section.
+    The settings-store surface quarantines corrupt shared settings files."""
 
     def __init__(self, plugin_base: "PluginBase"):
         self.plugin_base = plugin_base
@@ -28,19 +24,12 @@ class AssetManager:
         self.icons = Manager(Icon, "icons")
 
     def _settings_file(self) -> PluginSettings:
-        """Give the plugin's settings file, once per call.
-
-        The path is an attribute of the plugin. A path read at construction
-        keeps pointing at a file the plugin stopped using."""
+        """Create settings access from the plugin's current path on each call."""
         return PluginSettings(self.plugin_base.settings_path)
 
     def load_assets(self) -> "dict[str, Any] | None":
-        # The first reader of this file. PluginBase.__init__ runs before
-        # register(), and a plugin that never registers, because a version gate
-        # or an incomplete manifest stops it, has no other reader. A corrupt
-        # file therefore needs a quarantine from here too, or it survives every
-        # load and the next save destroys it. Nothing here may raise, or the
-        # whole plugin fails to load without a trace.
+        # This can be the only read for an unregistered plugin, so corrupt files
+        # must be quarantined here without stopping plugin loading.
         content = self._settings_file().document()
         if content is None:
             return {}
@@ -55,11 +44,8 @@ class AssetManager:
         assets[self.colors.get_save_key()] = self.colors.get_override_json()
         assets[self.icons.get_save_key()] = self.icons.get_override_json()
 
-        # Five UI call sites reach this, among them the icon override, the
-        # icon reset and the colour pick. The write replaces the file
-        # wholesale, so it reads the rest of the content back first. An
-        # unreadable file reads as empty and raises nothing at a colour
-        # picker.
+        # Preserve non-asset settings before the wholesale write; an unreadable
+        # file becomes an empty document without raising in UI callers.
         settings = self._settings_file()
         content = settings.document() or {}
         content["assets"] = assets

@@ -1,20 +1,5 @@
-"""Peer checks and a loopback rewrite for the plugin-backend rpyc sockets.
-
-The app imports this module as library code. The frontend servers gate
-accepted connections with refusal_reason, and register_backend pins the
-offered port to the launched process with listen_rows_of_port and
-pid_owns_inode. launch_backend also copies this file into every plugin venv
-next to a .pth line, and puts its directory on the child's PYTHONPATH, where
-sitecustomize.py imports it. Inside a child it runs as top-level
-"deckard_rpyc_guard" and installs an import hook that rebinds a
-hostname-less rpyc server to 127.0.0.1 and adds the peer-UID authenticator.
-The app-side import under src.backend... installs no hook.
-
-Loopback TCP carries no peer credentials, so /proc/net/tcp{,6} supplies
-them: the row whose local endpoint is the peer's endpoint names the UID that
-owns the peer socket. This file must stay stdlib-only: inside a plugin venv
-it has no app code and no packages beyond the plugin's own.
-"""
+"""Harden plugin-backend rpyc sockets with same-UID checks and child-side loopback binding.
+Use /proc because TCP has no peer credentials; app-side imports install no hook, child patches fail open, and copied code stays stdlib-only."""
 from __future__ import annotations
 
 import importlib.abc
@@ -60,9 +45,7 @@ def is_loopback(ip: str) -> bool:
 
 def _decode_proc_endpoint(field: str) -> tuple[str, int]:
     """Decode a /proc/net/tcp address field such as "0100007F:1F90".
-
-    The kernel prints each 4-byte group of the address in host byte order.
-    """
+    The kernel prints each four-byte address group in host byte order."""
     ip_hex, _, port_hex = field.partition(":")
     raw = bytes.fromhex(ip_hex)
     if sys.byteorder == "little":
@@ -72,12 +55,8 @@ def _decode_proc_endpoint(field: str) -> tuple[str, int]:
 
 
 def parse_proc_tcp(text: str) -> list[TcpRow]:
-    """Parse the body of /proc/net/tcp or /proc/net/tcp6.
-
-    Columns: sl, local, remote, state, tx:rx, tr:when, retrnsmt, uid,
-    timeout, inode. A malformed line is skipped, not fatal: one bad row must
-    not blind the caller to the others.
-    """
+    """Parse /proc/net/tcp{,6} columns: sl, local, remote, state, tx:rx, tr:when, retrnsmt, uid, timeout, and inode.
+    Skip malformed lines so one bad row does not hide the others."""
     rows: list[TcpRow] = []
     for line in text.splitlines():
         parts = line.split()
@@ -110,13 +89,8 @@ def _endpoint_of(addr: "tuple[str, int] | tuple[str, int, int, int]") -> tuple[s
 
 
 def uid_of_peer(sock: socket.socket) -> int | None:
-    """UID that owns the peer end of an established loopback connection.
-
-    The peer's socket appears in the table as the row whose local endpoint is
-    the peer's and whose remote endpoint is this socket's. The full 4-tuple
-    match keeps a TIME_WAIT ghost of an earlier connection out. None when no
-    row matches; the caller decides the fail direction.
-    """
+    """Return the UID from the established row whose local endpoint is the peer and remote endpoint is this socket.
+    The full four-tuple excludes TIME_WAIT ghosts; return None when no row matches."""
     try:
         peer = _endpoint_of(sock.getpeername())
         local = _endpoint_of(sock.getsockname())
@@ -153,12 +127,8 @@ def pid_owns_inode(pid: int, inode: int) -> bool:
 
 
 def refusal_reason(sock: socket.socket) -> str | None:
-    """Why this accepted socket must be refused, or None to accept.
-
-    Accepts only a loopback peer that the current UID owns. A peer the
-    socket table cannot attribute refuses too, because an unattributable
-    peer and a foreign one are indistinguishable here.
-    """
+    """Return why an accepted socket is not a same-UID loopback peer, or None.
+    Refuse unattributable peers because the socket table cannot distinguish them from foreign peers."""
     try:
         peer_ip, peer_port = _endpoint_of(sock.getpeername())
     except OSError as e:
@@ -174,11 +144,8 @@ def refusal_reason(sock: socket.socket) -> str | None:
 
 
 def loopback_uid_authenticator(sock: socket.socket) -> "tuple[socket.socket, None]":
-    """rpyc authenticator: accept same-UID loopback peers only.
-
-    rpyc runs this on the accepted socket before the protocol starts, so an
-    unmodified client passes with no cooperation.
-    """
+    """Accept only same-UID loopback peers before the rpyc protocol starts.
+    Unmodified clients pass without cooperation."""
     reason = refusal_reason(sock)
     if reason is not None:
         from rpyc.utils.authenticators import AuthenticationError
@@ -187,12 +154,8 @@ def loopback_uid_authenticator(sock: socket.socket) -> "tuple[socket.socket, Non
     return sock, None
 
 
-# Child-side import hook. rpyc resolves a missing server hostname with
-# AI_PASSIVE, which binds the wildcard address, so an unmodified backend
-# serves its netref surface to any host that reaches the port. The hook
-# rewrites that one case to loopback and injects the authenticator above.
-# Every path fails open: a broken guard must never stop a backend from
-# starting, and the app-side checks still hold without it.
+# Child-side hook replaces rpyc's hostname-less wildcard bind with loopback and
+# adds peer authentication; it fails open because app-side checks remain active.
 
 _PATCHED_MARK = "_deckard_rpyc_guard_patched"
 _TARGET_MODULE = "rpyc.utils.server"
@@ -224,18 +187,15 @@ def _patch_server_class(module: types.ModuleType) -> None:
 
     @functools.wraps(original)
     def guarded_init(self: Any, *args: Any, **kwargs: Any) -> Any:
-        # Compute the rewrite here, and call the constructor exactly once
-        # below. The constructor binds and listens, so a call inside the try
-        # would let a bind failure fall through to a second, unhardened
-        # construction that leaks the first socket and serves the wildcard.
+        # Compute arguments before the single constructor call so bind failures
+        # cannot trigger an unhardened retry that leaks a wildcard socket.
         call_args: tuple[Any, ...] = (self, *args)
         call_kwargs = kwargs
         try:
             bound = signature.bind(self, *args, **kwargs)
             if "authenticator" in params and not bound.arguments.get("socket_path"):
-                # The peer-UID gate goes on every TCP server, whatever hostname
-                # the caller chose: an explicit wildcard or a loopback bind is
-                # still reachable by another local UID without it.
+                # Authenticate every TCP bind because wildcard and loopback
+                # listeners remain reachable by other local UIDs.
                 bound.arguments["authenticator"] = _compose_authenticator(
                     bound.arguments.get("authenticator"))
                 if "hostname" in params and bound.arguments.get("hostname") in (None, ""):
@@ -279,18 +239,16 @@ class _RpycServerFinder(importlib.abc.MetaPathFinder):
 
     @override
     def find_spec(self, fullname: str, path: "Sequence[str] | None" = None, target: "types.ModuleType | None" = None) -> importlib.machinery.ModuleSpec | None:
-        # The re-entrant find_spec call below scans sys.meta_path again; the
-        # flag makes this finder answer None on that inner pass, so the
-        # regular path finder supplies the real spec.
+        # Skip this finder during its re-entrant sys.meta_path scan so a regular
+        # finder supplies the real spec.
         if fullname != _TARGET_MODULE or self._resolving:
             return None
         self._resolving = True
         try:
             spec = importlib.util.find_spec(fullname)
         except Exception:
-            # Fail open: a finder that raises here would abort the child's
-            # own `import rpyc.utils.server`, so the backend must never start
-            # a server it needs. Let the regular finders resolve it unpatched.
+            # Fail open so a finder error does not abort the child's import;
+            # regular finders can resolve the server module unpatched.
             _logger.exception("rpyc loopback guard finder failed; the module loads unpatched")
             return None
         finally:

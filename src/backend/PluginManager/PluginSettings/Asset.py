@@ -41,9 +41,8 @@ class Color(Asset):
 class Icon(Asset):
     def __init__(self, path: str, size: float = 1.0, valign: float = 0.0, halign: float = 0.0, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
-        # All three stay None while the file is absent. A custom icon the user
-        # deleted keeps its entry in the plugin's settings JSON, so these three
-        # are optional and not late-initialized.
+        # Deleted custom icons retain JSON entries, so these fields remain None
+        # while their file is absent.
         self._path: str | None
         self._icon: Media | None
         self._rendered: Image.Image | None
@@ -76,9 +75,8 @@ class Icon(Asset):
     def from_json(cls, *args: Any, **kwargs: Any) -> "Icon":
         save_data: dict[str, Any] = args[0]
 
-        # `or` and not a .get default: a deleted custom icon persists as a
-        # null path, and a null reaching isfile() raises TypeError, which
-        # fails the whole plugin's asset load on every later launch.
+        # Use `or` because a persisted null path would make isfile() raise
+        # TypeError and stop asset loading.
         path = save_data.get("path") or ""
         size = save_data.get("size") or 1.0
         halign = save_data.get("halign") or 0.00

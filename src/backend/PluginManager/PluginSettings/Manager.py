@@ -61,12 +61,7 @@ class Manager(Generic[AssetT]):
     # Getter
 
     def get_asset(self, key: str, skip_override: bool = False) -> AssetT | None:
-        """Return the override of an asset, or the asset itself.
-
-        :param key: The key of the asset
-        :param skip_override: Return the asset and read no override
-        :return: An Asset or None
-        """
+        """Return an asset's override unless skip_override is true."""
         if skip_override:
             return self._assets.get(key, None)
         return self._asset_overrides.get(key, self._assets.get(key, None))

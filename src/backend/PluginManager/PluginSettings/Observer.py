@@ -13,14 +13,11 @@ from src.Signals.weak_callbacks import CallbackRegistry
 
 class Observer:
     def __init__(self, label: str | None = None):
-        # A CallbackRegistry (src/Signals/weak_callbacks.py) holds a
-        # bound-method observer weakly. A subscriber that never calls
-        # unsubscribe() on teardown therefore stops growing this list and the
-        # set of objects it points at.
+        # Weak bound-method storage prevents subscribers that omit unsubscribe()
+        # from retaining themselves through this registry.
         self.observers = CallbackRegistry()
-        # This notifier's own dispatch lane. Its subscribers run in order on a
-        # thread of their own, so a blocking subscriber stalls this asset
-        # stream and no other. The wedge watchdog names the lane by label.
+        # Subscribers run in order on this notifier's lane, so a block stalls
+        # only this asset stream; the watchdog names the lane by label.
         self._lane = event_dispatch.Lane(label=label)
 
     def subscribe(self, observer: Callable[..., Any]) -> None:
@@ -30,18 +27,11 @@ class Observer:
         self.observers.remove(observer)
 
     def notify(self, *args: Any, **kwargs: Any) -> None:
-        """Queue the current subscribers onto the lane and return.
-
-        A return does not mean the subscribers ran. They run after it, one at
-        a time in subscription order, on this notifier's lane. A blocking
-        subscriber stalls this asset stream alone. The order against another
-        notifier's events is undefined. See event_dispatch.py.
-        """
+        """Queue a subscriber snapshot on this notifier's lane and return.
+        Callbacks run in order; a block stalls this lane only, and cross-lane order is undefined."""
         try:
             self._lane.dispatch(self.observers.snapshot(), args, kwargs)
         except event_dispatch.DispatchShutdown:
-            # For the reason EventHolder.trigger_event gives. After on_quit
-            # shuts the dispatcher down, an asset mutation that races the
-            # teardown must not raise out of notify(), which no caller checks.
-            # Any other RuntimeError still propagates.
+            # Drop notifications that race dispatcher shutdown because callers
+            # do not handle teardown failures; other dispatch errors propagate.
             log.debug("Asset notification after dispatch shutdown; dropped")

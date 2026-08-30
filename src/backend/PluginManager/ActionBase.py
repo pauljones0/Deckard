@@ -135,11 +135,8 @@ class ActionBase(ActionCore):
             self.on_key_down()
         elif event == Input.Dial.Events.UP:
             self.on_key_up()
-        # A discrete touchscreen gesture triggers the legacy activate hook,
-        # as Dial DOWN does above. Without these branches, a swipe or a strip
-        # tap over a dial that reaches a plain ActionBase action does nothing.
-        # An action that needs one direction or one event uses a per-action
-        # event override, or overrides event_callback.
+        # Map touchscreen swipes and dial-strip short taps to legacy on_key_down.
+        # Per-action event overrides can select one direction or event.
         elif event == Input.Dial.Events.SHORT_TOUCH_PRESS:
             self.on_key_down()
         elif event in (Input.Touchscreen.Events.DRAG_LEFT, Input.Touchscreen.Events.DRAG_RIGHT):
