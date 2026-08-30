@@ -1,4 +1,4 @@
-"""Hold newest unobserved event per holder key until registration or timeout; live dispatch wins.
+"""Hold newest unobserved event per key until registration or launch deadline; live dispatch wins.
 Relaunch drops data; the rpyc service thread re-reads listeners, queues only, and does no GTK."""
 
 import threading
@@ -8,8 +8,8 @@ from loguru import logger as log
 
 from src.backend import timer_wheel
 
-# Covers child launch and the rpyc handshake.
-# Bounds delay when a backend does not register.
+# Starts at backend launch and does not move when later events arrive.
+# Covers child launch and rpyc handshake, but bounds failure delay.
 HOLD_BOUND_S = 2.0
 
 

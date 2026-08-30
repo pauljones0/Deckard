@@ -38,7 +38,7 @@ class EventHolder:
         # Unlike id(), the serial cannot repeat after collection.
         self._hold_key = f"{next(_hold_serial)}::{self.event_id}"
         # Each holder owns an ordered lane that isolates its blocking observers.
-        # The lane dies with the holder; holders can share an event id.
+        # Cross-lane order is undefined; each lane dies with its holder, and event ids can repeat.
         self._lane = event_dispatch.Lane(label=self.event_id)
 
     def add_listener(self, callback: Callable[..., Any]) -> None:
@@ -52,8 +52,8 @@ class EventHolder:
         self.observers.remove(callback)
 
     def trigger_event(self, *args: Any, **kwargs: Any) -> None:
-        """Queue observers in registration order and return; lanes run later, isolated, unordered.
-        Hold unobserved events until backend registration; dispatch observed events immediately."""
+        """Queue observers in registration order and return without waiting for completion.
+        Hold unobserved events until backend registration; queue observed events immediately."""
         # Prepend event_id as the observers' first positional argument.
         payload = (self.event_id, *args)
 
