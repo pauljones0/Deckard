@@ -10,8 +10,8 @@ from src.Signals.weak_callbacks import CallbackRegistry
 if TYPE_CHECKING:
     from src.backend.PluginManager.PluginBase import PluginBase
 
-# Gives each holder a key of its own in the backend event hold. count() is
-# atomic across threads through its C implementation.
+# Gives each holder a unique backend-hold key.
+# count() is atomic across threads through its C implementation.
 _hold_serial = itertools.count()
 
 class EventHolder:
@@ -31,29 +31,19 @@ class EventHolder:
             raise ValueError("An event id suffix needs a plugin to build the event id")
         else:
             self.event_id = f"{plugin_base.get_plugin_id()}::{event_id_suffix}"
-        # A CallbackRegistry (src/Signals/weak_callbacks.py) holds a
-        # bound-method observer weakly, so an action or a plugin that omits
-        # remove_listener() on teardown stops growing this list. See
-        # docs/memory-footprint-plan.md.
+        # Weak bound-method observers disappear with their action or plugin.
+        # This limits leaks when teardown omits remove_listener().
         self.observers = CallbackRegistry()
-        # The key this holder uses in the plugin's backend event hold. It
-        # names the holder as well as the event id, because two holders can
-        # share one event id and a key on the id alone would let one holder's
-        # event replace the other's. The serial cannot repeat, which an id()
-        # of a collected holder can.
+        # Include a nonrepeating holder serial because holders can share an event id.
+        # Unlike id(), the serial cannot repeat after collection.
         self._hold_key = f"{next(_hold_serial)}::{self.event_id}"
-        # This holder's own dispatch lane. The observers of this event run in
-        # order on a thread of their own, so an observer that blocks, as a
-        # wedged pulsectl call does, stalls this event source's queue alone.
-        # Every other holder keeps delivering. The holder owns the lane, so the
-        # lane dies with it and needs no registry key. Two holders can share
-        # one event_id.
+        # Each holder owns an ordered lane that isolates its blocking observers.
+        # The lane dies with the holder; holders can share an event id.
         self._lane = event_dispatch.Lane(label=self.event_id)
 
     def add_listener(self, callback: Callable[..., Any]) -> None:
         if not self.observers.add(callback):
-            # A functools.partial and other callable objects have no
-            # __name__, and this warning must not break the connect.
+            # Name callable objects without breaking the connection warning.
             name = getattr(callback, "__name__", repr(callback))
             log.warning(f"Callback {name} is already subscribed to: {self.event_id}")
 
@@ -61,23 +51,9 @@ class EventHolder:
         self.observers.remove(callback)
 
     def trigger_event(self, *args: Any, **kwargs: Any) -> None:
-        """Queue this holder's current observers onto its lane and return.
-
-        A return does not mean the observers ran. They run after it, one at a
-        time in registration order, on this holder's lane. An observer that
-        blocks stalls this event source alone. The order against another
-        holder's events is undefined. See event_dispatch.py.
-
-        An event that nothing listens for goes nowhere. While the plugin's
-        backend connects, that is the normal state, because the actions that
-        listen are often not loaded yet, so the plugin's bounded hold takes
-        such an event and delivers it when the backend registers. See
-        backend_event_hold.py. An event that has an observer dispatches at
-        once, exactly as before, so the hold delays nothing that works today.
-        """
-        # The contract prepends self.event_id as the observers' first
-        # positional argument. AudioControl's on_pulse_device_change reads it
-        # as args[0] and the pulsectl event as args[1]. Keep that order.
+        """Queue observers in registration order and return before they run; other holders are unordered and isolated.
+        During backend connection, hold unobserved events for later subscribers; dispatch observed events now."""
+        # Prepend event_id as the observers' first positional argument.
         payload = (self.event_id, *args)
 
         def dispatch(from_hold: bool) -> None:
@@ -85,21 +61,15 @@ class EventHolder:
             # that subscribes while the hold keeps this event still gets it.
             observers = self.observers.snapshot()
             if from_hold and not observers:
-                # The window closes when the backend registers, which can win
-                # the race against the on_ready of the actions that listen.
-                # Say so rather than let the event disappear again.
+                # Backend registration can precede listener on_ready.
+                # Report a held event that still has no observer.
                 log.info(f"Event {self.event_id} was held while the backend connected and "
                          f"still reached no observer")
             try:
                 self._lane.dispatch(observers, payload, kwargs, label=self.event_id)
             except event_dispatch.DispatchShutdown:
-                # on_quit stopped the dispatcher, and a plugin event source keeps
-                # running until os._exit. AudioControl's pulse listener is a daemon
-                # thread that loops on pulse.event_listen() and calls this from its
-                # callback. A shutdown error out of this call kills that thread
-                # with an uncaught RuntimeError on every quit that races an event,
-                # and no caller can act on it. Any other RuntimeError still
-                # propagates. See DispatchShutdown.
+                # Plugin event sources can run after dispatch shutdown until os._exit.
+                # Drop only DispatchShutdown; other RuntimeError instances propagate.
                 log.debug(f"Event {self.event_id} triggered after dispatch shutdown; dropped")
 
         plugin_base = self.plugin_base
@@ -107,8 +77,6 @@ class EventHolder:
         if hold is not None:
             if not self.observers and hold.submit(self._hold_key, lambda: dispatch(True)):
                 return
-            # This event goes out now, so whatever the window still holds for
-            # this holder and event id is older than what the observers are
-            # about to see.
+            # Drop the older held value before this event reaches observers.
             hold.drop(self._hold_key)
         dispatch(False)

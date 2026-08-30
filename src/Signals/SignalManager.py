@@ -27,25 +27,15 @@ from gi.repository import GLib
 
 def _invoke_signal_callback(callback: Callable[..., Any], args: tuple[Any, ...],
                             kwargs: dict[str, Any]) -> bool:
-    """GLib.idle_add trampoline for trigger_signal.
-
-    idle_add forwards no keyword arguments, and it repeats a handler that
-    returns a truthy value. This trampoline forwards both argument shapes and
-    returns False, so the idle source fires once. A raising handler reaches the
-    main-loop dispatch, where the central exception hooks log it and GLib
-    removes the source.
-    """
+    """Invoke a signal callback with keywords and stop the GLib idle source.
+    Exceptions reach the main-loop hooks, and GLib removes the source."""
     callback(*args, **kwargs)
     return False
 
 
 def _safe_describe(callback: Callable[..., Any]) -> str:
-    """Name a callback for a log line, without raising.
-
-    describe_callback reads __qualname__ and __module__. On an rpyc netref that
-    attribute access goes over the socket and raises EOFError after shutdown.
-    The fallbacks read no attribute of the object.
-    """
+    """Name a callback without remote attribute failures after shutdown.
+    The fallbacks do not access callback attributes."""
     try:
         return describe_callback(callback)
     except BaseException:
@@ -57,18 +47,14 @@ def _safe_describe(callback: Callable[..., Any]) -> str:
 
 class SignalManager:
     def __init__(self) -> None:
-        # signal -> CallbackRegistry. A registry holds bound methods weakly and
-        # locks its own contents, so trigger_signal never iterates a list that
-        # another thread mutates. A registry is iterable and accepts list(), so
-        # connected_signals[signal] stays a drop-in for a direct reader.
+        # Registries hold methods weakly and lock mutation and snapshots.
+        # Their iterable interface preserves direct connected_signals readers.
         self.connected_signals: dict[type[Signal], CallbackRegistry] = {}
-        # Guards creation of a per-signal CallbackRegistry. Each registry locks
-        # its own add, remove and snapshot.
+        # Guards registry creation; each registry locks its own contents.
         self._registries_lock = threading.Lock()
 
-    # create=True always returns a registry and makes one on miss. Only
-    # create=False returns None. The overloads keep connect_signal from
-    # guarding a branch that cannot occur.
+    # create=True returns a registry and creates one on miss.
+    # Only create=False can return None.
     @overload
     def _get_registry(self, signal: type[Signal], create: Literal[True]) -> CallbackRegistry: ...
     @overload
@@ -103,12 +89,8 @@ class SignalManager:
             registry.remove(callback)
 
     def trigger_signal(self, signal: type[Signal], *args: Any, **kwargs: Any) -> None:
-        """Dispatch signal asynchronously, from any thread.
-
-        Each observer runs as its own idle callback on the GTK main loop, so
-        this returns before any observer runs. A caller that must wait for the
-        observers calls trigger_signal_sync instead.
-        """
+        """Queue each observer on the GTK main loop from any thread.
+        Return before observers run; use trigger_signal_sync to wait."""
         if not issubclass(signal, Signal):
             raise TypeError("signal must be of type Signal")
 
@@ -116,20 +98,13 @@ class SignalManager:
         if registry is None:
             return
 
-        # snapshot() takes the registry's lock and returns a list of the live
-        # callbacks. A concurrent connect or disconnect is safe here.
+        # The locked snapshot permits concurrent connection changes.
         for callback in registry.snapshot():
-            # The trampoline keeps the kwargs and stops the source after one
-            # run. See _invoke_signal_callback.
             GLib.idle_add(_invoke_signal_callback, callback, args, kwargs)
 
     def trigger_signal_sync(self, signal: type[Signal], *args: Any, **kwargs: Any) -> None:
-        """Dispatch signal on the calling thread and return after the last one.
-
-        The shutdown fan-out (AppQuit) needs this, because os._exit follows and
-        an observer on the main loop never runs. This marshals nothing, so a
-        worker thread runs its own observers, GTK-touching ones included.
-        """
+        """Run all observers on the calling thread before return.
+        This does not marshal GTK work; AppQuit uses it before os._exit."""
         if not issubclass(signal, Signal):
             raise TypeError("signal must be of type Signal")
 
@@ -138,9 +113,8 @@ class SignalManager:
             return
 
         for callback in registry.snapshot():
-            # One failed observer must not deny the others the notification.
-            # BaseException also catches a plugin that calls sys.exit() in its
-            # quit hook. The os._exit that follows makes this safe to swallow.
+            # Continue after failures, including plugin sys.exit calls.
+            # AppQuit follows this fan-out with os._exit.
             try:
                 callback(*args, **kwargs)
             except BaseException:
@@ -148,4 +122,3 @@ class SignalManager:
                     f"{signal.__name__} handler {_safe_describe(callback)} "
                     f"failed; continuing with the remaining handlers"
                 )
-
