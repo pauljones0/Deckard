@@ -1,18 +1,5 @@
-"""Shared library for gated hardware scripts: engine boot, write journal,
-synthetic scratch data, and bounded teardown.
-
-Importing this module has no side effects. The engine import happens inside
-boot_engine(), after sys.argv is rewritten to the scratch data dir, because
-globals.py resolves DATA_PATH from argv at import time. One process boots one
-engine once; a driver that needs a second boot runs a second process, which
-is how the orchestrator runs every gated script anyway.
-
-Distilled from the archived per-MR verifiers, which ran these exact
-mechanics against the physical deck: the journal wraps the BetterDeck write
-surface and records after the write returns, the stand-in deck manager
-carries only what the engine dereferences, and the scratch is fully
-synthetic, so a gated script never reads the real data directory.
-"""
+"""Shared engine boot, write journal, synthetic data, and teardown helpers.
+Import globals after argv points at scratch; boot one engine per process."""
 import hashlib
 import itertools
 import json
@@ -82,9 +69,7 @@ class Journal:
 
 
 def attach_journal(controller) -> Journal:
-    """Wrap the BetterDeck write surface of a live controller. Instance
-    attributes shadow the class methods, so every producer is captured and
-    the writes still reach the device."""
+    """Journal BetterDeck writes after each device write returns."""
     bd = controller.deck
     j = Journal()
     orig_key = bd.set_key_image
@@ -147,9 +132,7 @@ class HwDeckManager:
 
 
 def build_scratch(tag: str) -> str:
-    """A fully synthetic scratch data dir: per-key icons and one page. It
-    reads nothing from the real data directory; the engine's own healing
-    fills in every settings file it misses."""
+    """Build synthetic icons and one page without reading user data."""
     from PIL import Image, ImageDraw
 
     scratch = os.path.join(WORK_ROOT, tag)
@@ -194,17 +177,9 @@ def default_page_for(scratch: str, serial: str) -> None:
 
 
 def boot_engine(tag: str) -> dict:
-    """Bring the engine up in this process against the real deck.
-
-    Enumerates exactly one deck, opens it, and builds a real DeckController
-    over a stand-in manager: no GTK, no plugin manager, no UI port. Returns
-    the environment a gated script drives: gl, controller, journal, slots.
-    """
-    # Refuse while the system instance is alive, whoever calls. The deck is
-    # exclusive, and opening it out from under the live app is exactly the
-    # interleaving the claim choreography exists to prevent. The orchestrator
-    # quits the instance before it runs a gated script; a hand-run script
-    # gets this refusal instead of a fight over the handle.
+    """Open exactly one real deck with a headless DeckController.
+    Return globals, controller, journal, scratch, serial, and key slots."""
+    # Refuse access while the system instance owns the deck
     import hw_verify
     pid = hw_verify.dbus_owner_pid()
     if pid is not None:
@@ -257,9 +232,8 @@ def boot_engine(tag: str) -> dict:
 
 
 def shutdown_engine(env: dict, timeout: float = 15.0) -> float:
-    """Close the controller through the production quit path and report how
-    long it took. Raises when the media thread outlives the bound or the
-    handle stays open."""
+    """Close through the production path and return the elapsed time.
+    Raise if the media thread exceeds the bound or the handle stays open."""
     controller = env["controller"]
     began = time.monotonic()
     env["gl"].threads_running = False
@@ -269,11 +243,7 @@ def shutdown_engine(env: dict, timeout: float = 15.0) -> float:
         media.join(timeout)
         if media.is_alive():
             raise RuntimeError(f"the media writer outlived the {timeout:g}s teardown bound")
-    # close_all drives the terminal clear-and-close but not the controller's
-    # own tick-stop sweep; the app's quit path ends in os._exit, so it never
-    # needed the tick thread to exit. This process does: the interpreter waits
-    # for non-daemon threads, so a live tick thread hangs the script after its
-    # own PASS (the first hardware run found exactly that).
+    # Stop the non-daemon tick thread before normal interpreter exit
     controller.keep_actions_ticking = False
     stop_event = getattr(controller, "_tick_stop_event", None)
     if stop_event is not None:

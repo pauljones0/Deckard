@@ -1,43 +1,6 @@
 #!/usr/bin/env python3
-"""Visual calibration of the SD+ key spacing and strip band (#418).
-
-Opens the SD+ directly with the StreamDeck library. No app instance may be
-running. Paints one continuous pattern across the keys and the strip the way
-background_media composes an extended background, with four free variables:
-
-    sx    horizontal key gap in canvas pixels
-    sy    vertical key gap in canvas pixels
-    gap   vertical canvas gap between the bottom key row and the strip band
-    span  horizontal width of the strip's physical view, in canvas pixels,
-          centered on the key grid; the band height follows as 100*span/800
-
-The shipped code uses sx=sy=20, gap=sy, span=key-grid width (540 at sx=20).
-
-Pattern: diagonal stripes reveal the gaps (a wrong gap jogs a stripe at a
-bezel); the cyan vertical lines through each key column center reveal the
-span (a wrong span bends or rescales them on the strip). Stripes that read
-WIDER on the strip than on the keys mean the strip magnifies: the span is
-too small. Same width everywhere means the scale is right.
-
-Controls, live repaint on every change:
-
-    dial 1 turn   sx    +/- 2 per tick
-    dial 2 turn   sy    +/- 2 per tick
-    dial 3 turn   gap   +/- 2 per tick
-    dial 4 turn   span  +/- 8 per tick
-    top-row keys  xoff  -8 / -2 / +2 / +8 (the strip view's horizontal
-                  offset from centered-on-the-grid; + moves the view right,
-                  so the content slides left)
-    keys 6 and 7  bandh -2 / +2 (the band height in canvas pixels; the first
-                  press leaves the follow-the-span auto mode, shown with a
-                  trailing * on the label)
-    dial press, key 5 or key 8: print the current values to stdout
-
-The strip's top-left corner shows the values continuously. Ctrl+C ends,
-prints the final values, and blanks the deck.
-
-Start from other values:  hw_418_strip_band.py SX SY GAP SPAN [XOFF]
-"""
+"""With Deckard stopped and exclusive deck access, calibrate strip geometry.
+Dials set sx/sy/gap/span; keys 1-4 xoff, 5/8 print, 6/7 bandh."""
 
 import sys
 import threading
@@ -64,9 +27,7 @@ class Params:
                  bandh: int = 0) -> None:
         self.lock = threading.Lock()
         self.sx, self.sy, self.gap, self.span, self.xoff = sx, sy, gap, span, xoff
-        # Height of the band in canvas pixels. 0 = follow the span at the
-        # strip's own 800:100 aspect. A nonzero value decouples the vertical
-        # scale, for the case where the strip is anamorphic against the keys.
+        # Zero follows 800:100; nonzero sets an independent height
         self.bandh = bandh
         self.dirty = threading.Event()
         self.dirty.set()

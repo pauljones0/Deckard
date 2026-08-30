@@ -1,14 +1,5 @@
 #!/usr/bin/env python3
-"""
-Runner for the scenario harness (docs/presenter-migration-plan.md).
-
-Runs each tests/scenario_*.py in its own subprocess and interpreter, so one
-crash or hang cannot corrupt the next scenario.
-
-Usage:
-    .venv/bin/python tests/run_all.py [-k SUBSTRING] [--timeout SECONDS]
-                                      [--scenario-list PATH] [--junit PATH] [--jobs N]
-"""
+"""Run each scenario in an isolated subprocess."""
 import argparse
 from contextlib import suppress
 import os
@@ -29,7 +20,6 @@ TESTS_DIR = Path(__file__).resolve().parent
 # Scenarios that assert behavior the current code does not have yet. Add an
 # entry here with a one-line reason instead of weakening its assertions.
 EXPECTED_FAIL_UNTIL_M1: dict[str, str] = {
-    # "scenario_example.py": "needs the M1 control queue",
 }
 
 _TERM_GRACE_SECONDS = 3.0
@@ -81,13 +71,8 @@ def _terminate_process_group(proc: subprocess.Popen[str]) -> tuple[str, str]:
 
 
 def load_scenario_list(path: Path) -> list[Path]:
-    """Load an ordered, tracked list of scenario filenames.
-
-    A list is intentionally filenames only: it cannot escape tests/, and each
-    selected scenario must exist when the harness starts. This makes a CI
-    subset reviewable while preserving the normal discovery path for the full
-    suite.
-    """
+    """Load an ordered list of existing scenario filenames.
+    Reject paths, links, duplicates, and entries outside tests/."""
     try:
         lines = path.read_text(encoding="utf-8").splitlines()
     except OSError as error:
@@ -152,22 +137,16 @@ def run_one(path: Path, timeout: float) -> tuple[bool, str, float]:
 
 
 def _classify(name: str, ok: bool) -> tuple[str, bool]:
-    """Map a scenario result to (status, counts_as_hard_failure) through the
-    expected-fail list. One function keeps the serial and parallel paths
-    identical."""
+    """Map a result to status and hard-failure state."""
     expected_fail_reason = EXPECTED_FAIL_UNTIL_M1.get(name)
     if ok:
         return "PASS", False
     if expected_fail_reason is not None:
-        return "XFAIL", False  # an expected failure does not fail the run
+        return "XFAIL", False
     return "FAIL", True
 
 
-# Captured scenario output can carry ANSI colour and other control bytes. XML
-# 1.0 forbids the C0 control characters bar tab, newline and carriage return,
-# so minidom's parse of the serialized tree raises on them and the whole
-# report is lost. Strip ANSI escape sequences, then any remaining forbidden
-# control character.
+# Remove ANSI escapes and XML 1.0 forbidden control bytes from captured output
 _ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
 _FORBIDDEN_CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 
@@ -177,10 +156,8 @@ def _xml_safe(text: str) -> str:
 
 
 def write_junit(path: Path, results: list) -> None:
-    """Write a JUnit XML report with one testsuite and one testcase each.
-
-    A FAIL case carries a failure child and an XFAIL case a skipped child. A
-    PASS case attaches the captured stdout and stderr as system-out."""
+    """Write one JUnit testcase per result.
+    Encode FAIL as failure, XFAIL as skipped, and PASS output as system-out."""
     total_time = sum(elapsed for _, _, elapsed, _ in results)
     n_fail = sum(1 for _, s, _, _ in results if s == "FAIL")
     n_skip = sum(1 for _, s, _, _ in results if s == "XFAIL")
@@ -275,8 +252,6 @@ def main() -> int:
             _record(path, ok, output, elapsed)
     else:
         with ThreadPoolExecutor(max_workers=jobs) as pool:
-            # Submit every scenario, then collect in discovery order, so the
-            # table and the verbose output match the serial run.
             future_for = {path: pool.submit(run_one, path, args.timeout) for path in scenarios}
             for path in scenarios:
                 ok, output, elapsed = future_for[path].result()

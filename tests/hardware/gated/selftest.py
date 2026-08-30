@@ -1,12 +1,7 @@
 #!/usr/bin/env python3
 # hw: no-deck-ok
-"""The harness's own self-test, as a gated entry.
-
-Runs hw_verify's parser/evaluator self-test and checks the orchestrator's
-script contract mechanics (the no-deck marker scan). It needs no deck, so it
-is the entry a deckless machine or CI can run to prove the pipeline:
-discovery, the process-group runner, and the summary all execute for real.
-"""
+"""Run deck-free self-tests for hardware parsing and orchestration.
+Exercises discovery, process-group execution, and summary output."""
 import os
 import subprocess
 import sys
@@ -60,9 +55,7 @@ def main() -> int:
             print("FAIL: default_page_for did not point at the synthetic page")
             return 1
 
-    # The boot guard: while the system instance runs, boot_engine must refuse
-    # before it touches the deck. With no instance running this leg proves
-    # nothing and is skipped rather than faked.
+    # Verify boot refusal against a live instance; skip when none exists
     import hw_verify
     if hw_verify.dbus_owner_pid() is not None:
         try:

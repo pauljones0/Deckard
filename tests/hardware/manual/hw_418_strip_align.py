@@ -1,46 +1,6 @@
 #!/usr/bin/env python3
-"""Visual strip-band alignment on a color-coded test card (#418, round three).
-
-Opens the SD+ directly with the StreamDeck library. No app instance may be
-running. Paints a generated calibration card across the keys and the strip
-with the four geometry parameters live-adjustable, or an actual image fitted
-the way background_media fits one (key 7 flips between the two without
-losing the values).
-
-The card carries two line families, color-coded so every line identifies
-itself across a bezel:
-
-    diagonals  WARM colors (red, orange, yellow, magenta), 45 degrees.
-               A vertical-gap error (gap, sy, bandh) shows as a horizontal
-               jog where a diagonal crosses the bezel or the strip boundary;
-               match the COLOR to know which diagonal continues where.
-    verticals  COOL colors (blue, cyan, green, white), straight down.
-               A span error spreads or squeezes them on the strip; an xoff
-               error shifts them all sideways by the same amount.
-
-In card mode the pattern is drawn at exact canvas scale on every repaint, so
-its spacing is pixel-true and never resampled by a source fit. In image mode
-the source goes through the production ImageOps.fit.
-
-Controls, live repaint on every change:
-
-    dial 1 turn   sx     horizontal key gap, +/- 2 per tick
-    dial 2 turn   sy     vertical key gap, +/- 2 per tick
-    dial 3 turn   gap    key-to-strip gap, +/- 2 per tick
-    dial 4 turn   span   strip view width, +/- 4 per tick
-    key 1..4      xoff   -8 / -2 / +2 / +8
-    key 5 / 6     bandh  -2 / +2 (band height)
-    key 7         flip card <-> image
-    key 8         print the current values to stdout
-    Ctrl+C        print FINAL values and blank the deck
-
-Usage:
-    hw_418_strip_align.py [IMAGE] [SX SY GAP SPAN [XOFF [BANDH]]]
-
-IMAGE is an optional path for image mode's picture; without one, image mode
-uses the deck's configured wallpaper. The numbers default to the shipped
-calibration (20 36 40 516 0 72).
-"""
+"""With Deckard stopped, align SD+ geometry by color family.
+Warm diagonals show gap/sy/bandh; cool verticals show span/xoff."""
 
 import json
 import os
@@ -198,10 +158,7 @@ def main() -> int:
     deck = plus[0]
     deck.open()
     try:
-        # The deck can refuse feature reports for a moment after an unclean
-        # close by a previous holder, while data writes already work. Retry
-        # briefly, then continue without the reset; painting needs only data
-        # writes and overwrites every surface anyway.
+        # Retry feature reports, then paint because data writes can still work
         for attempt in range(3):
             try:
                 deck.reset()

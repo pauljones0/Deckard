@@ -1,36 +1,6 @@
 #!/usr/bin/env python3
-"""Automated hardware-verification driver for the fps-campaign MRs (!71/!72/!74).
-
-Runs the real app against the real Stream Deck from a per-branch git worktree
-and an ISOLATED scratch copy of the data dir (background swapped to a test
-video, screensaver disabled), captures the env-gated media profiler output,
-and evaluates the quantitative gates from the hardware-verification plans
-posted on the MRs. The physical/subjective half (dial feel, touchscreen,
-unplug/replug, suspend, visual smoothness) cannot be automated and is emitted
-as a manual checklist in every report.
-
-Scenarios:
-  mr71         fair transport lock: install-line gate, violations, fps capture
-  mr72         native tile cache: loop-2 encode-free criteria, RSS bound
-  mr72-killswitch  fallback proof: encodes must PERSIST with the cache off
-  mr74         A/B usb_write-share merge gate (runs two captures)
-  soak         long capture with wedge/RSS-trend detection on any branch
-
-Examples:
-  hw_verify.py mr71
-  hw_verify.py mr72 --duration 240 --video /path/to/worst-case.mp4
-  hw_verify.py mr74 --duration 180
-  hw_verify.py soak --branch perf/presenter-write-overlap --duration 7200
-  hw_verify.py mr71 --post 71        # append the report as a note on MR !71
-  hw_verify.py --selftest            # parser/evaluator self-test, no hardware
-
-The app instance is started with `-b --devel --data <scratch>`; the real
-config is never read or written. Preflight refuses to run if another app
-instance is alive (detected via its D-Bus name — argv is masked, pgrep is
-blind) or the deck is absent. With --take-deck, a running instance is
-cleanly quit over D-Bus first and ALWAYS relaunched (/usr/bin/deckard -b)
-after the captures, even on failure.
-"""
+"""Run hardware performance captures against isolated scratch data.
+Preflight checks D-Bus ownership and USB; it cannot enforce all ownership."""
 
 import argparse
 import json
@@ -45,9 +15,7 @@ from statistics import median
 
 APP_ID = "io.github.nazbert.Deckard"
 DBUS_PATH = "/io/github/nazbert/Deckard"
-# The packaged binary is lowercase since the Deckard rebrand landed in the
-# AUR recipe (/usr/bin/deckard); the old capitalised path no longer exists,
-# so the relaunch used to fail silently and leave the deck dark.
+# Packaged launcher used to restore the system instance after a deck claim
 SYSTEM_LAUNCHER = ["/usr/bin/deckard", "-b"]
 
 # The repository this file sits in, so a checkout anywhere works. A worktree
@@ -87,8 +55,6 @@ MANUAL_CHECKLIST = """
 - [ ] Suspend -> resume mid-video: painting resumes, dials responsive
 """
 
-
-# ------------------------------------------------------------------ parsing
 
 def parse_log(text: str) -> dict:
     """Extract profiler windows and grep-gates from a captured app log."""
@@ -138,16 +104,13 @@ def sec(w, name, field):
     return s[field] if s else None
 
 
-# ------------------------------------------------------------- orchestration
-
 def sh(cmd, **kw):
     return subprocess.run(cmd, capture_output=True, text=True, **kw)
 
 
 def dbus_owner_pid():
-    """PID owning the app's session-bus name, or None. This is the same check
-    the app's own single-instance gate uses; the process argv is masked to
-    just "Deckard", so pgrep alone is blind to an installed instance."""
+    """Return the PID that owns the app session-bus name, or None.
+    Use D-Bus because the process argv is masked."""
     r = sh(["busctl", "--user", "--no-legend", "list"])
     for line in r.stdout.splitlines():
         cols = line.split()
@@ -157,9 +120,7 @@ def dbus_owner_pid():
 
 
 def dbus_quit():
-    """Activate the app's own 'quit' action — the same clean path the tray
-    uses (blank deck, bounded joins, close). Never boots a replacement,
-    unlike `main.py --close-running`."""
+    """Activate the app's clean quit action without booting a replacement."""
     return sh(["gdbus", "call", "--session", "--dest", APP_ID,
                "--object-path", DBUS_PATH, "--method",
                "org.gtk.Actions.Activate", "quit", "[]", "{}"], timeout=30)
@@ -205,8 +166,7 @@ def die(msg):
 
 
 def make_worktree(branch: str) -> str:
-    """Fresh worktree for the branch under WORK_ROOT (recreated every run so
-    it can never be stale — the recurring stale-base trap)."""
+    """Recreate a detached worktree for the branch under WORK_ROOT."""
     slug = branch.replace("/", "-")
     path = os.path.join(WORK_ROOT, "wt", slug)
     if os.path.exists(path):
@@ -230,20 +190,8 @@ def find_serial() -> str:
 
 
 def repoint_default_pages(scratch: str) -> dict:
-    """Rewrite `settings/pages.json` default-page paths to the scratch copies.
-
-    THIS IS WHAT MAKES A FULL-COPY SCRATCH ACTUALLY ISOLATED. `pages.json`
-    stores ABSOLUTE page paths, and on this machine they read
-    `~/.var/app/io.github.nazbert.Deckard/data/pages/...`, which is a SYMLINK
-    to the live `~/.local/share/deckard/data`. Copying the tree without
-    rewriting them leaves every scratch run pointed at the user's real page
-    file — which the app then loads AND SAVES. Confirmed 2026-08-09: same
-    inode on both paths.
-
-    The rsync has already copied `pages/` into the scratch, so this normally
-    just re-points at a file that is already there; it copies only if the
-    target is missing. Idempotent, and a path already inside `scratch` is
-    left alone. Returns {serial: new_path} for the entries it moved."""
+    """Repoint every absolute default-page path into scratch.
+    Keep scratch paths; copy missing targets; return moved entries."""
     pages_file = os.path.join(scratch, "settings", "pages.json")
     if not os.path.isfile(pages_file):
         return {}
@@ -268,20 +216,8 @@ def repoint_default_pages(scratch: str) -> dict:
 
 def make_scratch_data(video: str, serial: str, scenario: str,
                       blank_page: bool = False) -> str:
-    """Isolated data dir: real config copied (minus logs/cache), background
-    forced to the test video, screensaver disabled. With blank_page, the deck
-    opens on an empty page so every key is on the tile_passthrough path —
-    required to exercise the native tile cache at all (a fully-populated real
-    page has zero passthrough keys and the identity path never engages).
-
-    !!! FULL-COPY MODE IS ONLY ISOLATED BECAUSE OF repoint_default_pages() !!!
-    A copied `settings/pages.json` carries ABSOLUTE page paths into the live
-    data dir (via the ~/.var/app/... symlink), so without that rewrite every
-    non-blank_page scenario reads and WRITES the user's real page file. That
-    was live in this harness from its first commit until 2026-08-09 —
-    blank_page mode happened to overwrite the entry and hid it. The rewrite
-    is done HERE, for every caller, precisely so no scenario has to remember
-    it; do not move it into the callers."""
+    """Copy data, repoint all absolute page paths, and set video.
+    Disable screensaver; blank_page makes all keys use tile passthrough."""
     scratch = os.path.join(WORK_ROOT, "data", scenario)
     shutil.rmtree(scratch, ignore_errors=True)
     os.makedirs(scratch, exist_ok=True)
@@ -362,9 +298,8 @@ def run_capture(worktree, scratch, env_extra, duration, tag):
 
 
 def shutdown(proc, worktree, scratch) -> bool:
-    """D-Bus 'quit' action (the real tray quit path — exercises shutdown
-    ordering), then SIGTERM, SIGKILL. NOT `--close-running`: that flag quits
-    the running instance and then boots ITSELF as a replacement."""
+    """Request D-Bus quit, then escalate to SIGTERM and SIGKILL.
+    Do not use --close-running because it starts a replacement instance."""
     if proc.poll() is not None:
         return False
     dbus_quit()
@@ -383,8 +318,6 @@ def shutdown(proc, worktree, scratch) -> bool:
     os.killpg(proc.pid, signal.SIGKILL)
     return False
 
-
-# ------------------------------------------------------------- evaluation
 
 def check(ok, label, detail=""):
     mark = "PASS" if ok else "FAIL"
@@ -480,8 +413,7 @@ def eval_soak(parsed, rss, clean, duration):
     st = steady(wins)
     fps_first = w_med(wins[:max(3, len(wins) // 10)], lambda w: w.get("loop_fps"))
     fps_last = w_med(st, lambda w: w.get("loop_fps"))
-    # a healthy capture emits a window every ~5s of ACTIVE loop; long gaps mean
-    # idle (fine) or a wedge (not fine) — flag only a total absence at the tail
+    # Window presence checks total absence, not tail freshness
     rss_delta = (rss[-1] - rss[0]) if len(rss) >= 2 else 0
     rate_mb_h = rss_delta / (duration / 3600) if duration else 0
     rows = [
@@ -497,8 +429,6 @@ def eval_soak(parsed, rss, clean, duration):
     stats = f"windows {len(wins)} | RSS {rss[0] if rss else '?'}->{rss[-1] if rss else '?'}MB over {duration}s"
     return rows, stats
 
-
-# ------------------------------------------------------------------ report
 
 def report(scenario, rows, stats, video, extra=""):
     ok = all(r[0] for r in rows)
@@ -518,8 +448,6 @@ def post_note(mr_iid, body):
     print(r.stdout.strip() or r.stderr.strip())
 
 
-# ------------------------------------------------------------------ selftest
-
 SYNTH = """
 boot noise
 INFO Installed the fair (FIFO) transport lock on Stream Deck +
@@ -531,9 +459,7 @@ INFO Installed the fair (FIFO) transport lock on Stream Deck +
 
 
 def _selftest_repoint():
-    """Reproduces the exact 2026-08-09 hazard: pages.json holding an ABSOLUTE
-    path into a SYMLINKED view of the live data dir, and proves a scratch
-    write can no longer reach the live page."""
+    """Verify that a symlinked absolute page path stays in scratch."""
     import tempfile
     with tempfile.TemporaryDirectory() as tmp:
         live = os.path.join(tmp, "live")
@@ -586,7 +512,7 @@ def selftest():
     assert all(r[0] for r in rows), "\n".join(r[1] for r in rows)
     rows71, _ = eval_mr71(p, [500, 540], clean=True)
     assert all(r[0] for r in rows71), "\n".join(r[1] for r in rows71)
-    # mr74: A = high usb share in tick, B = tick collapsed
+    # A has high in-tick USB share; B has a shorter tick
     pa = parse_log("""
 [media-prof] 5.0s window: loop_fps=28.0 | tick n=140 tot=4000ms p50=28.00ms | usb_write n=1100 tot=1600ms p50=1.40ms
 [media-prof] 5.0s window: loop_fps=28.2 | tick n=141 tot=4010ms p50=28.10ms | usb_write n=1110 tot=1620ms p50=1.41ms
@@ -602,8 +528,6 @@ def selftest():
     assert "40%" in stats74 or "usb share" in stats74
     print("selftest OK")
 
-
-# ---------------------------------------------------------------------- main
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__,

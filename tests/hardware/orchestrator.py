@@ -1,30 +1,6 @@
 #!/usr/bin/env python3
-"""Run the gated hardware suite unattended, with the deck claim choreography.
-
-The physical deck is held exclusively by the system instance, so a hardware
-run has to take it and give it back. This driver does that once around the
-whole batch instead of once per script:
-
-  1. Preflight. The deck must be on USB, and the running instance must quit
-     cleanly over D-Bus, or the run refuses to start. Nothing is ever
-     force-killed: an instance that does not answer keeps the deck.
-  2. Run every script in tests/hardware/gated/, each in its own process
-     group with a timeout. A timeout kills the whole group, so a script's
-     engine subprocesses die with it and cannot hold the deck hostage.
-  3. Relaunch the system instance, whatever the results were.
-  4. Print one summary and exit nonzero when any script failed.
-
-Script contract (gated/*.py):
-  - Non-interactive: no input(), no visual judgment, exit code is the verdict.
-  - Self-contained data: never reads or writes the real data dir (use
-    hw_verify.make_scratch_data or a temp dir).
-  - A script that can run with NO deck attached declares it with a line
-    `# hw: no-deck-ok` in its first 10 lines. --no-deck runs only those,
-    skips the claim choreography entirely, and is safe on any machine.
-
-Interactive tools and visual calibration live in manual/, and historical
-one-off MR verifiers in manual/archive/ (untracked). See README.md.
-"""
+"""Run isolated, non-interactive hardware scripts with one deck claim.
+Use bounded process groups; never force owners; restore stopped instances."""
 import argparse
 import os
 import signal
