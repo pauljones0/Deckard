@@ -22,7 +22,7 @@ import os
 import threading
 import time
 
-from PIL import Image, ImageEnhance, ImageOps
+from PIL import Image, ImageEnhance
 from loguru import logger as log
 
 from src.backend.DeckManagement.HelperMethods import is_video
@@ -32,6 +32,7 @@ from src.backend.DeckManagement.media_loop import MEDIA_LOOP_FPS, FrameScheduled
 from src.backend.DeckManagement.deck_controller.gif_pipeline import GifBackground, GifBudgetExceeded
 from src.backend.DeckManagement.deck_controller.slideshow import IN_ORDER, Slideshow
 from src.backend.DeckManagement.deck_controller.strip_band import band_layout, clamp_box
+from src.backend.DeckManagement.deck_controller.viewport import DEFAULT_VIEW, render_viewport
 
 from typing import TYPE_CHECKING, cast, override
 if TYPE_CHECKING:
@@ -39,6 +40,26 @@ if TYPE_CHECKING:
 
     from src.backend.DeckManagement.deck_controller.controller import DeckController
     from src.backend.PageManagement.Page import Page
+
+
+def background_canvas_size(deck_controller: "DeckController", extend_touchscreen: bool) -> "tuple[int, int] | None":
+    """The canvas the background composes onto: the key grid with the bezel
+    spacing, extended by the strip band when extend is on. None when the deck
+    geometry is absent. BackgroundImage and the viewport dialog both read
+    this, so the white box in the dialog and the crop on the deck cannot
+    disagree about the aspect."""
+    deck = getattr(deck_controller, "deck", None)
+    if deck is None:
+        return None
+    key_rows, key_cols = deck.key_layout()
+    key_width, key_height = deck_controller.get_key_image_size()
+    spacing_x, spacing_y = deck_controller.key_spacing
+    canvas_width = key_width * key_cols + spacing_x * (key_cols - 1)
+    canvas_height = key_height * key_rows + spacing_y * (key_rows - 1)
+    if extend_touchscreen and deck.is_touch():
+        canvas_width, canvas_height, _grid_x, _band = \
+            band_layout(deck_controller, canvas_width, canvas_height)
+    return (canvas_width, canvas_height)
 
 
 class Background:
@@ -159,7 +180,8 @@ class Background:
             self.deck_controller.update_all_inputs()
 
     def set_slideshow(self, paths: "Sequence[str]", interval: float, order: str = IN_ORDER,
-                      update: bool = True, now: "float | None" = None) -> None:
+                      update: bool = True, now: "float | None" = None,
+                      views: "Sequence[tuple[float, float, float]] | None" = None) -> None:
         """Install a still-image rotation over paths.
 
         This loads the first frame at once and arms the interval clock, so the
@@ -178,6 +200,11 @@ class Background:
         # advance a rotation whose page is no longer active, the way the
         # background video guards its own repaint on video.page.
         show.page = self.deck_controller.active_page
+        # Each image carries its own viewport, aligned by position with
+        # paths. A rotation with the same file twice shares one view, which
+        # the path-keyed lookup makes explicit.
+        show.views = ({p: v for p, v in zip(paths, views)}
+                      if views is not None and len(views) == len(paths) else {})
         # Drop the current rotation before installing the first frame below.
         # The install runs off the lock, and a media tick during it would
         # otherwise advance the old rotation and overwrite the frame installed
@@ -191,7 +218,9 @@ class Background:
         # A path that is not a loadable image (a stale entry, or a video the
         # caller did not filter) is skipped, so the rotation starts on the first
         # frame that renders.
-        installed = self._install_slideshow_frame(first, update=update, keep=True) if first else False
+        installed = (self._install_slideshow_frame(
+            first, update=update, keep=True,
+            view=show.views.get(first, DEFAULT_VIEW)) if first else False)
         if not installed and len(show) <= 1:
             # One entry that would not load, or an empty list, leaves nothing
             # to rotate. Clear to a blank background rather than hold whatever
@@ -234,9 +263,11 @@ class Background:
         next_path = show.maybe_advance(now)
         if next_path is None:
             return False
-        return self._install_slideshow_frame(next_path, update=True, keep=True)
+        return self._install_slideshow_frame(next_path, update=True, keep=True,
+                                             view=show.views.get(next_path, DEFAULT_VIEW))
 
-    def _install_slideshow_frame(self, path: "str | None", update: bool, keep: bool) -> bool:
+    def _install_slideshow_frame(self, path: "str | None", update: bool, keep: bool,
+                                 view: "tuple[float, float, float]" = DEFAULT_VIEW) -> bool:
         """Load path as a still and swap it in as the background image. Returns
         True on success. A path that does not resolve to an image is discarded
         and the previous frame stays, so one bad entry does not blank the deck.
@@ -249,7 +280,7 @@ class Background:
             # it and discard cleanly, which is what a missing entry already
             # does. Without this a corrupt frame raises into the media loop's
             # per-tick guard instead of being skipped.
-            kind, payload = self.prebuild_from_path(path, allow_keep=False)
+            kind, payload = self.prebuild_from_path(path, allow_keep=False, view=view)
         except Exception:
             log.opt(exception=True).warning(
                 f"Slideshow frame failed to decode, skipping it: {path}"
@@ -262,6 +293,37 @@ class Background:
         # whatever the prebuild built and leave the current frame showing.
         self._discard_prebuilt(kind, payload)
         return False
+
+    def update_view(self, view: "tuple[float, float, float]") -> bool:
+        """Swap the live background's viewport in place, for the drag preview.
+
+        Returns True when the swap re-rendered live: a still image, including
+        the current slideshow frame, re-composites at once with no re-decode
+        of its file. A video or GIF background returns False, because its
+        view bakes into its per-frame cache and only a full background reload
+        rebuilds that; the caller reloads on release instead of per drag
+        step.
+
+        The view lands on the image before the epoch bump. A compose that
+        snapshots the epoch after the bump reads the image's view later
+        still, so it cannot publish the old view under the new epoch; one
+        that snapshotted before the bump is discarded at publish.
+        """
+        with self._render_state_lock:
+            image = self.image
+        if image is None:
+            return False
+        image.set_view(view)
+        with self._render_state_lock:
+            self._source_epoch += 1
+            self._touchscreen_slice = None
+            self._identified_tiles = None
+        # The composited-key and native caches hold the previous crop.
+        self.deck_controller.clear_encoded_key_caches()
+        self.deck_controller.refresh_tile_cache_min_age(None)
+        self.update_tiles()
+        self.deck_controller.update_all_inputs()
+        return True
 
     def set_extend_to_touchscreen(self, extend: bool, update: bool = True) -> None:
         if extend == self.extend_to_touchscreen:
@@ -298,7 +360,8 @@ class Background:
             return self._touchscreen_slice
 
     def prebuild_from_path(self, path: str | None, fps: int = MEDIA_LOOP_FPS, loop: bool = True,
-                           allow_keep: bool = True) -> "tuple[str, BackgroundVideo | GifBackground | BackgroundImage | str | None]":
+                           allow_keep: bool = True,
+                           view: "tuple[float, float, float]" = DEFAULT_VIEW) -> "tuple[str, BackgroundVideo | GifBackground | BackgroundImage | str | None]":
         """Build the new background object lock-free, without a touch on
         self.video, self.image or the deck. apply_prebuilt() swaps it in.
 
@@ -318,6 +381,7 @@ class Background:
                 # video keeps showing the old factor.
                 if (self.video is not None and self.video.video_path == path
                         and self.video.extend_touchscreen == extend
+                        and self.video.view == view
                         and abs(self.video.saturation - self.deck_controller.get_display_saturation()) <= 0.001):
                     # Carry the path so apply_prebuilt re-checks it. This
                     # verdict is lock-free, and a load_background that races
@@ -332,16 +396,16 @@ class Background:
                 # cv2 path below instead of an OOM risk. The keep-check
                 # above stops the warning from repeating.
                 try:
-                    return ("video", GifBackground(self.deck_controller, path, loop=loop, fps=fps, extend_touchscreen=extend))
+                    return ("video", GifBackground(self.deck_controller, path, loop=loop, fps=fps, extend_touchscreen=extend, view=view))
                 except GifBudgetExceeded as e:
                     log.warning(f"GIF background over budget, falling back to the opaque cv2 path: {e}")
                 except Exception:
                     log.opt(exception=True).warning(f"GIF background decode failed, falling back to the opaque cv2 path: {path}")
-            return ("video", BackgroundVideo(self.deck_controller, path, loop=loop, fps=fps, extend_touchscreen=extend))
+            return ("video", BackgroundVideo(self.deck_controller, path, loop=loop, fps=fps, extend_touchscreen=extend, view=view))
         if not os.path.isfile(path):
             return ("noop", None)
         with Image.open(path) as image:
-            return ("image", BackgroundImage(self.deck_controller, image.copy(), path=path))
+            return ("image", BackgroundImage(self.deck_controller, image.copy(), path=path, view=view))
 
     def _discard_prebuilt(self, kind: str, payload: "BackgroundVideo | GifBackground | BackgroundImage | str | None") -> None:
         """Release the resources of a prebuilt payload that no caller applied.
@@ -392,12 +456,13 @@ class Background:
         else:  # "blank"
             self.set_image_to_blank(update=update)
 
-    def set_from_path(self, path: str | None, fps: int = MEDIA_LOOP_FPS, loop: bool = True, update: bool = True, allow_keep: bool = True) -> None:
+    def set_from_path(self, path: str | None, fps: int = MEDIA_LOOP_FPS, loop: bool = True, update: bool = True, allow_keep: bool = True,
+                      view: "tuple[float, float, float]" = DEFAULT_VIEW) -> None:
         """Prebuild and apply in one call, for a caller that does not need
         the lock-free split. Those callers are load_background, which already
         holds _background_load_lock, and the ScreenSaver setters that act
         while it shows."""
-        kind, payload = self.prebuild_from_path(path, fps=fps, loop=loop, allow_keep=allow_keep)
+        kind, payload = self.prebuild_from_path(path, fps=fps, loop=loop, allow_keep=allow_keep, view=view)
         self.apply_prebuilt(kind, payload, fps=fps, loop=loop, update=update)
 
     def get_identified_tile(self, key_index: int) -> "tuple[Image.Image, tuple[str, int]] | None":
@@ -473,7 +538,8 @@ class Background:
                 log.opt(exception=True).error("Failed to update background tiles; keeping previous")
 
 class BackgroundImage:
-    def __init__(self, deck_controller: "DeckController", image: Image.Image, path: str | None = None) -> None:
+    def __init__(self, deck_controller: "DeckController", image: Image.Image, path: str | None = None,
+                 view: "tuple[float, float, float]" = DEFAULT_VIEW) -> None:
         self.deck_controller = deck_controller
         # The source file that image came from, or None for a caller with no
         # file (the test harness). An extend-to-touchscreen toggle can need
@@ -481,14 +547,29 @@ class BackgroundImage:
         # then re-decodes from this path.
         self.path = path
 
+        # The pan-and-zoom viewport this image renders through, a normalized
+        # (x, y, scale) tuple. set_view() swaps it live; the default view is
+        # the centered cover crop.
+        self.view = view
+
         # Bake the saturation into the source image once, at load time. The
         # key tiles and the strip slice both derive from self.image, so they
         # inherit one enhancement pass at no per-frame cost. Factor 1.0 skips
         # the ImageEnhance call and the mode conversion, so the bytes stay.
         image = self._prepare_image(image)
+        # The source's own resolution caps what a re-decode can recover, so
+        # _ensure_fits_canvas() does not re-open a file that simply has no
+        # more pixels than the retained copy, once per compose.
+        self._native_size: tuple[int, int] = image.size
         # close() sets this to None. _ensure_fits_canvas() and
         # create_full_deck_sized_image() both handle the released state.
         self.image: Image.Image | None = self._fit_to_canvas(image, self._extend_effective())
+
+    def set_view(self, view: "tuple[float, float, float]") -> None:
+        """Swap the viewport, and re-decode when the zoom now demands more
+        source resolution than the retained, budgeted copy holds."""
+        self.view = view
+        self._ensure_fits_canvas(self._extend_effective())
 
     def _extend_effective(self) -> bool:
         # extend_to_touchscreen lives on Background, not on DeckController.
@@ -520,36 +601,43 @@ class BackgroundImage:
         """The canvas size that create_full_deck_sized_image() targets, with
         the touchscreen strip when extend is on. Returns None when the deck
         geometry is absent; the caller then skips the fit and the re-decode."""
-        deck = getattr(self.deck_controller, "deck", None)
-        if deck is None:
-            return None
-        canvas_width, canvas_height = self._grid_size()
+        return background_canvas_size(self.deck_controller, extend_touchscreen)
 
-        if extend_touchscreen and deck.is_touch():
-            canvas_width, canvas_height, _grid_x, _band = \
-                band_layout(self.deck_controller, canvas_width, canvas_height)
+    def _budget_multiplier(self) -> float:
+        """How much source resolution to keep, in canvas widths.
 
-        return (canvas_width, canvas_height)
+        A zoomed-in view samples a 1/scale slice of the cover rect, so a
+        sharp render needs scale times the canvas resolution from the
+        source. The multiplier follows the zoom up to 4x and no further,
+        which bounds the retained image; a view zoomed past 4x renders from
+        the 4x copy and softens instead of growing memory without limit.
+        """
+        return min(max(self.view[2], 1.0), 4.0)
 
     def _fit_to_canvas(self, image: Image.Image, extend_touchscreen: bool) -> Image.Image:
         canvas = self._canvas_size(extend_touchscreen)
         if canvas is None:
             return image
-        budget = (canvas[0] * 2, canvas[1] * 2)
+        multiplier = 2 * self._budget_multiplier()
+        budget = (int(canvas[0] * multiplier), int(canvas[1] * multiplier))
         if image.width > budget[0] or image.height > budget[1]:
             image.thumbnail(budget, Image.Resampling.LANCZOS)
         return image
 
     def _ensure_fits_canvas(self, extend_touchscreen: bool) -> None:
-        """Re-decode from path when the current canvas needs more resolution
-        than the retained image holds. The canvas grows when the user toggles
-        touchscreen-extend at runtime, with no fresh page load."""
+        """Re-decode from path when the current canvas and zoom need more
+        resolution than the retained image holds. The canvas grows when the
+        user toggles touchscreen-extend at runtime, and the demand grows when
+        set_view() zooms in, both with no fresh page load."""
         if not self.path or self.image is None:
             return
         canvas = self._canvas_size(extend_touchscreen)
         if canvas is None:
             return
-        if canvas[0] <= self.image.width and canvas[1] <= self.image.height:
+        multiplier = self._budget_multiplier()
+        demand_w = min(canvas[0] * multiplier, self._native_size[0])
+        demand_h = min(canvas[1] * multiplier, self._native_size[1])
+        if demand_w <= self.image.width and demand_h <= self.image.height:
             return
         try:
             with Image.open(self.path) as fresh:
@@ -557,6 +645,7 @@ class BackgroundImage:
         except (OSError, FileNotFoundError):
             return
         fresh = self._prepare_image(fresh)
+        self._native_size = fresh.size
         old_image = self.image
         self.image = self._fit_to_canvas(fresh, extend_touchscreen)
         if old_image is not None:
@@ -592,9 +681,12 @@ class BackgroundImage:
                 "still being composed"
             )
 
-        # Convert to RGBA before the resize to keep transparency.
+        # Convert to RGBA before the resize to keep transparency. The default
+        # view renders the same centered cover crop ImageOps.fit produced; a
+        # user view pans and zooms it, and a zoomed-out view letterboxes with
+        # transparency over the black deck base.
         img_rgba = source.convert("RGBA")
-        return ImageOps.fit(img_rgba, (canvas_width, canvas_height), Image.Resampling.LANCZOS)
+        return render_viewport(img_rgba, (canvas_width, canvas_height), self.view)
 
     def get_touchscreen_image(self) -> Image.Image:
         """The strip's view of the extended canvas, at strip resolution."""
@@ -648,7 +740,8 @@ class BackgroundImage:
         return tiles
 
 class BackgroundVideo(BackgroundVideoCache, FrameScheduled):
-    def __init__(self, deck_controller: "DeckController", video_path: str, loop: bool = True, fps: int = MEDIA_LOOP_FPS, extend_touchscreen: bool = False) -> None:
+    def __init__(self, deck_controller: "DeckController", video_path: str, loop: bool = True, fps: int = MEDIA_LOOP_FPS, extend_touchscreen: bool = False,
+                 view: "tuple[float, float, float]" = DEFAULT_VIEW) -> None:
         self.deck_controller = deck_controller
         self.video_path = video_path
         self.loop = loop
@@ -664,7 +757,7 @@ class BackgroundVideo(BackgroundVideoCache, FrameScheduled):
         # does not run at source fps and the loop period is unknown.
         self._min_age_synced: bool = False
 
-        super().__init__(video_path, deck_controller=deck_controller, extend_touchscreen=extend_touchscreen)
+        super().__init__(video_path, deck_controller=deck_controller, extend_touchscreen=extend_touchscreen, view=view)
 
     @override
     def _render_rate(self) -> float:

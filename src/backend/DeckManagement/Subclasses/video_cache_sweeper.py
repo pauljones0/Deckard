@@ -61,16 +61,20 @@ def _clamp_saturation(raw: Any) -> float:
 
 
 # Current cache-file naming. A default-saturation file is "<md5>.mp4". It can
-# carry a ".satNNN" baked-in saturation variant (mp4_tile_cache.sat_suffix)
+# carry a ".satNNN" baked-in saturation variant (mp4_tile_cache.sat_suffix),
+# a ".vXXXX-YYYY-SSSSS" baked-in viewport variant (viewport.view_suffix),
 # and a rendering variant, e.g. ".bounded" for KeyGIF's alpha-dropped
 # over-budget artifact (mp4_tile_cache.acquire_from_frames). The sweep matches
-# on the saturation group. It accepts the rendering variant, so it sweeps a
-# ".satNNN.bounded.mp4" with the factor that file belongs to instead of
-# falling through as an unrecognized name and protecting it forever. Anything
-# else in a layout dir is legacy or a writer temp file, and the other sweep
-# branches handle it.
+# on the saturation group. It accepts the view and rendering variants, so it
+# sweeps a ".satNNN.bounded.mp4" with the factor that file belongs to instead
+# of falling through as an unrecognized name and protecting it forever. A
+# view variant of a referenced video is kept whatever its view, because the
+# stored views live spread across deck settings, page files and slideshow
+# entries and the sweep does not collect them; the variant falls to the
+# unreferenced branch when its video does. Anything else in a layout dir is
+# legacy or a writer temp file, and the other sweep branches handle it.
 _MP4_NAME_RE = re.compile(
-    r"^(?P<hash>[0-9a-f]+)(?P<sat>\.sat\d+)?(?P<variant>\.[a-z]+)?\.mp4$")
+    r"^(?P<hash>[0-9a-f]+)(?P<sat>\.sat\d+)?(?P<view>\.v[0-9-]+)?(?P<variant>\.[a-z]+)?\.mp4$")
 
 # Top-level directory names the deleted key_video_cache.py JPEG-per-frame
 # format wrote into. Those were VID_CACHE/single_key/<stem>/<size>/<frame>.jpg

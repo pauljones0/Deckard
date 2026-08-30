@@ -53,6 +53,7 @@ from src.backend.DeckManagement.BetterDeck import BetterDeck, open_device_handle
 from src.backend.DeckManagement.InputIdentifier import Input, InputIdentifier
 from src.backend.DeckManagement.Subclasses import cache_budget
 from src.backend.DeckManagement.HelperMethods import is_image
+from src.backend.DeckManagement.deck_controller.viewport import media_entries, normalize_view
 from src.backend.DeckManagement.Subclasses.ScreenSaver import ScreenSaver
 from src.backend.DeckManagement.Subclasses.encoded_image_cache import EncodedImageCache
 from src.backend.DeckManagement.Subclasses.native_tile_cache import NativeTileCache, native_tile_cache_max_bytes
@@ -806,30 +807,28 @@ class DeckController:
             self.background.set_extend_to_touchscreen(
                 config.get("extend-to-touchscreen", False), update=False
             )
-            # A slideshow is a list of two or more still images that rotate on
-            # an interval. It wins over the single media-path, image or video:
-            # the user built the list, so it is the more specific intent, and a
-            # rotation of stills and one playing video cannot both show. One or
-            # zero images falls back to the single media-path, which keeps a
-            # plain single-image or video background loading exactly as before.
-            # Only real, existing image files count; a deleted or video entry
-            # drops out here rather than blank a frame later.
-            slideshow_paths = [
-                p for p in (config.get("media-paths") or [])
-                if isinstance(p, str) and is_image(p)
-            ]
-            if len(slideshow_paths) >= 2:
+            # A slideshow is a list of two or more still images that rotate
+            # on an interval. It wins over the single media-path: the user
+            # built the list, so it is the more specific intent, and a
+            # rotation of stills and one playing video cannot both show.
+            # Fewer than two fall back to the single media-path. Only real,
+            # existing image files count; a deleted or video entry drops out
+            # here rather than blank a frame later. media_entries reads both
+            # stored entry shapes, each path with its own viewport.
+            pairs = [(p, v) for p, v in media_entries(config.get("media-paths")) if is_image(p)]
+            if len(pairs) >= 2:
                 self.background.set_slideshow(
-                    slideshow_paths,
+                    [p for p, _view in pairs],
                     interval=config.get("slideshow-interval", 10),
                     order=config.get("slideshow-order", "in-order"),
                     update=update,
+                    views=[v for _path, v in pairs],
                 )
             else:
-                single = slideshow_paths[0] if slideshow_paths else config.get("media-path")
+                single, single_view = pairs[0] if pairs else (
+                    config.get("media-path"), normalize_view(config.get("view")))
                 self.background.set_from_path(
-                    path=single,
-                    update=update,
+                    path=single, update=update, view=single_view,
                     loop=config.get("loop", False),
                     fps=config.get("fps", 30),
                 )

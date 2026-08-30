@@ -9,6 +9,7 @@ from loguru import logger as log
 import globals as gl
 from src.backend.DeckManagement.Subclasses.mp4_tile_cache import Mp4FrameCache, VID_CACHE
 from src.backend.DeckManagement.deck_controller.strip_band import band_layout, clamp_box
+from src.backend.DeckManagement.deck_controller.viewport import DEFAULT_VIEW
 
 # Import typing
 from typing import TYPE_CHECKING, override
@@ -26,7 +27,8 @@ class BackgroundVideoCache(Mp4FrameCache[list[Image.Image]]):
     and naming.
     """
 
-    def __init__(self, video_path: str, deck_controller: "DeckController", extend_touchscreen: bool = False) -> None:
+    def __init__(self, video_path: str, deck_controller: "DeckController", extend_touchscreen: bool = False,
+                 view: "tuple[float, float, float] | None" = None) -> None:
         self.deck_controller = deck_controller
 
         self.key_layout = self.deck_controller.deck.key_layout()
@@ -57,7 +59,8 @@ class BackgroundVideoCache(Mp4FrameCache[list[Image.Image]]):
         self._legacy_cache_path: str | None = None  # set by _default_cache_path()
 
         saturation = deck_controller.get_display_saturation()
-        super().__init__(video_path, out_size=self._canvas_size(), saturation=saturation)
+        super().__init__(video_path, out_size=self._canvas_size(), saturation=saturation,
+                         view=view if view is not None else DEFAULT_VIEW)
 
     # Geometry and cache-path hooks.
 
@@ -75,7 +78,9 @@ class BackgroundVideoCache(Mp4FrameCache[list[Image.Image]]):
         self._legacy_cache_path = os.path.join(legacy_dir, f"{self.video_md5}.cache")
         cache_dir = os.path.join(
             VID_CACHE, f"{self.key_layout_str}@{self.out_size[0]}x{self.out_size[1]}")
-        return os.path.join(cache_dir, f"{self.video_md5}{self._sat_suffix}.mp4")
+        # The view joins the name like the saturation: a view change builds a
+        # new cache file, and the default view keeps the pre-view name.
+        return os.path.join(cache_dir, f"{self.video_md5}{self._sat_suffix}{self._view_suffix}.mp4")
 
     def _canvas_size(self) -> tuple[int, int]:
         key_rows, key_cols = self.key_layout

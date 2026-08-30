@@ -198,7 +198,7 @@ def check_close_load_race() -> int:
     past_gate = threading.Event()   # load has passed the gen-gate, is prebuilding
     release = threading.Event()     # test lets the parked prebuild finish
 
-    def blocking_prebuild(path, fps=30, loop=True, allow_keep=True):
+    def blocking_prebuild(path, fps=30, loop=True, allow_keep=True, view=None):
         # Called from set_from_path, which load_background calls after its
         # _page_is_current(gen) gate, so this is past the gate. Park here, as a
         # real multi-second decode would, until the test has run the close()

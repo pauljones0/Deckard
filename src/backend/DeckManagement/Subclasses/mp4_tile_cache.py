@@ -32,6 +32,7 @@ from loguru import logger as log
 
 import globals as gl
 from src.backend.DeckManagement.Subclasses import cache_budget
+from src.backend.DeckManagement.deck_controller.viewport import DEFAULT_VIEW, is_default_view, render_viewport_rgb, view_suffix
 from typing import Generic, TypeVar, cast, override
 
 VID_CACHE = os.path.join(gl.DATA_PATH, "cache", "videos")
@@ -177,13 +178,17 @@ class Mp4FrameCache(Generic[PayloadT]):
     _registry_entry: "_TileCacheEntry | None"
 
     def __init__(self, source_path: str, out_size: tuple[int, int], saturation: float = 1.0,
-                 cache_path: str | None = None, is_builder: bool = True) -> None:
+                 cache_path: str | None = None, is_builder: bool = True,
+                 view: tuple[float, float, float] = DEFAULT_VIEW) -> None:
         self.lock = threading.Lock()
 
         self.source_path = source_path
         self.out_size = out_size
         self.saturation = canonical_saturation(saturation)
         self._sat_suffix = sat_suffix(self.saturation)
+        # The viewport baked into every cached frame; it joins the file name
+        # like the saturation, so a view change builds a new cache.
+        self.view, self._view_suffix = view, view_suffix(view)
         # BackgroundVideoCache uses one instance as both roles, a single
         # consumer with the build interleaved with playback ticks. The
         # KeyVideoCache registry splits them into one detached builder thread
@@ -575,11 +580,16 @@ class Mp4FrameCache(Generic[PayloadT]):
         return payload
 
     def _fit_to_target(self, frame_bgr: "npt.NDArray[np.uint8]") -> "npt.NDArray[np.uint8]":
-        """Fit a source BGR frame to out_size, keep the aspect ratio and bake
+        """Fit a source BGR frame to out_size through the viewport and bake
         in the saturation boost. This runs once per source frame during a
         cache build, and never again once the cache is complete."""
         pil_image = Image.fromarray(cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB))
-        canvas = ImageOps.fit(pil_image, self.out_size, Image.Resampling.HAMMING)
+        if is_default_view(self.view):
+            # The centered cover crop of before, byte-identical, so a cache
+            # built without views stays valid.
+            canvas = ImageOps.fit(pil_image, self.out_size, Image.Resampling.HAMMING)
+        else:
+            canvas = render_viewport_rgb(pil_image, self.out_size, self.view, Image.Resampling.HAMMING)
         # canvas is always mode "RGB" here, because pil_image came from a
         # 3-channel BGR to RGB conversion, so ImageEnhance.Color needs no mode
         # check and no conversion. The default factor skips this entirely.

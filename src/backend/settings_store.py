@@ -146,6 +146,12 @@ DECK_DEFAULTS: dict[str, Any] = {
         # media-path; fewer fall back to the single media-path. Empty by
         # default: nothing rotates until the user builds a list.
         "media-paths": [],
+        # The pan-and-zoom viewport for the single media-path, as
+        # {"x": ..., "y": ..., "scale": ...} with a normalized center and a
+        # zoom factor. None means the default view, the centered cover crop
+        # every background rendered with before views existed. A slideshow
+        # entry carries its own view inside its media-paths object instead.
+        "view": None,
         # Seconds one slideshow image shows before the next. A non-positive
         # value holds the first image rather than flickering.
         "slideshow-interval": 10,
