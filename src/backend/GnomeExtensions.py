@@ -34,9 +34,8 @@ class GnomeExtensions:
                 "org.gnome.Shell.Extensions",
                 None
             )
-            # Gio builds a proxy for a name that nobody owns, so off GNOME the
-            # failure surfaces later, out of calls that have no error path.
-            # Check the owner to report "not connected" here instead.
+            # Gio builds proxies for unowned names, so verify the owner here.
+            # Later callers have no error path for an absent GNOME Shell.
             if self.proxy.get_name_owner() is None:
                 self.proxy = None
                 raise RuntimeError("nothing owns org.gnome.Shell on the session bus")
@@ -55,10 +54,8 @@ class GnomeExtensions:
         proxy = self.proxy
         if proxy is None:
             return extensions
-        # A finite deadline: listing extensions is a plain read, and a Shell
-        # that stops answering must not park this call for good. The
-        # InstallRemoteExtension call below keeps -1 on purpose, because it
-        # answers only after the user dismisses a dialog.
+        # Bound this plain read so an unresponsive Shell cannot block forever.
+        # Installation stays unbounded because it waits for the user dialog.
         reply = proxy.call_sync("ListExtensions", None, Gio.DBusCallFlags.NONE, QUERY_TIMEOUT_MS, None)
         extensions.extend(reply.unpack()[0])
         return extensions

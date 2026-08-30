@@ -14,11 +14,8 @@ from gi.repository import Gio, GLib
 from loguru import logger as log
 
 class LogindLockScreenDetector(LockScreenDetector):
-    """Fallback for a session with no desktop-specific detector (Niri, Sway,
-    river). logind sends Lock and Unlock for loginctl lock-session, lid
-    switches and idle policy, apart from any session-bus screen saver. Both
-    are lock requests, so this detector misses a locker that never calls logind,
-    so the desktop detectors stay first in the chain."""
+    """Fallback for Niri, Sway, and river that handles logind Lock and Unlock from loginctl, lid switches, and idle policy.
+    It misses lockers that do not call logind, so desktop screen-saver detectors take priority."""
 
     def __init__(self, lock_screen_manager: "LockScreenManager", bus: Gio.DBusConnection | None = None):
         super().__init__(lock_screen_manager)
@@ -29,18 +26,14 @@ class LogindLockScreenDetector(LockScreenDetector):
 
     def setup_dbus(self, bus: Gio.DBusConnection | None = None) -> None:
         try:
-            # logind lives on the system bus; the desktop detectors use the
-            # session bus. Keep the connection referenced, because the
-            # subscription below lives as long as the connection does. bus is a test
-            # seam and production passes None. Compare against None, because a
-            # falsy but valid double must not pull in the real system bus.
+            # Keep the system-bus connection referenced for the subscription lifetime.
+            # Compare the test seam with None so a falsy valid double stays in use.
             self.bus = bus if bus is not None else Gio.bus_get_sync(Gio.BusType.SYSTEM, None)
 
             self.session_path = self.resolve_session_path()
 
-            # setup() runs on the manager's daemon thread, which has no
-            # thread-default main context, so GDBus dispatches the callback on
-            # the global default one, which is the GTK main loop.
+            # The setup daemon has no thread-default context, so GDBus uses the
+            # global default context and dispatches this callback on the GTK loop.
             self.bus.signal_subscribe(
                 "org.freedesktop.login1",
                 "org.freedesktop.login1.Session",
@@ -56,9 +49,8 @@ class LogindLockScreenDetector(LockScreenDetector):
     def resolve_session_path(self) -> str:
         bus = self.bus
         if bus is None:
-            # setup_dbus assigns self.bus immediately before it calls this, so
-            # nothing reaches here. Raise GLib.Error to route an unusable
-            # connection into setup_dbus's own failure branch.
+            # setup_dbus assigns the bus first; route an unusable connection
+            # through its GLib.Error failure branch.
             raise GLib.Error("logind D-Bus connection unavailable")
 
         session_id = os.getenv("XDG_SESSION_ID")
@@ -92,14 +84,8 @@ class LogindLockScreenDetector(LockScreenDetector):
 
     @override
     def read_initial_lock_state(self) -> None:
-        """Seed the lock from the session's current LockedHint, once, at startup.
-
-        logind sets LockedHint while the session is locked, and sends no Lock
-        signal for a lock that predates the subscription. A process that
-        starts into an already-locked session reads the hint here and drives
-        the same lock() the signal path drives, rather than wait for a Lock
-        that never arrives while the session stays locked.
-        """
+        """Seed the startup lock from the session's current LockedHint.
+        A lock that predates the subscription sends no Lock signal."""
         bus = self.bus
         session_path = self.session_path
         if bus is None or session_path is None:
