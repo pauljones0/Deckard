@@ -1055,7 +1055,8 @@ class DeckController:
             self.load_page(self.active_page, allow_reload=True)
     
     def get_own_deck_stack_child(self) -> "object | None":
-        """Return the attached UI child by controller identity, or None with no UI."""
+        """Deprecated in-process shim for out-of-tree plugins.
+        Return the attached UI child by controller identity, or None with no UI."""
         return ui_port.get().query_deck_widget(self, "deck_stack_child")
 
     def _write_blank_frames(self) -> None:
@@ -1087,7 +1088,8 @@ class DeckController:
         self.media_player.submit_control(ClearMsg(seq=seq, expects_repaint=expects_repaint))
 
     def get_own_key_grid(self) -> "object | None":
-        """Return the attached UI key grid, or None when no UI is attached."""
+        """Deprecated in-process shim for out-of-tree plugins.
+        Return the attached UI key grid, or None when no UI is attached."""
         return ui_port.get().query_deck_widget(self, "key_grid")
     
     def clear_media_player_tasks(self, gen: "int | None" = None) -> None:
@@ -1102,8 +1104,8 @@ class DeckController:
             self.media_player.discard_paint_tasks("controller_queue_cleared")
 
     def close(self, remove_media: bool, app_quit: bool = False) -> None:
-        """Run one idempotent teardown; non-quit main-thread calls are supported but warn.
-        A worker thread avoids UI freeze if a plugin teardown hook stalls."""
+        """Idempotent teardown: remove_media gates resources; app_quit skips action teardown.
+        Device/thread/registration cleanup always runs; non-quit main-thread calls warn."""
         # Serialize state removal with page installation, then run blocking hooks outside the lock.
         load_page_lock = getattr(self, "_load_page_lock", None)
         with load_page_lock if load_page_lock is not None else nullcontext():

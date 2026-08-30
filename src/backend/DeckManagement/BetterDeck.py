@@ -176,7 +176,7 @@ class BetterDeck():
         stop_device_read_thread(self.deck, timeout)
 
     def release_handle(self, timeout: "float | None" = None) -> None:
-        """Under the device lock, stop the reader, shadow open(), and close.
+        """Under the device lock, shadow open(), stop the reader, then close.
         This serializes release against multi-chunk writes and deliberate opens."""
         with self._lock:
             _install_release_shadow(self.deck)

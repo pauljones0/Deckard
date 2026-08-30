@@ -46,7 +46,7 @@ class InputIdentifier:
         return cast("dict[str, Any] | None", d.get(self.input_type, {}).get(self.json_identifier))
 
     # Page JSON state keys are strings; accept integers and coerce them here.
-    # Accessors return live values; mutations update page.dict for the next Page.save().
+    # Accessors return live nested values only when each requested nested value exists.
 
     def get_states(self, page: "Page") -> dict[str, Any]:
         return cast(dict[str, Any], self.get_config(page).get("states", {}))

@@ -183,9 +183,8 @@ def _candidates(vendor_id: int, product_id: int) -> "list[_Candidate]":
 
 def find_device_node(vendor_id: int, product_id: int, serial: "str | None",
                      label: str) -> "str | None":
-    """
-    The usbfs node of the one device this identity names, or None.
-    """
+    """Return the node for one serial match or exactly one model candidate.
+    Return None when neither rule identifies one device."""
     candidates = _candidates(vendor_id, product_id)
     if not candidates:
         log.warning(
@@ -235,8 +234,8 @@ def _descriptor_identity(fd: int) -> "tuple[int, int] | None":
 
 def reset_usb_device(vendor_id: "int | None", product_id: "int | None",
                      serial: "str | None", label: str) -> "str | None":
-    """Reset the named device only after its caller has stopped all device writes.
-    Return the reset node, or None when no reset was issued."""
+    """Reset only after all writes stop; recheck the opened descriptor before ioctl.
+    The selected node can be reassigned between discovery and open."""
     if vendor_id != ELGATO_VENDOR_ID or product_id is None:
         # A fake deck, a remote deck, or a device this app does not drive.
         log.debug(f"Deck {label}: not an Elgato USB device, so no reset is issued")

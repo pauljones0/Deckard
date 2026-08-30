@@ -1,7 +1,7 @@
 # The state classes live in input_state_classes.py.
 # This file and its module docstring define their persistence rules.
 """Cold loads use stored state; warm same-page loads keep each deck's live state.
-State 0 removes its key; reject bad values, retain unavailable states, and use the loaded page."""
+State 0/invalid keys are removed; out-of-range values remain; weak page identity owns writes."""
 from __future__ import annotations
 
 import weakref

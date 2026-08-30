@@ -105,7 +105,7 @@ class ScreenSaver:
         self.show()
 
     def show(self) -> None:
-        """Prebuild the background lock-free, then install it under _load_page_lock.
+        """Prebuild unlocked, then install transient saver state under _load_page_lock.
         The locked phase performs no file I/O, GTK marshaling, or plugin callback."""
         if getattr(self.deck_controller, "_closing", False):
             # A timer that races close() must not restore transient state.
@@ -189,7 +189,7 @@ class ScreenSaver:
             )
 
     def hide(self) -> None:
-        """Restore screensaver state under _load_page_lock.
+        """Remove transient saver state under _load_page_lock before page reload.
         Reload the page and reset the timer only after releasing the lock."""
         if getattr(self.deck_controller, "_closing", False):
             # Do not let the follow-up load_page resurrect a closing controller.

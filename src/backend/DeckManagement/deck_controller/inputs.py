@@ -139,8 +139,8 @@ class ControllerInput(Generic[StateT, EventT]):
         # When the in-flight gesture went down, or None outside one.
         self.down_start_time: float | None = None
 
-        # DOWN-time gesture snapshot, a (state, actions) pair captured when the input went down, or
-        # None outside a gesture.
+        # Route the full gesture through its DOWN-time state and actions across page changes.
+        # One tuple gives racing hold and release callbacks a coherent snapshot or None.
         self._gesture: "tuple[StateT, list[ActionCore | NoActionHolderFound | ActionOutdated]] | None" = None
 
         self.is_visual: bool = True
@@ -151,8 +151,8 @@ class ControllerInput(Generic[StateT, EventT]):
         # media write from ActionCore.set_media.
         self._states_lock = threading.RLock()
 
-        # Serializes one input's compose-to-offer span, so the order paints are composed in is the
-        # order they reach the writer.
+        # Lock order: _load_page_lock, _states_lock, _paint_lock, then writer-slot lock.
+        # Paint takes no device lock; it offers encoded bytes for the sole writer.
         self._paint_lock = threading.RLock()
 
         self.states: dict[int, StateT] = {
@@ -273,9 +273,8 @@ class ControllerInput(Generic[StateT, EventT]):
 
     def load_from_input_dict(self, input_dict: "dict[str, Any]", update: bool = True, page: "Page | None" = None, *,
                              still_current: "Callable[[], bool] | None" = None) -> None:
-        """
-        still_current, when given, is re-asked at every mutation boundary.
-        """
+        """Recheck still_current before mutations; deadline abandonment does not cancel the task.
+        A superseded load must stop before it changes the shared input."""
         pass
 
     def add_new_state(self, switch: bool = True) -> None:
@@ -895,7 +894,8 @@ class ControllerKey(ControllerInput["ControllerKeyState", KeyEvent]):
 
 
     def get_own_ui_key(self) -> "object | None":
-        """Return this input's attached UI widget, or None when headless."""
+        """Deprecated in-process shim for plugins.
+        Return this input's attached UI widget, or None when headless."""
         return ui_port.get().query_input_widget(self.deck_controller, self.identifier)
     
     def get_image_size(self) -> tuple[int, int]:
