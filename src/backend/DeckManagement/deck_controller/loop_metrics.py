@@ -1,35 +1,15 @@
-"""Work-rate window and low-FPS warning state for the media loop.
+"""Track the media loop's pre-wait capacity rate, not its achieved cadence.
 
-This module is the authoritative statement of the metric's semantics. The
-loop records the inverse of each tick's work duration, taken before the
-scheduled wait. That value is a work-rate: a capacity ceiling that says how
-fast the loop could run if it never waited. It is not the achieved loop
-rate. The idle cadence parks the achieved rate near 2 Hz on purpose, and
-the media-prof report logs the achieved rate under its own name, loop_fps,
-when profiling is enabled. Nothing in this module carries an fps-style name
-for the recorded value, so an operator cannot tune from a false FPS
-reading.
-
-The warning keys on capacity. A median work-rate below the warn fraction of
-the target rate means the loop cannot hold that rate even with a zero wait.
-A short work duration yields a high work-rate no matter how long the
-scheduled wait is, so an idle deck never trips the warning.
-
-Threading: the media thread records and updates, the settings window
-toggles the enable flag, and a torn read of the flag only shifts one
-update by a tick.
+The median inverse work duration warns below 80% of target; idle cadence near 2 Hz does not warn, and settings can delay one update by one tick.
 """
 import statistics
 from typing import Callable
 
 
 class WorkRateMonitor:
-    """Sliding work-rate window plus edge-triggered low-FPS warning state.
+    """Maintain a sliding work-rate window and edge-triggered warning.
 
-    record() must run before update_warning() on every tick, which is the
-    order the loop guarantees; update_warning() on an empty window raises.
-    The publish callable receives the new warning state only on a state
-    change, so a holding state never re-sends its banner.
+    Call record() before update_warning(); publish runs only on state changes, and an empty window raises.
     """
 
     # The warning shows once the median work-rate falls below this fraction
@@ -69,8 +49,7 @@ class WorkRateMonitor:
     def set_enabled(self, state: bool) -> None:
         """Enable or disable the warning, mirroring the settings toggle.
 
-        Enabling resets the edge state so the next update can show a
-        still-standing warning. Disabling hides the banner at once.
+        Enabling resets the edge state for a standing warning; disabling hides the banner immediately.
         """
         self.warnings_enabled = state
         if state:

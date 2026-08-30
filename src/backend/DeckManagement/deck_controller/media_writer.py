@@ -71,16 +71,15 @@ if TYPE_CHECKING:
     from src.backend.DeckManagement.deck_controller.paint_protocol import PresentState
 
 
-# JPEG quality every key native is encoded at. It is part of the native
-# tile cache key, so bytes encoded at one quality must never be served for
-# another.
+# JPEG quality for native key encoding; it is part of the tile-cache key.
 KEY_ENCODE_QUALITY = 90
 
 
 def encode_native_key(deck: "BetterDeck", image: "Image.Image", quality: int = KEY_ENCODE_QUALITY) -> bytes:
-    """PILHelper.to_native_key_format with a tunable JPEG quality, where the
-    library hardcodes q100. A smaller JPEG means fewer serial USB HID writes
-    per key."""
+    """Encode a key in PILHelper's native format with configurable JPEG quality.
+
+    The library fixes quality at 100; lower quality reduces serial USB HID writes.
+    """
     fmt = deck.key_image_format()
     if image.size != fmt["size"]:
         image.thumbnail(fmt["size"])
@@ -93,25 +92,18 @@ def encode_native_key(deck: "BetterDeck", image: "Image.Image", quality: int = K
     with io.BytesIO() as buf:
         save_kwargs = {"quality": quality}
         if fmt["format"] == "JPEG":
-            # Below quality 95 Pillow switches to 4:2:0 chroma subsampling,
-            # which halves the color resolution on both axes and gives a
-            # measured ~4% average desaturation plus chroma smear on busy
-            # 120px tiles. Force 4:4:4. It keeps the q90 encode speed and
-            # costs ~17% more bytes.
+            # Below quality 95, 4:2:0 halves chroma resolution and caused ~4% average desaturation plus smear on busy 120 px tiles.
+            # Force 4:4:4; quality 90 keeps encode speed and costs ~17% more bytes.
             save_kwargs["subsampling"] = 0
         image.save(buf, fmt["format"], **save_kwargs)
         return buf.getvalue()
 
 
 def encode_native_touchscreen(deck: "BetterDeck", image: "Image.Image", quality: int = 90) -> bytes:
-    """PILHelper.to_native_touchscreen_format with a tunable JPEG quality,
-    and with no mutation of the caller's image. The library hardcodes q100,
-    and its _to_native_format calls image.thumbnail() in place when it
-    resizes, which corrupts the caller's copy. The touchscreen strip is the
-    largest single USB write on the deck. A smaller JPEG here buys back time
-    under the device write mutex. That time is dial-latency margin.
-    ControllerTouchScreen.update reuses the same image object afterward for
-    the UI mirror, so any resize here must work on a copy."""
+    """Encode a touchscreen in native format with configurable quality without mutating the caller.
+
+    The library fixes quality at 100 and resizes in place; copy for UI reuse, while lower quality reduces the largest device write and mutex hold.
+    """
     fmt = deck.touchscreen_image_format()
     if image.size != fmt["size"]:
         image = image.copy()
@@ -125,9 +117,8 @@ def encode_native_touchscreen(deck: "BetterDeck", image: "Image.Image", quality:
     with io.BytesIO() as buf:
         save_kwargs = {"quality": quality}
         if fmt["format"] == "JPEG":
-            # Force 4:4:4 as encode_native_key does. Below q95 Pillow
-            # switches to 4:2:0 chroma subsampling, which visibly desaturates
-            # the strip's icons and text.
+            # Force 4:4:4 because Pillow uses visibly desaturated 4:2:0 below
+            # quality 95.
             save_kwargs["subsampling"] = 0
         image.save(buf, fmt["format"], **save_kwargs)
         return buf.getvalue()
@@ -136,9 +127,8 @@ def encode_native_touchscreen(deck: "BetterDeck", image: "Image.Image", quality:
 @dataclass
 class MediaPlayerTask:
     deck_controller: "DeckController"
-    # None when the deck has no active page, at boot or during teardown. The
-    # write boundary only identity-compares it against active_page and never
-    # dereferences it, so a page-less paint is judged stale, not crashed on.
+    # Active page at submission, or None during boot and teardown; the write
+    # boundary uses identity only, so a page-less task becomes stale.
     page: Page | None
     _callable: Callable[..., Any]
     args: tuple[Any, ...]
@@ -149,76 +139,49 @@ class MediaPlayerTask:
 
 @dataclass
 class SetBrightnessMsg:
-    """Control message that sets the device brightness. It executes on the
-    media thread, the sole writer, through MediaPlayerThread.control_q. See
-    docs/presenter-migration-plan.md."""
+    """Set deck brightness on the sole media-writer thread."""
     value: float
 
 
 @dataclass
 class ClearMsg:
-    """Control message that blanks the deck. seq holds the submitting
-    thread's monotonic submit-sequence counter value at submission time, from
-    MediaPlayerThread.next_submit_seq(). Executing this wipes only image and
-    touchscreen tasks stamped with a lower submit_seq. A frame submitted
-    after this Clear was requested survives and paints afterward, which
-    preserves the caller's clear-then-paint order.
+    """Blank the deck after discarding queued paints older than seq; later paints preserve clear-then-paint order.
 
-    expects_repaint records the submitter's intent, which the writer cannot
-    infer once the message is on the queue. True means the submitter is about
-    to repaint this deck and these blanks are a transition, as at screensaver
-    entry and exit. False means the blank deck is the result, as in
-    load_page's page-is-None branch. Only the first may be recovered from
-    when it executes late; see _exec_clear. It is stamped at submission and
-    not read off live state at execution, because live state has moved on by
-    then."""
+    expects_repaint is submission-time intent: transition clears can recover if late, while terminal blank states cannot.
+    """
     seq: int
     expects_repaint: bool = False
 
 
 @dataclass
 class ClearAndCloseMsg:
-    """Terminal control message. It wipes the pending image and touchscreen
-    tasks, writes blanks, closes the device where it can, and stops the media
-    thread's loop."""
+    """Discard pending paints, blank and close the device where possible, and stop the media loop."""
     pass
 
 
 @dataclass
 class ReleaseStashedInputsMsg:
-    """Control message that closes every stashed input's media resources,
-    then empties the dict in place. ScreenSaver.show() uses it to release the
-    previous page's input set shortly after it swaps the set out. That
-    release frees the set instead of pinning it for the whole screensaver
-    duration.
+    """Close and clear stashed inputs as a page-independent FIFO control operation.
 
-    This is a control message and not a generic add_task(). An add_task task
-    is dropped unrun when task.page is not active_page by the time the batch
-    executes, which is correct for a stale render and wrong here. A
-    hide()-triggered load_page() that changes active_page before this drains
-    must not skip the release. A control message has no page affinity and
-    always executes, FIFO, like ClearMsg and SetBrightnessMsg."""
-    # The stashed deck_controller.inputs mapping: input type to its inputs.
+    Do not use add_task(), because a page change can drop it before the screensaver releases the previous page.
+    """
     stashed_inputs: "dict[type[InputIdentifier], list[ControllerKey | ControllerDial | ControllerTouchScreen]]"
 
 
 @dataclass
 class ReopenDeckMsg:
-    """Control message that gives the device handle back and takes it again,
-    after the library's input reader thread died under a live device.
+    """Release and reopen a live device after its input reader thread dies.
 
-    It runs here because this thread is the sole device writer, and a close
-    waits on the device lock a write in flight holds. The supervisor carries
-    the attempt state and performs the attempt; see reader_supervisor."""
+    The media thread performs it because it is the sole writer and close waits for in-flight writes under the device lock.
+    """
     supervisor: "DeckReaderSupervisor"
 
 
 def _env_float(name: str, default: float) -> float:
-    """Read a float tuning knob from the environment, and fall back to
-    default on a malformed value. A typo in an env var must degrade to the
-    built-in default with a warning. It must never raise out of
-    MediaPlayerThread init, where DeckManager would report a failed deck and
-    skip the whole device."""
+    """Read an environment float, warning and returning default when malformed.
+
+    This must not raise during writer initialization, which would prevent the deck from loading.
+    """
     raw = os.environ.get(name)
     if raw is None:
         return default
@@ -230,21 +193,10 @@ def _env_float(name: str, default: float) -> float:
 
 
 def _install_fair_transport_lock(deck: Any) -> bool:
-    """Swap the transport's per-device mutex for a FIFO one.
+    """Install a FIFO transport mutex before deck.open() starts the reader, and report success.
 
-    The library guards every read, write and feature report of a device with
-    deck.device.mutex, a stock threading.Lock. Unfair ordering there lets a
-    write burst out-race the HID read poll, which is what dial input
-    starvation is. The swap is one attribute assignment on an object this
-    process owns. The library is neither vendored nor patched. An upstream
-    rename therefore degrades to the unfair lock, with the env knobs still
-    available, and every guard below returns False instead of raising.
-
-    This must run before deck.open(), which starts the reader thread. Before
-    that, no thread can be inside the old lock, so the swap cannot leave two
-    threads in hidapi at once. The reopen path on resume from suspend reuses
-    the same Device instance, so the FIFO lock survives a suspend cycle with
-    no reinstall. Returns whether the FIFO lock is installed."""
+    FIFO prevents write bursts from starving HID reads; missing or held mutexes keep the stock lock, while suspend reopen keeps an installed lock.
+    """
     device = getattr(deck, "device", None)
     if device is None:
         # A FakeDeck or a RemoteDeck has no HID transport to order.
@@ -275,89 +227,51 @@ def _install_fair_transport_lock(deck: Any) -> bool:
 
 
 class MediaPlayerThread(threading.Thread):
-    # An image batch at or above this size is a bulk repaint, from a video
-    # frame or a full-page paint, and gets inter-write yields. A smaller
-    # batch is interactive, from press feedback or a plugin set_media, and
-    # writes at once.
+    # Batches at or above this size are bulk repaints with inter-write yields;
+    # smaller interactive batches write immediately.
     BULK_BATCH_THRESHOLD = 4
     # Within a bulk batch, yield after every N writes. See the batch loop in
     # perform_media_player_tasks.
     YIELD_STRIDE = 3
-    # Quiet render ticks the page-generation watch owes a new generation
-    # before the quiescence gate re-engages. It is small because these run at
-    # full FPS, so the window costs ~100ms of frames per page change made
-    # while the user is away.
+    # Quiet render ticks required before quiescence resumes after a generation
+    # change; three full-FPS ticks cost about 100 ms while the user is away.
     GATE_SETTLE_TICKS = 3
-    # Hard wall-clock bound on that window. The countdown above re-arms
-    # whenever the task queues are non-empty, which means page-load work is
-    # still landing. That predicate is also permanently true under any
-    # producer at 10Hz or more, such as a plugin that loops set_media into
-    # add_image_task, or the touchscreen latest-wins re-queue under a low
-    # DECKARD_VIDEO_WRITE_HZ. Unbounded, such a producer pins the loop
-    # un-gated at full FPS for the whole away window, and the logs say
-    # nothing. So the window also closes on this deadline, whatever the
-    # queues say. It is generous next to what it bounds, because a settle is
-    # GATE_SETTLE_TICKS quiet ticks, about 100ms, plus the time the page-load
-    # tasks take to drain. If it truncates a genuinely slow page load, the
-    # cost is one away window of stale imagery on that page's transparent
-    # keys, for one page instead of for the whole gate.
+    # Hard limit for a gate window that otherwise rearms while queues remain nonempty.
+    # Producers at 10 Hz or more can hold that state; expiry can leave slow-page transparent keys stale for one away window.
     GATE_WINDOW_MAX_S = 0.5
 
     def __init__(self, deck_controller: "DeckController"):
-        # Suffix the thread name with the deck serial, so the journal's
-        # thread_name attributes a writer to its deck when two decks run at
-        # once. serial_number() is a cheap attribute read that never raises on
-        # any real or fake deck.
+        # Include deck serial in the thread name to identify concurrent writers.
         try:
             _serial = deck_controller.serial_number()
         except Exception:
             _serial = "unknown"
         super().__init__(name=f"MediaPlayerThread-{_serial}", daemon=True)
         self.deck_controller: DeckController = deck_controller
-        self.FPS = MEDIA_LOOP_FPS  # the loop's declared rate; media_loop owns it
+        self.FPS = MEDIA_LOOP_FPS
 
-        # Cap how often a background video repaints the device. The FIFO
-        # transport lock keeps the HID read poll from starving, because the
-        # reader waits at most for the chunk in flight, so this cap is a rate
-        # alignment. The same gate drives the repaint decision at
-        # now - _last_video_write < min_gap below, so it governs render cost
-        # as well as write cost, and a render above the loop rate buys
-        # nothing. Hence 30, not unlimited. Render cost on high-entropy
-        # content, where tile dedup skips nothing at ~270 candidate writes per
-        # second, belongs to the native tile cache and not to this knob. A
-        # value of 0 disables the cap, and the env var is a field bisection
-        # tool; 20 restores the older pacing.
+        # Cap background-video render and writes at loop rate; 0 disables the cap.
+        # FIFO bounds HID-reader wait; high-entropy content can still produce about 270 candidate key writes per second before deduplication.
         self._video_write_hz = _env_float("DECKARD_VIDEO_WRITE_HZ", 30.0)
         self._last_video_write = 0.0
-        # The same budget caps every touchscreen write, at the write point in
-        # perform_media_player_tasks. Dial-state videos and scrolling labels
-        # otherwise rewrite the strip at loop FPS, which is the same
-        # HID-starvation vector through a different content type.
+        # Apply the same write budget to touchscreen frames so dial videos and
+        # scrolling labels cannot starve HID reads.
         self._last_touch_write = 0.0
 
-        # Inter-write yield inside a bulk batch, in seconds. See
-        # perform_media_player_tasks. It is off by default, because the yield
-        # only hands the reader a mutex slot and FIFO ordering grants that
-        # anyway. The machinery stays so the env var restores the older
-        # pacing, 1.5, in the field with no rebuild.
+        # Optional bulk-batch inter-write delay; FIFO ordering makes the default
+        # zero, while DECKARD_WRITE_YIELD_MS can enable pacing without a rebuild.
         self._inter_write_yield = _env_float("DECKARD_WRITE_YIELD_MS", 0.0) / 1000.0
 
         self.running = False
         self.media_ticks = 0
-        # Ticks that skipped the animation section because the user is away.
-        # The quiescence scenarios and the hardware driver assert on it, and
-        # media_ticks minus gated_ticks is the number of ticks that rendered.
+        # Ticks that skipped animation while the user was away; subtract from
+        # media_ticks to get the number of rendered ticks.
         self.gated_ticks = 0
-        # Ticks the settle window rendered instead of gating. It sits next to
-        # gated_ticks so an open render window is observable from outside the
-        # loop. A window that never closes is this gate's worst failure mode,
-        # and gated_ticks merely stops advancing, which also describes a user
-        # who is not yet quiescent.
+        # Settle-window render ticks make an open window observable while
+        # gated_ticks does not advance.
         self.gate_window_ticks = 0
-        # Page-generation watch state; see _run_one_tick. It holds the
-        # generation last observed while gated, the render ticks the settle
-        # window still owes it, and the monotonic instant the window closes
-        # whatever happens, from GATE_WINDOW_MAX_S.
+        # Generation seen while gated, remaining settle ticks, and monotonic
+        # window deadline.
         self._gated_generation: int | None = None
         self._gate_render_ticks = 0
         self._gate_window_deadline = 0.0
@@ -367,41 +281,20 @@ class MediaPlayerThread(threading.Thread):
         self.tasks: list[MediaPlayerTask] = []
         self.image_tasks: dict[int, MediaPlayerSetImageTask] = {}
         self.touchscreen_task: MediaPlayerSetTouchscreenImageTask | None = None
-        # Guards the single-slot task stores against a producer and consumer
-        # interleave. The drain's read-then-null on touchscreen_task and the
-        # Clear's get-then-del on image_tasks can both discard a task assigned
-        # in between, and the producer already stamped the target's enqueued
-        # hash, so static content stays stale forever with no tick to
-        # re-enqueue it. The critical sections are a few instructions.
+        # Serialize latest-paint slots so read-then-clear cannot lose a new task
+        # after its enqueued hash was stamped.
         self._slot_lock = threading.Lock()
         self._paint_queue = PaintQueue(self)
         self._wake_event = threading.Event()
 
-        # Control queue. append and popleft are GIL-atomic, so it needs no
-        # extra lock. The loop drains it fully and first on every wake, ahead
-        # of any animation tick or task work, so a brightness or clear op
-        # never waits behind them.
+        # GIL-atomic deque operations need no extra lock; every wake drains
+        # controls before animation or paint work.
         self.control_q: "collections.deque[SetBrightnessMsg | ClearMsg | ClearAndCloseMsg | ReleaseStashedInputsMsg | ReopenDeckMsg]" = collections.deque()
-        # Deck-wide ordering state, both fields. A target's own present state
-        # holds what that target shows; these two order every target's frames
-        # against each other, because a Clear judges the whole deck against
-        # one seq of its own. Split either per target and that comparison has
-        # nothing left to compare.
-        #
-        # Per-writer monotonic stamp counter. add_image_task and
-        # add_touchscreen_task stamp a task with next(self._submit_seq) under
-        # _slot_lock, atomically with the slot assignment. A stamp taken
-        # before the lock lets racing producers assign out of seq order and
-        # leaves a slot holding an older frame. A Clear captures the counter
-        # at its own submission through next_submit_seq(), so it can tell
-        # which queued frames predate it.
+        # Keep submit ordering deck-wide so Clear can compare every target;
+        # allocate stamps under _slot_lock with assignment to preserve latest wins.
         self._submit_seq = itertools.count()
-        # Highest submit_seq whose frame reached the device, rather than one
-        # merely queued or dropped at the write boundary. It advances only
-        # right after a task's own run() returns, so it means the content is
-        # on the deck now. _exec_clear compares it against a Clear's seq to
-        # tell the two Clear interleaves apart. Media thread only, like the
-        # rest of the drain state.
+        # Highest submit sequence whose task returned on the media thread;
+        # Clear uses it to detect later paint attempts that ran before its blanks.
         self._max_executed_seq: int = -1
 
         # Wall-clock gap detection. A gap much larger than the loop's own
@@ -416,30 +309,20 @@ class MediaPlayerThread(threading.Thread):
             gl.settings_manager.app().enable_fps_warnings,
             self.set_banner_revealed)
 
-        # Set by this deck's reader supervisor while the device handle is
-        # down, and cleared when a reopen takes it back. Every device write
-        # would raise meanwhile, and each failure arms a full repaint, so an
-        # unsuspended writer composites the whole deck and logs a row of
-        # errors every two seconds for as long as the deck stays registered.
-        # Renders still run while it is set, so the window previews stay live.
+        # Suspend writes while the reader supervisor lacks a live handle; renders
+        # continue for previews, while dropped writes avoid errors and repaint retries.
         self.device_writes_suspended: bool = False
 
-        # Loop-guard state. This thread is the sole writer for paints,
-        # brightness, Clear and ClearAndClose, so its death freezes the deck
-        # until a replug. The guard in run() keeps it alive, and these two
-        # fields rate-limit its logging so a per-tick failure cannot storm
-        # the sinks.
+        # Rate-limit loop-error logs so persistent failures cannot storm sinks;
+        # the in-loop guard keeps the sole device writer alive.
         self._last_tick_error_log: float = 0.0
         self._suppressed_tick_errors: int = 0
 
     def run(self) -> None:
         self.running = True
 
-        # Guard the body. An uncaught exception here kills the sole writer and
-        # freezes the deck. @log.catch on run() is wrong, because it logs once
-        # and returns, so the thread dies anyway; the guard must sit inside
-        # the while. The central threading.excepthook reports an escaping
-        # death, and this prevents the death.
+        # Catch tick exceptions inside the loop so the sole writer survives;
+        # @log.catch on run() would log once and let the thread exit.
         try:
             while True:
                 try:
@@ -456,24 +339,11 @@ class MediaPlayerThread(threading.Thread):
                         self._suppressed_tick_errors = 0
                     else:
                         self._suppressed_tick_errors += 1
-                    # A tick that raised mid-batch already popped its task
-                    # lists, because perform_media_player_tasks drains
-                    # image_tasks and touchscreen_task before it runs them, so
-                    # the failing frame's siblings are lost too. Without a
-                    # scheduled recovery the unpainted keys keep their
-                    # previous imagery forever. Arm the pending full repaint,
-                    # the same recovery a failed device write uses; its 2s
-                    # rate limit makes this safe against a deterministic
-                    # per-tick failure.
+                    # A mid-batch exception loses every paint popped for that tick;
+                    # schedule the 2-second-rate-limited repaint to restore siblings.
                     self.deck_controller._schedule_full_repaint()
-                    # A raising body never reaches the FPS wait below, so
-                    # without this backoff a persistent failure spins at
-                    # 100%. Use _wake_event and not sleep, so stop() still
-                    # wakes the loop at once. Every producer sets that event
-                    # too, so one wait() under a set_media storm returns at
-                    # once and the retry rate tracks the producer rate
-                    # instead of ~4Hz. Re-wait until the backoff elapses;
-                    # only _stop cuts it short.
+                    # Back off for 250 ms without delaying stop; re-wait because
+                    # producers also set _wake_event and could drive retry rate.
                     deadline = time.monotonic() + 0.25
                     while not self._stop:
                         remaining = deadline - time.monotonic()
@@ -484,17 +354,15 @@ class MediaPlayerThread(threading.Thread):
                     if self._stop:
                         break
         finally:
-            # This sits in a finally, not at the loop's tail. The guard
-            # catches Exception, so a BaseException such as SystemExit or
-            # KeyboardInterrupt escapes it, and a death that left
-            # running=True makes every later stop() burn its full join
-            # timeout on a dead thread.
+            # Clear running in finally so BaseException exits do not make
+            # stop() wait on a dead thread.
             self.running = False
 
     def _open_gate_window(self) -> None:
-        """Open the gated render window again for GATE_SETTLE_TICKS quiet
-        render ticks, and never more than GATE_WINDOW_MAX_S of wall clock
-        however busy the task queues stay. Writer thread only."""
+        """Open rendering for GATE_SETTLE_TICKS quiet ticks, bounded by GATE_WINDOW_MAX_S.
+
+        Media-writer thread only.
+        """
         self._gate_render_ticks = self.GATE_SETTLE_TICKS
         self._gate_window_deadline = media_loop.now() + self.GATE_WINDOW_MAX_S
 
@@ -503,20 +371,8 @@ class MediaPlayerThread(threading.Thread):
         # Monotonic: gates, deadlines and waits must not follow wall steps.
         start = media_loop.now()
 
-        # Drain the control queue fully and first on every wake, ahead of the
-        # resume-gap check, the pending-repaint hook, any animation tick or
-        # task work, and ahead of a pending stop. Two orderings matter.
-        #
-        # Drain before _stop, because close_all() submits a terminal
-        # ClearAndCloseMsg and then calls stop() at once. A _stop check before
-        # this drain, or at the bottom of the loop after a wake that raced
-        # that flag set, strands the terminal message unprocessed.
-        #
-        # Drain before everything else, because the rest of this tick can
-        # raise into the run() guard. Anything ahead of the drain lets a
-        # persistently failing tick starve SetBrightnessMsg, ClearMsg and
-        # ClearAndCloseMsg forever, so the deck never blanks or closes on
-        # quit.
+        # Drain controls before stop checks and all other tick work so terminal
+        # close runs and persistent later failures cannot starve control messages.
         if not self.drain_control_queue():
             return False
         if self._stop:
@@ -525,71 +381,34 @@ class MediaPlayerThread(threading.Thread):
         self.check_resume_gap(start)
         repaint_fired = self.deck_controller._run_pending_repaint()
 
-        # Quiescence gate. It runs strictly after the control-queue drain and
-        # the _stop check above, because quit, clear and brightness must never
-        # wait on quiescence. When it holds, this tick skips the whole
-        # animation section below, with no background decode or composite, no
-        # key, dial or touchscreen tick, and no scroll-label advance.
-        # perform_media_player_tasks() still runs, so queued interactive
-        # paints and control-adjacent work stay live and the deck stays
-        # functional. Only the animation pauses.
+        # After controls and stop checks, quiescence skips animation, decode,
+        # composition, input ticks, and scrolling; queued paints still drain.
         gated = self.deck_controller.animations_gated()
         force_render = False
         gate_window_open = False
         if gated:
-            # Page-generation watch. update_all_inputs() leaves the device
-            # paint of a non-opaque key to this loop whenever a background
-            # video is set. It paints the dials and the fully-opaque keys and
-            # pushes the rest to the UI preview only. A page load or a
-            # background swap that lands while gated would then leave the
-            # previous page's imagery on every transparent key for the whole
-            # away window, and _run_pending_repaint() is no escape, because it
-            # calls that same update_all_inputs(). So render un-gated across a
-            # new generation, then re-gate.
-            #
-            # This is a settle window and not a single pass. load_page() bumps
-            # the generation at its very top, and queues the work that builds
-            # the new page's inputs and background onto this thread
-            # afterwards. A single pass fired on the first tick that sees the
-            # new generation renders the old page's content, correctly, and
-            # then never again. So the window keeps rendering while the task
-            # queues are non-empty, which means page-load work is still
-            # landing, and counts down only over quiet ticks. The last of
-            # those paints the settled new page. GATE_WINDOW_MAX_S bounds the
-            # whole thing, because non-empty queues are a producer's permanent
-            # state. This uses the same snapshot under _page_gen_lock as
-            # perform_media_player_tasks.
+            # On a gated generation change, render transparent video keys through the required quiet ticks.
+            # Page-load queues rearm it, the deadline bounds producers, and _page_gen_lock supplies the snapshot.
             with self.deck_controller._page_gen_lock:
                 current_gen = self.deck_controller._page_load_generation
             if current_gen != self._gated_generation:
                 self._gated_generation = current_gen
                 self._open_gate_window()
             if repaint_fired:
-                # A full repaint that just fired, from a resume or from the
-                # 2s retry after write failures, bumps no generation but runs
-                # through the same update_all_inputs(), so it has the same
-                # transparent-key blind spot on a video-background page. Open
-                # the window for it too, or a machine that wakes from sleep
-                # while the user is away leaves those keys showing whatever
-                # survived the suspend.
+                # Resume and write-failure recovery repaints do not change generation;
+                # open the window for their transparent video keys while the user is away.
                 self._open_gate_window()
             if self._gate_render_ticks > 0:
                 if media_loop.now() >= self._gate_window_deadline:
-                    # Wall-clock stop from GATE_WINDOW_MAX_S. The window was
-                    # open long enough. It closes here whatever the queue
-                    # state below says, because a steady producer holds that
-                    # predicate true forever.
+                    # Close at GATE_WINDOW_MAX_S even when a steady producer
+                    # keeps queues nonempty.
                     self._gate_render_ticks = 0
                 else:
                     gated = False
                     gate_window_open = True
                     self.gate_window_ticks += 1
-                    # The pass must paint. The video block's frame deadline
-                    # otherwise skips this single frame on any video whose
-                    # rate is below the loop's. The window deadline bounds
-                    # that bypass, because it applies only while this window
-                    # is open, so no video runs above its own frame rate for
-                    # longer than GATE_WINDOW_MAX_S.
+                    # Force settle passes past video deadlines; the window bound
+                    # limits how long a video can exceed its own rate.
                     force_render = True
                     if self.tasks or self.image_tasks or self.touchscreen_task:
                         self._gate_render_ticks = self.GATE_SETTLE_TICKS
@@ -613,16 +432,13 @@ class MediaPlayerThread(threading.Thread):
         if video is not None and not gated:
             if video.page is self.deck_controller.active_page:
                 has_bg_video = True
-                # Rate-limit the video's repaints to the write budget in
-                # _video_write_hz. This gate decides whether the frame renders
-                # at all, not only whether it is written.
+                # Gate video rendering, not only writes, to _video_write_hz.
                 min_gap = 1.0 / self._video_write_hz if self._video_write_hz > 0 else 0
                 if start - self._last_video_write >= min_gap:
                     video_repaint = True
                     self._last_video_write = start
-                # The video's own frame deadline paces the render, so a
-                # swapped video renders at once and a slow source pays
-                # nothing between frames. force_render = settle pass paints.
+                # The source deadline renders swaps immediately and skips work
+                # between slow frames; force_render bypasses it for settle passes.
                 if video_repaint and (force_render or video.frame_due(start)):
                     self.deck_controller.background.update_tiles()
                     bg_frame_new = True
@@ -630,30 +446,20 @@ class MediaPlayerThread(threading.Thread):
                     # touchscreen re-composited for the new frame.
                     bg_strip_dirty = self.deck_controller.background.get_touchscreen_image() is not None
 
-        # Advance a still-image slideshow when its interval has elapsed. The
-        # model no-ops without a rotation, so a video or single-image
-        # background pays one attribute read here. It reads its own monotonic
-        # clock, matching the seed the load path set, and swaps the background
-        # image plus repaints when a frame comes due. Gated pauses it, as it
-        # pauses every animation above.
+        # Advance due still-image slideshows on their load-seeded monotonic
+        # clock; videos and single images no-op, and quiescence pauses it.
         if not gated:
             self.deck_controller.background.slideshow_tick()
 
-        # Iterate the keys only when animated content needs an update.
         if not gated and (bg_frame_new or self._needs_key_ticks()):
-            # Snapshot the dict and use .get, because the screensaver swaps
-            # the whole inputs dict from another thread. init_inputs builds
-            # then swaps, so every dict this sees is complete, but read
-            # deck_controller.inputs once per tick and never subscript it
-            # directly. _needs_key_ticks uses the same pattern.
+            # Snapshot the complete inputs dict because screensaver swaps it
+            # from another thread; use .get(), as _needs_key_ticks does.
             inputs = self.deck_controller.inputs
-            #TODO: generalize
             for key in inputs.get(Input.Key, []):
                 cast("ControllerKey", key).on_media_player_tick(start, bg_frame_new)
 
-            # The dials and any per-touchscreen background video share one
-            # touchscreen. Render it at most once per frame, not once per
-            # dial.
+            # Dials and per-touchscreen videos share one strip, so composite it
+            # at most once per frame.
             dials = inputs.get(Input.Dial, [])
             touchscreens = inputs.get(Input.Touchscreen, [])
             touchscreen_dirty = False
@@ -676,76 +482,44 @@ class MediaPlayerThread(threading.Thread):
             media_prof.add("tick", end - start)
             media_prof.maybe_report()
 
-        # Use a low FPS when idle, with no animated content and no pending
-        # task. These slot reads take no _slot_lock. A torn read only
-        # mis-picks the target FPS for one tick and never affects
-        # correctness, because the next tick re-reads and self-corrects.
-        #
-        # gated outranks _cached_needs_ticks. _needs_key_ticks() writes that
-        # cache inside the block the gate skips, so under the gate it holds
-        # whatever the last rendering tick saw, and a page with a key video
-        # would otherwise spin this loop at 30 Hz for nothing. has_pending
-        # still outranks the gate, so queued frames, from interactive paints
-        # and control-adjacent work, drain at full speed.
-        #
-        # The gated cadence stays at 2 Hz instead of the slowest possible,
-        # because check_resume_gap() reads an inter-iteration gap of 5s or
-        # more as a resume and schedules a full repaint. Anyone who lengthens
-        # this past ~4s must teach that check about quiescence first. It costs
-        # nothing, because a gated tick is a drain, a check and a wait. The
-        # CPU win is the skipped decode, composite, encode and write.
+        # Use 2 Hz only without animation or queued paints; unlocked slot reads affect one tick.
+        # Quiescence outranks cached animation, queued work stays full-rate, and 2 Hz remains below the 5-second resume-gap threshold.
         has_pending = bool(self.tasks or self.image_tasks or self.touchscreen_task)
         if has_pending:
             target_fps = self.FPS
         elif gate_window_open:
-            # The settle window is open, so run it out at full FPS. It is a
-            # render window bounded in wall clock by GATE_WINDOW_MAX_S. At the
-            # 2Hz gated cadence one tick sleeps through the whole window, so a
-            # page loaded while gated gets exactly one pass, fired before its
-            # background finishes installing, and its transparent keys are
-            # never painted at all.
+            # Run settle windows at full FPS because 2 Hz can sleep through the
+            # bound and leave transparent keys unpainted after early passes.
             target_fps = self.FPS
         elif gated:
             target_fps = 2
         elif has_bg_video or getattr(self, '_cached_needs_ticks', False):
             target_fps = self.FPS
         else:
-            target_fps = 2  # idle; check for new tasks occasionally
+            target_fps = 2
 
         # Recorded before the wait below on purpose: the value is this
         # tick's work-rate, not the achieved cadence.
         self.metrics.record(1 / (end - start))
         self.metrics.update_warning()
         wait = max(0, 1/target_fps - (end - start))
-        # Event-based wait on both paths. A submitted control op or an
-        # interactive paint wakes the loop at once, instead of a wait for a
-        # full active-FPS tick.
+        # Event waits let controls and interactive paints wake either path immediately.
         self._wake_event.wait(wait)
         self._wake_event.clear()
 
-        # No _stop check here. It sits at the top, right after the
-        # control-queue drain, so the loop always goes around once more and
-        # drains before it honors a stop.
+        # Check _stop only after the next control drain so stop cannot strand
+        # a terminal message.
         return True
 
     def next_submit_seq(self) -> int:
-        """Allocate the next value from the writer's monotonic submit-seq
-        counter. add_image_task and add_touchscreen_task use it to stamp a
-        task, and DeckController.clear() uses it to capture the counter at a
-        Clear's submission time."""
+        """Allocate the next deck-wide submit sequence for paints and Clear snapshots."""
         return next(self._submit_seq)
 
     def submit_control(self, msg: "SetBrightnessMsg | ClearMsg | ClearAndCloseMsg | ReleaseStashedInputsMsg | ReopenDeckMsg") -> bool:
-        """Append and wake, without blocking, and report whether the message
-        was queued. Safe from any thread, because a deque append is GIL-atomic
-        and needs no lock.
+        """Append and wake without blocking; GIL-atomic deque append is safe from any thread.
 
-        It rejects a message once the writer stops or closes. The loop is gone
-        by then, so nothing would ever drain a message appended after that
-        point. If a late plugin or API callback kept calling set_brightness()
-        on a torn-down deck, control_q would grow unbounded for the rest of
-        the process's life. A caller that tracks its message, as the reader
-        supervisor does with an in-flight marker, needs the rejection back."""
+        Reject after stop because no loop remains to drain the message, and return rejection to callers with in-flight state.
+        """
         if self._stop:
             return False
         self.control_q.append(msg)
@@ -753,11 +527,10 @@ class MediaPlayerThread(threading.Thread):
         return True
 
     def drain_control_queue(self) -> bool:
-        """Execute every pending control message, FIFO. Returns False after
-        it processes a terminal ClearAndCloseMsg, and the caller must then
-        stop the loop. It is split out of run() so a unit-tier scenario drives
-        the control queue without a running thread. The harness's stub
-        controller never starts the thread. See tests/fixtures.py."""
+        """Run all control messages FIFO, returning False after terminal clear-and-close.
+
+        The separate method permits use without a running writer thread.
+        """
         while self.control_q:
             msg = self.control_q.popleft()
             if isinstance(msg, SetBrightnessMsg):
@@ -770,19 +543,14 @@ class MediaPlayerThread(threading.Thread):
             elif isinstance(msg, ReleaseStashedInputsMsg):
                 self._exec_release_stashed_inputs(msg)
             elif isinstance(msg, ReopenDeckMsg):
-                # This blocks the loop for as long as the attempt takes, at
-                # most the supervisor's reopen deadline. _stop shortens that
-                # to the open in flight plus one retry gap, not to nothing.
-                # Meanwhile this deck paints nothing, and it has no working
-                # handle to paint to.
+                # A reopen blocks this deck's loop until the supervisor deadline, with no valid handle for paints.
+                # _stop shortens it after the current open and one retry gap.
                 msg.supervisor.run_attempt(stopping=lambda: self._stop)
         return True
 
     def _exec_set_brightness(self, msg: "SetBrightnessMsg") -> None:
-        # Write to the device directly, not through
-        # DeckController.set_brightness(), which re-submits and loops forever.
-        # The error policy is attempt and swallow, reported to the unified
-        # per-controller handler as the task classes do.
+        # Write directly to avoid DeckController.set_brightness() resubmission;
+        # attempt, report through _on_write_result, and swallow failures.
         if self.device_writes_suspended:
             return
         try:
@@ -793,9 +561,10 @@ class MediaPlayerThread(threading.Thread):
             self.deck_controller._on_write_result(False)
 
     def _exec_release_stashed_inputs(self, msg: "ReleaseStashedInputsMsg") -> None:
-        """Run on the media player thread, serialized with every render and
-        write it does. See the ReleaseStashedInputsMsg docstring for why this
-        is a control message and not an add_task()."""
+        """Close stashed resources on the media thread, serialized with renders and writes.
+
+        This page-independent control must not use add_task().
+        """
         stashed_inputs = msg.stashed_inputs
         for inputs in list(stashed_inputs.values()):
             for controller_input in list(inputs):
@@ -826,61 +595,25 @@ class MediaPlayerThread(threading.Thread):
         return False
 
     def _exec_clear(self, msg: "ClearMsg") -> None:
-        # Wipe only the slots whose frame predates this Clear. A frame
-        # submitted after this Clear survives and paints afterward, which
-        # keeps the queued Clear in the caller's clear-then-paint order. The
-        # _slot_lock covers the per-key get-then-del, which could otherwise
-        # delete a newer task assigned in between, one whose submit_seq
-        # survives this Clear. The touchscreen slot needs the same guard,
-        # because clear_media_player_tasks() and close() also null it from
-        # other threads.
+        # Under _slot_lock, discard only paints older than Clear so later work
+        # survives and concurrent assignments, including touchscreen, cannot be deleted.
         self._paint_queue.discard_before_clear(msg.seq)
-        # Reset the dedup state on every current input before the blanks go
-        # out. Otherwise an identical repaint after this Clear matches the
-        # pre-clear cached hash, is wrongly skipped, and leaves the device
-        # stuck on blank.
+        # Reset current-input hashes before blanking so identical repaints are
+        # not deduplicated against pre-clear content.
         self.deck_controller._reset_dedup_hashes()
         try:
             self.deck_controller._write_blank_frames()
         except Exception as e:
             log.error(f"Failed to write blank frames for Clear: {e}")
 
-        # A Clear can execute after the paints it was meant to precede. The
-        # caller queues it, then fills the task slots, so a tick that already
-        # drained control writes those paints and pops this Clear next pass.
-        # The seq filter above cannot help, because those paints already ran,
-        # and the blanks land last. Behind a showing screensaver that state is
-        # terminal, because a still image animates nothing and no other
-        # producer runs, so the deck stays blank until the screensaver is
-        # dismissed. Arm the repaint retry, which _run_pending_repaint
-        # services, from the media thread only.
-        #
-        # The test must be exactly that a frame stamped after this Clear
-        # reached the device. An arm on an ordinary transition is harmful,
-        # because _run_pending_repaint composites the whole deck unlocked from
-        # the media thread ahead of the task drain, racing an
-        # update_all_inputs() under _load_page_lock, and the producer leaves
-        # the enqueued-hash stamp and the slot assignment unsynchronised, so a
-        # pre-swap repaint can land last and stick with both present hashes
-        # agreeing. Queue occupancy cannot tell the two apart, because the
-        # screensaver clears the slots between its Clear and its paints. This
-        # counter moves only when a frame goes out, so it exceeds this Clear's
-        # seq only where the paints went out and these blanks overwrote them.
-        #
-        # DeckController.clear() has three callers. The screensaver's entry and
-        # exit stamp expects_repaint True; load_page's page-is-None branch does
-        # not, because there a blank deck is the requested end state. The
-        # submitter stamps it, because hide() clears showing one statement
-        # later.
+        # If a transition Clear runs after a later paint attempt, its blanks land last; require intent and a higher executed sequence.
+        # Ordinary clears must stay blank, and queue occupancy cannot prove that the later paint already ran.
         if msg.expects_repaint and self._max_executed_seq > msg.seq:
             self.deck_controller._schedule_full_repaint()
 
     def _exec_clear_and_close(self) -> None:
-        # Set _stop before any of the work below, and do not rely only on the
-        # external stop() call that follows this message. In the window
-        # between this terminal message landing and that stop() call, a late
-        # submit_control() would otherwise still be accepted into a queue that
-        # nothing drains again.
+        # Set _stop before terminal work so late controls are rejected before
+        # the queue becomes undrained.
         self._stop = True
         self._paint_queue.discard_all("terminal_clear")
         self.deck_controller._reset_dedup_hashes()
@@ -924,13 +657,10 @@ class MediaPlayerThread(threading.Thread):
 
 
     def wake(self) -> None:
-        """Cut short the loop's inter-tick wait. Safe from any thread,
-        because it only calls Event.set(). The in-module producers
-        submit_control, add_task, add_image_task, add_touchscreen_task and
-        stop poke _wake_event directly. This is the public name for an
-        external caller with no task to submit. The presence monitor's
-        transition fan-out is one such caller. Its only effect is that the
-        next tick evaluates the gate differently."""
+        """Wake the media loop without work; Event.set() makes this safe from any thread.
+
+        External gate-state transitions use this so the next tick re-evaluates quiescence.
+        """
         self._wake_event.set()
 
     def stop(self, timeout: float = 2.0) -> None:
@@ -962,13 +692,8 @@ class MediaPlayerThread(threading.Thread):
                 latency_sample=latency_sample,
             ),
         )
-        # Stamp inside the slot lock. A seq allocated before the lock lets
-        # two racing producers, the media tick and a dial update on another
-        # thread, allocate in one order and assign in the other, and the
-        # single slot then holds the older frame. With the stamp and the
-        # assignment atomic, seq order is assignment order, the slot ends up
-        # with the newest frame, and a Clear's survives-if-submitted-after
-        # test stays consistent with what the slot holds.
+        # Allocate touchscreen sequence with assignment under _slot_lock so
+        # racing producers preserve latest-wins order and Clear sees consistent state.
         self._paint_queue.replace_touchscreen(task, self.next_submit_seq)
         self._wake_event.set()
 
@@ -995,9 +720,8 @@ class MediaPlayerThread(threading.Thread):
         self._paint_queue.discard_all(reason)
 
     def perform_media_player_tasks(self) -> None:
-        # Drain the queues before the page and generation snapshot. Every
-        # drained task then predates the snapshot, so a mismatch means stale.
-        # The reverse order drops a task just queued for the new page, unrun.
+        # Drain before the page-generation snapshot so every task predates it;
+        # the reverse order can drop a new-page task queued after the snapshot.
         task_batch = self.tasks.copy()
         for task in task_batch:
             try:
@@ -1012,15 +736,11 @@ class MediaPlayerThread(threading.Thread):
             except KeyError:
                 continue
 
-        # Take _slot_lock. A producer that assigns between the read and the
-        # null loses its frame, and with the enqueued hash already stamped a
-        # static strip stays stale forever. clear_media_player_tasks also
-        # nulls this, from the GTK thread.
+        # Take _slot_lock so read-then-clear cannot lose a touchscreen frame
+        # assigned after its enqueued hash was stamped.
         touch_task = self._paint_queue.take_touchscreen()
 
-        # Snapshot the page and the generation as one pair, so the whole
-        # batch is judged consistently. The assignment in load_page holds the
-        # same lock.
+        # Snapshot page and generation together under the lock used by load_page.
         with self.deck_controller._page_gen_lock:
             active_page = self.deck_controller.active_page
             current_gen = self.deck_controller._page_load_generation
@@ -1046,13 +766,8 @@ class MediaPlayerThread(threading.Thread):
                 self._paint_queue.account_writer_tick_exception(pending)
                 raise
 
-        # Every device write below would raise on a deck whose handle the
-        # reader supervisor could not take back, and each failure arms another
-        # full repaint, so the loop would composite the deck and log a row of
-        # errors every two seconds for the rest of the session. Drop the
-        # frames instead, silently. The renders that produced them already
-        # reached the window previews, and a reopen resets every present state
-        # before it repaints, so nothing stays stale after a recovery.
+        # Drop writes while no handle is live to avoid repeated failures and
+        # repaint retries; previews remain, and reopen resets state before repaint.
         if self.device_writes_suspended:
             for image_task in image_batch:
                 image_task.ticket.discarded(self.deck_controller, "device_writes_suspended")
@@ -1060,20 +775,8 @@ class MediaPlayerThread(threading.Thread):
                 touch_task.ticket.discarded(self.deck_controller, "device_writes_suspended")
             return
 
-        # Bulk-batch write pacing, off by default. A video-frame repaint
-        # lands as a burst of back-to-back writes, and the transport
-        # serializes the reads and writes of a deck on one mutex, so under an
-        # unfair lock the writer releases and re-acquires ahead of the waiting
-        # 20Hz HID read poll, which starves the dials. A yield between bulk
-        # writes hands the reader a mutex slot. The FIFO transport lock hands
-        # it one in queue order. DECKARD_WRITE_YIELD_MS therefore defaults to
-        # 0 and this loop is a straight write. The machinery stays as the
-        # field bisection tool if dial latency regresses; 1.5 restores the
-        # older pacing with no rebuild. An interactive paint, in a small
-        # batch, is never paced. The stride exists because the read poll needs
-        # one mutex window per ~50ms, not one per write. Per-write yields cost
-        # ~12ms per video frame on high-entropy content where dedup skips
-        # nothing, measured at a 19fps loop on a busy video.
+        # Optional bulk pacing yields every YIELD_STRIDE writes for the 20 Hz HID reader, which needs one slot per about 50 ms.
+        # FIFO makes the default 0 ms and interactive batches never yield; per-write yields cost about 12 ms at 19 FPS on high-entropy video.
         bulk = len(image_batch) >= self.BULK_BATCH_THRESHOLD
         writes_since_yield = 0
         for index, image_task in enumerate(image_batch):
@@ -1095,28 +798,13 @@ class MediaPlayerThread(threading.Thread):
                 image_task.ticket.discarded(self.deck_controller, "stale_paint")
 
         if touch_task is not None and _is_current(touch_task):
-            # Rate-cap every touchscreen write with the same budget as the
-            # background video, _video_write_hz. A dial-state video and a
-            # scrolling label re-render the shared strip from the media tick
-            # at loop FPS, which is the same HID-starvation vector the cap was
-            # built for, through a different content type. The cap sits here
-            # at the write point, so it covers every producer: the bg-video
-            # strip, a dial video, a scroll label and an interactive paint.
-            # The latest frame wins. An over-budget frame goes back into the
-            # single task slot unless a newer frame arrived meanwhile, and the
-            # next iteration writes the freshest composite, so content is
-            # delayed by at most one budget window and never lost. A non-empty
-            # slot keeps the loop at active FPS, so the retry is prompt. One
-            # _last_touch_write timestamp shares the budget across every
-            # producer, so a frame can wait one window against a different
-            # stream; a bg-video frame that arrives right after a scroll-label
-            # write is re-queued and waits.
+            # Share _video_write_hz across background video, dial video, scrolling labels, and interactive touchscreen paints.
+            # An over-budget frame returns only if still newest, so one shared timestamp delays it by at most one budget window.
             now = media_loop.now()
             min_gap = 1.0 / self._video_write_hz if self._video_write_hz > 0 else 0
             if min_gap and now - self._last_touch_write < min_gap:
-                # Locked check-then-set. A producer that assigns a newer
-                # frame between the None check and the putback must win;
-                # unguarded, the putback clobbers it with this older frame.
+                # Under _slot_lock, put back this frame only if no newer
+                # producer filled the slot.
                 self._paint_queue.defer_rate_limited_touchscreen(touch_task)
             else:
                 self._last_touch_write = now
@@ -1132,19 +820,10 @@ class MediaPlayerThread(threading.Thread):
             touch_task.ticket.discarded(self.deck_controller, "stale_paint")
 
     def _note_executed(self, task: "MediaPlayerSetImageTask | MediaPlayerSetTouchscreenImageTask") -> None:
-        """Record that the task's device write was attempted and did not
-        raise. A caller reaches this only after the task's own run() returns.
-        A task dropped as stale, or deferred by the touchscreen write budget,
-        never reaches it. A frame that was never sent must not advance this.
+        """Advance executed sequence only after a task returns; stale or deferred paints do not count.
 
-        This is not quite the same as reaching the device. The task classes
-        swallow StreamDeck.TransportError, so a write that failed at the
-        transport still returns normally and advances this. That is safe,
-        because every such failure runs _on_write_result(False), which arms
-        the same pending repaint this counter triggers, so the recovery
-        happens either way.
-
-        Writer thread only, so the read-compare-write needs no lock."""
+        Swallowed transport errors still count but schedule the same recovery through _on_write_result(False); media thread only.
+        """
         seq = task.submit_seq
         if seq is not None and seq > self._max_executed_seq:
             self._max_executed_seq = seq

@@ -50,25 +50,9 @@ if TYPE_CHECKING:
 
 
 class PresentState:
-    """What one target shows now, and what is on its way to it.
+    """Track one target's presented and enqueued hashes; skip only when both match.
 
-    The two hashes have three writers. last_presented_hash moves on the
-    media thread, once the device call for a paint has returned, so it names
-    what the device holds. last_enqueued_hash moves on whichever thread
-    rendered the paint, at the moment that paint is handed to the writer, so
-    it names what is in flight. reset() clears both, from a Clear on the
-    media thread and from the full repaint that same thread fires.
-
-    A repaint is skipped only when the new image matches both. Either alone
-    can be stale, after a paint the write boundary dropped or an in-flight
-    revert, and would wrongly skip the correcting repaint.
-
-    One target owns one of these. The writer's submit-seq counter and its
-    high-water mark of executed seqs stay deck-wide on the writer, because a
-    Clear judges every target's frames against one seq of its own.
-
-    A subclass binds the target's slot on the device: KeyPresentState a key
-    index, TouchscreenPresentState the single strip.
+    Render threads update enqueued, the media thread updates presented or resets both, subclasses bind key or strip slots, and deck-wide ordering stays on the writer.
     """
 
     def __init__(self) -> None:
@@ -76,61 +60,26 @@ class PresentState:
         self.last_enqueued_hash: int | None = None
 
     def reset(self) -> None:
-        """Forget both hashes, so the next paint reaches the device whatever
-        it shows. A Clear and a full repaint both need it: without it a
-        repaint of visually identical content matches the hash cached before
-        the clear, is skipped, and the device stays on the blank."""
+        """Clear both hashes so the next paint cannot be deduplicated.
+
+        Clear and full repaint need this to prevent identical content from leaving the device blank.
+        """
         self.last_presented_hash = None
         self.last_enqueued_hash = None
 
     def note_presented(self, img_hash: int | None) -> None:
-        """Record that img_hash is on the device now.
+        """Record the hash only after its device write returns.
 
-        The write boundary calls it once the device call for that paint has
-        returned, and never at render time. A paint the boundary dropped, and
-        a write that raised, never reach it. Either would advance this past
-        what the device holds, so the correcting render is hash-skipped and
-        the target bleeds forever.
+        Dropped or failed paints must not advance it, or the correcting render is deduplicated.
         """
         self.last_presented_hash = img_hash
 
     def offer(self, media_player: "MediaPlayerThread", *, page: "Page | None",
               config_gen: int | None, img_hash: int,
               encode: "Callable[[], bytes]", force: bool = False) -> bool:
-        """Offer a rendered image to the device, and report whether it was
-        enqueued.
+        """Offer an image unless both hashes match; force bypasses the check, and encoding runs only after acceptance.
 
-        The caller has an image and its hash. This decides whether that image
-        is worth a device write, encodes it if it is, records it as in flight
-        and hands it to the writer's slot for this target.
-
-        An image is skipped when its hash matches both what the device shows
-        and what is already on its way there. Either alone can be stale, after
-        a paint the write boundary dropped or an in-flight revert, and would
-        wrongly skip the correcting repaint. force runs the paint through
-        whatever the hashes say.
-
-        encode runs only for a paint that is not skipped, which is what keeps
-        an unchanged composite off the JPEG encoder. page and config_gen are
-        the pair the caller captured before it rendered, so a page switch
-        mid-render invalidates this paint at the write boundary.
-
-        The enqueued-hash stamp lands before the slot assignment and is not
-        synchronised with it here. The producer is what orders the two: every
-        caller offers while holding the paint lock of the input that owns this
-        target, so two paints of one target reach the slot in the order they
-        were composed, and no paint can stamp a hash the slot does not hold. A
-        producer that offers outside that lock reopens that race, where a paint
-        that loses to the slot leaves a hash saying it is in flight.
-
-        The stamp still runs ahead of the device write, which the lock does not
-        change. A paint stamped here is dropped later at the write boundary when
-        _is_current judges its page or generation stale, or when a Clear wipes
-        it, and note_presented never runs for it. last_enqueued_hash then names
-        bytes the device never got. The dual-hash skip above is what recovers:
-        the correcting repaint still differs from last_presented_hash, which
-        names what the device actually holds, so the two-way test fails and the
-        repaint is offered rather than skipped as a repeat.
+        Callers must hold the target paint lock to order stamp and slot; page or generation changes may drop tickets, while the presented hash permits recovery.
         """
         if (not force and img_hash == self.last_presented_hash
                 and img_hash == self.last_enqueued_hash):
@@ -203,20 +152,15 @@ class TouchscreenPresentState(PresentState):
 
 @dataclass(frozen=True, slots=True)
 class PaintTicket:
-    """One paint, from the render that produced it to the device write.
+    """Carry one immutable paint from rendering to device write.
 
-    It is frozen, because a producer and the media thread hold the same
-    ticket. The one change the writer makes is the payload release after the
-    write, and it builds a successor for that rather than mutating this one.
+    The writer releases payload bytes through a successor ticket, so producer and media-thread references never mutate.
     """
 
-    # The present state this paint belongs to, or None for a paint submitted
-    # with no target behind it, as the writer scenarios do. The write boundary
-    # stamps it and reads nothing else off it.
+    # Present state for this paint, or None for targetless writer scenarios.
     present: "PresentState | None"
-    # None when the deck has no active page, at boot or during teardown. The
-    # write boundary only identity-compares it against active_page and never
-    # dereferences it, so a page-less paint is judged stale, not crashed on.
+    # Active page at render time, or None during boot and teardown; the write
+    # boundary uses identity only, so a page-less paint becomes stale.
     page: "Page | None"
     # Generation of the content rendered; the paint is dropped at present if
     # a newer generation superseded it.
@@ -229,14 +173,9 @@ class PaintTicket:
     latency_sample: "LatencySample | None" = None
 
     def released(self) -> "PaintTicket":
-        """This ticket with its encoded bytes dropped.
+        """Return a successor ticket without encoded bytes; all other fields remain.
 
-        The task replaces its own ticket with this right after the write, so a
-        frame's bytes are freed as it reaches the device instead of at the end
-        of the batch. It matters most for the touchscreen strip, the largest
-        single write on the deck and the one native no cache holds. Every
-        other field survives, so an empty payload means exactly one thing:
-        this paint was already written.
+        Tasks call this after each write so payload memory, especially the uncached touchscreen strip, is released before batch end; empty means already written.
         """
         return replace(self, native_image=b"")
 
@@ -263,12 +202,9 @@ class PaintTicket:
         self.record_drop(deck_controller, reason)
 
     def presented_by(self, deck_controller: object) -> "PaintTicket":
-        """Record the completed device write and release this frame's bytes.
+        """Record a completed device write and release its bytes.
 
-        The presented hash is recorded here, at the write, and never at
-        render time. A paint dropped at the write boundary must not advance
-        the hash, or the correcting render hash-skips and the content
-        bleeds forever.
+        Only successful writes update the presented hash; otherwise a correcting render could be deduplicated.
         """
         self.usb_presented(deck_controller)
         if self.present is not None:
