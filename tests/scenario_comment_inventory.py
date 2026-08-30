@@ -3,15 +3,17 @@ import fixtures  # noqa: F401  (must be first: isolates DATA_PATH)
 
 import io
 import json
+import subprocess
 import sys
 from pathlib import Path
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from comment_inventory_core import InventoryError, Unit, attribute_unit, extract_units
-from comment_inventory_git import blame_arguments, parse_blame
+from comment_inventory_git import GitRepository, blame_arguments, parse_blame
 from comment_inventory_partitions import assign_partitions, validate_coverage
 from comment_inventory_report import write_partition
 
@@ -78,6 +80,31 @@ def check_attribution_and_blame_footing() -> None:
     print("PASS: blame is move-aware, copy-aware, mixed-unit-safe, and fail-closed")
 
 
+def check_git_execution_diagnostics() -> None:
+    repository = GitRepository(ROOT)
+    generic_failure = subprocess.CompletedProcess([], 1, b"", b"missing revision\n")
+    with patch("comment_inventory_git.subprocess.run", return_value=generic_failure):
+        expect_inventory_error(
+            lambda: repository.resolve_commit("missing"),
+            "git rev-parse --verify missing^{commit} failed: missing revision",
+        )
+
+    ancestor_failure = subprocess.CompletedProcess([], 1, b"", b"invalid ancestry\n")
+    with patch("comment_inventory_git.subprocess.run", return_value=ancestor_failure) as run:
+        expect_inventory_error(
+            lambda: repository.require_ancestor("base", "tip"),
+            "fork boundary base is not an ancestor of tip: invalid ancestry",
+        )
+        assert run.call_args.args[0][-4:] == ["merge-base", "--is-ancestor", "base", "tip"]
+
+    with patch("comment_inventory_git.subprocess.run", side_effect=OSError("git unavailable")):
+        expect_inventory_error(
+            lambda: repository.require_ancestor("base", "tip"),
+            "cannot execute git: git unavailable",
+        )
+    print("PASS: one Git executor preserves generic and operation-specific diagnostics")
+
+
 def check_partition_coverage() -> None:
     units = (
         Unit("main.py", 1, 1, "comment", "ordinary", False, "# root", (6,), (1,)),
@@ -138,6 +165,7 @@ def main() -> None:
     fixtures.start_watchdog(30, label="scenario_comment_inventory")
     check_extraction_and_types()
     check_attribution_and_blame_footing()
+    check_git_execution_diagnostics()
     check_partition_coverage()
     check_bounded_review_output()
     print("PASS: scenario_comment_inventory")

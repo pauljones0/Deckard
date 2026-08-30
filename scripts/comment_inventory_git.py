@@ -5,6 +5,7 @@ import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 from comment_inventory_core import (
     InventoryError,
@@ -70,7 +71,11 @@ class GitRepository:
     def __init__(self, root: Path) -> None:
         self.root = root.resolve()
 
-    def _run(self, *args: str) -> bytes:
+    def _execute(
+        self,
+        args: tuple[str, ...],
+        failure_message: Callable[[str], str],
+    ) -> bytes:
         try:
             process = subprocess.run(
                 ["git", "-C", str(self.root), *args],
@@ -82,27 +87,25 @@ class GitRepository:
             raise InventoryError(f"cannot execute git: {error}") from error
         if process.returncode != 0:
             detail = process.stderr.decode("utf-8", "replace").strip()
-            raise InventoryError(f"git {' '.join(args)} failed: {detail}")
+            raise InventoryError(failure_message(detail))
         return process.stdout
+
+    def _run(self, *args: str) -> bytes:
+        return self._execute(
+            args,
+            lambda detail: f"git {' '.join(args)} failed: {detail}",
+        )
 
     def resolve_commit(self, revision: str) -> str:
         return self._run("rev-parse", "--verify", f"{revision}^{{commit}}").decode().strip()
 
     def require_ancestor(self, boundary: str, revision: str) -> None:
-        try:
-            process = subprocess.run(
-                ["git", "-C", str(self.root), "merge-base", "--is-ancestor", boundary, revision],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                check=False,
-            )
-        except OSError as error:
-            raise InventoryError(f"cannot execute git: {error}") from error
-        if process.returncode != 0:
-            detail = process.stderr.decode("utf-8", "replace").strip()
-            raise InventoryError(
+        self._execute(
+            ("merge-base", "--is-ancestor", boundary, revision),
+            lambda detail: (
                 f"fork boundary {boundary} is not an ancestor of {revision}: {detail}"
-            )
+            ),
+        )
 
     def tracked_python(self, revision: str) -> list[str]:
         output = self._run("ls-tree", "-r", "-z", "--name-only", revision)
