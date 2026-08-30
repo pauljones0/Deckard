@@ -1,21 +1,6 @@
-"""
-Regression test for the info rows overriding inherited widget members.
+"""Verify that store information rows do not shadow inherited widget members."""
 
-InfoPage defined set_name, which GTK already defines on every widget, and
-DescriptionRow and AttributeRow defined set_title, which Adw.PreferencesRow
-already defines. Either override silently changes what the inherited call does.
-
-The rows also held their caption in self.title, one name away from the title
-the row inherits. PyGObject keeps GObject properties behind .props, so that
-attribute never wrote the property, but the two names read as one thing and
-mean two. The rows now hold the caption in title_str, and the checks below
-hold that name so the collision cannot come back.
-"""
-
-# The setters now carry intention-revealing names, so the inherited GTK methods
-# stay reachable. The class-dictionary checks read no widget state, and the
-# label checks build single rows, so no window is realized and no store data is
-# fetched.
+# Class dictionaries and isolated rows verify the names without realizing a window.
 import fixtures  # noqa: F401  (isolated --data tempdir; import first)
 
 import gi

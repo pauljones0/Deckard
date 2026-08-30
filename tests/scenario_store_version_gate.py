@@ -1,18 +1,4 @@
-"""
-Regression test for the minimum-app-version gate, and for the shared store
-tab and card that carry it.
-
-StoreData.is_min_app_version_satisfied is the one implementation, and it
-compares inclusively, so an asset requiring exactly the running version is
-compatible. StorePreview delegates to it.
-
-The second half is the anti-drift guard. Every store tab is one
-descriptor-driven page class, and every card one descriptor-driven preview
-class. Each began as four copies that drifted apart, one convenient edit at a
-time, and the version gate was the copy that drifted furthest. A subclass may
-hold what its asset class really does differently, and never a copy of a
-method the shared class already carries.
-"""
+"""Verify inclusive version checks and descriptor-driven shared store classes."""
 
 # No GTK widget is built here, because the method never touches self.
 import fixtures  # noqa: F401  (isolated --data tempdir; import first)
@@ -44,11 +30,7 @@ def test_helper_gate_semantics() -> None:
 
 
 def test_verdict_matches_runtime_gate_on_suffixed_versions() -> None:
-    """The store badge must agree with the runtime plugin loader.
-
-    PluginBase.is_minimum_version_ok compares base versions, with the pre-
-    release, post-release, dev and local suffixes stripped.
-    """
+    """Match runtime base-version checks after stripping all version suffixes."""
     # A raw parsed compare diverges on a pre-release build, where an asset
     # pinned to the release loads at runtime but reads as incompatible.
     running = version.parse(gl.app_version)
@@ -74,9 +56,7 @@ def test_verdict_matches_runtime_gate_on_suffixed_versions() -> None:
             f"(running {gl.app_version!r})"
         )
 
-    # Spell out the concrete case, so a regression names itself. On a
-    # pre-release build, requiring exactly the release must display as
-    # compatible, because it loads at runtime.
+    # A pre-release build accepts a requirement for its matching base release.
     if running.is_prerelease:
         assert is_min_app_version_satisfied(base) is True, (
             f"on pre-release build {gl.app_version!r}, an asset requiring the "
@@ -129,8 +109,7 @@ COLLAPSED_PREVIEW_METHODS = frozenset({
     "check_required_version",
 })
 
-# What one asset class may still do differently, and why. Everything else
-# belongs in the shared class.
+# Only listed asset-specific behavior may override the shared classes.
 ALLOWED_PAGE_OVERRIDES = {
     "PluginPage": frozenset(),
 }
@@ -142,8 +121,7 @@ ALLOWED_PREVIEW_OVERRIDES = {
 
 STORE_WINDOW_DIR = Path(__file__).resolve().parent.parent / "src" / "windows" / "Store"
 
-# The one subclass of each shared class. A new one is a deliberate edit here,
-# together with the reason it cannot be a descriptor row.
+# Any new subclass requires an explicit exception from descriptor-driven rows.
 EXPECTED_PAGE_SUBCLASSES = {"PluginPage"}
 EXPECTED_PREVIEW_SUBCLASSES = {"PluginPreview"}
 # The shared classes are the only thing that subclasses the store page and
@@ -155,11 +133,7 @@ EXPECTED_BASE_SUBCLASSES = {
 
 
 def _class_defs() -> "list[tuple[Path, ast.ClassDef]]":
-    """Every class defined under src/windows/Store, with the file it lives in.
-
-    The scan reads the tree rather than __subclasses__, so a page module that
-    nothing imports is covered too.
-    """
+    """Read every store-window class from source, including modules not imported."""
     found: list[tuple[Path, ast.ClassDef]] = []
     paths = sorted(STORE_WINDOW_DIR.rglob("*.py"))
     assert paths, f"no store window modules found under {STORE_WINDOW_DIR}"
@@ -183,11 +157,7 @@ def _base_names(node: "ast.ClassDef") -> "set[str]":
 
 
 def _class_index(defs: "list[tuple[Path, ast.ClassDef]]") -> "dict[str, ast.ClassDef]":
-    """Class name to its definition, over the whole scanned tree.
-
-    A duplicate name would make the closure below follow the wrong bases, so
-    it fails here instead of reading as a class with no ancestry.
-    """
+    """Index unique class names so ancestry cannot follow an ambiguous definition."""
     index: dict[str, ast.ClassDef] = {}
     for path, node in defs:
         assert node.name not in index, (
@@ -201,13 +171,7 @@ def _class_index(defs: "list[tuple[Path, ast.ClassDef]]") -> "dict[str, ast.Clas
 
 def _ancestor_names(node: "ast.ClassDef",
                     index: "dict[str, ast.ClassDef]") -> "set[str]":
-    """Every base of this class, direct and inherited.
-
-    A direct-base read alone lets a copy hide one level down: a class that
-    subclasses PluginPreview and re-grows install() is a card the descriptor
-    table can still name, and a check that looks at its bases only would see
-    a class it does not govern.
-    """
+    """Collect direct and inherited bases so nested subclasses cannot regrow shared methods."""
     ancestors: set[str] = set()
     queue = list(_base_names(node))
     while queue:
@@ -241,8 +205,7 @@ def test_shared_store_classes_carry_the_collapsed_methods() -> None:
         "method moved, and COLLAPSED_PAGE_METHODS names its new spelling, or "
         "the collapse came undone."
     )
-    # check_required_version sits one level up, on StorePreview, which is the
-    # spot the first half of this scenario pins.
+    # check_required_version belongs to StorePreview one level above StoreAssetPreview.
     shared_preview_names = set(vars(StoreAssetPreview)) | set(vars(StorePreview))
     missing_preview = COLLAPSED_PREVIEW_METHODS - shared_preview_names
     assert not missing_preview, (
@@ -264,9 +227,7 @@ def test_no_store_tab_regrows_a_per_family_copy() -> None:
     index = _class_index(defs)
 
     for path, node in defs:
-        # Ancestry, so a copy one level below the shared class is governed
-        # too. The direct bases stay in their own name for the reach-past
-        # check below, which is about what a class inherits from first.
+        # Use ancestry for regrowth checks and direct bases for reach-past checks.
         bases = _ancestor_names(node, index)
         direct_bases = _base_names(node)
         defined = _defined_names(node)
@@ -325,12 +286,7 @@ def test_every_asset_class_reaches_the_store_through_a_descriptor_row() -> None:
 
 
 def test_uninstall_row_matches_the_card_that_reads_it() -> None:
-    """A row names a record-taking uninstall, or the card overrides it.
-
-    The shared uninstall passes the record. A row that named a method taking
-    something else, as the plugin one does by naming an id, would call it with
-    the wrong argument the moment its card stopped overriding uninstall.
-    """
+    """Require each shared uninstall row to accept its record or provide a card override."""
     import inspect
 
     from src.backend.Store.StoreBackend import StoreBackend
@@ -338,9 +294,7 @@ def test_uninstall_row_matches_the_card_that_reads_it() -> None:
     from src.windows.Store.AssetPage import StoreAssetPage, StoreAssetPreview
     from src.windows.Store.Plugins.PluginPage import PluginPage
 
-    # The page class that carries each row, which is the module its card name
-    # resolves in. Building one with __new__ runs the real resolution without
-    # a GTK widget.
+    # Resolve each card through its real page class without constructing a GTK widget.
     page_cls_for = {True: PluginPage, False: StoreAssetPage}
 
     for descriptor in ASSET_TYPES:

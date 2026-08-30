@@ -1,13 +1,6 @@
-"""
-Regression test for StoreCache write atomicity.
+"""Verify atomic StoreCache writes and post-commit fetched stamps."""
 
-A write goes to a sibling temp file and os.replace's it over the real path on a
-successful close, stamping "fetched" only after that commit.
-"""
-
-# Writers on one cache key serialize on a per-file lock, and a legacy entry
-# with no "fetched" falls back to the file mtime rather than the ever-renewed
-# "date".
+# Writers serialize per key; legacy content age falls back to file mtime.
 import os
 import threading
 import time

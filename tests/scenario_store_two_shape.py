@@ -1,14 +1,4 @@
-"""Two-shape pin resolution for store catalog entries.
-
-A catalog entry pins its commit in one of two shapes: the old "commits"
-map of app versions to shas, and the flat "hash" sha the migrated catalog
-carries. Both shapes stay live across catalog refs, and a few entries
-carry both. This pins the resolver's precedence and validation, drives a
-hash-only entry through the prepare, update-check and claim paths for
-every asset family, pins the branch arm's priority over any pin at all
-three sites, and pins the official ref: the vetted STORE_PIN commit,
-decided with no fetch.
-"""
+"""Verify map and flat-hash catalog pins across prepare, update, and claim paths."""
 
 import fixtures  # noqa: F401  (isolated --data tempdir; import first)
 import globals as gl
@@ -87,20 +77,13 @@ def test_resolver_precedence_and_validation() -> None:
     upper = HASH_SHA.upper()
     assert resolve_pinned_revision({"hash": upper}) == PinnedRevision(upper, True)
 
-    # On a mixed entry the hash wins: the map keys there hold the
-    # plugin's own versions, so the map's app-major verdict means
-    # nothing. That holds even when the map alone would read as
-    # incompatible; the update path trusts the pin, and the catalog ref
-    # carries that responsibility.
+    # A valid flat hash takes priority because mixed-entry map keys are plugin versions.
     mixed = {"hash": HASH_SHA, "commits": {COMPATIBLE_VERSION: MAP_SHA}}
     assert resolve_pinned_revision(mixed) == PinnedRevision(HASH_SHA, True)
     mixed_incompat = {"hash": HASH_SHA, "commits": {INCOMPATIBLE_VERSION: INCOMPAT_SHA}}
     assert resolve_pinned_revision(mixed_incompat) == PinnedRevision(HASH_SHA, True)
 
-    # An invalid hash falls back to the map instead of hiding the entry.
-    # An abbreviated sha is invalid: the install gate refuses anything
-    # but 40 hex characters, so resolving it would pin an uninstallable
-    # revision.
+    # Invalid flat hashes fall back to the map; both gates require exactly 40 hex characters.
     for bad in ("not a sha", "abcdef1", "abcde", "a" * 41, "g" * 40, 7, ""):
         entry = {"hash": bad, "commits": {COMPATIBLE_VERSION: MAP_SHA}}
         assert resolve_pinned_revision(entry) == PinnedRevision(MAP_SHA, True), (
@@ -127,9 +110,7 @@ def test_resolver_precedence_and_validation() -> None:
 
 
 def test_prepare_families_on_hash_entry() -> None:
-    """A hash-only entry lists in every family, fetched at the hash, and
-    reads as compatible: the flat shape carries no version map, so the
-    manifest's minimum-app-version gates it downstream instead."""
+    """List hash-only entries as compatible and defer compatibility to their manifests."""
     _stub_globals()
     for method in PREPARE_METHODS:
         sb = _make_backend()
@@ -155,10 +136,7 @@ def test_prepare_families_on_hash_entry() -> None:
 
 
 def test_branch_wins_over_any_pin() -> None:
-    """A plugin entry that carries a branch resolves the branch tip at
-    every site, whether the pin beside it is valid or broken. The three
-    sites must agree; a pin-first listing would drop an entry the update
-    check still resolves."""
+    """Resolve a plugin branch before any valid or invalid adjacent pin at every site."""
     _stub_globals()
     for pin in ({"hash": HASH_SHA}, {"hash": "NOT-A-SHA"}, {"commits": {}}):
         sb = _make_backend()
@@ -213,10 +191,7 @@ def test_claim_reads_the_hash_revision() -> None:
 
 
 def test_official_ref_is_the_vetted_pin() -> None:
-    """The official catalog reads at STORE_PIN, a full commit sha the
-    resolver's own shape gate accepts, decided with no remote fetch. A
-    ref that upstream could move would let the catalog change without a
-    vet."""
+    """Use a full immutable STORE_PIN for the official catalog without a remote lookup."""
     from src.backend.Store.catalog_entry import COMMIT_SHA_RE
 
     _stub_globals()
@@ -245,9 +220,7 @@ def test_official_ref_is_the_vetted_pin() -> None:
 
 
 def test_catalog_refetch_follows_ref_mutability() -> None:
-    """A catalog file at a pinned commit is served from cache with no
-    forced refetch, so the store works offline; a branch-named ref still
-    forces one, because a branch moves."""
+    """Use cached immutable pins offline and force refetches for movable branches."""
     _stub_globals()
     sb = _make_backend()
     seen: list = []

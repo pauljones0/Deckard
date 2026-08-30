@@ -1,11 +1,6 @@
-"""
-Regression test for StoreBackend.get_remote_file and get_web_image.
-"""
+"""Verify remote-file caching and web-image error containment."""
 
-# The cache key carries the data type end to end, so a text fetch and a binary
-# fetch of one repo path never collide on one cache file. get_web_image guards
-# with except Exception, so a KeyboardInterrupt escapes while an ordinary
-# decode or fetch error stays contained. request_from_url is stubbed.
+# Cache text and binary data separately; contain ordinary image errors but not BaseException.
 
 import fixtures  # noqa: F401  (isolated --data tempdir; import first)
 import globals as gl  # noqa: F401

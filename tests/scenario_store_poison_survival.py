@@ -1,10 +1,6 @@
-"""
-Regression test for poison-entry survival across all four preparers.
+"""Keep catalog entries after optional fetch failures in all four preparers.
 
-A failed thumbnail or asset fetch lists the entry with image None. Only a
-failed manifest still drops the entry, because it leaves no id or name to
-list. No network is involved.
-"""
+A failed manifest still drops its entry because no identity remains."""
 
 # Under a partial 429 storm the catalogs must therefore keep their entries
 # rather than thin out silently.
@@ -45,9 +41,7 @@ def _stub_asset_fetches(sb: StoreBackend, manifest: dict) -> None:
     gl.lm = SimpleNamespace(get_custom_translation=lambda d: None)
 
 
-# One entry per catalog, a store-JSON item pinned to a compatible version.
-# The pinned value must be a full 40-hex sha; the resolver drops anything
-# else before the prepare paths under test here ever run.
+# Use a full 40-hex compatible SHA so the entry reaches the prepare paths.
 _ENTRY = {"url": "https://github.com/Example/TestPack", "commits": {"1.5.0": "abc123" + "0" * 34}}
 _MANIFEST = {"id": "com_example_TestPack", "name": "Test Pack",
              "version": "1.0", "thumbnail": "store/thumb.png"}

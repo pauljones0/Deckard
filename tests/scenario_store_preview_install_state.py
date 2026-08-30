@@ -1,12 +1,4 @@
-"""
-A store preview button must not read "installed" after a failed download.
-
-The one data-only preview install() checks the StoreResult, notifies on an Err,
-and leaves the button in its previous state so the user can retry. Each asset
-class reaches it through its own descriptor, so every check below drives the
-same method over the descriptor of one class. The preview runs unbound over a
-duck-typed self.
-"""
+"""Keep preview install state unchanged after failed descriptor-driven installs."""
 
 # An Err is truthy, so the protocol is narrowing on the result type rather than
 # a truthiness check.
@@ -41,16 +33,7 @@ def pump_main_context(rounds: int = 50) -> None:
 
 
 def _install_stub(descriptor, install_result):
-    """A stand-in for one backend install method, with its real signature.
-
-    A stub that swallowed every call shape would hide the trap this scenario
-    now covers. install_icon takes icon_data, install_wallpaper takes
-    wallpaper_data, and install_sd_plus_bar_wallpaper takes
-    sd_plus_bar_wallpaper_data. A shared install written with any one of those
-    keywords works for that class and raises TypeError for the rest. Binding
-    the call against the real signature raises here exactly where the real
-    backend would.
-    """
+    """Bind calls against the selected backend install method's real signature."""
     import inspect
 
     from src.backend.Store.StoreBackend import StoreBackend
@@ -139,15 +122,7 @@ def check_sd_plus_preview_400() -> None:
 
 
 def check_install_rows_bind_against_the_real_backend() -> None:
-    """Every row's install method must take the record the shared install
-    passes it.
-
-    The stub above answers any call shape, so it cannot see a call the real
-    backend would refuse. A keyword call is the trap: install_icon takes
-    icon_data, install_wallpaper takes wallpaper_data, and a shared install
-    written with either name works for one class and raises TypeError for the
-    other three. This binds the row against the real signature instead.
-    """
+    """Bind each descriptor record positionally against its real backend method."""
     import inspect
 
     from src.backend.Store.StoreBackend import StoreBackend
@@ -162,8 +137,7 @@ def check_install_rows_bind_against_the_real_backend() -> None:
 
 
 def check_icon_preview_success_flips_installed() -> None:
-    """A successful install still flips the button. An Ok(None) reaches the
-    idle-marshalled set_install_state, which this check pumps."""
+    """Pump the idle-marshalled state change after an Ok install result."""
     from src.windows.Store.AssetPage import StoreAssetPreview
 
     data = IconData(github="https://github.com/a/Icons", icon_id="com_a_Icons",
@@ -181,10 +155,7 @@ def check_icon_preview_success_flips_installed() -> None:
     print("PASS: icon preview flips to installed on a successful install")
 
 
-# The dependency branches of the shared install. A backend without
-# get_manifest sends every resolution down the "manifest unreadable" arm, so
-# the checks above only ever drive the zero-dependency path. These build a
-# backend that answers a manifest, so the real set is resolved.
+# Supply readable manifests to exercise dependency-set branches of the shared install.
 
 PINNED_SHA = "0" * 40
 
