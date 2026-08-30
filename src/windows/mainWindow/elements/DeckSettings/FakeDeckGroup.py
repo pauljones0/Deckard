@@ -96,8 +96,8 @@ class Layout(Adw.PreferencesRow):
         self.apply_key_layout([deck.key_layout()[0], columns])
 
     def apply_key_layout(self, key_layout: list[int]) -> None:
-        """Resize the fake deck after init_inputs replaces the registry with empty inputs.
-        Rebuild the grid before reload; release old inputs through the media writer, not inline."""
+        """Call set_key_layout before init_inputs replaces the fake deck inputs.
+        Release old inputs through the media writer, then rebuild the grid and reload."""
         controller = self.settings_page.deck_controller
         deck = cast("FakeDeck", controller.deck.deck)
 

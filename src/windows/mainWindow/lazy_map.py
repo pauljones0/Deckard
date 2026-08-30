@@ -1,5 +1,5 @@
-"""Run queued work in order when a widget first maps, then clear the queue.
-Exceptions preserve remaining tasks; owners connect on_map and initialize on_map_tasks."""
+"""Drain queued work in order on each map, then clear the queue.
+An empty queue does nothing; an exception leaves the queue uncleared."""
 from collections.abc import Callable
 
 

@@ -282,8 +282,8 @@ class ScreenBarImage(LazyMapTasks, Gtk.Picture):
         thumbnail.thumbnail((width, width/8))
 
         pixbuf = image2pixbuf(thumbnail.convert("RGBA"), force_transparency=True)
-        # Carry the task ID with the pixbuf so set_pixbuf_and_del drops older frames.
-        # The widget-local counter prevents a replacement screenbar from sharing its ordering.
+        # The ID only marks order; set_pixbuf_and_del rejects a payload when its ID
+        # differs from the widget's latest ID. Each widget has an independent counter.
         self.latest_task_id = self.get_new_task_id()
         task_id = self.latest_task_id
 

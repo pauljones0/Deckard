@@ -405,7 +405,6 @@ class EventAssignerUI(BetterPreferencesGroup):
         self.load_for_action(self.action)
 
     def on_clear_all(self, button: Gtk.Button) -> None:
-        # set_all_events_to_null clears every assignment.
         self.action.set_all_events_to_null()
         # self.action.set_event_assignments(assignments)
         self.load_for_action(self.action)
