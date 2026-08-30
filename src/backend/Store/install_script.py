@@ -16,7 +16,7 @@ from loguru import logger as log
 
 import globals as gl
 
-# Mark declined steps so unattended updates do not run them; a staged reinstall clears the marker.
+# Mark skipped steps so unattended updates do not run them; a staged reinstall clears the marker.
 SKIP_MARKER = "install-scripts-skipped"
 
 # Allow slow network-backed environment creation but bound a stuck step.
@@ -41,7 +41,7 @@ class Outcome(enum.Enum):
 def decide_install_scripts(existing_dir: "str | None", display_name: str,
                           consent: "Callable[[str], bool] | None") -> bool:
     """Decide before download whether plugin install steps may run.
-    Under ask, unattended paths allow steps unless an existing skip marker records refusal."""
+    Under ask, unattended paths allow steps unless a marker records skipped steps."""
     policy = _policy()
     if policy == "never":
         return False
@@ -59,7 +59,7 @@ def run_install_steps(plugin_dir: str, display_name: str, run: bool,
                       timeout_s: float = DEFAULT_TIMEOUT_S,
                       use_bwrap: "bool | None" = None) -> Outcome:
     """Run or skip present hook and requirements steps, then return the worst outcome.
-    Continue after failure; when confined, requirements can write only the interpreter prefix."""
+    Continue after failure; confined requirements add the interpreter prefix as writable."""
     hook = os.path.join(plugin_dir, "__install__.py")
     requirements = os.path.join(plugin_dir, "requirements.txt")
     has_hook = os.path.isfile(hook)

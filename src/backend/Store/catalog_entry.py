@@ -15,13 +15,13 @@ COMMIT_SHA_RE = re.compile(r"^[0-9a-fA-F]{40}$")
 
 class PinnedRevision(NamedTuple):
     """A pinned commit and its app-version-map compatibility verdict.
-    Flat hash pins have no version map and resolve as compatible."""
+    A valid flat hash wins over any version map and resolves as compatible."""
     sha: str
     compatible: bool
 
 
 def resolve_pinned_revision(entry: dict[str, Any]) -> PinnedRevision | None:
-    """Resolve a valid flat hash before the app-version map, or return None.
+    """Resolve a valid flat hash, ignoring any version map, or return None.
     Fall back to the map for an invalid hash and let malformed version keys raise."""
     sha = entry.get("hash")
     if sha is not None:

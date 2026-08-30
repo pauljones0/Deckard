@@ -20,7 +20,7 @@ class ErrReason(enum.Enum):
 
     NO_CONNECTION = "no_connection"   # no store reachable / catalog fetch failed
     INVALID_ASSET = "invalid_asset"   # unsafe id, missing url, staged-manifest mismatch
-    INSTALL_FAILED = "install_failed"  # git / archive / ref hard failure
+    INSTALL_FAILED = "install_failed"  # unresolved repository/ref or missing/failed Git
 
 
 @dataclass(frozen=True)

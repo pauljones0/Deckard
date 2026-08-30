@@ -972,8 +972,8 @@ class StoreBackend:
 
     def download_repo(self, repo_url:str, directory:str, commit_sha:str | None = None, branch_name:str | None = None, expected_id:str | None = None,
                       gate_app_version: bool = True) -> StoreResult[None]:
-        """Transactionally download, validate, stamp, and swap a repository tree.
-        Use INVALID_ASSET for manifests, INSTALL_FAILED for refs, and NO_CONNECTION for I/O."""
+        """Use INVALID_ASSET for manifests and NO_CONNECTION for network or archive faults.
+        Use INSTALL_FAILED when Git is missing or a clone/ref command fails."""
         if not is_flatpak() and gl.argparser.parse_args().devel:
             return self.clone_repo(repo_url, directory, commit_sha, branch_name, expected_id, gate_app_version)
 

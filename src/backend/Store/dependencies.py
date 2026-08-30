@@ -244,8 +244,8 @@ def install_with_dependencies(
         confirm_set: "Callable[[str, Plan], bool] | None" = None,
         ask_install_script: "Callable[[str], bool] | None" = None,
         max_depth: int = MAX_DEPTH) -> InstallReport:
-    """Resolve, confirm, and install a dependency set.
-    Request set consent before download when dependencies, unknown ids, or truncation exist."""
+    """Resolve and install a dependency set.
+    Ask via confirm_set for dependencies, unknown ids, or truncation; otherwise run unattended."""
     plan = resolve(root, CatalogIndex(backend), manifest_reader(backend), max_depth)
     degraded = bool(plan.dependencies or plan.unknown or plan.truncated)
     if degraded and confirm_set is not None:
