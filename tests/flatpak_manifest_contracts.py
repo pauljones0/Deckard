@@ -94,19 +94,28 @@ def check_complete_drift_mode(directory: Path) -> None:
 def check_ci_contract(root: Path) -> None:
     config = yaml.safe_load((root / ".gitlab-ci.yml").read_text(encoding="utf-8"))
     build = config["build:flatpak"]
+    manifest_test = config["test:flatpak-python"]
     changed_paths = {
         path
-        for rule in build["rules"]
+        for rule in manifest_test["rules"]
         for path in rule.get("changes", [])
     }
     assert {"requirements.txt", "pypi-requirements.yaml", "flatpak/**/*"} <= changed_paths
+    assert manifest_test["image"] == "python:3.13-slim"
+    assert manifest_test["rules"] == build["rules"][: len(manifest_test["rules"])]
 
-    script = build["script"]
+    script = manifest_test["script"]
     generation = next(i for i, command in enumerate(script) if "--check" in command)
     payload = next(i for i, command in enumerate(script) if "check_python_payload.py" in command)
-    bundle = next(i for i, command in enumerate(script) if "flatpak-builder" in command)
-    assert generation < bundle and payload < bundle
+    assert generation < payload
+
+    build_need = next(need for need in build["needs"] if need["job"] == "test:flatpak-python")
+    assert build_need == {
+        "job": "test:flatpak-python",
+        "artifacts": False,
+        "optional": True,
+    }
 
     release_needs = {need["job"] for need in config["release:gate"]["needs"]}
     assert "build:flatpak" in release_needs
-    print("PASS: manifest inputs trigger checks before the release-blocking build")
+    print("PASS: manifest inputs trigger the Python 3.13 gate before the release build")

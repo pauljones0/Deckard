@@ -29,9 +29,10 @@ also be incomplete.
 5. Set the initial budgets from the measured clean runtime and required build
    source closure plus 5%, rounded up to the next MiB: 297 MiB for x86_64 and
    222 MiB for aarch64.
-6. Run regeneration drift and payload checks in `build:flatpak`. This job is an
-   existing direct dependency of `release:gate`, so a release cannot bypass the
-   checks. Extend its merge-request change rules for all new manifest inputs.
+6. Run regeneration drift and payload checks in a Python 3.13
+   `test:flatpak-python` job that `build:flatpak` needs. The build is an existing
+   direct dependency of `release:gate`, so a release cannot bypass the checks.
+   Give the test and build the same automatic rules for manifest inputs.
    Keep the download cache keyed by the app and Python manifests, which fully
    identify the sources that enter that cache.
 7. Add offline scenario coverage for generator normalization, architecture
@@ -57,9 +58,10 @@ also be incomplete.
 - When either selected payload exceeds its architecture budget, the payload
   checker shall fail and identify the architecture, measured size, and budget.
 - When a merge request changes a manifest input or checker, GitLab CI shall run
-  `build:flatpak` automatically.
-- When a mainline or release-tag pipeline runs, `build:flatpak` shall verify
-  generation drift and both payload budgets before it builds the bundle.
+  `test:flatpak-python` before `build:flatpak` automatically.
+- When a mainline or release-tag pipeline runs, `test:flatpak-python` shall
+  verify generation drift and both payload budgets before `build:flatpak` builds
+  the bundle.
 - When implementation is complete, the repository shall pass the focused
   scenarios, full scenario suite, Ruff, ty, type-ignore guard, compile check,
   and module-size ratchet.
