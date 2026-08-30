@@ -30,8 +30,8 @@ def is_min_app_version_satisfied(minimum_app_version: str | None) -> bool:
 class StoreData:
     github: str | None = None # Link to the github repository
     # Preserve None versus empty translations because LocaleManager distinguishes them
-    descriptions: dict[str, str] | None = field(default_factory=dict)
-    short_descriptions: dict[str, str] | None = field(default_factory=dict)
+    descriptions: dict[str, str] | None = field(default_factory=dict) # All the translations for the description
+    short_descriptions: dict[str, str] | None = field(default_factory=dict) # All the translations for the short descriptions
     description: str | None = None # Translated Description of the Content
     short_description: str | None = None # Translated short Description of the Content
     author: str | None = None # Author of the Content
@@ -41,7 +41,7 @@ class StoreData:
     minimum_app_version: str | None = None # Minimum app version that is required to use the Content
     app_version: str | None = None # The Current app version the Plugin is made for
     repository_name: str | None = None # Name of the Repository
-    tags: list[str] | None = field(default_factory=list)
+    tags: list[str] | None = field(default_factory=list) # If the asset has a compatible version
     is_compatible: bool | None = None
 
     @property
@@ -67,7 +67,7 @@ class LicenceData:
     copyright: str | None = None
     original_url: str | None = None
     license: str | None = None # The actual licence
-    license_descriptions: dict[str, str] | None = field(default_factory=dict)
+    license_descriptions: dict[str, str] | None = field(default_factory=dict) # Translations for the Licence Description
 
 # Shared read-only properties normalize each class's id, name, and version fields
 # Catalog asset_id is a manifest id, unlike installed-directory and update-match ids

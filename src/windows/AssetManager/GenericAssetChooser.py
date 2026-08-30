@@ -123,7 +123,7 @@ def asset_matches_search(item: Any, search: str, attr: str = "path") -> bool:
 
 
 def compare_assets(item1: Any, item2: Any, search: str, attr: str = "path") -> int:
-    """Order assets alphabetically for an empty query, else by search relevance."""
+    """Order assets case-sensitively by name for an empty query, else by relevance."""
     name1 = asset_display_name(item1, attr)
     name2 = asset_display_name(item2, attr)
 

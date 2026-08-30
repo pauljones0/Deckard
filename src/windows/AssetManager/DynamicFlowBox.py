@@ -168,6 +168,7 @@ class DynamicFlowBox(Gtk.Box, Generic[WidgetT, T]):
                     continue
                 preview.set_visible(True)
             else:
+                # Hide left over placeholders
                 preview.set_visible(False)
 
         self.back_button.set_sensitive(start > 0)

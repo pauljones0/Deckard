@@ -189,10 +189,13 @@ class StorePreview(Gtk.FlowBoxChild):
             store.currently_downloading = True
             try:
                 if self.install_state == 0:
+                    # Install
                     self.install()
                 elif self.install_state == 1:
+                    # Uninstall
                     self.uninstall()
                 elif self.install_state == 2:
+                    # Update
                     self.update()
             finally:
                 store.currently_downloading = False

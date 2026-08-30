@@ -107,7 +107,7 @@ class Preview(Gtk.FlowBoxChild):
 
     @staticmethod
     def decode_pixbuf(path: str | os.PathLike[str] | None) -> GdkPixbuf.Pixbuf | None:
-        """Decode at preview size off-main; return None for unreadable files."""
+        """Decode at preview size; safe off-main, returning None for unreadable files."""
         # Check None before fspath and catch corrupt-file errors to clear recycled cells
         if path is None:
             return None

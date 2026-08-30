@@ -209,7 +209,7 @@ def ranker(query: str) -> QueryRanker:
 
 
 def release_cache() -> None:
-    """Drop the cached ranker and its per-name memo when the owning view closes."""
+    """Drop the cached ranker and its memo when a grid or view is invalidated."""
     global _cached_ranker
     with _cache_lock:
         _cached_ranker = None
