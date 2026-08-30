@@ -127,7 +127,10 @@ def on_main(func: Callable[_Params, _Return]) -> Callable[_Params, _Return]:
 _background_pool = ThreadPoolExecutor(max_workers=8, thread_name_prefix="background")
 
 
-def _log_background_exception(future: "Future[Any]") -> None:
+def log_future_exception(future: "Future[Any]") -> None:
+    """Done-callback that reports a raised future into the logs. Shared by
+    the application pool below and every owned executor whose failures
+    would otherwise vanish with the worker."""
     try:
         exc = future.exception()
     except Exception:
@@ -140,7 +143,7 @@ def run_in_background(func: Callable[_Params, _Return], *args: _Params.args, **k
     """Submit func to the background pool and return its Future. A .result()
     call on the GTK thread deadlocks when the work calls an on_main method."""
     future = _background_pool.submit(func, *args, **kwargs)
-    future.add_done_callback(_log_background_exception)
+    future.add_done_callback(log_future_exception)
     return future
 
 

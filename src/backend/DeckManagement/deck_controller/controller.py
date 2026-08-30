@@ -39,7 +39,7 @@ import os
 import threading
 import time
 from contextlib import nullcontext
-from concurrent.futures import Future
+from concurrent.futures import Future, ThreadPoolExecutor
 from functools import partial
 from threading import Thread
 
@@ -215,6 +215,20 @@ class DeckController:
         # overwrite a newer page's background.
         self._background_load_lock = threading.Lock()
         self._bg_future: "Future[None] | None" = None
+        # Background decode owns two workers of its own, so a burst on the
+        # application background pool (store tabs, importers, window
+        # grabbing) cannot queue this deck's page background behind
+        # unrelated work. Two, not one: a rapid page switch must start the
+        # new page's decode while the superseded page's decode still runs,
+        # or the switch inherits the old page's decode time. A third rapid
+        # switch cancels the queued middle one, and close() shuts the pool
+        # down.
+        try:
+            _serial = self.serial_number()
+        except Exception:
+            _serial = "unknown"
+        self._bg_decode_pool = ThreadPoolExecutor(
+            max_workers=2, thread_name_prefix=f"bg-decode-{_serial}")
         self._page_completion: PageLoadCompletion | None = None
         self._input_load_done = control_plane.InputLoadBarrier()
 
@@ -373,7 +387,9 @@ class DeckController:
             self._tick_stop_event.set()  # created by the same statement pair as the thread
             self.tick_thread.join(2.0)
         self.media_player.stop(timeout=2.0)
-        for pool in (getattr(self, "action_executor", None), getattr(self, "load_executor", None)):
+        for pool in (getattr(self, "action_executor", None),
+                     getattr(self, "load_executor", None),
+                     getattr(self, "_bg_decode_pool", None)):
             if pool is not None:
                 pool.shutdown(wait=False, cancel_futures=True)
         if not self.media_player.running:  # otherwise the handle stays open
@@ -1079,10 +1095,12 @@ class DeckController:
                 # Decode the background off the media thread so it overlaps the
                 # input load. The completion callback queues compositing only
                 # after the background and input marker are ready.
-                from src.backend.main_loop import run_in_background
+                from src.backend.main_loop import log_future_exception
                 if self._bg_future is not None:
                     self._bg_future.cancel()
-                bg_future = run_in_background(self.load_background, page, update=False, gen=gen)
+                bg_future = self._bg_decode_pool.submit(
+                    self.load_background, page, update=False, gen=gen)
+                bg_future.add_done_callback(log_future_exception)
                 self._bg_future = bg_future
             completion = PageLoadCompletion(self, gen, wait_for_inputs=load_inputs)
             self._page_completion = completion
@@ -1447,6 +1465,11 @@ class DeckController:
             bg_future = getattr(self, "_bg_future", None)
             if bg_future is not None:
                 bg_future.cancel()
+            bg_decode_pool = getattr(self, "_bg_decode_pool", None)
+            if bg_decode_pool is not None:
+                # Non-blocking: queued decodes die, a running one finishes
+                # into cancelled completion state and the worker exits.
+                bg_decode_pool.shutdown(wait=False, cancel_futures=True)
 
         if not app_quit and threading.current_thread() is threading.main_thread():
             # A soft guard, not a hard failure. The test harness teardown()
