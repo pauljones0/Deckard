@@ -1,11 +1,5 @@
-"""on_quit must arm the force-quit watchdog before any teardown step runs.
-
-The teardown detaches the UI, stops DBus, destroys the window and runs
-third-party AppQuit hooks, and any of those can block. If the watchdog is
-armed only after them, a block parks the quit with no escape timer. This
-drives the real App.on_quit with a stub self, makes the first teardown step
-raise, and proves the watchdog was already scheduled by then.
-"""
+"""Arm the watchdog before UI, D-Bus, window, or AppQuit teardown can block.
+Raise at the first teardown step to verify that the watchdog is already set."""
 import fixtures  # noqa: F401  (must be first: isolates DATA_PATH before globals)
 
 from src import app as app_module  # noqa: E402

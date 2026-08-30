@@ -1,21 +1,5 @@
-"""
-The X11 active-window watcher reads focus changes from the X event stream with
-python-xlib, in place of a poll that spawned xprop processes.
-
-A real X server is not reachable headlessly, so a stub display stands in. It
-emits synthetic PropertyNotify events and answers the property reads the decode
-path makes, which lets the whole watcher thread run: it opens the display,
-selects events, decodes a change, reports it through the grabber interface, and
-tears down clean.
-
-The checks cover:
-  * a focus change reports the new window through the grabber;
-  * a title change on the same focused window reports too;
-  * the loop survives an exception raised while routing one change;
-  * teardown closes the display and joins the thread, leaking neither;
-  * no reachable X server makes the watcher report nothing rather than raise;
-  * the decode helpers turn events and properties into the right Window.
-"""
+"""Drive focus and title property events through X11 decoding and routing.
+Verify route-error survival, unavailable and lost displays, and clean teardown."""
 import fixtures  # noqa: F401  (must be imported first: isolates DATA_PATH)
 
 import contextlib
@@ -99,9 +83,7 @@ class FakeScreen:
 
 
 class FakeDisplay:
-    """Stands in for an Xlib display connection. fileno() returns a real pipe
-    read end, so the watcher's select() blocks on it; emit() queues an event
-    and writes the pipe to wake that select."""
+    """Provide an Xlib display whose real pipe wakes select() for queued events."""
 
     def __init__(self, windows: dict, active_id):
         self.windows = dict(windows)
@@ -178,9 +160,7 @@ def _property_event(window_id, atom):
 
 
 class Recorder:
-    """The grabber stand-in. Records each reported window, and can raise on a
-    marked class to model a routing that fails. It also records the re-check
-    request the watcher makes when the X connection drops."""
+    """Record routed windows, optional route failures, and connection recovery requests."""
 
     def __init__(self, raise_on_class=None):
         self.calls: list[Window] = []
@@ -203,9 +183,7 @@ class Recorder:
 
 
 class EofRaiseDisplay(FakeDisplay):
-    """A display whose connection drops and reports the drop by raising
-    ConnectionClosedError from pending_events, the way python-xlib does. Its fd
-    stays readable, so the watcher's select fires and reaches the drain."""
+    """Report a readable connection drop by raising from pending_events."""
 
     def __init__(self):
         super().__init__(windows={0x10: ("Window", "app")}, active_id=0x10)
@@ -218,9 +196,8 @@ class EofRaiseDisplay(FakeDisplay):
 
 
 class EofZeroDisplay(FakeDisplay):
-    """A display whose connection drops but reports the drop as end of file: a
-    readable fd that yields zero events, with no error. The fd is kept readable
-    and never drained, so a watcher that does not stop would spin on it."""
+    """Report a connection drop as a readable fd with zero events.
+    Keep it readable so failure to stop produces a detectable spin."""
 
     def __init__(self):
         super().__init__(windows={0x10: ("Window", "app")}, active_id=0x10)

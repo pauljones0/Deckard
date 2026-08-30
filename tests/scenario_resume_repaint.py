@@ -1,10 +1,5 @@
-"""
-Unit-tier scenario for the suspend and resume repaint.
-
-MediaPlayerThread.check_resume_gap detects a wall-clock gap of 5s or more
-between iterations. It then arms a pending full repaint. The repaint nulls
-the dedup hashes and re-enqueues every input.
-"""
+"""Repaint every input after a media-loop gap of at least five seconds.
+Reset deduplication hashes before enqueueing the repaint."""
 
 # A repaint whose writes fail re-arms itself, because a static page produces no
 # other recovery trigger.
@@ -74,9 +69,8 @@ def main() -> None:
     assert controller._run_pending_repaint(), "the deferred repaint must fire once the window opens"
     assert controller.repaint_count == 2
 
-    # The static-page recovery property. A repaint whose writes all fail,
-    # with the handle not yet reopened, re-arms itself and retries until its
-    # writes land.
+    # Failed writes re-arm the repaint because static pages have no other
+    # recovery trigger.
     media_player.perform_media_player_tasks()   # drain the earlier tasks first
     deck.clear_journal()
     seed_hashes(controller)

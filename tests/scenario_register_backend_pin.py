@@ -1,10 +1,5 @@
-"""register_backend connects only to a port the launched backend owns.
-
-verify_backend_port pins the LISTEN socket on the offered port to the
-spawned process through /proc/<pid>/fd. The frontend authenticator gates who
-may call register_backend. This gates the argument, so a lure or squatter
-port is refused instead of served the app's netref surface.
-"""
+"""Authenticate callers and use only a loopback port owned by the launched backend.
+Pin its listening socket through /proc/<pid>/fd to reject lure ports."""
 import socket
 import subprocess
 import sys
@@ -20,9 +15,7 @@ gl.plugin_manager = types.SimpleNamespace(backends=[], backend_processes=[])
 from src.backend.PluginManager.ActionCore import ActionCore  # noqa: E402
 from src.backend.PluginManager.PluginManager import verify_backend_port  # noqa: E402
 
-# A stand-in backend: LISTEN on loopback, report the port, hold until stdin
-# closes. The bind address is argv-selectable so one script also produces the
-# wildcard case.
+# Listen on the selected address, report the port, and wait for stdin to close.
 CHILD_SRC = """\
 import socket, sys
 s = socket.socket()
@@ -55,12 +48,8 @@ def _make_action() -> ActionCore:
 
 
 def check_register_backend_terminates_exposed_child() -> None:
-    """register_backend kills a backend that registers from a wildcard bind.
-
-    Refusing the connection alone leaves the exposed listener alive, so the
-    enforcement terminates the child. The termination runs off-thread, so
-    this waits for the process to exit.
-    """
+    """Terminate a backend that registers from a wildcard bind.
+    Wait because refusal leaves the listener alive and termination runs off-thread."""
     action = _make_action()
     wild_child, wild_port = _spawn_listener("0.0.0.0")
     action.backend_process = wild_child
@@ -132,9 +121,7 @@ def main() -> None:
         assert verify_backend_port(own_port, None, True, "pin-test") == "127.0.0.1"
         print("PASS: the terminal path accepts any same-uid loopback listener")
 
-        # A wildcard-only backend is LAN-reachable, so the loopback guard did
-        # not take effect there. It owns the port, but the registration is
-        # refused rather than connecting the app to an exposed backend.
+        # Refuse an owned wildcard listener because it is reachable from the LAN.
         wild_child, wild_port = _spawn_listener("0.0.0.0")
         try:
             try:

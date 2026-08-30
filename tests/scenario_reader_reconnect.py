@@ -1,18 +1,5 @@
-"""A deck whose input reader dies under a live device is reopened.
-
-The library's reader thread is what makes a deck an input device. It dies in
-two ways that leave the device connected: an exception the library's except arm
-does not catch, which leaves the handle open, and an exhausted resume loop,
-which leaves it closed. Both leave the deck deaf to every press, and both pass
-the USB liveness checks, because the device is present.
-
-Each leg drives the production watchdog over a deck that models the reader
-thread. The recovery legs assert what one attempt does; the policy legs assert
-what a run of them does, and those run at the shipped constants, because the
-count of consecutive attempts is what decides a give-up and it must not depend
-on any timing the harness could rescale. Only the two legs that measure a
-window itself shrink one, and each puts it back.
-"""
+"""Reopen a connected deck after its input reader dies with its handle open or closed.
+Run attempt-count policy checks at shipped constants and restore changed time bounds."""
 import threading
 import time
 
@@ -33,47 +20,15 @@ from src.backend.DeckManagement.reader_supervisor import DeckReaderWatchdog
 
 
 class _FakeTransport:
-    """The transport object the fair-lock installer swaps a mutex on.
-
-    FakeDeck models no transport, so the installer skips it and no scenario
-    can see whether the FIFO lock survives a reopen. This carries the one
-    attribute that installer touches.
-    """
+    """Provide the transport mutex needed to verify that a reopen keeps its FIFO lock."""
 
     def __init__(self) -> None:
         self.mutex = threading.Lock()
 
 
 class SupervisedDeck(FaultyFakeDeck):
-    """FaultyFakeDeck plus the reader-thread contract of the library.
-
-    open() starts a reader thread the way StreamDeck.open() does through
-    _setup_reader, and journals the open, so a leg can order a reopen against
-    the release that must precede it. The thread ends when run_read_thread goes
-    down, which is how the release seam stops it, and close() records the flags
-    as it saw them.
-
-    Three reader states are modeled, all with the device still connected:
-
-    die_open() ends the thread with the handle still open and run_read_thread
-    still up. That is any exception which is not a TransportError, such as one
-    raised by an input callback, because the library's read loop catches only
-    the transport kind.
-
-    die_closed() closes the handle first and then ends the thread, which is
-    what an exhausted resume loop leaves behind.
-
-    park_in_resume_loop() is the state the supervisor must not touch: the
-    thread stays alive inside the reopen arm, which reads neither flag, and
-    re-opens the handle itself.
-
-    Two device behaviours drive the policy legs. block_open makes every open()
-    raise, and with drop_bus_on_open_failure the device also reports itself off
-    the bus for exactly one query afterwards, which is a device that answers
-    the sweep as present and is gone again by the time the attempt asks.
-    reader_life_s gives every reader a lifetime, so a reopen succeeds and loses
-    its reader again a moment later.
-    """
+    """Model handle-open, handle-closed, and live resume-loop reader states.
+    Journal release order and provide blocked-open, one-query bus-drop, and short-life policies."""
 
     def __init__(self, *args, reader_life_s=None, **kwargs):
         super().__init__(*args, **kwargs)
@@ -92,9 +47,7 @@ class SupervisedDeck(FaultyFakeDeck):
         self.reader_life_s = reader_life_s
         self._bus_dropped = False
         self._die = None
-        # Device writes attempted, successful or not. The journal cannot serve
-        # here: a write that raises never reaches it, and a write storm against
-        # a deck with no handle is made entirely of writes that raise.
+        # Count all write attempts because failures do not reach the operation journal.
         self.write_attempts = 0
 
     def _do_write(self, op: str, slot, data) -> None:
@@ -168,10 +121,8 @@ class SupervisedDeck(FaultyFakeDeck):
                 while time.monotonic() < deadline:
                     self.resume_attempts += 1
                     try:
-                        # Drop the handle on this thread first, the way the
-                        # library's _setup_reader replaces it, so a successful
-                        # reopen starts a fresh reader instead of finding this
-                        # one alive and returning.
+                        # Clear this reader handle before open() so the reopen starts
+                        # a new reader instead of finding the current thread alive.
                         self.read_thread = None
                         self.open()
                         break
@@ -193,21 +144,13 @@ def make_controller(serial: str, **deck_kwargs):
 
 
 def app_closes(deck: SupervisedDeck) -> list:
-    """Flag records for the closes the app performed.
-
-    A close from the modeled reader is the library closing on its own behalf,
-    and only a close the app made says anything about the supervisor.
-    """
+    """Return close flags recorded outside the modeled reader thread."""
     return [flags for flags in deck.flags_at_close
             if not flags[2].startswith("FakeReader-")]
 
 
 def kill_the_reader(deck: SupervisedDeck, mode: str, label: str):
-    """End the modeled reader the named way, and hand the dead thread back.
-
-    "open" leaves the handle open, "closed" gives it back first. Both leave
-    the device connected.
-    """
+    """End and return the reader; open keeps its handle and closed releases it."""
     if mode == "open":
         deck.die_open()
     else:
@@ -248,10 +191,8 @@ def test_dead_reader_is_reopened() -> None:
     watchdog = DeckReaderWatchdog(gl.deck_manager)
     try:
         boot_paint(deck, "reopen")
-        # The boot journal entry above comes from the constructor's direct
-        # clear, which carries no present state. Wait for a paint that records
-        # one, or the present-state assertions below hold on a deck that never
-        # painted through the present protocol.
+        # Wait for a protocol paint because the constructor's direct clear records
+        # no present state and would make later state checks vacuous.
         assert fixtures.wait_until(
             lambda: any(k.present_state.last_presented_hash is not None
                         for k in controller.inputs.get(Input.Key, [])), timeout=10), (
@@ -275,9 +216,8 @@ def test_dead_reader_is_reopened() -> None:
         assert deck.connected(), "the device must still be on the bus for this leg"
         deck.clear_journal()
         deck.flags_at_close.clear()
-        # Hold the scheduled repaint inside its rate-limit window, so the
-        # present state can be read after the reopen and before the repaint
-        # clears it again on its way through.
+        # Hold the repaint in its rate-limit window to inspect the reopened
+        # present state before the repaint clears it again.
         controller._last_full_repaint_ts = time.time()
 
         watchdog.sweep()
@@ -329,10 +269,7 @@ def test_dead_reader_is_reopened() -> None:
             "the successful reopen cleared the attempt count before its reader held. "
             "A deck that reopens and dies again forever would then never be given up.")
 
-        # The page content did not change across the reopen, so a repaint that
-        # kept its present-state hashes would match them and write nothing.
-        # Writes after the reopen are what proves the reset ran, and that the
-        # writer resumed device writes.
+        # Unchanged content writes only if the reopen reset present-state hashes.
         reopen_seq = opens[0][1]
         assert fixtures.wait_until(
             lambda: any(e[2] == "set_key_image" and e[1] > reopen_seq
@@ -368,11 +305,8 @@ def test_a_reader_that_closed_the_handle_is_reopened() -> None:
 
 
 def test_a_reader_in_the_resume_loop_is_left_alone() -> None:
-    """A reader inside the library's reopen arm is alive, so it is not dead.
-
-    Both would otherwise close and open the same handle at once, and the
-    library's arm reads no flag that would stop it.
-    """
+    """Leave a live reader in the library reopen arm alone.
+    Concurrent recovery would close and open the same handle without a stop flag."""
     controller, deck = make_controller("reader-resume")
     watchdog = DeckReaderWatchdog(gl.deck_manager)
     try:
@@ -408,9 +342,8 @@ def test_a_reader_in_the_resume_loop_is_left_alone() -> None:
         assert supervisor.attempts_started == 0, (
             "the supervisor attacked the reader while the library recovered it")
 
-        # The wrapper enforces the same rule for any caller. The library's
-        # open() joins the previous reader with no bound of its own, so an
-        # open under a running reader waits for a thread nothing can stop.
+        # Reject open_handle() while the reader runs because library open()
+        # joins that reader without a bound or a stop mechanism.
         deck.block_open.set()
         deck.in_resume_loop.clear()
         deck.park_in_resume_loop()
@@ -425,12 +358,8 @@ def test_a_reader_in_the_resume_loop_is_left_alone() -> None:
 
 
 def test_a_closing_or_quitting_app_reopens_nothing() -> None:
-    """Teardown and quit own the handle, and the supervisor stands off.
-
-    The two guards sit on different threads. The sweep skips a controller that
-    is closing, and the attempt itself re-checks on the media thread, because
-    the watchdog decided up to one sweep earlier.
-    """
+    """Do not reopen a handle owned by teardown or quit.
+    Check closing during the sweep and recheck quit on the media thread."""
     controller, deck = make_controller("reader-teardown")
     watchdog = DeckReaderWatchdog(gl.deck_manager)
     try:
@@ -471,15 +400,9 @@ def test_a_closing_or_quitting_app_reopens_nothing() -> None:
 
 
 def test_a_teardown_that_starts_mid_attempt_wins() -> None:
-    """close() can land while an attempt is already inside its retry loop.
-
-    It empties the control queue and releases the handle, so a reopen that ran
-    afterwards would lift the shadow the teardown installed. The attempt asks
-    again under the device lock, immediately before the open.
-    """
-    # The deadline is not what this leg measures. It shrinks so the attempt
-    # spends a bounded time in the retry loop with the teardown landing inside
-    # it, and it goes back at the end.
+    """Let close() win after a reopen attempt enters its retry loop.
+    Recheck teardown under the device lock immediately before open()."""
+    # Shorten and restore the deadline to bound the retry loop around teardown.
     shipped_deadline = reader_supervisor.REOPEN_DEADLINE_S
     shipped_gap = reader_supervisor.REOPEN_RETRY_GAP_S
     reader_supervisor.REOPEN_DEADLINE_S = 5.0
@@ -493,10 +416,8 @@ def test_a_teardown_that_starts_mid_attempt_wins() -> None:
 
         watchdog.sweep()
         supervisor = watchdog.supervisor_for(controller)
-        # A closed handle means the attempt released it and is now inside its
-        # retry loop. Waiting for the in-flight marker alone would interrupt a
-        # message the writer had not started, which the guard before the
-        # release already covers.
+        # A closed handle proves the in-flight attempt reached its retry loop;
+        # the marker alone can precede execution by the writer.
         assert fixtures.wait_until(lambda: not deck.is_open(), timeout=10), (
             "the attempt never reached its retry loop, so this leg would interrupt "
             "nothing")
@@ -507,11 +428,8 @@ def test_a_teardown_that_starts_mid_attempt_wins() -> None:
         # check keeps the attempt from taking the handle back.
         deck.block_open.clear()
 
-        # Land the teardown in the one window that matters: after the retry
-        # loop's own check has passed and before the open. Holding the device
-        # lock parks the attempt inside open_handle, past that check, so
-        # setting the flag here is the race rather than a re-check the loop
-        # would make anyway.
+        # Hold the device lock after the retry-loop check and set closing before
+        # open(), which isolates the final under-lock teardown check.
         with controller.deck._lock:
             time.sleep(0.2)
             controller._closing = True
@@ -537,12 +455,8 @@ def test_a_teardown_that_starts_mid_attempt_wins() -> None:
 
 
 def test_the_attempt_cap_gives_a_flapping_deck_up() -> None:
-    """A device that never comes back costs a bounded number of attempts.
-
-    Nothing is rescaled here. The cap counts attempts, so it must fire at the
-    shipped constants, and the device models a real flap: present when the
-    sweep asks, gone by the time the attempt does.
-    """
+    """Cap a flapping device at the shipped attempt count.
+    Model it as present during the sweep and absent during the attempt."""
     controller, deck = make_controller("reader-flapping")
     watchdog = DeckReaderWatchdog(gl.deck_manager)
     records: list[str] = []
@@ -579,13 +493,8 @@ def test_the_attempt_cap_gives_a_flapping_deck_up() -> None:
             watchdog.sweep()
         assert supervisor.attempts_started == reader_supervisor.MAX_CONSECUTIVE_ATTEMPTS, (
             "a given-up deck was retried again")
-        # Keep a producer painting, because that is what storms a dead handle.
-        # The scheduled full repaint is not the source: update_all_inputs()
-        # checks the deck first and composites nothing while the handle is
-        # closed. The writes come from the producers that do not, a scroll
-        # label, a key video, a plugin's set_media, each landing in the writer's
-        # slots. This is one of those, and without the suspension every one of
-        # them raises, logs and arms another repaint.
+        # Keep a producer active because direct producers can storm a closed handle.
+        # Full repaints check the deck first and are not the write source here.
         quiet_from = len(deck.journal())
         attempts_from = deck.write_attempts
         native = fixtures.make_native_image()
@@ -630,12 +539,8 @@ def test_the_attempt_cap_gives_a_flapping_deck_up() -> None:
 
 
 def test_a_reopen_that_never_holds_is_capped() -> None:
-    """The flap the cap exists for: every reopen works, and none of them last.
-
-    Nothing is rescaled here either. A policy that cleared its count on every
-    successful reopen would close and open this handle for the rest of the
-    session.
-    """
+    """Cap repeated successful reopens whose readers never hold.
+    Run at shipped constants so transient success cannot reset the policy."""
     controller, deck = make_controller("reader-never-holds", reader_life_s=0.15)
     watchdog = DeckReaderWatchdog(gl.deck_manager)
     try:
@@ -662,12 +567,8 @@ def test_a_reopen_that_never_holds_is_capped() -> None:
 
 
 def test_a_message_the_writer_refuses_counts_no_attempt() -> None:
-    """A writer that has stopped drains nothing, so the message is dropped.
-
-    An attempt counted for a message nobody will ever run would push a
-    tearing-down deck toward the give-up latch, and the in-flight marker it
-    left would refuse every later attempt.
-    """
+    """Do not count a reopen message that the writer refuses.
+    A refused message must not set the give-up count or in-flight marker."""
     controller, deck = make_controller("reader-refused")
     watchdog = DeckReaderWatchdog(gl.deck_manager)
     try:
@@ -676,9 +577,7 @@ def test_a_message_the_writer_refuses_counts_no_attempt() -> None:
         supervisor = watchdog.supervisor_for(controller)
 
         class _RefusingWriter:
-            """A writer that is running but takes no more control messages,
-            which is the window between a terminal message and the loop's
-            exit."""
+            """Model the interval after a terminal message but before loop exit."""
             running = True
 
             def submit_control(self, msg) -> bool:
@@ -748,15 +647,8 @@ def test_a_reopen_that_holds_clears_the_count() -> None:
 
 
 def test_a_synchronous_reopen_keeps_its_hold() -> None:
-    """A writer that runs the reopen inside submit_control must not have its
-    hold erased.
-
-    submit_control is a deque append the media thread drains, so run_attempt
-    can arm a fresh hold before request_reopen returns. request_reopen must
-    clear the previous hold before it submits, not after, or a synchronously
-    completed reopen loses the exact hold it just armed and never settles its
-    recovery count.
-    """
+    """Keep the hold armed by a reopen that completes inside submit_control.
+    Clear the previous hold before submission so synchronous completion survives."""
     controller, deck = make_controller("reader-sync-hold")
     watchdog = DeckReaderWatchdog(gl.deck_manager)
     try:

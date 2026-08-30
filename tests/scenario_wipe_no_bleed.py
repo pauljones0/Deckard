@@ -1,10 +1,4 @@
-"""
-The no-bleed contract, the first half of the wipe-restore behavior.
-
-Switching to a page whose key has no action must clear that slot, so the
-previous page's action-owned image never survives. The source image is set
-through a seam.
-"""
+"""Clear action-owned media when switching to a page with no action in that slot."""
 
 # A cross-page load builds a different action object, so the stash-and-restore,
 # which gates on action identity, never restores into it.
@@ -49,9 +43,7 @@ def main() -> None:
 
         bleeds = []
         for i in range(TRIALS):
-            # Establish an action-owned image without racing the load. Load
-            # the action page, wait for it to settle, then force a fresh
-            # paint on the stabilized state.
+            # Let the action page settle before forcing a fresh action-owned paint.
             action_page = gl.page_manager.get_page(
                 fixtures.seed_action_page(f"LatchNB{i}", key_ident), controller)
             controller.load_page(action_page, allow_reload=True)
@@ -69,9 +61,8 @@ def main() -> None:
                 "-- the no-bleed check that follows would be vacuous"
             )
 
-            # Switch to a page whose same key has no action. The slot must
-            # clear. A cross-page load builds a different action object, so
-            # nothing owns the old image, so it must not survive.
+            # A cross-page load creates a different action, so the empty slot
+            # must not restore media owned by the prior action.
             controller.load_page(empty_page, allow_reload=True)
             cleared = wait_until(lambda: active_image() is None, timeout=5)
             if not cleared:

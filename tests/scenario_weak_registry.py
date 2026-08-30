@@ -1,9 +1,4 @@
-"""
-Unit-tier scenario for CallbackRegistry in src/Signals/weak_callbacks.py.
-
-The registry backs SignalManager, EventHolder and the plugin-settings Observer,
-and its properties hold whichever subsystem uses it.
-"""
+"""Verify CallbackRegistry lifetime, identity, logging, and concurrency rules."""
 
 # A bound method dies with its owner, a lambda survives, an add dedupes,
 # concurrent use is safe, and SC_STRONG_CALLBACKS keeps a bound method alive.
@@ -25,9 +20,7 @@ _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
 
 class _Owner:
-    """A throwaway object whose only purpose is to die and take its bound
-    method's WeakMethod entry down with it (unless SC_STRONG_CALLBACKS is
-    set)."""
+    """Provide a bound method that dies with its owner unless strong mode is set."""
 
     def __init__(self):
         self.calls = 0
@@ -69,9 +62,7 @@ def check_dedupe_same_bound_method():
     registry = CallbackRegistry()
     owner = _Owner()
     assert registry.add(owner.method) is True
-    # An access of owner.method creates a new bound-method wrapper every
-    # time, so the dedupe must compare (obj, func) rather than the identity
-    # of that wrapper.
+    # Each owner.method access creates a wrapper, so deduplicate by object and function.
     assert registry.add(owner.method) is False
     assert len(registry) == 1
     snap = registry.snapshot()
@@ -83,10 +74,7 @@ def check_dedupe_same_bound_method():
 def check_concurrent_add_remove_snapshot():
     registry = CallbackRegistry()
 
-    # Canaries. Added once, up-front, never touched again by the hammering
-    # threads below. If concurrent add/remove/snapshot corrupts the
-    # registry's internal list, a canary going missing from the final
-    # snapshot is the tell.
+    # Keep untouched canaries to detect list corruption during concurrent mutation.
     canary_owners = [_Owner() for _ in range(5)]
     for owner in canary_owners:
         assert registry.add(owner.method) is True
@@ -185,9 +173,7 @@ def check_strong_callbacks_env_escape_hatch():
 
 
 def check_prune_logs_debug():
-    # A subscription dropped because its owner died is the price of weak
-    # storage, and it must leave a trace. Without a DEBUG record naming the
-    # pruned callback, a plugin whose events stop cannot be diagnosed.
+    # Log each pruned weak subscription with its callback name for diagnosis.
     records: list[str] = []
     handle = log.add(lambda message: records.append(str(message)), level="DEBUG")
     try:
@@ -223,10 +209,8 @@ def check_prune_logs_debug():
 
 
 def check_custom_eq_is_never_called() -> None:
-    # add/remove must match by identity, never a callback's own __eq__, so a
-    # plugin's custom equality cannot run under the registry lock. Two distinct
-    # instances that compare equal by __eq__ must be treated as distinct
-    # subscriptions, and __eq__ must never be called.
+    # Match callbacks by identity so custom equality never runs under the lock.
+    # Distinct instances remain distinct even when __eq__ reports equality.
     calls = {"eq": 0}
 
     class NosyCallable:

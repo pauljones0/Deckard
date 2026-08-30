@@ -1,13 +1,5 @@
-"""Page rename must stay inside the pages directory and never overwrite.
-
-move_page copies the source over the destination and then deletes the source,
-so a crafted destination name that escapes the pages tree would overwrite an
-arbitrary JSON file and delete the original page. move_page enforces
-containment for both names at the mutation seam, refuses a destination that
-already exists, and leaves both files untouched on refusal. Three seams:
-backend move_page, the DBus RenamePage handler, and the GTK
-rename_page_by_path callback (which must not rename its row on refusal).
-"""
+"""Keep backend and DBus page renames inside pages and refuse overwrites.
+Leave source and destination unchanged when validation fails."""
 import fixtures  # noqa: F401  (must be first: isolates DATA_PATH)
 
 import json
@@ -41,7 +33,7 @@ def main() -> int:
     os.makedirs(pages_dir, exist_ok=True)
     failures: list[str] = []
 
-    # --- Part A: backend move_page containment ----------------------------
+    # Backend move_page containment
     secret = os.path.join(gl.DATA_PATH, "evil_backend.json")
     _write_secret(secret)
     src = fixtures.seed_page("RenameSrcA")
@@ -57,7 +49,7 @@ def main() -> int:
     if not os.path.exists(src):
         failures.append("move_page: a refused rename still deleted the source page")
 
-    # --- Part B: refuse an existing destination ---------------------------
+    # Existing destination refusal
     src_b = fixtures.seed_page("RenameSrcB")
     dst_b = fixtures.seed_page("RenameDstB")
     try:
@@ -69,14 +61,14 @@ def main() -> int:
     if not os.path.exists(src_b):
         failures.append("move_page: a refused overwrite still deleted the source")
 
-    # --- Part C: a normal in-tree rename still works ----------------------
+    # Normal in-tree rename
     src_c = fixtures.seed_page("RenameSrcC")
     dst_c = os.path.join(pages_dir, "RenameDstC.json")
     gl.page_manager.move_page(src_c, dst_c)
     if os.path.exists(src_c) or not os.path.exists(dst_c):
         failures.append("move_page: a normal in-tree rename did not land")
 
-    # --- Part D: DBus RenamePage handler ----------------------------------
+    # DBus RenamePage handler
     from src.api import DeckardAPI
     api = DeckardAPI()
 

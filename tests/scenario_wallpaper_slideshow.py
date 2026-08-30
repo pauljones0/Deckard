@@ -1,13 +1,5 @@
-"""The wallpaper slideshow: a deck background of several stills that rotate.
-
-Two halves. The first drives the pure Slideshow model with times it controls,
-so the index, the interval and the wrap are checked with no sleeps and no
-device. The second builds a real headless controller and follows the model
-through the settings seam and the render path: the list round-trips, the
-render path is handed the image for the current index, a page switch cancels
-the rotation, a single-image background still loads, and a video and a
-slideshow never both show.
-"""
+"""Verify order, timing, settings round-trip, indexed rendering, and page-stop behavior.
+Keep single-image loading and video/slideshow exclusivity."""
 import fixtures  # noqa: F401  (must be first: rewrites argv to a temp data dir)
 
 import os  # noqa: E402
@@ -88,10 +80,8 @@ def check_shuffle_is_a_permutation_without_repeats() -> None:
         seen.append(show.index)
     check("one cycle visits every image once", sorted(seen) == [0, 1, 2, 3], f"saw {seen}")
 
-    # The no-repeat guard, exercised deterministically. On a two-image list,
-    # seed 4 is a case where the naive reshuffle at the wrap would replay the
-    # image the last cycle ended on. The guard must reorder it away, so the
-    # image right after the wrap differs from the one right before.
+    # Seed 4 makes a naive two-image reshuffle repeat the prior cycle's last image.
+    # The no-repeat guard must reorder that wrap.
     two = Slideshow(["a.png", "b.png"], interval=5, order=SHUFFLE, rng=random.Random(4))
     walk = [two.index]
     for step in range(2):
@@ -138,11 +128,8 @@ def _load_deck_background(controller, serial: str, background: dict) -> None:
 
 
 def check_render_path_gets_the_current_index(controller, serial: str) -> None:
-    """The media thread advances the installed slideshow on its interval, and
-    the render path follows onto the image for each new index, wrapping at the
-    end. The precise index/interval arithmetic is the model's, checked above
-    with controlled times; this follows the real wiring end to end with a short
-    interval, so the sole writer drives the swap rather than the test."""
+    """Let the media thread advance and wrap the render image on a short interval.
+    The pure model checks exact index and interval arithmetic separately."""
     p1 = _png("idx1.png", (200, 10, 10))
     p2 = _png("idx2.png", (10, 200, 10))
     _load_deck_background(controller, serial, {
@@ -242,10 +229,8 @@ def check_single_image_set_clears_the_rotation(controller, serial: str) -> None:
 
 
 def check_moved_page_does_not_advance(controller, serial: str) -> None:
-    """A rotation advances only while its page is active. A page switch flips
-    active_page synchronously but reloads the background on a worker, so a tick
-    can race the switch with the old page's rotation still installed. The page
-    guard refuses that tick."""
+    """Refuse rotation after active_page changes but before background reload.
+    This closes the worker-reload race with an old slideshow still installed."""
     p1 = _png("mv1.png", (10, 90, 10))
     p2 = _png("mv2.png", (90, 10, 10))
     _load_deck_background(controller, serial, {
@@ -260,9 +245,8 @@ def check_moved_page_does_not_advance(controller, serial: str) -> None:
     original_page = controller.active_page
     before_index = show.index
     before_path = controller.background.image.path
-    # The switch window: active_page has flipped to another page while the old
-    # rotation is still installed. seed(0.0) makes the interval elapsed, so only
-    # the page guard stops the advance.
+    # Flip active_page while the old rotation remains installed.
+    # An elapsed interval ensures only the page guard stops the advance.
     controller.active_page = object()
     try:
         show.seed(0.0)
