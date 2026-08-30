@@ -1,5 +1,5 @@
-"""Validate untrusted ZIP member names before extraction and verify each resolved write target.
-These standard-library checks reject absolute, drive-relative, and parent-escaping paths without relying on zipfile normalization."""
+"""Validate untrusted ZIP member names and resolved write targets.
+Reject absolute, drive-relative, and parent escapes without relying on zipfile normalization."""
 from __future__ import annotations
 
 import os

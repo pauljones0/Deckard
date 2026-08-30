@@ -1,5 +1,5 @@
-"""Build icon packs from ZIP archives or picture folders in hidden, unique staging trees, then register them with one rename.
-Validate source and destination paths, reject linked or special files, enforce the size budget, flatten deep folders, and copy only renderable formats."""
+"""Build icon packs from ZIP archives or picture folders in hidden, unique staging trees.
+Publish with one rename after bounded copies of renderable files to checked, one-level paths."""
 from __future__ import annotations
 
 import os
@@ -113,7 +113,7 @@ def _unique_dest(dest_dir: str, filename: str, taken: set[str]) -> str:
 
 
 def _planned_destination(relative: str, taken: set[str]) -> str:
-    """Keep only the source's first folder and file name because pack discovery reads one subfolder level.
+    """Keep the first source folder and file name because discovery reads one subfolder level.
     Clean both components and reserve a unique destination."""
     parts = [part for part in relative.replace("\\", "/").split("/") if part not in ("", ".")]
     if not parts:
@@ -155,8 +155,8 @@ def _walk_files(folder: str) -> Iterator[str]:
 
 
 def _copy_planned_files(planned: list[_PlannedFile], assets_dir: str) -> None:
-    """Copy only ordinary, single-link files; reject pipes, devices, symlinks, and hardlinks that can reference external data.
-    Count streamed bytes against MAX_UNPACKED_BYTES."""
+    """Copy only ordinary, single-link files; reject pipes, devices, symlinks, and hardlinks.
+    Links can reach external data; count streamed bytes against MAX_UNPACKED_BYTES."""
     written = 0
     for item in planned:
         try:
@@ -234,7 +234,7 @@ def _common_top_folder(names: list[str]) -> str:
 
 def _declared_size(archive: zipfile.ZipFile, member: str) -> int:
     """Return the member's declared unpacked size.
-    ZipExtFile enforces it, but extraction also checks it for readers that may trust forged headers."""
+    ZipExtFile enforces it; extraction also guards readers that trust forged headers."""
     return archive.getinfo(member).file_size
 
 
@@ -244,7 +244,7 @@ def _extract_planned_files(archive: zipfile.ZipFile, planned: list[_PlannedFile]
         try:
             limit = _declared_size(archive, item.source)
         except KeyError as error:
-            # One open archive supplies the plan and extraction, so a missing member indicates a malformed handle.
+            # A missing planned member from the same open archive indicates a malformed handle.
             # Convert the lookup error to the import contract.
             raise PackImportError(
                 "This archive is damaged, so nothing from it was imported."
@@ -299,7 +299,7 @@ def _is_decodable(path: str) -> bool:
 
 def _write_thumbnail(staging: str, assets_dir: str, planned: list[_PlannedFile],
                      banner_path: str | None) -> str:
-    """Write a valid banner or the first planned icon as the required thumbnail, preferring a raster fallback.
+    """Write a valid banner or first planned icon as the thumbnail, with a raster fallback.
     Check the destination before copying."""
     if banner_path and os.path.isfile(banner_path) and _is_importable(banner_path) \
             and _is_decodable(banner_path):

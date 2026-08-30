@@ -75,8 +75,8 @@ def pack_wide_entry(attribution: dict[str, Any]) -> dict[str, Any]:
 
 def check_family_contract(cls: type, base: type, attributes: tuple[str, ...],
                           overrides: tuple[str, ...]) -> None:
-    """Reject incomplete family subclasses because annotations and factory stubs satisfy type checking.
-    The base classes need no exemption because Python invokes __init_subclass__ only for subclasses."""
+    """Reject incomplete subclasses because type checking accepts annotations and factory stubs.
+    Python calls __init_subclass__ only for subclasses, so the bases need no exemption."""
     missing = [name for name in attributes if not hasattr(cls, name)]
     missing += [name for name in overrides
                 if getattr(cls, name) is getattr(base, name)]

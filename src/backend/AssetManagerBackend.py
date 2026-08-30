@@ -42,7 +42,7 @@ class AssetManagerBackend(list[Any]):
         self.remove_invalid_data()
 
     def load_json(self) -> None:
-        # An unreadable index must not stop startup; the store quarantines corruption and returns an empty library.
+        # The store quarantines a corrupt index and returns an empty library so startup continues.
         # A missing index also starts empty.
         self.clear()
         self.extend(settings_store.get().read(settings_store.ASSET_LIBRARY))
@@ -69,7 +69,7 @@ class AssetManagerBackend(list[Any]):
             log.warning(f"Tried to add already existing asset. Ignoring. File: {asset_path}")
             return cast(str | None, existing["id"])
 
-        # Reject undecodable imports before copying; existing assets stay because decode failures can be transient.
+        # Reject undecodable imports before copying, but keep existing assets after decode failures.
         # Reuse this image for video and SVG thumbnails.
         decoded = self._decode_for_import(asset_path)
         if decoded is None:
@@ -277,7 +277,7 @@ class AssetManagerBackend(list[Any]):
         self.save_json()
 
     def _alert_on_main(self, window: "Gtk.Window | None", message: str, detail: str) -> None:
-        # Create the dialog in the idle callback because file drops use a worker and GTK requires the main thread.
+        # Chooser drops use a worker, so create the GTK dialog in the main-thread idle callback.
         # Pass the window so the modal dialog has a parent.
         def show() -> None:
             dial = Gtk.AlertDialog(message=message, detail=detail, modal=True)
@@ -301,7 +301,7 @@ class AssetManagerBackend(list[Any]):
                 return None
 
             os.makedirs(os.path.join(gl.DATA_PATH, "cache", "downloads"), exist_ok=True)
-            # Catch network and HTTP failures so a bad URL reports an error instead of ending the import worker.
+            # Catch network or HTTP errors so the UI reports failure instead of ending the worker.
             # KeyGrid can also call this path on the GTK main thread.
             try:
                 path = download_file(url=url, path=os.path.join(gl.DATA_PATH, "cache", "downloads"))
@@ -327,7 +327,7 @@ class AssetManagerBackend(list[Any]):
             return None
         asset_id = gl.asset_manager_backend.add(asset_path=path)
         if asset_id is None:
-            # Report unreadable, uncopyable, or undecodable drops because they otherwise have no UI result.
+            # Report unreadable, uncopyable, or undecodable drops; otherwise the UI shows nothing.
             self._alert_on_main(
                 window,
                 message="No valid image or video.",
