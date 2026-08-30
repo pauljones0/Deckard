@@ -200,9 +200,9 @@ class ScreenSaver:
             self.deck_controller.clear(expects_repaint=True)
             # The seq-stamped ClearMsg just submitted wipes the image and
             # touchscreen slots. It does not touch the generic tasks list,
-            # e.g. a straggling load_all_inputs or
-            # _update_all_inputs_awaiting_background from a load_page in
-            # flight. clear_media_player_tasks() owns that generic wipe. It
+            # e.g. a straggling load_all_inputs, completion marker or final
+            # page paint from a load_page in flight.
+            # clear_media_player_tasks() owns that generic wipe. It
             # takes no gen argument, because this code holds _load_page_lock
             # and nothing can supersede its own gen during the hold.
             self.deck_controller.clear_media_player_tasks()
