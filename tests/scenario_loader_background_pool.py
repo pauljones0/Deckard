@@ -1,4 +1,4 @@
-"""Check store tabs, onboarding lists, page imports, and asset choosers use the pool.
+"""Check StorePage and PluginRecommendations use the shared background pool.
 Pool work runs off-thread, returns promptly, logs failures, and marshals one callback."""
 import threading
 import types
