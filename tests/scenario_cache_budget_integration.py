@@ -1,8 +1,4 @@
-"""Integration scenario for the image-cache budget over real DeckControllers.
-
-Both per-deck caches join the budget. A binding ceiling makes an idle deck
-shed to a busy one, the paint path is unaffected, and a closed deck stops.
-"""
+"""Verify the image-cache budget across real deck controllers."""
 import fixtures  # noqa: F401  (isolated data dir + sys.path, house convention)
 
 import os
@@ -31,11 +27,7 @@ def _set_ceiling(value) -> None:
 
 
 def _fill(cache, prefix: str, total_bytes: int) -> None:
-    """File synthetic entries through the real put() of the cache.
-
-    The paint path makes the same call. Each key is put twice, so the
-    doorkeeper of the encode memo admits it.
-    """
+    """Add synthetic entries twice so the encode-memo doorkeeper admits them."""
     for i in range(total_bytes // ENTRY):
         key = (prefix, i)
         cache.put(key, bytes(ENTRY))
@@ -47,11 +39,7 @@ def _deck_bytes(controller) -> int:
 
 
 def _present(cache, prefix: str, total_bytes: int) -> int:
-    """Count how many entries _fill filed are still cached.
-
-    Counted per key rather than by byte total. A real repaint can file an
-    entry at any moment, and these assertions are about the synthetic ones.
-    """
+    """Count retained synthetic keys without including concurrent real paints."""
     return sum(1 for i in range(total_bytes // ENTRY) if cache.get((prefix, i)) is not None)
 
 
@@ -126,12 +114,7 @@ def check_registration_and_cross_deck_eviction(busy, idle) -> None:
         f"the sum must land at or under the ceiling: "
         f"{cache_budget.evictable_bytes()} > {CEILING_BYTES}"
     )
-    # The sum of the default floors is 4 MiB times 4 registrants, 64 times this
-    # ceiling. Only the ceiling // (2 * registrants) clamp makes any of this
-    # evictable, and the clamped floor is where the idle memo comes to rest. It
-    # is the oldest cache in the process, so the drain runs it down to the floor
-    # and takes the rest from the next-oldest. A comparison against the nominal
-    # 4 MiB floor would be vacuous, because this fixture is a quarter of a MiB.
+    # Four registrants clamp their 4 MiB default floors under this 256 KiB ceiling.
     floor_clamp = CEILING_BYTES // (2 * 4)   # 32 KiB, 4 evictable registrants
     assert idle.encode_memo.total_bytes >= floor_clamp, (
         f"global eviction dug the idle deck's memo below its clamped floor: "
@@ -164,11 +147,7 @@ def check_registration_and_cross_deck_eviction(busy, idle) -> None:
 
 
 def check_tile_min_age_tracks_video(controller) -> None:
-    """Native tile entries are keyed per frame and re-touched once per loop.
-
-    The flat 2 s default would leave the frame set of a playing video evictable
-    exactly one loop before it is needed again.
-    """
+    """Keep native video tiles protected for one loop duration."""
     assert controller.native_tile_cache.budget_min_age_s == cache_budget.DEFAULT_MIN_AGE_S, (
         "fixture sanity: a deck with no background video starts at the default min-age"
     )
@@ -179,10 +158,7 @@ def check_tile_min_age_tracks_video(controller) -> None:
     video.page = None
     controller.background.set_video(video, update=False)
 
-    # While the tile cache is still building, playback advances one frame per
-    # media tick rather than at source fps, so the true loop period is longer
-    # than frames over fps, and unknowably so. The conservative clamp maximum
-    # holds the frame set until the build lands.
+    # Use the maximum age while cache-building playback does not follow source FPS.
     assert not video.is_cache_complete(), "fixture sanity: the cache should still be building"
     assert controller.native_tile_cache.budget_min_age_s == cache_budget.MAX_MIN_AGE_S, (
         f"an unbuilt tile cache must be shielded by the clamp maximum, not by a "
@@ -232,12 +208,7 @@ def check_tile_min_age_tracks_video(controller) -> None:
 
 
 def check_gif_frames_census(controller) -> None:
-    """A retained GIF frame list is the largest uncapped image holder.
-
-    The list is the per-frame memo of the asset, so it is not evictable, and
-    this census column sizes whether an aggregate cap is warranted. Only an
-    alpha-carrying GIF keeps a frame list.
-    """
+    """Count retained GIF frames in the non-evictable image census."""
     from src.backend.DeckManagement.DeckController import KeyGIF
 
     path = os.path.join(gl.DATA_PATH, "media", "budget_census.gif")
@@ -269,11 +240,7 @@ def check_gif_frames_census(controller) -> None:
 
 
 def check_close_zeroes_share(controller) -> None:
-    """close() step 7 clears both caches, so a torn-down deck stops counting.
-
-    The weak registry drops it whenever GC gets to it, with no unregister call
-    on the teardown path.
-    """
+    """Require controller close to return both cache shares to the budget."""
     before = cache_budget.evictable_bytes()
     share = _deck_bytes(controller)
     assert share > 0, "fixture sanity: the deck being closed should hold cached bytes"
@@ -310,9 +277,7 @@ def main() -> None:
         check_close_zeroes_share(idle)
     finally:
         _set_ceiling(None)
-        # Tear both down, always. A controller left alive keeps its non-daemon
-        # threads running and the interpreter would never exit on a failing
-        # assert. Teardown is bounded and safe to repeat.
+        # Always stop non-daemon controller threads; teardown is bounded and idempotent.
         fixtures.teardown(busy)
         fixtures.teardown(idle)
 

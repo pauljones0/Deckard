@@ -1,8 +1,4 @@
-"""Pins the control plane in src/backend/control_plane.py.
-
-One rule set decides whether a page or state switch is valid, for every
-transport. A validation failure comes back as a result; an exception escapes.
-"""
+"""Verify one page and state validation contract across all transports."""
 import fixtures  # noqa: F401  (isolates DATA_PATH before src imports)
 
 import json  # noqa: E402
@@ -27,10 +23,7 @@ WIDE_STATES = 20
 
 
 def seed_multistate_page(page_name: str, key_ident: str, n_states: int) -> str:
-    """Seed a page whose key_ident carries n_states states.
-
-    The state bound under test is then the input's real state count.
-    """
+    """Seed a key with the state count used as its validation bound."""
     pages_dir = os.path.join(gl.DATA_PATH, "pages")
     os.makedirs(pages_dir, exist_ok=True)
     path = os.path.join(pages_dir, f"{page_name}.json")
@@ -43,11 +36,7 @@ def seed_multistate_page(page_name: str, key_ident: str, n_states: int) -> str:
 
 
 def settle(controller, quiet_for: float = 0.4, timeout: float = 10.0) -> None:
-    """Wait until the deck has gone quiet_for seconds without a write.
-
-    The media thread feeds the journal, so a claim that nothing happened means
-    something only once whatever was happening has finished.
-    """
+    """Wait until the deck journal has no writes for quiet_for seconds."""
     raw = fixtures.raw_deck(controller)
     deadline = time.monotonic() + timeout
     last = raw.current_seq()
@@ -66,11 +55,7 @@ def settle(controller, quiet_for: float = 0.4, timeout: float = 10.0) -> None:
 
 
 def load_named_page(controller, page_name: str) -> str:
-    """Put page_name on controller the plain way, with no service involved.
-
-    Waits for it to become the active page, the fixed starting point the
-    equivalence and no-op guards compare from.
-    """
+    """Load and await a named page without using the control service."""
     path = gl.page_manager.find_matching_page_path(page_name)
     assert path is not None, f"the scenario must seed {page_name!r} before loading it"
     if controller.active_page is None or os.path.abspath(controller.active_page.json_path) != os.path.abspath(path):
@@ -87,8 +72,6 @@ def active_name(controller) -> str | None:
     return None if page is None else page.get_name()
 
 
-# 1. Unknown serial
-
 def check_unknown_serial(plane) -> None:
     result = plane.change_page("not-a-deck", "Main")
     assert not result.ok and result.code == "no-such-deck", result
@@ -101,10 +84,7 @@ def check_unknown_serial(plane) -> None:
     assert state_result.message == result.message, (
         "both entry points must answer an unknown serial identically")
 
-    # With nothing connected there is no list to offer. The wording has to leave
-    # room for a deck on its way, because requests are answered from the moment
-    # the app takes the bus name, which is before it opens a single deck. A flat
-    # none-connected would call a deck unplugged while it is merely unenumerated.
+    # With no controllers, allow for decks that have not finished enumerating.
     manager = gl.deck_manager
     saved = manager.deck_controller
     manager.deck_controller = []
@@ -119,13 +99,9 @@ def check_unknown_serial(plane) -> None:
     print("PASS: an unknown serial answers no-such-deck and lists what is connected")
 
 
-# 2. Unknown page
-
 def check_unknown_page(plane, controller) -> None:
     before = load_named_page(controller, "Alpha")
-    # Compare by identity, not by path equality. A rejected request that
-    # reloaded the same page would leave an equal path and a different object,
-    # and only identity tells those apart.
+    # Object identity detects an unintended reload of the same page path.
     active_before = controller.active_page
 
     result = plane.change_page_on(controller, "no-such-page")
@@ -142,10 +118,7 @@ def check_unknown_page(plane, controller) -> None:
     assert plane.change_state(SERIAL_A, "no-such-page", "0,0", 0).code == "no-such-page", (
         "a state change must fail on the page BEFORE it looks at coordinates")
 
-    # The same guards, through the transport a --change-page reaches today. The
-    # handler they were written against crashes on an unknown name. It compares
-    # os.path.abspath(None) against the active page path and calls
-    # get_page(page_path=None) before its None check.
+    # Apply the unknown-page guards through the CLI's DBus transport.
     from src.api import DeckardAPI
 
     top = DeckardAPI()
@@ -179,11 +152,7 @@ def check_unknown_page(plane, controller) -> None:
 
 
 def check_unbuildable_page_leaves_deck_alone(plane, controller) -> None:
-    """A page name that resolves to a file the store cannot turn into a page.
-
-    get_page answers None, and load_page(None) clears the deck, so the deck goes
-    blank while the request reports success on every surface at once.
-    """
+    """Keep the active page when a resolved page file cannot be built."""
     load_named_page(controller, "Alpha")
     active_before = controller.active_page
     page_manager = gl.page_manager
@@ -224,14 +193,7 @@ def check_unbuildable_page_leaves_deck_alone(plane, controller) -> None:
 
 
 def check_default_page_build_failure_leaves_deck(controller) -> None:
-    """The boot path is the other surface that hands get_page's answer to
-    load_page.
-
-    load_default_page resolves a default page by name and loads it. get_page
-    answers None for a page that cannot be built, and load_page(None) clears
-    the deck, so a default page that fails to build would blank a deck that
-    already shows a page. The deck must keep its page instead.
-    """
+    """Keep the active page when the boot default cannot be built."""
     load_named_page(controller, "Alpha")
     active_before = controller.active_page
     page_manager = gl.page_manager
@@ -252,15 +214,8 @@ def check_default_page_build_failure_leaves_deck(controller) -> None:
     print("PASS: a default page that cannot be built leaves the deck's page in place")
 
 
-# 3. The same-page no-op, through the DBus method
-
 def check_same_page_noop_over_dbus(controller) -> None:
-    """SetActivePage must not reload the page a deck already shows.
-
-    A reload reaches the device, which the write journal records. Identical
-    repaints are deduped at the write boundary, so the probe is something a
-    load restores, and an off-page brightness makes the next load visible.
-    """
+    """Keep SetActivePage as a no-op when the deck already shows that page."""
     from src.api import ControllerInstanceAPI
 
     probe_brightness = 37
@@ -301,8 +256,6 @@ def check_same_page_noop_over_dbus(controller) -> None:
     print("PASS: SetActivePage for the active page is a no-op (nothing reaches the deck)")
 
 
-# 4 and 5. Device-truth bounds, and loading only when different
-
 def check_load_only_if_different(plane, controller) -> None:
     load_named_page(controller, "Alpha")
 
@@ -341,11 +294,7 @@ def check_device_truth_bounds(plane, controller_b) -> None:
     c_input = controller_b.get_input(Input.Key(WIDE_KEY))
     assert c_input is not None, f"the 10x10 deck must have an input at {WIDE_KEY}"
 
-    # No wait for the input rebuild here on purpose. change_state_on waits for
-    # the load it triggers, so a state request straight after a page switch
-    # both validates and applies against the page's own states, and never
-    # against an input the media thread has not finished rebuilding. The
-    # requests below run with no settling step and must still see 20 states.
+    # Do not settle: change_state_on must await its own input rebuild.
 
     # In bounds for this device, and beyond the invented CLI caps of x,y <= 10
     # and state <= 20, which rejected requests before they reached a deck.
@@ -354,9 +303,7 @@ def check_device_truth_bounds(plane, controller_b) -> None:
     assert c_input.state == 19, f"the input must actually be on state 19: {c_input.state}"
     assert SERIAL_B in ok.message, ok.message
 
-    # A state that arrives as text still applies. Nothing on the DBus signature
-    # can carry a string, but the parked-request dict is written into by hand,
-    # so the success arm of that conversion holds only while this asserts it.
+    # Parked-request dictionaries can supply the state as text.
     assert plane.change_state_on(controller_b, "Wide", "9,9", "18").ok
     assert c_input.state == 18, f"a state given as text must apply: {c_input.state}"
     assert plane.change_state_on(controller_b, "Wide", "9,9", 19).ok
@@ -385,8 +332,6 @@ def check_device_truth_bounds(plane, controller_b) -> None:
 
     print("PASS: coordinate and state bounds are the device's and the page's truth")
 
-
-# 6 and 7. Failures are results, exceptions are not
 
 def check_validation_failures_are_results(plane, controller) -> None:
     load_named_page(controller, "Alpha")
@@ -425,10 +370,7 @@ def check_validation_failures_are_results(plane, controller) -> None:
 
 
 def check_unexpected_exception_propagates(plane, controller) -> None:
-    """Only a genuine exception may escape, and it must escape.
-
-    The peek-and-resolve split of the boot path is built on this.
-    """
+    """Propagate genuine exceptions so parked requests remain retryable."""
     load_named_page(controller, "Alpha")
 
     def exploding_load_page(page, *args, **kwargs):
@@ -457,24 +399,14 @@ def check_unexpected_exception_propagates(plane, controller) -> None:
     print("PASS: an unexpected exception propagates out of the service")
 
 
-# 8. The delegate and the core agree
-
 def check_dbus_delegate_matches_service(plane, controller) -> None:
-    """Drive the DBus method and the service core over the same requests.
-
-    Both start from the same state, and the deck must end up doing the same
-    thing. The transport may render the answer, and may not decide anything.
-    """
+    """Require DBus page methods and service calls to produce the same outcome."""
     from src.api import DeckardAPI
 
     top = DeckardAPI()
 
     def outcome(drive) -> tuple:
-        """Active page and load count after drive(), from a fixed start.
-
-        load_page sets active_page itself, so it is already the answer when
-        the drive returns.
-        """
+        """Return the active page and load count from a fixed start."""
         load_named_page(controller, "Alpha")
         original_load_page = controller.load_page
         loads: list = []
@@ -516,20 +448,14 @@ def check_dbus_delegate_matches_service(plane, controller) -> None:
 
 
 def check_state_delegate_matches_service(plane, controller) -> None:
-    """The state half of the same comparison.
-
-    Drive the DBus method and the service core over the same requests from the
-    same starting state, and compare what the deck ended up doing.
-    """
+    """Require DBus state methods and service calls to produce the same outcome."""
     from src.api import DeckardAPI
 
     top = DeckardAPI()
     c_input = controller.get_input(Input.Key(WIDE_KEY))
 
     def outcome(drive) -> tuple:
-        # No settling step here either: the state drive below goes through the
-        # service, which waits for its own page load before it reads or sets a
-        # state.
+        # Do not settle: the service must await the page load it starts.
         assert plane.change_page_on(controller, "Wide").ok
         c_input.set_state(0)
         original_load_page = controller.load_page
@@ -546,9 +472,7 @@ def check_state_delegate_matches_service(plane, controller) -> None:
             del controller.load_page
         return (active_name(controller), c_input.state, len(loads))
 
-    # The state is an integer on this transport, as the method signature says,
-    # and the coordinates are still the text the caller typed. Parsing them is
-    # the job of the service, on every path.
+    # Let the service parse textual coordinates on every transport path.
     requests = [
         (SERIAL_B, "Wide", "9,9", 5),          # applied
         (SERIAL_B, "Wide", "9,9", 99),         # state out of range
@@ -573,11 +497,7 @@ def check_state_delegate_matches_service(plane, controller) -> None:
 
 
 def check_other_decks_are_untouched(plane, controller_a, controller_b) -> None:
-    """A request names one deck.
-
-    The second controller is here anyway, so pinning that it stays out of the
-    request costs nothing.
-    """
+    """Require each request to affect only the deck it names."""
     load_named_page(controller_a, "Alpha")
     settle(controller_b)
     raw_b = fixtures.raw_deck(controller_b)
@@ -600,23 +520,12 @@ def check_other_decks_are_untouched(plane, controller_a, controller_b) -> None:
 
 
 def check_state_barrier_clears_before_background(plane, controller_b) -> None:
-    """The state barrier waits for the input rebuild, not the background decode.
+    """Release the state barrier after input rebuild, before background decode.
 
-    A page switch queues the input rebuild first, then a paint task that blocks
-    the media thread for the whole background decode. change_state_on must
-    return once the rebuild is done, well before that decode ends. Its caller
-    is the DBus dispatch on the GTK main thread, so a change_state that also
-    switches pages would freeze the app for the decode's length otherwise.
-
-    Start on a different page so the change_state below is a real switch that
-    queues a fresh rebuild and a fresh background decode. A slow load_background
-    makes the background future, and so the paint task waiting on it, block for
-    bg_block_s. The barrier must clear far sooner, off the input rebuild alone.
+    Waiting for decode would block DBus dispatch on the GTK main thread.
     """
     load_named_page(controller_b, "Alpha")
-    # Drain Alpha's own input rebuild before measuring. The barrier keys on
-    # generations now, so a straggling prior rebuild cannot release it early;
-    # the settle just keeps the timing below free of unrelated media work.
+    # Drain prior media work before measuring the generation-keyed barrier.
     settle(controller_b)
 
     bg_block_s = 5.0
@@ -646,21 +555,7 @@ def check_state_barrier_clears_before_background(plane, controller_b) -> None:
 
 
 def check_stale_rebuild_does_not_release_barrier(plane, controller_b) -> None:
-    """An older page's input rebuild must not release the state barrier.
-
-    Page loads overlap. Alpha's rebuild is held inside the load, past the point
-    where it decides it is current, so the switch to Wide below supersedes it
-    while it runs and it still reaches its completion. That completion lands
-    first, before Wide's own rebuild has finished. A barrier keyed on a bare
-    flag clears there, and the state request then reads the 9x9 input before
-    Wide's states exist, which rejects a valid state as "only has 1 state". The
-    barrier must stay shut until the rebuild for the generation the switch
-    armed has finished.
-
-    Holding each input, not the rebuild's entry, is what makes the stale
-    completion happen at all: a rebuild held before its own currency check
-    simply abandons itself and publishes nothing.
-    """
+    """Keep the state barrier closed when an older page rebuild completes first."""
     load_named_page(controller_b, "Beta")
     settle(controller_b)
 
@@ -669,9 +564,7 @@ def check_stale_rebuild_does_not_release_barrier(plane, controller_b) -> None:
     real_load_input = controller_b.load_input
 
     def held_load_input(controller_input, page, *args, **kwargs):
-        # Every page's inputs are held, Wide's included, so Wide's rebuild is
-        # still running when Alpha's stale one completes. The loads run
-        # concurrently on the per-deck pool, so a rebuild costs one hold.
+        # Hold both concurrent rebuilds so Alpha completes one hold before Wide.
         if page.get_name() == "Alpha":
             alpha_started.set()
         time.sleep(hold_s)

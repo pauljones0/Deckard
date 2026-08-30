@@ -1,8 +1,4 @@
-"""Corrupt-but-present JSON must not become silent data loss on the read side.
-
-The loader quarantines the corrupt file and heals from the backup, whatever
-use_backup says. A failed quarantine still heals, and never clobbers a copy.
-"""
+"""Verify that corrupt JSON is quarantined and healed without data loss."""
 import fixtures  # noqa: F401  (import first: sets up the isolated data dir)
 
 import json
@@ -125,10 +121,7 @@ def check_sweep_survives_poison() -> int:
 
 
 def _seed_page_with_backup(name: str, content: dict) -> str:
-    """Write a real page and a validated backup, then corrupt the primary.
-
-    Returns the page path.
-    """
+    """Write a page and backup, corrupt the primary, and return its path."""
     path = seed_page(name)
     backup_dir = os.path.join(gl.page_manager.PAGE_PATH, "backups")
     os.makedirs(backup_dir, exist_ok=True)
@@ -141,18 +134,13 @@ def _seed_page_with_backup(name: str, content: dict) -> str:
 
 
 def check_set_page_settings_no_gut() -> int:
-    # The settings writers read with use_backup=False and save the result back.
-    # A corrupt page must heal from the backup, so the write preserves keys and
-    # background instead of gutting them to a settings-only dict.
+    # Healing must preserve page content before the settings writer saves it back.
     content = {"keys": {"0x0": {"states": {"0": {}}}}, "background": {"path": "wall.png"}}
     path = _seed_page_with_backup("SettingsWriterHeal", content)
 
     gl.page_manager.set_page_settings(path, {"brightness": 42})
 
-    # A settings write is an edit of the page, marked with the flush seam and
-    # written on its timer. The heal has just left this path with no primary,
-    # because the loader quarantined it, so the file exists again only once that
-    # write goes out.
+    # Flush the delayed edit because quarantine removed the primary file.
     page_flush.get().flush_path(path)
     with open(path) as f:
         after = json.load(f)
@@ -245,10 +233,7 @@ def check_quarantine_no_clobber() -> int:
 
 
 def check_wrong_root_type_heals() -> int:
-    # A file that parses cleanly but holds the wrong root type -- a list or a
-    # scalar where an object is expected -- must be treated as corrupt, not
-    # passed through to the schema accessors where it raises and can abort
-    # startup.
+    # Reject valid JSON whose root type does not match the requested schema.
     from src.backend import settings_store
 
     store = settings_store.get()

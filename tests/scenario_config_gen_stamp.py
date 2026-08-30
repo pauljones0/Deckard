@@ -1,9 +1,4 @@
-"""Regression test for the config_gen stamping race.
-
-load_page() must stamp every input config_gen synchronously under
-_page_gen_lock. An async stamp lets a racing paint carry the old generation,
-which the present-boundary judge then drops and blanks the new page.
-"""
+"""Verify synchronous input generation stamps during page loads."""
 import fixtures
 import globals as gl
 
@@ -12,9 +7,7 @@ def main() -> None:
     fixtures.start_watchdog(30, label="scenario_config_gen_stamp")
     controller = fixtures.make_headless_controller(serial="cfggen-1")
     try:
-        # Neutralize the async per-input stamp path. With load_all_inputs a
-        # no-op, config_gen can advance only through the synchronous stamp in
-        # load_page, which is what the real paint path races.
+        # Disable the async stamp path so only load_page can advance config_gen.
         controller.load_all_inputs = lambda *a, **k: None
 
         seed_path = fixtures.seed_page("CfgGenPage")

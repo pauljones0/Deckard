@@ -1,8 +1,4 @@
-"""Unit-tier scenario for clear-against-frames ordering.
-
-DeckController.clear() submits a seq-stamped ClearMsg to the control queue.
-A frame submitted after the Clear must paint after the blank, never be wiped.
-"""
+"""Verify clear ordering against frames submitted before and after it."""
 import fixtures
 from src.backend.DeckManagement.DeckController import ClearMsg
 from src.backend.DeckManagement.InputIdentifier import Input
@@ -58,10 +54,7 @@ def main() -> None:
         "the post-clear frame must actually repaint different content, not stay blank"
     )
 
-    # Part 2. A Clear submitted before any content exists, which is the
-    # screensaver-entry clear-then-paint pattern. Content queued after must
-    # survive, and the final observed state for the key must be the content,
-    # never a blank.
+    # Model screensaver entry: clear first, then require later content to survive.
     deck.clear_journal()
 
     seq2 = media_player.next_submit_seq()
@@ -88,15 +81,7 @@ def main() -> None:
 
 
 def leg_executed_seq_is_deck_wide() -> None:
-    """The mark of the highest frame that reached the device belongs to the
-    deck, and moves only for a frame whose write ran.
-
-    A Clear that executes after the paints it was meant to precede asks one
-    question about the whole deck: did anything go out after I was submitted?
-    It compares its own seq against that one mark, so a mark kept per target
-    would answer for a target the Clear never names. Here one key of two
-    paints, and the Clear must still see it.
-    """
+    """Require the executed-frame sequence to be deck-wide and write-gated."""
     controller, media_player, _ = fixtures.make_stub_controller(
         serial="clearorder-exec", n_keys=2)
     page = controller.active_page
@@ -121,9 +106,7 @@ def leg_executed_seq_is_deck_wide() -> None:
         "and behind a screensaver nothing else would repaint it"
     )
 
-    # A frame whose run() raised never reached the device. Only a
-    # TransportError is swallowed inside run(); anything else escapes the
-    # drain, and the mark must stay where it was.
+    # A frame whose run() raises must not advance the device-write sequence.
     def boom() -> None:
         raise TypeError("boom-executed-seq")
 
