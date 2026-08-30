@@ -44,6 +44,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, override
 
 if TYPE_CHECKING:
+    from src.backend.DeckManagement.deck_controller.input_latency import LatencySample
     from src.backend.DeckManagement.deck_controller.media_writer import MediaPlayerThread
     from src.backend.PageManagement.Page import Page
 
@@ -136,14 +137,35 @@ class PresentState:
             return False
         native_image = encode()
         self.last_enqueued_hash = img_hash
-        self._enqueue(media_player, native_image, page, config_gen, img_hash)
+        tracker = getattr(getattr(media_player, "deck_controller", None), "input_latency", None)
+        latency_sample = tracker.current_sample() if tracker is not None else None
+        if latency_sample is not None:
+            assert tracker is not None
+            tracker.paint_enqueued(latency_sample)
+        self._enqueue(media_player, native_image, page, config_gen, img_hash, latency_sample)
         return True
 
     def _enqueue(self, media_player: "MediaPlayerThread", native_image: bytes,
-                 page: "Page | None", config_gen: int | None, img_hash: int) -> None:
+                 page: "Page | None", config_gen: int | None, img_hash: int,
+                 latency_sample: "LatencySample | None") -> None:
         """Hand the encoded bytes to this target's slot on the writer. The two
         subclasses name the slot; nothing reaches this body."""
         raise NotImplementedError
+
+    def _enqueue_ticket(self, submit: "Callable[..., None]", *args: object,
+                        native_image: bytes, page: "Page | None",
+                        config_gen: int | None, img_hash: int,
+                        latency_sample: "LatencySample | None") -> None:
+        """Submit either paint target through one latency-aware ticket seam."""
+        kwargs = {
+            "page": page,
+            "config_gen": config_gen,
+            "present": self,
+            "img_hash": img_hash,
+        }
+        if latency_sample is not None:
+            kwargs["latency_sample"] = latency_sample
+        submit(*args, native_image, **kwargs)
 
 
 class KeyPresentState(PresentState):
@@ -155,10 +177,13 @@ class KeyPresentState(PresentState):
 
     @override
     def _enqueue(self, media_player: "MediaPlayerThread", native_image: bytes,
-                 page: "Page | None", config_gen: int | None, img_hash: int) -> None:
-        media_player.add_image_task(self.key_index, native_image, page=page,
-                                    config_gen=config_gen, present=self,
-                                    img_hash=img_hash)
+                 page: "Page | None", config_gen: int | None, img_hash: int,
+                 latency_sample: "LatencySample | None") -> None:
+        self._enqueue_ticket(
+            media_player.add_image_task, self.key_index, native_image=native_image,
+            page=page, config_gen=config_gen, img_hash=img_hash,
+            latency_sample=latency_sample,
+        )
 
 
 class TouchscreenPresentState(PresentState):
@@ -167,9 +192,13 @@ class TouchscreenPresentState(PresentState):
 
     @override
     def _enqueue(self, media_player: "MediaPlayerThread", native_image: bytes,
-                 page: "Page | None", config_gen: int | None, img_hash: int) -> None:
-        media_player.add_touchscreen_task(native_image, page=page, config_gen=config_gen,
-                                          present=self, img_hash=img_hash)
+                 page: "Page | None", config_gen: int | None, img_hash: int,
+                 latency_sample: "LatencySample | None") -> None:
+        self._enqueue_ticket(
+            media_player.add_touchscreen_task, native_image=native_image,
+            page=page, config_gen=config_gen, img_hash=img_hash,
+            latency_sample=latency_sample,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -196,6 +225,8 @@ class PaintTicket:
     native_image: bytes
     # Hash of the image these bytes show. run() records it as presented.
     img_hash: int | None
+    # The physical input sample that caused this paint, if it has one.
+    latency_sample: "LatencySample | None" = None
 
     def released(self) -> "PaintTicket":
         """This ticket with its encoded bytes dropped.
@@ -208,3 +239,38 @@ class PaintTicket:
         this paint was already written.
         """
         return replace(self, native_image=b"")
+
+    def writer_started(self, deck_controller: object) -> None:
+        if self.latency_sample is not None:
+            tracker = getattr(deck_controller, "input_latency", None)
+            if tracker is not None:
+                tracker.writer_started(self.latency_sample)
+
+    def usb_presented(self, deck_controller: object) -> None:
+        if self.latency_sample is not None:
+            tracker = getattr(deck_controller, "input_latency", None)
+            if tracker is not None:
+                tracker.usb_presented(self.latency_sample)
+
+    def record_drop(self, deck_controller: object, reason: str) -> None:
+        if self.latency_sample is not None:
+            tracker = getattr(deck_controller, "input_latency", None)
+            if tracker is not None:
+                tracker.drop(self.latency_sample, reason)
+
+    def discarded(self, deck_controller: object, reason: str) -> None:
+        """Record a lost paint frame; a sibling may still complete its token."""
+        self.record_drop(deck_controller, reason)
+
+    def presented_by(self, deck_controller: object) -> "PaintTicket":
+        """Record the completed device write and release this frame's bytes.
+
+        The presented hash is recorded here, at the write, and never at
+        render time. A paint dropped at the write boundary must not advance
+        the hash, or the correcting render hash-skips and the content
+        bleeds forever.
+        """
+        self.usb_presented(deck_controller)
+        if self.present is not None:
+            self.present.note_presented(self.img_hash)
+        return self.released()

@@ -58,6 +58,7 @@ from src.backend.DeckManagement.Subclasses.encoded_image_cache import EncodedIma
 from src.backend.DeckManagement.Subclasses.native_tile_cache import NativeTileCache, native_tile_cache_max_bytes
 from src.backend.DeckManagement.deck_controller.background_media import Background, BackgroundVideo
 from src.backend.DeckManagement.deck_controller.inputs import ControllerDial, ControllerKey, ControllerTouchScreen
+from src.backend.DeckManagement.deck_controller.input_latency import InputLatencyRun, dispatch_dial_callback, dispatch_key_callback, dispatch_touchscreen_callback, make_input_latency_tracker, write_input_latency_report
 from src.backend.DeckManagement.deck_controller.media_writer import (
     ClearAndCloseMsg,
     ClearMsg,
@@ -112,6 +113,9 @@ class DeckController:
 
     def __init__(self, deck_manager: "DeckManager", deck: "StreamDeck.StreamDeck | FakeDeck | RemoteDeck"):
         self.deck_manager: "DeckManager" = deck_manager
+        self.input_latency_run = InputLatencyRun.from_environment()
+        self.input_latency = make_input_latency_tracker(self.input_latency_run)
+        self.input_latency_model: str | None = None
 
         # Per-instance memo for stable deck properties. An lru_cache on an
         # instance method pins every self on the class and never evicts.
@@ -133,6 +137,8 @@ class DeckController:
         # the bring-up gives the device back here. A raise past the bring-up
         # is released by the failed-init teardown or by the caller's retry.
         self.deck: BetterDeck = BetterDeck(cast("StreamDeck.StreamDeck", deck))
+        if self.input_latency_run is not None:
+            self.input_latency_model = self.deck.deck_type()
 
         try:
             self.deck.set_rotation(gl.settings_manager.deck_view(self.get_deck_settings()).get("rotation"))
@@ -611,18 +617,13 @@ class DeckController:
         # handle the reader thread passes, and it reports the unrotated
         # layout: decoding against that names a different key for six of the
         # eight positions of a two by four grid at 90 and at 270.
-        coords = ControllerKey.Index_To_Coords(self.deck, key)
-        ident = Input.Key(f"{coords[0]}x{coords[1]}")
-        self.event_callback(ident, *args, **kwargs)
+        dispatch_key_callback(self, key, args, kwargs)
 
     def dial_event_callback(self, deck: Any, dial: Any, *args: Any, **kwargs: Any) -> None:
-        ident = Input.Dial(str(dial))
-        self.event_callback(ident, *args, **kwargs)
+        dispatch_dial_callback(self, dial, args, kwargs)
 
     def touchscreen_event_callback(self, deck: Any, *args: Any, **kwargs: Any) -> None:
-        ident = Input.Touchscreen("sd-plus")
-        self.event_callback(ident, *args, **kwargs)
-
+        dispatch_touchscreen_callback(self, args, kwargs)
 
     ### Helper methods
     def generate_alpha_key(self) -> Image.Image:
@@ -1420,11 +1421,9 @@ class DeckController:
             if gen is not None and gen != self._page_load_generation:
                 return
             self.media_player.tasks.clear()
-            # Take the writer's slot lock, so this cannot interleave with the
-            # drain's read-then-null or with a producer's assignment.
-            with self.media_player._slot_lock:
-                self.media_player.image_tasks.clear()
-                self.media_player.touchscreen_task = None
+            # The writer's discard helper takes the slot lock, so this cannot
+            # interleave with the drain or a producer assignment.
+            self.media_player.discard_paint_tasks("controller_queue_cleared")
 
     def close(self, remove_media: bool, app_quit: bool = False) -> None:
         """One deterministic teardown sweep. Every unplug and replug through
@@ -1531,6 +1530,9 @@ class DeckController:
             except Exception:
                 log.opt(exception=True).warning("Failed to submit ClearAndClose during close()")
             media_player.stop(timeout=2.0)
+            media_player.discard_paint_tasks("close_cleanup")
+
+        write_input_latency_report(self)
 
         # Step 6 runs the action teardown, and the app-quit path skips it.
         # on_quit runs synchronously on main against a 6s force-quit deadline,
@@ -1579,9 +1581,7 @@ class DeckController:
                 log.opt(exception=True).warning("Failed to close image resources during close()")
             self.clear_encoded_key_caches()
             if media_player is not None:
-                media_player.image_tasks.clear()
                 media_player.tasks.clear()
-                media_player.touchscreen_task = None
                 media_player.control_q.clear()
         # Fallback release. The writer normally released the device from step
         # 5's ClearAndCloseMsg. This matters only when that writer wedged and

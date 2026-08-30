@@ -216,3 +216,9 @@ uv.lock
 .DS_Store
 # Historical one-off hardware verifiers: machine-specific, kept locally only.
 tests/hardware/manual/archive/
+
+# Hardware latency runs write their reports here. The location is tracked
+# through .gitkeep; the per-run contents never are, because each report
+# carries machine-local serials and paths.
+tests/hardware/reports/*
+!tests/hardware/reports/.gitkeep

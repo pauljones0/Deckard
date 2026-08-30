@@ -195,6 +195,9 @@ class ControllerInputState:
         # default it resolves here, when the pool worker runs, which reads
         # deck_controller.active_page and so tracks any page swap between the
         # event and this dispatch.
+        tracker = getattr(self.controller_input.deck_controller, "input_latency", None)
+        if tracker is not None:
+            tracker.action_started(tracker.current_sample())
         if actions is None:
             actions = self.get_own_actions()
         for action in actions:
@@ -310,8 +313,31 @@ class ControllerInputState:
         if exc is not None:
             log.opt(exception=exc).error(f"Action callback for {self.controller_input.identifier} raised")
 
+    def _run_correlated_action_event(self, tracker: Any, sample: object,
+                                     event: InputEvent, data: dict[str, Any] | None,
+                                     show_notifications: bool,
+                                     actions: list[Any] | None) -> None:
+        tracker.run_with_sample(
+            sample, self.own_actions_event_callback, event, data,
+            show_notifications, actions,
+        )
+
     def own_actions_event_callback_threaded(self, event: InputEvent, data: dict[str, Any] | None = None, show_notifications: bool = False, actions: list[Any] | None = None) -> None:
-        self._submit_action_callback(self.own_actions_event_callback, event, data, show_notifications, actions)
+        tracker = getattr(self.controller_input.deck_controller, "input_latency", None)
+        sample = tracker.current_sample() if tracker is not None else None
+        if sample is None:
+            self._submit_action_callback(
+                self.own_actions_event_callback, event, data,
+                show_notifications, actions,
+            )
+            return
+        assert tracker is not None
+        future = self._submit_action_callback(
+            self._run_correlated_action_event, tracker, sample, event, data,
+            show_notifications, actions,
+        )
+        if future is None:
+            tracker.drop(sample, "action_not_submitted")
 
     def set_image(self, image: "InputImage | None", /, update: bool = True) -> None:
         """Attach this state's still media, or clear it with None.
@@ -977,4 +1003,3 @@ class ControllerKeyState(ControllerInputState):
         self.label_manager.clear_labels()
         self.layout_manager.clear()
         self.background_manager.set_page_color(None)
-

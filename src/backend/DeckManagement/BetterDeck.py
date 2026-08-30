@@ -391,7 +391,8 @@ class BetterDeck():
         :rtype: str
         :return: String containing the model name of the StreamDeck device.
         """
-        return cast(str, self.deck.deck_type())
+        with self._lock:
+            return cast(str, self.deck.deck_type())
 
     def is_visual(self) -> bool:
         """

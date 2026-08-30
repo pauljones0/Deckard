@@ -90,10 +90,6 @@ GRANDFATHER: dict[str, int] = {
     # class-level declaration of the narrowed present state, which a subclass
     # must state at class level for a reader of the attribute to see it.
     "src/backend/DeckManagement/deck_controller/controller.py": 1670,
-    # The sole-writer loop. It holds the control-message vocabulary and the
-    # ordering rules between paints, so a message the writer must execute, and
-    # a gate on the writes it performs, have no other home.
-    "src/backend/DeckManagement/deck_controller/media_writer.py": 1221,
     "src/backend/DeckManagement/deck_controller/inputs.py": 1457,
     "src/backend/Store/StoreBackend.py": 1948,
 }
