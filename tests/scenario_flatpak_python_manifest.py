@@ -12,6 +12,7 @@ import zipfile
 
 from flatpak.ci import check_python_payload as payload
 from flatpak.ci import generate_python_manifest as generator
+import flatpak_manifest_contracts as contracts
 
 
 def check_output_normalization() -> None:
@@ -171,6 +172,16 @@ def check_budget_policy(directory: Path) -> None:
         assert "by policy" in str(error)
     else:
         raise AssertionError("budget outside the approved policy must fail")
+    contract["headroom_percent"] = 6
+    contract["architectures"]["x86_64"]["budget_bytes"] = payload.rounded_budget(100, 6)
+    contract["architectures"]["aarch64"]["budget_bytes"] = payload.rounded_budget(200, 6)
+    path.write_text(json.dumps(contract), encoding="utf-8")
+    try:
+        payload.load_budget_contract(path)
+    except ValueError as error:
+        assert "5% headroom" in str(error)
+    else:
+        raise AssertionError("headroom other than the approved 5% must fail")
     assert payload.report_budget_result(
         {"x86_64": 10, "aarch64": 10},
         {"x86_64": 10, "aarch64": 10},
@@ -190,8 +201,11 @@ def main() -> None:
     fixtures.start_watchdog(30, label="scenario_flatpak_python_manifest")
     check_output_normalization()
     check_architecture_selection()
+    contracts.check_ci_contract(Path(__file__).resolve().parents[1])
     with tempfile.TemporaryDirectory() as directory:
         path = Path(directory)
+        contracts.check_generator_commands(path)
+        contracts.check_complete_drift_mode(path)
         check_drift_reporting(path)
         check_archive_sizes_and_hashes(path)
         check_measure_verifies_before_counting(path)

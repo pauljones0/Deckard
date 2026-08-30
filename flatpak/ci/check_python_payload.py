@@ -23,6 +23,7 @@ MANIFEST = ROOT / "pypi-requirements.yaml"
 BUDGETS = ROOT / "flatpak" / "python-payload-budgets.json"
 MIB = 1024 * 1024
 ALLOWED_HOST = "files.pythonhosted.org"
+APPROVED_HEADROOM_PERCENT = 5
 
 
 def rounded_budget(baseline: int, headroom_percent: int) -> int:
@@ -39,10 +40,10 @@ def load_budget_contract(path: Path) -> dict[str, int]:
     architectures = data.get("architectures")
     if (
         not isinstance(headroom, int)
-        or headroom < 0
+        or headroom != APPROVED_HEADROOM_PERCENT
         or not isinstance(architectures, dict)
     ):
-        raise ValueError("invalid payload budget contract")
+        raise ValueError("payload budget contract must use 5% headroom")
 
     budgets: dict[str, int] = {}
     for arch in ("x86_64", "aarch64"):

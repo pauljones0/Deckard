@@ -204,9 +204,13 @@ def _check_file(path: Path, expected: str) -> bool:
     return False
 
 
-def generate(*, check: bool, upgrade: bool) -> int:
+def require_python_313() -> None:
     if sys.version_info[:2] != (3, 13):
         raise RuntimeError("Flatpak dependency generation requires Python 3.13")
+
+
+def generate(*, check: bool, upgrade: bool) -> int:
+    require_python_313()
     with tempfile.TemporaryDirectory(prefix="deckard-flatpak-python-") as directory:
         temp = Path(directory)
         lock_path = temp / LOCK.name
