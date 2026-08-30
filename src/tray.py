@@ -15,8 +15,8 @@ ICON_FILE_SUFFIXES = (".png", ".svg", ".xpm")
 
 
 def icon_search_roots() -> list[str]:
-    """Return absolute icon roots with the user directory before system directories.
-    Replace missing or relative environment entries with specification defaults."""
+    """Default missing or relative XDG_DATA_HOME and put its absolute root first.
+    Drop relative XDG_DATA_DIRS; use system defaults only if no absolute paths remain."""
     home = os.environ.get("XDG_DATA_HOME", "")
     if not os.path.isabs(home):
         home = os.path.join(os.path.expanduser("~"), ".local", "share")

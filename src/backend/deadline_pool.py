@@ -76,7 +76,7 @@ class DeadlinePool:
         self._wording = BatchWording() if wording is None else wording
         self._new_executor: ExecutorFactory = _new_thread_pool if executor_factory is None else executor_factory
         # Serialize submits, swaps, and shutdown; the lock is not reentrant.
-        # A factory that calls its own pool while holding it deadlocks.
+        # A task or factory that calls its own pool while holding it deadlocks.
         self._lock = threading.Lock()
         self._shutdown = False
         self._leaked_workers = 0

@@ -212,7 +212,7 @@ class DeckardAPI:
 
     def ListActions(self, page: Str, coords: Str) -> Str:
         """Return page actions as JSON for all inputs or one x,y coordinate.
-        Missing pages and invalid coordinates return a top-level error object."""
+        Missing pages or coordinates that do not parse as x,y return a top-level error object."""
         log.info(f"DBus API: ListActions called – page={page!r} coords={coords!r}")
         try:
             error, data = control_plane.get().list_page_actions(page, coords)

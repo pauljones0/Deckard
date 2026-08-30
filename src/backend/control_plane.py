@@ -24,8 +24,13 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class ControlResult:
-    """One control result with a stable machine code and a surface-ready message.
-    An already-active no-op is successful; all other nonempty codes identify the refusal."""
+    """A stable machine code and surface-ready message; "" and already-active mean success."""
+
+    # Input: bad-coords, bad-event, bad-state, coords-out-of-bounds, input-blocked
+
+    # Input: input-held, no-such-input, press-not-started, state-out-of-range
+
+    # Page/deck: no-page-manager, no-such-deck, no-such-page, page-build-failed, page-moved
 
     ok: bool
     code: str = ""
@@ -272,7 +277,7 @@ def _wait_for_input_load(controller: DeckController) -> None:
 
 
 class ControlPlane:
-    """Stateless control rules that read current globals and run on the caller's thread.
+    """Stateless caller-thread rules read deck_manager, page_manager, and window_grabber.
     Page loads own their lock; only the media thread writes devices; methods never call UI."""
 
     # Core methods take a controller because default-page loading runs before serial registration.

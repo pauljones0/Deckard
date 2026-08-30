@@ -86,7 +86,7 @@ class TimerWheel:
             if handle._fired or handle._cancelled:
                 return
             handle._cancelled = True
-            # Drop the closure while a cancelled handle remains in the heap.
+            # Replace the closure with _NOOP while the cancelled handle remains in the heap.
             # Compaction or front removal later reclaims its small record.
             handle._callback = _NOOP
             # Avoid a scan on each cancel; _run drops front entries.

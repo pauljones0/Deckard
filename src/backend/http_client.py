@@ -53,7 +53,7 @@ SIDECAR_SUFFIX = ".part"
 # mtime alone cannot protect buffered transfers or clock jumps.
 STALE_SIDECAR_MAX_AGE = 60 * 60
 
-# Absolute sidecars owned by active downloads; reapers skip them at any age.
+# Absolute sidecars owned by active downloads in this process; reapers skip them at any age.
 # Register before creation and remove after publish or cleanup.
 _in_flight_sidecars: set[str] = set()
 _in_flight_lock = threading.Lock()
@@ -92,7 +92,7 @@ def get(url: str, *, timeout: float, stream: bool = False) -> requests.Response:
 
 
 def _reap_stale_sidecars(dir_path: str) -> None:
-    """Remove stale module-owned sidecars that no active download owns.
+    """Remove stale module sidecars that no download in this process owns.
     Ignore unlink races and filesystem errors so cleanup cannot break a download."""
     try:
         entries = os.listdir(dir_path)

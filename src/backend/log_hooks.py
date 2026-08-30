@@ -16,8 +16,9 @@ Central exception hooks.
 
 A function decorated with @log.catch feeds its exceptions into loguru. An
 uncaught exception on any other path reaches stderr alone, and a detached run
-under autostart or flatpak loses it. install_exception_hooks() closes the four
-surfaces that leak one, and _log_exc() rate-limits what they report.
+under autostart or flatpak loses it. install_exception_hooks() closes three
+global surfaces; event_dispatch installs the asyncio-loop handler. _log_exc()
+rate-limits what they report.
 
 Every hook routes through loguru, so a record reaches every sink that
 config_logger() installed, which are logs/logs.log, stderr and the gl.logs
@@ -327,7 +328,7 @@ def asyncio_exception_handler(loop: asyncio.AbstractEventLoop, context: dict[str
 
 
 def install_exception_hooks() -> None:
-    """Install redaction and sys, threading, unraisable, and asyncio hooks once before risky work.
+    """Install redaction and sys, threading, and unraisable hooks once before risky work.
     The opt-out skips hooks but not redaction; executor futures still need done-callbacks."""
     global _installed, _prev_sys_hook
     install_log_redaction()
@@ -341,7 +342,7 @@ def install_exception_hooks() -> None:
 
 
 def _bound_fault_log(path: str) -> None:
-    """At boot, keep whole recent sections under the size cap by rewriting the same inode.
+    """At boot, cap the same inode from a boot marker or else the next line boundary.
     Skip lock contention; appends can be lost, but failures must not block startup."""
     max_bytes = _FAULT_LOG_MAX_BYTES
     try:

@@ -591,7 +591,7 @@ def _brightness_from_dump(serial: str, payload: str) -> tuple[str, str | None]:
 
 def _run_one_verb(kind: str, params: tuple[str, ...], transport: Transport,
                   output: list[str], failures: list[str]) -> None:
-    """Forward one instance verb and append its unmodified payload or failure."""
+    """Append one verb's failure or output; get-brightness extracts a QueryState value."""
     if kind == "json":
         payload = transport.query_state()
         error = _query_error(payload)
@@ -694,7 +694,7 @@ class _BusTransport:
 
     def is_running(self) -> bool:
         """Check application-name ownership without D-Bus activation.
-        Treat probe errors as no owner so requests park and boot instead of being lost."""
+        Probe errors mean no owner: parkable requests boot, but instance-only verbs fail."""
         try:
             reply = self._connection.call_sync(
                 "org.freedesktop.DBus",
