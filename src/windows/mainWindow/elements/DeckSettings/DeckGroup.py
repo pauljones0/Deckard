@@ -287,8 +287,8 @@ class Brightness(LazyMapTasks, Adw.PreferencesRow):
 
 class Saturation(LazyMapTasks, Adw.PreferencesRow):
     """Set the per-deck PIL ImageEnhance.Color factor; 1.0 changes nothing."""
-    # Media takes saturation at load and cache-build time, so changes reload the active page.
-    # Static media updates immediately; video rebuilds its factor-specific cache on the next playthrough.
+    # Saturation is read at load and cache-build time, so changes reload the page.
+    # Static media updates immediately; video cache rebuilds on its next playthrough.
     def __init__(self, settings_page: "DeckSettingsPage", deck_serial_number: str) -> None:
         super().__init__()
         self.settings_page = settings_page

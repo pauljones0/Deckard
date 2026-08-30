@@ -355,8 +355,8 @@ class VideoFpsRow(Adw.PreferencesRow):
     MIN_FPS = 1
     MAX_FPS = MEDIA_LOOP_FPS
 
-    # Wait 250 ms before revealing revert so rapid spinner steps do not flicker or shift the control.
-    # The delay outlasts an input burst while still appearing tied to the edit.
+    # Delay revert by 250 ms so rapid spinner steps do not flicker or shift it.
+    # This outlasts an input burst but still appears tied to the edit.
     REVEAL_DELAY_MS = 250
 
     def __init__(self, sidebar: "Sidebar", expander: BackgroundExpanderRow, **kwargs: Any) -> None:
@@ -424,8 +424,8 @@ class VideoFpsRow(Adw.PreferencesRow):
         return GLib.SOURCE_REMOVE
 
     def _request_revert(self, show: bool) -> None:
-        """Hide revert immediately when no override exists, or reveal it after the rate settles.
-        Restart delayed reveals on each step, but never delay a hide or move an already visible control."""
+        """Hide revert immediately when no override exists; reveal it after the rate settles.
+        Keep visible controls in place; restart only pending reveals on each step."""
         self.cancel_reveal()
         if not show:
             self.revert_button.set_visible(False)

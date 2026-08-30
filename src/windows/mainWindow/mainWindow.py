@@ -114,6 +114,7 @@ class MainWindow(Adw.ApplicationWindow):
         self.main_stack = Gtk.Stack(hexpand=True, vexpand=True)
         self.main_box.append(self.main_stack)
 
+        # Add the main stack as the content widget of the split view
         # set_content above binds the page; this selects content when collapsed.
         # Do not pass a page here because the property expects a boolean.
         self.split_view.set_show_content(True)

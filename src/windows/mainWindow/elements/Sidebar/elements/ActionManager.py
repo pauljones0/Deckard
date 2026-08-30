@@ -227,7 +227,7 @@ class ActionExpanderRow(BetterExpander):
 
     def move_row(self, row: "ActionRow", dest_index: int) -> None:
         """Move one action row and apply the order to the page and deck.
-        Ignore destinations outside the action rows, including end-button moves."""
+        Ignore destinations outside the action rows, including moves beyond either end."""
         rows = self.action_rows()
         if row not in rows:
             return
@@ -606,7 +606,7 @@ class ActionRow(Adw.ActionRow):
 
     def init_dnd(self) -> None:
         """Enable drag reordering between loaded action rows.
-        Missing or outdated rows reject drag; buttons retain access to list ends and pointer-free use."""
+        Missing or outdated rows reject drag; buttons preserve non-drag access to list ends."""
         dnd_source = Gtk.DragSource()
         dnd_source.set_actions(Gdk.DragAction.MOVE)
         dnd_source.connect("prepare", self.on_dnd_prepare)

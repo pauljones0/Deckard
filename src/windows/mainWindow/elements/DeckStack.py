@@ -77,16 +77,16 @@ class DeckStack(Gtk.Stack):
             return
         deck_number, deck_type = attr
 
-        # Unbind before construction so hidden-image replay cannot target widgets from an earlier window.
-        # Use duck typing so wrapper ports can provide the same bind/unbind contract.
+        # Unbind before child construction to keep hidden-image replay off stale widgets.
+        # Duck typing keeps wrapper ports compatible with the bind/unbind contract.
         adapter = ui_port.get()
         unbind = getattr(adapter, "unbind", None)
         if callable(unbind):
             unbind(deck_controller)
         page = DeckStackChild(self, deck_controller)
         self.add_titled(page, deck_number, deck_type)
-        # Bind by reference after the child reaches the stack to avoid another device serial read.
-        # This also prevents construction failure from leaving a controller bound to an absent child.
+        # Bind by reference after insertion to avoid another device serial read.
+        # This prevents construction failure from binding a child absent from the stack.
         bind = getattr(adapter, "bind", None)
         if callable(bind):
             bind(deck_controller, page)

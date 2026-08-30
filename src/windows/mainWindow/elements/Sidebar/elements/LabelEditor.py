@@ -291,7 +291,7 @@ class LabelRow(Adw.PreferencesRow):
             self.set_alignment(composed_label.alignment)
 
             # self.font_chooser_button.button.set_font_desc(Pango.FontDescription.from_string(f"{composed_label.font_name} {composed_label.style} {composed_label.font_size}px"))
-            # A complete font description requires family, size, style, and weight; otherwise keep the chooser value.
+            # Keep the chooser value unless family, size, style, and weight are all set.
             font_name = composed_label.font_name
             font_size = composed_label.font_size
             style = composed_label.style

@@ -260,8 +260,8 @@ class ScreenBarImage(LazyMapTasks, Gtk.Picture):
         self.on_map_tasks = []
         self.connect("map", self.on_map)
 
-        # next() gives producer threads unique IDs, but the latest-ID store can publish out of order.
-        # A later frame corrects a stale paint; one producer is the normal case.
+        # next() gives producer threads unique IDs, but latest-ID stores can publish out of
+        # order. A later frame corrects stale paint; one producer is normal.
         self.task_ids = itertools.count()
         # None until the first frame is queued.
         self.latest_task_id: int | None = None
