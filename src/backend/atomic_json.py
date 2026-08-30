@@ -24,26 +24,18 @@ import stat
 import tempfile
 import time
 
-# A hard kill between the write and the rename orphans a temp file. The next
-# write for the same target removes such a temp once it is older than this
-# (seconds).
+# Reap a target's temp file after this many seconds if a hard kill orphaned it
+# between write and rename.
 STALE_TMP_MAX_AGE = 60 * 60
 
-# How many .corrupt sidecars to keep per primary file. They hold forensic
-# copies rather than a version history. Without the cap, a file that corrupts
-# again and again fills the config directory; three copies are enough for
-# post-mortem.
+# Keep three forensic sidecars per primary so repeated corruption cannot fill
+# the configuration directory; these copies are not version history.
 CORRUPT_SIDECAR_KEEP = 3
 
 
 def _process_umask() -> int:
-    """Read the process umask and leave other threads alone.
-
-    os.umask() reads only by setting, which zeroes the mask for the whole
-    process, so a concurrent open() in another thread creates an unmasked
-    file. Linux exposes the mask read-only in /proc/self/status. Elsewhere
-    this falls back to the set-and-restore round trip.
-    """
+    """Read Linux umask without changing process state; elsewhere set and restore it.
+    os.umask has no read-only call, so its fallback briefly exposes a zero mask to concurrent opens."""
     try:
         with open("/proc/self/status") as f:
             for line in f:
@@ -57,13 +49,8 @@ def _process_umask() -> int:
 
 
 def _reap_stale_tmp_siblings(dir_path: str, target_basename: str) -> None:
-    """Remove old orphaned temp files for this one target.
-
-    A SIGKILL between the write and the rename leaks a temp file, and nothing
-    else cleans the config directories. This removes only temps older than
-    STALE_TMP_MAX_AGE, so a concurrent writer keeps its live temp. An unlink
-    race with another reaper is harmless.
-    """
+    """Remove this target's orphaned temp files after STALE_TMP_MAX_AGE.
+    The age guard preserves concurrent live writes, and races with another reaper are harmless."""
     prefix = f".save-{target_basename}."
     try:
         entries = os.listdir(dir_path)
@@ -82,21 +69,8 @@ def _reap_stale_tmp_siblings(dir_path: str, target_basename: str) -> None:
 
 
 def quarantine_corrupt_file(file_path: str) -> tuple[bool, str]:
-    """Move a corrupt file aside, so the next save cannot overwrite the only
-    surviving copy of the user's data.
-
-    Returns (moved, dest). moved is False when the rename fails, after a
-    read-only filesystem error, a permission error, or a concurrent
-    quarantine that moved the file first. The primary is corrupt either way,
-    so a caller must not gate its recovery on moved. dest is the sidecar on
-    success and the untouched original path on failure.
-
-    This takes the first free .corrupt, .corrupt.1, .corrupt.2 and so on. It
-    keeps an earlier sidecar, so a second corruption cannot destroy the first
-    forensic copy. os.replace of the chosen name stays atomic. Two threads can
-    pick one free slot; the loser then overwrites an equally corrupt file, or
-    finds the source gone and reports not-moved.
-    """
+    """Atomically move corrupt data to the first free .corrupt[.n] sidecar and return (moved, destination).
+    Read-only, permission, or concurrent-move failure returns the original path without canceling recovery; racers can replace one corrupt sidecar."""
     candidate = file_path + ".corrupt"
     n = 0
     # Bounded probe for a free sidecar name. If every slot is taken, keep the
@@ -115,36 +89,8 @@ def quarantine_corrupt_file(file_path: str) -> tuple[bool, str]:
 
 def prune_corrupt_sidecars(primary_path: str, keep: int = CORRUPT_SIDECAR_KEEP,
                            protect: "str | list[str] | tuple[str, ...] | None" = None) -> list[str]:
-    """Prune <primary_path>.corrupt sidecars, oldest first.
-
-    A loader calls this immediately after it quarantines a file, never as a
-    startup-wide filesystem walk. The scope is one primary file's own
-    sidecars, so how often that file corrupts bounds the work. Only names the
-    quarantine primitive writes count: <name>.corrupt, and <name>.corrupt.<n>
-    with a purely numeric suffix. A user's own settings.json.corrupt.bak, and
-    a directory of a matching name, stay. A user file named exactly
-    <name>.corrupt reads as a sidecar and is prunable. Only this module writes
-    that name next to a config file, so this documents the case instead of
-    defending against it.
-
-    protect names sidecars that survive whatever their age. Pass the sidecar
-    the caller just created. Age is the sidecar's mtime, which os.replace
-    carries over from the corrupt primary. That is the time the corrupt
-    content was written, and not the time the sidecar appeared. A backup tool
-    that restores a corrupt primary keeps its old mtime. The fresh forensic
-    copy then sorts older than the sidecars already on disk, and prunes first
-    without protect. A protected entry still counts toward keep, so the
-    surviving total holds and the next-oldest unprotected sidecar goes
-    instead.
-
-    Names hold no age order. quarantine_corrupt_file takes the first free slot,
-    so the next corruption recycles a pruned .corrupt. The name breaks a tie
-    between equal mtimes only, and on a coarse-granularity filesystem that
-    tie-break can invert the true age. It gives determinism within one mtime.
-
-    Returns the paths this call removed. It swallows every filesystem error,
-    because a failed tidy-up must not break the load that triggered it.
-    """
+    """Prune one primary's regular .corrupt[.numeric] files by mtime, then name, while protecting requested paths within keep.
+    Ignore all filesystem errors; names only break equal-mtime ties, protected files count toward keep, and unrelated suffixes or directories remain."""
     keep = max(keep, 0)
     if protect is None:
         protected = set()
@@ -201,16 +147,8 @@ def prune_corrupt_sidecars(primary_path: str, keep: int = CORRUPT_SIDECAR_KEEP,
 
 
 def require_containment(base_dir: str, path: str) -> str:
-    """Resolve path and confirm it stays inside base_dir; return the real path.
-
-    A caller that builds a target filename from untrusted content, such as a
-    page importer that takes a name out of an export file, passes the target
-    here before it writes. A crafted name like "../../secret" would otherwise
-    resolve to a file outside base_dir and overwrite it. Both sides resolve
-    with realpath, the same resolution atomic_write_json applies, so a symlink
-    component cannot slip a write past the check. Raises ValueError when the
-    resolved target is neither base_dir itself nor a path below it.
-    """
+    """Return path's real path when it is base_dir or below it; otherwise raise ValueError.
+    Resolve both sides like atomic_write_json so untrusted traversal and symlink components cannot escape containment."""
     real_base = os.path.realpath(base_dir)
     real_path = os.path.realpath(path)
     if real_path != real_base and not real_path.startswith(real_base + os.sep):
@@ -219,20 +157,8 @@ def require_containment(base_dir: str, path: str) -> str:
 
 
 def atomic_write_json(file_path: str, data: Any, indent: int | None = 4) -> None:
-    """Write data as JSON to file_path atomically and durably.
-
-    This serializes the payload into a temp file in the target's real
-    directory, fsyncs it, chmods it, and moves it in with os.replace(). An
-    existing file keeps its mode, and a new file follows the process umask.
-    It then fsyncs the directory, so the rename survives a crash. An
-    interrupted write leaves no partial file at file_path, and a reader sees
-    the old content or the new content.
-
-    This follows a symlinked target. The write lands in the link's real file
-    and the link stays a link. os.replace on the link path detaches a managed
-    config such as stow or chezmoi. Resolving up front also keeps the temp
-    file and the rename on one filesystem.
-    """
+    """Durably replace real file_path with fsynced JSON, preserving its mode or applying umask for a new file.
+    The same-directory temp and directory fsync expose only old or new content; resolving first preserves symlink-managed targets."""
     file_path = os.path.realpath(file_path)
     dir_path = os.path.dirname(file_path) or "."
     os.makedirs(dir_path, exist_ok=True)
@@ -246,9 +172,8 @@ def atomic_write_json(file_path: str, data: Any, indent: int | None = 4) -> None
             json.dump(data, f, indent=indent)
             f.flush()
             os.fsync(f.fileno())
-        # mkstemp creates 0600. Keep the existing file's mode, or apply the
-        # umask-derived default for a new file. A hardcoded 0644 leaks plugin
-        # settings, which hold API tokens, under a restrictive umask like 077.
+        # Keep an existing mode or apply umask to mkstemp's 0600 for a new file;
+        # hardcoded 0644 can expose plugin API tokens despite a restrictive umask.
         try:
             mode = os.stat(file_path).st_mode & 0o777
         except FileNotFoundError:
@@ -271,25 +196,8 @@ def atomic_write_json(file_path: str, data: Any, indent: int | None = 4) -> None
 
 
 def atomic_copy_file(src_path: str, dst_path: str, overwrite: bool = True) -> None:
-    """Copy src_path to dst_path atomically and durably.
-
-    The content lands in a temp file in the destination's real directory,
-    fsyncs, and publishes in one atomic rename, like atomic_write_json
-    above. A reader sees the old destination or the whole copy, never a
-    truncated one, and a failure or a hard kill leaves the destination as
-    it was, with at most a stale temp for the reaper above.
-
-    The copy carries content and mode, not timestamps: an existing
-    destination keeps its own mode, a new one takes the source's, and the
-    temp keeps its fresh mtime, because a temp stamped with an old source
-    mtime reads as stale to the reaper while it is still being filled.
-
-    With overwrite False an existing destination is refused with
-    FileExistsError. The publish then goes through os.link, which creates
-    the destination name with its full content in one atomic step, so no
-    empty or partial file exists under dst_path at any point, even across
-    a hard kill mid-copy.
-    """
+    """Durably publish a content-and-mode copy through a fresh same-directory temp, never copying timestamps or exposing partial data.
+    Preserve existing or source mode; failure leaves the destination unchanged, and overwrite=False atomically links or raises FileExistsError."""
     dst_path = os.path.realpath(dst_path)
     dir_path = os.path.dirname(dst_path) or "."
     os.makedirs(dir_path, exist_ok=True)
