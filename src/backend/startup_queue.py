@@ -46,7 +46,7 @@ class StartupQueue:
 
     def park_page_request(self, serial_number: str, page_name: str) -> None:
         """Park a raw page name until its deck appears; the last write per serial wins.
-        Called pre-boot on main; unswept requests persist for process life and resolve when claimed."""
+        Called pre-boot on main; requests live until claimed or process exit."""
         gl.api_page_requests[serial_number] = page_name
 
     def claim_page_request(self, serial_number: str) -> str | None:

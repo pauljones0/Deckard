@@ -22,8 +22,8 @@ if TYPE_CHECKING:
 # Translations
 
 def tr(key: str, fallback: str | None = None) -> str:
-    """Return plain text; locale fallback precedes fallback, so unknown keys normally return themselves.
-    Raise before locale initialization; None adds no fallback, and Pango callers must escape the result."""
+    """Return plain text; locale fallback comes first, so unknown keys return themselves.
+    Raise before setup; None adds no fallback, and Pango callers must escape it."""
     # Widen the late-bound concrete slot so the live pre-boot branch remains typed.
     # A direct None check would otherwise narrow to an uninhabited type.
     lm: LocaleManager | None = gl.lm

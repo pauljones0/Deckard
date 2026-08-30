@@ -12,7 +12,7 @@ if TYPE_CHECKING:
 
 
 class UIPort:
-    """Accept any-thread calls without blocking on GTK; marshal widgets with idle_add, never run_on_main.
+    """Accept any-thread calls without blocking GTK; use idle_add, never run_on_main.
     push_input_image admits off-thread, and a main-loop drain paints the newest frame."""
 
     # Render mirror on the hot path. The media thread calls it up to keys x
@@ -22,8 +22,8 @@ class UIPort:
                          identifier: "InputIdentifier",
                          image: "Image.Image",
                          latency_sample: "LatencySample | None" = None) -> "bool | InputImageDropRecorded":
-        """Mirror an image: True accepts, False needs caller dirty-marking, and InputImageDropRecorded is counted.
-        Never raise; the adapter dirty-marks an accepted frame if a later unmap or rebuild drops it."""
+        """Mirror images: True accepts, False needs dirty-marking; recorded drops are pre-counted.
+        Never raise; the adapter dirty-marks later unmap or rebuild drops after acceptance."""
         return False
 
     # Per-deck sync. The caller does not wait; the adapter coalesces.

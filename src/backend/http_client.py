@@ -115,8 +115,8 @@ def _reap_stale_sidecars(dir_path: str) -> None:
 
 
 def download_to_file(url: str, target_path: str, *, timeout: float = 30, chunk_size: int = 8192) -> None:
-    """Stream through a same-directory sidecar; network, HTTP, and filesystem errors publish nothing and propagate.
-    Replacement is atomic and replaces symlinks, but unframed truncation can pass and no fsync protects power loss."""
+    """Use a same-directory sidecar; network, HTTP, and file errors propagate without publishing.
+    Atomic publish replaces symlinks; unframed truncation can pass; no fsync guards power loss."""
     directory = os.path.dirname(target_path)
     if directory:
         os.makedirs(directory, exist_ok=True)

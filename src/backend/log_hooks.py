@@ -128,7 +128,7 @@ def _emit_pending(key: SiteKey, count: int, reason: str) -> None:
 
 
 def _prune_locked(now: float) -> list[tuple[SiteKey, int]]:
-    """Under _rate_lock, evict idle sites then the least recently hit half and return pending counts.
+    """Under _rate_lock, evict idle sites and the least recently hit half; return pending counts.
     Snapshot items for GC re-entry safety; last-hit order keeps active storms throttled."""
     dropped: list[tuple[SiteKey, int]] = []
 
@@ -327,7 +327,7 @@ def asyncio_exception_handler(loop: asyncio.AbstractEventLoop, context: dict[str
 
 
 def install_exception_hooks() -> None:
-    """Idempotently install redaction plus sys, threading, unraisable, and asyncio support before risky work.
+    """Install redaction and sys, threading, unraisable, and asyncio hooks once before risky work.
     The opt-out skips hooks but not redaction; executor futures still need done-callbacks."""
     global _installed, _prev_sys_hook
     install_log_redaction()
@@ -342,7 +342,7 @@ def install_exception_hooks() -> None:
 
 def _bound_fault_log(path: str) -> None:
     """At boot, keep whole recent sections under the size cap by rewriting the same inode.
-    Skip nonblocking-lock contention; concurrent appends can be lost, and failures must not block startup."""
+    Skip lock contention; appends can be lost, but failures must not block startup."""
     max_bytes = _FAULT_LOG_MAX_BYTES
     try:
         if not os.path.exists(path) or os.path.getsize(path) <= max_bytes:
@@ -382,8 +382,8 @@ def _bound_fault_log(path: str) -> None:
 
 
 def _scrub_fault_log(path: str) -> None:
-    """At boot, stream-scrub old C-level dumps back onto the same inode; current dumps stay raw until next boot.
-    Skip lock contention and read-only files; concurrent appends can be lost, and failures must not block startup."""
+    """At boot, scrub old C dumps in place; current dumps wait until next boot.
+    Skip lock or read-only files; appends can be lost, but failures do not block boot."""
     if not os.path.exists(path):
         return
     tmp_path = None

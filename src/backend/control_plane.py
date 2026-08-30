@@ -8,7 +8,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, TYPE_CHECKING
 
-# Keep the render-engine import closure widget-free and limit runtime globals to deck and page managers.
+# Keep render-engine imports widget-free; runtime globals are deck and page managers.
 # Postponed annotations keep all other imports under TYPE_CHECKING on Python 3.13.
 import globals as gl
 from src.backend import timer_wheel
@@ -145,7 +145,7 @@ _PRESS_START_WAIT_S = 2.0
 
 class _Press:
     """One emulated press claimed once by its caller or the timer wheel.
-    Deliver through the hardware event path off the caller thread, and schedule release without sleeping."""
+    Deliver through the hardware path off-thread; schedule release without sleeping."""
 
     def __init__(self, controller: DeckController, identifier: Input.Key,
                  page: "Page", hold_s: float) -> None:
@@ -164,7 +164,7 @@ class _Press:
         self._gesture: object | None = None
 
     def deliver(self) -> None:
-        """Deliver off the caller thread only if the named page still shows and input remains enabled."""
+        """Deliver off-thread only while the named page shows and input stays enabled."""
         with self._lock:
             if self._settled:
                 return  # The caller timed out and claimed the press.
@@ -226,7 +226,7 @@ _INPUT_LOAD_WAIT_S = 12.0
 
 
 class InputLoadBarrier:
-    """Publish completion by monotonic page generation so stale rebuilds cannot release newer waiters.
+    """Publish monotonic completion so stale rebuilds cannot release newer waiters.
     Loads with no rebuild publish completion; an armed higher generation remains blocked."""
 
     def __init__(self) -> None:
@@ -273,7 +273,7 @@ def _wait_for_input_load(controller: DeckController) -> None:
 
 class ControlPlane:
     """Stateless control rules that read current globals and run on the caller's thread.
-    Page loading owns its lock, the media thread remains the sole device writer, and no method calls UI."""
+    Page loads own their lock; only the media thread writes devices; methods never call UI."""
 
     # Core methods take a controller because default-page loading runs before serial registration.
     # Transport wrappers below resolve serials for later calls.
@@ -325,7 +325,7 @@ class ControlPlane:
             return found
         c_input, x, y = found
 
-        # Accept strings because direct writers of parked request state bypass typed transport edges.
+        # Accept strings because direct parked-state writers bypass typed edges.
         try:
             state_number = int(state)
         except (TypeError, ValueError):
@@ -350,7 +350,7 @@ class ControlPlane:
     def emulate_input_on(self, controller: DeckController, page_ref: str,
                          coords: str, event: str) -> ControlResult:
         """Load the page and emulate a hardware-path press at its rotated-layout coordinates.
-        Reject bad events before switching, and return after delivery starts while refusing deferred or moved pages."""
+        Reject bad events first; return at press start or refuse a deferred or moved page."""
         hold_s = _hold_seconds(controller, event)
         if hold_s is None:
             return ControlResult(False, "bad-event",
@@ -361,7 +361,7 @@ class ControlPlane:
         if not page_result.ok:
             return page_result
 
-        # Snapshot the switched page, then verify it again at delivery after possible competing switches.
+        # Recheck the page at delivery because another source can change it.
         page = controller.active_page
         if page is None:
             return _page_moved(controller, page_ref, "nothing")
@@ -375,11 +375,11 @@ class ControlPlane:
         c_input, x, y = found
 
         if not controller.allow_interaction:
-            # Refuse before arming and recheck at delivery because the session can lock between them.
+            # Refuse now and at delivery because the session can lock between checks.
             return _input_blocked(controller)
 
         if c_input.down_start_time is not None:
-            # Reject a second DOWN on an existing gesture; concurrent requests can still race this check.
+            # Reject a second DOWN; concurrent requests can still race this gesture check.
             return ControlResult(False, "input-held",
                                  f"Position ({x},{y}) on device {controller.serial_number()} "
                                  f"is already held down. Let that press finish first")
@@ -402,7 +402,7 @@ class ControlPlane:
                              f"Set the brightness of {controller.serial_number()} to {value}")
 
     def sleep_on(self, controller: DeckController) -> ControlResult:
-        """Show the idle screensaver without disabling interaction; leave an already-sleeping deck unchanged."""
+        """Show the idle screensaver without disabling input; do nothing if already asleep."""
         controller.screen_saver.show()
         return ControlResult(True, "",
                              f"Device {controller.serial_number()} is showing its screensaver")
@@ -415,7 +415,7 @@ class ControlPlane:
 
     def dump_state(self) -> dict[str, Any]:
         """Return stable keyed state for decks and pages.
-        Brightness is the last commanded whole percent or null; active_page is null when unloaded."""
+        Brightness is the last-commanded whole percent or null; active_page is null if unloaded."""
         decks: list[dict[str, Any]] = []
         for controller in _controllers():
             page = controller.active_page

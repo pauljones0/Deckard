@@ -1,5 +1,5 @@
 """Plan, park, or forward CLI control requests without importing globals or the toolkit.
-Page and state changes can wait for a deck; inputs cannot, and lost launch races forward parked work."""
+Page and state changes can wait; inputs cannot. Lost launch races forward parked work."""
 from __future__ import annotations
 
 import json
@@ -348,7 +348,7 @@ def park(plan: Plan) -> None:
 
 def forward(plan: Plan, transport: Transport) -> list[str]:
     """Forward every request and collect failures without stopping later independent work.
-    Preserve per-kind argv order, with all pages, then states, then inputs so presses use the new state."""
+    Preserve per-kind argv order: pages, states, then inputs; presses use the new state."""
     failures: list[str] = []
     try:
         for serial_number, page_name in plan.page_requests:
@@ -382,7 +382,7 @@ def forward_cli_requests(args: Namespace,
         return Verdict(handled=True, failures=outcome.failures, output=outcome.output)
 
     if answered_by_a_listing(args):
-        # A listing is the whole command; reject an adjacent press instead of reporting false success.
+        # Refuse an adjacent press because a listing is the whole command.
         return Verdict(handled=False,
                        failures=unparkable(plan_requests(args), LISTING_MESSAGE))
 
@@ -655,7 +655,7 @@ def run_instance_verbs(jobs: list[tuple[str, tuple[str, ...]]],
 def answer_instance_verbs(args: Namespace,
                           transport: Transport | None = None) -> InstanceOutcome:
     """Answer all instance-only verbs without parking or booting.
-    Syntax errors void the command, and these verbs take precedence over adjacent parkable requests."""
+    Syntax errors void the command; instance verbs outrank parkable requests."""
     jobs, failures = _plan_instance_verbs(args)
     if failures:
         return InstanceOutcome(failures=failures + [USAGE])

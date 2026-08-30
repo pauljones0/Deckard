@@ -1,5 +1,7 @@
 """Expose Deckard control at /io/github/nazbert/Deckard over io.github.nazbert.Deckard.
-Each controller uses /io/github/nazbert/Deckard/controllers/<serial>."""
+
+Each controller uses /io/github/nazbert/Deckard/controllers/<serial>.
+"""
 
 import contextlib
 import json
@@ -187,8 +189,8 @@ class DeckardAPI:
         return result.message
 
     def EmulateInput(self, serial: Str, page: Str, coords: Str, event: Str) -> Str:
-        """Load page if needed and send press or long-press through the deck input path.
-        Reply after the bounded press admission, not action completion or release; return empty or the reason."""
+        """Load the page and send a press or long press through the deck input path.
+        Reply after bounded admission, before completion or release; return empty or a reason."""
         log.info(f"DBus API: EmulateInput called – serial={serial!r} page={page!r} "
                  f"coords={coords!r} event={event!r}")
         result = control_plane.get().emulate_input(serial, page, coords, event)
@@ -335,7 +337,9 @@ class DeckardAPI:
 
     def NotifyForegroundWindow(self, name: Str, wm_class: Str) -> None:
         """Report a foreground window without kdotool and route it through the worker.
-        Never route inline because page loading marshals back to this D-Bus main context."""
+
+        Never route inline; page loading marshals back to this D-Bus main context.
+        """
         win = WindowInfo(name, wm_class)
         log.info(f"DBus API: NotifyForegroundWindow called – {win!r}")
         try:
@@ -615,7 +619,8 @@ def notify_active_page_changed(serial: str, page_name: str) -> None:
 
 
 def notify_foreground_window_changed(name: str, wm_class: str) -> None:
-    """Publish a WindowGrabber or NotifyForegroundWindow change to D-Bus clients."""
+    """Publish WindowGrabber or NotifyForegroundWindow changes to D-Bus clients.
+    """
     # Track the desktop only while a page needs window auto-change rules.
     # Constant updates would poll only to maintain this property.
     if _api_instance is not None:

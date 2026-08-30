@@ -1,5 +1,5 @@
-"""Route notifications from any thread through readiness and GLib; use desktop delivery unless the window is visible.
-This module imports globals, so globals must not import it; main.create_global_objects fills the gl.notify slot."""
+"""Route any-thread notifications through readiness and GLib; use desktop while hidden.
+globals must not import this module; create_global_objects sets gl.notify."""
 from gi.repository import GLib
 
 import appinfo

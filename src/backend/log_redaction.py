@@ -251,7 +251,7 @@ def _host_token(host: str) -> str | None:
 
 def _hostname_candidates() -> list[str]:
     """Return kernel and environment hostnames in full and short forms, longest first.
-    Exclude names under three characters, generic vocabulary, invalid shapes, and allowlisted hosts."""
+    Exclude names under three characters, generic terms, invalid shapes, and allowlisted hosts."""
     raw: list[str] = []
     with contextlib.suppress(OSError):
         raw.append(socket.gethostname())

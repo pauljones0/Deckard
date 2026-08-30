@@ -12,8 +12,8 @@ This programm comes with ABSOLUTELY NO WARRANTY!
 You should have received a copy of the GNU General Public License
 along with this program. If not, see <https://www.gnu.org/licenses/>.
 """
-# One Condition-backed heap provides Timer-compatible handles for screensaver, overlay, and key-hold delays.
-# Due work uses separate daemon threads, not the scheduler or shared pool, so slow callbacks cannot block timers.
+# A Condition heap gives Timer-compatible handles for screensaver, overlay, and key-hold delays.
+# Separate daemon threads run due work so slow callbacks block neither scheduler nor shared pool.
 import heapq
 import itertools
 import threading

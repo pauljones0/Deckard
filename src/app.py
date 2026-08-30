@@ -335,7 +335,7 @@ class App(Adw.Application):
             except Exception as e:
                 log.warning(f"Failed to detach log sink during shutdown: {e}")
 
-        # Submit ClearAndClose and bounded-join media writers before controller close and slow joins.
+        # Start ClearAndClose and bounded media-writer joins before controller close and slow joins.
         # A device left open at force_quit can fail the next startup.
         deck_manager = gl.deck_manager
         if deck_manager is not None:
