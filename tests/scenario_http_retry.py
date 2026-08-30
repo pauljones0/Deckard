@@ -1,13 +1,6 @@
-"""Coverage for the shared HTTP client, against a local http.server.
+"""Check 429, 502, and 503 retries, pooling, and atomic concurrent downloads.
 
-Transient 429, 502 and 503 answers are retried, the exhausted retry returns
-the final response, the session pools, and connect failures are not retried.
-
-A download streams into a sidecar and lands on its target with one rename, so
-the target never holds a body that is still arriving. The legs below pin that
-from inside the write loop, cover the sidecar a killed download orphans, hold a
-transfer open while another download sweeps the same directory, and run several
-downloads at once to prove they take separate sidecars.
+Downloads use distinct sidecars and expose the target only after a complete transfer.
 """
 import os
 import socket
@@ -25,9 +18,7 @@ BODY = b"payload" * 4096  # about 28 KiB, several iter_content chunks
 
 
 class _Handler(BaseHTTPRequestHandler):
-    # Keep-alive needs HTTP/1.1 plus an explicit Content-Length on every answer.
-    # Without it the server closes after each response and the connection-reuse
-    # assertion below could never hold.
+    # HTTP/1.1 and Content-Length keep responses eligible for connection reuse.
     protocol_version = "HTTP/1.1"
 
     def log_message(self, *args):
@@ -70,9 +61,7 @@ class _Handler(BaseHTTPRequestHandler):
         elif self.path == "/asset":
             self._respond(200, BODY)
         elif self.path == "/retry-after":
-            # One 429 carrying a real, non-zero Retry-After. The backoff of the
-            # first retry is 0 s, so any wait observed here can only come from
-            # the header being honored.
+            # A nonzero Retry-After distinguishes server delay from zero first backoff.
             if n > 1:
                 self._respond(200, b"ok")
             else:
@@ -115,13 +104,7 @@ def _ports(server: ThreadingHTTPServer, path: str) -> list[int]:
 
 
 class _StubResponse:
-    """A streamed response whose chunks a scenario supplies.
-
-    download_to_file calls the module-level get(), so replacing that hands the
-    write loop an iterator the test steers: one that raises part way through
-    stands in for a transfer that dies mid-body, and one that blocks holds
-    several downloads open at once.
-    """
+    """Supply controlled chunks to model failed and overlapping streamed responses."""
 
     def __init__(self, chunks):
         self._chunks = chunks
@@ -168,11 +151,7 @@ def test_retries_transient_429(server, base) -> None:
         f"expected 2 retries after the initial attempt, server saw "
         f"{_count(server, '/flaky')} requests"
     )
-    # A ceiling on the retry ladder, not on the sub-millisecond loopback work.
-    # urllib3 sleeps 0 s before the first retry and backoff_factor times 2, so
-    # 1.0 s, before the second, so retrying can never turn one fetch into a
-    # long stall. A Retry-After of 0 does not short-circuit that, because
-    # urllib3 treats a zero header as absent and falls back to the ladder.
+    # Two retries include one 1-second backoff; Retry-After zero uses that ladder.
     assert elapsed < 2.0, f"retrying one fetch took {elapsed:.2f}s -- backoff is unbounded"
     print("PASS: a transient 429 is retried and the eventual 200 is returned")
 
@@ -184,9 +163,7 @@ def test_respects_retry_after(server, base) -> None:
 
     assert response.status_code == 200
     assert _count(server, "/retry-after") == 2
-    # The backoff of the first retry is 0 s. A wait of about 1 s can therefore
-    # only be the Retry-After of 1 being obeyed, which backs off by as much as
-    # the server asks instead of hammering a rate-limited endpoint.
+    # A one-second first-retry delay can only come from the Retry-After header.
     assert elapsed >= 0.9, (
         f"retry fired after {elapsed:.2f}s despite Retry-After: 1 -- the "
         f"server's requested delay is being ignored"
@@ -195,11 +172,7 @@ def test_respects_retry_after(server, base) -> None:
 
 
 def test_exhausted_retries_return_response(server, base) -> None:
-    """A still-429 fetch comes back as a response, never as a raised RetryError.
-
-    request_from_url turns that non-200 into a StoreFetchError, and
-    get_remote_file catches it and serves the cached copy.
-    """
+    """Check that exhausted status retries return the final response."""
     response = http_client.get(f"{base}/always-429", timeout=5)
 
     assert response.status_code == 429, (
@@ -231,12 +204,7 @@ def test_session_is_shared_and_pooled(server, base) -> None:
 
 
 def test_connect_failures_are_not_retried(server, base) -> None:
-    """connect=0 keeps the status retries and drops the connect amplification.
-
-    A total of 2 alone would spend the budget on connect errors too. That
-    buys nothing against a down host. It also triples the wall clock of every
-    offline failure, including on the GTK main thread.
-    """
+    """Check status retries with connect retries disabled for fast offline failure."""
     retry = http_client.get_session().adapters["https://"].max_retries
     assert retry.connect == 0, (
         f"connect retries must stay off, got connect={retry.connect!r} -- an "
@@ -244,10 +212,7 @@ def test_connect_failures_are_not_retried(server, base) -> None:
     )
     assert retry.total == 2, f"status retry budget changed: total={retry.total!r}"
 
-    # A port nobody listens on refuses instantly, so all the elapsed time an
-    # extra attempt could add is the backoff of the retry ladder, about 1.0 s
-    # before the second retry. Measuring that is a behavioural check on top of
-    # the config assertion above.
+    # An unused local port exposes any added retry-backoff delay.
     probe = socket.socket()
     probe.bind(("127.0.0.1", 0))
     dead_port = probe.getsockname()[1]
@@ -270,12 +235,7 @@ def test_connect_failures_are_not_retried(server, base) -> None:
 
 
 def test_non_200_returns_connection(server, base) -> None:
-    """The non-200 branch of request_from_url must consume the error body.
-
-    Closing a streamed response with an unread body closes the socket. The
-    routine 404s of a catalog would then cost the next fetch a fresh
-    handshake and defeat the pooled session.
-    """
+    """Check that non-200 bodies are consumed so the pooled socket remains reusable."""
     from src.backend.Store.StoreBackend import StoreBackend
     from src.backend.Store.store_result import StoreFetchError
 
@@ -283,9 +243,7 @@ def test_non_200_returns_connection(server, base) -> None:
     sb._fetch_limiter = threading.Semaphore(http_client.POOL_MAXSIZE)
 
     assert sb.request_from_url(f"{base}/pooled").status_code == 200
-    # A 404 raises StoreFetchError, but only after draining the error body,
-    # which is what keeps the socket in the pool and is the property this test
-    # pins.
+    # Drain the 404 body before StoreFetchError so the socket remains pooled.
     try:
         sb.request_from_url(f"{base}/absent")
         raise AssertionError("a 404 must raise StoreFetchError")
@@ -332,10 +290,7 @@ def test_download_leaves_no_partial_file(server, base) -> None:
 
 
 def test_download_rejects_error_status(server, base) -> None:
-    """An HTTP error body is never persisted as if it were the asset.
-
-    The older download helper wrote 404 pages straight into the asset cache.
-    """
+    """Reject HTTP error bodies instead of persisting them as assets."""
     target = os.path.join(_SCRATCH, "missing.bin")
 
     raised = None
@@ -365,13 +320,7 @@ def test_completed_download_leaves_no_sidecar(server, base) -> None:
 
 
 def test_target_stays_absent_until_the_body_is_whole() -> None:
-    """The half-written body must never be visible under the target's name.
-
-    An asset cache accepts a file on its extension alone, so a torn image left
-    at the final path reads as a valid asset for good. The check runs from
-    inside the write loop, after a chunk landed and before the transfer dies,
-    which is the window a kill would freeze.
-    """
+    """Check target invisibility after a chunk lands but before a failed transfer ends."""
     directory = _scratch_dir("torn")
     target = os.path.join(directory, "asset.png")
     seen = {}
@@ -408,14 +357,7 @@ def test_target_stays_absent_until_the_body_is_whole() -> None:
 
 
 def test_stale_sidecar_is_reaped_and_a_recent_one_is_kept(server, base) -> None:
-    """A kill orphans a sidecar, because it runs no cleanup at all.
-
-    The next download into that directory clears one whose last write is old,
-    and leaves a recent one alone. This pins the age test only. The guard that
-    actually protects a running transfer is the in-flight register, which the
-    leg below covers, because a buffered write can hold mtime at the creation
-    time for as long as the transfer lasts.
-    """
+    """Check age-based cleanup of stale sidecars while preserving recent ones."""
     directory = _scratch_dir("orphans")
     target = os.path.join(directory, "asset.bin")
     stale = os.path.join(directory, f"{http_client.SIDECAR_PREFIX}5ta1e{http_client.SIDECAR_SUFFIX}")
@@ -443,18 +385,7 @@ def test_stale_sidecar_is_reaped_and_a_recent_one_is_kept(server, base) -> None:
 
 
 def test_a_running_download_survives_a_reap_that_finds_its_sidecar_old(server, base) -> None:
-    """A transfer in flight keeps its sidecar however old the file looks.
-
-    mtime cannot carry this. Writes go through an 8 KiB buffer, so a body that
-    trickles in under that size leaves mtime at the creation time for the whole
-    transfer, and a clock step forward ages every sidecar at once. Either way a
-    second download's reaper meets a live sidecar that reads as long dead. If
-    it removes one, the transfer that owns it dies at its rename with
-    FileNotFoundError, and the store starts one install thread per click into
-    the one cache directory.
-
-    The leg above cannot catch this: its sidecar is a file nobody is writing.
-    """
+    """Check that the in-flight registry protects a live sidecar despite old mtime."""
     directory = _scratch_dir("in-flight")
     slow_url = "http://stub/slow.bin"
     slow_target = os.path.join(directory, "slow.bin")
@@ -523,12 +454,7 @@ def test_a_running_download_survives_a_reap_that_finds_its_sidecar_old(server, b
 
 
 def test_concurrent_downloads_take_separate_sidecars() -> None:
-    """Downloads into one directory must not share a sidecar name.
-
-    The store prepare pool and the asset importer both write into the cache,
-    so two transfers overlap there. One shared sidecar would interleave the two
-    bodies and hand each caller the other's bytes.
-    """
+    """Check distinct sidecar names and payloads for concurrent downloads."""
     directory = _scratch_dir("concurrent")
     count = 4
     payloads = {f"http://stub/file-{i}.bin": f"body-{i}-".encode() * 512 for i in range(count)}
@@ -538,9 +464,7 @@ def test_concurrent_downloads_take_separate_sidecars() -> None:
 
     def chunks(payload: bytes):
         yield payload[:128]
-        # Every download has written its first chunk once this releases, so
-        # each sidecar exists. No download can finish before the first snapshot
-        # below, because the rest of its body waits behind that snapshot.
+        # The barrier exposes all sidecars after first chunks and before completion.
         barrier.wait()
         with peak_lock:
             peak.append(_sidecars(directory))

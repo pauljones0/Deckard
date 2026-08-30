@@ -1,20 +1,6 @@
-"""A fake-deck rows or columns change must refill and sweep the input set.
+"""Check that fake-deck relayout reloads the page and queues old-input release.
 
-The layout spinners resize the fake deck and call init_inputs(), which swaps
-in a fresh registry of empty inputs. Two things have to follow.
-
-  (1) The page has to land on the new inputs. init_inputs() alone leaves them
-      blank, so the deck and the editor grid show nothing until the next page
-      switch. Every other caller of init_inputs() pairs it with a page load.
-  (2) The replaced inputs still hold the media of the page that was showing,
-      so that data waits for the collector unless something releases it. The
-      release has to go through the media player's control queue. A tick that
-      began before the swap still renders against the old objects, so a close
-      on the calling thread races the sole writer.
-
-Both legs drive the real Layout.apply_key_layout over a real DeckController on
-a fake deck. No GTK widget is built: the method reads three names off its
-settings page, so a stand-in supplies them and the editor grid is a recorder.
+Only the media writer may close replaced inputs because a tick can still reference them.
 """
 import fixtures  # noqa: F401  (import first: isolated --data tempdir)
 
@@ -34,14 +20,10 @@ PAGE_NAME = "RelayoutPage"
 LABEL_POSITION = "center"
 LABEL_TEXT = "relayout"
 
-# The key that carries the label. It exists in the 2x4 default shape and in
-# the 3x3 shape the relayout asks for, so the same key is readable before and
-# after the change.
+# Key present in both the default and requested layouts
 KEY_IDENTIFIER = "0x0"
 
-# The shape the spinner asks for. It differs from the default in both
-# dimensions, so a relayout that ignored the argument would fail on the
-# geometry check alone.
+# Shape that differs from the default on both axes
 NEW_LAYOUT = [3, 3]
 
 
@@ -83,23 +65,13 @@ def label_text_of(controller, identifier) -> "str | None":
 
 
 def wait_for_label(controller, identifier) -> bool:
-    """Whether the key carries the page label, once the load settles.
-
-    load_all_inputs runs off the calling thread, so the label lands a moment
-    after load_page returns.
-    """
+    """Wait until the asynchronous input load applies the page label."""
     return fixtures.wait_until(
         lambda: label_text_of(controller, identifier) == LABEL_TEXT, timeout=10.0)
 
 
 class ControlSpy:
-    """Records the control messages the relayout submits, and forwards them.
-
-    The release has to reach the media player's control queue. A close run on
-    the calling thread would release the same objects and leave no trace here,
-    which is the whole point: a tick that began before the input swap still
-    renders against the old objects, so only the sole writer may close them.
-    """
+    """Record and forward control messages to verify writer-owned release."""
 
     def __init__(self, media_player):
         self.media_player = media_player
@@ -140,8 +112,7 @@ def check_relayout() -> None:
             deck_controller=controller,
             deck_stack_child=SimpleNamespace(
                 page_settings=SimpleNamespace(grid_page=grid)))
-        # apply_key_layout reads three names off self and builds no widget, so
-        # the stand-in stands in for a fully built Layout row.
+        # apply_key_layout needs only these settings-page attributes.
         Layout.apply_key_layout(SimpleNamespace(settings_page=settings_page),
                                 list(NEW_LAYOUT))
 
@@ -174,9 +145,7 @@ def check_relayout() -> None:
             "the release message must carry the registry the relayout "
             "replaced, not some other mapping")
 
-        # The writer empties the mapping in place once it runs the release, so
-        # an empty mapping is the proof that the close happened on the media
-        # thread and not on this one.
+        # The writer empties this mapping in place after it closes the old inputs.
         assert fixtures.wait_until(
             lambda: not any(outgoing_registry.values()), timeout=10.0), (
             "the media writer never drained the release, so the outgoing "

@@ -1,13 +1,4 @@
-"""A background GIF must honour the fps render cap its setter documents.
-
-GifBackground._pick_frame never quantized against the configured rate, so a
-deck or strip background GIF advanced at its own delay timeline and ignored
-background/fps even though set_playback calls the number a render cap.
-_pick_frame now applies the same wall-clock quantization and ceiling guard as
-KeyGIF: a cap below the loop ceiling throttles the frame advance, and a cap at
-or above it leaves the picks exactly as before. This walks the picked frame
-under a capped and an uncapped background GIF and compares the advances.
-"""
+"""Check background GIF frame caps below and at the media-loop ceiling."""
 import os
 
 import fixtures  # noqa: F401  (import first: sets up the isolated data dir)

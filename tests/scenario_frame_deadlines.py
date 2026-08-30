@@ -1,24 +1,6 @@
-"""Per-source frame deadlines render each source at its own rate.
+"""Check source-rate deadlines, drift, stall recovery, and away-gap resync.
 
-The media loop runs at MEDIA_LOOP_FPS, but a source below that rate owes a
-frame only when its own period elapses. The old integer divider mapped 24
-and 20 fps sources onto every tick, which paid composite and hash work for
-frames the picker then deduplicated. A deadline advances on its source's
-own timeline, so the checks pin:
-
-  (1) Source-rate fidelity: on a 30 Hz loop, a 24 fps source is due at
-      most 24 times per simulated second, 12 fps at most 12, and a source
-      at or above the loop rate on every tick.
-  (2) No drift: the due count over a simulated minute matches the source
-      rate to within one frame.
-  (3) Catch-up without burst: after a short stall the deadline yields one
-      due pass, not a burst, and the long-run average holds.
-  (4) Away-gap resync: after a gap longer than the resync threshold the
-      source resumes at once and its schedule re-seeds from the gap end.
-  (5) The clock seam is injectable and restores to monotonic.
-
-Everything runs on a fake clock through media_loop.install_clock, so no
-check sleeps and wall-clock behavior cannot leak in.
+With a fake clock, stalls up to RESYNC_GAP_S catch up once; longer gaps resync.
 """
 import fixtures  # noqa: F401  (import first: isolated --data tempdir)
 
@@ -90,9 +72,7 @@ def check_catch_up_without_burst() -> None:
     try:
         deadline = FrameDeadline(24.0)
         run_loop(deadline, clock, seconds=0.5)
-        # A stall shorter than the resync gap: the loop misses ~0.2s of
-        # ticks, which owes several source frames. The next tick must render
-        # once, not replay the missed frames as a burst.
+        # A 0.2 s stall below RESYNC_GAP_S owes one render, not a missed-frame burst.
         clock.advance(0.2)
         assert deadline.due(media_loop.now()), (
             "the first tick after a stall must render")
@@ -117,9 +97,7 @@ def check_away_gap_resync() -> None:
     try:
         deadline = FrameDeadline(12.0)
         run_loop(deadline, clock, seconds=0.5)
-        # Ticks stop while a page is away. On return the source renders at
-        # once and the schedule re-seeds from the gap end: the next frame
-        # comes one period later, not on the pre-gap timeline.
+        # A 10 s gap above RESYNC_GAP_S renders once, then re-seeds from return.
         clock.advance(10.0)
         assert deadline.due(media_loop.now()), (
             "the first tick after an away gap must render")
@@ -142,8 +120,7 @@ def check_source_render_rates() -> None:
         KeyGIF,
     )
 
-    # The classes construct against real media, so the rate formulas are
-    # checked on bare instances carrying only the fields the formula reads.
+    # Bare instances isolate the fields used by each render-rate formula.
     video = InputVideo.__new__(InputVideo)
     video.video_cache = None
     video.natural_speed = False

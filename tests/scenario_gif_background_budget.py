@@ -1,8 +1,4 @@
-"""A GIF background over GIF_BG_BUDGET_MB must not decode into RAM.
-
-The provider raises pre-decode and the background falls back to the cv2 mp4
-path with one logged warning. Re-setting the same path keeps that fallback.
-"""
+"""Check over-budget GIF fallback, warning count, playback, and reuse."""
 import os
 
 import fixtures
@@ -35,9 +31,7 @@ def main() -> None:
     try:
         from src.backend.DeckManagement.DeckController import GIF_BG_BUDGET_MB
 
-        # The frame count derives from the real canvas geometry, which mirrors
-        # the provider estimate, so the fixture is over budget on any deck
-        # layout the harness runs with and no hardcoded count can rot.
+        # Derive frame count from actual canvas geometry to exceed any harness layout budget.
         key_rows, key_cols = controller.deck.key_layout()
         key_w, key_h = controller.deck.key_image_format()['size']
         spacing_x, spacing_y = controller.key_spacing
@@ -66,9 +60,7 @@ def main() -> None:
                 f"{len(over_budget_warnings)}: {over_budget_warnings}"
             )
 
-            # Playback still runs on the fallback. The media tick publishes
-            # tiles, and alpha placeholders while the cv2 cache builds count,
-            # because the contract is a live playback machinery with no crash.
+            # The fallback must publish a full tile set while its cache builds.
             assert wait_until(
                 lambda: len(controller.background.tiles) == controller.deck.key_count()
                 and all(t is not None for t in controller.background.tiles),

@@ -1,22 +1,6 @@
-"""The writer's per-tick metric is a work-rate, and the low-FPS warning keys
-on capacity, not on the achieved cadence. loop_metrics.py owns the full
-semantics; these checks pin them.
+"""Check writer work-rate metrics, warning transitions, and settings behavior.
 
-  (1) The recorded value is the inverse of the tick's work duration, taken
-      before the scheduled wait: a live idle writer with slow work records
-      rates far above its 2 Hz cadence.
-  (2) A fast workload at a slow scheduled cadence never reveals the
-      warning; a loop whose work alone runs below the warn fraction of the
-      target rate reveals it once, and recovery hides it once.
-  (3) The writer exposes no fps-named per-tick metric an operator could
-      tune from.
-  (4) The settings toggle hides the banner at once on disable, pushes
-      nothing on enable, and a disabled monitor pushes nothing at all.
-
-The warning checks drive the writer's WorkRateMonitor in the exact
-record-then-update sequence the loop runs, so the banner pushes go through
-the writer's real publish path into a recording UI port. The work-rate
-check runs the real writer thread over the stub controller.
+The metric measures work before the scheduled wait, not achieved loop cadence.
 """
 import fixtures  # noqa: F401  (import first: isolated --data tempdir)
 
@@ -27,16 +11,11 @@ from src.backend.DeckManagement.deck_controller.media_writer import (
     MediaPlayerThread,
 )
 
-# The target rate is 30, so the warning threshold sits at 24. These two
-# rates land clearly on either side of it.
+# Rates on opposite sides of the 24-per-second warning threshold
 FAST_RATE = 500.0   # 2ms of work per tick
 LATE_RATE = 20.0    # 50ms of work per tick
 
-# Injected work duration for the live-thread check, and the bounds the
-# recorded rates must land in. The idle cadence waits toward 2 Hz, so a
-# value recorded after the wait could never exceed ~2.2; the injected 20ms
-# of work bounds a before-the-wait value at 50. The lower bound leaves room
-# for scheduler noise stretching the measured work duration.
+# Bounds distinguish 20 ms work from the writer's 2 Hz idle cadence.
 INJECTED_WORK_S = 0.02
 WORK_RATE_MIN = 3.0
 WORK_RATE_MAX = 55.0
@@ -53,10 +32,7 @@ class RecordingPort(ui_port.UIPort):
 
 
 def make_writer(warnings_enabled: bool = True) -> MediaPlayerThread:
-    # A real writer over the stub controller, not started; the checks drive
-    # the metric path directly. The toggle goes through
-    # set_show_fps_warnings, the same facade the settings window calls; no
-    # port is installed yet, so the disable push lands in the null port.
+    # Use the settings facade on an unstarted real writer with the null UI port.
     _controller, media_player, _deck_manager = fixtures.make_stub_controller()
     media_player.set_show_fps_warnings(warnings_enabled)
     return media_player
@@ -170,9 +146,7 @@ def check_settings_toggle_contract() -> None:
         assert port.states == [False], (
             f"a disabled monitor pushed: {port.states}")
 
-        # Enable pushes nothing by itself; the still-late window shows the
-        # warning on the next update, so a standing condition survives an
-        # off/on cycle.
+        # Enable pushes nothing; the next update restores a standing warning.
         writer.set_show_fps_warnings(True)
         assert port.states == [False], (
             f"enable pushed {port.states} on its own, expected no new push")

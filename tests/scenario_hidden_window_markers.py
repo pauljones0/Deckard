@@ -1,8 +1,4 @@
-"""ui_image_changes_while_hidden must store dirty markers, not composites.
-
-The null UI port makes push_input_image return False, so every input is in
-the nothing-is-showing state and the marker path is directly exercisable.
-"""
+"""Check hidden-window dirty markers, deterministic recomposition, and consumption."""
 
 import fixtures
 from PIL import Image
@@ -50,9 +46,7 @@ def main() -> None:
 
         print("PASS: initial hidden-window paint stores markers, not PIL images")
 
-        # Repeated ticks, which model a video background rewriting every input
-        # 20 to 30 times a second while hidden, must never leave a PIL image
-        # behind. Every value observed is always the marker.
+        # Repeated hidden updates must retain markers instead of PIL composites.
         sample_key = key_inputs[0]
         for _ in range(10):
             sample_key.update(force=True)
@@ -67,10 +61,7 @@ def main() -> None:
 
         print("PASS: repeated hidden-window ticks never store a PIL image")
 
-        # get_current_image() is a pure composite with no side effects, so
-        # calling it again with nothing changed must reproduce the same pixels.
-        # The map-time recompose then shows the current frame rather than
-        # something stale.
+        # Pure recomposition must return identical pixels when state is unchanged.
         img1 = sample_key.get_current_image()
         hash1 = hash(img1.tobytes())
         img1.close()
@@ -89,9 +80,7 @@ def main() -> None:
 
         print("PASS: get_current_image() is a deterministic, side-effect-free recompose accessor")
 
-        # The consume-on-map contract. A read and a pop leave no residue, for
-        # both Key and Touchscreen identifiers, so a Touchscreen marker is just
-        # as consumable as a Key one.
+        # Key and touchscreen markers are both consumed without residue.
         for i in key_inputs:
             assert i.identifier in tasks
             recomposed = i.get_current_image()
@@ -107,9 +96,7 @@ def main() -> None:
         tasks.pop(touchscreen_identifier)
         assert touchscreen_identifier not in tasks
 
-        # Popping twice, when the KeyGrid fallback path races the ScreenBar
-        # consumption, must be safe. Both sites guard with try and except
-        # KeyError, never a raw dict subscript.
+        # Consumers guard a second pop when key-grid and screen-bar paths race.
         try:
             tasks.pop(touchscreen_identifier)
             raised = False

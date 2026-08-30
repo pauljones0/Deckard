@@ -1,8 +1,4 @@
-"""The import closure of the render engine must be widget-free.
-
-A real DeckController must run page loads, input, media ticks and teardown
-without importing Gtk, Adw, Gdk, GdkPixbuf, Pango, src.windows or GtkHelper.
-"""
+"""Check the real render engine without widget-stack imports."""
 import sys
 
 FORBIDDEN_EXACT = frozenset({
@@ -21,20 +17,14 @@ FORBIDDEN_PREFIXES = ("src.windows.", "GtkHelper.GenerativeUI.")
 # so a sweep over an engine that imported nothing cannot pass silently.
 REQUIRED_PRESENT = ("gi.repository.GLib", "gi.repository.Gio")
 
-# The complete set the engine closure may pull in. Engine code names GLib and
-# Gio through SignalManager, api, notify and HelperMethods.open_web. GObject
-# and GModule come with gi itself, and Xdp is the flatpak probe of DeckManager,
-# which is libportal and absent on Mac, hence a subset check. Anything outside
-# this set is a new dependency that has to be argued for.
+# Complete allowed GI residue; Xdp is optional outside Flatpak-capable systems.
 ALLOWED_GI_RESIDUE = frozenset({
     "gi.repository.GLib",
     "gi.repository.GModule",
     "gi.repository.GObject",
     "gi.repository.Gio",
     "gi.repository.Xdp",
-    # PyGObject 3.56 and later split the Unix-only parts of GLib and Gio into
-    # their own namespaces and load them transitively with Gio. Still no widget
-    # stack, so the same argument as GLib and Gio themselves holds.
+    # PyGObject 3.56+ loads Unix GLib and Gio namespaces transitively.
     "gi.repository.GLibUnix",
     "gi.repository.GioUnix",
 })
@@ -45,11 +35,7 @@ def _is_forbidden(name: str) -> bool:
 
 
 class _GuiImportTripwire:
-    """A meta-path finder that refuses widget-stack imports.
-
-    The DynamicImporter of gi is a meta-path finder too, so a gi.repository
-    import routes through here first once this sits at index 0.
-    """
+    """Refuse widget imports before the GI dynamic importer handles them."""
 
     def find_spec(self, fullname, path=None, target=None):
         if _is_forbidden(fullname):
@@ -68,9 +54,7 @@ import globals as gl  # noqa: E402
 
 from src.backend.DeckManagement.InputIdentifier import Input  # noqa: E402
 
-# The harness runs a StubDeckManager, because the real one starts a USBMonitor
-# and an Xdp portal probe, so without this import the real module and its
-# closure would go unproven. Importing the module alone starts nothing.
+# Import the real manager closure without constructing its USB and portal monitors.
 import src.backend.DeckManagement.DeckManager  # noqa: E402,F401
 
 WATCHDOG_SECONDS = 60
@@ -109,12 +93,7 @@ def _any_action_ready(page) -> bool:
 
 
 def check_engine_runs_headless() -> None:
-    """Drive the real engine end to end under the tripwire.
-
-    Two visually distinct pages, a page switch, key and dial input, media ticks
-    and teardown. Page B is an action page, so ActionCore construction,
-    initialize_actions, on_ready and the local GenerativeUI import are covered.
-    """
+    """Drive page loads, action setup, input, media ticks, and teardown under the tripwire."""
     import os
 
     red = fixtures.make_test_png(
@@ -193,11 +172,7 @@ def check_engine_runs_headless() -> None:
 
 
 def check_no_widget_modules_loaded() -> None:
-    """Catch anything imported before the tripwire went in.
-
-    Nothing should be, and a silent widget import at the very top of the
-    process is not otherwise observable.
-    """
+    """Detect widget modules that loaded before the tripwire was installed."""
     loaded = sorted(m for m in sys.modules if _is_forbidden(m))
     assert not loaded, f"widget-stack modules loaded in the engine closure: {loaded}"
 

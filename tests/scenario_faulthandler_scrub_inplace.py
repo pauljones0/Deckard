@@ -1,8 +1,4 @@
-"""The boot-time faulthandler scrub must preserve the file inode.
-
-faulthandler registers the raw fd, so a tmp-and-replace rewrite sends every
-dump from an already running instance to the unlinked old file.
-"""
+"""Check that fault-log scrubbing preserves the inode used by live writers."""
 import os
 import tempfile
 
@@ -29,8 +25,7 @@ def main() -> None:
             f.write("===== boot 2026-01-01T00:00:00 pid=1 =====\n")
             f.write(raw_line)
 
-        # The running instance. faulthandler stores a raw fd, exactly like this,
-        # and keeps writing through it after other boots come and go.
+        # Model a running instance that retains its raw append descriptor.
         running_fd = os.open(path, os.O_WRONLY | os.O_APPEND)
         ino_before = os.stat(path).st_ino
         try:
@@ -47,8 +42,7 @@ def main() -> None:
             )
             assert raw_line not in content, "raw home path survived the scrub"
 
-            # The running instance dumps after the scrub. It must land in the
-            # file a reader would open, not in an unlinked ghost.
+            # The retained descriptor must write to the path that readers open.
             os.write(running_fd, b"LIVE DUMP MARKER\n")
             with open(path) as f:
                 assert "LIVE DUMP MARKER" in f.read(), (
@@ -56,18 +50,14 @@ def main() -> None:
                     "the on-disk file -- the fd was stranded"
                 )
 
-            # Idempotence. The scrub of a second boot must be a byte-exact
-            # no-op, not merely leave the redacted line alive.
+            # A second scrub must be a byte-exact no-op.
             with open(path, "rb") as f:
                 after_first = f.read()
             _scrub_fault_log(path)
             with open(path, "rb") as f:
                 assert f.read() == after_first, "re-scrub was not a byte-exact no-op"
 
-            # Undecodable bytes must not crash the scrub or corrupt the file.
-            # With nothing left to redact the file must stay byte-untouched, so
-            # the unchanged-skip path preserves the raw bytes and writes no
-            # replacement characters.
+            # Preserve undecodable bytes when no redaction changes the file.
             os.write(running_fd, b"garbage \xff\xfe bytes\n")
             with open(path, "rb") as f:
                 with_garbage = f.read()
