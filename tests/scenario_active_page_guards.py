@@ -1,8 +1,4 @@
-"""Regression tests for unguarded active_page derefs and pending-page retention.
-
-active_page goes None on close() or load_page(None), and a racing switch swaps
-it. Each part builds a deterministic seam for a race that is otherwise rare.
-"""
+"""Verify active-page null races and pending-page retention."""
 from types import SimpleNamespace
 
 import fixtures
@@ -10,10 +6,7 @@ import globals as gl
 
 
 class FlippingController:
-    """Stands in for a DeckController whose active_page a racing thread nulls.
-
-    The property serves a real page for the first live_reads reads, then None.
-    """
+    """Return a page for live_reads accesses, then simulate a racing null."""
 
     def __init__(self, page, live_reads: int):
         self._page = page
@@ -46,7 +39,6 @@ def part_a_get_own_actions() -> None:
     state.controller_input = SimpleNamespace(deck_controller=ctrl, identifier="key-0x0")
     state.state = 0
 
-    # Without the snapshot, this raises AttributeError on NoneType.
     actions = state.get_own_actions()
     assert actions == sentinel, (
         f"expected the snapshot page's actions, got {actions!r} -- the live "
@@ -61,15 +53,12 @@ def part_b_load_page_tail(controller) -> None:
     seed_path = fixtures.seed_page("GuardTailPage")
     page = gl.page_manager.get_page(seed_path, controller)
 
-    # initialize_actions runs in the tail right before the ChangePage signal.
-    # Have it stand in for the racing close() or load_page(None) that nulls
-    # active_page, which makes the seam deterministic.
+    # Null active_page from initialize_actions immediately before ChangePage.
+    # This models a racing close or load_page(None) deterministically.
     page.initialize_actions = lambda *a, **k: setattr(controller, "active_page", None)
 
-    # Observe at the trigger call site, because a connected callback needs a
-    # GLib main loop iteration and this harness runs none. The deref under test
-    # happens at argument evaluation, so an AttributeError lands in the
-    # @log.catch of load_page and records no ChangePage trigger.
+    # Observe the trigger directly because this harness runs no GLib main loop.
+    # Argument evaluation must not fail before the ChangePage trigger.
     received = []
     original_trigger = gl.signal_manager.trigger_signal
 
@@ -106,8 +95,6 @@ def part_c_load_default_page(controller) -> None:
         "state": 0,
     }
 
-    # Without the guard this raises AttributeError. The deref sits before the
-    # branch's own try/except and the method has no other guard.
     controller.load_default_page()
 
     assert len(loaded) >= 2, (

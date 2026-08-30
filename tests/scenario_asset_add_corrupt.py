@@ -1,8 +1,5 @@
-"""Corrupt files are refused at asset import time.
-
-generate_thumbnail never raises; it returns a placeholder tagged sc_broken.
-The import gate keys off that marker and runs before the copy.
-"""
+"""Refuse corrupt assets before copying them into the library.
+The import gate reads generate_thumbnail's sc_broken marker."""
 import fixtures  # noqa: F401  (must be first, see fixtures.py docstring)
 
 import json
@@ -58,7 +55,7 @@ def check_corrupt_refused_no_partial_copy(backend: AssetManagerBackend, files: d
         json_before, files_before = _library_state(backend)
         n_before = len(backend)
 
-        asset_id = backend.add(path)  # must not raise
+        asset_id = backend.add(path)
 
         assert asset_id is None, f"{name}: undecodable file must be refused with None, got {asset_id!r}"
         assert len(backend) == n_before, f"{name}: refused file must not append an asset"
@@ -82,10 +79,7 @@ def check_valid_still_adds(backend: AssetManagerBackend) -> None:
 
 
 def check_decode_import_keys_sc_broken(backend: AssetManagerBackend) -> None:
-    """The gate must read the sc_broken marker, not catch an exception.
-
-    generate_thumbnail never raises.
-    """
+    """Read generate_thumbnail's sc_broken marker instead of an exception."""
     real_generate = gl.media_manager.generate_thumbnail
     try:
         broken = Image.new("RGB", (8, 8))
@@ -117,11 +111,7 @@ def make_test_video(path: str, n_frames: int = 8, size=(48, 32), fps: int = 10) 
 
 
 def check_video_add_decodes_once(backend: AssetManagerBackend) -> None:
-    """The gate decode is the thumbnail decode.
-
-    A video add runs generate_thumbnail once, not once for the gate and again
-    inside save_thumbnail.
-    """
+    """Reuse the import-gate decode as the video's thumbnail decode."""
     video = os.path.join(WORK_DIR, "decode_once.mp4")
     make_test_video(video)
 
@@ -150,11 +140,7 @@ def check_video_add_decodes_once(backend: AssetManagerBackend) -> None:
 
 
 def check_ui_add_shows_alert_dialog(backend: AssetManagerBackend, files: dict) -> None:
-    """A refused drop must tell the user with an AlertDialog.
-
-    Gtk and GLib are stubbed at module level. The harness is headless, so only
-    the dialog construction is under test.
-    """
+    """Construct an AlertDialog on main when a headless import is refused."""
     dialogs: list[dict] = []
     shown: list[tuple] = []
     built_before_idle: list[int] = []
@@ -167,10 +153,8 @@ def check_ui_add_shows_alert_dialog(backend: AssetManagerBackend, files: dict) -
             shown.append(a)
 
     def fake_idle_add(fn, *a):
-        # Count the dialogs that exist when the callback is scheduled. The
-        # calling worker thread must build no GTK object, because construction
-        # belongs inside the main-thread callback. This path runs on the bare
-        # import thread of the chooser, see Chooser.add_files.
+        # The chooser import worker must schedule dialog construction on main.
+        # Count existing dialogs before the callback runs.
         built_before_idle.append(len(dialogs))
         return fn(*a)
 

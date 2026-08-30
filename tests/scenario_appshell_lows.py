@@ -1,8 +1,4 @@
-"""Regression checks for the grouped low-severity app-shell findings.
-
-Every check drives a real method unbound on plain stub objects, so no GTK
-widget is built and no display is needed.
-"""
+"""Exercise app-shell methods on stubs without building GTK widgets."""
 import fixtures  # noqa: F401  (must be first: isolates the data dir)
 
 import inspect
@@ -110,12 +106,7 @@ def check_deck_name_dedup() -> None:
 
 
 def check_page_selector_no_selection_guard() -> None:
-    """No selection must never fall back to a page.
-
-    The selector held a Gtk.ComboBox index, whose no-selection value -1
-    indexed the model from the end and so picked the last page. The selection
-    is a page path now, and None must stay a no-op on both paths.
-    """
+    """Treat a None page selection as a no-op on both selector paths."""
     from src.backend import services
     from src.windows.mainWindow.elements.PageSelector import PageSelector
 
@@ -136,9 +127,8 @@ def check_page_selector_no_selection_guard() -> None:
     finally:
         services.require_page_manager = saved_require
 
-    # The page-settings button with nothing selected: the manager opens and
-    # no page is activated in it. lists_page() answers True for anything, so
-    # only the empty selection can stop the path here.
+    # Open the manager without activating a page when selection is empty.
+    # lists_page accepts every value, so only the None guard stops activation.
     activate = Recorder()
     open_manager = Recorder()
     saved_window = gl.page_manager_window
@@ -183,10 +173,7 @@ def check_deck_manager_usb_callback_guards() -> None:
     finally:
         gl.app = saved_app
 
-    # add_newly_connected_deck must reach the call that re-checks whether any
-    # deck is available. A trailing dot in recursive_hasattr(gl, "app.main_win.")
-    # always reads False and skips it. The call goes through a port, not a direct
-    # main_win poke, so the recorder is a port.
+    # Verify add_newly_connected_deck refreshes availability through the UI port.
     from src.backend import ui_port
 
     class _RecordingPort(ui_port.UIPort):
@@ -209,9 +196,7 @@ def check_deck_manager_usb_callback_guards() -> None:
     saved_ctor = dm_mod.DeckController
     dm_mod.DeckController = lambda manager, deck: Obj(deck=deck)
     try:
-        # DeckManager wraps the controller construction in
-        # _init_deck_controller_with_retry(). Stub it, so the method reaches the
-        # availability refresh this test verifies.
+        # Stub controller construction so the method reaches the UI refresh.
         stub = Obj(
             deck_controller=[],
             fake_deck_controller=[],
@@ -258,9 +243,7 @@ def check_deck_group_active_page_guards() -> None:
             "no active page means 'not overwritten'"
         )
 
-        # update_image is the screensaver asset picker callback. It must not
-        # reload the screensaver against a None active_page, because
-        # load_screensaver dereferences page.dict and would raise.
+        # Skip screensaver reload when no active page can supply page.dict.
         load_screensaver = Recorder()
         controller3 = Obj(active_page=None, load_screensaver=load_screensaver)
         stub3 = Obj(
@@ -345,10 +328,8 @@ def check_asset_manager_drops_callback_refs() -> None:
 
 
 def check_flowbox_drops_callback_refs() -> None:
-    # The second delivery path is CustomAssets/FlowBox.on_child_activated. It
-    # captures the callback, then nulls the manager refs before it spawns the
-    # delivery thread. Stub threading.Thread, so the capture is synchronous and
-    # no real thread runs.
+    # Capture callback data before clearing manager references and dispatching.
+    # Stub Thread so this check remains synchronous.
     import src.windows.AssetManager.CustomAssets.FlowBox as fb_mod
 
     action = Obj(name="opener-action")  # stands in for the pinned action/page

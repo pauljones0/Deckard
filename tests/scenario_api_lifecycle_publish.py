@@ -1,8 +1,5 @@
-"""Pins the deck lifecycle of the D-Bus API.
-
-A deck stays on the bus for exactly as long as the deck manager holds it,
-whichever thread registered or removed it. Every leg reads over the wire.
-"""
+"""Verify D-Bus deck publication follows the deck-manager lifecycle.
+Every lifecycle leg reads over a separate bus connection."""
 import fixtures  # noqa: F401  (must be first: isolates DATA_PATH before globals)
 
 import ctypes  # noqa: E402
@@ -43,9 +40,8 @@ PATH_LATE = f"{api.CONTROLLER_BASE_PATH}/api_late_1"
 PAGE = "Main"
 
 
-# The real DeckManager, with its environment-touching collaborators stubbed at
-# module level before construction. The boot-enumeration scenario uses the same
-# kit, so both drive the same real lifecycle code.
+# Stub environment-facing collaborators before constructing the real manager.
+# The boot and lifecycle scenarios then drive the same manager code.
 
 class StubUSBMonitor:
     """usbmonitor.USBMonitor stand-in with no udev and no threads."""
@@ -68,8 +64,7 @@ class StubPortal:
 
 
 class ScriptedDeviceManager:
-    """StreamDeck.DeviceManager stand-in whose enumerate() returns whatever
-    the class-level script currently says."""
+    """Return the current class-level enumeration script."""
 
     results: list = []
     _lock = threading.Lock()
@@ -78,8 +73,6 @@ class ScriptedDeviceManager:
         with ScriptedDeviceManager._lock:
             return list(ScriptedDeviceManager.results)
 
-
-# An isolated session bus
 
 BUS_CONFIG = """<!DOCTYPE busconfig PUBLIC
  "-//freedesktop//DTD D-Bus Bus Configuration 1.0//EN"
@@ -104,21 +97,12 @@ _LIBC = ctypes.CDLL("libc.so.6", use_errno=True)
 
 
 def _die_with_parent() -> None:
-    """Ask the kernel to SIGKILL this child when its parent dies.
-
-    The scenario kills the daemon in a finally. The harness watchdog and a
-    hard failure both end the process with os._exit and run no finally.
-    """
+    """Kill the private bus if the harness exits without Python cleanup."""
     _LIBC.prctl(PR_SET_PDEATHSIG, signal.SIGKILL)
 
 
 def start_private_bus() -> tuple[subprocess.Popen, str]:
-    """Run a private dbus-daemon and point the process at it.
-
-    Gio.TestDBus waits at teardown for the shared session connection to be
-    finalized. GDBus holds a reference per dispatched call, so the wait burns
-    its full 30-second timeout here. Owning the daemon drops the wait.
-    """
+    """Start an owned bus; Gio.TestDBus otherwise waits its full 30 s timeout."""
     assert shutil.which("dbus-daemon") is not None, (
         "dbus-daemon is not on PATH, so this scenario cannot start an isolated "
         "session bus and would prove nothing about the DBus API. Install it "
@@ -148,14 +132,8 @@ def stop_private_bus(proc: subprocess.Popen) -> None:
     proc.wait(timeout=10)
 
 
-# Main-context pumping and the observing connection
-
 def pump(seconds: float = 0.0) -> None:
-    """Run the default main context for seconds.
-
-    The queued publish and unpublish work runs here. The lifecycle marshals to
-    this context, and nothing in this scenario runs a GLib main loop.
-    """
+    """Run queued publication work without a GLib main loop."""
     context = GLib.MainContext.default()
     deadline = time.monotonic() + seconds
     while True:
@@ -177,11 +155,7 @@ def pump_until(condition, timeout: float, what: str) -> None:
 
 
 class Observer:
-    """A private bus connection standing in for an external client.
-
-    It is separate from the connection the API publishes on, so nothing here
-    can pass by talking to the service in-process.
-    """
+    """Observe the API through a connection separate from the publisher."""
 
     def __init__(self, bus_address: str, destination: str):
         self.connection = Gio.DBusConnection.new_for_address_sync(
@@ -214,11 +188,7 @@ class Observer:
 
     def call(self, object_path: str, interface: str, method: str,
              params=None, timeout: float = 5.0):
-        """Call a method and pump until the reply lands.
-
-        The call is asynchronous because the service answers on this process's
-        main context. A synchronous call from this thread would deadlock.
-        """
+        """Call asynchronously and pump the service context to avoid deadlock."""
         box: dict = {}
 
         def on_done(source, result, *_user_data):
@@ -247,11 +217,7 @@ class Observer:
                                  "Controllers")
 
     def published_paths(self) -> list[str]:
-        """Every controller object that is on the bus, asked of the bus.
-
-        GDBus answers the introspection out of its own registration table, so
-        this is the object set the bus holds, not what this process claims.
-        """
+        """Return controller paths from GDBus's registration table."""
         xml = self.call(api.CONTROLLER_BASE_PATH,
                         "org.freedesktop.DBus.Introspectable",
                         "Introspect", None).unpack()[0]
@@ -263,12 +229,8 @@ class Observer:
 
 
 def assert_agreement(observer: Observer, where: str) -> None:
-    """The property and the addressable object set name the same decks.
-
-    Both are read over the wire, where the disagreement matters. A client reads
-    Controllers, composes a path per serial, and calls it. The composition uses
-    the app's own sanitizer, not a second copy of the rule.
-    """
+    """Compare advertised serials with addressable objects over the wire.
+    Compose each path with the application's serial sanitizer."""
     listed = sorted(api._serial_to_dbus_path(serial)
                     for serial in observer.controllers())
     published = sorted(os.path.basename(path)
@@ -282,10 +244,7 @@ def assert_agreement(observer: Observer, where: str) -> None:
 
 def wait_for_object(observer: Observer, object_path: str,
                     timeout: float = 15.0) -> str:
-    """Poll the bus until the controller object answers, pumping throughout.
-
-    Returns its ActivePageName.
-    """
+    """Poll while pumping and return the controller's ActivePageName."""
     deadline = time.monotonic() + timeout
     last: Exception | None = None
     while True:
@@ -318,10 +277,8 @@ def expect_gone(observer: Observer, object_path: str) -> str:
     )
 
 
-# Which thread mutates the bus. dasbus keeps its object registrations in a
-# plain dict and GDBus dispatches them on the GLib main context, so every
-# registration mutation must happen there. A direct call in place of the
-# idle_add leaves the whole suite green, so record the thread and check below.
+# Record registration threads because dasbus mutates an unlocked dictionary.
+# Every mutation must share the GLib context that dispatches GDBus calls.
 
 MAIN_IDENT = threading.main_thread().ident
 BUS_CALLS: list[tuple[str, str, int]] = []
@@ -357,14 +314,8 @@ def assert_on_main(op: str, object_path: str) -> None:
         )
 
 
-# Deck registration helpers
-
 class Exploding:
-    """Fails any attribute access.
-
-    Passed to publish and unpublish with no service running, to prove the bus
-    guard is the first statement. The boot path calls these mid-construction.
-    """
+    """Fail attribute access to verify the no-bus guard runs first."""
 
     def __getattr__(self, name):
         raise AssertionError(
@@ -387,10 +338,7 @@ def controller_for(manager, serial: str):
 
 
 def connect_deck_on_worker(manager, serial: str) -> None:
-    """Register a deck the way a hotplug does.
-
-    Calls connect_new_decks() from a thread that is not the main one.
-    """
+    """Register a hotplugged deck from a worker thread."""
     deck = FaultyFakeDeck(serial_number=serial, deck_type="Fake Deck")
     ScriptedDeviceManager.results = [deck]
     thread = threading.Thread(target=manager.connect_new_decks,
@@ -403,13 +351,8 @@ def connect_deck_on_worker(manager, serial: str) -> None:
     ScriptedDeviceManager.results = []
 
 
-# Legs
-
 def leg_boot_sweep(manager, bus_address: str) -> Observer:
-    """Decks registered before the service exists reach the boot sweep.
-
-    start_dbus_service publishes them instead of losing them.
-    """
+    """Publish decks that registered before the service started."""
     deck = FaultyFakeDeck(serial_number=SERIAL_BOOT, deck_type="Fake Deck")
     manager.load_hardware_deck(deck)
     assert controller_for(manager, SERIAL_BOOT) is not None, \
@@ -436,11 +379,7 @@ def leg_boot_sweep(manager, bus_address: str) -> Observer:
 
 
 def leg_worker_thread_arrival(manager, observer: Observer) -> None:
-    """A deck that arrives on a worker thread must appear on the bus.
-
-    Without lifecycle publishing the deck registers, works, and stays invisible
-    to every D-Bus client for the rest of the session. Autostart hits this.
-    """
+    """Publish a runtime deck that arrives on a worker thread."""
     observer.property_changes.clear()
     connect_deck_on_worker(manager, SERIAL_HOT)
 
@@ -479,11 +418,7 @@ def leg_worker_thread_arrival(manager, observer: Observer) -> None:
 
 
 def leg_active_page_seeded(manager, observer: Observer) -> None:
-    """Publishing reads the page the deck shows from the controller.
-
-    The boot page loads before the object exists, so a wait for the first
-    switch leaves ActivePageName empty on a deck that has a page.
-    """
+    """Seed ActivePageName because boot selects a page before API publication."""
     for serial, path in ((SERIAL_BOOT, PATH_BOOT), (SERIAL_HOT, PATH_HOT)):
         controller = controller_for(manager, serial)
         assert controller.active_page is not None, \
@@ -499,10 +434,7 @@ def leg_active_page_seeded(manager, observer: Observer) -> None:
 
 
 def leg_removal_unpublishes(manager, observer: Observer):
-    """Removal takes the object off the bus, so the two views agree.
-
-    Returns the removed controller, which the next legs use as the stale one.
-    """
+    """Unpublish a removed controller and return it for stale-call checks."""
     observer.property_changes.clear()
     controller = controller_for(manager, SERIAL_HOT)
 
@@ -546,11 +478,7 @@ def leg_removal_unpublishes(manager, observer: Observer):
 
 
 def leg_replug(manager, observer: Observer, stale) -> None:
-    """The object path is a pure function of the serial.
-
-    A replugged deck comes back at the same path, with a fresh instance bound
-    to the fresh controller.
-    """
+    """Rebind a replugged deck to a fresh object at its serial-derived path."""
     connect_deck_on_worker(manager, SERIAL_HOT)
     fresh = controller_for(manager, SERIAL_HOT)
 
@@ -566,13 +494,10 @@ def leg_replug(manager, observer: Observer, stale) -> None:
         f"cache paths by serial break"
     )
 
-    # It works, because a method call reaches the fresh controller.
     observer.call(PATH_HOT, api.CTRL_IFACE, "SetActivePage",
                   GLib.Variant("(s)", (PAGE,)))
 
-    # A late unpublish for the deck that held this serial must not take the
-    # replugged deck's object down. The removal path looks its entry up by
-    # controller identity, not by serial.
+    # A stale unpublish must use controller identity and preserve the replug.
     api.unpublish_controller(stale)
     pump(0.2)
     assert wait_for_object(observer, PATH_HOT, timeout=5) == PAGE, (
@@ -583,12 +508,8 @@ def leg_replug(manager, observer: Observer, stale) -> None:
 
 
 def leg_inverted_replug_order(manager, observer: Observer) -> None:
-    """A publish queued before the old controller's unpublish must survive.
-
-    Nothing orders the two enqueues. Removal queues its unpublish after it
-    releases the deck manager lock, and the registration sites take no lock.
-    The two workers run in the losing order here, publish first.
-    """
+    """Preserve a replug whose publish runs before the stale unpublish.
+    Registration and removal workers do not order their queued operations."""
     stale = controller_for(manager, SERIAL_HOT)
     assert api.get_controller_instance(SERIAL_HOT) is not None, \
         "nothing is published at this serial -- the race below cannot happen"
@@ -625,11 +546,8 @@ def serials_registered(manager) -> list[str]:
 
 
 def leg_publish_lag_direction(manager, observer: Observer) -> None:
-    """The property must lag the app rather than name an unaddressable deck.
-
-    Publishing marshals onto the main context, so the deck manager holds a deck
-    before its object exists, and the property reads the published set instead.
-    """
+    """Make Controllers follow published objects rather than manager contents.
+    Main-context marshaling creates both publication and removal lag windows."""
     deck = FaultyFakeDeck(serial_number=SERIAL_LATE, deck_type="Fake Deck")
     controller = manager._init_deck_controller_with_retry(deck)
     assert controller is not None, "the late controller failed to build"
@@ -668,10 +586,8 @@ def leg_publish_lag_direction(manager, observer: Observer) -> None:
         "away"
     )
 
-    # The removal side of the same window fails the other way round. The deck
-    # leaves the manager first and its object goes when the queued work runs.
-    # The property must stay with the object here too. A client told the deck is
-    # gone while its object still answers is misled just as surely.
+    # During removal lag, Controllers must keep naming the still-addressable
+    # object until the queued unpublish runs.
     observer.property_changes.clear()
     manager.remove_controller(controller)  # queues the unpublish
     assert SERIAL_LATE not in serials_registered(manager), \
@@ -690,13 +606,9 @@ def leg_publish_lag_direction(manager, observer: Observer) -> None:
 
 
 def leg_stop_service(manager, observer: Observer) -> None:
-    """Stopping takes every object off the bus.
-
-    The lifecycle calls that keep arriving afterwards are silent no-ops.
-    """
-    # Queued while the service was up, dispatched after it stopped. quit runs on
-    # this same context, so the two serialize here as they do in the app, and
-    # the worker must find the bus gone and return quietly.
+    """Unpublish all objects on stop and ignore later lifecycle calls."""
+    # Dispatch queued work after stop on the same serialized main context.
+    # The worker must find no bus and return quietly.
     survivor = controller_for(manager, SERIAL_BOOT)
     api.unpublish_controller(survivor)
     assert api.get_api_instance() is not None, \
@@ -732,12 +644,7 @@ def leg_stop_service(manager, observer: Observer) -> None:
 
 
 def leg_failed_publish_commits_nothing() -> None:
-    """A publish that raises leaves both globals None.
-
-    A half-open bus left in api._bus reads as usable to publish_controller and
-    the Controllers getter, so the start path must commit neither global on
-    failure. The service is already stopped here, so both start None.
-    """
+    """Leave both API globals unset when initial object publication fails."""
     assert api._bus is None and api.get_api_instance() is None
 
     real_bus = api.SessionMessageBus

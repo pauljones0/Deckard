@@ -1,24 +1,5 @@
-"""Regression scenario for reordering the actions of a key.
-
-Three layers, in order.
-
-The decision layer is src.backend.PageManagement.action_order, which answers
-where a dragged row lands and moves the slots. It is pure, so every edge case
-of a drag runs here: a drop on the dragged row, a drop past the end, a list too
-short to reorder, and an index that names no row.
-
-The page layer is action_order.move_action over a real Page on disk. It proves
-what a reorder must never lose: the settings, the comment and the event
-assignments of an action follow that action, and the control indices beside the
-list follow the action they name.
-
-The sidebar layer is ActionRow and ActionExpanderRow, driven over duck-typed
-stand-ins without GTK. The up and down buttons and the drop handler both end in
-the same move, so both are checked against the same page.
-
-A real drag needs a pointer, so the gesture itself and the drop indicator it
-draws are outside what a headless run can reach.
-"""
+"""Verify action reordering across decision, page, and sidebar layers.
+The headless run excludes pointer gestures and visible drop indicators."""
 import fixtures  # noqa: F401  (import first: sets up the isolated data dir)
 
 import copy
@@ -53,11 +34,7 @@ def check(name: str, condition: bool, detail: str = ""):
 
 
 def call(handler, *args):
-    """Invoke a handler and return the exception instead of raising.
-
-    PyGObject swallows handler exceptions, and a run against broken code must
-    fail in order instead of dying mid-scenario.
-    """
+    """Return handler exceptions so PyGObject-style failures stay observable."""
     try:
         handler(*args)
         return None
@@ -66,19 +43,12 @@ def call(handler, *args):
 
 
 def target_of(registry, index):
-    """The action object a control index names, read the way ActionCore reads it.
-
-    ActionCore.get_own_action_index reports a position in
-    Page.get_all_actions_for_input, which leaves out an action that did not
-    load, so a permission is compared against that same filtered list.
-    """
+    """Resolve a control index against the loaded-action list used by ActionCore."""
     visible = [action for action in registry.values() if action is not None]
     if not isinstance(index, int) or not 0 <= index < len(visible):
         return None
     return visible[index]
 
-
-# ---------------------------------------------------------------- decision
 
 print("(1) resolve_drop_index answers where a dragged row lands")
 
@@ -162,8 +132,6 @@ check("without a registry each entry stands for itself",
 check("an empty registry stands for no registry",
       action_order.row_slots({}, 2) == [0, 1])
 
-
-# ------------------------------------------------------------------- page
 
 print("(2) a move on a real page, written to disk and read back")
 
@@ -267,9 +235,8 @@ hole_state_dict["actions"] = [
     {"id": "plugin::BROKEN", "settings": {"marker": "broken"}},
     {"id": "plugin::C", "settings": {"marker": "c"}},
 ]
-# The middle holder answered nothing, which is what an action the app version
-# is too old for leaves, and what a plugin whose constructor raises leaves.
-# The loader keys the slot and holds None there, and the sidebar draws no row.
+# An incompatible action or failed plugin constructor leaves a keyed None slot
+# that draws no sidebar row.
 hole_page.action_objects.setdefault("keys", {}).setdefault("0x0", {})[0] = {
     0: "obj_A", 1: None, 2: "obj_C",
 }
@@ -278,7 +245,6 @@ hole_state_dict["image-control-action"] = 1
 hole_state_dict["background-control-action"] = 0
 hole_state_dict["label-control-actions"] = [1, 1, 0]
 
-# The user moves the C row up, which is row 1 of the two rows shown.
 moved = action_order.move_action(hole_page, real_identifier, 0, source_index=1, dest_index=0)
 check("the move on a page with a hole reports the page changed", moved is True, str(moved))
 
@@ -314,11 +280,8 @@ check("the label permissions on disk still name C, C and A",
       str(hole_disk_state.get("label-control-actions")))
 
 
-# ---------------------------------------------------------------- sidebar
-
-# Duck-typed stand-ins. FakeExpander borrows the real methods from
-# ActionExpanderRow, which are plain functions in the class dict, so the data
-# path under test is production code. Lists emulate the widget-tree plumbing.
+# FakeExpander borrows production ActionExpanderRow methods.
+# Lists emulate the widget-tree plumbing without GTK.
 
 class FakeExpander:
     action_rows = ActionExpanderRow.action_rows
@@ -343,9 +306,7 @@ class FakeExpander:
         return list(self.rows)
 
     def reorder_child_after(self, child, after):
-        # Emulates BetterExpander.reorder_child_after, which drops the child in
-        # at the index the neighbour held before the removal and rebuilds the
-        # list box from the result.
+        # Insert at the neighbour's pre-removal index, as BetterExpander does.
         self.reorder_child_after_calls.append((child, after))
         after_index = self.rows.index(after)
         self.rows.remove(child)
@@ -376,10 +337,7 @@ class FakeRow:
 
 def make_world(action_ids, image_control=0, background_control=0,
                label_controls=(0, 0, 0), include_control_keys=True):
-    """Build a fake controller and page in gl.app, plus a FakeExpander.
-
-    The expander holds one FakeRow per action and the add button last.
-    """
+    """Build a fake controller, page, and expander with the add button last."""
     state = {"actions": [{"id": a, "settings": {"marker": a}} for a in action_ids]}
     if include_control_keys:
         state["image-control-action"] = image_control
@@ -417,16 +375,8 @@ def make_world(action_ids, image_control=0, background_control=0,
 
 def make_hole_world(entries, image_control=None, background_control=None,
                     label_controls=None):
-    """Build a world whose page holds entries that draw no row.
-
-    entries is a list of (name, kind). "row" is an entry with an id whose action
-    loaded, and it draws a row. "broken" is an entry with an id whose action
-    holder answered nothing, which leaves a registry key holding None and draws
-    no row. "no-id" is an entry the loader skips, which leaves no key at all.
-
-    A control index is written only when it is given, so a state can be built
-    without one.
-    """
+    """Build loaded rows, keyed None failures, and skipped no-id entries.
+    Write each control index only when supplied."""
     actions = []
     registry = {}
     for slot, (name, kind) in enumerate(entries):
@@ -470,23 +420,15 @@ def make_hole_world(entries, image_control=None, background_control=None,
 
 
 def slot_ids(page):
-    """The id of the page entry each loaded action is keyed to.
-
-    A registry key is a page slot, so this reads back the pairing that a move
-    must keep. Page.get_action_dict walks the actions list and matches it
-    against these keys, so a key that drifts off its entry sends the settings of
-    one action to another.
-    """
+    """Return each loaded action's page-entry id by registry slot.
+    Slot drift would associate one action with another action's settings."""
     actions = state_dict(page)["actions"]
     return {slot: actions[slot].get("id")
             for slot, action in registry_of(page).items() if action is not None}
 
 
 def add_input_state(page, json_identifier, state, action_ids):
-    """Give the page a second input, or a second state, with actions of its own.
-
-    A stale plan that reaches the wrong list has something to lose there.
-    """
+    """Add another input or state to detect stale drop plans."""
     states = page.dict["keys"].setdefault(json_identifier, {}).setdefault("states", {})
     states[state] = {"actions": [{"id": a, "settings": {"marker": a}} for a in action_ids]}
     key_objects = page.action_objects["keys"].setdefault(json_identifier, {})
@@ -526,7 +468,7 @@ print("(3) the up button on the middle row")
 controller, page, expander, rows = make_world(["A", "B", "C"], image_control=1,
                                               background_control=0,
                                               label_controls=[0, 1, 2])
-raised = call(ActionRow.on_click_up, rows[1], None)  # B moves up
+raised = call(ActionRow.on_click_up, rows[1], None)
 
 check("on_click_up does not raise", raised is None, repr(raised))
 if raised is None:
@@ -561,7 +503,7 @@ print("(3) the down button on the middle row")
 controller, page, expander, rows = make_world(["A", "B", "C"], image_control=1,
                                               background_control=2,
                                               label_controls=[2, 2, 2])
-raised = call(ActionRow.on_click_down, rows[1], None)  # B moves down
+raised = call(ActionRow.on_click_down, rows[1], None)
 
 check("on_click_down does not raise", raised is None, repr(raised))
 if raised is None:
@@ -584,7 +526,7 @@ if raised is None:
 
 print("(3) the buttons at the ends of the list")
 controller, page, expander, rows = make_world(["A", "B"])
-raised = call(ActionRow.on_click_up, rows[0], None)  # nothing sits above the first row
+raised = call(ActionRow.on_click_up, rows[0], None)
 check("the up button on the first row does not raise", raised is None, repr(raised))
 check("the up button on the first row moves nothing",
       expander.reorder_child_after_calls == [] and action_order_of(page) == ["A", "B"],
@@ -629,7 +571,7 @@ check("a third up moves nothing, because C is at the top",
 print("(3) a page without the control keys")
 controller, page, expander, rows = make_world(["A", "B", "C"],
                                               include_control_keys=False)
-raised = call(ActionRow.on_click_up, rows[1], None)  # B moves up
+raised = call(ActionRow.on_click_up, rows[1], None)
 check("a move without the control keys does not raise", raised is None, repr(raised))
 check("the actions are still reordered", action_order_of(page) == ["B", "A", "C"],
       str(action_order_of(page)))
@@ -664,11 +606,8 @@ check("the actions are still reordered around it", action_order_of(page) == ["B"
       str(action_order_of(page)))
 
 
-# ---------------------------------------------------- rows against slots
-
-# A page entry that draws no row makes the row count and the entry count
-# differ. The indices the sidebar hands in count rows; the actions list counts
-# entries. A move that reads one as the other moves an action nobody touched.
+# Sidebar indices count rows, while action-list indices include entries with no
+# row; confusing them moves an action the user did not select.
 
 print("(3) a move across an action that failed to load")
 controller, page, expander, rows = make_hole_world(
@@ -680,7 +619,7 @@ check("the media permission starts on C",
       permission_target(page, "image-control-action") == "obj_C",
       str(state_dict(page).get("image-control-action")))
 
-raised = call(ActionRow.on_click_up, rows[1], None)  # the user moves C up
+raised = call(ActionRow.on_click_up, rows[1], None)
 check("the move does not raise", raised is None, repr(raised))
 check("the page moved the action the user moved",
       action_order_of(page) == ["C", "A", "B"], str(action_order_of(page)))
@@ -708,7 +647,7 @@ controller, page, expander, rows = make_hole_world(
     image_control=1, background_control=0)
 check("the entry with no id draws no row", [r.name for r in rows] == ["A", "C"], str(rows))
 
-raised = call(ActionRow.on_click_up, rows[1], None)  # the user moves C up
+raised = call(ActionRow.on_click_up, rows[1], None)
 check("the move does not raise", raised is None, repr(raised))
 check("the page moved the action the user moved",
       action_order_of(page) == ["C", "A", None], str(action_order_of(page)))
@@ -727,7 +666,7 @@ print("(3) a move down across a hole between the two rows")
 controller, page, expander, rows = make_hole_world(
     [("A", "row"), ("B", "broken"), ("C", "row"), ("D", "row")],
     image_control=0, background_control=2)
-raised = call(ActionRow.on_click_down, rows[0], None)  # the user moves A down
+raised = call(ActionRow.on_click_down, rows[0], None)
 check("the move does not raise", raised is None, repr(raised))
 check("the page moved the action the user moved",
       action_order_of(page) == ["B", "C", "A", "D"], str(action_order_of(page)))
@@ -747,7 +686,7 @@ print("(3) a move up across a hole between the two rows")
 controller, page, expander, rows = make_hole_world(
     [("A", "row"), ("B", "broken"), ("C", "row"), ("D", "row")],
     image_control=1, background_control=2)
-raised = call(ActionRow.on_click_up, rows[1], None)  # the user moves C up
+raised = call(ActionRow.on_click_up, rows[1], None)
 check("the move does not raise", raised is None, repr(raised))
 check("the page moved the action the user moved",
       action_order_of(page) == ["C", "A", "B", "D"], str(action_order_of(page)))
@@ -795,8 +734,6 @@ check("a move onto a slot the page does not hold moves no row",
 check("a move onto a slot the page does not hold saves nothing",
       page.save_calls == 0, str(page.save_calls))
 
-
-# ------------------------------------------------------------------- drag
 
 print("(4) a drag marks where it lands")
 controller, page, expander, rows = make_world(["A", "B", "C"])
@@ -857,12 +794,10 @@ controller, page, expander, rows = make_world(["A", "B", "C"], image_control=0,
 real_glib = action_manager.GLib
 real_action_row = action_manager.ActionRow
 action_manager.GLib = RecordingIdle()
-# The drop handler refuses a value that is not an action row, and a stand-in is
-# not one. Point the name the handler reads at the stand-in class, so the check
-# passes for the rows this scenario builds and still refuses everything else.
+# Point the handler's type check at FakeRow while preserving rejection of all
+# other values.
 action_manager.ActionRow = FakeRow
 try:
-    # Drag A onto the lower half of C.
     call(ActionRow.on_dnd_begin, rows[0], None, None)
     accepted = ActionRow.on_dnd_drop(rows[2], None, rows[0], 0.0, 90.0)
     check("the drop is accepted", accepted is True, str(accepted))
@@ -921,9 +856,8 @@ try:
     check("a drop of something else queues nothing", action_manager.GLib.calls == [],
           str(action_manager.GLib.calls))
 
-    # The sidebar can load another input or another state between the drop and
-    # the idle that carries it out. The planned rows then name a list nobody
-    # dropped anything on, and that list holds its own actions to lose.
+    # A deferred drop must not apply after the sidebar changes input or state.
+    # The newly shown list has independent actions that the drop must preserve.
     print("(4) a drop that lands after the sidebar moved on")
     controller, page, expander, rows = make_world(["A", "B", "C"])
     add_input_state(page, "0x0", "1", ["P", "Q", "R"])

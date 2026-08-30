@@ -1,11 +1,5 @@
-"""Pins the scoring ladder the asset searches rank with.
-
-The module holds strings only, so every check here is pure logic: no GTK, no
-widget, no deck and no display.
-
-The names in the corpus below are real ones, taken from the four icon packs of
-an installation: Material Icons, Tabler, Font Awesome and simple-icons.
-"""
+"""Verify normalization, fallback stages, battery aliases, and ranking order.
+The corpus uses Material, Tabler, Font Awesome, and simple-icons names."""
 import fixtures  # noqa: F401  (import first: isolated --data tempdir)
 
 import ast
@@ -115,12 +109,7 @@ def test_empty_query_keeps_everything() -> None:
 
 
 def test_empty_query_costs_nothing() -> None:
-    """The resting state of every grid must not build a memo.
-
-    A grid with an empty search box filters its whole pack on every pass, and
-    every name would otherwise be normalized and memoized for an answer that
-    is always the same.
-    """
+    """Avoid memoization when an empty query accepts every grid item."""
     empty = QueryRanker("")
     for name in BATTERY + NOT_BATTERY:
         assert empty.matches(name)
@@ -152,20 +141,13 @@ def test_cache_is_released_on_demand() -> None:
 
 
 def test_a_word_written_with_a_separator() -> None:
-    """A pack can write one word with a separator inside it.
-
-    The name is tried again with its separators taken out when a token misses,
-    so wi-fi answers "wifi". The retry is the last rung tried, and it scores
-    the joined form, so such a match stands on whatever rung that form earns.
-    """
+    """Retry missed tokens against a separator-free name at its earned rung."""
     for name in ("wi-fi", "wi_fi", "wi.fi"):
         assert score(name, "wifi") == SCORE_EXACT, f"{name} did not answer wifi"
     assert score("e-mail", "email") == SCORE_EXACT
     assert score("micro-sd-card", "microsd") == SCORE_PREFIX
 
-    # A match that crosses a word boundary is not held below one that does
-    # not: the joined form of ho-me is the whole query, and go-home holds it
-    # as a word. The module docstring says so, and this pins it.
+    # The joined exact form outranks a match that starts at a word boundary.
     assert score("ho-me", "home") == SCORE_EXACT
     assert score("go-home", "home") == SCORE_WORD_PREFIX
 
@@ -181,12 +163,7 @@ def test_a_word_written_with_a_separator() -> None:
 
 
 def test_threshold_is_the_lowest_rung() -> None:
-    """The threshold accepts a name that holds the query anywhere.
-
-    The rung above it, 80, demands a word boundary and drops real targets, so
-    the shipped threshold is the contains rung. A caller that wants the strict
-    cut asks for it.
-    """
+    """Use the contains rung as default threshold; allow stricter callers."""
     assert SEARCH_SCORE_THRESHOLD == SCORE_CONTAINS, "the search threshold moved"
 
     assert matches("airplay", "play")
@@ -204,12 +181,7 @@ def test_threshold_is_the_lowest_rung() -> None:
 
 
 def test_battery_regression() -> None:
-    """The query that the edit-ratio model answered with the wrong names.
-
-    fuzz.ratio scores the whole name against the whole query, so a long name
-    loses for its length: it dropped the long battery names and kept unrelated
-    short ones. Both halves are pinned, so a return to that model fails here.
-    """
+    """Keep long battery matches and reject unrelated short edit-ratio matches."""
     for name in BATTERY:
         assert matches(name, "battery"), f"{name} no longer answers 'battery'"
     for name in NOT_BATTERY:
@@ -220,7 +192,7 @@ def test_battery_regression() -> None:
     assert len(kept_by_ratio) < len(BATTERY), (
         "the edit-ratio model kept every battery name here, so this check "
         "would prove nothing; pick longer names")
-    # The two the assessment named, with the scores that dropped them.
+    # Representative long names score below the old edit-ratio threshold.
     assert fuzz.ratio("battery_charging_20_symbolic", "battery") < 50
     assert fuzz.ratio("battery-charging-outline", "battery") < 50
     assert score("battery_charging_20_symbolic", "battery") == SCORE_PREFIX
@@ -273,11 +245,7 @@ def test_comparator_contract() -> None:
 
 
 def test_rank_key_orders_the_same_way() -> None:
-    """A caller that sorts by key must get the comparator's order.
-
-    A search across packs ranks a merged list by key rather than by
-    comparison, so the two must not drift apart.
-    """
+    """Keep rank-key order equal to comparator order across merged packs."""
     for query in ("battery", "play", "volume up"):
         names = BATTERY + NOT_BATTERY + ["airplay", "volume_up", "volume_down"]
         kept = [name for name in names if matches(name, query)]
@@ -316,15 +284,7 @@ def test_ranker_is_reused_and_bounded() -> None:
 
 
 def test_module_stays_headless() -> None:
-    """No GTK may reach this module.
-
-    The pack choosers, the custom-asset grid and a search across packs all
-    score through it, and a GTK import here would put every one of those
-    behind a display and out of reach of a headless check.
-
-    Imports only: the docstring of the module explains itself in terms of the
-    windows that use it, and naming GTK in prose costs nothing.
-    """
+    """Keep the shared scoring module free of GTK and application globals."""
     path = os.path.join(REPO_ROOT, "src", "windows", "AssetManager", "asset_search.py")
     with open(path, encoding="utf-8") as handle:
         tree = ast.parse(handle.read(), path)

@@ -1,9 +1,4 @@
-"""Pins the search behaviour of the AssetManager asset choosers as pure logic.
-
-The three chooser pages share one filter_func and sort_func on
-GenericAssetChooserPage, and their pack grids share one card filter. No GTK
-widget, no display, no deck.
-"""
+"""Verify shared asset-chooser search and sorting as headless pure logic."""
 import fixtures  # noqa: F401  (import first: isolated --data tempdir)
 
 import ast
@@ -71,11 +66,8 @@ CORPUS = [
 ]
 NAMES = ["volume_up", "volume_down", "brightness", "Zebra", "apple"]
 
-# The ladder scores for the queries below, as documentation. The checks assert
-# orderings and rungs, not the ranking key itself.
-#   volume: volume_up 90 and volume_down 90, both prefixes, and volume_up
-#           first because it is the shorter name; nothing else matches.
-#   bright: brightness 90, nothing else matches.
+# The volume query ties both prefixes at 90 and orders the shorter name first.
+# The bright query gives only brightness a score of 90.
 
 
 def make_page(cls, search: str):
@@ -122,12 +114,7 @@ def test_three_types_share_implementation() -> None:
 
 
 def test_three_types_share_their_widgets() -> None:
-    """One grid shell and one card serve all three asset types.
-
-    Each type held a copy of both, and the copies drifted: one card read a
-    different global for the window it reports to, and one dropped the
-    original-url field the other two passed on.
-    """
+    """Share one pack grid, pack card, asset grid, and asset card."""
     flow_boxes = {cls.FLOW_BOX_CLASS for cls in CHOOSER_CLASSES.values()}
     previews = {cls.PREVIEW_CLASS for cls in CHOOSER_CLASSES.values()}
     assert flow_boxes == {GenericAssetFlowBox}, (
@@ -145,13 +132,10 @@ def test_three_types_share_their_widgets() -> None:
           "and asset card")
 
 
-# What a pack stack may still define for itself. The icon stack defers a
-# pre-selection until both its pages have built, and it is the one stack that
-# AssetChooser.show_for_path routes to.
+# The icon stack alone defers pre-selection until both pages finish building.
+# AssetChooser.show_for_path also routes through that stack.
 ALLOWED_STACK_METHODS = {
-    # _show_pack_asset is the widget half of show_for_path. It stands apart
-    # because show_for_path can run on a build worker, and that half has to
-    # reach the main loop.
+    # _show_pack_asset is the main-thread widget half of worker-callable routing.
     "IconPackChooserStack": {"prepare", "show_for_path", "_show_pack_asset",
                              "get_is_build_finished", "on_load_finished"},
     "WallpaperPackChooserStack": set(),
@@ -256,10 +240,7 @@ def test_comparator_returns_int() -> None:
 
 
 def test_helpers_and_methods_agree() -> None:
-    """The bound methods must be the module helpers over the search entry.
-
-    No per-class fixup may come back.
-    """
+    """Keep bound chooser methods equal to the shared search helpers."""
     for search in ("", "volume", "bright", "zzzz"):
         page = make_page(IconChooserPage, search)
         for item in CORPUS:
@@ -314,11 +295,7 @@ def test_pack_grid_filters_on_the_pack_name() -> None:
 
 
 def test_pack_grid_installs_its_filter() -> None:
-    """The grid must be handed the predicate, or the search box does nothing.
-
-    Reading the source, because the install line sits in the main-loop
-    callback that builds the widgets.
-    """
+    """Verify the main-loop build callback installs the pack predicate."""
     source = inspect.getsource(GenericPackChooserPage._build_ui)
     tree = ast.parse(textwrap.dedent(source))
     installed = [node for node in ast.walk(tree)
@@ -336,11 +313,7 @@ def test_pack_grid_installs_its_filter() -> None:
 
 
 def test_every_search_box_reaches_a_page() -> None:
-    """No page may leave the base hook in place.
-
-    ChooserPage.apply_search does nothing, so a page that keeps it shows a
-    search entry that changes nothing. Three pack pages did.
-    """
+    """Require every page with a search box to override the inert base hook."""
     pages = dict(PACK_CHOOSER_CLASSES)
     pages.update({f"{label} assets": cls for label, cls in CHOOSER_CLASSES.items()})
     pages["custom assets"] = CustomAssetChooser

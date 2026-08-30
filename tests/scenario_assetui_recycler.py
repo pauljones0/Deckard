@@ -1,8 +1,4 @@
-"""Regression test for the asset-manager recycler and chooser races.
-
-One main-loop callback must unselect, bind and then show a recycled child.
-The build-finished flag and the deferred-task queue move under one lock.
-"""
+"""Verify unselect, bind, then show order and locked chooser task delivery."""
 import fixtures  # noqa: F401  (isolated --data tempdir; import first)
 
 import threading
@@ -13,8 +9,6 @@ import src.windows.AssetManager.CustomAssets.AssetPreview as ap_mod
 import src.windows.AssetManager.CustomAssets.Chooser as chooser_mod
 import src.windows.AssetManager.IconPacks.Stack as stack_mod
 
-
-# Fakes
 
 class FakeGLib:
     """Captures idle_add callbacks, so the test controls main-loop time."""
@@ -71,12 +65,7 @@ class FakeButton:
 
 
 class NullThumbnailLoader:
-    """Stands in for the per-grid thumbnail loader.
-
-    _apply_range starts a new generation on every page, which cancels the
-    decodes the last page left. This recycler test drives the bind logic, not
-    the decode, so both calls are no-ops here.
-    """
+    """Skip decoding while recycler tests exercise generation and binding."""
 
     def begin_generation(self):
         pass
@@ -112,8 +101,6 @@ class StubFlow:
     if hasattr(dfb_mod.DynamicFlowBox, "_apply_range"):
         _apply_range = dfb_mod.DynamicFlowBox._apply_range
 
-
-# 1. DynamicFlowBox leaves no visible-but-unbound gap and swaps pages atomically.
 
 def test_children_not_shown_before_bound() -> None:
     fake_glib = FakeGLib()
@@ -200,8 +187,6 @@ def test_filter_shrink_hides_leftovers_atomically() -> None:
     assert flow.children[0].asset == "a4"
 
 
-# 2. AssetPreview.set_asset binds synchronously
-
 def test_set_asset_binds_synchronously() -> None:
     fake_glib = FakeGLib()
     ap_mod.GLib = fake_glib
@@ -229,8 +214,6 @@ def test_set_asset_binds_synchronously() -> None:
     assert stub.asset == asset and stub.flow == "flow-sentinel"
 
 
-# 3. CustomAssetChooser races build_finished against the deferred task.
-
 def _make_chooser_stub(ran):
     class Stub:
         pass
@@ -249,11 +232,7 @@ def _make_chooser_stub(ran):
 
 
 def test_raced_deferred_task_still_runs() -> None:
-    """Replay the losing interleaving deterministically.
-
-    show_for_path reads build_finished as False, stops inside its append, and
-    the build finishes meanwhile. The deferred task must still run.
-    """
+    """Finish a build during a gated deferred append without losing the task."""
     ran = []
     stub = _make_chooser_stub(ran)
 
@@ -310,10 +289,7 @@ def test_post_finish_calls_dispatch_directly() -> None:
 
 
 def test_enqueue_storm_loses_no_tasks() -> None:
-    """Stress the lock with N threads racing show_for_path and _finish_build.
-
-    Every path must be delivered exactly once, deferred or direct.
-    """
+    """Deliver each path once while many enqueues race build completion."""
     for _ in range(50):
         ran = []
         stub = _make_chooser_stub(ran)
@@ -344,19 +320,13 @@ def test_enqueue_storm_loses_no_tasks() -> None:
         assert stub.build_task_finished_tasks == []
 
 
-# 4. IconPackChooserStack races a two-flag build against the deferred task.
-
 class _StubChooser:
     def __init__(self):
         self.build_finished = False
 
 
 def _make_stack_stub(ran):
-    """Stub carrying what Stack.show_for_path and on_load_finished touch.
-
-    A patched gl.icon_pack_manager with an empty pack set records the path, so
-    the GTK-heavy tail never runs and only the dispatch logic is observed.
-    """
+    """Record stack dispatch through an empty pack manager without GTK."""
     class Stub:
         pass
 
@@ -395,11 +365,7 @@ def _restore_stack_stub(stub):
 
 
 def test_iconpack_raced_deferred_task_runs() -> None:
-    """Replay the losing interleaving with the two-flag icon-pack build.
-
-    show_for_path reads one flag as False and stops inside its append. The
-    build then finishes. The deferred task must still run.
-    """
+    """Finish a two-flag build during append without losing the task."""
     ran = []
     stub = _make_stack_stub(ran)
     try:
@@ -423,9 +389,7 @@ def test_iconpack_raced_deferred_task_runs() -> None:
         t_caller.start()
         assert gate_reached.wait(timeout=5), "show_for_path never tried to defer its task"
 
-        # The icon build finishes now. The flag flips, then on_load_finished
-        # runs. Without the lock this drains an empty queue and the raced
-        # append lands afterwards, stranded forever.
+        # Flip the final flag while append is gated; the lock must retain the task.
         def finish():
             stub.leaf_chooser.build_finished = True
             stack_mod.IconPackChooserStack.on_load_finished(stub)
@@ -450,12 +414,8 @@ def test_iconpack_raced_deferred_task_runs() -> None:
 
 
 def test_iconpack_drain_runs_task_once() -> None:
-    """Both build threads can enter the drain at the same time.
-
-    Drainer 1 blocks inside its first task while drainer 2 enters. The lock
-    makes drainer 1 snapshot and clear the queue before any task runs, so
-    drainer 2 finds it empty. Every task must run exactly once.
-    """
+    """Run each task once when both build threads enter the drain.
+    The first drainer must snapshot and clear before it executes tasks."""
     ran = []
     order_lock = threading.Lock()  # serialize appends to the ran list
     stub = _make_stack_stub(ran)
@@ -464,9 +424,7 @@ def test_iconpack_drain_runs_task_once() -> None:
         release_first_task = threading.Event()
         paths = [f"i{i}" for i in range(6)]
 
-        # Seed the queue directly with instrumented tasks and bypass the
-        # GTK-heavy show_for_path body, because the drain is under test and not
-        # the dispatch tail. The first task gates; the rest record immediately.
+        # Seed instrumented tasks directly to test the drain without GTK dispatch.
         def make_task(p, is_first):
             def task():
                 if is_first:
@@ -497,9 +455,7 @@ def test_iconpack_drain_runs_task_once() -> None:
         )
         d2.start()
         d2.join(timeout=5)
-        # Without the lock, d2 re-snapshots the full queue, re-runs task[0] and
-        # blocks on the same gate, so it is still alive here. With the lock, d1
-        # already cleared the queue, so d2 finds nothing and returns.
+        # The first drainer has cleared the queue, so the second must return.
         assert not d2.is_alive(), (
             "drainer2 did not return -- it re-entered the drain and re-ran a "
             "task (double-run) instead of seeing the queue already cleared"
