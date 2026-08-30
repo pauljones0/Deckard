@@ -549,7 +549,8 @@ def main() -> None:
     adapter.unbind(adapter_controller)
     assert unbound_sample.drop_reasons == {"ui_unbound": 1}
 
-    # Snapshot mutable sample fields under lock before concurrent report mutation.
+    # report() snapshots mutable sample fields while holding the tracker lock.
+    # A concurrent drop mutates the same sample, so it waits for snapshot completion.
     class SnapshotGateTracker(InputLatencyTracker):
         def __init__(self) -> None:
             super().__init__(clock=Clock(50.0))

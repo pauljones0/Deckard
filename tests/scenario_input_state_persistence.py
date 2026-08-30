@@ -1,5 +1,5 @@
-"""Persist each input's active state across page switches and app starts.
-Warm reloads keep per-deck state; missing or invalid values open state 0."""
+"""Persist active input state across switches and starts; warm reloads keep per-deck state.
+Missing or invalid values open 0; valid positive but unavailable values open 0 and stay stored."""
 
 # Timers stay disarmed, so every write here is one a check asks for by name.
 import fixtures  # noqa: F401  (must be first: isolates DATA_PATH)
