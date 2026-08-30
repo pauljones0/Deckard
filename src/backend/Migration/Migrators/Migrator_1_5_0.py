@@ -112,12 +112,8 @@ class Migrator_1_5_0(Migrator):
 
         for key in page.get("keys", {}):
             key_dict = page["keys"][key]
-            # Migrator_1_5_0_beta_5 sorts first (1.5.0-beta.5 < 1.5.0) and
-            # nests each key's labels and media under states.0, so handle
-            # the nested shape and the flat one. Rewrite the key dict
-            # itself as well, because beta_5 skips a key that already has states,
-            # so stray top-level labels and media stay behind. The id() set
-            # stops a second pass over a flat key, which is its own state.
+            # Handle both the flat shape and beta.5's nested states, including stray top-level data.
+            # Track identities because a flat key is its own state and must be rewritten once.
             rewrite_dicts = []
             seen_ids = set()
             for candidate in ([key_dict] + list(key_dict.get("states", {}).values())):
