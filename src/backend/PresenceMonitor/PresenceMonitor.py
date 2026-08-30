@@ -1,30 +1,5 @@
-"""Quiescence and presence signal.
-
-One process-wide object (gl.presence_monitor) answers one question for every
-deck's media loop. Is the user away? When it answers yes,
-DeckController.animations_gated() turns true and the media loop skips its
-whole animation section. No background-video decode, no key, dial or
-touchscreen tick, and no scroll-label advance. The control queue and the
-queued interactive paints keep running at full speed.
-
-Three inputs drive it, and every one is event-driven. Nothing polls. The
-screen lock arrives at on_lock_changed, the logind idle state at
-on_idle_hint_changed, and a deck press at notify_activity. Every input change
-evaluates this rule.
-
-    quiescent := mode == "system-idle" and (
-        (screen_locked and now - last_deck_activity >= DECK_ACTIVITY_GRACE_S)
-        or (idle_hint and now - max(idle_since, last_deck_activity) >= minutes*60)
-    )
-
-The default mode "screensaver" makes this object report False forever, which
-matches the behaviour of an app without this monitor.
-
-Those inputs arrive on three threads. A Gio callback arrives on the GLib
-default main context. The idle deadline arrives on a timer_wheel dispatch
-thread. notify_activity arrives on a deck reader thread. This module makes no
-GTK call.
-"""
+"""GLib, timer-wheel, and deck-reader events update one quiescence flag without GTK.
+Media loops read it lock-free; system-idle gates animations after lock grace or idle delay."""
 import os
 import threading
 import time
@@ -43,9 +18,8 @@ from gi.repository import Gio, GLib
 MODE_SCREENSAVER = "screensaver"
 MODE_SYSTEM_IDLE = "system-idle"
 
-# Mirrors the SettingsManager DEFAULTS entries. The monitor reads these while
-# the settings are still unreachable, during early startup and in the
-# unit-tier harness.
+# Match SettingsManager defaults while settings are unavailable during early startup.
+# The unit-tier harness also uses these values with its stub manager.
 FALLBACK_MODE = MODE_SCREENSAVER
 FALLBACK_IDLE_MINUTES = 5
 
@@ -57,10 +31,8 @@ PROPERTIES_IFACE = "org.freedesktop.DBus.Properties"
 
 
 def _settings_seed() -> tuple[str, int]:
-    """Reads the persisted mode and minutes. Falls back to the careful
-    defaults while the settings stay unreachable. Startup constructs the
-    monitor early, and the unit-tier harness installs a stub settings
-    manager. An unreadable setting must never leave the gate on."""
+    """Read persisted values or use conservative defaults while settings are unavailable.
+    An unreadable setting must not enable the animation gate."""
     try:
         app = gl.settings_manager.app()
         return str(app.animation_pause_mode), int(app.animation_idle_minutes)
@@ -73,22 +45,14 @@ def _settings_seed() -> tuple[str, int]:
 class PresenceMonitor:
     """The quiescence signal. See the module docstring for the rule."""
 
-    # How long a deck press keeps this deck live while the screen is locked.
-    # The lock is the strongest away signal, but it describes the monitor
-    # only. With lock-on-lock-screen off the deck stays live and usable while
-    # the screen is locked. Without this grace such a user drums on a working
-    # deck whose animations stay frozen, because the lock term wins before the
-    # rule reads any activity. This value is long enough that ordinary use
-    # never trips the gate, and short enough that a walk away from a locked
-    # screen saves the CPU within the minute. It sits on the class so the
-    # harness can shorten it.
+    # Keep animations live after input when lock-on-lock-screen is off.
+    # Tests can shorten this 30-second balance between active use and CPU savings.
     DECK_ACTIVITY_GRACE_S = 30.0
 
     def __init__(self, mode: str | None = None, minutes: int | None = None,
                  idle_detector: bool = True, bus: Gio.DBusConnection | None = None) -> None:
-        # The media thread reads this plain bool every tick, and the lock
-        # below never guards it. A torn read cannot happen, and a stale read
-        # costs one tick of animation.
+        # Media threads read this bool without the lock on every tick.
+        # A stale read costs one animation tick, and a torn bool read cannot occur.
         self.quiescent: bool = False
 
         self._lock = threading.Lock()
@@ -101,26 +65,13 @@ class PresenceMonitor:
         # Wall clock (time.time() domain, same as logind's IdleSinceHint,
         # which is CLOCK_REALTIME microseconds).
         self._idle_since: float | None = None
-        # 0.0 means "no deck input yet". Never seed this with time.time().
-        # Process start is not deck activity, and a seed of now postpones the
-        # first gate by the full idle delay after every restart, including a
-        # restart into a session that logind already reports as hours idle.
+        # 0.0 means no deck input; process start is not activity.
+        # Seeding with now would postpone gating after a restart into an already-idle session.
         self._last_deck_activity: float = 0.0
         self._deadline: "timer_wheel.TimerHandle | None" = None
 
-        # Build the logind detector on demand, for the mode that reads it. In
-        # the default pause mode an eager build opens a system-bus connection
-        # on a startup thread, resolves the session, and holds a
-        # PropertiesChanged subscription for every user who never opted in,
-        # all for a signal that nothing consumes. The deferral loses nothing, because the
-        # detector seeds the monitor from the session's current IdleHint each
-        # time it builds (setup_dbus calls read_initial_state), and not at
-        # process start alone.
-        #
-        # idle_detector is the harness's opt-out, and bus is the detector's
-        # test seam. Both are captured here for the deferred build, which runs
-        # before the seeding evaluation below, so an already-idle session
-        # reaches the first verdict.
+        # Build logind only for system-idle; each build seeds IdleHint before evaluation.
+        # Capture the test opt-out and bus seam for that deferred build.
         self.idle_detector: "LogindIdleDetector | None" = None
         self._idle_detector_enabled: bool = bool(idle_detector)
         self._idle_detector_bus = bus
@@ -128,9 +79,8 @@ class PresenceMonitor:
         if self._mode == MODE_SYSTEM_IDLE:
             self._ensure_idle_detector()
 
-        # Evaluate once at construction. Without this call, system-idle mode
-        # stays off after every restart until the first lock or idle
-        # transition arrives, and a restart into a locked session never gates.
+        # Evaluate at construction so an already-locked or idle session gates
+        # without waiting for its next state transition.
         self._evaluate()
 
     # Reads
@@ -150,45 +100,29 @@ class PresenceMonitor:
     # Inputs
 
     def on_lock_changed(self, active: bool) -> None:
-        """Called from LockScreenManager.lock() right after it publishes
-        gl.screen_locked. That method publishes before its
-        lock_on_lock_screen early return. The lock therefore stays a usable
-        presence input for a user who keeps the decks live on lock. active
-        carries that same value, and only the log reads it. The evaluation
-        re-reads gl.screen_locked, so this object and the rest of the app
-        cannot disagree about the lock state. The constructor's seeding
-        evaluation has no argument to read."""
+        """Handle a published lock even when lock-on-lock-screen keeps decks live.
+        active records unlock activity; evaluation re-reads gl.screen_locked."""
         log.debug(f"PresenceMonitor: screen lock -> {active}")
         if not active:
-            # An unlock means a person at the machine. On a session whose idle
-            # agent sets IdleHint and never clears it (swayidle with idlehint
-            # and no matching resume) the unlock is the only such signal.
-            # Without this line the idle term keeps measuring from a stale
-            # IdleSinceHint minutes in the past, so the deck stays frozen
-            # through the unlock and until the next deck press.
+            # Treat unlock as activity because some idle agents do not clear IdleHint.
+            # This prevents a stale IdleSinceHint from keeping decks frozen until the next press.
             self._last_deck_activity = time.time()
         self._evaluate()
 
     def on_idle_hint_changed(self, idle_hint: bool, idle_since: float | None = None) -> None:
-        """The logind session IdleHint changed. idle_since carries the
-        wall-clock time the session went idle, from IdleSinceHint. None means
-        "as of now", which the arithmetic assumes when logind reports no
-        usable timestamp."""
+        """Handle a logind IdleHint change with its wall-clock IdleSinceHint.
+        None means now when logind provides no usable timestamp."""
         with self._lock:
             self._idle_hint = bool(idle_hint)
             self._idle_since = idle_since if idle_hint else None
         self._evaluate()
 
     def notify_activity(self) -> None:
-        """A deck input happened. ScreenSaver.on_key_change() calls this, the
-        funnel that every key, dial and touch interaction passes. The
-        compositor and the lock state both miss a deck press, so this call is
-        the only signal for a user present at the deck. It clears an idle
-        hint, and it outranks a locked screen for DECK_ACTIVITY_GRACE_S."""
+        """Record key, dial, or touch input that the compositor and lock state cannot observe.
+        Reset the effective idle deadline and outrank lock for DECK_ACTIVITY_GRACE_S."""
         self._last_deck_activity = time.time()
-        # Fast path for the default mode. Nothing gates there, so an input
-        # needs neither the lock nor the timer wheel. set_mode() rebinds _mode
-        # atomically and evaluates for itself.
+        # The default mode never gates, so input needs no lock or timer-wheel work.
+        # set_mode atomically replaces the mode and performs its own evaluation.
         if self._mode != MODE_SYSTEM_IDLE:
             return
         self._evaluate()
@@ -201,19 +135,14 @@ class PresenceMonitor:
                 self._minutes = max(1, int(minutes))
             mode_now = self._mode
         if mode_now == MODE_SYSTEM_IDLE:
-            # The opt-in builds the detector (see __init__). Build it outside
-            # the lock, because an injected bus wires up inline and calls
-            # straight back into _evaluate(). A switch back to the default
-            # mode keeps the detector. The rule ignores it there, and a
-            # teardown and rebuild on every toggle churns the bus.
+            # Build outside the lock because an injected bus calls back into _evaluate inline.
+            # Keep the detector across later mode changes to avoid D-Bus teardown and rebuild churn.
             self._ensure_idle_detector()
         self._evaluate()
 
     def _ensure_idle_detector(self) -> None:
-        """Builds the logind idle detector once, when the mode wants one.
-        Idempotent and safe from any thread. Never call it while you hold
-        self._lock, because an injected bus makes the build call back into
-        _evaluate(), which takes that lock."""
+        """Build the logind idle detector once from any thread when the mode needs it.
+        Do not hold self._lock because an injected bus calls _evaluate during the build."""
         if not self._idle_detector_enabled:
             return
         with self._detector_lock:
@@ -222,9 +151,8 @@ class PresenceMonitor:
             self.idle_detector = LogindIdleDetector(self, bus=self._idle_detector_bus)
 
     def stop(self) -> None:
-        """Releases the idle deadline and the D-Bus subscription. The app
-        never calls this, because the monitor lives for the process. It exists
-        so a scenario leaves no timer behind."""
+        """Release the idle deadline and D-Bus subscription.
+        The process-lifetime app does not call this, but scenarios use it to leave no timer."""
         with self._lock:
             self._cancel_deadline_locked()
         if self.idle_detector is not None:
@@ -242,10 +170,8 @@ class PresenceMonitor:
         self._evaluate()
 
     def _evaluate(self) -> None:
-        """Recomputes quiescent from the current inputs, and arms the deadline
-        that changes the verdict on its own. That deadline is the idle delay,
-        or the deck-activity grace under a locked screen. Safe to call from
-        any thread and as often as inputs arrive."""
+        """Recompute quiescence from any thread and arm its next automatic change.
+        The deadline is the idle delay or the deck-activity grace under a locked screen."""
         with self._lock:
             was = self.quiescent
             now = time.time()
@@ -255,26 +181,13 @@ class PresenceMonitor:
             if self._mode == MODE_SYSTEM_IDLE:
                 since_activity = now - self._last_deck_activity
                 if bool(getattr(gl, "screen_locked", False)):
-                    # The strongest away signal, and the one that works
-                    # without an idle agent. It stays independent of
-                    # lock-on-lock-screen, which decides whether the deck
-                    # shows its screensaver on lock, and says nothing about
-                    # the user.
-                    #
-                    # It still yields to a recent deck press for
-                    # DECK_ACTIVITY_GRACE_S. A locked screen over a live deck
-                    # (lock-on-lock-screen off) is a supported configuration,
-                    # and the person who presses its keys is at it. The seed
-                    # _last_deck_activity = 0.0 means "no press seen", which
-                    # reads here as an elapsed grace, so a process that starts
-                    # into an already-locked session gates at once.
+                    # A lock is the strongest away signal and is independent of lock-on-lock-screen.
+                    # Recent input gets a grace; 0.0 makes locked startup gate at once.
                     if since_activity >= self.DECK_ACTIVITY_GRACE_S:
                         quiescent = True
                     else:
-                        # Nothing else calls back. The lock state holds, and
-                        # logind never sees a deck press. Arm the grace's own
-                        # expiry, or the gate stays off until the next
-                        # unrelated input.
+                        # Arm expiry because lock state and logind cannot report later input.
+                        # Without this deadline, gating waits for an unrelated input.
                         rearm_in = self.DECK_ACTIVITY_GRACE_S - since_activity
                 elif self._idle_hint:
                     since = self._idle_since if self._idle_since is not None else now
@@ -301,9 +214,8 @@ class PresenceMonitor:
             self._wake_media_threads()
 
     def _wake_media_threads(self) -> None:
-        """Cuts short every media loop's inter-tick wait. A presence
-        transition then takes effect on the next tick, instead of after up to
-        half a second of gated cadence."""
+        """End every media loop's inter-tick wait so a presence transition applies on the next tick.
+        This avoids up to half a second of gated cadence."""
         deck_manager = getattr(gl, "deck_manager", None)
         if deck_manager is None:
             return
@@ -319,20 +231,8 @@ class PresenceMonitor:
 
 
 class LogindIdleDetector:
-    """Feeds PresenceMonitor.on_idle_hint_changed() from the logind session
-    properties IdleHint and IdleSinceHint.
-
-    This class keeps the shape of LockScreenManager/Detectors/Logind.py. It
-    uses the same system-bus Gio connection, the same resolve_session_path()
-    (GetSession($XDG_SESSION_ID) with a GetSessionByPID fallback), the same
-    bus= test seam, and the same inert answer to a GLib.Error. One shared
-    resolver can then replace both.
-
-    The desktop environment maintains IdleHint. GNOME and KDE set it from
-    their own idle policy, while Niri, Sway and river need a user-side agent
-    (swayidle idlehint N). Where nothing sets it, this component stays false
-    and the monitor gates on the lock alone.
-    """
+    """Feed the monitor from logind IdleHint and IdleSinceHint on the system bus.
+    GNOME and KDE set it; Niri, Sway, and river need an agent or use lock-only gating."""
 
     def __init__(self, monitor: PresenceMonitor, bus: Gio.DBusConnection | None = None) -> None:
         self.monitor = monitor
@@ -344,25 +244,20 @@ class LogindIdleDetector:
             # so wire it up inline and keep a scenario deterministic.
             self.setup_dbus(bus)
         else:
-            # The real system bus goes on a daemon thread, like
-            # LockScreenManager.__init__ does. main() constructs this object
-            # on the startup path, and Gio.bus_get_sync plus a synchronous
-            # GetSession round trip holds app startup behind a wedged logind
-            # for the call's full timeout.
+            # Open the real system bus on a daemon because bus_get_sync and GetSession can block.
+            # This keeps a wedged logind off the application startup path.
             threading.Thread(target=self.setup_dbus, name="PresenceIdleSetup",
                              daemon=True).start()
 
     def setup_dbus(self, bus: Gio.DBusConnection | None = None) -> None:
         try:
-            # logind lives on the system bus. bus is a test seam and
-            # production passes None. Compare against None, because a falsy but
-            # valid double must not pull in the real bus.
+            # Use the system bus unless the test seam supplies a connection.
+            # Compare with None so a falsy valid double does not open the real bus.
             self.bus = bus if bus is not None else Gio.bus_get_sync(Gio.BusType.SYSTEM, None)
             self.session_path = self.resolve_session_path()
 
-            # This runs on a plain daemon thread, which has no thread-default
-            # main context, so GDBus dispatches this callback on the global
-            # default one, the GTK main loop, like every lock detector.
+            # The setup daemon has no thread-default context, so GDBus uses the
+            # global default context and dispatches this callback on the GTK loop.
             self._subscription_id = self.bus.signal_subscribe(
                 LOGIND_BUS_NAME,
                 PROPERTIES_IFACE,
@@ -375,9 +270,8 @@ class LogindIdleDetector:
 
             self.read_initial_state()
         except GLib.Error as e:
-            # Every detector answers a failure the same way. Report once at
-            # info and stay inert. The lock input keeps working, and the idle
-            # half of the rule goes dark.
+            # Report the failure once and leave idle detection inert.
+            # Lock-based gating continues to work.
             log.info(f"Presence: logind IdleHint unavailable, idle gating inert ({e})")
         except Exception:
             log.opt(exception=True).warning(
@@ -388,9 +282,8 @@ class LogindIdleDetector:
     def resolve_session_path(self) -> str:
         bus = self.bus
         if bus is None:
-            # setup_dbus assigns self.bus immediately before it calls this, so
-            # nothing reaches here. Raise GLib.Error to route an unusable
-            # connection into setup_dbus's stay-inert branch.
+            # setup_dbus assigns the bus first; route an unusable connection
+            # through its GLib.Error stay-inert branch.
             raise GLib.Error("logind system bus unavailable")
 
         session_id = os.getenv("XDG_SESSION_ID")
@@ -398,16 +291,8 @@ class LogindIdleDetector:
             method = "GetSession"
             args = GLib.Variant("(s)", (session_id,))
         else:
-            # PID 0 tells logind to resolve the caller from its bus
-            # credentials. os.getpid() gives a sandbox-namespace number under
-            # flatpak, which the host's logind reads as a host PID, either
-            # unknown or belonging to an unrelated process's session. A live
-            # logind (systemd 261) confirms the behaviour. pid 0 takes the
-            # caller-credentials branch and answers "Caller does not belong to
-            # any known session", where a numeric pid answers "PID <n> does
-            # not belong to any known session". logind accepts pid 0 as a
-            # valid argument. The logind lock detector wants the same shape,
-            # for the shared resolver that replaces both.
+            # PID 0 makes logind resolve the caller from D-Bus credentials.
+            # A Flatpak namespace PID can name no host process or the wrong host session.
             method = "GetSessionByPID"
             args = GLib.Variant("(u)", (0,))
 
@@ -428,9 +313,8 @@ class LogindIdleDetector:
         bus = self.bus
         session_path = self.session_path
         if bus is None or session_path is None:
-            # setup_dbus never ran or never completed, so nothing exists to
-            # read from. GLib.Error is the logind-unavailable channel that
-            # both callers handle.
+            # No completed setup means there is no session property source.
+            # Both callers use GLib.Error as the logind-unavailable result.
             raise GLib.Error("logind session properties unavailable")
 
         reply = bus.call_sync(
@@ -447,18 +331,14 @@ class LogindIdleDetector:
         return reply.unpack()[0]
 
     def read_initial_state(self) -> None:
-        """Seeds the monitor from the session's current properties. A process
-        that starts into an already-idle session must gate without a wait for
-        the next PropertiesChanged, which possibly never arrives."""
+        """Seed the monitor from current session properties.
+        An already-idle startup might never receive another PropertiesChanged signal."""
         hint = bool(self.read_property("IdleHint"))
         self.monitor.on_idle_hint_changed(hint, self._read_idle_since() if hint else None)
 
     def _read_idle_since(self, changed: dict[str, Any] | None = None) -> float | None:
-        """IdleSinceHint as wall-clock seconds, or None when logind has no
-        usable timestamp. logind reports 0 for a session that was never idle.
-        This prefers the value the signal carries, and falls back to a
-        property read, because logind does not always send it with
-        IdleHint."""
+        """Return IdleSinceHint as wall-clock seconds, or None for zero or unusable values.
+        Prefer the signal value, then read the property because logind can omit it."""
         raw = None
         if changed is not None:
             raw = changed.get("IdleSinceHint")

@@ -30,19 +30,14 @@ class LockScreenDetector:
         self.lock_screen_manager: "LockScreenManager" = lock_screen_manager
         # Stays None whenever the bus connection fails below.
         self.bus: Gio.DBusConnection | None = None
-        # subscribe_to_screen_saver records the ScreenSaver object here, so
-        # read_initial_lock_state can call GetActive on the same source it
-        # subscribes to. A detector with no session-bus screen saver leaves
-        # them None.
+        # Keep the subscribed ScreenSaver source for the initial GetActive call.
+        # Detectors without a session-bus screen saver leave both values unset.
         self._screen_saver_object_path: str | None = None
         self._screen_saver_interface: str | None = None
 
     def subscribe_to_screen_saver(self, bus_name: str | None, object_path: str, interface: str, callback: Callable[..., Any]) -> None:
-        """Listen for the ScreenSaver ActiveChanged signal on the session bus.
-
-        bus_name is the sender to match. The desktop detectors pass None and
-        accept any sender.
-        """
+        """Listen for ScreenSaver ActiveChanged on the session bus.
+        A None bus_name accepts any sender, as required by desktop detectors."""
         try:
             # Keep the connection referenced. The subscription below lives
             # exactly as long as the connection does.
@@ -50,9 +45,8 @@ class LockScreenDetector:
             self._screen_saver_object_path = object_path
             self._screen_saver_interface = interface
 
-            # setup() runs on the manager's daemon thread, which has no
-            # thread-default main context, so GDBus dispatches the callback on
-            # the global default one, which is the GTK main loop.
+            # The setup daemon has no thread-default context, so GDBus uses the
+            # global default context and dispatches this callback on the GTK loop.
             self.bus.signal_subscribe(
                 bus_name,
                 interface,
@@ -66,28 +60,16 @@ class LockScreenDetector:
             log.error(f"Failed to connect to D-Bus: {e}")
 
     def read_initial_lock_state(self) -> None:
-        """Seed the lock from the screen saver's CURRENT state, once, at startup.
-
-        The event path learns the lock only from the next ActiveChanged
-        signal. A session already locked when the app starts sends no such
-        signal, so the lock branch never engages and the decks stay lit
-        behind the lock screen. Read GetActive here and drive the same
-        lock() the signal path drives.
-
-        The desktop detectors record the ScreenSaver object in
-        subscribe_to_screen_saver. A detector with no session-bus screen
-        saver leaves it unset, so this stays a no-op there and that
-        detector's own source seeds the lock.
-        """
+        """Seed startup with GetActive because an existing lock sends no ActiveChanged.
+        Detectors without a session-bus screen saver use their own source."""
         bus = self.bus
         object_path = self._screen_saver_object_path
         interface = self._screen_saver_interface
         if bus is None or object_path is None or interface is None:
             return
 
-        # The three ScreenSaver services own a bus name equal to their
-        # interface (org.gnome.ScreenSaver, org.freedesktop.ScreenSaver,
-        # org.cinnamon.ScreenSaver), so the interface is the call destination.
+        # GNOME, freedesktop, and Cinnamon ScreenSaver services use their
+        # interface name as the bus name, so it is also the call destination.
         try:
             reply = bus.call_sync(
                 interface,
