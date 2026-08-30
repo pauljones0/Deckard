@@ -1,19 +1,9 @@
-"""
-Plugin dial media set through set_media must survive the input-load wipe.
-
-create_n_states rebuilds every state object on a load and closes its media.
-Only on_update() can repaint afterwards, and a latched action dedups there and
-never does, so the dial settles blank. A key's action-owned media is stashed
-before the wipe and restored after; a dial's was not: set_media never stamped
-the owning action on a dial state, and ControllerDial.load_from_input_dict had
-no stash-and-restore.
+"""Require action-owned dial media to survive state recreation during input load.
+A latched action does not repaint, so ownership must support stash and restore.
 """
 
-# The check drives the wipe deterministically. It paints the dial through a
-# direct set_media on a latched action, then reloads the same page config on
-# this thread. The latched action's on_update dedups and never repaints, so the
-# same media object returns only when the stash-and-restore carried it across
-# create_n_states.
+# Paint through a latched action, then synchronously reload the same config;
+# only stash and restore can preserve the exact media object.
 import json
 import os
 
@@ -86,9 +76,8 @@ def main() -> None:
 
         media_before = state.image
 
-        # Drive the wipe on this thread. load_from_input_dict runs
-        # create_n_states and the stash-and-restore synchronously. The latched
-        # action's on_update dedups, so nothing repaints.
+        # Reload synchronously through create_n_states and stash-and-restore;
+        # the latched action's on_update does not repaint.
         config = dial.identifier.get_config(controller.active_page)
         dial.load_from_input_dict(config, page=controller.active_page)
 
@@ -96,9 +85,8 @@ def main() -> None:
         assert new_state is not state, (
             "the reload did not rebuild the dial state; the wipe never ran")
 
-        # Part 2: the stash-and-restore carried the exact media object across
-        # the wipe. A missing restore leaves the recreated state blank, because
-        # the latched action never repaints.
+        # Require stash-and-restore to carry the exact object because the
+        # latched action leaves a recreated state blank.
         assert new_state.image is media_before, (
             "the dial media did not survive the reload -- create_n_states wiped "
             "the action-owned image and the stash-and-restore did not carry it")

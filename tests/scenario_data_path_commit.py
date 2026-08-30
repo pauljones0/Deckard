@@ -1,7 +1,5 @@
-"""The data-path setting must persist on an explicit apply, not per keystroke.
-
-DataPathGroup validates before it persists, refuses an invalid path, and
-keeps the previous value as data-path-previous. Needs a display.
+"""Require explicit apply to persist a validated data path and its old value.
+The scenario needs a display.
 """
 import os
 
@@ -25,10 +23,7 @@ def main() -> None:
     saves: list[dict] = []
 
     class RecordingSettingsManager:
-        """Only the two methods DataPathGroup dereferences.
-
-        Returns a fresh dict per read, like the real load_settings_from_file.
-        """
+        """Return fresh settings through the two methods DataPathGroup uses."""
 
         def __init__(self):
             self._static = {"data-path": gl.DATA_PATH}

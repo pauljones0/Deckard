@@ -1,8 +1,4 @@
-"""A burst of write failures must be swallowed, and writes must resume.
-
-No controller removal and no reconnect. Every failure arms the pending full
-repaint, which _run_pending_repaint fires once per burst on a 2 s cadence.
-"""
+"""Swallow write failures, resume writes, and schedule one repaint per burst."""
 import fixtures
 
 

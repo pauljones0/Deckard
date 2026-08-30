@@ -1,8 +1,4 @@
-"""Regression scenario for four DeckManagement contract bugs.
-
-Each one is a declaration that claimed a value could never be absent, or
-claimed the wrong shape, while the code around it disagreed.
-"""
+"""Check optional values and container shapes in DeckManagement contracts."""
 import fixtures  # noqa: F401  (isolated data dir + sys.path, house convention)
 
 from src.backend.DeckManagement.HelperMethods import is_video
@@ -44,10 +40,7 @@ def check_remote_deck_key_callback_slot() -> None:
 
 
 class _StubController:
-    """Just enough of DeckController for ScreenSaver.__init__.
-
-    The constructor only stores the reference.
-    """
+    """Provide the controller reference stored by ScreenSaver construction."""
 
 
 def check_screensaver_stash_is_mapping() -> None:

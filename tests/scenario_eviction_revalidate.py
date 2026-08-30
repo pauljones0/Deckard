@@ -1,8 +1,4 @@
-"""Page-cache eviction must not gut a live page.
-
-clear_old_cached_pages re-validates each item under _pages_lock and pops
-before the teardown, so a concurrent get_page() mints a fresh Page.
-"""
+"""Require page eviction to revalidate under lock and pop before teardown."""
 import fixtures  # noqa: F401  (import first: sets up the isolated data dir)
 
 import globals as gl
@@ -97,11 +93,8 @@ def main() -> int:
         return 1
     print("PASS: page activated mid-eviction is skipped by re-validation")
 
-    # 3. The pop happens inside the lock before clear_action_objects(), so while
-    # the corpse is torn down outside the lock the cache slot is already empty.
-    # A concurrent get_page() must mint a new Page through the single-flight
-    # builder rather than hand back the object being gutted. Made deterministic
-    # by having the victim teardown perform that get_page() and capture it.
+    # 3. Pop under lock before teardown so a concurrent get_page uses the
+    # single-flight builder instead of receiving the object being cleared.
     controller3 = StubController("evict-3")
     gl.deck_manager.deck_controller.append(controller3)
     pages3 = fill_cache(controller3, 6, "Refetch")
