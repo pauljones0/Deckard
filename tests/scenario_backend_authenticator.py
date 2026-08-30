@@ -1,9 +1,5 @@
-"""The frontend rpyc servers accept only same-UID loopback peers.
-
-frontend_authenticator runs on the accepted socket before the rpyc protocol
-starts. A refusal therefore closes the socket with no protocol exchange. A
-legitimate backend child needs no cooperation to pass.
-"""
+"""Frontend rpyc servers accept only same-UID loopback peers.
+Authentication precedes the protocol, so refusal exchanges no protocol data and legitimate backend children need no cooperation."""
 import os
 import threading
 import time
@@ -29,12 +25,8 @@ class EchoService(rpyc.Service):
 
 
 def _connect(port: int, tries: int = 100, delay: float = 0.05) -> "rpyc.Connection":
-    """Connect to the just-started server, retrying the spin-up window.
-
-    The accept loop runs in a daemon thread, so a connect issued right after
-    the thread starts can beat it and get a socket-level refusal, which is
-    load-sensitive in a busy container. Retry briefly until the server serves;
-    the bound (tries * delay) stays well under the scenario watchdog."""
+    """Retry the connection while the daemon accept loop starts.
+    The tries * delay bound stays below the watchdog and covers load-sensitive socket refusals."""
     last: Exception | None = None
     for _ in range(tries):
         try:
@@ -53,17 +45,13 @@ def main() -> None:
                             authenticator=frontend_authenticator)
     threading.Thread(target=server.start, name="test_frontend", daemon=True).start()
 
-    # The same uid passes: this mirrors the unmodified backend child. Retry
-    # the connect over the server's spin-up window (the accept loop is a
-    # daemon thread that a busy container can schedule late).
+    # A same-UID backend must pass; retry because a busy host can schedule the daemon accept loop late.
     connection = _connect(server.port)
     assert connection.root.marker() == "frontend-alive"
     connection.close()
     print("PASS: a same-uid loopback client connects through the authenticator")
 
-    # A foreign uid is refused before the protocol starts. The uid lookup is
-    # swapped because this suite runs under one real uid; the refusal then
-    # surfaces client-side as a closed socket, not as a served connection.
+    # Substitute a foreign UID because the suite has one real UID; refusal must close before the protocol and appear client-side.
     real = guard.uid_of_peer
     guard.uid_of_peer = lambda s: os.getuid() + 1
     try:

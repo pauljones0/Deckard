@@ -1,16 +1,5 @@
-"""Pins the BetterDeck rotation mapping and the async callback setters.
-
-reorder_physical_for_rotation must write out[logical(p)] = orig[p], checked
-against get_physical_index. The three async setters call the wrapped deck.
-
-The wrapper is the one place that knows what a rotation means, so the rest
-pins the maps it hands out: the strip turn, the touch positions, the dial
-order, and the two callbacks that carry those from the reader thread.
-
-Every deck shape here comes from the fake deck's model presets, so a changed
-preset changes these checks with it: the Stream Deck + for the strip and the
-dials, and the Original's 3 by 5 grid for the key map.
-"""
+"""Verify BetterDeck key, strip, touch, dial, and reader-callback rotation mappings; all three async setters must delegate to the wrapped deck.
+Model presets supply the Stream Deck + strip/dials and Original 3-by-5 key grid; reorder writes out[logical(p)] = orig[p]."""
 import fixtures  # noqa: F401  (import first: sets up the isolated data dir)
 
 
@@ -25,18 +14,8 @@ ORIGINAL = FAKE_DECK_MODELS["original"]
 N_DIALS = PLUS.dial_count
 STRIP_SIZE = PLUS.touchscreen_image.size
 
-# Which logical key each physical key of a 2 by 4 grid becomes, read off a
-# turned device and not off the mapping formula, so a map that is
-# self-consistent in the wrong direction still fails here.
-#
-# Hold a 2 by 4 deck and turn it a quarter turn clockwise, which is rotation
-# 90. The key at the top-left corner comes to lie at the top-right. In grid
-# terms, a physical key at (row, column) of a rows by cols grid comes to lie
-# at (column, rows - 1 - row) of a cols by rows grid, and a logical index
-# reads that grid row-major with `rows` keys per row. Physical 0 therefore
-# becomes logical 0 * 2 + (2 - 1 - 0) = 1, physical 4 becomes 0 * 2 + 0 = 0,
-# and so on. Rotation 270 is the same turn the other way, and 180 reverses
-# the whole grid.
+# Device-read oracle for a row-major 2-by-4 grid: at 90 degrees (row, column) maps to (column, rows - 1 - row), so physical 0 becomes logical 1 and physical 4 becomes 0.
+# Rotation 270 turns the other way and 180 reverses the grid; using an external table catches two formulas that agree in the wrong direction.
 DIRECTION_ROWS, DIRECTION_COLS = 2, 4
 DIRECTION_TABLE = {
     0: [0, 1, 2, 3, 4, 5, 6, 7],
@@ -70,9 +49,7 @@ def check_rotation() -> int:
                   f"permutation: {out}")
             return 1
 
-        # Check against the inverse formula as an oracle. The value from
-        # physical slot p must sit at logical slot l where
-        # get_physical_index(l) == p.
+        # Physical value p must occupy logical slot l where get_physical_index(l) == p.
         for logical in range(total):
             p = better.get_physical_index(logical)
             if out[logical] != physical[p]:
@@ -81,12 +58,8 @@ def check_rotation() -> int:
                       f"{p} -- the map is applied in the wrong direction")
                 return 1
 
-    # One literal for 3 rows by 5 cols at rotation 90, which fixes where the
-    # reorder puts a value rather than only that it puts it somewhere:
-    # get_logical_index(0) = (0%5)*3 + (3-1-0//5) = 2, so orig[0] lands at
-    # out[2]. It restates the formula, so it cannot judge the direction of
-    # the turn; check_rotation_direction does that against a table read off
-    # a turned deck.
+    # For a 3-by-5 grid at 90 degrees, get_logical_index(0) = 2, so orig[0] must land at out[2].
+    # This literal checks placement, while check_rotation_direction uses a device-read table to check turn direction.
     better.set_rotation(90)
     out = better.reorder_physical_for_rotation(physical)
     if out[2] != 0:
@@ -125,13 +98,8 @@ def check_async_setters() -> int:
 
 
 def check_rotation_direction() -> int:
-    """The key map turns the grid the way the deck was turned.
-
-    The permutation checks above compare the two maps against each other, so
-    a pair that is wrong in the same direction satisfies them. This compares
-    one of them against a table read off the turned device, which nothing in
-    the implementation can agree with by construction.
-    """
+    """Compare key rotation with a table read from the turned deck.
+    Inverse permutation checks alone can pass when both maps use the same wrong direction."""
     deck = FaultyFakeDeck(serial_number="rot-direction", model="plus")
     better = BetterDeck(deck)
     if tuple(PLUS.key_layout) != (DIRECTION_ROWS, DIRECTION_COLS):
@@ -161,12 +129,8 @@ def check_rotation_direction() -> int:
 
 
 def check_strip_turn() -> int:
-    """The strip turns end for end at 180 and nowhere else.
-
-    At 90 and 270 the strip stands on its side and the device buffer keeps
-    its shape, so there is nothing to turn an upright composite into. Pinning
-    the zero there stops a well-meant rotate() that would squash the strip.
-    """
+    """Turn the strip end for end only at 180 degrees.
+    At 90 and 270 the unchanged device-buffer shape cannot hold a rotated upright composite without squashing it."""
     deck = FaultyFakeDeck(serial_number="rot-strip", model="plus")
     better = BetterDeck(deck)
 
@@ -233,10 +197,8 @@ def check_touch_value() -> int:
         print(f"FAIL(d): rotation 180 dropped an unmapped key: {carried}")
         return 1
 
-    # A position past the end of the strip stays past the end at every
-    # rotation. The library clamps nothing, and mirroring an out-of-range x
-    # unclamped lands it back on the strip as -1, which a consumer's slot
-    # arithmetic reads as the first slot. x == width is the first such value.
+    # Keep out-of-range positions outside at every rotation; the library does not clamp them.
+    # Mirroring x == width to -1 would make consumer slot arithmetic select the first slot.
     for rotation in ROTATIONS:
         better.set_rotation(rotation)
         edge = better.logical_touch_value({"x": width, "y": height})

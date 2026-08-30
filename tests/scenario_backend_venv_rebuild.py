@@ -1,18 +1,5 @@
-"""A backend venv whose interpreter no longer starts is rebuilt once.
-
-A plugin backend runs on its own venv's interpreter. A system upgrade can
-leave that interpreter unable to start, and the backend never runs again. The
-launch detects exactly that, and nothing else: a venv recorded against another
-Python version whose interpreter still works launches correctly and must be
-left alone.
-
-The rebuild goes through the install-script gate a store install uses, and a
-launch answers that gate's prompt with no, because it asks nobody. Only the
-"always" policy, a standing decision the user made, runs the steps here.
-
-The install steps run as real argv lists, captured at the gate's subprocess
-seam, so the shape of every command the rebuild issues is pinned.
-"""
+"""Rebuild once when a backend venv interpreter cannot start, but keep usable cross-version venvs.
+Rebuilds use the install gate and argv steps; unattended launches run them only under the "always" policy."""
 
 import os
 import sys
@@ -39,11 +26,8 @@ MARKER = "built-by-the-previous-python"
 
 
 def _make_venv(venv_path: str, tag: str, marker: bool = False, stale: bool = False) -> None:
-    """A venv-shaped tree: pyvenv.cfg, bin/python and site-packages.
-
-    With stale, bin/python points at an interpreter that is not there, which
-    is what a system Python upgrade leaves behind.
-    """
+    """Build a venv-shaped tree with pyvenv.cfg, bin/python, and site-packages.
+    With stale, bin/python points to an absent interpreter as after a system Python upgrade."""
     os.makedirs(os.path.join(venv_path, "bin"), exist_ok=True)
     os.makedirs(os.path.join(venv_path, "lib", f"python{tag}", "site-packages"), exist_ok=True)
     with open(os.path.join(venv_path, "pyvenv.cfg"), "w") as f:
@@ -94,12 +78,8 @@ class _Steps:
 
 
 def _with_stub_gate(steps: _Steps, call) -> None:
-    """Run call with the gate's subprocess seam and bwrap probe stubbed.
-
-    bwrap is stubbed off so the recorded argv is the command itself, not a
-    confinement prefix whose shape depends on the host. scenario_install_
-    script_gate covers the confined tier.
-    """
+    """Run a call with the gate's subprocess seam and bwrap probe stubbed.
+    Disabling bwrap records host-independent command argv; scenario_install_script_gate covers confinement."""
     real_execute = install_script._execute
     real_bwrap = install_script._bwrap_works
     install_script._execute = steps
@@ -112,19 +92,14 @@ def _with_stub_gate(steps: _Steps, call) -> None:
 
 
 def check_version_tag_reading() -> None:
-    """The recorded version, and the site-packages name as the fallback.
-
-    The tag names the venv in a log line. It does not decide anything, so a
-    wrong answer here costs a confusing message and nothing else.
-    """
+    """Read the recorded version, with the site-packages name as fallback.
+    The tag affects only the venv's log label."""
     base = os.path.join(gl.DATA_PATH, "tags")
     matching = os.path.join(base, "matching")
     _make_venv(matching, RUNNING_TAG)
     assert venv_python_tag(matching) == RUNNING_TAG
 
-    # version_info instead of version, which newer venvs also write. The
-    # directories say the running version here, so only a config read gives
-    # the old one.
+    # Newer venvs can write version_info; only the config exposes the old version when directories name the running version.
     info_only = os.path.join(base, "info")
     _make_venv(info_only, RUNNING_TAG)
     with open(os.path.join(info_only, "pyvenv.cfg"), "w") as f:
@@ -169,13 +144,8 @@ def check_version_tag_reading() -> None:
 
 
 def check_stale_detection() -> None:
-    """Only a venv whose interpreter does not start counts as stale.
-
-    The backend runs the venv's own interpreter, so a venv built for another
-    Python version whose interpreter is still installed launches correctly.
-    Condemning it would destroy a working install of a plugin that pins an
-    older interpreter on purpose.
-    """
+    """Treat a venv as stale only when its interpreter does not start.
+    A usable older interpreter can be an intentional plugin pin and must remain intact."""
     base = os.path.join(gl.DATA_PATH, "stale")
     usable = os.path.join(base, "usable")
     _make_venv(usable, RUNNING_TAG)
@@ -219,11 +189,8 @@ def check_stale_detection() -> None:
 
 
 def check_rebuild_runs_the_gate_with_argv_lists() -> None:
-    """The rebuild runs the plugin's install steps as argv lists.
-
-    It also puts the loopback guard back into the venv the steps created, so
-    a rebuilt venv never launches a backend unguarded.
-    """
+    """Run plugin install steps as argv lists and restore the loopback guard.
+    A rebuilt venv must not launch an unguarded backend."""
     plugin_dir = _plugin("com_test_rebuild", requirements=True)
     venv_path = os.path.join(plugin_dir, "backend", ".venv")
     _make_venv(venv_path, OLD_TAG, stale=True)
@@ -259,11 +226,8 @@ def check_rebuild_runs_the_gate_with_argv_lists() -> None:
 
 
 def check_rebuild_runs_once_per_process() -> None:
-    """A rebuild that cannot succeed costs one attempt, not one per launch.
-
-    The stale tree also comes back, so a wrong verdict never destroys a
-    working install.
-    """
+    """Limit an unsuccessful rebuild to one attempt per process.
+    Restore the stale tree so an incorrect verdict cannot destroy a working install."""
     plugin_dir = _plugin("com_test_once")
     venv_path = os.path.join(plugin_dir, "backend", ".venv")
     _make_venv(venv_path, OLD_TAG, marker=True, stale=True)
@@ -287,15 +251,8 @@ def check_rebuild_runs_once_per_process() -> None:
 
 
 def check_ask_policy_runs_nothing_unattended() -> None:
-    """The default policy runs no install script at a launch.
-
-    This is the security boundary of the rebuild. A launch asks nobody, and
-    under "ask" an unattended run cannot tell a user who agreed from a user
-    who was never asked: a plugin installed before the gate existed carries no
-    record either way. Both must read as no, or every such plugin runs its
-    install script silently at the first start after a Python upgrade, on a
-    setting that says the user is asked first.
-    """
+    """Run no install script at launch under the default "ask" policy.
+    An unattended launch has no consent result, including for plugins installed before consent records existed."""
     plugin_dir = _plugin("com_test_ask")
     venv_path = os.path.join(plugin_dir, "backend", ".venv")
     _make_venv(venv_path, OLD_TAG, marker=True, stale=True)
@@ -324,12 +281,8 @@ def check_ask_policy_runs_nothing_unattended() -> None:
 
 
 def check_a_raising_rebuild_puts_the_venv_back() -> None:
-    """A raise inside the steps still leaves the plugin its venv.
-
-    An absent venv is no verdict for stale_venv_reason, so a venv left at the
-    moved-aside path would never be repaired by a later launch, and the launch
-    command would refuse a path that is not there for good.
-    """
+    """Restore the plugin venv when an install step raises.
+    An absent venv is not stale, so leaving it moved aside would prevent later repair and launch."""
     plugin_dir = _plugin("com_test_raise")
     venv_path = os.path.join(plugin_dir, "backend", ".venv")
     _make_venv(venv_path, OLD_TAG, marker=True, stale=True)
@@ -366,12 +319,8 @@ def check_a_raising_rebuild_puts_the_venv_back() -> None:
 
 
 def check_rebuild_takes_the_short_timeout() -> None:
-    """The launch-time rebuild runs on a smaller budget than a store install.
-
-    It runs inline on the warm-up thread, which serves every plugin's
-    on_app_ready one at a time, so the gate's own budget would let one plugin
-    park the warm-up of all the others.
-    """
+    """Give launch-time rebuilds less time than store installs.
+    Rebuilds run inline on the serial warm-up thread, so one plugin must not block all later on_app_ready calls."""
     plugin_dir = _plugin("com_test_timeout")
     venv_path = os.path.join(plugin_dir, "backend", ".venv")
     _make_venv(venv_path, OLD_TAG, stale=True)
@@ -400,13 +349,8 @@ def check_rebuild_takes_the_short_timeout() -> None:
 
 
 def check_a_second_launcher_waits_for_the_rebuild() -> None:
-    """A concurrent launcher of the same venv waits instead of racing it.
-
-    A plugin's on_app_ready and an action's on_ready can launch backends of
-    the same venv at once. The second must not look at the tree while it is
-    moved aside: it would find no venv, read that as nothing to repair, and
-    launch against a path that is not there.
-    """
+    """Make concurrent launchers of one venv wait for its rebuild.
+    A launcher that sees the tree moved aside treats it as non-stale and tries to launch an absent path."""
     plugin_dir = _plugin("com_test_concurrent")
     venv_path = os.path.join(plugin_dir, "backend", ".venv")
     _make_venv(venv_path, OLD_TAG, stale=True)
@@ -481,12 +425,8 @@ def check_declined_install_steps_leave_the_venv() -> None:
 
 
 def check_unknown_plugin_dir_is_booked_too() -> None:
-    """A venv whose plugin directory is unknown reports once, not every launch.
-
-    The rebuild cannot run without the plugin's install steps, so there is
-    nothing to retry, and repeating the message on every launch of that
-    backend only fills the log.
-    """
+    """Report a venv with an unknown plugin directory only once.
+    Without install steps there is nothing to retry, and each launch would only repeat the log."""
     venv_path = os.path.join(gl.DATA_PATH, "orphan", ".venv")
     _make_venv(venv_path, OLD_TAG, marker=True, stale=True)
     _set_policy("always")
@@ -524,11 +464,8 @@ def check_usable_venv_is_untouched() -> None:
 
 
 def check_launch_checks_the_venv_before_the_argv() -> None:
-    """launch_backend asks about the venv before it builds the command.
-
-    build_backend_launch_command refuses a venv with no interpreter, so a
-    check that ran after it would never see a stranded venv.
-    """
+    """Check the venv before launch_backend builds its command.
+    Command construction rejects a missing interpreter before a later check could repair it."""
     from src.backend.PluginManager.PluginBase import PluginBase
 
     plugin_dir = _plugin("com_test_launch_order")
@@ -541,9 +478,7 @@ def check_launch_checks_the_venv_before_the_argv() -> None:
     real_subprocess = plugin_base_module.subprocess
 
     def recording_ensure(path, plugin_path, name):
-        # It records and rebuilds nothing, so the launch command below still
-        # refuses the venv. That refusal is what proves the order: a check
-        # that ran after it would never be reached.
+        # Record without rebuilding; command refusal then proves that the check ran first.
         seen.append((path, plugin_path, name))
 
     class _LaunchStop(Exception):

@@ -1,23 +1,5 @@
-"""The sidebar FPS row must cover GIF media and offer a revert.
-
-A GIF is video media, so the row appears for it like any other video. The
-revert arrow appears only while the page carries an explicit rate, clears the
-key when clicked, and leaves the row showing the rate the media itself runs
-at. The row must stay wired across all of that, or a later edit is dropped
-silently.
-
-The arrow arrives late. A spin button steps its value many times a second, so
-an arrow that came at once would appear and go again through a burst of steps.
-The row therefore arms a timeout and reveals the arrow when the rate settles.
-A reveal armed that way outlives the binding that armed it, because the
-expander hides this row without loading it when the next input carries no
-video. The reveal must therefore read the page again when it runs, and both
-ends of it must leave no source id behind.
-
-This harness builds no real GTK widget. It drives the real row and expander
-methods on duck-typed stand-ins, the same pattern scenario_editor_reconnect
-uses. The main loop is a stand-in too, so a delay passes on demand.
-"""
+"""Verify GIF row visibility, explicit-rate-only delayed revert, key clearing to the native rate, and signal continuity with duck-typed GTK stand-ins.
+A delayed reveal must re-read its binding after a hidden-row transition, and both completion and cancellation must clear the source ID."""
 
 import fixtures  # noqa: F401  (must be first: isolates DATA_PATH before globals)
 
@@ -43,13 +25,8 @@ ROW_MODULE = sys.modules[VideoFpsRow.__module__]
 
 
 class FakeGLib:
-    """The main loop the row arms its reveal on.
-
-    It holds each armed timeout until a check asks for the delay to pass, so
-    the reveal runs at a point the check chooses. It also refuses a removal of
-    a source that is not armed, which is the shape of a bug GLib answers with a
-    warning and a dead timer.
-    """
+    """Hold row reveal timeouts until a check advances the main loop.
+    Reject removal of an unarmed source because GLib would warn and leave the intended timer active."""
 
     SOURCE_REMOVE = False
     SOURCE_CONTINUE = True
@@ -67,12 +44,8 @@ class FakeGLib:
         return source_id
 
     def idle_add(self, callback, *args):
-        """Run the callback at once, and keep it for a check to read.
-
-        The image row hands work to the main loop this way. Nothing in this
-        file reaches that yet, so this stands in front of the AttributeError a
-        check that does would otherwise die on.
-        """
+        """Run the callback immediately and retain it for inspection.
+        This supports any borrowed image-row path that submits work through idle_add."""
         source_id = self._next
         self._next += 1
         self.idles.append(callback)
@@ -167,11 +140,8 @@ class FakeRevert:
 
 
 class FakePage:
-    """The page seam the row reads and writes.
-
-    A rate of None means the page carries no key for it, which is what a
-    revert must leave behind.
-    """
+    """Provide the page seam that the row reads and writes.
+    None means that no rate key exists, which is the required revert state."""
 
     def __init__(self, media_path=None, background_image=None,
                  media_fps=None, background_fps=None, native=None) -> None:
@@ -291,11 +261,8 @@ def install(page) -> None:
 
 
 def check_gif_media_shows_the_row() -> int:
-    """A GIF on a key is video media, so the row must appear for it.
-
-    A dial keeps the exclusion: its page load cannot build a GIF at all yet,
-    so a rate offered there would edit media that never reaches the dial.
-    """
+    """Show the video row for a key GIF but not a dial GIF.
+    Dial page loading cannot build GIF media, so a rate there would edit media that never reaches the dial."""
     cases = [
         (KEY, "clip.gif", True, "a GIF on a key"),
         (KEY, "clip.mp4", True, "an mp4 on a key"),
@@ -412,12 +379,8 @@ def check_change_then_revert_round_trip() -> int:
 
 
 def check_the_arrow_waits_for_the_delay() -> int:
-    """An edit must not put the arrow on screen in the same frame.
-
-    The arrow shares a linked box with the spinner, so it moves the spinner
-    sideways the moment it appears. It waits instead, and arrives once the
-    rate has held.
-    """
+    """Delay the arrow until the edited rate settles.
+    Immediate visibility shifts the spinner sideways within the same linked-box frame."""
     glib = install_glib()
     page = FakePage(media_path=media_file("clip.gif"), native=9.6)
     install(page)
@@ -444,13 +407,8 @@ def check_the_arrow_waits_for_the_delay() -> int:
 
 
 def check_the_delay_outlasts_a_burst_of_steps() -> int:
-    """The delay is a number the flash depends on, so it takes a floor.
-
-    A held spinner arrow repeats about every 50 ms, and a hand that flicks the
-    scroll wheel back reaches the top of the range inside about 150 ms. A
-    shorter delay reveals the arrow inside such a pass, which is the flash.
-    A much longer one stops reading as the answer to the edit at all.
-    """
+    """Keep the reveal delay between 150 and 500 ms.
+    It must outlast 50 ms spinner repeats and a 150 ms range pass without becoming detached from the edit."""
     if not 150 <= VideoFpsRow.REVEAL_DELAY_MS <= 500:
         print(f"FAIL(delay-value): the reveal delay is "
               f"{VideoFpsRow.REVEAL_DELAY_MS} ms; under 150 ms it fires inside "
@@ -463,11 +421,8 @@ def check_the_delay_outlasts_a_burst_of_steps() -> int:
 
 
 def check_a_quick_pass_reveals_nothing() -> int:
-    """A rate that comes and goes inside the delay must show no arrow at all.
-
-    This is the flash: a spin off the ceiling and back, which every pass down
-    the range starts with.
-    """
+    """Show no arrow when a rate returns to the ceiling within the delay.
+    This prevents a flash at the start of a downward range pass."""
     glib = install_glib()
     page = FakePage(media_path=media_file("clip.gif"), native=9.6)
     install(page)
@@ -476,9 +431,7 @@ def check_a_quick_pass_reveals_nothing() -> int:
 
     for value in (29, 28, 27, 28, 29, FakeFpsRow.MAX_FPS):
         row.spinner.set_value(value)
-        # Each step drops the reveal the step before it armed. A step that
-        # drops some other source leaves its own reveal running, and the main
-        # loop answers a stale id with a warning and nothing else.
+        # Each step must cancel the prior reveal; cancelling a stale ID warns and leaves the current reveal active.
         try:
             row.spinner.fire()
         except AssertionError as e:
@@ -502,13 +455,8 @@ def check_a_quick_pass_reveals_nothing() -> int:
 
 
 def hidden_row_after_an_edit(rate_survives):
-    """Arm a reveal, then hide the row the way the expander hides it.
-
-    The expander hides this row when the input it shows carries no video, and
-    it does not load the row for that input, so the row stays bound to the one
-    before and the reveal armed for it stays armed. rate_survives says whether
-    that binding still carries a rate by the time the reveal runs.
-    """
+    """Arm a reveal, then hide the row without rebinding it as the expander does for an input with no video.
+    rate_survives selects whether the retained binding still has a rate when the reveal runs."""
     glib = install_glib()
     page = FakePage(media_path=media_file("clip.gif"), native=9.6)
     install(page)
@@ -530,13 +478,8 @@ def hidden_row_after_an_edit(rate_survives):
 
 
 def check_a_hidden_row_reveals_for_its_own_binding() -> int:
-    """A reveal must read the page when it runs, not trust the edit that
-    armed it.
-
-    A hide leaves the row bound to the input before it, and the rate that
-    input carries can be gone by the time the reveal runs. An arrow put up
-    blind then states a rate that is not there.
-    """
+    """Read the page when a delayed reveal runs instead of trusting the edit that armed it.
+    A hidden row keeps its prior binding, whose rate can disappear before the callback."""
     glib, row = hidden_row_after_an_edit(rate_survives=False)
     if row.visible is not False:
         print("FAIL(hidden): the row stayed on screen with no video to rate")
@@ -567,12 +510,8 @@ def check_a_hidden_row_reveals_for_its_own_binding() -> int:
 
 
 def check_a_spent_or_cancelled_reveal_leaves_no_id() -> int:
-    """Both ends of a reveal must clear the source id.
-
-    A kept id makes the next cancel remove a source the main loop has already
-    dropped. The loop answers that with a warning and nothing else, so the
-    reveal that cancel was meant to drop keeps running.
-    """
+    """Clear the source ID after both reveal completion and cancellation.
+    A retained stale ID makes the next cancel warn while leaving its intended reveal active."""
     glib = install_glib()
     page = FakePage(media_path=media_file("clip.gif"), native=9.6)
     install(page)
@@ -606,11 +545,8 @@ def check_a_spent_or_cancelled_reveal_leaves_no_id() -> int:
 
 
 def check_a_load_drops_a_pending_reveal() -> int:
-    """A reveal armed for one input must not land on the next one.
-
-    A load binds the row to another input, and the row may be showing that
-    one's rate, which needs no arrow at all.
-    """
+    """Cancel a reveal when loading another input.
+    The new binding can have no explicit rate and therefore require no arrow."""
     glib = install_glib()
     page = FakePage(media_path=media_file("clip.gif"), native=9.6)
     install(page)
@@ -635,11 +571,8 @@ def check_a_load_drops_a_pending_reveal() -> int:
 
 
 def check_a_shown_arrow_is_not_re_armed() -> int:
-    """An arrow already on screen must not be taken away and delayed again.
-
-    Every step of an edit that starts from a stored rate would otherwise
-    restart the wait and hide the arrow it already earned.
-    """
+    """Keep an already visible arrow through further edits.
+    Restarting the delay would hide an arrow earned by the stored rate."""
     glib = install_glib()
     page = FakePage(media_path=media_file("clip.gif"), media_fps=12, native=9.6)
     install(page)
@@ -663,11 +596,8 @@ def check_a_shown_arrow_is_not_re_armed() -> int:
 
 
 def check_top_of_range_stores_no_rate() -> int:
-    """The top of the range limits nothing, so choosing it must clear the key.
-
-    Storing it would leave the page carrying a rate with no effect, and the
-    row offering a revert for something that does nothing.
-    """
+    """Clear the rate key when the spinner reaches its ceiling.
+    The ceiling limits nothing, so storing it would offer a revert for an ineffective override."""
     page = FakePage(media_path=media_file("clip.gif"), media_fps=8, native=9.6)
     install(page)
     row = FakeFpsRow()
@@ -709,11 +639,8 @@ def check_stored_top_reads_as_no_rate() -> int:
 
 
 def check_revert_leaves_the_row_wired() -> int:
-    """A revert must not silently unwire the spinner.
-
-    The revert writes into the spinner, so it disconnects first. A handler
-    left off makes every later edit vanish without a word.
-    """
+    """Reconnect the spinner after a revert writes its value.
+    Leaving the handler disconnected silently drops every later edit."""
     page = FakePage(media_path=media_file("clip.gif"), media_fps=20, native=10.0)
     install(page)
     row = FakeFpsRow()

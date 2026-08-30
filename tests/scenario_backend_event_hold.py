@@ -1,12 +1,5 @@
-"""A plugin's events survive the window in which its backend connects.
-
-A backend launch is asynchronous, and an event a plugin fires before the
-backend registers reaches no observer, because the actions that listen are
-often not loaded yet. The hold keeps such an event for a bounded window and
-delivers it on registration. It holds one entry per holder and event id, a
-live dispatch supersedes what it holds, it drops what a relaunch superseded,
-and it drops the rest with one log line when the window closes on time.
-"""
+"""Hold pre-registration backend events for a bounded window and release them when the backend registers.
+The hold keeps the newest per holder and event ID; live dispatch and relaunch supersede entries, and expiry drops the rest with one log."""
 
 import threading
 import time
@@ -16,9 +9,7 @@ import fixtures  # noqa: F401  (isolated --data tempdir; import first)
 
 import globals as gl  # noqa: E402
 
-# launch_backend and the teardown push into these two registries. The harness
-# builds no real PluginManager, which would drag in the whole plugin
-# ecosystem, so stand in with what those paths touch.
+# Stub only the registries touched by launch and teardown; a real PluginManager loads the plugin ecosystem.
 gl.plugin_manager = types.SimpleNamespace(backends=[], backend_processes=[])
 
 from src.backend.PluginManager import PluginBase as plugin_base_module  # noqa: E402
@@ -58,12 +49,8 @@ def _holder(hold: BackendEventHold, event_id: str) -> EventHolder:
 
 
 def check_held_then_delivered_on_connect() -> None:
-    """An event with no observer is held, and the release delivers it.
-
-    The observer subscribes after the trigger, which is the case the hold
-    exists for: the backend reports its state before the actions that show it
-    are loaded.
-    """
+    """Release an unobserved event after its observer subscribes.
+    This covers backend state sent before action listeners load."""
     hold = BackendEventHold(label="held", bound_s=30.0)
     holder = _holder(hold, "test::held")
     hold.arm()
@@ -85,11 +72,8 @@ def check_held_then_delivered_on_connect() -> None:
 
 
 def check_observed_event_is_not_delayed() -> None:
-    """An event that already has an observer dispatches at once.
-
-    The hold must not delay a delivery that works today, so it takes only the
-    events that would go nowhere.
-    """
+    """Dispatch observed events immediately.
+    The hold accepts only events that would otherwise have no observer."""
     hold = BackendEventHold(label="observed", bound_s=30.0)
     holder = _holder(hold, "test::observed")
     recorder = _Recorder()
@@ -124,9 +108,7 @@ def check_coalescing_and_multiple_ids() -> None:
     hold.release()
 
     assert recorder_a.got.wait(10) and recorder_b.got.wait(10), "a held event was lost"
-    # The lanes are serialized per holder, so one delivery each means the
-    # queue drained; give a second delivery a chance to appear before the
-    # count is asserted.
+    # Per-holder lanes are serialized; after one delivery, allow time for an erroneous second delivery before asserting the count.
     assert not _wait_until(lambda: len(recorder_a.calls) > 1, timeout=0.5), (
         f"the hold replayed every trigger of one event id: {recorder_a.calls}"
     )
@@ -140,13 +122,8 @@ def check_coalescing_and_multiple_ids() -> None:
 
 
 def check_a_live_dispatch_supersedes_the_held_value() -> None:
-    """A held value never lands behind a newer one the observers already saw.
-
-    An event fires with nobody listening and the window keeps it. An action
-    then subscribes, and the source fires again, which dispatches live. The
-    release must not follow that with the older value, or the observer's last
-    reading is stale for good.
-    """
+    """Do not replay a held value after a newer live dispatch.
+    Otherwise release leaves the observer's final state stale."""
     hold = BackendEventHold(label="supersede", bound_s=30.0)
     holder = _holder(hold, "test::supersede")
     hold.arm()
@@ -169,12 +146,8 @@ def check_a_live_dispatch_supersedes_the_held_value() -> None:
 
 
 def check_two_holders_sharing_an_event_id() -> None:
-    """Two holders of one plugin that share an event id keep an entry each.
-
-    EventHolder allows two holders on one event id. A hold keyed on the id
-    alone would let the second holder's event replace the first's, and the
-    first would vanish with no trace.
-    """
+    """Keep separate held entries for holders that share one event ID.
+    Keying by event ID alone would silently replace the first holder's event."""
     hold = BackendEventHold(label="shared-id", bound_s=30.0)
     first = _holder(hold, "test::shared")
     second = _holder(hold, "test::shared")
@@ -200,12 +173,8 @@ def check_two_holders_sharing_an_event_id() -> None:
 
 
 def check_the_deadline_does_not_move() -> None:
-    """A later event does not push the deadline out.
-
-    The window is a bound on how long a plugin's events wait, so it has to
-    close at a fixed time after the launch. A timer re-armed per offer would
-    let a chatty source hold its events for the life of the process.
-    """
+    """Keep the launch-time deadline fixed when later events arrive.
+    Rearming per offer lets a chatty source hold events for the process lifetime."""
     hold = BackendEventHold(label="deadline", bound_s=0.1)
     holder = _holder(hold, "test::deadline")
     hold.arm()
@@ -248,12 +217,8 @@ def check_bound_expiry_drops_and_shuts() -> None:
 
 
 def check_generation_guard_across_reconnect() -> None:
-    """A relaunch drops what the previous connection attempt held.
-
-    Each leg uses a holder of its own, because a holder that already has an
-    observer dispatches instead of holding, and every trigger under test must
-    reach the hold.
-    """
+    """Discard data held by a superseded backend launch.
+    Each test leg uses a new holder so every trigger reaches the hold."""
     hold = BackendEventHold(label="generation", bound_s=30.0)
 
     superseded = _holder(hold, "test::generation-superseded")
@@ -268,9 +233,7 @@ def check_generation_guard_across_reconnect() -> None:
         f"{superseded_recorder.calls}"
     )
 
-    # A relaunch also empties the hold. Without that the stamp check is the
-    # only thing that stops a stale entry, the drop goes unreported, and the
-    # payloads of the failed attempt stay pinned until some later release.
+    # Relaunch must clear payloads; a generation check alone prevents delivery but pins data and hides the drop.
     pinned = _holder(hold, "test::generation-pinned")
     hold.arm()
     pinned.trigger_event("pinned")
@@ -289,9 +252,7 @@ def check_generation_guard_across_reconnect() -> None:
     assert fresh_recorder.got.wait(10), "the new connection's held event was not delivered"
     assert fresh_recorder.calls[0][0] == ("test::generation-fresh", "second-attempt")
 
-    # The stamp on each entry is the guard that holds when a delivery races a
-    # relaunch, so an entry left from an older generation never goes out even
-    # though the window is open.
+    # Entry generation blocks stale delivery when release races a relaunch, even while the window is open.
     stamped = _holder(hold, "test::generation-stamped")
     stamped_recorder = _Recorder()
     hold.arm()
@@ -362,12 +323,8 @@ def _wiring_plugin(hold: BackendEventHold) -> PluginBase:
 
 
 def check_hold_exists_without_a_full_init() -> None:
-    """A plugin that overrode __init__ without super() still gets a hold.
-
-    The launch, the registration, the teardown and every event holder of a
-    plugin reach for it, so a slot that only __init__ wrote would break all
-    four for such a plugin.
-    """
+    """Provide one shared hold when a plugin skips PluginBase.__init__.
+    Launch, registration, teardown, and event holders all access this property."""
     plugin = PluginBase.__new__(PluginBase)
     hold = plugin.backend_event_hold
     assert hold is not None, "a plugin that skipped __init__ has no event hold"
@@ -393,9 +350,7 @@ def check_hold_exists_without_a_full_init() -> None:
         f"concurrent first reads built more than one hold: {len({id(e) for e in seen})}"
     )
 
-    # The build under the lock must re-read the slot. A lock stand-in that
-    # seeds it at acquire time reproduces, in one thread, exactly what a
-    # thread finds when another built the hold while it waited for the lock.
+    # Re-read the slot under lock because another thread can initialize it while this thread waits.
     contended = PluginBase.__new__(PluginBase)
     winner = BackendEventHold(label="winner")
 
@@ -479,13 +434,8 @@ def check_register_backend_closes_the_window() -> None:
 
 
 def check_release_happens_before_the_plugin_hook() -> None:
-    """The window is shut by the time on_backend_ready runs.
-
-    That hook is where a plugin syncs the state its backend just gave it, and
-    an event it fires there must go out at once. A hook that ran while the
-    window was still open would have its own events held until something else
-    closed it.
-    """
+    """Close the window before on_backend_ready runs.
+    Events fired while the hook synchronizes backend state must dispatch immediately."""
     hold = BackendEventHold(label="hook-order", bound_s=30.0)
     seen: list = []
 
@@ -532,9 +482,7 @@ def check_teardown_closes_the_window() -> None:
     holder.trigger_event("orphan")
     holder.add_listener(recorder)
 
-    # A backend that died before it registered leaves no server, connection or
-    # process behind, which is the state the teardown returns early on. It
-    # must still shut the window, so the shut has to come before that return.
+    # Close the window before the early return for a backend with no server, connection, or process.
     plugin.server = None
     plugin.backend_connection = None
     plugin.backend_process = None

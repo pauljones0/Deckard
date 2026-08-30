@@ -1,12 +1,5 @@
-"""A stale background render must not overwrite a newer still background.
-
-update_tiles snapshots the source, renders unlocked, and publishes. A media
-tick that snapshotted video A can finish after a page load published still
-image B; without an epoch check its publish puts A's frame over B, and a
-still image has no later tick to repair it, so the wrong background stays.
-This forces that exact interleaving with a video whose frame render blocks on
-a gate, and asserts the newer still's tiles survive.
-"""
+"""Prevent a stale unlocked video render from overwriting a newer still background.
+The gated interleaving verifies the epoch check because a still image has no later tick to repair stale tiles."""
 import fixtures  # noqa: F401  (must be first: isolates DATA_PATH before globals)
 
 import os  # noqa: E402
