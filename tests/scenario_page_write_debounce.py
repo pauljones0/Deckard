@@ -1,10 +1,4 @@
-"""
-Page edits are written once per burst, and at every boundary.
-
-Page.save marks the page and arms a trailing timer, so a burst of edits costs
-one write. Every reader crosses a barrier that writes pending edits first, and
-every boundary a user reads as "done" writes now.
-"""
+"""Verify page-write debounce timing, barriers, backups, and handovers."""
 
 # A virtual clock drives the timing with no sleeps, so the delay, the re-arm
 # and the cap are assertions.
@@ -50,12 +44,7 @@ def backups_of(path: str) -> list[tuple[str, str]]:
 
 
 class VirtualTime:
-    """The flush seam's clock and timer source in one, on virtual time.
-
-    A timer fires when the clock reaches its due time, so advance() does to
-    the process what a second of wall clock does. No sleeps run, and the
-    moment of a write is a number the checks can read.
-    """
+    """Provide a deterministic virtual clock and timer source for the flush seam."""
 
     def __init__(self, start: float = 1000.0):
         self.now = start
@@ -77,9 +66,8 @@ class VirtualTime:
         return handle
 
     def cancel(self, handle):
-        # Tolerates a handle that already fired, like the wheel does. The
-        # flush cancels the timer of the entry it just wrote, and that timer
-        # may be the one that called it.
+        # Tolerate an already-fired handle because a timer can flush its own
+        # entry and then cancel that timer.
         self.cancelled.append(handle)
         self.armed.pop(handle, None)
 
@@ -112,12 +100,7 @@ class VirtualTime:
 
 
 class ManualScheduler:
-    """A timer source whose handles fire one at a time, when told.
-
-    VirtualTime models the wheel's clock and this models its concurrency. A
-    fire runs on a real thread, so a mark can land while a write is in
-    flight. That interleaving decides whether an edit lands.
-    """
+    """Fire selected timer handles to control real-thread write interleavings."""
 
     def __init__(self):
         self.armed: dict[int, object] = {}
@@ -140,11 +123,7 @@ class ManualScheduler:
 
 
 class CountingFlush:
-    """A flush seam that records what it was asked to do and does nothing.
-
-    Some barrier sites hold nothing but the ask. The write they would cause
-    belongs to another check's assertions.
-    """
+    """Record flush requests without writing."""
 
     def __init__(self):
         self.calls: list[tuple[str, str | None]] = []
@@ -170,9 +149,7 @@ VT = VirtualTime()
 
 
 def install_write_recorder() -> None:
-    """Counts writes. Records whether the path was still marked pending while
-    its bytes went down, which pins the retire-after-write order. Records the
-    virtual moment of the write too."""
+    """Record each write's path, pending state, and virtual time."""
     real_write = page_flush.atomic_write_json
 
     def recording_write(path, data):
@@ -183,13 +160,7 @@ def install_write_recorder() -> None:
 
 
 def install_backup_recorder() -> None:
-    """Counts the copies into pages/backups/.
-
-    The hook sits on the atomic copy the backup seam calls, not on
-    back_up_page_file itself, because half of what the checks assert is a
-    copy that must not happen. back_up_page_file is entered for a corrupt
-    primary and then declines before the copy.
-    """
+    """Record completed atomic copies into pages/backups/."""
     real_copy = page_document.atomic_copy_file
     backups_dir = os.path.join("pages", "backups")
 
@@ -214,12 +185,7 @@ def write_page(path: str, data: dict) -> None:
 
 
 def fresh_flush() -> VirtualTime:
-    """A clean flush seam on virtual time, installed process-wide.
-
-    Every production caller reaches the seam through page_flush.get(), so
-    replacing the singleton is the injection point for the whole process. A
-    new seam is also a new session, so each check owns its own first copy.
-    """
+    """Install a process-wide virtual-time flush seam for a fresh session."""
     global VT
     VT = VirtualTime()
     page_flush._flush = page_flush.PageFlush(scheduler=VT, clock=VT)
@@ -339,11 +305,7 @@ def check_max_dirty_age_cap(controller) -> None:
 
 
 def check_mid_write_mark_survives(controller) -> None:
-    """An edit made while a write is in flight must not be swallowed by it.
-
-    The write in flight serializes a snapshot taken before that edit existed,
-    so retiring the pending record it finds afterwards drops an edit.
-    """
+    """Keep a pending edit whose mark arrives after an in-flight snapshot."""
     # No timer comes back for that edit, and both outcomes leave the map empty
     # and the file written, so nothing else can tell them apart.
     scheduler = ManualScheduler()
@@ -400,12 +362,7 @@ def check_mid_write_mark_survives(controller) -> None:
 
 
 def check_flush_writes_locked_path(controller) -> None:
-    """The file written is the key the edits were marked under, never whatever
-    json_path says when the flush runs.
-
-    A page move re-points json_path in place, so the two names can differ while
-    a mark is outstanding.
-    """
+    """Write the locked pending key even if the Page json_path changes."""
     # With this invariant a flush and its lock can never be about different
     # files.
     scheduler = ManualScheduler()
@@ -459,9 +416,8 @@ def check_page_switch_flushes(controller) -> None:
 
 def check_deck_close_flushes() -> None:
     vt = fresh_flush()
-    # A deck with no default page loads whichever page sorts first, which by
-    # now belongs to another check. Name this deck's page before the
-    # controller exists, and hold the fixture to it.
+    # Set the default before controller creation so pages from other checks
+    # cannot change which page this deck loads.
     serial = "debounce-closing"
     active_path = seed_page("Closing")
     gl.page_manager.set_default_page(serial, active_path)
@@ -476,9 +432,8 @@ def check_deck_close_flushes() -> None:
             f"page this check is about")
         edit(page, "written-on-close")
 
-        # A page this deck visited earlier, still cached, dirty and off
-        # screen. Closing drops its cache entry too, so its edits have
-        # nowhere left to go.
+        # Closing must also flush a cached, dirty, off-screen page before
+        # dropping its only cache entry.
         cached_path = seed_page("ClosingCached")
         cached = gl.page_manager.get_page(cached_path, closing)
         edit(cached, "cached-but-dirty")
@@ -519,9 +474,7 @@ def check_flush_all_covers_quit(controller) -> None:
 
 
 def check_quit_flush_placement() -> None:
-    """The quit flush must sit behind the force-quit watchdog, like every
-    other unbounded write on that path. Two fsyncs carry no timeout of their
-    own, so a wedged filesystem hangs a quit with nothing armed to end it."""
+    """Run the unbounded quit flush only after arming the force-quit watchdog."""
     with open(APP_PY) as f:
         tree = ast.parse(f.read())
 
@@ -557,12 +510,8 @@ def check_move_flushes_then_discards(controller) -> None:
     page = gl.page_manager.get_page(old_path, controller)
     edit(page, "carried-across")
 
-    # A save landing mid-move, keyed under the path the move is about to
-    # remove. The hook sits on the move's fill copy, between the move's
-    # flush and its json_path re-point, which is the only window where a
-    # mark can still take the old key. Without it the move's discard has
-    # nothing to discard. It patches the name the page manager imported, so
-    # the backup seam's own atomic copy stays unhooked.
+    # Mark during the move's fill copy, after its flush and before json_path is
+    # repointed, while leaving the backup seam's atomic copy unhooked.
     raced = {"landed": False}
     real_fill = PageManagerBackend.atomic_copy_file
 
@@ -632,12 +581,7 @@ def check_delete_discards(controller) -> None:
 
 
 def check_backup_is_once_per_session(controller) -> None:
-    """One copy into pages/backups/ per page per session, holding the file as
-    the seam found it.
-
-    A backup is read only when the primary will not parse, so the state worth
-    keeping is the one from before this session started editing.
-    """
+    """Back up each page once per session before its first write."""
     vt = fresh_flush()
     path = seed_page("SessionBackup")
     backup = backup_path_of(path)
@@ -671,19 +615,13 @@ def check_backup_is_once_per_session(controller) -> None:
 
 
 def check_discard_reopens_backup(controller) -> None:
-    """A discard hands the file to another writer, so the next flush of that
-    path backs up what that writer left there.
-
-    Every discard means the page at this path is not the page the backup
-    describes.
-    """
+    """Make the next flush back up the new file owner after a discard."""
     # Carrying the "already backed up" record across would leave a heal
     # restoring a page that has since gone from this name.
     vt = fresh_flush()
 
-    # The shape of an import. The pending state is discarded, because a flush
-    # would land after the import and undo it, and the file is replaced
-    # wholesale.
+    # An import discards pending state before replacing the file, so a later
+    # flush cannot undo the imported content.
     path = seed_page("DiscardImportedOver")
     backup = backup_path_of(path)
     page = gl.page_manager.get_page(path, controller)
@@ -735,12 +673,7 @@ def check_discard_reopens_backup(controller) -> None:
 
 
 def check_discard_waits_for_flush(controller) -> None:
-    """A discard arriving while a flush holds the path must wait for it.
-
-    The flush finishes its backup bookkeeping after the copy. The record the
-    flush adds on its way out then overwrites a discard that slips through
-    mid-copy. Real threads open that window.
-    """
+    """Make discard wait for an in-flight write and its backup bookkeeping."""
     # The flush's own write then lands on top of the file the importer wrote.
     scheduler = ManualScheduler()
     page_flush._flush = page_flush.PageFlush(scheduler=scheduler, clock=time.monotonic)
@@ -801,9 +734,8 @@ def check_discard_waits_for_flush(controller) -> None:
     assert len(backups_of(path)) == 1, (
         f"expected the pre-import page to have been backed up once: {BACKUPS}")
 
-    # The next write of this path backs up the import's own content. That
-    # works only if the record the discard cleared stayed cleared to the end
-    # of the flush that was in flight.
+    # The next write must back up the import, which requires the discarded
+    # backup record to stay clear after the in-flight flush exits.
     edit(page, "post-import")
     scheduler.fire(scheduler.last_handle)
     assert len(backups_of(path)) == 2, (
@@ -816,15 +748,9 @@ def check_discard_waits_for_flush(controller) -> None:
 
 
 def check_quarantined_primary_is_written_back(controller) -> None:
-    """A page whose file is gone stays writable, because the write recreates
-    it.
-
-    A page can be live on screen with no primary behind it.
-    """
-    # The loader quarantines an unparseable page by renaming it aside, and
-    # get_page_data then serves the backup.
-    # Nothing to copy is a refusal like any other, and the write it guards
-    # still runs and puts the page back.
+    """Recreate a missing primary for a live page without replacing its backup."""
+    # Model quarantine by moving the primary aside; backup refusal must not
+    # prevent the guarded write from recreating it.
     vt = fresh_flush()
     path = seed_page("Quarantined")
     quarantined = path + ".corrupt"
@@ -863,12 +789,7 @@ def check_quarantined_primary_is_written_back(controller) -> None:
 
 
 def check_corrupt_primary_is_never_backed_up(controller) -> None:
-    """A primary that will not parse is not copied over the backup, and that
-    refusal stands for the session.
-
-    A corrupt page is healed from the backup, so copying the corruption over it
-    loses the page for good.
-    """
+    """Keep corrupt primary data out of the backup for the full session."""
     # A later write would find the primary parseable again, because this seam
     # wrote it a moment ago.
     vt = fresh_flush()
@@ -905,9 +826,8 @@ def check_corrupt_primary_is_never_backed_up(controller) -> None:
         "the last copy taken before the corruption was replaced by a "
         "duplicate of the file that is already on disk")
 
-    # Garbage bytes rather than malformed JSON. Decoding fails before the
-    # parser runs, which raises ValueError but not a JSON error. A
-    # JSONDecodeError-only guard lets that through and drops the write.
+    # Garbage bytes fail text decoding with ValueError rather than JSONDecodeError,
+    # and must still refuse backup while allowing the write.
     binary_path = seed_page("BinaryPrimary")
     binary_backup = backup_path_of(binary_path)
     binary_page = gl.page_manager.get_page(binary_path, controller)
@@ -955,15 +875,9 @@ def assert_barrier_precedes(module_path: str, func_name: str, barrier: str,
 
 
 def check_every_reader_takes_barrier() -> None:
-    """The six sites that touch a page file without going through
-    get_page_data, each pinned so that removing its barrier turns red.
-
-    A reader without a barrier sees a page as it was up to a second ago. An
-    importer without one has its work undone a second later.
-    """
-    # Two sites run headless through a counting seam. The four behind GTK are
-    # pinned at the source, where the call must also come before the read or
-    # the write it guards.
+    """Require barriers at all six page-file sites outside get_page_data."""
+    # Run two sites through a counting seam and check four GTK sites in source,
+    # including barrier order before the guarded read or write.
     counting = CountingFlush()
     page_flush._flush = counting
 
@@ -1001,17 +915,14 @@ def check_every_reader_takes_barrier() -> None:
 
 
 def check_eviction_keeps_pending_edits(controller) -> None:
-    """Eviction never touches disk, so a page evicted mid-window takes its
-    unwritten edits with it unless the flush seam holds a reference."""
+    """Keep a strong flush reference to pending edits after page eviction."""
     vt = fresh_flush()
     path = seed_page("Evicted")
     page = gl.page_manager.get_page(path, controller)
     edit(page, "survives-eviction")
     del page
-    # The fetch above reserves the page against eviction until its caller
-    # activates it or the deck fetches again. No caller exists here, so stand
-    # in for one that moved on. Otherwise the reservation keeps the page
-    # rather than the flush seam, and this check proves nothing.
+    # Release the fetch reservation so only the flush seam can retain the
+    # evicted page and its pending edits.
     gl.page_manager.pins.release_fetch(controller)
 
     original_max = gl.page_manager.max_pages

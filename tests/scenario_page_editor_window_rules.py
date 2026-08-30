@@ -1,25 +1,11 @@
-"""The page editor commits a window rule and applies it at once.
-
-The title and wm-class rows commit their text on Enter or on the apply button.
-A user who types a pattern and then clicks elsewhere left it in the widget
-alone, and the page kept the pattern it had. Every edit must also ask the
-window grabber to re-check the window in front, or the rule takes effect at
-the next window change only.
-
-Closing the window is the other end of that. The rows hold handlers that would
-fire while the widgets go away, so the editor commits what the entries hold
-and drops every handler before the window destroys it.
-"""
+"""Verify window-rule commits, immediate rechecks, and close cleanup."""
 
 import fixtures  # noqa: F401  (must be first: isolates DATA_PATH)
 import globals as gl
 
 
 class StubWindowGrabber:
-    """Counts what the editor asks of the window grabber.
-
-    The real one probes the desktop and loads pages on a background thread.
-    """
+    """Count editor requests without probing the desktop."""
 
     def __init__(self):
         self.rechecks = 0
@@ -73,13 +59,8 @@ def check_focus_leave_commits_typed_text(group, page_path, grabber) -> None:
 
 
 def check_focus_leave_without_an_edit_rechecks_only(group, page_path, grabber) -> None:
-    """A leave that carries no edit writes nothing, and still re-checks.
-
-    A write per leave would re-gate the watcher and re-apply every rule. The
-    re-check stays, because the focus leaving the entry is often the window
-    the rule names coming to the front, and a user who committed with Enter
-    would otherwise see nothing happen at that moment.
-    """
+    """Do not write unchanged text because that re-gates and reapplies every rule.
+    Still recheck because focus leave can bring the named window forward after Enter."""
     rechecks_before = grabber.rechecks
     gate_passes_before = grabber.gate_passes
 
@@ -135,14 +116,7 @@ def check_editor_without_a_grabber(group, page_path) -> None:
 
 
 def check_window_close_commits_and_disconnects(window, editor, page_path, grabber) -> None:
-    """Closing the window is the last chance for text nobody applied, and the
-    last moment a row handler may run.
-
-    The handlers outlive the load that connected them, because a window that
-    closes loads no further page, so the close has to drop them itself. One
-    left connected fires while the widgets go away and queues a
-    matching-window refresh that lands on an idle after that.
-    """
+    """Commit pending text and disconnect row handlers before window teardown."""
     group = editor.auto_change_group
     group.title_entry.set_text("Thunderbird")
     rechecks_before = grabber.rechecks

@@ -1,10 +1,4 @@
-"""
-Dying inside a deferred page write costs the burst, never the page.
-
-A page write happens about a second after the edit, on a timer thread, so the
-process can die during a write nobody asked for. A child makes its pre-burst
-state durable, arms a fatal fsync, edits, and waits for the debounce timer.
-"""
+"""Verify a crash during deferred fsync preserves the last durable page."""
 
 # The parent then reads the page, the residue and the backup it left behind.
 import fixtures  # noqa: F401  (must be first: isolates DATA_PATH)
@@ -59,9 +53,8 @@ def run_child() -> None:
     print("PRE_BURST " + json.dumps(pre_burst), flush=True)
     print("OPENING " + json.dumps(opening), flush=True)
 
-    # Armed before the edits, so no write can slip through. From here on the
-    # first fsync anywhere is fatal, and the pre-burst state above is the
-    # last thing that reached the disk.
+    # Arm before editing so the first fsync is fatal and the pre-burst state
+    # remains the last durable state.
     real_fsync = os.fsync
 
     def dying_fsync(fd):
@@ -152,11 +145,8 @@ def main() -> None:
             "something quarantined the page: a crashed write must leave the "
             "primary loadable, so nothing has cause to")
 
-        # 3. The heal path is untouched. get_page_data recovers a corrupt
-        #    page from this file, and it still holds the complete page this
-        #    session found on disk. The copy is taken once, before the
-        #    session's first write, so the crashed write is neither in it nor
-        #    half of it.
+        # 3. The heal backup remains the complete opening page because its
+        #    single session copy precedes every write.
         backup_path = os.path.join(pages_dir, "backups", basename)
         with open(backup_path) as f:
             backup = json.load(f)

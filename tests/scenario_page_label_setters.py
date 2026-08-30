@@ -1,10 +1,4 @@
-"""
-Every Page.set_label_* styling setter reaches the UI port, then repaints.
-
-Each of the eight setters forwards to on_input_visuals_changed with the aspect
-"labels", then runs its trailing update_input. The port call must come first,
-because a raise in the forwarder would abort the repaint.
-"""
+"""Verify each label-style setter notifies the UI port before repainting."""
 
 # Each setter must also work with no UI attached.
 import fixtures
@@ -38,14 +32,11 @@ class RecordingPort(ui_port.UIPort):
 
 
 def check_font_family_every_controller(page, identifier, state) -> None:
-    """The family must land on every controller the page covers and survive a
-    state switch. The setter writes KeyLabel.font_name; a write to font_family
-    grows a stray attribute instead of raising."""
+    """Apply font_name on each same-page controller and retain it across a state switch."""
     second = fixtures.make_headless_controller(serial="label-setters-2")
     try:
-        # get_controller_input_states iterates every controller with no page
-        # filter. That unscoped broadcast is existing behavior, not a
-        # page-scoped guarantee this scenario pins.
+        # The second controller shares the active page, so the page-scoped
+        # lookup must include its input state.
         covered = page.get_controller_input_states(identifier, state)
         serials = [s.controller_input.deck_controller.serial_number() for s in covered]
         assert "label-setters-2" in serials, (

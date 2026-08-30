@@ -1,10 +1,4 @@
-"""
-Regression test for Change Page and Run Command on one button.
-
-ControllerKey snapshots the state and the resolved action objects at key DOWN.
-It then dispatches every event of the gesture to that snapshot, whatever page
-swaps happen in between.
-"""
+"""Verify each key gesture stays on its DOWN-time action snapshot."""
 
 # Stub actions sit on two real Pages over a fake deck, with a recorder on page
 # B's same key to catch bleed.
@@ -161,12 +155,8 @@ def main() -> None:
         assert bleed_recorder.received == [], \
             f"gesture bleed onto page B on press 2: {bleed_recorder.received}"
 
-        # Press 3. The origin page is evicted mid-gesture. The key handler
-        # holds the pressed page only for the length of the callback, so the
-        # origin page is evictable while the key is down. The dispatch loop
-        # must skip the torn-down snapshot members and still serve a healthy
-        # one. sentinel is detached from page A before the eviction, so
-        # clear_action_objects never tears it down.
+        # Press 3. Evict the origin page mid-gesture, then skip torn-down
+        # snapshot members while still dispatching to a detached healthy one.
         sentinel = RecordingAction(
             tag="snapshot_sentinel",
             deck_controller=controller, page=page_a, input_ident=ident)
@@ -222,11 +212,8 @@ def main() -> None:
         assert SHORT_UP in survivor.received
         assert UP in raiser.received  # the raiser itself was still dispatched
 
-        # The screensaver engages mid-hold and the gesture dies with the
-        # stash. show() confiscates the whole input set, so the physical
-        # release lands on the replacement key and is swallowed. The stashed
-        # key's hold timer must not stay armed and fire HOLD_START into its
-        # pinned snapshot after the finger left.
+        # A screensaver replaces inputs and swallows the physical release, so
+        # it must cancel the stashed key's hold timer and gesture snapshot.
         controller.hold_time = 0.5
         ident_ss = Input.Key("2x0")
         ss_recorder = RecordingAction(

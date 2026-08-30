@@ -1,10 +1,4 @@
-"""
-Concurrent get_page cache misses must construct exactly one Page.
-
-Twin Pages carry actions that hold live event and signal registrations. A
-load for a nonexistent path must strand no waiter. The in-flight entry is
-popped and its event set in a finally, so a waiter re-checks and builds.
-"""
+"""Verify single-flight page construction and failed-load waiter release."""
 import fixtures  # noqa: F401  (must be first: isolates DATA_PATH)
 
 import threading
@@ -17,9 +11,7 @@ import src.backend.PageManagement.PageManagerBackend as pmb
 
 
 class StubController:
-    """Just enough controller for Page construction over an empty page json
-    (Available_Identifiers needs .deck; load_action_objects compares
-    .active_page)."""
+    """Provide the deck and active page used during Page construction."""
 
     def __init__(self, serial: str = "single-flight-1"):
         self.deck = FaultyFakeDeck(serial_number=serial)

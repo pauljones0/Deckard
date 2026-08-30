@@ -1,10 +1,4 @@
-"""
-The page-change UI sync refreshes the sidebar.
-
-GtkUIAdapter.on_page_changed holds the logic and the engine calls the port. The
-fake DeckStackChild carries no settings_page, which is the real
-PageSettingsPage shape.
-"""
+"""Verify page-change sidebar refresh, filtering, and coalescing."""
 
 # No widget is constructed here, and the harness pumps the default MainContext
 # by hand so the coalescer stays observable.
@@ -62,10 +56,8 @@ def main() -> None:
     adapter = GtkUIAdapter()
     ui_port.install(adapter)
     try:
-        # The real PageSettingsPage shape has page_settings and no
-        # settings_page.
-        # The media thread's FPS-warning path pokes the bound child, so
-        # low_fps_banner needs a sink to keep background ticks quiet.
+        # Match PageSettingsPage and provide the low-FPS sink used by media
+        # ticks, without adding a settings_page attribute.
         own_child = SimpleNamespace(
             deck_controller=controller,
             page_settings=SimpleNamespace(deck_config=SimpleNamespace(grid=object())),
@@ -73,9 +65,7 @@ def main() -> None:
         )
         adapter.bind(controller, own_child)
 
-        # The fixture's initial page load queued one sync through the port.
-        # Drain it while no window is attached, so the counts below start at
-        # zero.
+        # Drain the fixture's initial queued sync before recording counts.
         assert adapter._window is None
         _pump()
 
@@ -124,9 +114,8 @@ def main() -> None:
             f"3 queued triggers produced {update.calls} refreshes, expected "
             "1 -- coalescing broken"
         )
-        # The flag is popped, not written back as False. Re-inserting the key
-        # after an interleaved unbind() pins the whole DeckController graph of
-        # an unplugged deck.
+        # Pop the flag because reinsertion after unbind would retain the
+        # unplugged controller graph.
         assert not adapter._page_sync_queued.get(controller), "queue flag not cleared"
 
         # 5. An unbound controller gets no refresh and no crash. A None child

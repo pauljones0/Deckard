@@ -1,9 +1,4 @@
-"""The fetched-not-yet-activated window in the page cache.
-
-get_page hands back a Page that nothing references yet, so an ownership pin
-covers that window. Eviction spares a reserved page, and installing the page
-retires the reservation.
-"""
+"""Verify page pins protect fetched pages and balance all ownership paths."""
 
 # One reservation per deck bounds an abandoned fetch to one unevictable page,
 # retired by that deck's next fetch or load.
@@ -31,9 +26,7 @@ class StubController:
 
 
 def reset_world() -> None:
-    """Isolate a leg. The legs share the singleton page manager, so a prior
-    leg's controllers and cached pages would inflate total and displace this
-    leg's evictions."""
+    """Clear shared controllers and cached pages before each leg."""
     gl.deck_manager.deck_controller.clear()
     gl.page_manager.pages.clear()
     gl.page_manager._loads_in_flight.clear()
@@ -46,9 +39,7 @@ def fresh_controller(serial: str) -> StubController:
 
 
 def arm(page) -> None:
-    """Inject a sentinel action object. The seeded pages carry no actions, so
-    this is what makes a teardown observable, because clear_action_objects
-    empties every state dict."""
+    """Inject an action sentinel that makes cache teardown observable."""
     page.action_objects["sentinel"] = {"0x0": {0: {0: object()}}}
 
 
@@ -70,8 +61,8 @@ def leg_fetched_page_survives_pressure() -> int:
     fillers = [gl.page_manager.get_page(seed_page(f"PinFiller{i}"), controller)
                for i in range(2)]
 
-    # The page under test is fetched last, so this is the state a caller sits
-    # in between get_page and load_page.
+    # A get_page result remains reserved until the deck fetches another page
+    # or installs it, which protects this unactivated target.
     target_path = seed_page("PinTarget")
     target = gl.page_manager.get_page(target_path, controller)
     arm(target)
@@ -79,9 +70,7 @@ def leg_fetched_page_survives_pressure() -> int:
         print("FAIL(1-setup): the cache was not seeded")
         return 1
 
-    # With total 4 and budget 1 the excess is 3, and 3 entries are evictable.
-    # Without a pin the fetched page is one of them, because the cache sees no
-    # reference to it.
+    # Total 4 with budget 1 makes three entries evictable without the target pin.
     gl.page_manager.max_pages = 1
     gl.page_manager.clear_old_cached_pages()
 
@@ -95,9 +84,8 @@ def leg_fetched_page_survives_pressure() -> int:
               "from the cache")
         return 1
 
-    # The caller then sees the consequence. A re-fetch must return the same
-    # object, because a twin Page for one (controller, path) registers two
-    # sets of live event handlers for one key.
+    # A re-fetch must return the same object because twin Pages would register
+    # duplicate live event handlers for one controller and path.
     again = gl.page_manager.get_page(target_path, controller)
     if again is not target:
         print("FAIL(1): re-fetching the evicted page minted a twin Page for "
@@ -114,9 +102,8 @@ def leg_fetched_page_survives_pressure() -> int:
     return 0
 
 
-# Leg 2. Abandoned fetches are bounded, not accumulated. A caller that raises
-# between the fetch and the load runs no release, so the bound of one
-# reservation per deck is what stops the cache filling with pinned pages.
+# Leg 2. One reservation per deck bounds abandoned fetches when a caller
+# raises between fetching and loading a page.
 def leg_abandoned_fetches_bounded() -> int:
     reset_world()
     controller = fresh_controller("pin-abandon")
@@ -183,9 +170,8 @@ def leg_install_releases_reservation(controller) -> int:
     return 0
 
 
-# Leg 4. The screensaver hand-off. A page change while the screensaver shows
-# is stashed, not installed, so its reservation must survive. The stash and
-# the reservation together carry the page until hide() installs it.
+# Leg 4. A screensaver-stashed page keeps its reservation until hide()
+# installs it.
 def leg_screensaver_pending_keeps_reservation(controller) -> int:
     pins = gl.page_manager.pins
     page = gl.page_manager.get_page(seed_page("PinPending"), controller)
@@ -215,9 +201,8 @@ def leg_screensaver_pending_keeps_reservation(controller) -> int:
     return 0
 
 
-# Leg 5. Bracketed work is counted, not flagged. The tick loop and a key
-# gesture bracket the same page routinely, and with a flag the first release
-# ends the protection the second still relies on.
+# Leg 5. Overlapping tick and gesture brackets require counts because the
+# first release must not end the second holder's protection.
 def leg_brackets_are_counted(controller) -> int:
     pins = gl.page_manager.pins
     page = gl.page_manager.get_page(seed_page("PinBracket"), controller)
@@ -253,9 +238,8 @@ def leg_brackets_are_counted(controller) -> int:
         return 1
     controller.mark_page_ready_to_clear(True, page)
 
-    # A bracket whose body raises must still release. A count does not heal
-    # on the next bracket, so one skipped release pins the page for the life
-    # of the process, once per raising call.
+    # A raising bracket must release because one skipped release permanently
+    # pins the page, once per failed call.
     base = pins.count(page)
     for _ in range(3):
         try:
@@ -273,11 +257,8 @@ def leg_brackets_are_counted(controller) -> int:
     return 0
 
 
-# Leg 6. The screensaver hand-off, end to end. hide() pops the pending page
-# under the load lock and installs it after releasing that lock, so in between
-# the page is neither pending nor active. A second fetch during the
-# screensaver retires the stash's own reservation, which leaves only the
-# re-reservation hide() takes at the pop.
+# Leg 6. hide() pops and re-reserves the pending page under the load lock,
+# then installs it after releasing that lock.
 def leg_screensaver_handoff_survives_pressure(controller) -> int:
     saver = controller.screen_saver
     deferred = gl.page_manager.get_page(seed_page("PinHandoff"), controller)
@@ -338,12 +319,7 @@ GUARD_INTERVAL_S = 0.2
 
 
 class RaisingInputs(dict):
-    """The deck's input table, raising when the tick loop iterates it.
-
-    A raise here belongs to no input, so the loop's per-input guard cannot
-    catch it and its finally is the only thing that gives the page back. Every
-    other reader, on every other thread, gets the real table's answer.
-    """
+    """Raise only for tick-loop iteration, outside the per-input guard."""
 
     def __iter__(self):
         if threading.current_thread().name == TICK_THREAD:
@@ -351,14 +327,8 @@ class RaisingInputs(dict):
         return super().__iter__()
 
 
-# Leg 7. The tick loop brackets by hand rather than with a context manager,
-# because the liveness probe other scenarios hang off it counts both calls.
-# Its release lives in a finally, so a walk that raises still releases. The
-# loop's guard holds a failure it can charge to one input, and the bracket
-# then runs its ordinary path; a failure in the walk itself unwinds to the
-# finally. Both shapes run here, and every bracket either opens has to
-# balance. A throwaway deck runs this, because the injections stand over
-# several walks.
+# Leg 7. Both guarded input failures and unguarded walk failures must leave
+# the manual tick bracket balanced through its finally block.
 def leg_tick_bracket_releases_on_error() -> int:
     pins = gl.page_manager.pins
     records: list[str] = []
@@ -373,9 +343,8 @@ def leg_tick_bracket_releases_on_error() -> int:
             print("FAIL(7-setup): the deck's page never settled unpinned")
             return 1
 
-        # Count both halves of the bracket, on the tick thread alone. That
-        # counts walks, where counting the raise would also count the media
-        # thread's reads of the same states.
+        # Count both bracket calls only on the tick thread to exclude media
+        # reads of the same states.
         marks = {"open": 0, "close": 0}
         real_mark = controller.mark_page_ready_to_clear
 
@@ -389,24 +358,21 @@ def leg_tick_bracket_releases_on_error() -> int:
             raise RuntimeError("a tick body blew up")
 
         controller.mark_page_ready_to_clear = counting_mark
-        # Ten walks a second instead of one, so several bracketed walks pass
-        # under each injection and the leg stays short. The loop re-reads this
-        # every walk and floors its wait at 0.1s.
+        # The loop re-reads this delay each walk and floors it at 0.1 seconds,
+        # which gives several bracket samples during each injection.
         controller.TICK_DELAY = 0.05
         controller.TICK_ERROR_LOG_INTERVAL_S = GUARD_INTERVAL_S
 
-        # Failure one, charged to an input. Restore as soon as the proof
-        # lands: the media thread reads the same states, and its log.catch
-        # would swallow this on every frame for as long as it stands.
+        # Restore the input failure promptly because the media thread reads the
+        # same states and would catch it on every frame.
         patched = [i for input_list in controller.inputs.values()
                    for i in input_list]
         originals = [i.get_active_state for i in patched]
         for controller_input in patched:
             controller_input.get_active_state = boom
         try:
-            # Wait on the open half. It runs ahead of the guarded body on
-            # every walk, so a release that goes missing shows up as an
-            # unbalanced count below and never as a wait that timed out.
+            # Wait on the opening call so a missing release appears as an
+            # unbalanced count instead of a timeout.
             charged = fixtures.wait_until(lambda: marks["open"] >= 3, timeout=20)
             charged_record = fixtures.wait_until(
                 lambda: any(GUARD_MARKER in record for record in records),
@@ -416,9 +382,8 @@ def leg_tick_bracket_releases_on_error() -> int:
             for controller_input, original in zip(patched, originals):
                 controller_input.get_active_state = original
 
-        # Failure two, in the walk itself. No per-input guard covers this one,
-        # so the release in the loop's finally is the only thing that hands
-        # the page back.
+        # A walk-level failure bypasses the per-input guard, so only the outer
+        # finally releases the page.
         real_inputs = controller.inputs
         opens_before = marks["open"]
         records.clear()
@@ -479,17 +444,10 @@ def leg_tick_bracket_releases_on_error() -> int:
     return 0
 
 
-# Legs 8 and 9. Deleting a page retires the deck's outstanding fetch on the
-# two branches of remove_page that install nothing in its place. Installing a
-# page is what normally retires a reservation, so such a branch would leave
-# the deleted page reserved and unevictable. The two branches are mutually
-# exclusive per controller, so each leg drives exactly one release.
+# Legs 8 and 9. Deletion branches that install no replacement must retire the
+# outstanding fetch that installation normally releases.
 def reservation_of(controller):
-    """The deck's outstanding fetch, resolved. None when it has none.
-
-    This reads the reservation table directly. count reports whether the page
-    is held, and this reports whether the deck reserves it. A release that
-    unpins without retiring the entry leaves a stale slot."""
+    """Resolve the deck's outstanding fetch, including stale reservation slots."""
     reference = gl.page_manager.pins._reservations.get(controller)
     return reference() if reference is not None else None
 
@@ -500,9 +458,8 @@ def leg_delete_pending_page_retires_reservation() -> int:
     pins = gl.page_manager.pins
     gl.page_manager.max_pages = 100
 
-    # The deck shows something else and the doomed page is fetched last, so
-    # it is the deck's one outstanding reservation. Leg 4 pins that the
-    # screensaver deferral keeps it there.
+    # Fetch the doomed page last while another page is active, then stash it as
+    # the deck's single outstanding screensaver reservation.
     controller.active_page = gl.page_manager.get_page(seed_page("RmPendingHome"),
                                                       controller)
     doomed_path = seed_page("RmPendingDoomed")
@@ -544,10 +501,8 @@ def leg_delete_last_page_retires_reservation() -> int:
         print("FAIL(9-setup): the page is not the deck's outstanding fetch")
         return 1
 
-    # The branch under test is "no page left to switch to". Other legs seed
-    # pages into the shared data dir, so this states the emptiness instead of
-    # arranging it on disk. The deck has no default page, so remove_page takes
-    # the fallback and finds the list empty.
+    # Override the shared page list to drive the no-page-left fallback without
+    # depending on files seeded by other legs.
     real_get_pages = gl.page_manager.get_pages
     gl.page_manager.get_pages = lambda *args, **kwargs: [doomed_path]
     try:
