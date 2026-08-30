@@ -1,37 +1,6 @@
 """
-The page-flush seam is the one place that turns a Page's in-memory dict into
-the bytes in pages/<name>.json, and the one place that decides when. An inline
-write in each mutator asks that question at about 30 call sites. Each one
-answers "now, twice per keystroke, on the GTK main thread".
-
-What this module owns
-
-* the canonical key a page file is known by in this process (canonical_path),
-* the per-file save lock registry (save_lock),
-* a per-file record of who holds edits the file does not have (_pending),
-* the timer that turns a burst of edits into one write (mark_dirty), and
-* which page files this process copied into pages/backups/ (_backed_up).
-
-The protocol, in four calls
-
-mark_dirty(source) records that the content of source is ahead of its file, and
-arms the write. flush_path(path) brings the file level now. flush_all() does
-the same for every path with something outstanding. discard_path(path) throws
-pending edits away, which a page deletion needs.
-
-The read barrier
-
-Anything that reads a page file from disk must call flush_path or flush_all
-first, or it reads the file instead of the page. The barriers are at the page
-manager's get_page_data, the asset sweep's per-file read, the page export, the
-duplicate's read-back, the page move's copy, the boot backup zip and the video
-cache sweep. The importers call discard_path instead, because they overwrite
-the page wholesale. That list is the reader map, and it is a precondition for
-any deferral.
-
-Every call works from any thread. A save starts on the GTK main thread, on a
-plugin or action thread, or on an ad-hoc thread. The lock rules live at
-save_lock and at _pending_guard.
+Disk readers must flush first: get_page_data, asset sweeps, exports, duplicates, page moves,
+boot backup zip, and video cache. Replacing importers discard; all calls are thread-safe.
 """
 from __future__ import annotations
 
@@ -42,24 +11,16 @@ from typing import Any, Callable, Protocol
 
 from loguru import logger as log
 
-# atomic_json, timer_wheel and InputIdentifier are stdlib and loguru modules
-# with no widget or gi reach. Page sits in the headless engine's import closure,
-# so everything it imports must stay that way. The timer is the process wheel
-# and not a GLib timeout for three reasons: GLib would put gi in that closure,
-# a save starts on threads with no main loop to run a GLib source, and a GLib
-# timeout would put the fsync back on the GTK main thread.
+# Keep Page's import closure free of widgets and GI. The process wheel works
+# without a main loop and keeps fsync off the GTK thread, unlike a GLib timeout.
 from src.backend import timer_wheel
 from src.backend.DeckManagement.InputIdentifier import Input
 from src.backend.atomic_json import atomic_write_json
 
 
 class PageContent(Protocol):
-    """The holder of a page's unwritten content, as the seam sees it.
-
-    A Page and a PageDocument both satisfy this. A page no deck shows has no
-    Page, so an edit through the document marks the document. Both hold the
-    same dict, so the record only decides whose methods produce the bytes.
-    """
+    """A Page or PageDocument that holds a page's unwritten shared content.
+    Off-deck edits mark the document because no Page exists; the record selects the serializer."""
 
     json_path: str
 
@@ -76,65 +37,34 @@ class PageContent(Protocol):
         ...
 
 
-# How long after the last edit the write goes out, and how long a path can stay
-# unwritten while edits keep arriving. One second stays below the delay a user
-# notices before the next action (a page switch or a window close, which both
-# flush synchronously), and it swallows a whole typed label. Five seconds bounds
-# what continuous typing leaves unwritten, which the trailing timer alone defers
-# without end.
+# One second absorbs a typed label before synchronous actions flush. Five seconds
+# bounds deferral before a write attempt; failed writes can remain dirty past it.
 DEBOUNCE_S = 1.0
 MAX_DIRTY_AGE_S = 5.0
-# Re-arm delay after a transient write failure. Long enough not to spin on a
-# stuck filesystem, short enough that a brief outage recovers within a couple
-# of debounce windows. Quit flush is the final retry.
+# Retry transient failures without spinning on a stuck filesystem; a short outage
+# recovers within a few debounce windows, and quit flush provides the final retry.
 RETRY_S = 2.0
 
 
 def canonical_path(path: str) -> str:
-    """Give the one key for a page file, whatever spelling names it.
-
-    Every per-page registry keys by this: the save lock, the pending record,
-    the backup record, and the document that holds the content.
-    """
-    # Two spellings that key differently give one file two owners. A page
-    # reached through a symlinked data directory and the same page reached
-    # through the resolved one take separate save locks. A mark left under one
-    # spelling is invisible to a barrier that asks under the other, and the
-    # re-read after that barrier then erases the edit from memory too.
-    #
-    # One lstat per path component costs about 8 us for a page under a normal
-    # data directory, against about 150 us for the write it guards, at the rate
-    # a person types. It lives here and not with the document, because this
-    # module reaches no further than the stdlib.
+    """Return the canonical key used by document, lock, pending, and backup registries.
+    Resolving aliases prevents separate locks and invisible pending edits for one file."""
+    # Under a normal data directory, resolution costs about 8 us against a
+    # guarded write's 150 us; keep the canonicalization rule here.
     return os.path.realpath(path)
 
 
-# One save lock per page file, shared by every Page object for that file. Each
-# controller on one page holds its own Page instance, so a per-object lock
-# cannot order two controllers' saves of one file. The registry grows one entry
-# per distinct page file and never prunes. The user's page count (tens) bounds
-# it, so it needs no eviction.
+# Share one lock across all Page objects for a file so controllers cannot save
+# concurrently; the user's page count bounds this permanent registry.
 _save_locks: dict[str, threading.Lock] = {}
 _save_locks_guard = threading.Lock()
 
 
 def save_lock(path: str) -> threading.Lock:
-    """Give the one lock for the page file at path.
-
-    Public because the write is not its only holder. A page's content and its
-    bytes are two states of one file, so PageDocument.edit holds this lock
-    while it changes the content.
-    """
-    # The save lock is a leaf and must stay one. While a caller holds it, it
-    # takes only stdlib file I/O, _pending_guard, and the timer source's own
-    # lock. No timer-wheel callback outside this module may take a page's save
-    # lock. Above it sit the controller's page-load lock, which a page switch
-    # holds across its flush, and a document's load guard. The page cache lock
-    # is never held across it.
-    #
-    # It canonicalizes instead of trusting its caller. This registry carries
-    # the whole one-file one-writer rule, and a caller that keys it by a raw
-    # spelling gives one file two locks unnoticed.
+    """Return the per-file lock below page-load/document-load locks and outside cache locks.
+    It may nest I/O, _pending_guard, or timer locks; external timer callbacks must not take it."""
+    # Canonicalize here because trusting raw caller spelling would silently give
+    # one file two locks; the page cache lock is never held across this lock.
     with _save_locks_guard:
         return _save_locks.setdefault(canonical_path(path), threading.Lock())
 
@@ -158,12 +88,8 @@ class Scheduler(Protocol):
 
 
 class TimerWheelScheduler:
-    """A Scheduler backed by the process timer wheel.
-
-    Each fire gets its own short-lived daemon thread, which is the wheel's
-    contract, so a slow page write delays no other timer. A daemon thread dies
-    at os._exit, so quit flushes explicitly instead of trusting an armed timer.
-    """
+    """Schedule each fire on a separate short-lived timer-wheel daemon thread.
+    Slow writes do not delay timers; quit must flush because os._exit stops daemon threads."""
 
     def schedule(self, delay_s: float, callback: Callable[[], None]) -> timer_wheel.TimerHandle:
         return timer_wheel.schedule(delay_s, callback, name="page_flush")
@@ -173,17 +99,10 @@ class TimerWheelScheduler:
 
 
 class _Pending:
-    """One file's outstanding edits.
+    """One file's source, marked spelling, first-mark time, and write timer."""
 
-    It holds who has them, the name they were marked under, the time of the
-    first mark, and the timer that writes them.
-    """
-
-    # A mark that lands mid-write replaces this object instead of mutating it,
-    # so a flush separates the edits it wrote from the edits that arrived after
-    # its read by comparing the entry it took. path is the spelling of the
-    # mark, because the backup is filed under the page's basename while the key
-    # is a resolved path, and a page move re-points json_path in place.
+    # Replacement lets a flush distinguish edits marked during its write. Keep
+    # raw path for backup naming because the canonical key and moved json_path differ.
     __slots__ = ("source", "path", "first_marked", "handle")
 
     def __init__(self, source: PageContent, path: str, first_marked: float) -> None:
@@ -194,56 +113,31 @@ class _Pending:
 
 
 class PageFlush:
-    """Which pages are ahead of their files, and when the file catches up.
-
-    The scheduler and the clock are constructor arguments, so a caller can
-    drive the deferral in virtual time with no sleep. A headless test supplies
-    a scheduler that fires on command and a clock it advances, which turns
-    every timing rule above into an assertion.
-    """
+    """Track pages ahead of disk and schedule when each file catches up.
+    Injected scheduler and clock let headless tests assert timing in virtual time without sleep."""
 
     def __init__(self, scheduler: "Scheduler | None" = None,
                  clock: "Callable[[], float] | None" = None) -> None:
-        # path -> the edits that path waits for. A strong reference to the
-        # source, because the page cache evicts without a write and an evicted
-        # page with pending edits must stay writable. The next mint of that path
-        # reads the file through the barrier, so it gets what this kept alive.
+        # Keep pending sources strong so cache eviction cannot drop unwritten edits;
+        # the next Page reads the resulting file through the barrier.
         self._pending: dict[str, _Pending] = {}
-        # Page files this seam copied into pages/backups/ already. The copy
-        # keeps the state the file had before this seam overwrote it, which
-        # belongs to the session and not to one write, so it is taken once per
-        # path. Only discard_path prunes an entry, because it gives the file to
-        # another writer. The user's page count bounds it, like the locks.
+        # Back up once per path per session; only discard removes the record when
+        # another writer takes the file, and the user's page count bounds the set.
         self._backed_up: set[str] = set()
-        # Guards _pending and _backed_up. A caller takes it inside the per-path
-        # save lock or on its own, never the other way round, so the two cannot
-        # deadlock. Neither the write nor the backup copy runs under it, so a
-        # mark never waits on a flush.
+        # Take this guard alone, or after a save lock when both are needed. Never
+        # acquire a save lock under it; file writes and backup copies stay outside it.
         self._pending_guard = threading.Lock()
         self._scheduler: Scheduler = scheduler if scheduler is not None else TimerWheelScheduler()
         self._clock: Callable[[], float] = clock if clock is not None else time.monotonic
 
     def mark_dirty(self, source: PageContent) -> None:
-        """Record that source holds edits its file lacks, and arm the write.
-
-        This runs on the GTK main thread once per keystroke, so it takes one
-        uncontended lock, touches a dict and re-arms a timer. It never writes.
-        """
-        # One entry per file, and the last marker wins. Every Page on a page and
-        # the document behind them share the one dict the page manager holds for
-        # that file.
-        #
-        # A mark cancels an armed timer and re-arms a trailing one, so a burst
-        # of edits costs one write DEBOUNCE_S after the last edit. The window
-        # reopens only on a write that completes with nothing marked behind it.
-        # A mark inside a capped write inherits the older first_marked, so it
-        # starts past the deadline and stays clamped to an immediate write. That
-        # degrades toward one write per edit, which bounds the loss window a
-        # clock restart on every mark would widen.
+        """Record the latest shared source and re-arm at DEBOUNCE_S without file I/O.
+        MAX_DIRTY_AGE_S bounds deferral before an attempt; failed writes can exceed it."""
+        # One entry per file is sufficient because every Page and its document
+        # share one dictionary; a clean completed write starts the next age window.
         with self._pending_guard:
-            # Read under the guard, together with the map write. The page move
-            # re-points json_path first and discards the old key second, so a
-            # mark that reads the old path cannot land after that discard.
+            # Read json_path under the map guard so a move's repoint-then-discard
+            # order cannot let an old-path mark land after the discard.
             path = source.json_path
             key = canonical_path(path)
             now = self._clock()
@@ -253,59 +147,35 @@ class PageFlush:
             self._pending[key] = entry
             if previous is not None and previous.handle is not None:
                 self._scheduler.cancel(previous.handle)
-            # Trailing, but never past the age cap. At the deadline the delay
-            # clamps to zero and the write goes out on the next timer dispatch,
-            # instead of moving one more second per keystroke.
+            # Use a trailing delay only until the age cap; at the deadline, clamp
+            # to zero instead of extending the write by another keystroke.
             deadline = entry.first_marked + MAX_DIRTY_AGE_S
             delay = min(DEBOUNCE_S, max(0.0, deadline - now))
             entry.handle = self._scheduler.schedule(delay, lambda: self._fire(key))
 
     def pending_source(self, path: str) -> "PageContent | None":
-        """Give the holder of the edits path waits for, or None.
-
-        It is readable, so a test can assert the ordering rules from outside.
-        """
+        """Return the pending source for external ordering assertions, or None."""
         with self._pending_guard:
             entry = self._pending.get(canonical_path(path))
             return entry.source if entry is not None else None
 
     def _fire(self, key: str) -> None:
         """Timer dispatch. It logs a failure, because it has no caller."""
-        # Every deferred write runs here, on a timer thread, which takes the
-        # fsync pair off the GTK main thread. A crash or a power loss therefore
-        # loses at most the last DEBOUNCE_S of edits, or MAX_DIRTY_AGE_S under
-        # a continuous burst. The file itself is never at risk.
+        # Timer-thread fsync keeps GTK responsive. Without write failures, crashes
+        # lose at most DEBOUNCE_S or MAX_DIRTY_AGE_S of pending edits.
         try:
             self.flush_path(key)
         except Exception:
             log.opt(exception=True).error(f"Deferred write of page {key} failed")
 
     def flush_path(self, path: str) -> None:
-        """Put the pending edits of path on disk now. A no-op when it has none.
-
-        The clean case is one dict lookup and a return, which is cheap enough
-        to sit in front of every read of a page file. It does not raise: a
-        transient filesystem failure keeps the edit pending and re-arms a
-        retry timer, and a permanent serialization failure is logged and
-        retired. Either way a reader's barrier returns and reads the current
-        on-disk file, and a retained edit survives to a later flush or the
-        quit flush.
-        """
-        # The write comes first and the retire second, both under the per-path
-        # save lock. An entry claimed up front leaves the map empty while the
-        # bytes go down, and the fast path below then sends a reader to the
-        # stale file. A retire at the end keeps the map marked for as long as
-        # the file is behind.
-        #
-        # It writes the file this call locked, which is the key the edits were
-        # marked under, and never the path json_path holds when the timer
-        # fires. A page move re-points that attribute in place, so the two can
-        # name different files, and the move retires the stale key.
+        """Write pending edits now; retain OSError failures and retire all other failures.
+        No-pending and failure paths return for read barriers; retained edits retry later."""
+        # Write before retiring under the marked path's save lock so readers never
+        # observe an unmarked stale file and moves cannot redirect an old-path write.
         key = canonical_path(path)
-        # This test runs unguarded. A containment test is atomic, and a lost
-        # race against a mark means the reader arrived before an edit it does
-        # not wait for. Every decision below re-reads _pending under the
-        # guard.
+        # This atomic unguarded test may miss only a later mark the caller need not
+        # await; every later decision reads _pending under its guard.
         if key not in self._pending:
             return
 
@@ -328,18 +198,13 @@ class PageFlush:
                 # page.
                 atomic_write_json(entry.path, without_objects)
             except OSError as e:
-                # Transient filesystem failure: a full disk, a read-only mount,
-                # a lost network share. The bytes never reached the file, so
-                # keep the edit pending and re-arm a retry rather than drop it.
-                # The edit is still in the source's dict, so a later flush, or
-                # the quit flush, writes it once the filesystem recovers.
+                # Full disks, read-only mounts, and lost shares leave bytes unwritten;
+                # retain the source for the retry timer or the final quit flush.
                 self._retain_for_retry(key, entry, e)
                 return
             except Exception:
-                # Permanent serialization failure: the page dict cannot be
-                # encoded at all. Retrying it forever would pin the entry and
-                # re-fail every reader's barrier, so log it with the traceback
-                # and retire it.
+                # Do not retry non-OSError failures; log and retire them so read
+                # barriers do not fail repeatedly.
                 log.opt(exception=True).error(
                     f"Discarding an unserializable pending edit of page {key}")
                 self._retire(key, entry)
@@ -347,12 +212,8 @@ class PageFlush:
             self._retire(key, entry)
 
     def _retire(self, key: str, entry: "_Pending") -> None:
-        """Drop a written or unrecoverable entry and cancel its timer.
-
-        Retires only the passed entry. A save that landed mid-write replaced
-        it with a newer one, which is ahead of these bytes and keeps its own
-        timer.
-        """
+        """Drop only the written or unrecoverable entry and cancel its timer.
+        A replacement marked during the write stays pending with its timer, ahead of these bytes."""
         with self._pending_guard:
             if self._pending.get(key) is entry:
                 del self._pending[key]
@@ -360,11 +221,8 @@ class PageFlush:
                     self._scheduler.cancel(entry.handle)
 
     def _retain_for_retry(self, key: str, entry: "_Pending", error: OSError) -> None:
-        """Keep a transiently-failed entry pending and re-arm its timer.
-
-        A newer save may have superseded this entry while its write ran; then
-        that entry owns the retry and this one is already gone.
-        """
+        """Re-arm a transiently failed entry only if no newer save replaced it.
+        A superseding entry owns its own retry."""
         with self._pending_guard:
             if self._pending.get(key) is not entry:
                 return
@@ -376,52 +234,22 @@ class PageFlush:
             entry.handle = self._scheduler.schedule(RETRY_S, lambda: self._fire(key))
 
     def _back_up_once(self, key: str, path: str, source: PageContent) -> None:
-        """Copy path into pages/backups/ unless this session did it already.
-
-        It runs under the path's save lock and before the write it guards, so
-        pages/backups/ gets the file as this seam found it. The page manager
-        heals a corrupt primary from that copy.
-        """
-        # One copy per path per session, because a copy re-parses the whole
-        # file, and one copy per keystroke gives a backup that chases the
-        # primary. A backup is read only when the primary is unreadable, and
-        # nothing here can make it unreadable. Every page write goes out
-        # through an atomic publish: saves through the temporary-then-replace
-        # of atomic_write_json, the rename fill and the backup copy itself
-        # through atomic_copy_file. Corruption therefore arrives from
-        # outside, and against that a copy from before this seam's writes
-        # serves as well as a copy from a second ago. The
-        # boot backup zip keeps the older history.
-        #
-        # A refusal counts as done. make_backup copies nothing when the
-        # primary does not parse, which would destroy what the backup is for,
-        # and nothing when the primary is absent, which the write recreates. A
-        # second attempt would find that primary parseable and put the current
-        # file over the last copy taken before the damage. Only a raise, an
-        # unexpected I/O error, leaves the question open, and it takes the
-        # write with it.
-        #
-        # It uses path and never the source's json_path. A page move re-points
-        # that attribute in place, and the file that needs its previous state
-        # kept is the one this call locked and overwrites next.
+        """Back up the locked path once per session before overwriting it.
+        The corrupt-primary heal copy uses path because moves can repoint source.json_path."""
+        # Atomic writes cannot corrupt the primary, so one pre-write copy serves external
+        # corruption. Missing or invalid files count as done; only a raised I/O error retries.
         with self._pending_guard:
             if key in self._backed_up:
                 return
-        # The copy runs outside the guard, because it re-parses and duplicates
-        # a whole page file, and every mark_dirty on the GTK main thread takes
-        # that guard. Two flushes of one path cannot both be here, because the save
-        # lock is held for the length of this call.
+        # Copy outside the registry guard so GTK marks do not wait on file I/O;
+        # the held save lock prevents two copies for this path.
         source.make_backup(path)
         with self._pending_guard:
             self._backed_up.add(key)
 
     def flush_all(self) -> None:
-        """Put the pending edits of every path on disk now.
-
-        For the callers that read everything (the boot backup zip, the video
-        cache sweep) and for quit, where the timer threads die with the
-        process. It never raises, and it logs per path instead.
-        """
+        """Flush every pending path for whole-tree readers and process exit.
+        Log failures per path instead of raising; timer daemon threads cannot be trusted at exit."""
         with self._pending_guard:
             paths = list(self._pending)
         for path in paths:
@@ -431,25 +259,10 @@ class PageFlush:
                 log.opt(exception=True).error(f"Could not write pending edits of page {path}")
 
     def discard_path(self, path: str) -> None:
-        """Throw the pending edits of path away without a write.
-
-        For a page that goes away. A flush of a deleted page writes the file
-        back into existence. A flush of a move's source writes a file the
-        move removes next.
-        """
-        # The backup record goes with them. Every caller gives the file to a
-        # delete, a move or an import, so what stands at this path afterwards
-        # is content this seam never overwrote. A heal from the old copy would
-        # put the gone page back over the one the user has now, so the next
-        # flush of this path takes its own copy.
-        #
-        # It runs under the path's save lock, like a flush, so a discard cannot
-        # land inside one. A flush already past its entry read sits between the
-        # backup and the write, and a discard that slipped past it is undone
-        # twice: the flush copy re-adds the backup record, and the write puts
-        # the pre-discard page over the replacement. The wait lets that flush
-        # finish, and the caller after it has the last word. One page write
-        # bounds the wait, which a read barrier already accepts.
+        """Discard pending edits and the backup record before deletion, move, or import.
+        Hold the save lock so an active flush cannot restore old state over replacement content."""
+        # The next flush must back up the new file; retaining the old heal source
+        # could restore a deleted or moved page over its replacement.
         key = canonical_path(path)
         with save_lock(key):
             with self._pending_guard:

@@ -1,27 +1,5 @@
-"""
-One page file, one dict, one lock.
-
-Many decks can show one page json, and each deck holds its own Page object for
-it. A PageDocument holds that content once, so an edit through one Page is an
-edit for all of them, with no file involved.
-
-The page manager owns the registry that hands documents out. It keys them
-through the flush seam's canonical_path, so a page named two ways is one
-document with one save lock and one pending write. A document is minted on
-first use and never dropped, and each one holds a whole page dict, tens of
-kilobytes. Only the registry can promise one content per file. An entry dropped
-while a Page still reads through it gives the next Page a second copy, silently.
-
-edit() is the mutation seam for everything that is not a Page. That covers the
-page settings, the whole-file editor, and the sweep that strips a deleted asset
-out of every page. The lock rules live at edit() and at adopt(), and the refresh
-rules at refresh_from_disk() and _apply().
-
-Page delegates four names here: the json-shaped snapshot, the removal of live
-action objects, the key ordering, and the copy into pages/backups/. All four
-belong to the content and its path, and the seam needs them for a page no deck
-shows.
-"""
+"""Keep one permanent document and save lock per page; each retains tens of kilobytes.
+Dropping one in use gives the next Page a duplicate content copy; pre-manager Pages stay private."""
 from __future__ import annotations
 
 import json
@@ -39,12 +17,8 @@ from src.backend.atomic_json import atomic_copy_file
 
 
 def snapshot_json_tree(value: Any) -> Any:
-    """Copy a json-shaped tree structurally, and share the leaves.
-
-    dict.copy() and list() run in C under the GIL. Each container therefore
-    snapshots atomically while another thread mutates it. json.dump and
-    copy.deepcopy raise over a live page document. It shares the leaves,
-    because an action entry holds a live ActionCore that must stay unique."""
+    """Copy JSON containers atomically under the GIL while sharing leaves.
+    Shared leaves keep ActionCore unique; live content is unsafe for json.dump and deepcopy."""
     if isinstance(value, dict):
         return {key: snapshot_json_tree(item) for key, item in value.copy().items()}
     if isinstance(value, list):
@@ -53,12 +27,8 @@ def snapshot_json_tree(value: Any) -> Any:
 
 
 def content_without_action_objects(data: dict[str, Any]) -> dict[str, Any]:
-    """Give a json-serializable copy of page content, without action objects.
-
-    It works from a snapshot. json.dump over the live tree raises mid-dump
-    against a concurrent mutation, and a shallow copy would let the del below
-    mutate the original action dicts.
-    """
+    """Return a JSON-serializable snapshot without live action objects.
+    Live mutation can break traversal; shallow deletion would alter source action dictionaries."""
     dictionary = snapshot_json_tree(data)
     for input_type in Input.KeyTypes:
         for key in dictionary.get(input_type, {}):
@@ -73,23 +43,15 @@ def content_without_action_objects(data: dict[str, Any]) -> dict[str, Any]:
 
 
 def move_key_to_end(dictionary: dict[str, Any], key: str) -> None:
-    """Re-file key last in dictionary, if it is there at all.
-
-    It operates on the caller's snapshot. A pop and reinsert on the live
-    content mutates the page mid-save and reorders the wrong dict.
-    """
+    """Move an existing key to the end of the caller's snapshot.
+    Never use this on live content because pop and reinsert would mutate the page during save."""
     if key in dictionary:
         dictionary[key] = dictionary.pop(key)
 
 
 def back_up_page_file(src_path: str) -> None:
-    """Copy a page file into pages/backups/, which heals a corrupt primary.
-
-    Only a primary that reads back as a whole page is worth a copy. Both
-    refusals below keep pages/backups/ untouched and let the write go ahead. A
-    page dies two ways here: damage on top of the surviving copy, and a refusal
-    to write at all.
-    """
+    """Copy parseable JSON to pages/backups/ as the corrupt-primary heal source.
+    Missing or unparseable primaries leave backups unchanged but allow replacement writes."""
     os.makedirs(os.path.join(gl.DATA_PATH, "pages", "backups"), exist_ok=True)
     dst_path = os.path.join(gl.DATA_PATH, "pages", "backups", os.path.basename(src_path))
 
@@ -97,16 +59,13 @@ def back_up_page_file(src_path: str) -> None:
         with open(src_path) as f:
             json.load(f)
     except FileNotFoundError:
-        # Nothing to copy. A page whose file the loader quarantined is live in
-        # memory with no primary behind it, because get_page_data substituted
-        # the backup. The write this guards recreates the file from that page, and
-        # it is the one thing that gives the user back a writable page.
+        # A quarantined primary can be live from its backup; let the write recreate
+        # that primary instead of blocking recovery because there is nothing to copy.
         log.warning(f"No page file at {src_path} to back up; the write recreates it")
         return
     except ValueError as e:
-        # ValueError covers JSONDecodeError and UnicodeDecodeError. A file of
-        # garbage bytes fails while it decodes, before the parser sees it, so a
-        # JSONDecodeError clause lets it escape and kills the write.
+        # ValueError includes JSONDecodeError and UnicodeDecodeError, so malformed
+        # text cannot escape before parsing and block the replacement write.
         log.error(f"Invalid json in {src_path}: {e}")
         return
 
@@ -116,19 +75,10 @@ def back_up_page_file(src_path: str) -> None:
 
 
 def _apply(data: dict[str, Any], content: dict[str, Any]) -> None:
-    """Make data hold content without replacing the dict object.
-
-    New values first, removals second. The caller holds the page file's lock.
-    """
-    # A refresh mutates the dict, because every Page holds this one object and
-    # nobody would see a fresh one. The media threads read page content under
-    # no lock, as .get chains off page.dict. dict.update and del each run to
-    # completion in C under the GIL, so such a reader sees whole values. Its
-    # one anomaly is a section that survives a moment past its removal, and it
-    # never sees a section missing that both versions hold, which a clear-first
-    # order would show it. Only top-level keys are rebound, each to a tree the
-    # loader just built, so a snapshot that walks data["keys"] walks an object
-    # this never mutates.
+    """Apply content without replacing data; the caller holds the file lock.
+    Bind new trees before removals so unlocked readers see whole values without transient gaps."""
+    # Every Page aliases data. GIL-atomic update and deletion can leave a removed
+    # section briefly visible, but never remove a section present in both versions.
     if content is data:
         return
     dropped = [key for key in data if key not in content]
@@ -138,20 +88,14 @@ def _apply(data: dict[str, Any], content: dict[str, Any]) -> None:
 
 
 class PageDocument:
-    """The single in-memory copy of one page file.
-
-    json_path is the file this content belongs to. Page carries the same
-    attribute name, because the flush seam takes either as the holder of a
-    page's unwritten edits. data is the dict every Page on this path mutates.
-    It is read-only, so nothing can leave the Pages aliasing a dropped dict.
-    """
+    """The single in-memory content object for one page file.
+    Page/flush share json_path and read-only data, preventing aliases to replaced dictionaries."""
 
     def __init__(self, path: str) -> None:
         self.json_path = path
         self._data: dict[str, Any] = {}
-        # Serializes the one-time fill below, and nothing else. Taken above the
-        # page file's save lock, never below it, because the load reads the
-        # file through the page manager's read barrier.
+        # Serialize only the first fill. Take this above the save lock because
+        # loading uses the page manager's read barrier and takes that lock.
         self._load_guard = threading.Lock()
         self._loaded = False
 
@@ -162,23 +106,10 @@ class PageDocument:
 
     @contextmanager
     def edit(self) -> Iterator[dict[str, Any]]:
-        """Change this page's content, and send the change to its file.
-
-        Nothing inside the block may touch a page file or the GTK main loop.
-        Mutate the dict, and do the rest after the block.
-        """
-        # The lock held here is the file's only lock, and it is a leaf. A read
-        # of a page (the read barrier takes the lock), a reload onto a deck
-        # (the controller takes its page-load lock and then this one), and a
-        # marshal to the GTK main thread each deadlock from in here.
-        #
-        # The content comes from the file before the lock. A document minted
-        # for a page no deck shows starts empty, and an edit into an empty dict
-        # writes a page that holds that edit alone.
-        #
-        # The block marks the page even when it raises, as Page.save() marks
-        # it. A mutator that stopped halfway already changed the content every
-        # reader holds, so an unwritten mark only puts the file out of step.
+        """Mutate this page under its file lock and mark it dirty even on error.
+        Do not read page files or enter GTK in the block; their outer locks would deadlock."""
+        # Load before locking so a new off-deck document cannot write only its edit.
+        # Always mark partial mutations because every reader already sees them.
         self.ensure_loaded()
         with page_flush.save_lock(self.json_path):
             try:
@@ -187,50 +118,26 @@ class PageDocument:
                 page_flush.get().mark_dirty(self)
 
     def replace(self, content: dict[str, Any]) -> None:
-        """Make content this page's whole content, as one edit.
-
-        For the editor that hands back a whole page json. The document takes
-        content by reference, so the caller must drop the tree it passes.
-        """
-        # A replacement drops whatever the caller's content does not carry, and
-        # it drops it from the page and the file together. A file-only
-        # replacement loses to a page edit still on its timer, which writes the
-        # old content back over it. A later change to the passed tree changes
-        # the live page from any thread, under no lock, so the caller parses
-        # fresh json and drops it.
+        """Replace all page content as one edit and take the input tree by reference.
+        The caller must drop it; later mutation would change the live page without its lock."""
+        # Replace memory and file together; a file-only replacement can lose to a
+        # pending page edit that writes the old content back.
         with self.edit() as data:
             _apply(data, content)
 
     def ensure_loaded(self) -> None:
-        """Fill this document from its file unless it already holds it.
-
-        A mint reads nothing, because the page manager hands documents out for
-        paths a Page is about to load. Every other entry needs the content first, and
-        needs it once. If two threads read the file into one unfilled document,
-        the second read lands after the first thread's edit and drops it.
-        """
+        """Load an unfilled document exactly once before non-Page access.
+        The guard prevents a second read from discarding the first thread's edit."""
         with self._load_guard:
             if self._loaded:
                 return
             self._load()
 
     def refresh_from_disk(self) -> None:
-        """Bring this document back in line with the file.
-
-        It goes through the page manager, so the read barrier and the
-        corrupt-heal are the ones every read of a page file gets.
-        """
-        # It serves the writers that go around the document: an importer that
-        # replaces a page wholesale, a migrator before the page manager exists,
-        # and a page created under a name whose document holds a deleted page.
-        #
-        # It can lose only an edit the file does not know about. A mutator
-        # mutates and saves in one call, save() marks the page, and the barrier
-        # writes every marked edit out before the read. One window stays open.
-        # An edit marked after the load returns, but before the swap, is lost
-        # from memory and from the file, because the mark then points at
-        # reverted content. Closing it needs the file's lock across the read,
-        # which the barrier inside that read takes for itself.
+        """Refresh through the page manager's read barrier and corrupt-file recovery.
+        The unlocked read-to-adopt gap can lose an edit that starts after the disk read."""
+        # External writers include full-page imports, pre-manager migrations, and
+        # recreation of a deleted page under a document's retained name.
         with self._load_guard:
             self._load()
 
@@ -243,12 +150,8 @@ class PageDocument:
         self._loaded = True
 
     def adopt(self, content: dict[str, Any]) -> None:
-        """Make content this document's content without replacing the dict.
-
-        It holds the page file's lock, so no write takes its snapshot during
-        the swap. A flush caught between the two steps writes the sections this
-        drops, and the next read of that file puts them back.
-        """
+        """Adopt content without replacing the shared dictionary.
+        The lock prevents a flush between update and removal from restoring dropped sections."""
         with page_flush.save_lock(self.json_path):
             _apply(self._data, content)
 
@@ -262,23 +165,14 @@ class PageDocument:
         move_key_to_end(dictionary, key)
 
     def make_backup(self, json_path: str | None = None) -> None:
-        """Copy this page's file into pages/backups/.
-
-        The flush passes the path it holds the save lock for. A page move
-        re-points this document in place while a write for the old path is
-        still pending. A backup of any file but the one about to be
-        overwritten copies the wrong page over the wrong backup.
-        """
+        """Back up the path whose save lock the flush holds.
+        A move can repoint json_path during an old-path write; the current path can be wrong."""
         back_up_page_file(json_path if json_path is not None else self.json_path)
 
 
 def document_for(path: str) -> PageDocument:
-    """Return the page manager's document for path, when a manager exists.
-
-    A Page built before create_global_objects() has no registry to join and
-    gets its own document. That page has no sibling yet, so it shares with
-    nothing.
-    """
+    """Return the manager's shared document, or a private pre-manager document.
+    A Page created before global objects has no registry or sibling with which to share."""
     page_manager = gl.page_manager
     if page_manager is None:
         return PageDocument(path)
