@@ -1,4 +1,4 @@
-"""Verify normalization, fallback, battery aliases, and mixed-script search.
+"""Verify normalization, fallback stages, battery aliases, and ranking order.
 The corpus uses Material, Tabler, Font Awesome, and simple-icons names."""
 import fixtures  # noqa: F401  (import first: isolated --data tempdir)
 

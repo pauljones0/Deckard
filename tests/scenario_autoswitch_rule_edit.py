@@ -82,8 +82,7 @@ class StubDeckController:
         self.last_manual_loaded_page_path: str | None = None
         self.loaded_pages: list[str] = []
         self._load_lock = threading.RLock()
-        # A real load takes long enough for a second routing to start inside
-        # it. Legs that race two routings set this.
+        # Create an overlap window for legs that race two routings.
         self.load_delay = 0.0
 
     def serial_number(self) -> str:
@@ -134,7 +133,7 @@ def _clear_pages() -> None:
 
 
 def _fresh_grabber() -> WindowGrabber:
-    """Settle the previous grabber and install a fresh integration."""
+    """Settle the previous grabber before its queued worker builds in the next check."""
     previous = gl.window_grabber
     if isinstance(previous, WindowGrabber):
         _settle(previous)
@@ -546,8 +545,7 @@ def check_recheck_and_watcher_load_once() -> None:
 
     grabber = _fresh_grabber()
     controller = StubDeckController("SERIAL", active_page=StubPage(manual_path))
-    # Hold the first load until the second routing observes the old page.
-    # The delay is long enough for a busy machine.
+    # Keep the first load open long enough to create an overlap window.
     controller.load_delay = 0.25
 
     start = threading.Barrier(2)
@@ -574,8 +572,8 @@ def check_recheck_and_watcher_load_once() -> None:
 
 
 def check_a_reported_window_never_routes_on_the_caller() -> None:
-    """Route D-Bus window reports off the GTK caller thread.
-    Page loads marshal to that thread and would otherwise wait on themselves."""
+    """Route reports from any session-bus caller off the GTK caller thread.
+    A route there can self-wait for 30 s and leave the page half built."""
     _clear_pages()
     manual_path = _write_page("Manual")
     rule_path = _write_page("Browser")

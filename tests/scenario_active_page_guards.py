@@ -1,5 +1,4 @@
-"""Verify active-page guards and pending-page release under deterministic races.
-Boot fallback and rejected routes must not leave stale page names."""
+"""Verify active-page null races and pending-page retention."""
 from types import SimpleNamespace
 
 import fixtures
