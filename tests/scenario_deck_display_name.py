@@ -1,26 +1,5 @@
-"""The name a deck shows in the switcher, and the duplicate suffix under it.
-
-A deck takes the name the user chose in its settings, and the model name the
-device reports while there is none. The switcher shows one label per deck, so
-two decks that carry one title must still read apart, which the "(n)" suffix
-does. The suffix predates the chosen name and must survive it.
-
-Three defects sit under this scenario:
-
-  * A title resolver that answers None. Its caller puts the answer straight
-    into a switcher label and has no second source, so a None there is a blank
-    tab with no way to tell why.
-
-  * A suffix that only ever applied to the model name. Two decks the user
-    named the same then share one label.
-
-  * A rename that leaves the old title in the taken list. The deck then
-    collides with the title it is giving up and takes a "(2)" of its own,
-    which grows by one at every rename.
-
-The stack methods run through the unbound functions with a duck-typed self,
-the way scenario_widget_rows drives the ComboRow guard, so this needs no
-widget and no display.
+"""Check deck-name fallbacks, duplicate suffixes, and live-title updates.
+Most stack checks use unbound methods over display-free stand-ins.
 """
 import fixtures  # noqa: F401  (must be first: see fixtures.py docstring)
 
@@ -41,19 +20,12 @@ from src.windows.mainWindow.elements.DeckStack import DeckStack  # noqa: E402
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CSV_PATH = os.path.join(REPO_ROOT, "locales", "locales.csv")
 
-# The locale key the name row asks for.
 NAME_KEY = "deck.deck-group.name"
 
 
-# Stand-ins
-
-
 class _FakeDeck:
-    """The deck handle, which answers a model name and a serial, or refuses to.
-
-    device_serial is the serial the device reports now, which the settings key
-    on. It defaults to the controller's memoized serial, so a test that does
-    not care sees one serial everywhere; a test of the boot skew sets it apart.
+    """Return a model and current device serial, with optional read failures.
+    The device serial defaults to the controller's memoized serial.
     """
 
     def __init__(self, deck_type, device_serial, raises=False, serial_raises=False):
@@ -101,11 +73,7 @@ class _FakeStackPage:
 
 
 class _FakeStack:
-    """A DeckStack with the real methods over plain bookkeeping.
-
-    Every method under test reads the three lists and the child lookup, and
-    nothing else of the widget, so the real functions run unchanged here.
-    """
+    """Run real DeckStack methods over the plain state that they read."""
 
     base_title = DeckStack.base_title
     _settings_serial = DeckStack._settings_serial
@@ -142,15 +110,8 @@ def name_deck(serial: str, name: str) -> None:
     settings.save()
 
 
-# The resolver
-
-
 def check_display_name_never_answers_none() -> None:
-    """display_name is total. Every input gives a non-empty string.
-
-    Its caller has no second source for a label, so a None or an empty string
-    here is a blank switcher tab.
-    """
+    """Require every input to resolve to a non-empty switcher label."""
     empties = (None, "", "   ", 0, [], {})
     for stored in empties:
         for model in (None, "", "  ", 17):
@@ -200,12 +161,7 @@ def check_display_name_trims_and_caps() -> None:
 
 
 def check_cap_cuts_the_chosen_name_only() -> None:
-    """The cap holds the name the user types, not what the device reports.
-
-    A long model name is a value from the device, and a cut one reads as a
-    broken read rather than a long choice, so the fallbacks reach the switcher
-    whole.
-    """
+    """Apply the length cap only to user names, not device-provided fallbacks."""
     long_model = "Fake Deck 1 (Stream Deck Original)"
     assert len(long_model) > DECK_NAME_MAX_LENGTH, "pick a model name past the cap"
     got = DeckSettings({}, "S1").display_name(long_model)
@@ -226,9 +182,6 @@ def check_reading_the_name_writes_nothing() -> None:
     print("PASS: resolving a label writes no name into the settings")
 
 
-# The stack
-
-
 def check_base_title_reads_the_settings() -> None:
     stack = _FakeStack()
     name_deck("base-1", "Studio")
@@ -240,12 +193,8 @@ def check_base_title_reads_the_settings() -> None:
 
 
 def check_base_title_keys_on_the_fresh_device_serial() -> None:
-    """The title reads the name under the serial the device reports now.
-
-    The settings pane writes the name under the fresh device serial. The
-    stack-child name keys on the memoized first read, and those two differ at
-    boot under USB contention. base_title must read the name under the fresh
-    serial, the same key the write used, or a saved name reads back empty.
+    """Read the name by current device serial, with the memoized serial as fallback.
+    The two serials can differ during boot under USB contention.
     """
     stack = _FakeStack()
     # The device now reports "fresh-1"; the memoized stack serial is "cached-1".
@@ -361,18 +310,12 @@ def check_every_title_is_a_non_empty_string() -> None:
 
 
 def check_unreadable_serial_is_the_one_none() -> None:
-    """The serial read is the only path that gives up.
-
-    The serial is the stack-child name, and there is nothing to invent for it.
-    """
+    """Return no attributes only when the stack-child serial is unreadable."""
     stack = _FakeStack()
     assert stack.get_page_attributes(_FakeController("x", serial_raises=True)) is None
     assert stack.deck_names == [], "a deck that got no attributes took a title"
     assert stack.deck_numbers == [], "a deck that got no attributes took a number"
     print("PASS: an unreadable serial gives no attributes and takes nothing")
-
-
-# The rename
 
 
 def check_rename_retitles_the_live_child() -> None:
@@ -475,15 +418,8 @@ def check_empty_name_returns_the_model_title() -> None:
     print("PASS: clearing the name gives the model title back")
 
 
-# The row and its label
-
-
 class _FakeNameRow:
-    """The name row over plain state, with the real apply and load bodies.
-
-    Both methods read the text, the serial and the settings page, and nothing
-    else of the widget, so they run unchanged here and need no display.
-    """
+    """Run real name-row apply and load methods over their display-free state."""
 
     deck_stack = DeckName.deck_stack
     on_apply = DeckName.on_apply
@@ -519,13 +455,7 @@ class _Bag:
 
 
 class _RecordedSaves:
-    """Every settings save while this is entered.
-
-    The unit-tier settings manager hands out the live settings dict, so a set
-    alone already shows in a later read of it. Only the save call proves that
-    the name would reach a file in the app, so the apply legs assert on this
-    rather than on a read back.
-    """
+    """Record saves because the unit settings manager exposes its live dictionary."""
 
     def __init__(self):
         self.saves: list[tuple[str, dict]] = []
@@ -650,11 +580,7 @@ def check_locale_key_is_filled() -> None:
 
 
 def check_the_row_holds_no_timeout() -> None:
-    """The name row writes on apply and arms nothing.
-
-    A deferred write here would need a cancel at dispose, and the row has no
-    dispose hook to put one in.
-    """
+    """Require immediate apply because the row has no hook to cancel deferred writes."""
     source_path = os.path.join(
         REPO_ROOT, "src", "windows", "mainWindow", "elements", "DeckSettings",
         "DeckGroup.py",
@@ -677,13 +603,8 @@ def check_the_row_holds_no_timeout() -> None:
 
 
 def check_real_name_row_wires_and_saves() -> None:
-    """A real DeckName widget wires its apply handler and saves through it.
-
-    The other row legs drive the apply and load bodies over a stub, so they
-    prove the bodies but not the __init__ that connects them. This builds the
-    real widget, so a construction that skips the max-length, the apply
-    connect or the map reload is caught. It needs libadwaita and a display,
-    which hugo supplies under xvfb.
+    """Build a real DeckName to check its cap, apply handler, and map reload.
+    This check needs libadwaita and a display.
     """
     if not fixtures.has_usable_display():
         print("SKIP: no usable display; the real name row is not built")

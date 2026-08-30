@@ -1,7 +1,5 @@
-"""Desktop-session matching for the window grabber.
-
-XDG_CURRENT_DESKTOP is a colon-separated list, so session_info splits it and
-select_integration_class picks from the components. Session type outranks KDE.
+"""Check window-grabber selection from desktop components and session type.
+Session type outranks a KDE desktop component.
 """
 import os
 

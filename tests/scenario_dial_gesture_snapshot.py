@@ -1,7 +1,5 @@
-"""Dial and touchscreen gestures must resolve their actions at read time.
-
-A page change mid-gesture must not redirect the tail of that gesture. A
-screensaver that engages mid-hold cancels the dial gesture with the stash.
+"""Resolve dial and touchscreen actions at read time across page changes.
+Screensaver activation during a hold must cancel the stashed dial gesture.
 """
 import os
 from concurrent.futures import Future
@@ -41,10 +39,7 @@ class RecordingAction(ActionCore):
 
 
 class ChangePageDialAction(RecordingAction):
-    """Mirrors the ChangePage action of the deck plugin on a dial.
-
-    The DOWN event loads the target page synchronously on the action pool.
-    """
+    """Load a target page synchronously when the dial receives DOWN."""
 
     def __init__(self, target_page, **kwargs):
         super().__init__(**kwargs)
@@ -57,10 +52,7 @@ class ChangePageDialAction(RecordingAction):
 
 
 class EasyCommandLikeAction(RecordingAction):
-    """Mirrors the EasyCommand latch of the OS plugin.
-
-    DOWN is swallowed while registered_down is set, and only UP clears it.
-    """
+    """Latch on DOWN and clear only on UP, like the EasyCommand action."""
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -79,11 +71,7 @@ class EasyCommandLikeAction(RecordingAction):
 
 
 class DeferredExecutor:
-    """Stands in for the deck action pool to make the dispatch window exact.
-
-    submit() queues the dispatch instead of running it, and drain() runs
-    everything queued in order on the caller's thread.
-    """
+    """Queue action dispatches until drain runs them in order on the caller."""
 
     def __init__(self):
         self.queue = []
@@ -103,10 +91,7 @@ class DeferredExecutor:
 
 
 def inject(page, ident, actions: list) -> None:
-    """Place stub action objects where get_all_actions_for_input reads them.
-
-    The path is action_objects[input_type][json_identifier][state][index].
-    """
+    """Place actions at action_objects[input_type][identifier][state][index]."""
     per_state = page.action_objects.setdefault(ident.input_type, {}).setdefault(ident.json_identifier, {})
     per_state[0] = {i: a for i, a in enumerate(actions)}
 
@@ -212,10 +197,8 @@ def main() -> None:
             f"hold gesture bled onto page B: {bleed_recorder.received}"
         controller.hold_time = 10.0
 
-        # A turn is a single event, resolved at read time. A turn read on page A
-        # whose pool dispatch runs after a swap must still land on page A
-        # actions. DeferredExecutor holds the dispatch while the test swaps the
-        # page, which makes the event-to-worker window deterministic.
+        # Hold a turn dispatch while the page changes to prove that its
+        # read-time page, not its later worker-time page, receives it.
         controller.load_page(page_a)
         assert fixtures.wait_until(lambda: controller.active_page is page_a)
 

@@ -1,8 +1,4 @@
-"""A malformed env var must not abort deck init.
-
-MediaPlayerThread.__init__ reads DECKARD_VIDEO_WRITE_HZ and
-DECKARD_WRITE_YIELD_MS. A bad value logs a warning and falls back.
-"""
+"""Require malformed media-writer environment values to fall back during init."""
 import os
 
 # Poison the environment before the thread class ever reads it.

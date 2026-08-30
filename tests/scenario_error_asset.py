@@ -1,8 +1,4 @@
-"""The SingleKeyAsset fallback image must resolve against the repo root.
-
-A CWD-relative path raises FileNotFoundError whenever the process starts
-anywhere but the repo root, such as under a desktop launcher.
-"""
+"""Resolve the SingleKeyAsset fallback image from the repository, not the CWD."""
 import os
 
 import fixtures  # noqa: F401  (isolated DATA_PATH + repo-root sys.path)

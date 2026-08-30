@@ -1,8 +1,4 @@
-"""A wedged plugin observer must be loud and attributable.
-
-An observer that blocks past the threshold produces an error log naming it
-and the queued backlog. A piled-up backlog warns on the submit side too.
-"""
+"""Require wedge and backlog warnings to identify blocked plugin observers."""
 import fixtures  # noqa: F401  (import first: sets up the isolated data dir)
 
 import contextlib
@@ -43,10 +39,8 @@ def main() -> int:
         return 1
     print("PASS: wedged observer is named in the watchdog error")
 
-    # 1b. The watchdog re-warns while the observer is still stuck, with a
-    # climbing duration. A wedge that logged once and went quiet would look
-    # resolved. Parse the stall duration out of every wedge record and require
-    # two distinct warns whose reported duration increased.
+    # 1b. Re-warn with increasing duration while the observer stays stuck so
+    # one old warning cannot make the wedge look resolved.
     def _wedge_durations() -> list[float]:
         out = []
         for r in records:
@@ -94,10 +88,8 @@ def main() -> int:
         return 1
     print("PASS: lane drains and keeps working after the wedge releases")
 
-    # 4. Backlog accounting survives a batch that raises before the observer
-    # loop. _get_loop(), which creates the loop and lazily imports log_hooks,
-    # sits inside the try whose finally owns the decrement, so a raise there
-    # must not leak the count.
+    # 4. Preserve backlog accounting when _get_loop raises before the observer
+    # loop but inside the decrement's try/finally.
     baseline = ed._backlog
     orig_get_loop = ed._get_loop
 
@@ -119,9 +111,8 @@ def main() -> int:
         return 1
     print("PASS: backlog does not leak when a batch raises before dispatch")
 
-    # 5. A submit that fails because dispatch has shut down must roll the
-    # increment back and re-raise, not leave the count stuck. This is
-    # destructive to the lane, so it runs last.
+    # 5. Roll back and re-raise a submit after shutdown; run this destructive
+    # check last.
     baseline = ed._backlog
     ed.shutdown()
     raised = False

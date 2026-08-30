@@ -1,13 +1,5 @@
-"""release_handle and open_handle cannot interleave to close a fresh handle.
-
-release_handle once installed the shadow, stopped the reader, and closed the
-device with only the close under the wrapper lock. A reopen could slip between
-the reader stop and the close: it passed open_handle's reader-alive check
-(the stop had just joined the reader), opened the device, and then the close
-in release_handle closed the handle it had just opened. release_handle now
-runs the whole transition under the lock, so the two serialize. This drives
-the race with a device whose close blocks on a gate, and proves a concurrent
-open cannot proceed while a release holds the lock.
+"""Require release_handle and open_handle to serialize under the wrapper lock.
+A concurrent open must not proceed while a gated close holds that lock.
 """
 import fixtures  # noqa: F401  (must be first: isolates DATA_PATH before globals)
 
@@ -19,9 +11,7 @@ from src.backend.DeckManagement.BetterDeck import BetterDeck  # noqa: E402
 
 
 class GatedDevice:
-    """A device whose close() blocks on a gate, so a leg can hold a release
-    mid-transition and try to open concurrently. It has no reader thread, so
-    the stop is just the flag writes."""
+    """Gate close to hold release mid-transition while another thread tries open."""
 
     def __init__(self):
         self.ops: list[str] = []

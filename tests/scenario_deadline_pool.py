@@ -1,19 +1,5 @@
-"""
-DeadlinePool, driven directly: the deadline, the replacement and the close.
-
-The pool is the primitive under every owner that must survive a task which
-never returns. Its contract is four promises, and each case here holds one of
-them to the pool itself, with no controller and no page in the way:
-
-- a batch deadline names the task that started and did not return, and tells
-  it from the tasks that are only queued behind it,
-- a wedge costs the pool its executor, and the replacement takes work at
-  once, while the abandoned executor keeps its queue and runs it late,
-- a pool that does not replace cancels nothing, because an owner whose task
-  must run exactly once cannot have it taken away,
-- a shut-down pool refuses quietly. The owner shuts down first and drops its
-  reference second, and a caller that lands between those two steps gets
-  None, never an exception.
+"""Exercise deadlines, replacement budgets, non-cancelling pools, and shutdown.
+Each case drives DeadlinePool directly without a controller or page.
 """
 import fixtures  # noqa: F401  (import first: sets up the isolated data dir)
 
@@ -46,11 +32,7 @@ WORDING = BatchWording(
 
 
 class LogCapture:
-    """Collect loguru messages for the with block.
-
-    The report is the only thing the deadline path says out loud, and which
-    tasks it names is the behaviour under test.
-    """
+    """Capture loguru output because task names in deadline reports are under test."""
 
     def __init__(self, level: str = "INFO"):
         self._level = level
@@ -76,10 +58,8 @@ class LogCapture:
 
 
 class Task:
-    """One unit of batch work, which records what happened to it.
-
-    A hanging task blocks until it is released, or until HANG_CAP, whichever
-    comes first.
+    """Record one batch task's progress.
+    A hanging task waits for release or HANG_CAP, whichever comes first.
     """
 
     def __init__(self, name: str, hang: bool = False, raises: "Exception | None" = None):
@@ -105,11 +85,7 @@ def batch(*tasks: Task) -> list:
 
 
 class RefusingExecutor:
-    """Wraps an executor and raises a given error on the nth submit.
-
-    Thread exhaustion and a shut-down executor both leave submit as a
-    RuntimeError, and they mean opposite things to the caller.
-    """
+    """Raise a specified RuntimeError on one submit to distinguish refusal causes."""
 
     def __init__(self, inner, refuse_at: int, error: RuntimeError) -> None:
         self._inner = inner
@@ -128,12 +104,7 @@ class RefusingExecutor:
 
 
 class CountingExecutor:
-    """Wraps an executor and announces when a whole batch has been submitted.
-
-    A case that closes the pool mid-batch has to close after the last submit
-    and before the sweep gives up on the first task. The first half is what
-    this event says; a sleep would only guess it.
-    """
+    """Signal when the whole batch is submitted so closure can precede its sweep."""
 
     def __init__(self, inner, expect: int) -> None:
         self._inner = inner
@@ -164,9 +135,9 @@ def one_worker_pool(prefix: str, replace_on_wedge: bool) -> DeadlinePool:
 
 
 def case_the_deadline_tells_a_stuck_task_from_a_late_one() -> None:
-    """A started task that is overdue is stuck: it holds a worker, it is
-    named, it is counted, and it costs the pool its executor. The tasks queued
-    behind it are only late, and they run once the wedge clears."""
+    """Require an overdue started task to be stuck and queued tasks to be late.
+    The late tasks must run after the wedge clears.
+    """
     pool = one_worker_pool("dp_wedge", replace_on_wedge=True)
     hung, first, second = Task("hung", hang=True), Task("first"), Task("second")
     # A third queued task, so a per-task wait would overrun the ceiling below
@@ -181,11 +152,8 @@ def case_the_deadline_tells_a_stuck_task_from_a_late_one() -> None:
             outcome = pool.run_batch(batch(hung, first, second, third), deadline=DEADLINE)
             waited = time.monotonic() - began
 
-        # The deadline covers the batch, not the task. A wait spent per task
-        # would hold the caller for the deadline times the number of overdue
-        # tasks, which is the stall the media thread must never take, so the
-        # ceiling here has to be a small multiple of one deadline and never a
-        # fraction of the hang.
+        # Bound the whole batch to a small multiple of one deadline; a per-task
+        # wait would stall the media thread once for each overdue task.
         assert DEADLINE <= waited < 3 * DEADLINE, (
             f"run_batch held its caller {waited:.2f}s for a 4-task batch; one "
             f"batch-absolute {DEADLINE}s deadline is the whole budget, and a "
@@ -233,12 +201,8 @@ def case_the_deadline_tells_a_stuck_task_from_a_late_one() -> None:
 
 
 def case_the_replacement_takes_work_at_once() -> None:
-    """The point of the replacement: work submitted after a wedge runs
-    straight away, instead of queueing behind the task that never returns.
-
-    A second wedge on the same pool proves the counters accumulate. Each
-    replacement strands its own workers, and a count that only ever holds the
-    last wedge hides every one before it.
+    """Require work after a wedge to run on the replacement executor at once.
+    A second wedge must accumulate replacement and leaked-worker counts.
     """
     pool = one_worker_pool("dp_fresh", replace_on_wedge=True)
     hung, hung_again, probe = Task("hung", hang=True), Task("hung-again", hang=True), Task("probe")
@@ -270,10 +234,8 @@ def case_the_replacement_takes_work_at_once() -> None:
 
 
 def case_the_replacement_budget_quarantines_the_pool() -> None:
-    """A replacing pool stops swapping executors after its budget, so a deck
-    that wedges over and over cannot leak a worker per wedge for the life of
-    the process. Past the budget the pool quarantines: it keeps the stuck task
-    on the current executor and replaces no more, and it says so.
+    """Require replacement to stop at its budget and quarantine the pool.
+    Quarantine keeps the stuck task on the current executor and reports it.
     """
     budget = 3
     pool = DeadlinePool(
@@ -305,10 +267,8 @@ def case_the_replacement_budget_quarantines_the_pool() -> None:
             outcome = pool.run_batch(batch(over), deadline=DEADLINE)
         assert outcome.replaced is False, "a wedge past the budget must not replace"
         assert pool.is_quarantined, "the pool must quarantine once the budget is spent"
-        # replacements is the real bound: no more executors are abandoned, so
-        # the abandoned-executor thread count is capped at budget worth. The
-        # over-budget stuck task still pins a worker on the current executor,
-        # and leaked_workers counts every stuck task seen, so it reads one more.
+        # Replacements bound abandoned executors to the budget; leaked_workers
+        # also counts the over-budget task pinned to the current executor.
         assert pool.replacements == budget, (
             f"a quarantined pool abandons no more executors, got {pool.replacements}")
         assert pool.leaked_workers == budget + 1, (
@@ -325,10 +285,9 @@ def case_the_replacement_budget_quarantines_the_pool() -> None:
 
 
 def case_a_pool_that_does_not_replace_cancels_nothing() -> None:
-    """The action pool's shape. It reports the wedge and keeps its executor,
-    and above all it never cancels the queued task: a ready callback that is
-    cancelled never runs the finally that opens the action's gates, and the
-    action stays dead for the life of the page."""
+    """Require a non-replacing pool to keep its executor and queued tasks.
+    Cancelling a ready callback would leave the action gates closed.
+    """
     pool = one_worker_pool("dp_keep", replace_on_wedge=False)
     hung, queued = Task("hung", hang=True), Task("queued")
     try:
@@ -356,9 +315,7 @@ def case_a_pool_that_does_not_replace_cancels_nothing() -> None:
 
 
 def case_a_shut_down_pool_refuses_without_raising() -> None:
-    """Close order: the owner shuts the pool down, then drops its reference.
-    A caller that lands in between must get None out of submit and an empty
-    outcome out of run_batch, and no exception at all."""
+    """Require calls during close to return None or an empty outcome without raising."""
     pool = one_worker_pool("dp_closed", replace_on_wedge=True)
     late_submit, in_batch = Task("late-submit"), Task("in-batch")
 
@@ -390,16 +347,8 @@ def case_a_shut_down_pool_refuses_without_raising() -> None:
 
 
 def case_a_close_during_the_sweep_cancels_the_queue_quietly() -> None:
-    """The owner may close the pool while a batch is still inside its deadline
-    wait, and shutdown(cancel_futures=True) cancels every task still queued.
-    The sweep then meets a cancelled future where it waited for a result. That
-    is the teardown, not a failure: the batch reports the stuck task, reports
-    the cancelled ones as nothing at all, and hands its caller an outcome
-    instead of an exception.
-
-    The same close also settles what a wedge costs a closed pool: nothing. A
-    fresh executor built for a pool the owner is dropping is litter that
-    nobody ever shuts down.
+    """Treat queued-task cancellation during a close as quiet teardown.
+    A wedge in the closed pool must not create a replacement executor.
     """
     executors: list[CountingExecutor] = []
 
@@ -464,11 +413,9 @@ def case_a_close_during_the_sweep_cancels_the_queue_quietly() -> None:
 
 
 def case_a_live_pool_that_refuses_is_reported() -> None:
-    """A live pool refuses when the process is out of threads. That task never
-    reaches the queue, so the deadline sweep can neither wait for it nor name
-    it, and without the report it would vanish. The same exception raised
-    because the executor is shutting down means the opposite and stays
-    quiet."""
+    """Report thread-exhaustion refusal but keep shutdown refusal quiet.
+    A refused task never reaches the queue or deadline sweep.
+    """
     exhaustion = RuntimeError("can't start new thread")
     exhausted = DeadlinePool(
         max_workers=4,
@@ -519,9 +466,7 @@ def case_a_live_pool_that_refuses_is_reported() -> None:
 
 
 def case_a_task_that_raises_does_not_stop_the_sweep() -> None:
-    """A task that raises must not cost the rest of the batch its report. The
-    exception belongs to the task, and the deadline still belongs to every
-    other task in the batch."""
+    """Require a task exception not to stop classification of the rest of its batch."""
     pool = one_worker_pool("dp_raise", replace_on_wedge=False)
     raiser = Task("raiser", raises=RuntimeError("the task itself failed"))
     hung, queued = Task("hung", hang=True), Task("queued")

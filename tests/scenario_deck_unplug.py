@@ -1,8 +1,4 @@
-"""Scenario for deck unplug and replug mid-render.
-
-FaultyFakeDeck models the closed and unplugged states, so this pins the
-lifecycle seam, writer survival, close on an unplugged deck, and a load race.
-"""
+"""Check lifecycle state, writer survival, and close races during unplug."""
 import fixtures  # noqa: F401  (import first: sets up the isolated data dir)
 
 import threading
@@ -21,10 +17,7 @@ from StreamDeck.Transport.Transport import TransportError
 
 
 def test_lifecycle_seam() -> int:
-    """is_open() and connected() report real state.
-
-    In strict mode a write past close() or unplug raises TransportError.
-    """
+    """Report open and connected state; reject strict writes after close or unplug."""
     deck = FaultyFakeDeck(serial_number="unplug-seam")
 
     if not deck.is_open() or not deck.connected():
@@ -86,11 +79,8 @@ def test_lifecycle_seam() -> int:
 
 
 def test_unplug_mid_render_survives() -> int:
-    """Yanking the deck mid-render must not kill the sole writer.
-
-    The TransportError handler of the write task swallows the failed write and
-    arms the pending repaint through _on_write_result(False). Part b1 drives
-    the tick by hand for determinism; part b2 checks the live loop survives.
+    """Keep the sole writer alive and arm repaint after unplug rejects a write.
+    Drive one check manually and one through the live loop.
     """
     from src.backend.DeckManagement.DeckController import Input
 
@@ -190,11 +180,7 @@ def test_unplug_mid_render_survives() -> int:
 
 
 def test_close_unplugged_deck_completes() -> int:
-    """close() on an already-unplugged deck must still tear the controller down.
-
-    The blank-frame writes fail harmlessly and the fallback deck.close() is a
-    lifecycle-exempt no-op. The controller deregisters and its threads exit.
-    """
+    """Close an unplugged deck despite rejected blanks, then deregister and exit."""
     controller = make_headless_controller(serial="unplug-close")
     deck = raw_deck(controller)
 
@@ -242,11 +228,7 @@ def test_close_unplugged_deck_completes() -> int:
 
 
 def test_unplug_races_page_load() -> int:
-    """A close concurrent with a page load must not deadlock or crash.
-
-    close() bumps the generation, so the racing load aborts at its gen gate.
-    Teardown completes whichever way the interleave went.
-    """
+    """Require close and a concurrent page load to complete without deadlock or crash."""
     controller = make_headless_controller(serial="unplug-load")
     deck = raw_deck(controller)
 
@@ -323,10 +305,8 @@ def test_unplug_races_page_load() -> int:
 
 def main() -> int:
     start_watchdog(60, "deck_unplug")
-    # One tier only. Install the integration globals up front. The bare
-    # FaultyFakeDecks of the first leg need only
-    # gl.settings_manager.get_deck_settings(), which the real SettingsManager
-    # satisfies, and the controller legs need the full integration graph.
+    # Install one integration tier for both bare FaultyFakeDeck settings reads
+    # and the full controller graph.
     fixtures._install_integration_globals()
     rc = test_lifecycle_seam()
     rc |= test_unplug_mid_render_survives()

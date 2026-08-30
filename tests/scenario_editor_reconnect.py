@@ -1,16 +1,5 @@
-"""Sidebar rows must stay wired after a mid-load return.
-
-Every row loader disconnects its value-changed handler, looks the input up,
-then reconnects. A lookup that returns early (an input the deck does not carry,
-a page not yet loaded) once left the handler disconnected: the user edited the
-spinner and nothing was saved, silently. The alignment row escalated it,
-because its disconnect had no guard, so the next load raised TypeError and
-aborted the whole sidebar load before the label, action and background editors
-ran.
-
-This harness builds no real GTK widget, so it drives the real SizeRow and
-AlignmentRow loaders on duck-typed stand-ins, the same pattern
-scenario_store_branch_contract uses.
+"""Require sidebar rows to reconnect after early returns during load.
+Drive real row methods on display-free stand-ins.
 """
 
 import fixtures  # noqa: F401  (must be first: isolates DATA_PATH before globals)
@@ -27,12 +16,7 @@ _APP = object()
 
 
 class FakeButton:
-    """A spin button that records its value-changed handlers by id.
-
-    Supports both wiring calls the code may make: connect/disconnect by the
-    tracked id (the fix), and disconnect_by_func (the old spelling), so the one
-    scenario file exercises the code before and after the fix.
-    """
+    """Record value-changed handlers and support both GTK disconnect forms."""
 
     def __init__(self) -> None:
         self._handlers: dict[int, object] = {}
@@ -261,10 +245,7 @@ def test_size_row_wires_exactly_once_on_load() -> None:
 
 
 def test_alignment_row_survives_repeated_midload_returns() -> None:
-    """Repeated mid-load returns must not raise and must leave the row wired.
-
-    The alignment disconnect once had no guard, so the second load raised
-    TypeError and aborted the whole sidebar load."""
+    """Require repeated early returns to keep the alignment row wired."""
     page = FakePage()
     _install(FakeController(None), page)
 
@@ -273,7 +254,7 @@ def test_alignment_row_survives_repeated_midload_returns() -> None:
 
     identifier = object()
     row.load_for_identifier(identifier, 0)
-    # Pre-fix this second call raised TypeError, aborting the sidebar load.
+    # Repeat the early-return path; it must remain wired.
     row.load_for_identifier(identifier, 0)
 
     assert row.alignment_spinner.button.handler_count() == 1, (
