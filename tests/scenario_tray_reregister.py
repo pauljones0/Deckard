@@ -1,12 +1,5 @@
-"""
-Regression scenario. Tray icon registration must not be one-shot.
-
-A watcher that appears late must still receive the item, and the SNI spec
-requires an item to re-register with a watcher that restarted. The tray item
-and its menu must also keep their own D-Bus object paths, the app must hand
-the desktop shell an icon theme path only when the host theme lacks the app
-icon, and the dir it hands over must hold a theme a shell can read.
-"""
+"""Verify late and restarted tray watchers, idempotent D-Bus registration,
+separate object paths, and valid host-aware icon-theme discovery."""
 
 # This scenario runs an isolated session bus, registers the tray icon with no
 # watcher present, then starts one, kills it, and starts a fresh one.
@@ -146,10 +139,7 @@ class _StubInterfaceInfo:
 
 
 def check_base_double_register_no_orphan() -> None:
-    """DBusService.register with no intervening unregister must not orphan
-    the previous object registration on the connection. Exactly one live
-    registration survives any number of register calls, and none survives an
-    unregister."""
+    """Repeated DBusService registration keeps one live object and no orphan."""
     from src.backend.trayicon import DBusService
 
     bus = _StubBus()
@@ -169,23 +159,11 @@ def check_base_double_register_no_orphan() -> None:
 
 
 def check_sni_double_register_keeps_menu_live() -> None:
-    """A second register() over the real TrayIcon path must keep both objects.
-
-    StatusNotifierItemService.register registers the SNI object and a nested
-    menu object, and its unregister cascades to the menu. Both registration
-    ids must stay live across a second register, with nothing orphaned.
-    """
+    """Repeated SNI registration keeps the item and nested menu ids live."""
     import src.backend.trayicon as trayicon_mod
     from src.backend.trayicon import StatusNotifierItemService
 
-    # An unregister-then-reregister remedy inside the base register()
-    # dispatches virtually to the SNI unregister override, which tears the
-    # menu down, and the base then re-registers the SNI object alone. That
-    # leaves the tray menu dead on the bus, which is what this check fails on.
-    # register() also watches org.kde.StatusNotifierWatcher through
-    # Gio.bus_watch_name_on_connection, which type-checks its first argument
-    # against a real connection. That name-watch is orthogonal to the
-    # object-registration leak, so it is stubbed out.
+    # Stub the real-connection name watch to isolate object registration.
     orig_watch = trayicon_mod.Gio.bus_watch_name_on_connection
     orig_unwatch = trayicon_mod.Gio.bus_unwatch_name
     trayicon_mod.Gio.bus_watch_name_on_connection = (
@@ -221,9 +199,7 @@ def check_sni_double_register_keeps_menu_live() -> None:
             f"(no leak, no teardown): registered={bus.registered}, "
             f"unregistered={bus.unregistered}, live={bus.live} (expected 2)"
         )
-        # A double register changes nothing. Each object keeps its original
-        # registration id, so nothing was unregistered and re-registered,
-        # which would churn the id and kill the menu on this path.
+        # Both objects must retain their registration ids.
         assert sni.registration_id == sni_id, (
             f"SNI object id churned on double register(): {sni_id} -> "
             f"{sni.registration_id}; register() must be a no-op when already "
@@ -264,14 +240,7 @@ def shipped_icon_dirs() -> "set[str]":
 
 
 def check_shipped_icon_theme_resolves() -> None:
-    """The icon dir that ships with the app must hold a theme a shell reads.
-
-    A theme is an index.theme and the dirs it names. An icon loader that
-    takes the spec strictly reads nothing from a dir that holds no
-    index.theme, and the shell then draws a placeholder in place of the app
-    icon. The theme must also name every dir that holds an icon, because a
-    dir it leaves out is invisible to a shell that reads the theme.
-    """
+    """The shipped theme has a valid index and lists every icon directory."""
     index_path = os.path.join(ICON_THEME_DIR, "index.theme")
     assert os.path.isfile(index_path), (
         f"{index_path} is missing; a shell whose icon loader takes the icon "
@@ -316,9 +285,7 @@ def check_shipped_icon_theme_resolves() -> None:
             assert parser.get(entry, key, fallback="") != "", (
                 f"[{entry}] in {index_path} has no {key}"
             )
-    # The whole source-tree branch rests on one name resolving. An icon file
-    # that is renamed, moved or dropped leaves a theme that reads correctly
-    # and holds no icon the tray can name.
+    # The application id must resolve through the shipped theme.
     theme = Gtk.IconTheme.new()
     theme.set_search_path([BUNDLED_ICON_DIR])
     theme.set_theme_name("hicolor")
@@ -333,15 +300,7 @@ def check_shipped_icon_theme_resolves() -> None:
 
 
 def check_flatpak_manifest_installs_the_app_icon() -> None:
-    """A sandboxed copy must carry its icon where the icon search reads.
-
-    The tray hands the desktop shell no theme path when the app icon sits in
-    a data dir the search covers, and inside the sandbox that search reads
-    the sandbox's own data dirs, /app/share among them. The manifest line
-    below is what puts the icon there. Move it, rename it, or drop it, and a
-    sandboxed copy would name a sandbox path to the shell again, which the
-    shell outside the sandbox cannot read.
-    """
+    """The Flatpak manifest installs the app icon under /app/share icons."""
     with open(FLATPAK_MANIFEST, encoding="utf-8") as f:
         manifest = f.read()
     pattern = (r"/app/share/icons/hicolor/[^/\s]+/apps/"
@@ -359,15 +318,8 @@ def check_flatpak_manifest_installs_the_app_icon() -> None:
 
 
 def check_item_and_menu_take_their_own_paths() -> None:
-    """The tray item and its menu must take the paths their names state.
-
-    The item registers at the item path and announces that path to the
-    StatusNotifierWatcher. The menu registers at the menu path, which the
-    item's Menu property carries. Passing the two the wrong way round keeps
-    the pair consistent on the wire, because both readers follow the same
-    two fields, and leaves every name in the code stating the opposite of
-    what it holds.
-    """
+    """The tray item registers and announces its item path while Menu names the
+    separate menu object path."""
     from src.tray import TrayIcon
 
     tray = TrayIcon()
@@ -406,13 +358,7 @@ def check_item_and_menu_take_their_own_paths() -> None:
 
 
 def check_icon_theme_path_only_when_the_host_lacks_the_icon() -> None:
-    """The app names an icon theme path only for a copy the host cannot see.
-
-    A shell that gets a theme path searches that path alone, so an installed
-    copy must hand it nothing and keep the icon the host theme already holds.
-    A copy that runs from a source tree hands over the icons that ship with
-    the app.
-    """
+    """Use the bundled theme path only when host icon roots lack the app icon."""
     import appinfo
     from src.tray import TrayIcon, icon_search_roots, tray_icon_theme_path
 
@@ -428,9 +374,7 @@ def check_icon_theme_path_only_when_the_host_lacks_the_icon() -> None:
                 os.environ[name] = value
 
     try:
-        # An unset environment must still reach the system dirs. A shell that
-        # is handed a bundled path it need not have shows the wrong icon at
-        # the wrong size, and a sandbox path it cannot read shows none.
+        # Unset XDG variables must retain the standard system roots.
         os.environ.pop("XDG_DATA_HOME", None)
         os.environ.pop("XDG_DATA_DIRS", None)
         assert "/usr/share" in icon_search_roots(), (
@@ -560,18 +504,11 @@ def main() -> None:
         traceback.print_exc()
         sys.stdout.flush()
         sys.stderr.flush()
-        # The traceback holds the frames of the failing check, which hold the
-        # TrayIcon, which holds the session bus. No collection can free that
-        # while the traceback lives, so the teardown below would wait its
-        # full 30 seconds and the failure would read as a timeout. Kill the
-        # daemon, which takes no wait, and leave at once.
+        # Traceback frames retain the bus, so stop it without waiting on teardown.
         test_bus.stop()
         os._exit(1)
     finally:
-        # A TrayIcon holds its menu, whose items hold bound methods back to
-        # the TrayIcon, so reference counting alone never drops the tray or
-        # the session bus it holds. The bus below then waits 30 seconds for a
-        # reference that a collection releases at once.
+        # Collect the tray-menu cycle before waiting for the session bus.
         gc.collect()
         test_bus.down()
     print("PASS: scenario_tray_reregister")
@@ -583,9 +520,7 @@ def run_checks(bus_address: str) -> None:
     tray = DBusTrayIcon(menu=menu, app_id="com.example.HarnessTray",
                         title="HarnessTray")
 
-    # 1. A late watcher. Registering while no watcher exists must neither
-    #    raise nor lose the icon, and the announcement must arrive as soon
-    #    as a watcher shows up.
+    # Registration without a watcher must announce when one appears later.
     try:
         tray.register()
     except Exception as e:

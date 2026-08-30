@@ -1,10 +1,5 @@
-"""
-The engine-to-UI port contract, observed through a recording implementation.
-
-With an accepting port attached, a page load pushes an image for every key and
-for the touchscreen, and nothing dirty-marks. on_page_changed fires with the
-page's actions already initialized.
-"""
+"""Verify engine-to-UI port ordering, headless safety, mirror coalescing,
+concurrent unbinding, and dial-preview payload delivery."""
 
 # Every port method is callable headless, and the adapter's mirror slots
 # coalesce to one paint.
@@ -219,19 +214,8 @@ def _fake_mirror_child(button, strip):
 
 
 def check_mirror_pushes_coalesce() -> None:
-    """Many producer pushes against a blocked main loop must cost one
-    main-loop callback and one paint, carrying the last frame.
-
-    Both mirrors hand a frame to a per-input latest-wins slot, so the backlog
-    stays at one frame per input whatever the producer does.
-    """
-    # A convert-and-idle_add per frame accumulates one queued callback and one
-    # retained pixbuf per frame per key on a stalled loop, then paints every
-    # superseded frame in turn. The drains are counted as well as the paints,
-    # because a slot that armed a callback per push still paints once, and
-    # would look identical from the widget's side. Conversion is counted
-    # too: a superseded frame must never be converted, so the winning frame
-    # pays the only PIL and pixbuf work, inside the drain.
+    """Blocked-loop pushes coalesce to one callback and paint of the last frame."""
+    # Count drains, conversions, and paints to detect hidden per-push work.
 
     from src.windows.ui_adapter import TOUCHSCREEN_UI_INTERVAL_S, GtkUIAdapter
 
@@ -241,9 +225,7 @@ def check_mirror_pushes_coalesce() -> None:
     adapter.bind(controller, _fake_mirror_child(button, strip))
     adapter._window_mapped = True
 
-    # Every scheduled callback lands here first, because push_input_image
-    # resolves self._drain_mirror at schedule time, so an instance attribute
-    # wins.
+    # Replace the instance drain before callbacks are scheduled.
     drains: list = []
     real_drain = adapter._drain_mirror
 
@@ -295,10 +277,7 @@ def check_mirror_pushes_coalesce() -> None:
         f"painted: {controller.ui_image_changes_while_hidden!r}"
     )
 
-    # The touchscreen mirror runs on the same slot, plus an interval. Its
-    # preview is as wide as the deck, so the interval rate-limits it. A frame
-    # the interval holds back must still land once it expires, or the last
-    # frame of a burst, such as a scroll that stops, is lost.
+    # Touchscreen slots defer the last burst frame until their interval expires.
     ts_ident = Input.Touchscreen("sd-plus")
     assert adapter.push_input_image(controller, ts_ident, "strip-first") is True
     pump()
@@ -345,17 +324,8 @@ def check_mirror_pushes_coalesce() -> None:
 
 
 def check_unbind_tolerates_concurrent_drain() -> None:
-    """unbind() must survive its slots being deleted underneath it.
-
-    Deck removal arrives on the USB monitor, boot rescan and flatpak poll
-    threads, while the GTK loop runs the drains still armed for that deck,
-    and each drain pops its own slot the moment the child is gone.
-    """
-    # A KeyError out of unbind escapes on_deck_removed, so the caller never
-    # reaches the controller's close() and the deck's media thread and USB
-    # handle keep running with nothing holding them. The registry below runs
-    # the adapter's real drains while unbind snapshots its keys, which is the
-    # window the race lands in.
+    """unbind survives mirror slots removed concurrently by armed drains."""
+    # Run real drains while unbind snapshots slot keys.
     from src.windows.ui_adapter import GtkUIAdapter, _MirrorSlot
 
     class _DrainDuringScan(dict):
@@ -401,17 +371,9 @@ def check_unbind_tolerates_concurrent_drain() -> None:
 
 
 def check_dial_preview_rides_strip_payload() -> None:
-    """The sidebar's dial preview is a crop of the strip frame, so it travels
-    in that frame's payload.
-
-    It is converted on the producer and painted by the same main-loop callback,
-    with no callback of its own.
-    """
-    # The real prepare and paint halves run against a stand-in self.
-    # Handing the crop to IconSelector.set_image instead puts one uncoalesced
-    # idle on the loop per produced frame, at PRIORITY_HIGH, above GTK's own
-    # redraw. That arrives at the producer's rate rather than the painted one,
-    # and is the pressure the mirror slot removes.
+    """The dial preview travels and paints with its strip frame without an
+    additional main-loop callback."""
+    # Drive the real prepare and paint halves against a stand-in self.
     import src.windows.mainWindow.DeckPlus.ScreenBar as screenbar_mod
     from PIL import Image
 
@@ -519,10 +481,7 @@ def check_port_methods_headless_safe() -> None:
     identifier = Input.Key("0x0")
     controller = object()
 
-    # Anything the adapter logs at WARNING or above is a failure for the
-    # quiet-no-op half below. push_input_image's broad except reports through
-    # the log, so without this sink a guard that degraded into the except
-    # path would look identical to a guard that worked.
+    # Capture warnings to distinguish guards from broad exception containment.
     warnings: list = []
     sink_id = log.add(
         lambda msg: warnings.append(msg.record["message"]),
@@ -564,14 +523,7 @@ def check_port_methods_headless_safe() -> None:
         f"guard degraded into push_input_image's containment path: {warnings}"
     )
 
-    # The adapter's public sync methods are thin GLib.idle_add wrappers, and
-    # pygobject swallows an exception raised inside an idle callback, so the
-    # exercise() pass above proves little about them. With no main loop the
-    # _run_* bodies, which hold every real guard, never execute. The calls
-    # below reach those bodies directly.
-    #
-    # Each must also return False. A GLib idle/timeout callback that returns
-    # anything truthy re-arms itself forever.
+    # Call idle bodies directly and require False so GLib does not re-arm them.
     run_bodies = [
         ("_run_page_changed", (controller,)),
         ("_run_input_visuals_changed", (controller, identifier, 0, "labels")),
@@ -601,11 +553,7 @@ def check_port_methods_headless_safe() -> None:
     # returns, so it is checked separately from the no-warning assertion.
     assert adapter._run_input_visuals_changed(controller, identifier, 0, "bogus") is False
 
-    # The drain's containment (what keeps a failing preview from throttling
-    # the media writer). The conversion runs in the drain, so a raising
-    # widget does not fail the push: the push admits the frame, and the
-    # drain contains the failure, logs it, and dirty-marks the input so the
-    # frame is not silently lost.
+    # Drain-time conversion failure must log and dirty-mark after admission.
     marking_controller = _FakeController()
     adapter.bind(marking_controller, _fake_key_child(_RaisingButton()))
     adapter._window_mapped = True
@@ -624,9 +572,7 @@ def check_port_methods_headless_safe() -> None:
     )
     adapter.unbind(marking_controller)
 
-    # push_input_image's own except path: a widget lookup that raises at
-    # push time (a child mid-teardown) comes back False, so the engine
-    # dirty-marks, and the failure logs instead of reaching the media tick.
+    # Push-time lookup failure must log and return False for engine dirty-marking.
     class _TornChild:
         def __getattr__(self, name):
             raise RuntimeError("child widget tree is being torn down")
@@ -644,9 +590,7 @@ def check_port_methods_headless_safe() -> None:
     adapter.unbind(torn_controller)
     log.remove(sink_id)
 
-    # on_deck_layout_changed ran inline on the main thread, which is the path
-    # that imports KeyGrid lazily, so the import cycle between ui_adapter and
-    # KeyGrid is broken.
+    # The main-thread layout path must reach its lazy KeyGrid import.
     import sys
     assert "src.windows.mainWindow.elements.KeyGrid" in sys.modules, (
         "the rotation path never reached its lazy KeyGrid import"

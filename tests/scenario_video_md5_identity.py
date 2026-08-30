@@ -1,11 +1,5 @@
-"""get_video_md5 must not bind a digest to the wrong bytes.
-
-The memo keyed by (path, size, float mtime), so a same-size, same-second
-replacement reused the old digest, and a write during the hash could yield a
-digest for bytes no later reader opens. The key now includes device, inode,
-and nanosecond mtime, and the file is re-stat-ed after the hash so a digest is
-memoized only under an identity that held steady across the read.
-"""
+"""Verify stable file identity for video digests; identity changes retry, and
+an exhausted attempt returns its last digest without memoizing it."""
 import fixtures  # noqa: F401  (must be first: isolates DATA_PATH before globals)
 
 import os  # noqa: E402
@@ -50,9 +44,7 @@ def main() -> int:
     toggled = {"n": 0}
 
     def shifting_stat(p, *a, **k):
-        # Return a real stat, but on the SECOND call for this path (the
-        # after-hash re-stat) report a different identity, as a write during
-        # the hash would.
+        # Change the identity only for the post-hash stat.
         st = real_stat(p, *a, **k)
         if p == path:
             toggled["n"] += 1
@@ -67,8 +59,7 @@ def main() -> int:
 
     mtc.os.stat = shifting_stat
     try:
-        # attempts=1 so it does not loop; the after-hash mismatch must prevent
-        # memoization and return the digest unmemoized.
+        # One attempt prevents a retry and returns the last digest without memoizing it.
         digest_c = mtc.get_video_md5(path, attempts=1)
     finally:
         mtc.os.stat = real_stat

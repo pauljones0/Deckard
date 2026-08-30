@@ -1,11 +1,5 @@
-"""Plugin touchscreen media reaches the state through ActionCore.set_media.
-
-ActionCore.set_media returned early for every input but Key and Dial, so a
-plugin action on the touchscreen could not paint media through the public
-seam even though ControllerTouchScreenState implements set_image and
-set_video. This drives the real ActionCore.set_media on a touchscreen action
-and asserts the media lands, mirroring scenario_dial_action_media_restore.
-"""
+"""Verify that ActionCore.set_media paints media through the public touchscreen
+action interface."""
 import json
 import os
 
