@@ -7,10 +7,13 @@ crash or hang cannot corrupt the next scenario.
 
 Usage:
     .venv/bin/python tests/run_all.py [-k SUBSTRING] [--timeout SECONDS]
-                                      [--junit PATH] [--jobs N]
+                                      [--scenario-list PATH] [--junit PATH] [--jobs N]
 """
 import argparse
+from contextlib import suppress
+import os
 import re
+import signal
 import subprocess
 import sys
 import time
@@ -29,34 +32,122 @@ EXPECTED_FAIL_UNTIL_M1: dict[str, str] = {
     # "scenario_example.py": "needs the M1 control queue",
 }
 
+_TERM_GRACE_SECONDS = 3.0
+_KILL_GRACE_SECONDS = 3.0
+
 
 def discover_scenarios() -> list[Path]:
     return sorted(TESTS_DIR.glob("scenario_*.py"))
 
 
+def _decode(output: str | bytes | None) -> str:
+    if output is None:
+        return ""
+    return output.decode(errors="replace") if isinstance(output, bytes) else output
+
+
+def _combine_output(previous: str | bytes | None, current: str | bytes | None) -> str:
+    previous_text = _decode(previous)
+    current_text = _decode(current)
+    if current_text.startswith(previous_text):
+        return current_text
+    return previous_text + current_text
+
+
+def _terminate_process_group(proc: subprocess.Popen[str]) -> tuple[str, str]:
+    with suppress(ProcessLookupError):
+        os.killpg(proc.pid, signal.SIGTERM)
+
+    try:
+        stdout, stderr = proc.communicate(timeout=_TERM_GRACE_SECONDS)
+        return stdout, stderr
+    except subprocess.TimeoutExpired as error:
+        term_stdout, term_stderr = error.stdout, error.stderr
+
+    with suppress(ProcessLookupError):
+        os.killpg(proc.pid, signal.SIGKILL)
+
+    try:
+        stdout, stderr = proc.communicate(timeout=_KILL_GRACE_SECONDS)
+        return (
+            _combine_output(term_stdout, stdout),
+            _combine_output(term_stderr, stderr),
+        )
+    except subprocess.TimeoutExpired as error:
+        return (
+            _combine_output(term_stdout, error.stdout),
+            _combine_output(term_stderr, error.stderr),
+        )
+
+
+def load_scenario_list(path: Path) -> list[Path]:
+    """Load an ordered, tracked list of scenario filenames.
+
+    A list is intentionally filenames only: it cannot escape tests/, and each
+    selected scenario must exist when the harness starts. This makes a CI
+    subset reviewable while preserving the normal discovery path for the full
+    suite.
+    """
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError as error:
+        raise ValueError(f"cannot read scenario list {path}: {error}") from error
+
+    scenarios: list[Path] = []
+    names: set[str] = set()
+    for line_number, line in enumerate(lines, start=1):
+        name = line.partition("#")[0].strip()
+        if not name:
+            continue
+        if Path(name).name != name or not name.startswith("scenario_") or not name.endswith(".py"):
+            raise ValueError(
+                f"{path}:{line_number}: expected a scenario_*.py filename, got {name!r}"
+            )
+        if name in names:
+            raise ValueError(f"{path}:{line_number}: duplicate scenario {name}")
+        scenario = TESTS_DIR / name
+        if scenario.is_symlink():
+            raise ValueError(f"{path}:{line_number}: scenario must not be a symbolic link: {name}")
+        if not scenario.is_file():
+            raise ValueError(f"{path}:{line_number}: scenario does not exist: {name}")
+        try:
+            scenario.resolve(strict=True).relative_to(TESTS_DIR.resolve(strict=True))
+        except (OSError, ValueError) as error:
+            raise ValueError(
+                f"{path}:{line_number}: scenario resolves outside tests/: {name}"
+            ) from error
+        names.add(name)
+        scenarios.append(scenario)
+
+    if not scenarios:
+        raise ValueError(f"{path}: contains no scenarios")
+    return scenarios
+
+
 def run_one(path: Path, timeout: float) -> tuple[bool, str, float]:
     start = time.monotonic()
+    proc = subprocess.Popen(
+        [sys.executable, str(path)],
+        cwd=str(TESTS_DIR),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        start_new_session=True,
+    )
     try:
-        proc = subprocess.run(
-            [sys.executable, str(path)],
-            cwd=str(TESTS_DIR),
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
+        stdout, stderr = proc.communicate(timeout=timeout)
         elapsed = time.monotonic() - start
         ok = proc.returncode == 0
-        output = proc.stdout + proc.stderr
+        output = stdout + stderr
         return ok, output, elapsed
-    except subprocess.TimeoutExpired as e:
+    except subprocess.TimeoutExpired as error:
         elapsed = time.monotonic() - start
-        # TimeoutExpired keeps stdout and stderr as bytes even with
-        # text=True. The capture happens before the text-mode decode step.
-        def _decode(b):
-            if b is None:
-                return ""
-            return b.decode(errors="replace") if isinstance(b, bytes) else b
-        output = _decode(e.stdout) + _decode(e.stderr) + f"\n[TIMED OUT after {timeout}s]"
+        stdout, stderr = _terminate_process_group(proc)
+        output = (
+            _combine_output(error.stdout, stdout)
+            + _combine_output(error.stderr, stderr)
+            + f"\n[TIMED OUT after {timeout}s]"
+        )
         return False, output, elapsed
 
 
@@ -133,6 +224,8 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("-k", dest="substring", default=None,
                          help="only run scenarios whose filename contains this substring")
+    parser.add_argument("--scenario-list", type=Path, default=None,
+                        help="run the ordered scenario_*.py filenames listed in this file")
     parser.add_argument("--timeout", type=float, default=90.0,
                          help="per-scenario timeout in seconds (default: 90)")
     parser.add_argument("-v", "--verbose", action="store_true",
@@ -146,7 +239,16 @@ def main() -> int:
                               "are identical to serial.")
     args = parser.parse_args()
 
-    scenarios = discover_scenarios()
+    if args.substring and args.scenario_list is not None:
+        parser.error("--scenario-list cannot be combined with -k")
+
+    if args.scenario_list is not None:
+        try:
+            scenarios = load_scenario_list(args.scenario_list)
+        except ValueError as error:
+            parser.error(str(error))
+    else:
+        scenarios = discover_scenarios()
     if args.substring:
         scenarios = [s for s in scenarios if args.substring in s.name]
 
