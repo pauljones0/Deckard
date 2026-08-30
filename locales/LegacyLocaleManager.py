@@ -14,9 +14,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 """
 import os
 import json
-import locale
 from loguru import logger as log
 from typing import cast, Any
+
+from locales.locale_resolution import os_default_language, resolve_best_match
 
 class LegacyLocaleManager:
     def __init__(self, locales_path: str):
@@ -36,8 +37,7 @@ class LegacyLocaleManager:
             self.fallback_json = json.load(f)
 
     def set_to_os_default(self) -> None:
-        os_locale = locale.getlocale()[0]
-        self.set_language(self.FALLBACK_LOCALE if os_locale is None else os_locale)
+        self.set_language(os_default_language(self.FALLBACK_LOCALE))
 
     def set_language(self, language: str) -> None:
         language = self.get_best_match(language)
@@ -76,15 +76,5 @@ class LegacyLocaleManager:
         return locales
     
     def get_best_match(self, preferred_language: str) -> str:
-        # Get all available locales
-        available_locales = self.get_availbale_locales()
-        # Return preferred language if it exists
-        if preferred_language in available_locales:
-            return preferred_language
-
-        # Get primary language code (eg. en for en_US)
-        primary_language_code = preferred_language.split("_")[0]
-        for language in available_locales:
-            if language.startswith(primary_language_code):
-                return cast(str, language)
-        return self.FALLBACK_LOCALE
+        return resolve_best_match(
+            preferred_language, self.get_availbale_locales(), self.FALLBACK_LOCALE)

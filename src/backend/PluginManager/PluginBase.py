@@ -31,6 +31,7 @@ from gi.repository import Gtk, Adw, Gdk
 import globals as gl
 
 from locales.LegacyLocaleManager import LegacyLocaleManager
+from locales.translator import Translator
 from src.backend.PluginManager.ActionHolder import ActionHolder
 from src.backend.PluginManager.backend_event_hold import BackendEventHold
 from src.backend.PluginManager.EventHolder import EventHolder
@@ -139,7 +140,9 @@ class PluginBase(rpyc.Service):
         # never the reverse.
         self._settings_lock = threading.Lock()
 
-        self.locale_manager: LegacyLocaleManager | LocaleManager
+        # The two storage adapters share the Translator surface, which is
+        # all a plugin reads through this attribute.
+        self.locale_manager: Translator
         if use_legacy_locale:
             self.locale_manager = LegacyLocaleManager(os.path.join(self.PATH, legacy_dir))
         else:
