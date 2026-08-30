@@ -115,9 +115,8 @@ class MainWindow(Adw.ApplicationWindow):
         self.main_box.append(self.main_stack)
 
         # Add the main stack as the content widget of the split view
-        # set_content above binds the page. This only asks the collapsed
-        # view to show content rather than sidebar, and the page it used to
-        # carry reached the C call as a plain True.
+        # set_content above binds the page; this selects content when collapsed.
+        # Do not pass a page here because the property expects a boolean.
         self.split_view.set_show_content(True)
 
         # Main toast
@@ -184,9 +183,8 @@ class MainWindow(Adw.ApplicationWindow):
         self.copy_action = Gio.SimpleAction.new("copy", None)
         self.cut_action = Gio.SimpleAction.new("cut", None)
         self.paste_action = Gio.SimpleAction.new("paste", None)
-        # Not self.remove_action: Gio.ActionMap gives every window a
-        # remove_action() method, and binding over it makes that method
-        # uncallable on this window.
+        # Do not use self.remove_action because Gio.ActionMap already defines that method.
+        # Binding over it would make the window method uncallable.
         self.remove_input_action = Gio.SimpleAction.new("remove", None)
 
         # Connect actions
@@ -205,11 +203,8 @@ class MainWindow(Adw.ApplicationWindow):
 
 
     def add_accel_actions(self) -> None:
-        # Inert, so the four actions init_actions builds never reach this
-        # window and the accelerators for them resolve to nothing. Every
-        # KeyButton and every Dial adds a Gtk.ShortcutController of its own
-        # for the same keys, as does each ScreenBar, and that is what serves
-        # them.
+        # Do not install window accelerator actions.
+        # KeyButton, Dial, and ScreenBar serve the same keys through their own shortcut controllers.
         return
 
     def remove_accel_actions(self) -> None:
@@ -331,10 +326,8 @@ class MainWindow(Adw.ApplicationWindow):
         GLib.idle_add(self._add_toast, text, Adw.ToastPriority.NORMAL, 3)
 
     def show_error_toast(self, text: str) -> None:
-        # Safe from any thread. An error toast stays longer and jumps the
-        # queue, because it explains missing functionality, such as a plugin
-        # that failed to load. A caller reaches this from a background
-        # thread, such as a plugin load or a store load.
+        # Safe from any thread; error toasts use high priority and a seven-second timeout.
+        # Background plugin and store loads can call this method.
         GLib.idle_add(self._add_toast, text, Adw.ToastPriority.HIGH, 7)
 
     def _add_toast(self, text: str, priority: Adw.ToastPriority, timeout: int) -> bool:
@@ -347,27 +340,16 @@ class MainWindow(Adw.ApplicationWindow):
         return GLib.SOURCE_REMOVE
 
     def get_deck_stack(self) -> "DeckStack | None":
-        """The deck stack, or None while the window is still building it.
-
-        leftArea and its deck_stack bind inside build(), which runs after the
-        window publishes itself as the app's main window. A caller that reaches
-        this in that gap, such as a USB plug event on the media thread, gets
-        None rather than an AttributeError. The typed access makes a wrong
-        attribute name a check-time error, which a dotted string never caught.
-        """
+        """Return the deck stack, or None while the published window is still building.
+        This guard lets early media-thread USB events avoid AttributeError."""
         try:
             return self.leftArea.deck_stack
         except AttributeError:
             return None
 
     def get_sidebar(self) -> "Sidebar | None":
-        """The sidebar, or None while the window is still building it.
-
-        The sidebar binds inside build(), after the window publishes itself.
-        Every attribute a caller reads on it (active_identifier, page_selector,
-        action_chooser, key_editor) binds in Sidebar.__init__, so a built
-        sidebar carries them all and this one guard covers each site.
-        """
+        """Return the sidebar, or None while the published window is still building.
+        A built Sidebar initializes all attributes that callers access."""
         try:
             return self.sidebar
         except AttributeError:
@@ -383,17 +365,12 @@ class MainWindow(Adw.ApplicationWindow):
         return cast("DeckController | None", visible_child.deck_controller)
 
     def get_active_page(self) -> Page | None:
-        """The page that the selected deck shows, or None.
-
-        The result is None while nothing is selected and nothing is loaded.
-        A caller must accept None, which is the normal state between the deck
-        selection and the first page load.
-        """
+        """Return the selected deck's active page, or None.
+        None is normal before deck selection or the first page load."""
         controller = self.get_active_controller()
         if controller is None:
-            # Return None here. gl.page_manager has no dummy_page attribute,
-            # so a read of one raises AttributeError instead of reporting
-            # that no page exists.
+            # Report an absent page directly.
+            # The page manager has no dummy-page fallback.
             return None
         if hasattr(controller, "active_page"):
             return controller.active_page

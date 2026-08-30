@@ -34,10 +34,8 @@ class StateSwitcher(Gtk.ScrolledWindow):
         self.switch_callbacks: list[Callable[[], object]] = []
         self.add_new_callbacks: list[Callable[[int], object]] = []
 
-        # The visible-child-name handler id, or None while the stack is
-        # disconnected. A tracked id keeps connect and disconnect idempotent: a
-        # disconnect while already off cannot raise, and a reconnect cannot
-        # stack a second handler.
+        # Visible-child-name handler ID, or None while disconnected.
+        # Tracking keeps connect and disconnect idempotent.
         self._switch_handler: int | None = None
 
         self.build()
@@ -91,10 +89,8 @@ class StateSwitcher(Gtk.ScrolledWindow):
         if c_input is None:
             return
 
-        # The input owns the state list and tells the sidebar to reload, so
-        # this adds no stack child of its own and fires no add callback. The
-        # code that did opened with a return and read three attributes that a
-        # controller does not carry.
+        # The input owns the state list and tells the sidebar to reload.
+        # Do not add a stack child or fire the add callback here.
         c_input.add_new_state()
 
     def get_selected_state(self) -> int:

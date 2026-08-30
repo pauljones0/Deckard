@@ -103,11 +103,8 @@ class ScreenEditor(Gtk.ScrolledWindow):
         if controller is None:
             return
         
-        # Show the state, and never select it. This runs to mirror the input,
-        # and every caller carries whatever state it last held, so a selection
-        # from here moves the input to a state the user did not pick and the
-        # page keeps what it is moved to. A user-driven switch selects the
-        # state in the state switcher's own handler, before this runs.
+        # Show the state without selecting it because this load only mirrors the input.
+        # User-driven switches select the state in the switcher's handler before this load.
         self.state_switcher.load_for_identifier(identifier, state)
 
         self.remove_state_button.set_visible(self.state_switcher.get_n_states() > 1)

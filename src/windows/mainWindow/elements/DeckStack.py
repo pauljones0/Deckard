@@ -77,30 +77,16 @@ class DeckStack(Gtk.Stack):
             return
         deck_number, deck_type = attr
 
-        # Clear the earlier binding before the construction of the new child.
-        # KeyGrid.__init__ calls load_from_changes() during the construction,
-        # and its touchscreen branch replays the dirty markers into whatever
-        # screenbar it resolves. On a window rebuild a stale binding feeds
-        # those markers to dead widgets, and the new screenbar has nothing to
-        # replay on the map. Without a binding the replay defers, and the
-        # markers survive for the new widgets.
-        #
-        # The lookup is duck-typed and not an isinstance(GtkUIAdapter) test. A
-        # wrapper port, such as a recording port in a test or an IPC
-        # forwarder, implements the same bind and unbind pair without
-        # inheriting, and an isinstance gate drops every binding for it.
+        # Unbind before child construction to keep hidden-image replay off stale widgets.
+        # Duck typing keeps wrapper ports compatible with the bind/unbind contract.
         adapter = ui_port.get()
         unbind = getattr(adapter, "unbind", None)
         if callable(unbind):
             unbind(deck_controller)
         page = DeckStackChild(self, deck_controller)
         self.add_titled(page, deck_number, deck_type)
-        # Bind by reference, and only after the child reaches the stack. A
-        # lookup by stack-child name reads the serial from the device again,
-        # and it misses for good when either read is wrong, which USB
-        # contention at boot causes, or when the window rebuilds. A bind after
-        # add_titled also keeps an exception during the construction from
-        # leaving the controller bound to a child that is not in the stack.
+        # Bind by reference after insertion to avoid another device serial read.
+        # This prevents construction failure from binding a child absent from the stack.
         bind = getattr(adapter, "bind", None)
         if callable(bind):
             bind(deck_controller, page)
@@ -112,39 +98,21 @@ class DeckStack(Gtk.Stack):
         self.main_window.reload_sidebar()
             
     def base_title(self, deck_controller: "DeckController", serial_number: str) -> str:
-        """What this deck is called, before any duplicate suffix.
-
-        The name the user chose in the deck settings wins, and the model name
-        the device reports stands in while there is none. DeckSettings answers
-        a string for every input, so this does too. A caller that received
-        None here would have no label to put in the switcher and no way to
-        tell why one is missing.
-        """
+        """Return the configured deck name before any duplicate suffix.
+        Use the device model name when no custom name exists and always return a string."""
         try:
             model_name = deck_controller.deck.deck_type()
         except Exception as e:
-            # deck_type reads a model string the handle already holds, so this
-            # takes no device lock. It still raises once the handle is gone: a
-            # deck unplugged between the serial read and this call gets a
-            # title from its settings and then from its serial.
+            # deck_type needs no device lock but can raise after the handle is gone.
+            # An unplugged deck then falls back through its settings and serial.
             log.error(e)
             model_name = None
         return gl.settings_manager.deck(
             self._settings_serial(deck_controller, serial_number)).display_name(model_name)
 
     def _settings_serial(self, deck_controller: "DeckController", fallback: str) -> str:
-        """The serial this deck's settings are keyed on.
-
-        The deck settings key on the serial the device reports now, which is
-        the key the settings pane writes under (DeckSettingsPage reads
-        deck.get_serial_number()) and the key every other settings reader in
-        the tree uses. The stack-child name keys on the memoized first read
-        instead, so a later device read that differs never renames a live
-        child. Those two can differ at boot under USB contention, and the name
-        the user saved must read back under the same key it was written, so
-        this reads the device afresh and falls back to the memoized serial
-        only when that read fails.
-        """
+        """Return the current device serial used for deck settings.
+        Fall back to the memoized stack serial only when the fresh read fails."""
         try:
             return deck_controller.deck.get_serial_number()
         except Exception as e:
@@ -152,16 +120,8 @@ class DeckStack(Gtk.Stack):
             return fallback
 
     def unique_title(self, base_title: str) -> str:
-        """base_title, with a "(n)" suffix while the stack already shows it.
-
-        The suffix goes after the whole base title and never changes what is
-        inside it, because that turns a second "Stream Deck MK.2" into a
-        "Stream Deck MK.3". Two decks the user gave one name therefore read
-        "Name" and "Name (2)".
-
-        This records the title it hands out, so the next caller finds it
-        taken.
-        """
+        """Return and reserve base_title with a "(n)" suffix when already shown.
+        Append the suffix to the complete title so names such as "Stream Deck MK.2" stay intact."""
         title = base_title
         suffix = 2
         while title in self.deck_names:
@@ -175,9 +135,8 @@ class DeckStack(Gtk.Stack):
             return self.deck_attributes[deck_controller]
 
         try:
-            # Use the cached accessor of the controller, not a fresh device
-            # read. This string becomes the stack-child name, and every reader
-            # must see one value, even when a later device read differs.
+            # Use the cached serial for the stack-child name.
+            # Every reader must keep one value even if a later device read differs.
             serial_number = deck_controller.serial_number()
         except Exception as e:
             log.error(e)
@@ -191,21 +150,8 @@ class DeckStack(Gtk.Stack):
         return deck_number, title
 
     def refresh_page_title(self, deck_controller: "DeckController") -> None:
-        """Retitle the live stack child of this deck from its settings.
-
-        The name row of the deck settings calls this after it saves. The old
-        title leaves the taken list first, or the deck collides with the title
-        it is giving up and takes a "(2)" of its own.
-
-        This renames one deck only. A deck that carried "Studio (2)" because
-        this deck held "Studio" keeps its "(2)" after this deck renames away,
-        until the stack is rebuilt and the titles are assigned in order again.
-        The suffix is cosmetic and self-heals on that rebuild, so a full
-        renumber of every other deck's title on each rename is not worth the
-        churn on the stack.
-
-        Main thread only. It touches the stack.
-        """
+        """Retitle this live stack child from its settings on the main thread.
+        Release its old title first; other duplicate suffixes remain until the stack rebuilds."""
         attr = self.deck_attributes.get(deck_controller)
         if attr is None:
             return
@@ -241,10 +187,8 @@ class DeckStack(Gtk.Stack):
                 self.remove(page.get_child())
                 break
 
-        # Drop the cached attributes of the controller, whether or not it was
-        # visible. deck_attributes is keyed by the controller object, so an
-        # entry that stays keeps the dead controller reachable, and each
-        # unplug and replug adds one more stale entry.
+        # Drop cached attributes even when the controller was not visible.
+        # A retained object key would keep the dead controller reachable across replugs.
         attr = self.deck_attributes.pop(deck_controller, None)
         if attr is not None:
             deck_number, _deck_type = attr

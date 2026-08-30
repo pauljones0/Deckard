@@ -47,15 +47,8 @@ from src.windows.mainWindow.lazy_map import LazyMapTasks
 
 
 def _slideshow_summary_text(image_count: int) -> str:
-    """The label under the slideshow controls. Two or more images make a
-    rotation; fewer means the single-image background is in effect. A free
-    function, not a method, so the settings-page test can drive load_defaults
-    without binding it onto its row stub.
-
-    The label is cosmetic, so it reads empty when no locale manager is
-    installed. Only the settings-row test reaches that state, because it drives
-    load_defaults without the build() that reads every other localized string.
-    """
+    """Return the slideshow label; two or more images form a rotation.
+    Return an empty cosmetic label when no locale manager is installed."""
     lm = gl.lm
     if lm is None:
         return ""
@@ -85,10 +78,8 @@ class BackgroundMediaRow(LazyMapTasks, Adw.PreferencesRow):
         self.on_map_tasks = []
         self.connect("map", self.on_map)
 
-        # The handler id per widget key, absent while that widget is
-        # disconnected. Tracked ids keep connect and disconnect idempotent: a
-        # disconnect while already off cannot raise, and a reconnect cannot
-        # stack a second handler.
+        # Handler ID by widget key, absent while disconnected.
+        # Tracking keeps connect and disconnect idempotent.
         self._handlers: dict[str, int] = {}
 
         self.build()
@@ -128,9 +119,8 @@ class BackgroundMediaRow(LazyMapTasks, Adw.PreferencesRow):
         self.adjust_view_button.connect("clicked", self.on_adjust_view)
         self.media_selector.append(self.adjust_view_button)
 
-        # Slideshow controls. Add appends an image to the rotation, seeding the
-        # list from the single media-path so the first added image joins the
-        # existing background. Clear drops the list back to the single image.
+        # Add seeds the rotation from the single background before appending an image.
+        # Clear returns to the single-image background.
         self.slideshow_buttons = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, halign=Gtk.Align.CENTER,
                                          spacing=10, margin_top=10)
         self.config_box.append(self.slideshow_buttons)
@@ -231,13 +221,10 @@ class BackgroundMediaRow(LazyMapTasks, Adw.PreferencesRow):
             return
         self.disconnect_signals()
         try:
-            # One read, and read-only: the missing keys show the deck-settings
-            # schema's defaults without being written into the file. Persisting
-            # them here is what made a deck background loop or not depending on
-            # whether anyone had ever opened this page.
+            # Read one section without persisting missing schema defaults.
+            # Opening this page must not change deck background behavior.
             config = gl.settings_manager.deck(self.deck_serial_number).section("background")
 
-            # Update ui
             self.enable_switch.set_active(config["enable"])
             self.config_box.set_visible(config["enable"])
             self.loop_switch.set_active(config["loop"])
@@ -274,10 +261,8 @@ class BackgroundMediaRow(LazyMapTasks, Adw.PreferencesRow):
         settings = gl.settings_manager.deck(self.deck_serial_number)
         settings.set("background", "loop", state)
 
-        # Save
         settings.save()
 
-        # Update
         controller = self.settings_page.deck_controller
         page = controller.active_page
         if page is not None:
@@ -418,10 +403,8 @@ class BackgroundMediaRow(LazyMapTasks, Adw.PreferencesRow):
         settings = gl.settings_manager.deck(self.deck_serial_number)
         paths = list(settings.get("background", "media-paths") or [])
         if not paths:
-            # Seed the rotation from the single background already set, so the
-            # first added image joins it rather than starting a fresh list of
-            # one that hides the existing image. Its view travels with it as
-            # a list-entry view; the single-media view key is then spent.
+            # Seed from the single background so the first added image does not hide it.
+            # Move its view into the list entry and clear the spent single-media view key.
             current = settings.get("background", "media-path")
             if current:
                 current_view = view_as_setting(normalize_view(settings.get("background", "view")))
