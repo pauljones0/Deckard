@@ -1,11 +1,4 @@
-"""The dialog that turns a zip archive or a folder of pictures into a pack.
-
-It collects a name, an optional description, an optional banner and the
-archive or folder to read, and then hands all four to pack_import on a worker
-thread. The file dialogs and every widget here run on the main loop, and the
-scan, the copy and the unpack do not, because they read and write the disk.
-"""
-# Import gtk modules
+"""Build icon packs from an archive or folder, with GTK on-main and disk I/O off-main."""
 import os
 import threading
 
@@ -96,8 +89,6 @@ class ImportPackDialog(Adw.MessageDialog):
         self.banner_row.add_suffix(self.banner_button)
         self.group.add(self.banner_row)
 
-    # Collecting the answers
-
     def on_changed(self, *_args: Any) -> None:
         """A pack needs a name and something to read. Until both are there,
         the import response stays off rather than fail behind the dialog."""
@@ -131,8 +122,6 @@ class ImportPackDialog(Adw.MessageDialog):
         self.banner_path = path
         self.banner_row.set_subtitle(path)
 
-    # Doing the work
-
     def on_response(self, _dialog: Adw.MessageDialog, response: str) -> None:
         if response != "import":
             return
@@ -140,10 +129,7 @@ class ImportPackDialog(Adw.MessageDialog):
         if source is None:
             return
         if pack_import.import_is_running():
-            # A second import while one runs would race the first over the
-            # pack folders and the grid reload. The button that opens this
-            # dialog is guarded too; this is the guard for the dialog that is
-            # already open.
+            # Reject a second import before it races pack folders and grid reload
             return
         name = self.name_row.get_text().strip()
         description = self.description_row.get_text().strip()
@@ -177,11 +163,7 @@ class ImportPackDialog(Adw.MessageDialog):
 
         asset_manager = self.pack_chooser.asset_manager
         if gl.asset_manager is not asset_manager:
-            # The asset manager window closed while the import ran, so GTK is
-            # disposing its widgets. Touch none of them: a reload of a
-            # destroyed grid, a cursor on a gone window and a dialog transient
-            # for it all raise or warn. The pack is on disk, and the next open
-            # of the window reads it.
+            # Do not touch disposed widgets; the next window reads the imported pack
             return GLib.SOURCE_REMOVE
 
         asset_manager.set_cursor_from_name("default")
@@ -203,13 +185,7 @@ class ImportPackDialog(Adw.MessageDialog):
 
 
 class _FileChoice(Gtk.FileDialog):
-    """One file-dialog round trip that hands a path back to a callback.
-
-    Gtk.FileDialog answers on the main loop, and its finish call raises when
-    the user cancels, so each of the two forms has its own small handler. It
-    follows ChooseFileDialog of the custom-asset chooser, which is the file
-    dialog this window already uses.
-    """
+    """Return a local file or folder path from an asynchronous Gtk.FileDialog."""
 
     def __init__(self, dialog: ImportPackDialog, on_path: Callable[[str], None],
                  file_filter: "Gtk.FileFilter | None" = None, **kwargs: Any) -> None:

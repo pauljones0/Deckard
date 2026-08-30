@@ -35,7 +35,7 @@ from src.windows.Store.StorePage import StorePage
 
 class Store(Gtk.ApplicationWindow):
     def __init__(self, main_window: "MainWindow", *args: Any, **kwargs: Any) -> None:
-        super().__init__(  # GObject.__init__ takes properties by keyword only, so the properties are named and *args only forwards what a caller added
+        super().__init__(  # GObject properties are keyword-only; *args forwards caller additions
             title="Store",
             default_width=1050,
             default_height=750,
@@ -48,9 +48,7 @@ class Store(Gtk.ApplicationWindow):
         self.backend = gl.store_backend
 
         self.currently_downloading: bool = False # Used to prevent multiple downloads because this may lead to errors during plugin initialization
-        # Serializes install/uninstall/update across previews. The bool above
-        # is informational; the lock is what prevents concurrent downloads
-        # (the old check-then-set poll on the bool was racy).
+        # The lock serializes preview downloads; the bool only reports state
         self.download_lock = threading.Lock()
 
         self.build()
@@ -81,12 +79,7 @@ class Store(Gtk.ApplicationWindow):
         self.back_button.connect("clicked", self.on_back_button_click)
         self.header.pack_start(self.back_button)
 
-        # Every page builds its cheap widget skeleton here, so the
-        # StackSwitcher shows all tabs at once and no outside code meets a
-        # missing page attribute. Only the first tab, Plugins, starts its
-        # network fetch and content population at once, which StorePage.load()
-        # performs and which costs the time. The other three wait for
-        # on_switch(), when each first becomes the visible child.
+        # Build all tab shells now; fetch only Plugins until another tab is visible
         self.plugin_page = PluginPage(store=self)
         self.icon_page = StoreAssetPage(store=self, descriptor=asset_types.ICON)
         self.wallpaper_page = StoreAssetPage(store=self, descriptor=asset_types.WALLPAPER)
@@ -97,10 +90,7 @@ class Store(Gtk.ApplicationWindow):
         self.main_stack.add_titled(self.wallpaper_page, "Wallpapers", gl.lm.get("store.wallpapers.section"))
         self.main_stack.add_titled(self.sd_plus_bar_wallpaper_page, "sdPlusBarWallpapers", gl.lm.get("store.sdPlusBarWallpapers.section"))
 
-        # Load the first tab here, so the store shows content as soon as it
-        # opens. Do not rely on the notify that add_titled sends when the
-        # first child becomes visible. The ensure_loaded() call in on_switch
-        # can also arrive first, and both calls are idempotent.
+        # Load the first tab directly; ensure_loaded is idempotent with switch events
         self.plugin_page.ensure_loaded()
 
     def on_back_button_click(self, button: Gtk.Button) -> None:

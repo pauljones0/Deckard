@@ -25,10 +25,7 @@ from src.windows.AssetManager.WallpaperPacks.Wallpapers.WallpaperChooser import 
 
 
 class WallpaperPackChooserStack(GenericPackChooserStack[WallpaperChooserPage]):
-    # This stack takes no show_for_path. AssetChooser.show_for_path is the one
-    # entry point for a pre-selection, and it routes to the custom-asset
-    # chooser or to the icon-pack stack. A wallpaper pre-selection needs that
-    # routing first, and the tab switch that goes with it.
+    # Pre-selection routes only to custom assets or icon packs, not this stack
     PACK_CHOOSER_CLASS = WallpaperPackChooser
     LEAF_CHOOSER_CLASS = WallpaperChooserPage
     LEAF_CHILD_TITLE = "Wallpaper Chooser"

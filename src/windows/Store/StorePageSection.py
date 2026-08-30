@@ -90,19 +90,14 @@ class StorePageSection(Gtk.Stack):
         author = item.author_label.get_text().lower()
         description = item.description_label.get_text().lower()
 
-        # Compare the rounded scores. rapidfuzz returns a float, and a ratio
-        # of exactly 20 comes back as 19.999999999999996, one unit in the last
-        # place below the threshold, which drops a matching card such as "p"
-        # against "OS Plugin". sort_func keeps the unrounded scores for a
-        # finer ranking.
+        # Round for the inclusive threshold; retain raw scores for finer sorting
         name_score = round(fuzz.ratio(search_string, name))
         author_score = round(fuzz.ratio(search_string, author))
         description_score = round(fuzz.ratio(search_string, description))
 
         MIN_FUZZY_SCORE = 20
 
-        # bool() for the CI checker, where rapidfuzz is uninstalled and its
-        # scores read as Any; the local venv sees this as bool already.
+        # Normalize the dynamically typed rapidfuzz comparison to bool
         return bool(
                 name_score >= MIN_FUZZY_SCORE or
                 author_score >= MIN_FUZZY_SCORE or
@@ -122,8 +117,7 @@ class StorePageSection(Gtk.Stack):
             description_score = fuzz.ratio(search_string, description)
 
             # Adjust weights as desired
-            # float() for the same reason as the bool() in filter_func: the CI
-            # checker has no rapidfuzz, so its scores read as Any there.
+            # Normalize the dynamically typed rapidfuzz expression to float
             return float((name_score * 0.7) + (author_score * 0.25) + (description_score * 0.05))
 
         if search_string == "":

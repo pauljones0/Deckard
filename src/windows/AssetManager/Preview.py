@@ -31,10 +31,7 @@ if TYPE_CHECKING:
 
 
 class _PixbufUnset(enum.Enum):
-    # Separates a caller that passed a pixbuf, which can be None when the
-    # decode failed and the broken-image icon must show, from a caller that
-    # said nothing about an image. A single-member enum, so the identity
-    # check below narrows the union for the checker.
+    # Distinguish an omitted pixbuf from an explicit failed-decode None
     TOKEN = enum.auto()
 
 
@@ -42,10 +39,7 @@ _PIXBUF_UNSET = _PixbufUnset.TOKEN
 
 
 class Preview(Gtk.FlowBoxChild):
-    # The grid that pools a card sets this to its off-main thumbnail loader, so
-    # set_image hands the decode to a worker instead of running it on the main
-    # loop. A card built outside a grid keeps None and decodes inline. See
-    # DynamicFlowBox and thumbnail_loader.
+    # Pooled cards use an off-main loader; standalone cards decode inline
     _thumbnail_loader: "ThumbnailLoader | None" = None
 
     def __init__(self, image_path: str | os.PathLike[str] | None = None, text:str | None = None, can_be_deleted: bool = False,
@@ -97,9 +91,7 @@ class Preview(Gtk.FlowBoxChild):
                                margin_start=20, margin_end=20)
         self.main_box.append(self.label)
 
-        # A second line under the name, hidden until a caller sets one. A grid
-        # that gathers its assets from several packs names the pack of each
-        # card here, because the name alone does not say where it came from.
+        # Optional second line identifies each pack in cross-pack results
         self.subtitle = Gtk.Label(xalign=0.5, hexpand=False, ellipsize=Pango.EllipsizeMode.END, max_width_chars=20,
                                   margin_start=20, margin_end=20, visible=False,
                                   css_classes=["dim-label", "caption"])
@@ -115,20 +107,8 @@ class Preview(Gtk.FlowBoxChild):
 
     @staticmethod
     def decode_pixbuf(path: str | os.PathLike[str] | None) -> GdkPixbuf.Pixbuf | None:
-        """Decode path at preview size, or return None on a failed decode.
-
-        A missing, corrupt or unreadable file returns None. This method touches
-        no widget, because a GdkPixbuf decode is file I/O and not GTK work, so
-        it is safe off the main thread.
-        """
-        # The decode is slow, about 17 ms for a store thumbnail and about
-        # 110 ms for an oversized one, so a run inside a main-loop callback
-        # freezes the window for a whole pack grid. The pack choosers therefore
-        # decode on their build worker and pass the result to set_pixbuf.
-        # The None check runs before any fspath() call, because fspath(None)
-        # raises and a str(None) would give the true string "None". The decode also needs the guard, because a
-        # corrupt or unreadable file raises GLib.Error, which kills the idle
-        # and leaves the recycled cell on a stale image.
+        """Decode at preview size; safe off-main, returning None for unreadable files."""
+        # Check None before fspath and catch corrupt-file errors to clear recycled cells
         if path is None:
             return None
 
@@ -148,12 +128,7 @@ class Preview(Gtk.FlowBoxChild):
             return None
 
     def set_image(self, path: str | os.PathLike[str]) -> None:
-        """Show the thumbnail at path.
-
-        A card that a grid pools has a thumbnail loader, and the decode goes to
-        a worker: this returns at once and set_pixbuf lands later, on the main
-        loop. A card without a loader decodes inline, as before.
-        """
+        """Decode through the grid loader when present, else inline."""
         loader = self._thumbnail_loader
         if loader is None:
             self.set_pixbuf(self.decode_pixbuf(path))
@@ -172,11 +147,7 @@ class Preview(Gtk.FlowBoxChild):
         self.broken_icon.set_visible(False)
 
     def show_broken_image(self) -> None:
-        """Mark this preview as broken.
-
-        It clears the pixbuf, which can come from a recycled cell, and shows
-        the themed image-missing icon.
-        """
+        """Clear any recycled pixbuf and show the missing-image icon."""
         self.pixbuf = None
         self.picture.set_pixbuf(None)
         self.broken_icon.set_visible(True)
@@ -185,11 +156,7 @@ class Preview(Gtk.FlowBoxChild):
         self.label.set_text(text)
 
     def set_subtitle(self, text: str | None) -> None:
-        """Show a second line under the name, or None for no second line.
-
-        A recycled card carries the second line of the item it showed before,
-        so every rebind sets this, and None is what takes the line away.
-        """
+        """Replace a recycled card's subtitle, or hide it for None."""
         self.subtitle.set_text(text or "")
         self.subtitle.set_visible(text is not None and text != "")
 

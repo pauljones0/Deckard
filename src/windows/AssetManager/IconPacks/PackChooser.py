@@ -53,9 +53,7 @@ class IconPackChooser(GenericPackChooserPage["IconPack", "IconPackChooserStack"]
 
     def __init__(self, stack: "IconPackChooserStack", asset_manager: "AssetManager") -> None:
         super().__init__(stack, asset_manager)
-        # The nav box already holds the search entry, and this sits beside it.
-        # The base constructor built that box on this thread, which is the
-        # main one, so the button goes in here rather than in the build worker.
+        # Add beside the search entry on the main thread, not in the build worker
         self.import_button = Gtk.Button(
             label=gl.lm.get("asset-chooser.icon-packs.import"),
             margin_start=15, valign=Gtk.Align.CENTER)
@@ -63,9 +61,7 @@ class IconPackChooser(GenericPackChooserPage["IconPack", "IconPackChooserStack"]
         self.nav_box.append(self.import_button)
 
     def on_import_clicked(self, _button: Gtk.Button) -> None:
-        # One import at a time. A second while the first still copies would
-        # race the first over the pack folders and the grid reload, so the
-        # button does nothing until the running import finishes.
+        # Reject concurrent imports that would race pack folders and grid reload
         if pack_import.import_is_running():
             return
         ImportPackDialog(self).present()

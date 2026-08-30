@@ -79,17 +79,11 @@ SEARCH_SCORE_THRESHOLD = SCORE_CONTAINS
 # battery_charging_full, battery-charging-full and battery.charging.full.
 _SEPARATORS = re.compile(r"[\s_\-./\\+]+")
 
-# A ranker drops its memo when it grows past this. One pack of icons is about
-# 12000 names, so a search of a whole installation still memoizes every name,
-# and no ranker holds a memo without an end.
+# Bound the memo above one typical 12,000-name pack but below unbounded growth
 _MEMO_LIMIT = 50000
 
-# The ranking key of a name: the negated score first, so a plain ascending sort
-# puts the best match first; then where the query tokens sit in the name, so an
-# earlier hit wins a tie; then the length of the name, so the shorter of two
-# equal hits wins; then the normalized name, so the order never depends on the
-# order the caller passed the names in. An empty query scores every name the
-# same and leaves the length out, so only the name orders it.
+# Sort by negated score, hit positions, length, then normalized name
+# Empty queries omit length so alphabetical order remains
 RankKey = tuple[int, int, int, str]
 
 
@@ -99,11 +93,7 @@ def normalize(text: str) -> str:
 
 
 def _token_score(name: str, token: str) -> tuple[int, int]:
-    """The rung one token stands on in a normalized name, and where it hits.
-
-    The position is the index of the match the rung comes from, and -1 when
-    the name does not hold the token at all.
-    """
+    """Return a token's score rung and match index, or -1 when absent."""
     if name == token:
         return SCORE_EXACT, 0
     if name.startswith(token):
@@ -122,15 +112,9 @@ def _token_score(name: str, token: str) -> tuple[int, int]:
 
 
 class QueryRanker:
-    """One query, scored against as many names as the caller has.
+    """Memoize name ranks for one query.
 
-    It memoizes the key of each name, because a comparator asks for the same
-    name once per comparison, which is O(n log n) times over a grid of
-    thousands. Build one per query and throw it away when the query changes.
-
-    Two threads may score against one ranker. They can duplicate the work of a
-    name that neither has memoized yet, and that is the whole cost: each call
-    computes its own key, and a dict write is atomic.
+    Concurrent misses can duplicate computation, but each key and dict write is independent.
     """
 
     def __init__(self, query: str) -> None:
@@ -160,15 +144,9 @@ class QueryRanker:
         return -self.rank_key(name)[0]
 
     def matches(self, name: str, threshold: int = SEARCH_SCORE_THRESHOLD) -> bool:
-        """Whether name earns a place in the grid.
-
-        A caller that wants only the names holding a whole word of the query
-        passes SCORE_WORD_PREFIX as the threshold.
-        """
+        """Whether name reaches the threshold, such as SCORE_WORD_PREFIX."""
         if self.is_empty:
-            # The resting state of every grid. Answering it here costs no
-            # normalize and leaves no memo behind, which matters because this
-            # runs once per name in the pack on every pass.
+            # Empty queries avoid normalization and leave no per-name memo
             return True
         return self.score(name) >= threshold
 
@@ -186,11 +164,7 @@ class QueryRanker:
     def _compute(self, name: str) -> RankKey:
         normalized = normalize(name)
         if self.is_empty:
-            # Every name answers an empty query alike, so the score and the
-            # position are the same for all of them and the length is left
-            # out. Only the name then orders the grid. Carrying the length
-            # here would order it by how long its names are, which reads as no
-            # order at all.
+            # Equal score, position, and length leave empty queries alphabetical
             return (-SCORE_EXACT, 0, 0, normalized)
         if normalized == self._query_normalized:
             return (-SCORE_EXACT, 0, len(normalized), normalized)
@@ -204,9 +178,7 @@ class QueryRanker:
         for token in self._tokens:
             rung, position = _token_score(normalized, token)
             if rung == SCORE_NO_MATCH and " " in normalized:
-                # A pack can write one word with a separator inside it, such
-                # as wi-fi for wifi. Try the name without its separators
-                # before giving the token up.
+                # Retry joined names so a token such as wifi matches wi-fi
                 if stripped is None:
                     stripped = normalized.replace(" ", "")
                 rung, position = _token_score(stripped, token)
@@ -219,20 +191,13 @@ class QueryRanker:
         return (-worst, positions, len(normalized), normalized)
 
 
-# The ranker of the query that was scored last. Every call below goes through
-# it, so a filter pass and the sort pass that follows share one memo, and a
-# keystroke that changes the query drops it.
+# Share one memo between filter and sort until the query changes
 _cache_lock = threading.Lock()
 _cached_ranker: QueryRanker | None = None
 
 
 def ranker(query: str) -> QueryRanker:
-    """The ranker for query, reusing the last one while the query holds.
-
-    A caller that scores a batch of names should keep the returned object for
-    the batch. The lock guards the one-entry cache only; the ranker itself
-    needs none.
-    """
+    """Reuse the last query's ranker under a one-entry cache lock."""
     global _cached_ranker
     with _cache_lock:
         cached = _cached_ranker
@@ -244,12 +209,7 @@ def ranker(query: str) -> QueryRanker:
 
 
 def release_cache() -> None:
-    """Drop the cached ranker and the memo it holds.
-
-    A ranker that scored a whole pack holds a key per name of it. The window
-    that searched is the one to say when that is spent, because nothing in
-    here knows that the grid has gone.
-    """
+    """Drop the cached ranker and its memo when a grid or view is invalidated."""
     global _cached_ranker
     with _cache_lock:
         _cached_ranker = None
