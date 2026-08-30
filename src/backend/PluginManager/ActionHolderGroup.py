@@ -6,6 +6,11 @@ from src.backend.PluginManager.ActionInputSupport import ActionInputSupport
 
 class ActionHolderGroup:
     def __init__(self, group_name: str, action_holders: list[ActionHolder]):
+        """
+        Args:
+            group_name: The name of the group.
+            action_holders: The action holders in this group.
+        """
         self._group_name: str = group_name
         self._action_holders: set[ActionHolder] = set(action_holders)
 

@@ -26,7 +26,8 @@ from typing import cast, Any
 
 def terminate_backend_process(process: "subprocess.Popen[bytes] | None", escalate: bool = True) -> None:
     """Send SIGTERM to the launched backend's process group.
-    With escalation, wait three seconds, send SIGKILL, wait two more, and reap; app quit relies on os._exit."""
+    Escalation waits 3 seconds, sends SIGKILL, waits 2 more, and reaps; app quit skips it.
+    """
     if process is None:
         return
     try:
@@ -77,16 +78,17 @@ def build_backend_launch_command(backend_path: str, venv_path: str | None, port:
     if not open_in_terminal:
         return [interpreter, backend_path, f"--port={port}"]
 
-    # Keep the terminal open after crashes; positional arguments prevent path interpolation.
-    # DECKARD_TERMINAL includes the prefix: GNOME family uses `--`, Konsole, Alacritty, XTerm, and Xfce use `-e`, and Kitty uses none.
+    # Keep the terminal open after crashes; positional arguments prevent interpolation.
+    # Prefixes: GNOME family `--`; Konsole, Alacritty, XTerm, Xfce `-e`; Kitty none.
     terminal = shlex.split(os.environ.get("DECKARD_TERMINAL", "")) or ["gnome-terminal", "--"]
     return [*terminal, "bash", "-c", '"$1" "$2" --port="$3"; exec $SHELL',
             "deckard-backend", interpreter, backend_path, str(port)]
 
 
 def frontend_authenticator(sock: "socket.socket") -> "tuple[socket.socket, None]":
-    """Authenticate plugin and action frontend clients through socket tables because loopback TCP has no peer credentials.
-    rpyc accepts only same-UID loopback peers before protocol startup, so children need no cooperation."""
+    """Use socket tables to authenticate frontends because loopback TCP has no peer credentials.
+    Accept only same-UID peers before rpyc starts; children need no cooperation.
+    """
     reason = deckard_rpyc_guard.refusal_reason(sock)
     if reason is not None:
         log.error(f"Refused a connection to a plugin frontend server: {reason}")
@@ -97,7 +99,8 @@ def frontend_authenticator(sock: "socket.socket") -> "tuple[socket.socket, None]
 def verify_backend_port(port: int, process: subprocess.Popen[bytes] | None,
                         via_terminal: bool, owner: str) -> str:
     """Return a verified loopback address for a launched backend.
-    Raise RuntimeError for unowned, unverifiable, or non-loopback listeners so rpyc never connects to an untrusted port."""
+    Raise RuntimeError for unowned, unverifiable, or non-loopback listeners before rpyc connects.
+    """
     rows = deckard_rpyc_guard.listen_rows_of_port(port)
     if via_terminal:
         # Terminal services detach process ancestry, so verify the listener's
@@ -137,7 +140,8 @@ def verify_backend_port(port: int, process: subprocess.Popen[bytes] | None,
 
 def terminate_refused_backend(process: subprocess.Popen[bytes] | None, owner: str) -> None:
     """Terminate a refused backend asynchronously so its exposed or unverifiable listener closes.
-    The rpyc service thread must not wait; child disconnect then tears down the frontend connection."""
+    Do not block the rpyc service thread; child disconnect tears down the frontend.
+    """
     if process is None:
         return
     log.warning(f"{owner}: terminating the refused backend process (pid {process.pid})")
@@ -147,7 +151,8 @@ def terminate_refused_backend(process: subprocess.Popen[bytes] | None, owner: st
 
 def inject_backend_guard(venv_path: str) -> None:
     """Copy the current loopback guard and persistent .pth hook into a plugin venv before launch.
-    Writes are idempotent; failures only log because app-side gates remain active and read-only venvs must still launch."""
+    Idempotent writes only log failures; app-side gates let read-only venvs launch.
+    """
     try:
         source = os.path.abspath(deckard_rpyc_guard.__file__)
         with open(source, "rb") as f:
@@ -253,7 +258,8 @@ def _interpreter_runs(interpreter: str) -> bool:
 
 def stale_venv_reason(venv_path: str) -> str | None:
     """Return why an existing backend venv cannot launch, or None.
-    Ignore absent venvs and version mismatches with runnable interpreters; launch validation handles absence."""
+    Ignore absent venvs and runnable version mismatches; launch validation handles absence.
+    """
     if not os.path.isdir(venv_path):
         return None
     interpreter = os.path.join(venv_path, "bin", "python")
@@ -285,8 +291,9 @@ def _rebuild_lock_for(key: str) -> threading.Lock:
 
 
 def ensure_backend_venv(venv_path: str, plugin_dir: str, display_name: str) -> None:
-    """Rebuild a stale backend venv once per process and serially per venv through the confined install gate.
-    Only "always" permits unattended steps; apply launch timeout and guard injection, and restore the stale tree on every failure."""
+    """Rebuild a stale venv through the confined install gate once per process and one at a time.
+    Only "always" permits unattended steps; apply timeout and guard, and restore on every failure.
+    """
     key = os.path.realpath(venv_path)
     # Lock before probing because another rebuild temporarily moves the venv;
     # waiters then see the repaired tree instead of treating absence as healthy.
@@ -563,8 +570,9 @@ class PluginManager:
                     self.load_errors[folder] = "did not register (invalid or incomplete manifest?)"
 
     def generate_action_index(self) -> None:
-        """Atomically replace the class action index so concurrent page loads see the old or complete new mapping.
-        A fresh dict avoids persistent placeholders; assignment through self would shadow class-level readers."""
+        """Publish a new class action index atomically for concurrent page loads.
+        Fresh dicts prevent persistent placeholders; instance assignment would shadow class readers.
+        """
         index: dict[str, ActionHolder] = {}
         for plugin in self.get_plugins().values():
             plugin_base = plugin["object"]

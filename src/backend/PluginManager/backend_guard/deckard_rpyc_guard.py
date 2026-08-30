@@ -1,5 +1,6 @@
-"""Harden plugin-backend rpyc sockets with same-UID checks and child-side loopback binding.
-Use /proc because TCP has no peer credentials; app-side imports install no hook, child patches fail open, and copied code stays stdlib-only."""
+"""Check plugin-backend rpyc peers and bind child servers to loopback; app imports add no hook.
+Use /proc for UIDs; child patches fail open, and top-level imports stay stdlib-only.
+"""
 from __future__ import annotations
 
 import importlib.abc
@@ -55,8 +56,9 @@ def _decode_proc_endpoint(field: str) -> tuple[str, int]:
 
 
 def parse_proc_tcp(text: str) -> list[TcpRow]:
-    """Parse /proc/net/tcp{,6} columns: sl, local, remote, state, tx:rx, tr:when, retrnsmt, uid, timeout, and inode.
-    Skip malformed lines so one bad row does not hide the others."""
+    """Parse /proc/net/tcp{,6}: sl, local, remote, state, tx:rx, tr:when,
+    retrnsmt, uid, timeout, and inode; skip malformed lines without hiding valid rows.
+    """
     rows: list[TcpRow] = []
     for line in text.splitlines():
         parts = line.split()
@@ -89,8 +91,9 @@ def _endpoint_of(addr: "tuple[str, int] | tuple[str, int, int, int]") -> tuple[s
 
 
 def uid_of_peer(sock: socket.socket) -> int | None:
-    """Return the UID from the established row whose local endpoint is the peer and remote endpoint is this socket.
-    The full four-tuple excludes TIME_WAIT ghosts; return None when no row matches."""
+    """Return the UID for the established row whose local endpoint is the peer.
+    Match both full endpoints to reject TIME_WAIT ghosts; return None when no row matches.
+    """
     try:
         peer = _endpoint_of(sock.getpeername())
         local = _endpoint_of(sock.getsockname())
@@ -128,7 +131,8 @@ def pid_owns_inode(pid: int, inode: int) -> bool:
 
 def refusal_reason(sock: socket.socket) -> str | None:
     """Return why an accepted socket is not a same-UID loopback peer, or None.
-    Refuse unattributable peers because the socket table cannot distinguish them from foreign peers."""
+    Refuse unattributable peers because the table cannot distinguish them from foreign peers.
+    """
     try:
         peer_ip, peer_port = _endpoint_of(sock.getpeername())
     except OSError as e:
