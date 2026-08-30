@@ -276,10 +276,13 @@ class StoreBackend:
 
         return stores
     
-    def get_custom_plugins(self) -> list[tuple[str, str]]:
+    def get_custom_plugins(self) -> list[tuple[str, str | None]]:
+        # The branch element is None when the settings row omits it, and
+        # None is a live signal: no branch pinned, resolve the repository's
+        # default. get_stores defaults to "main" instead, on purpose.
         settings = gl.settings_manager.app()
 
-        plugins: list[tuple[str, str]] = []
+        plugins: list[tuple[str, str | None]] = []
         if settings.enable_custom_plugins:
             for plugin in settings.custom_plugins:
                 url = plugin.get("url")
