@@ -60,42 +60,23 @@ from src.backend.DeckManagement.HelperMethods import instance_cache
 
 
 class AttributionKey(Enum):
-    """How an asset names itself in its pack's attribution.json.
-
-    The one place the families disagree on meaning rather than on spelling.
-    BASENAME reads the file name alone, so two files of that name in different
-    subfolders share one entry. RELPATH reads the path of the file relative to
-    the pack root, so the asset folder and any subfolder stay in the key.
-    """
+    """Select how an asset is keyed in attribution.json.
+    BASENAME shares entries across subfolders; RELPATH includes the asset folder and subfolder."""
 
     BASENAME = "basename"
     RELPATH = "relpath"
 
 
 def pack_wide_entry(attribution: dict[str, Any]) -> dict[str, Any]:
-    """The entry that covers a whole pack: default, then general, then generic.
-
-    Three spellings of one idea, from three generations of pack author. A pack
-    with none of them attributes nothing.
-    """
+    """Return the first pack-wide entry from default, general, then generic, or an empty mapping."""
     return cast("dict[str, Any]",
                 attribution.get("default", attribution.get("general", attribution.get("generic", {}))))
 
 
 def check_family_contract(cls: type, base: type, attributes: tuple[str, ...],
                           overrides: tuple[str, ...]) -> None:
-    """Fail at class definition when a family leaves part of the contract out.
-
-    The trio states its four values as bare annotations and its two factories
-    as bodies that raise. A type checker reads a family that supplies neither
-    kind as complete, so without this the first sign of the omission is an
-    exception from deep inside discovery, at the first pack the family builds.
-    Here it is a TypeError naming what is missing, raised while the class body
-    runs.
-
-    Python calls __init_subclass__ for subclasses only, never for the class
-    that defines it, so the three bases need no exemption of their own.
-    """
+    """Reject incomplete family subclasses because annotations and factory stubs satisfy type checking.
+    The base classes need no exemption because Python invokes __init_subclass__ only for subclasses."""
     missing = [name for name in attributes if not hasattr(cls, name)]
     missing += [name for name in overrides
                 if getattr(cls, name) is getattr(base, name)]
@@ -109,7 +90,6 @@ def check_family_contract(cls: type, base: type, attributes: tuple[str, ...],
 class PackAsset:
     """One asset file inside a pack."""
 
-    # The family supplies this. See AttributionKey.
     ATTRIBUTION_KEY: ClassVar[AttributionKey]
 
     def __init_subclass__(cls) -> None:
@@ -147,12 +127,8 @@ AssetT = TypeVar("AssetT", bound=PackAsset)
 
 
 class Pack(Generic[AssetT]):
-    """One pack folder, read once at construction.
-
-    is_valid starts true and falls the moment a read finds the pack
-    undescribed. A manager drops an invalid pack; see the module docstring for
-    the one check that runs later than the constructor.
-    """
+    """Read one pack at construction and mark it invalid when required data is missing.
+    Thumbnail validity remains lazy until get_thumbnail_path()."""
 
     # The family supplies this: the manifest key that names the asset folder.
     ASSET_MANIFEST_KEY: ClassVar[str]
@@ -230,9 +206,8 @@ class Pack(Generic[AssetT]):
         if self.is_valid is False:
             return
 
-        # Not asset_path again: the parameter names the manifest key, and
-        # what comes back is the folder it points at. A manifest that omits
-        # the key leaves the pack unusable, and joining None raises.
+        # asset_path names the manifest key, not a path.
+        # A missing value invalidates the pack before joining it.
         asset_folder = manifest.get(asset_path)
         if asset_folder is None:
             self.is_valid = False
@@ -270,7 +245,6 @@ PackT = TypeVar("PackT", bound=Pack[Any])
 class PackManager(Generic[PackT]):
     """Discovery for one family. It holds no pack between calls."""
 
-    # The family supplies both of these.
     DATA_DIR: ClassVar[str]
     LABEL: ClassVar[str]
 
