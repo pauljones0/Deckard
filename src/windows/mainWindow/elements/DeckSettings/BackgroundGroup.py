@@ -111,9 +111,7 @@ class BackgroundMediaRow(LazyMapTasks, Adw.PreferencesRow):
         self.media_selector_button = Gtk.Button(label=gl.lm.get("deck.background-group.media-select-label"), css_classes=["page-settings-media-selector"])
         self.media_selector.append(self.media_selector_button)
 
-        # Pan and zoom the visible region of the selected media. A plain
-        # clicked handler, outside the signal harness: load_defaults writes
-        # no state into a button, so there is nothing to mute on reload.
+        # Pan and zoom selected media; this button has no reloadable state to mute.
         self.adjust_view_button = Gtk.Button(label=gl.lm.get("deck.background-group.adjust-view"),
                                              margin_top=10, halign=Gtk.Align.CENTER)
         self.adjust_view_button.connect("clicked", self.on_adjust_view)
@@ -303,9 +301,7 @@ class BackgroundMediaRow(LazyMapTasks, Adw.PreferencesRow):
         self.set_thumbnail(file_path)
         settings = gl.settings_manager.deck(self.deck_serial_number)
         settings.set("background", "media-path", file_path)
-        # A view belongs to the image it was framed on, not to the slot: a
-        # new wallpaper starts from the default crop instead of inheriting
-        # the previous one's zoom into a corner.
+        # Reset the view when media changes because the crop belongs to the selected image.
         settings.set("background", "view", None)
         settings.save()
 
@@ -321,9 +317,8 @@ class BackgroundMediaRow(LazyMapTasks, Adw.PreferencesRow):
             controller.load_background(page=page)
 
     def _deck_background_shows(self) -> bool:
-        """False while the active page overrides the deck background: the
-        deck's view then edits settings the deck is not rendering, so the
-        live push and the reload stay off and only the file changes."""
+        """Return whether the deck background is visible instead of an active page override.
+        When false, deck-view edits only update stored deck settings."""
         page = self.settings_page.deck_controller.active_page
         if page is None:
             return True
@@ -332,9 +327,7 @@ class BackgroundMediaRow(LazyMapTasks, Adw.PreferencesRow):
 
     def on_adjust_view(self, button: Gtk.Button) -> None:
         settings = gl.settings_manager.deck(self.deck_serial_number)
-        # The same resolution the loader applies, so the dialog adjusts the
-        # file the deck shows: the list when it holds a real image, else the
-        # single media-path. With nothing to render there is nothing to aim.
+        # Resolve the same renderable entries as the loader; stop when no media can be shown.
         entries = resolve_background_entries(settings.section("background"))
         if not entries:
             return
@@ -351,9 +344,8 @@ class BackgroundMediaRow(LazyMapTasks, Adw.PreferencesRow):
         dialog.present(self)
 
     def on_view_live(self, path: str, view: "tuple[float, float, float]") -> None:
-        """The drag preview: swap the showing image's view in place. A video,
-        a slideshow image that is not the current frame, or a page override
-        on the deck skips the live push; the commit settles those."""
+        """Preview a showing still in place when no page override hides the deck background.
+        Video, GIF, and non-showing slideshow frames wait for commit."""
         background = self.settings_page.deck_controller.background
         if self._deck_background_shows() and background.showing_path() == path:
             background.update_view(view)
@@ -363,9 +355,7 @@ class BackgroundMediaRow(LazyMapTasks, Adw.PreferencesRow):
         list_entries = [(p, v) for p, v in media_entries(settings.get("background", "media-paths"))
                         if is_image(p)]
         if list_entries:
-            # Rewrite the list in order, the same entries the loader renders.
-            # A default-view entry stays a plain string, so an untouched
-            # slideshow keeps its pre-view shape.
+            # Rewrite valid list entries in order, using plain strings for default-view entries.
             rewritten: "list[Any]" = []
             for entry_path, entry_view in list_entries:
                 use = view if entry_path == path else entry_view
@@ -384,9 +374,7 @@ class BackgroundMediaRow(LazyMapTasks, Adw.PreferencesRow):
             # The still on screen: re-crop in place, no decode, no reload.
             background.update_view(view)
         elif background.set_slideshow_view(path, view):
-            # A rotation frame not on screen: the rotation renders it through
-            # the new view when it returns; a reload would rebuild the
-            # rotation at its first frame and jump the deck off the current one.
+            # Store the view for the frame's next turn; reloading would jump to the first frame.
             return
         else:
             # A video or GIF bakes the view into its frame cache; only a full

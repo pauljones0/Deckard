@@ -35,10 +35,8 @@ class Slideshow:
         self._last_advance: float | None = None
         # Keep an opaque page identity so media ticks reject an inactive page's rotation.
         self.page: object | None = None
-        # Per-image viewports, keyed by path. The render layer fills and
-        # reads it; the model only carries it beside the rotation so a frame
-        # advance can render the incoming image through its own view. A path
-        # with no entry renders through the default view.
+        # Per-image viewports keyed by path; missing entries use the default view.
+        # The render layer reads them when each frame enters the rotation.
         self.views: dict[str, tuple[float, float, float]] = {}
 
     def _build_sequence(self) -> list[int]:

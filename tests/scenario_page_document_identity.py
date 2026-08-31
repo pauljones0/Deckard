@@ -120,9 +120,8 @@ def check_identity() -> int:
         print("FAIL: the page file changed while nothing asked for a write")
         return 1
 
-    # And back the other way, through the settings funnel every override row
-    # uses instead of the raw dict. It edits the document under the file's
-    # lock, so the sibling sees it and only the flush writes it.
+    # Edit through the settings funnel under the file lock so sibling pages see the change
+    # before only the explicit flush writes it.
     gl.page_manager.overwrite_background_settings(path, media_path="/some/wallpaper.png")
     if page_a.dict.get("settings", {}).get("background", {}).get("media-path") != "/some/wallpaper.png":
         print("FAIL: a settings edit through the funnel is invisible to the sibling Page")

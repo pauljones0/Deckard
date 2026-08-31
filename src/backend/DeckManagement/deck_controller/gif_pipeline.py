@@ -212,9 +212,8 @@ def gif_frame_walk(path: str, max_size: "tuple[int, int] | None" = None,
             decoded = frame.convert("RGBA")
             if fit_size is not None:
                 if not is_default_view(view):
-                    # The view crops even a size-matched frame, and its
-                    # zoomed-out letterbox stays transparent RGBA, so alpha
-                    # survives the way it does through the plain fit.
+                    # Apply nondefault views even to size-matched frames and keep letterboxes
+                    # transparent, preserving alpha through viewport and plain-fit paths.
                     decoded = render_viewport(decoded, fit_size, view)
                 elif decoded.size != fit_size:
                     decoded = ImageOps.fit(decoded, fit_size, Image.Resampling.LANCZOS)
@@ -276,9 +275,7 @@ class GifBackground(FrameScheduled):
 
         self.page: Page | None = deck_controller.active_page
         self.saturation = deck_controller.get_display_saturation()
-        # The viewport baked into every decoded frame. The prebuild
-        # keep-check compares it, so a view change re-decodes instead of
-        # keeping the old crop playing.
+        # Store the viewport baked into frames so the prebuild check decodes a changed view.
         self.view = view
 
         deck = deck_controller.deck

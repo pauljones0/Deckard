@@ -49,20 +49,8 @@ ViewTuple = tuple[float, float, float]
 
 
 class ViewportDialog(Adw.Dialog):
-    """Pan and zoom the visible region of a background image.
-
-    The dialog shows the media with a white, deck-canvas-aspect box over it:
-    the region the deck shows. Dragging the box pans; the zoom factor
-    scales it. entries is a list of (path, view) pairs; more than one entry
-    (a slideshow) adds a picker for which image is being adjusted.
-
-    on_live(path, view) fires rate-capped while a drag is in flight, for
-    the deck-side preview. on_commit(path, view) fires on drag release, on
-    a settled zoom change and on reset; the caller persists it there.
-    canvas_size() answers the current deck canvas, read per draw, so an
-    extend-to-touchscreen flip mid-dialog reshapes the box on the next
-    frame.
-    """
+    """Adjust one background image viewport, with a picker for multiple entries.
+    Preview changes are rate-capped; settled changes commit against the current deck canvas."""
 
     def __init__(self, entries: "list[tuple[str, ViewTuple]]",
                  canvas_size: "Callable[[], tuple[int, int] | None]",
@@ -135,7 +123,7 @@ class ViewportDialog(Adw.Dialog):
         self.reset_button.connect("clicked", self.on_reset)
         box.append(self.reset_button)
 
-    # -- entry handling ------------------------------------------------------
+    # Entry handling
 
     def _load_entry(self, index: int) -> None:
         self.index = index
@@ -148,17 +136,13 @@ class ViewportDialog(Adw.Dialog):
                 with Image.open(path) as img:
                     self._source = img.convert("RGBA")
             else:
-                # A video or GIF previews through its thumbnail frame; the
-                # crop math only needs the source aspect, which the frame
-                # shares with the stream.
+                # Video and GIF previews use a thumbnail whose source aspect matches the stream.
                 self._source = gl.media_manager.get_thumbnail(path).convert("RGBA")
         except Exception:
             log.opt(exception=True).warning(f"Viewport preview failed to load {path}")
         if self._source is not None:
-            # Every consumer of the source is a ratio: the crop rectangle is
-            # scale-invariant and the drag maps through width and height
-            # ratios. A preview-sized copy renders the same box for a
-            # fraction of the memory and per-draw paint cost of a photo.
+            # Crop and drag math use ratios, so a preview-sized source keeps the same geometry
+            # while reducing memory and draw cost.
             self._source.thumbnail((PREVIEW_W * 2, PREVIEW_H * 2), Image.Resampling.LANCZOS)
             self._pixbuf = image2pixbuf(self._source)
         self._loading = True
@@ -177,7 +161,7 @@ class ViewportDialog(Adw.Dialog):
     def current_path(self) -> str:
         return self.entries[self.index][0]
 
-    # -- geometry ------------------------------------------------------------
+    # Geometry
 
     def _display_transform(self, widget_w: int, widget_h: int) -> "tuple[float, float, float] | None":
         """(scale, x offset, y offset) that maps source pixels onto the
@@ -200,7 +184,7 @@ class ViewportDialog(Adw.Dialog):
         return (off_x + left * scale, off_y + top * scale,
                 off_x + right * scale, off_y + bottom * scale)
 
-    # -- drawing -------------------------------------------------------------
+    # Drawing
 
     def on_draw(self, area: Gtk.DrawingArea, cr: Any, width: int, height: int) -> None:
         transform = self._display_transform(width, height)
@@ -234,13 +218,11 @@ class ViewportDialog(Adw.Dialog):
         cr.rectangle(left, top, right - left, bottom - top)
         cr.stroke()
 
-    # -- interaction ---------------------------------------------------------
+    # Interaction
 
     def _apply_view(self, view: ViewTuple, live: bool) -> None:
-        # Store the view the renderer honors, not the raw pointer position:
-        # past the clamped range a drag changes nothing on screen, and the
-        # stored value must say so, or every release commits a distinct view
-        # for one identical crop.
+        # Store the canonical rendered center so clamped pointer positions do not create
+        # distinct saved views for the same crop.
         canvas = self.canvas_size()
         if self._source is not None and canvas is not None:
             view = canonical_view((self._source.width, self._source.height), canvas, view)
@@ -287,9 +269,7 @@ class ViewportDialog(Adw.Dialog):
     def on_scale_changed(self, spinner: Gtk.SpinButton) -> None:
         if self._loading or self._source is None:
             return
-        # A held spin button repeats at about 20 Hz; the live push takes the
-        # same rate cap as a drag, and the commit waits for the value to
-        # settle instead of firing per click.
+        # Held spin buttons repeat near 20 Hz; rate-cap previews and commit after settling.
         self._apply_view((self.view[0], self.view[1], float(spinner.get_value())), live=True)
         if self._scale_commit_handle is not None:
             GLib.source_remove(self._scale_commit_handle)

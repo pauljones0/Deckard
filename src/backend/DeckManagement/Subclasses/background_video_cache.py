@@ -58,8 +58,8 @@ class BackgroundVideoCache(Mp4FrameCache[list[Image.Image]]):
         self._legacy_cache_path = os.path.join(legacy_dir, f"{self.video_md5}.cache")
         cache_dir = os.path.join(
             VID_CACHE, f"{self.key_layout_str}@{self.out_size[0]}x{self.out_size[1]}")
-        # The view joins the name like the saturation: a view change builds a
-        # new cache file, and the default view keeps the pre-view name.
+        # The view joins the cache name like saturation, so each view gets its own file.
+        # The default view keeps the suffix-free name.
         return os.path.join(cache_dir, f"{self.video_md5}{self._sat_suffix}{self._view_suffix}.mp4")
 
     def _canvas_size(self) -> tuple[int, int]:

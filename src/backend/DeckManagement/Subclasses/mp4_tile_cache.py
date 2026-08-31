@@ -423,8 +423,7 @@ class Mp4FrameCache(Generic[PayloadT]):
         """Fit BGR through the viewport and bake saturation once during cache build."""
         pil_image = Image.fromarray(cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB))
         if is_default_view(self.view):
-            # The centered cover crop of before, byte-identical, so a cache
-            # built without views stays valid.
+            # Default view uses the centered crop byte-for-byte, so suffix-free caches stay valid.
             canvas = ImageOps.fit(pil_image, self.out_size, Image.Resampling.HAMMING)
         else:
             canvas = render_viewport_rgb(pil_image, self.out_size, self.view, Image.Resampling.HAMMING)

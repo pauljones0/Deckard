@@ -1,11 +1,5 @@
-"""The viewport reaches the composite through every settings shape.
-
-Four seams: a view on the deck's single media, the live update_view swap the
-drag preview uses, slideshow entries in both stored shapes (plain path
-strings and objects with per-image views), and the page background override.
-The color assertions render a half-red half-blue source, so a zoomed view
-shows one color where the default shows both.
-"""
+"""Verify viewport rendering through deck media, live updates, slideshow entries, and pages.
+A two-color source distinguishes centered and panned crops."""
 import fixtures  # noqa: F401  (must be first: isolates DATA_PATH)
 
 import os
@@ -54,7 +48,7 @@ def main() -> int:
 
         background = controller.background
 
-        # --- A: single media, default vs zoomed view ------------------------
+        # Default and zoomed single media
         background.set_from_path(two_tone, update=False)
         default_canvas = background.image.create_full_deck_sized_image()
         red_share, blue_share = color_shares(default_canvas)
@@ -69,7 +63,7 @@ def main() -> int:
             failures.append(f"a left-panned 2x zoom must show the red half, "
                             f"got red {red_share:.2f} blue {blue_share:.2f}")
 
-        # --- B: update_view swaps the live composite ------------------------
+        # Live composite update
         before = background.image.create_full_deck_sized_image().tobytes()
         applied = background.update_view((0.8, 0.5, 2.0))
         if not applied:
@@ -82,7 +76,7 @@ def main() -> int:
             failures.append(f"a right-panned 2x zoom must show the blue half, "
                             f"got red {red_share:.2f} blue {blue_share:.2f}")
 
-        # --- C: the deck settings carry the view into load_background -------
+        # Deck settings view during background load
         page = controller.active_page
         deck_config = gl.settings_manager.deck(controller.serial_number())
         deck_config.set("background", "enable", True)
@@ -94,7 +88,7 @@ def main() -> int:
             failures.append(f"the deck settings view did not reach the image: "
                             f"{None if background.image is None else background.image.view}")
 
-        # --- D: slideshow entries in both shapes ----------------------------
+        # Slideshow entries in both settings shapes
         second = write_two_tone(os.path.join(media_dir, "two_tone_b.png"))
         deck_config.set("background", "media-paths", [
             {"path": two_tone, "view": {"x": 0.8, "y": 0.5, "scale": 2.0}},
@@ -132,7 +126,7 @@ def main() -> int:
             if background.set_slideshow_view("/not/in/rotation.png", (0.5, 0.5, 2.0)):
                 failures.append("set_slideshow_view claimed a path the rotation lacks")
 
-        # --- E: the page override carries its own view ----------------------
+        # Page override view
         deck_config.set("background", "enable", False)
         deck_config.set("background", "media-paths", [])
         deck_config.save()

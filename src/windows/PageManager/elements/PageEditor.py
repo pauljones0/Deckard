@@ -625,9 +625,8 @@ class BackgroundGroup(PageEditorGroup):
         if not media_path:
             return
         showing = self._controllers_showing_page()
-        # The box needs a deck canvas for its aspect. A deck showing this page
-        # is the natural one; with none showing, any connected deck gives the
-        # geometry, and with no deck at all there is nothing to aim at.
+        # Prefer a deck showing this page for canvas geometry; otherwise use any connected deck.
+        # Without a connected deck, no viewport target exists.
         controllers = showing or list(services.require_deck_manager().deck_controller)
         if not controllers:
             return

@@ -1,10 +1,5 @@
-"""Viewport math: the default view is the old centered cover crop, and the
-pan, zoom and clamp rules hold in both scale regimes.
-
-The default-view equivalence is asserted byte for byte against
-ImageOps.fit, because "no stored view renders exactly as before" is the
-compatibility contract that lets existing configs skip migration.
-"""
+"""Verify default cover-crop equivalence and pan, zoom, clamp, and letterbox geometry.
+The default view must match ImageOps.fit byte for byte."""
 import fixtures  # noqa: F401  (must be first: isolates DATA_PATH)
 
 from PIL import Image, ImageOps
@@ -39,7 +34,7 @@ def main() -> int:
     start_watchdog(60, "wallpaper_viewport_math")
     failures: list[str] = []
 
-    # --- normalize_view: shapes, clamps, defaults ---------------------------
+    # Normalized shapes, clamps, and defaults
     if normalize_view(None) != DEFAULT_VIEW:
         failures.append("None did not read as the default view")
     if normalize_view({"x": "junk"}) != DEFAULT_VIEW:
@@ -53,9 +48,8 @@ def main() -> int:
     if normalize_view({"x": float("inf")}) != DEFAULT_VIEW:
         failures.append("Infinity slipped through the clamp")
 
-    # --- canonical_view: the stored center is the rendered center ---------
-    # 1000x500 onto 200x100 at scale 2: the rect is 500 wide, so any center
-    # below 0.25 renders the left-edge crop, and canonical_view says so.
+    # At scale 2, the 500-pixel crop clamps centers below 0.25 to the left edge.
+    # canonical_view() therefore returns 0.25 for a 1000-pixel source.
     if canonical_view((1000, 500), (200, 100), (0.0, 0.5, 2.0)) != (0.25, 0.5, 2.0):
         failures.append("a pushed-past-the-edge center did not canonicalize to the edge")
     if canonical_view((1000, 500), (200, 100), (0.83, 0.5, 1.0)) != (0.5, 0.5, 1.0):
@@ -63,7 +57,7 @@ def main() -> int:
     if canonical_view((1000, 500), (200, 100), (0.6, 0.5, 2.0)) != (0.6, 0.5, 2.0):
         failures.append("a center inside the honored range must not move")
 
-    # --- view_suffix: default is empty, non-default is stable ---------------
+    # Default and nondefault cache suffixes
     if view_suffix(DEFAULT_VIEW) != "":
         failures.append("the default view must produce no cache suffix")
     if view_suffix((0.5, 0.5, 1.00001)) != "":
@@ -72,7 +66,7 @@ def main() -> int:
     if not s or s != view_suffix((0.25, 0.75, 2.0)):
         failures.append("a non-default view must produce a stable non-empty suffix")
 
-    # --- default view == ImageOps.fit, byte for byte ------------------------
+    # Default view matches ImageOps.fit byte for byte
     for source_size, canvas_size in [((640, 480), (372, 174)),
                                      ((480, 640), (372, 174)),
                                      ((800, 100), (372, 236)),
@@ -84,7 +78,7 @@ def main() -> int:
             failures.append(f"default view diverged from ImageOps.fit for "
                             f"{source_size} -> {canvas_size}")
 
-    # --- rect geometry: zoom halves the rect, pan moves it ------------------
+    # Pan and zoom rectangle geometry
     rect1 = viewport_rect((1000, 500), (200, 100), (0.5, 0.5, 1.0))
     if not (close(rect1[0], 0) and close(rect1[1], 0)
             and close(rect1[2], 1000) and close(rect1[3], 500)):
@@ -98,7 +92,7 @@ def main() -> int:
     if not close(rect_left[0], 0):
         failures.append(f"panning to x=0 at zoom-in must clamp to the left edge, got {rect_left}")
 
-    # --- zoom-in never overhangs; zoom-out overhangs but stays centered -----
+    # Zoom-in clamping and centered zoom-out overhang
     rect_in = viewport_rect((1000, 500), (200, 100), (1.0, 1.0, 4.0))
     if rect_in[2] > 1000 or rect_in[3] > 500 or rect_in[0] < 0 or rect_in[1] < 0:
         failures.append(f"a zoom-in rect escaped the source: {rect_in}")
@@ -113,7 +107,7 @@ def main() -> int:
     if rect_fit[0] < 0:
         failures.append(f"a zoom-out side that fits must clamp inside, got {rect_fit}")
 
-    # --- zoom-out renders transparent letterbox, source centered ------------
+    # Transparent centered letterbox for zoom-out
     img = gradient_image(400, 200)
     out = render_viewport(img, (200, 100), (0.5, 0.5, 0.5))
     if out.size != (200, 100):
@@ -124,7 +118,7 @@ def main() -> int:
         if out.getpixel((100, 50))[3] != 255:
             failures.append("zoom-out center must show the source")
 
-    # --- a corner-panned zoom-out keeps part of the source on the canvas ----
+    # Corner-panned zoom-out keeps part of the source visible
     out2 = render_viewport(gradient_image(100, 100), (200, 100), (0.0, 0.0, 0.25))
     opaque = sum(1 for yy in range(100) for xx in range(200)
                  if out2.getpixel((xx, yy))[3] == 255)

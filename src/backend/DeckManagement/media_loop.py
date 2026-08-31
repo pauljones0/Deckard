@@ -3,8 +3,7 @@
 This is a leaf module: it imports only the standard library, so every layer
 that needs the loop rate can import it without a cycle. Every follower of
 the rate reads MEDIA_LOOP_FPS from here: the writer's loop, the media and
-page defaults, the sidebar's fps range, and the scroll cadence. The number
-was previously declared independently at each of those sites.
+page defaults, the sidebar's fps range, and the scroll cadence.
 
 The clock is monotonic. Deadlines, durations, and rate gates must not move
 when the wall clock steps, so wall time stays out of scheduling entirely.
