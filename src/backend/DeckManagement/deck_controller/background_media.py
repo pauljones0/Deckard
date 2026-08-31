@@ -62,8 +62,8 @@ def background_canvas_size(deck_controller: "DeckController", extend_touchscreen
 
 
 def resolve_background_entries(config: "Mapping[str, Any]") -> "list[tuple[str, tuple[float, float, float]]]":
-    """Return renderable background (path, view) entries in order.
-    An image list wins when nonempty; otherwise use the existing single media path or nothing."""
+    """Select the first existing image from the filtered list, or the configured single path.
+    Return all filtered entries for the picker; the single path can be missing."""
     pairs = [(p, v) for p, v in media_entries(config.get("media-paths")) if is_image(p)]
     if pairs:
         return pairs
@@ -238,8 +238,8 @@ class Background:
         return False
 
     def update_view(self, view: "tuple[float, float, float]") -> bool:
-        """Apply a still or current slideshow frame's view before the source epoch advances.
-        Return False for video and GIF views that require a full background reload."""
+        """Set a still view before the epoch increment; post-increment composers see the new view.
+        Pre-increment results are rejected; video and GIF views return False for reload."""
         with self._render_state_lock:
             image = self.image
             show = self.slideshow

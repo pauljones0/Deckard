@@ -53,7 +53,7 @@ def view_as_setting(view: tuple[float, float, float]) -> "dict[str, float] | Non
 
 def view_suffix(view: tuple[float, float, float]) -> str:
     """Return a dot-delimited fixed-point cache suffix, or empty for the default view.
-    The format keeps hash parsing unambiguous and makes different views miss the cache."""
+    Only different encoded values miss the cache; equal quantized values share it."""
     if is_default_view(view):
         return ""
     return f".v{round(view[0] * 10000):04d}-{round(view[1] * 10000):04d}-{round(view[2] * 10000):05d}"

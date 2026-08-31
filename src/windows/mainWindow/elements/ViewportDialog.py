@@ -49,8 +49,8 @@ ViewTuple = tuple[float, float, float]
 
 
 class ViewportDialog(Adw.Dialog):
-    """Adjust one background image viewport, with a picker for multiple entries.
-    Preview changes are rate-capped; settled changes commit against the current deck canvas."""
+    """Adjust viewports for images, videos, and GIFs, with a picker for multiple entries.
+    Previews are rate-capped; drag release, settled scale, and reset commit the view."""
 
     def __init__(self, entries: "list[tuple[str, ViewTuple]]",
                  canvas_size: "Callable[[], tuple[int, int] | None]",
