@@ -62,8 +62,8 @@ def background_canvas_size(deck_controller: "DeckController", extend_touchscreen
 
 
 def resolve_background_entries(config: "Mapping[str, Any]") -> "list[tuple[str, tuple[float, float, float]]]":
-    """Select the first existing image from the filtered list, or the configured single path.
-    Return all filtered entries for the picker; the single path can be missing."""
+    """Return all existing image-list entries, or the configured single path if none remain.
+    The single path can be missing; return empty when it is absent or empty."""
     pairs = [(p, v) for p, v in media_entries(config.get("media-paths")) if is_image(p)]
     if pairs:
         return pairs

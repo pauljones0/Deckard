@@ -627,8 +627,8 @@ class DeckController:
             self.background.set_extend_to_touchscreen(
                 config.get("extend-to-touchscreen", False), update=False
             )
-            # Two or more existing slideshow images override the single media path.
-            # Invalid entries are omitted; fewer than two fall back to the single path.
+            # Two or more existing list images form a slideshow; one becomes the selected still.
+            # With none, use the configured single path, which can be missing, or show nothing.
             pairs = resolve_background_entries(config)
             if len(pairs) >= 2:
                 self.background.set_slideshow(

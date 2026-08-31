@@ -327,7 +327,8 @@ class BackgroundMediaRow(LazyMapTasks, Adw.PreferencesRow):
 
     def on_adjust_view(self, button: Gtk.Button) -> None:
         settings = gl.settings_manager.deck(self.deck_serial_number)
-        # Resolve the same renderable entries as the loader; stop when no media can be shown.
+        # Use all existing list images, or the configured single path when none remain.
+        # Stop only when no nonempty path is configured.
         entries = resolve_background_entries(settings.section("background"))
         if not entries:
             return
