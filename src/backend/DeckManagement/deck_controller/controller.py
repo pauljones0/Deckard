@@ -627,14 +627,8 @@ class DeckController:
             self.background.set_extend_to_touchscreen(
                 config.get("extend-to-touchscreen", False), update=False
             )
-            # A slideshow is a list of two or more still images that rotate
-            # on an interval. It wins over the single media-path: the user
-            # built the list, so it is the more specific intent, and a
-            # rotation of stills and one playing video cannot both show.
-            # Fewer than two fall back to the single media-path. Only real,
-            # existing image files count; a deleted or video entry drops out
-            # rather than blank a frame later. resolve_background_entries is
-            # the one reading of that rule, shared with the settings UI.
+            # Two or more existing list images form a slideshow; one becomes the selected still.
+            # With none, use the configured single path, which can be missing, or show nothing.
             pairs = resolve_background_entries(config)
             if len(pairs) >= 2:
                 self.background.set_slideshow(

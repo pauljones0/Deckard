@@ -1,43 +1,24 @@
-"""Viewport math for background media: pan and zoom of the cover crop.
-
-A background renders by cropping the source image to the deck canvas's
-aspect and resizing, historically always centered at cover size. A viewport
-generalizes that crop: a normalized center (x, y) pans it and a scale factor
-zooms it. Scale 1.0 with a centered view reproduces the plain cover crop
-byte for byte, so media without a stored view renders exactly as before.
-
-The view travels as a plain (x, y, scale) tuple. normalize_view() is the
-single reader of the persisted dict shape, so every consumer sees clamped
-floats and a missing or malformed setting degrades to the default view
-instead of raising out of a render.
-"""
+"""Pan-and-zoom viewport math with a centered cover crop as the default view.
+Persisted values normalize to bounded tuples; missing or malformed values use that default."""
 import math
 from typing import Any
 
 from PIL import Image
 
-# The zoom bounds. The lower bound keeps at least a recognizable slice of
-# the image on the canvas; the upper bound caps how much source resolution a
-# render can demand.
+# The lower zoom bound keeps a recognizable image slice on the canvas.
+# The upper bound caps requested source resolution.
 MIN_SCALE = 0.25
 MAX_SCALE = 8.0
 
 DEFAULT_VIEW: tuple[float, float, float] = (0.5, 0.5, 1.0)
 
-# One equality tolerance for "is this the default view", shared by the
-# renderers and the cache naming, so the two cannot disagree about whether a
-# view changes the output.
+# Shared default-view tolerance keeps render output and cache naming decisions aligned.
 _EPSILON = 1e-4
 
 
 def normalize_view(raw: Any) -> tuple[float, float, float]:
-    """Read a persisted view value into a clamped (x, y, scale) tuple.
-
-    Accepts the settings dict shape {"x": ..., "y": ..., "scale": ...} with
-    any subset of keys. Anything else, including None, reads as the default
-    view. The center clamps to [0, 1] and the scale to the zoom bounds, so a
-    hand-edited or stale value cannot push the crop off the image entirely.
-    """
+    """Read a settings dict as a finite, clamped (x, y, scale) tuple.
+    Missing, malformed, or nonfinite values use the default; center and scale use their bounds."""
     if not isinstance(raw, dict):
         return DEFAULT_VIEW
     try:
@@ -63,28 +44,16 @@ def is_default_view(view: tuple[float, float, float]) -> bool:
 
 
 def view_as_setting(view: tuple[float, float, float]) -> "dict[str, float] | None":
-    """The stored shape of a view: the settings dict, or None for the default
-    view, so an untouched background keeps its pre-view settings file. The
-    inverse of normalize_view."""
+    """Return the settings dict for a view, or None for the default.
+    This is the inverse of normalize_view()."""
     if is_default_view(view):
         return None
     return {"x": view[0], "y": view[1], "scale": view[2]}
 
 
 def view_suffix(view: tuple[float, float, float]) -> str:
-    """A filename component naming this view, empty for the default.
-
-    A media cache whose content depends on the view carries this in its file
-    name, beside the saturation suffix, so a view change misses instead of
-    serving the previous crop. The default view stays suffix-free, which
-    keeps every cache file from before this feature valid.
-
-    The shape is a dot group like the saturation's ".satNNN", because the
-    video cache sweeper parses cache names as dot-delimited groups: the md5
-    is everything before the first dot, and its name pattern must recognize
-    the group or the file reads as a legacy leftover. Fixed-point digits
-    inside the group, so the group itself carries no further dots.
-    """
+    """Return a dot-delimited fixed-point cache suffix, or empty for the default view.
+    Only different encoded values miss the cache; equal quantized values share it."""
     if is_default_view(view):
         return ""
     return f".v{round(view[0] * 10000):04d}-{round(view[1] * 10000):04d}-{round(view[2] * 10000):05d}"
@@ -93,15 +62,8 @@ def view_suffix(view: tuple[float, float, float]) -> str:
 def render_viewport_rgb(image: Image.Image, canvas_size: tuple[int, int],
                         view: tuple[float, float, float],
                         resample: Image.Resampling = Image.Resampling.LANCZOS) -> Image.Image:
-    """render_viewport flattened onto black, for an opaque frame format.
-
-    A rectangle inside the source resizes the RGB frame straight from its
-    box, byte-identical to the RGBA path and without its three extra
-    full-frame copies, which matters at one call per source video frame. A
-    zoomed-out view letterboxes with transparency; a consumer that writes
-    opaque frames (the video tile cache's mp4) composites that onto black
-    here, which is also what the deck shows behind a background.
-    """
+    """Render a viewport to opaque RGB, flattening transparent letterboxes onto black.
+    Resize an in-bounds source box directly to avoid RGBA full-frame copies per video frame."""
     if image.mode != "RGB":
         image = image.convert("RGB")
     left, top, right, bottom = viewport_rect(image.size, canvas_size, view)
@@ -114,14 +76,8 @@ def render_viewport_rgb(image: Image.Image, canvas_size: tuple[int, int],
 
 
 def media_entries(raw: Any) -> "list[tuple[str, tuple[float, float, float]]]":
-    """Slideshow entries as (path, view) pairs, from both stored shapes.
-
-    A plain string entry is a path with the default view; an object entry
-    carries the path and that image's own viewport. Old settings files hold
-    strings, the writer moves an entry to an object when its view is set,
-    and both shapes read here so no migration write is needed. Empty and
-    non-string paths drop out.
-    """
+    """Return slideshow (path, view) pairs from string or object entries.
+    Strings use the default view; entries with empty or non-string paths are omitted."""
     entries: "list[tuple[str, tuple[float, float, float]]]" = []
     for entry in (raw or []):
         if isinstance(entry, dict):
@@ -137,18 +93,8 @@ def media_entries(raw: Any) -> "list[tuple[str, tuple[float, float, float]]]":
 
 def viewport_rect(source_size: tuple[int, int], canvas_size: tuple[int, int],
                   view: tuple[float, float, float]) -> tuple[float, float, float, float]:
-    """The source-space crop rectangle for a view, as a float (l, t, r, b).
-
-    The base is the cover rect: the largest canvas-aspect rectangle inside
-    the source, which is what the centered crop always used. The view scales
-    its dimensions by 1/scale and centers it on (x, y) in normalized source
-    coordinates.
-
-    Clamping is per dimension. A rectangle side that fits inside the source
-    shifts fully inside, so zooming never letterboxes an edge it could
-    avoid. A side longer than the source (zoomed out) keeps its center and
-    overhangs; the renderer letterboxes the overhang.
-    """
+    """Return the cover rectangle scaled by 1/scale around normalized source point (x, y).
+    Shift fitting sides inside the source; keep longer sides centered so they letterbox."""
     source_w, source_h = source_size
     canvas_w, canvas_h = canvas_size
     x, y, scale = view
@@ -176,17 +122,8 @@ def viewport_rect(source_size: tuple[int, int], canvas_size: tuple[int, int],
 
 def canonical_view(source_size: tuple[int, int], canvas_size: tuple[int, int],
                    view: tuple[float, float, float]) -> tuple[float, float, float]:
-    """The view whose center is the center of the rectangle actually
-    rendered.
-
-    viewport_rect clamps the rectangle inside the source, so a center pushed
-    past the honored range renders the same crop as the edge center. Storing
-    the pushed value would persist a view the renderer ignores, make two
-    pixel-identical crops read as different views (and name two video cache
-    files), and leave a drag dead zone at each edge. Reading the center back
-    from the clamped rectangle removes all three; at scale 1.0 with matching
-    aspect it collapses every center to the default view.
-    """
+    """Return a view centered on the rectangle that viewport_rect() actually renders.
+    This removes edge dead zones and duplicate cache IDs; matching-aspect 1x becomes default."""
     left, top, right, bottom = viewport_rect(source_size, canvas_size, view)
     source_w, source_h = source_size
     return ((left + right) / 2 / source_w, (top + bottom) / 2 / source_h, view[2])
@@ -195,15 +132,8 @@ def canonical_view(source_size: tuple[int, int], canvas_size: tuple[int, int],
 def render_viewport(image: Image.Image, canvas_size: tuple[int, int],
                     view: tuple[float, float, float],
                     resample: Image.Resampling = Image.Resampling.LANCZOS) -> Image.Image:
-    """Render the view of image onto a canvas-sized RGBA image.
-
-    A rectangle fully inside the source resizes straight from its float box,
-    the same operation the centered cover crop performed. An overhanging
-    rectangle (zoomed out) composites the visible part of the source onto a
-    transparent canvas, and the caller's base shows through the rest. With
-    the center clamped to the source and the scale bounded below, the
-    rectangle always overlaps the source, so the visible part is never empty.
-    """
+    """Render a viewport to RGBA, resizing in-bounds boxes and letterboxing overhangs.
+    Bounded scale and center values guarantee that the source remains visible."""
     if image.mode != "RGBA":
         image = image.convert("RGBA")
     left, top, right, bottom = viewport_rect(image.size, canvas_size, view)

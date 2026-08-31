@@ -1,11 +1,5 @@
-"""The page background override carries its own viewport through the settings API.
-
-overwrite_background_settings writes the override keys one at a time, and
-an argument left at its default changes nothing. The view breaks the
-None-means-unchanged convention on purpose: None clears the stored view
-back to the default. This drives the three cases (set, leave alone, clear)
-and asserts load_background renders the page through the stored view.
-"""
+"""Verify set, unchanged, and cleared page-background viewport settings.
+Also verify that background loading renders the stored page view."""
 import fixtures  # noqa: F401  (must be first: isolates DATA_PATH)
 
 import os
@@ -25,7 +19,7 @@ def main() -> int:
                               color=(200, 40, 40))
         pm = gl.page_manager
 
-        # --- set: the view lands beside the other override keys -------------
+        # Store the view beside other override keys
         pm.overwrite_background_settings(page_path, overwrite=True, show=True,
                                          media_path=media,
                                          view={"x": 0.2, "y": 0.5, "scale": 2.0})
@@ -35,7 +29,7 @@ def main() -> int:
         if stored.get("media-path") != media or not stored.get("overwrite"):
             failures.append(f"sibling keys were disturbed by the view write: {stored}")
 
-        # --- leave alone: a write of another key keeps the view -------------
+        # Keep the view when another key changes
         pm.overwrite_background_settings(page_path, fps=15)
         stored = pm.get_background_settings(page_path)
         if stored.get("view") != {"x": 0.2, "y": 0.5, "scale": 2.0}:
@@ -43,14 +37,14 @@ def main() -> int:
         if stored.get("fps") != 15:
             failures.append(f"the other key did not land: {stored}")
 
-        # --- the render path picks the stored page view up ------------------
+        # Load the stored page view
         controller.load_background(page, update=False)
         image = controller.background.image
         if image is None or image.view != (0.2, 0.5, 2.0):
             failures.append(f"load_background did not render the page view: "
                             f"{None if image is None else image.view}")
 
-        # --- clear: None removes the key, back to the default view ----------
+        # Clear the key to restore the default view
         pm.overwrite_background_settings(page_path, view=None)
         stored = pm.get_background_settings(page_path)
         if "view" in stored:

@@ -1,11 +1,5 @@
-"""A viewport change misses every media cache instead of serving the old crop.
-
-The video tile cache bakes the view into its frames, so the view joins its
-file name the way the saturation does, the sweeper's name pattern must keep
-recognizing such files, and the prebuild keep-check must rebuild on a view
-change instead of keeping the old crop playing. The GIF provider decodes in
-RAM, so for it the keep-check and the per-frame crop are the whole story.
-"""
+"""Verify viewport-dependent cache names, prebuild invalidation, and frame rendering.
+Video caches use file suffixes; GIF frames and keep-checks use the view directly."""
 import fixtures  # noqa: F401  (must be first: isolates DATA_PATH)
 
 import contextlib
@@ -45,7 +39,7 @@ def main() -> int:
         media_dir = os.path.join(gl.DATA_PATH, "media")
         video_path = make_test_mp4(os.path.join(media_dir, "vp_cache.mp4"))
 
-        # --- A/B: the view joins the cache file name -------------------------
+        # View-dependent cache names
         plain = BackgroundVideo(controller, video_path)
         videos.append(plain)
         zoomed = BackgroundVideo(controller, video_path, view=(0.3, 0.5, 2.0))
@@ -65,7 +59,7 @@ def main() -> int:
             failures.append(f"the viewed cache name corrupts the md5 parse: "
                             f"{match.group('hash')}")
 
-        # --- C: the prebuild keep-check rebuilds on a view change ------------
+        # Prebuild invalidation after a view change
         background = controller.background
         background.set_from_path(video_path, update=False, view=(0.3, 0.5, 2.0))
         kind_same, payload_same = background.prebuild_from_path(
@@ -80,7 +74,7 @@ def main() -> int:
             failures.append(f"a view change must rebuild the video, got {kind_new}")
         background._discard_prebuilt(kind_new, payload_new)
 
-        # --- D: the GIF provider bakes the view into its frames --------------
+        # GIF frame rendering through the view
         gif_path = make_test_gif(os.path.join(media_dir, "vp_cache.gif"))
         background.set_from_path(gif_path, update=False)
         default_frames = [f.tobytes() for f in background.video.frames[:1]]

@@ -45,11 +45,8 @@ if TYPE_CHECKING:
 
 
 def background_canvas_size(deck_controller: "DeckController", extend_touchscreen: bool) -> "tuple[int, int] | None":
-    """The canvas the background composes onto: the key grid with the bezel
-    spacing, extended by the strip band when extend is on. None when the deck
-    geometry is absent. BackgroundImage and the viewport dialog both read
-    this, so the white box in the dialog and the crop on the deck cannot
-    disagree about the aspect."""
+    """Return the shared key-grid canvas, with bezel spacing and an enabled touchscreen strip.
+    Return None when deck geometry is unavailable."""
     deck = getattr(deck_controller, "deck", None)
     if deck is None:
         return None
@@ -65,15 +62,8 @@ def background_canvas_size(deck_controller: "DeckController", extend_touchscreen
 
 
 def resolve_background_entries(config: "Mapping[str, Any]") -> "list[tuple[str, tuple[float, float, float]]]":
-    """The (path, view) entries a background config renders, in order.
-
-    The media-paths list wins when it holds at least one real image file,
-    with each entry's own view; otherwise the single media-path with the
-    config's view; otherwise nothing. The loader and the settings UI both
-    resolve through this, so the dialog adjusts the file the deck shows and
-    counts the same entries the renderer plays. A deleted file or a video in
-    the list drops out here for both.
-    """
+    """Return all existing image-list entries, or the configured single path if none remain.
+    The single path can be missing; return empty when it is absent or empty."""
     pairs = [(p, v) for p, v in media_entries(config.get("media-paths")) if is_image(p)]
     if pairs:
         return pairs
@@ -248,29 +238,16 @@ class Background:
         return False
 
     def update_view(self, view: "tuple[float, float, float]") -> bool:
-        """Swap the live background's viewport in place, for the drag preview.
-
-        Returns True when the swap re-rendered live: a still image, including
-        the current slideshow frame, re-composites at once with no re-decode
-        of its file. A video or GIF background returns False, because its
-        view bakes into its per-frame cache and only a full background reload
-        rebuilds that; the caller reloads on release instead of per drag
-        step.
-
-        The view lands on the image before the epoch bump. A compose that
-        snapshots the epoch after the bump reads the image's view later
-        still, so it cannot publish the old view under the new epoch; one
-        that snapshotted before the bump is discarded at publish.
-        """
+        """Set a still view before the epoch increment; post-increment composers see the new view.
+        Pre-increment results are rejected; video and GIF views return False for reload."""
         with self._render_state_lock:
             image = self.image
             show = self.slideshow
         if image is None:
             return False
         image.set_view(view)
-        # The rotation renders each frame through its own stored view when
-        # it returns to it, so the swap lands there too, or the frame reverts
-        # to the old crop one interval later.
+        # Keep the showing slideshow frame's stored view in sync so it does not revert
+        # when the rotation returns to it.
         if show is not None and image.path is not None and image.path in show.views:
             show.views[image.path] = view
         with self._render_state_lock:
@@ -285,12 +262,8 @@ class Background:
         return True
 
     def set_slideshow_view(self, path: str, view: "tuple[float, float, float]") -> bool:
-        """Store a view for one slideshow image without touching the frame on
-        screen. Returns True when a rotation holds that image; the rotation
-        renders through the new view when it next returns to it. The caller
-        uses update_view for the showing frame and this for the others, so an
-        edit to an image that is not on screen never reloads the rotation and
-        never jumps it back to its first frame."""
+        """Store a slideshow image's view for its next render without changing the current frame.
+        Return False when the active rotation does not contain the path."""
         with self._render_state_lock:
             show = self.slideshow
         if show is None or path not in show.views:
@@ -484,16 +457,13 @@ class BackgroundImage:
         # Retain source path for re-decode when runtime strip extension outgrows the fitted image.
         self.path = path
 
-        # The pan-and-zoom viewport this image renders through, a normalized
-        # (x, y, scale) tuple. set_view() swaps it live; the default view is
-        # the centered cover crop.
+        # Normalized (x, y, scale) viewport; the default is the centered cover crop.
+        # set_view() swaps it without replacing this background object.
         self.view = view
 
         # Bake saturation once for both key tiles and strip; 1.0 preserves original bytes.
         image = self._prepare_image(image)
-        # The source's own resolution caps what a re-decode can recover, so
-        # _ensure_fits_canvas() does not re-open a file that simply has no
-        # more pixels than the retained copy, once per compose.
+        # Record source resolution so compose skips decodes that cannot recover more pixels.
         self._native_size: tuple[int, int] = image.size
         # Set by _fit_to_canvas; the budget the retained copy was fitted for.
         self._fitted_budget: tuple[int, int] = image.size
@@ -536,14 +506,8 @@ class BackgroundImage:
         return background_canvas_size(self.deck_controller, extend_touchscreen)
 
     def _budget_multiplier(self) -> float:
-        """How much source resolution to keep, in canvas widths.
-
-        A zoomed-in view samples a 1/scale slice of the cover rect, so a
-        sharp render needs scale times the canvas resolution from the
-        source. The multiplier follows the zoom up to 4x and no further,
-        which bounds the retained image; a view zoomed past 4x renders from
-        the 4x copy and softens instead of growing memory without limit.
-        """
+        """Return the retained source-resolution multiplier in canvas widths.
+        Clamp it from 1x through 4x to bound memory; views above 4x can soften."""
         return min(max(self.view[2], 1.0), 4.0)
 
     def _budget(self, canvas: tuple[int, int]) -> tuple[int, int]:
@@ -557,11 +521,8 @@ class BackgroundImage:
         budget = self._budget(canvas)
         if image.width > budget[0] or image.height > budget[1]:
             image.thumbnail(budget, Image.Resampling.LANCZOS)
-        # The budget this copy was fitted for. _ensure_fits_canvas compares
-        # against it instead of against the copy's pixels: a thumbnail keeps
-        # the source aspect, so on an aspect-mismatched source one axis can
-        # never reach its per-axis demand, and a pixel comparison re-decoded
-        # the file on every compose.
+        # Store the requested budget, not thumbnail pixels, because aspect mismatch can keep one
+        # pixel axis below demand and otherwise cause a decode on every compose.
         self._fitted_budget = budget
         return image
 
@@ -591,9 +552,8 @@ class BackgroundImage:
             return
         fresh = self._prepare_image(fresh)
         self._native_size = fresh.size
-        # The old copy is dropped, not closed: a compose on the media thread
-        # can still hold it, and close() under it raises mid-render. With no
-        # file behind it, dropping the reference frees the pixels the same.
+        # Drop the previous copy without closing it because the media thread can still render it.
+        # The pixels are freed after the final reference is released.
         self.image = self._fit_to_canvas(fresh, extend_touchscreen)
 
     def close(self) -> None:
@@ -620,10 +580,8 @@ class BackgroundImage:
                 "still being composed"
             )
 
-        # Convert to RGBA before the resize to keep transparency. The default
-        # view renders the same centered cover crop ImageOps.fit produced; a
-        # user view pans and zooms it, and a zoomed-out view letterboxes with
-        # transparency over the black deck base.
+        # Convert before resizing to preserve alpha; zoomed-out regions expose the black deck base.
+        # The default view remains a centered cover crop.
         img_rgba = source.convert("RGBA")
         return render_viewport(img_rgba, (canvas_width, canvas_height), self.view)
 
