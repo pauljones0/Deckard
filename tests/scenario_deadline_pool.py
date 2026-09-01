@@ -134,7 +134,7 @@ def one_worker_pool(prefix: str, replace_on_wedge: bool) -> DeadlinePool:
     )
 
 
-def case_the_deadline_tells_a_stuck_task_from_a_late_one() -> None:
+def case_classifies_stuck_and_late_tasks() -> None:
     """Require an overdue started task to be stuck and queued tasks to be late.
     The late tasks must run after the wedge clears.
     """
@@ -200,7 +200,7 @@ def case_the_deadline_tells_a_stuck_task_from_a_late_one() -> None:
         pool.shutdown()
 
 
-def case_the_replacement_takes_work_at_once() -> None:
+def case_replacement_accepts_work_immediately() -> None:
     """Require work after a wedge to run on the replacement executor at once.
     A second wedge must accumulate replacement and leaked-worker counts.
     """
@@ -233,7 +233,7 @@ def case_the_replacement_takes_work_at_once() -> None:
         pool.shutdown()
 
 
-def case_the_replacement_budget_quarantines_the_pool() -> None:
+def case_replacement_budget_quarantines_pool() -> None:
     """Require replacement to stop at its budget and quarantine the pool.
     Quarantine keeps the stuck task on the current executor and reports it.
     """
@@ -284,7 +284,7 @@ def case_the_replacement_budget_quarantines_the_pool() -> None:
         pool.shutdown()
 
 
-def case_a_pool_that_does_not_replace_cancels_nothing() -> None:
+def case_nonreplacing_pool_keeps_queue() -> None:
     """Require a non-replacing pool to keep its executor and queued tasks.
     Cancelling a ready callback would leave the action gates closed.
     """
@@ -314,7 +314,7 @@ def case_a_pool_that_does_not_replace_cancels_nothing() -> None:
         pool.shutdown()
 
 
-def case_a_shut_down_pool_refuses_without_raising() -> None:
+def case_shutdown_pool_refuses_quietly() -> None:
     """Require calls during close to return None or an empty outcome without raising."""
     pool = one_worker_pool("dp_closed", replace_on_wedge=True)
     late_submit, in_batch = Task("late-submit"), Task("in-batch")
@@ -346,7 +346,7 @@ def case_a_shut_down_pool_refuses_without_raising() -> None:
     print("PASS: a shut-down pool refuses without raising")
 
 
-def case_a_close_during_the_sweep_cancels_the_queue_quietly() -> None:
+def case_close_cancels_queued_tasks() -> None:
     """Treat queued-task cancellation during a close as quiet teardown.
     A wedge in the closed pool must not create a replacement executor.
     """
@@ -370,13 +370,13 @@ def case_a_close_during_the_sweep_cancels_the_queue_quietly() -> None:
     # its own for the close to land inside that window.
     result: list = []
 
-    def run_the_batch() -> None:
+    def run_current_batch() -> None:
         try:
             result.append(pool.run_batch(batch(hung, first, second), deadline=DEADLINE))
         except BaseException as error:  # noqa: BLE001  the assertion below reports it
             result.append(error)
 
-    batch_thread = threading.Thread(target=run_the_batch, name="dp_close_mid_batch")
+    batch_thread = threading.Thread(target=run_current_batch, name="dp_close_mid_batch")
     try:
         batch_thread.start()
         assert executors[0].submitted.wait(PROMPT), (
@@ -412,7 +412,7 @@ def case_a_close_during_the_sweep_cancels_the_queue_quietly() -> None:
         batch_thread.join(PROMPT)
 
 
-def case_a_live_pool_that_refuses_is_reported() -> None:
+def case_live_pool_reports_refusal() -> None:
     """Report thread-exhaustion refusal but keep shutdown refusal quiet.
     A refused task never reaches the queue or deadline sweep.
     """
@@ -465,7 +465,7 @@ def case_a_live_pool_that_refuses_is_reported() -> None:
         closing.shutdown()
 
 
-def case_a_task_that_raises_does_not_stop_the_sweep() -> None:
+def case_task_failure_allows_sweep() -> None:
     """Require a task exception not to stop classification of the rest of its batch."""
     pool = one_worker_pool("dp_raise", replace_on_wedge=False)
     raiser = Task("raiser", raises=RuntimeError("the task itself failed"))
@@ -493,14 +493,14 @@ def case_a_task_that_raises_does_not_stop_the_sweep() -> None:
 
 def main() -> None:
     start_watchdog(60, label="scenario_deadline_pool")
-    case_the_deadline_tells_a_stuck_task_from_a_late_one()
-    case_the_replacement_takes_work_at_once()
-    case_the_replacement_budget_quarantines_the_pool()
-    case_a_pool_that_does_not_replace_cancels_nothing()
-    case_a_shut_down_pool_refuses_without_raising()
-    case_a_close_during_the_sweep_cancels_the_queue_quietly()
-    case_a_live_pool_that_refuses_is_reported()
-    case_a_task_that_raises_does_not_stop_the_sweep()
+    case_classifies_stuck_and_late_tasks()
+    case_replacement_accepts_work_immediately()
+    case_replacement_budget_quarantines_pool()
+    case_nonreplacing_pool_keeps_queue()
+    case_shutdown_pool_refuses_quietly()
+    case_close_cancels_queued_tasks()
+    case_live_pool_reports_refusal()
+    case_task_failure_allows_sweep()
     print("PASS: scenario_deadline_pool")
 
 

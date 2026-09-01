@@ -324,7 +324,7 @@ def check_keyless_screensaver_loops_dims() -> None:
         fixtures.teardown(controller)
 
 
-def check_deck_loops_page_does_not() -> None:
+def check_background_loop_defaults() -> None:
     """Require deck backgrounds to loop and page backgrounds to remain one-shot."""
     gif = make_gif("bg.gif")
     serial = "deck-defaults-bg"
@@ -408,7 +408,7 @@ class _Widget:
     def __init__(self, value=None):
         self.value = value
         self.handlers: dict = {}
-        self._next_handler = 1
+        self._next_handler_id = 1
         self.visible = None
 
     def get_value(self):
@@ -457,8 +457,8 @@ class _Widget:
             handler(self)
 
     def connect(self, signal, handler):
-        hid = self._next_handler
-        self._next_handler += 1
+        hid = self._next_handler_id
+        self._next_handler_id += 1
         self.handlers[hid] = handler
         return hid
 
@@ -676,7 +676,7 @@ def open_every_row(serial, controller):
     return rows
 
 
-def check_first_open_writes_moves_nothing() -> None:
+def check_first_open_has_no_side_effects() -> None:
     serial = "deck-defaults-first-open"
     fixtures._install_integration_globals()
     path = deck_settings_file(serial)
@@ -797,7 +797,7 @@ def check_control_use_saves_sparsely() -> None:
     print("PASS: using a control still saves, and saves only what was chosen")
 
 
-def check_reopened_row_one_handler() -> None:
+def check_reopened_row_has_one_handler() -> None:
     """Require each row reload to retain exactly one live signal handler."""
     serial = "deck-defaults-reopen"
     seed_deck_settings(serial, {"rotation": 90})
@@ -925,15 +925,15 @@ if __name__ == "__main__":
 
     check_fresh_deck_table_brightness()
     check_keyless_screensaver_loops_dims()
-    check_deck_loops_page_does_not()
+    check_background_loop_defaults()
     check_locked_deck_shows_config()
     check_locked_deck_blanks_without_screensaver()
 
-    check_first_open_writes_moves_nothing()
+    check_first_open_has_no_side_effects()
     check_fresh_page_shows_table()
     check_persisted_value_shown_untouched()
     check_control_use_saves_sparsely()
-    check_reopened_row_one_handler()
+    check_reopened_row_has_one_handler()
     check_page_editor_adds_no_handlers()
 
     print("\nALL PASS: scenario_deck_settings_defaults")

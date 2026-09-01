@@ -56,7 +56,7 @@ ALLOWED_ENGINE_GL_SURFACE = frozenset({
 
 # Exempt only startup_queue's app deferral slots, which share a module with the
 # engine's CLI paths but are not read by the engine workload.
-LEG_A_HOST_EXEMPTION = {
+STARTUP_QUEUE_UI_SLOT_EXEMPTIONS = {
     "src/backend/startup_queue.py": frozenset({"app", "app_loading_finished_tasks"}),
 }
 
@@ -267,11 +267,11 @@ def check_recorder_saw_engine(runtime_reads: set) -> None:
         f"workload did not run, not that the engine stopped reading them. "
         f"Recorded: {sorted(slots)}"
     )
-    controller_page_manager = [
+    controller_page_manager_paths = [
         path for slot, path in runtime_reads
         if slot == "page_manager" and path.endswith("/controller.py")
     ]
-    assert controller_page_manager, (
+    assert controller_page_manager_paths, (
         "no gl.page_manager read was attributed to the deck controller -- the "
         "known-allowed read this guard is calibrated against never happened"
     )
@@ -361,7 +361,7 @@ def check_static_surface(references: dict) -> None:
     )
     unlisted = []
     for relative, slots in sorted(references.items()):
-        exempt = LEG_A_HOST_EXEMPTION.get(relative, frozenset())
+        exempt = STARTUP_QUEUE_UI_SLOT_EXEMPTIONS.get(relative, frozenset())
         for slot in sorted(slots):
             if slot not in ALLOWED_ENGINE_GL_SURFACE and slot not in exempt:
                 unlisted.append(f"{relative}: gl.{slot}")
@@ -376,7 +376,7 @@ def check_static_surface(references: dict) -> None:
 def check_static_absent(references: dict) -> None:
     """Require UI slots statically absent except for exact file-and-slot exemptions."""
     for relative, slots in sorted(references.items()):
-        exempt = LEG_A_HOST_EXEMPTION.get(relative, frozenset())
+        exempt = STARTUP_QUEUE_UI_SLOT_EXEMPTIONS.get(relative, frozenset())
         offending = sorted((slots & REQUIRED_ABSENT) - exempt)
         assert not offending, (
             f"{relative} mentions UI-side slots {offending}. Engine code does "
@@ -384,13 +384,13 @@ def check_static_absent(references: dict) -> None:
             f"store -- if this file grew a legitimate need for one, it is not "
             f"engine code any more."
         )
-    hosts = sorted(LEG_A_HOST_EXEMPTION)
+    hosts = sorted(STARTUP_QUEUE_UI_SLOT_EXEMPTIONS)
     for host in hosts:
         assert host in references, (
             f"{host} is exempted from the absent-slot check but is not a loaded "
             f"engine module any more -- a stale exemption is a hole"
         )
-        stale = sorted(LEG_A_HOST_EXEMPTION[host] - references[host])
+        stale = sorted(STARTUP_QUEUE_UI_SLOT_EXEMPTIONS[host] - references[host])
         assert not stale, (
             f"{host} no longer mentions {stale}; drop it from the exemption "
             f"rather than leaving the slot permitted there"

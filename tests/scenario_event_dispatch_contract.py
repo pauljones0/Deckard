@@ -12,13 +12,13 @@ from src.backend.PluginManager.EventHolder import EventHolder
 def check_batch_runs_in_registration_order() -> None:
     order: list[int] = []
 
-    def make(n):
+    def make_observer(n):
         def observer(*args, **kwargs):
             order.append(n)
         observer.__name__ = f"observer_{n}"
         return observer
 
-    observers = [make(n) for n in range(10)]
+    observers = [make_observer(n) for n in range(10)]
     event_dispatch.dispatch(observers, ("evt",), {}, label="test::FIFO")
 
     assert wait_until(lambda: len(order) == 10, timeout=5.0), (
@@ -120,7 +120,7 @@ def check_async_callable_instance_is_awaited() -> None:
     print("PASS: an async callable instance is awaited, not discarded")
 
 
-def check_queue_cap_drops_oldest_and_counts() -> None:
+def check_queue_cap_drops_oldest() -> None:
     # While a wedge holds the lane, drop and count oldest batches past the cap.
     real_cap = event_dispatch._QUEUE_MAX
     event_dispatch._QUEUE_MAX = 5
@@ -156,7 +156,7 @@ def check_queue_cap_drops_oldest_and_counts() -> None:
     print("PASS: a flooded lane drops its oldest batches at the cap and counts them")
 
 
-def check_custom_repr_and_eq_are_not_called_under_the_lock() -> None:
+def check_observer_repr_and_eq_run_outside_lock() -> None:
     # A plugin observer with a custom __repr__/__eq__ must not have either run
     # under the dispatch watch lock. The observer records the lock state it saw.
     saw_locked = {"repr": False}
@@ -184,8 +184,8 @@ def main() -> None:
     check_dispatch_returns_before_observer_completes()
     check_trigger_event_returns_before_observer()
     check_async_callable_instance_is_awaited()
-    check_queue_cap_drops_oldest_and_counts()
-    check_custom_repr_and_eq_are_not_called_under_the_lock()
+    check_queue_cap_drops_oldest()
+    check_observer_repr_and_eq_run_outside_lock()
     print("PASS: scenario_event_dispatch_contract")
 
 

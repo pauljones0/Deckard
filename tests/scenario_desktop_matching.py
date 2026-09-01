@@ -22,7 +22,7 @@ def select(desktop: str | None, server: str | None = "wayland"):
     return select_integration_class(desktop_components(), session_type())
 
 
-def check_helper() -> None:
+def check_session_info_parsing() -> None:
     from src.backend.session_info import desktop_components, session_type
 
     stage_env("ubuntu:GNOME", "wayland")
@@ -94,7 +94,7 @@ def check_selection() -> None:
 def main() -> None:
     fixtures.start_watchdog(30, label="scenario_desktop_matching")
 
-    check_helper()
+    check_session_info_parsing()
     check_selection()
 
     print("PASS: scenario_desktop_matching")

@@ -597,7 +597,9 @@ def leg_instance_never_answers(controller) -> None:
                              state_requests=[(SERIAL, "States", "0,0", 1)]),
             transport)
 
-    no_objects = drive_on_worker(drive_missing_object, "cli-transport-no-objects")
+    missing_object_results = drive_on_worker(
+        drive_missing_object, "cli-transport-no-objects"
+    )
 
     api._bus.publish_object(api.DBUS_OBJECT_PATH, api._api_instance)
 
@@ -618,10 +620,12 @@ def leg_instance_never_answers(controller) -> None:
 
     older = drive_on_worker(drive_missing_method, "cli-transport-missing-method")
 
-    assert no_objects["running"] is True, (
+    assert missing_object_results["running"] is True, (
         "the name is owned -- an instance with nothing published looks exactly "
         "as running as any other, which is why this state is reachable")
-    assert no_objects["failures"] == [cli_forward.SKEW_MESSAGE], no_objects["failures"]
+    assert missing_object_results["failures"] == [cli_forward.SKEW_MESSAGE], (
+        missing_object_results["failures"]
+    )
     assert "older build" in cli_forward.SKEW_MESSAGE, cli_forward.SKEW_MESSAGE
     assert "shutting down" in cli_forward.SKEW_MESSAGE, (
         f"the state this leg just produced is also what tearing down looks "

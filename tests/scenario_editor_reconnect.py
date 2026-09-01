@@ -190,18 +190,18 @@ class FakeAlignmentRow:
         self.connect_signals()
 
 
-def _install(controller, page) -> None:
+def install_editor_test_context(controller, page) -> None:
     gl.app = _APP
     mw = FakeMainWindow(controller, page)
     services.require_main_window = lambda: mw
 
 
-def test_size_row_reconnects_after_midload_return() -> None:
+def test_size_row_reconnects_on_early_return() -> None:
     """A load that cannot resolve the input must still leave the spinner wired,
     so the next edit is saved."""
     page = FakePage()
     # Controller present, but the input is not carried: a mid-load return.
-    _install(FakeController(None), page)
+    install_editor_test_context(FakeController(None), page)
 
     row = FakeSizeRow()
     assert row.size_spinner.button.handler_count() == 1, "row must start wired"
@@ -222,12 +222,12 @@ def test_size_row_reconnects_after_midload_return() -> None:
     )
 
 
-def test_size_row_wires_exactly_once_on_load() -> None:
+def test_size_row_single_load_handler() -> None:
     """A full load must leave exactly one handler, so one edit writes once."""
     page = FakePage()
     layout = FakeLayout(size=0.8)
     controller = FakeController(FakeControllerInput(layout, {"size": True}))
-    _install(controller, page)
+    install_editor_test_context(controller, page)
 
     row = FakeSizeRow()
     row.load_for_identifier(object(), 0)
@@ -244,10 +244,10 @@ def test_size_row_wires_exactly_once_on_load() -> None:
     assert len(page.calls) == 1, f"one edit produced {len(page.calls)} writes"
 
 
-def test_alignment_row_survives_repeated_midload_returns() -> None:
+def test_alignment_row_reconnects_on_early_return() -> None:
     """Require repeated early returns to keep the alignment row wired."""
     page = FakePage()
-    _install(FakeController(None), page)
+    install_editor_test_context(FakeController(None), page)
 
     row = FakeAlignmentRow()
     assert row.alignment_spinner.button.handler_count() == 1, "row must start wired"
@@ -270,9 +270,9 @@ def test_alignment_row_survives_repeated_midload_returns() -> None:
 
 def main() -> None:
     fixtures.start_watchdog(30, label="scenario_editor_reconnect")
-    test_size_row_reconnects_after_midload_return()
-    test_size_row_wires_exactly_once_on_load()
-    test_alignment_row_survives_repeated_midload_returns()
+    test_size_row_reconnects_on_early_return()
+    test_size_row_single_load_handler()
+    test_alignment_row_reconnects_on_early_return()
     print("PASS: scenario_editor_reconnect")
 
 

@@ -21,7 +21,7 @@ def main() -> None:
     records: list[str] = []
     logger.add(lambda message: records.append(str(message)), level="TRACE")
 
-    def joined() -> str:
+    def log_text() -> str:
         return "".join(records)
 
     # Install with a spy as the pre-existing hook, so the KeyboardInterrupt
@@ -37,9 +37,9 @@ def main() -> None:
     t = threading.Thread(target=boom_thread, name="boom-worker")
     t.start()
     t.join()
-    assert "boom-thread" in joined(), "thread exception message must reach the sink"
-    assert "boom-worker" in joined(), "the thread NAME is what makes these actionable"
-    assert 'raise ValueError("boom-thread")' in joined(), (
+    assert "boom-thread" in log_text(), "thread exception message must reach the sink"
+    assert "boom-worker" in log_text(), "the thread NAME is what makes these actionable"
+    assert 'raise ValueError("boom-thread")' in log_text(), (
         "the full traceback (source line), not just the message, must be logged"
     )
 
@@ -49,8 +49,8 @@ def main() -> None:
         raise TypeError("boom-main")
     except TypeError:
         sys.excepthook(*sys.exc_info())
-    assert "boom-main" in joined() and "[main]" in joined()
-    assert 'raise TypeError("boom-main")' in joined()
+    assert "boom-main" in log_text() and "[main]" in log_text()
+    assert 'raise TypeError("boom-main")' in log_text()
 
     records.clear()
     sys.excepthook(KeyboardInterrupt, KeyboardInterrupt(), None)
@@ -67,7 +67,7 @@ def main() -> None:
     obj = BoomOnDel()
     del obj
     gc.collect()
-    assert "boom-del" in joined() and "[unraisable]" in joined()
+    assert "boom-del" in log_text() and "[unraisable]" in log_text()
 
     # 4a. The asyncio handler, through the real wiring in event_dispatch._get_loop.
     from src.backend.PluginManager import event_dispatch
@@ -75,11 +75,11 @@ def main() -> None:
     records.clear()
     loop = event_dispatch._get_loop()
     loop.call_exception_handler({"message": "ctx", "exception": ValueError("boom-asyncio")})
-    assert "boom-asyncio" in joined() and "[asyncio]" in joined()
+    assert "boom-asyncio" in log_text() and "[asyncio]" in log_text()
 
     records.clear()
     loop.call_exception_handler({"message": "boom-asyncio-msgonly"})
-    assert "boom-asyncio-msgonly" in joined(), "message-only contexts (no exception) must log too"
+    assert "boom-asyncio-msgonly" in log_text(), "message-only contexts (no exception) must log too"
 
     # 4b. Surface a batch exception through its Future callback because the pool
     # does not send it to threading.excepthook.
@@ -89,12 +89,12 @@ def main() -> None:
     try:
         event_dispatch.dispatch([lambda: None], (), {}, label="hooks-scenario")
         deadline = time.monotonic() + 5.0
-        while "boom-batch" not in joined() and time.monotonic() < deadline:
+        while "boom-batch" not in log_text() and time.monotonic() < deadline:
             time.sleep(0.02)
     finally:
         event_dispatch._get_loop = original_get_loop
-    assert "boom-batch" in joined(), "a batch-level failure must not vanish into the dropped Future"
-    assert "dispatch batch failed" in joined()
+    assert "boom-batch" in log_text(), "a batch-level failure must not vanish into the dropped Future"
+    assert "dispatch batch failed" in log_text()
 
     # 5. idempotence
     hook_after_first = sys.excepthook
@@ -234,9 +234,9 @@ def main() -> None:
             raise ValueError("boom-storm")  # one fixed site, fired 100x
 
         for _ in range(100):
-            st = threading.Thread(target=storm, name="storm-worker")
-            st.start()
-            st.join()
+            storm_thread = threading.Thread(target=storm, name="storm-worker")
+            storm_thread.start()
+            storm_thread.join()
         assert sum("boom-storm" in r for r in records) == 1, (
             f"a 100x storm from one site must log once, got "
             f"{sum('boom-storm' in r for r in records)} records"
@@ -247,18 +247,18 @@ def main() -> None:
         records.clear()
         log_hooks.RATE_LIMIT_WINDOW_S = 0.001
         time.sleep(0.01)
-        st = threading.Thread(target=storm, name="storm-worker")
-        st.start()
-        st.join()
+        storm_thread = threading.Thread(target=storm, name="storm-worker")
+        storm_thread.start()
+        storm_thread.join()
         assert sum("boom-storm" in r for r in records) == 1
-        assert "99 further failures at" in joined(), (
-            f"the next record must carry the suppressed count, got: {joined()[:300]!r}"
+        assert "99 further failures at" in log_text(), (
+            f"the next record must carry the suppressed count, got: {log_text()[:300]!r}"
         )
-        assert "since the last record" in joined(), (
+        assert "since the last record" in log_text(), (
             "the summary must not claim a window it cannot know (the gap "
             "between two records from one site is unbounded)"
         )
-        assert "scenario_exception_hooks.py" in joined() and "[ValueError]" in joined(), (
+        assert "scenario_exception_hooks.py" in log_text() and "[ValueError]" in log_text(), (
             "the summary must name the site it is summarizing"
         )
 
@@ -275,9 +275,9 @@ def main() -> None:
             raise ValueError("boom-site-b")
 
         for target in (site_a, site_b, site_a, site_b, site_a):
-            st = threading.Thread(target=target, name="two-sites")
-            st.start()
-            st.join()
+            site_thread = threading.Thread(target=target, name="two-sites")
+            site_thread.start()
+            site_thread.join()
         assert sum("boom-site-a" in r for r in records) == 1
         assert sum("boom-site-b" in r for r in records) == 1, (
             "a repeating site must not consume another site's budget"
@@ -298,16 +298,16 @@ def main() -> None:
             raise RuntimeError("uniq-3")
 
         for target in (uniq_one, uniq_two, uniq_three):
-            st = threading.Thread(target=target, name=target.__name__)
-            st.start()
-            st.join()
+            unique_site_thread = threading.Thread(target=target, name=target.__name__)
+            unique_site_thread.start()
+            unique_site_thread.join()
         try:
             raise KeyError("uniq-4")
         except KeyError:
             sys.excepthook(*sys.exc_info())
         for tag in ("uniq-1", "uniq-2", "uniq-3", "uniq-4"):
             assert sum(tag in r for r in records) == 1, f"{tag} must log exactly once"
-        assert "suppressed" not in joined(), (
+        assert "suppressed" not in log_text(), (
             "non-repeating failures must not gain suppression noise"
         )
 
@@ -367,8 +367,8 @@ def main() -> None:
         assert quiet not in log_hooks._rate_state, (
             "an idle site must be evicted before an active one"
         )
-        assert "5 further failures at /fake/quiet_site.py:7" in joined(), (
-            f"an evicted pending count must be reported, got: {joined()[-400:]!r}"
+        assert "5 further failures at /fake/quiet_site.py:7" in log_text(), (
+            f"an evicted pending count must be reported, got: {log_text()[-400:]!r}"
         )
         log_hooks.RATE_LIMIT_WINDOW_S = original_window
 
@@ -405,7 +405,7 @@ def main() -> None:
             f"every terminal invocation must be logged, got "
             f"{sum('boom-shared' in r for r in records)} records"
         )
-        assert "3 further failures at" in joined(), (
+        assert "3 further failures at" in log_text(), (
             "the terminal record must carry what the window swallowed -- "
             "there is no next record to carry it"
         )
@@ -463,7 +463,7 @@ def main() -> None:
         "RLock -- a raising __del__ collected inside the guarded region "
         "re-enters _log_exc on the same thread"
     )
-    assert "boom-reentrant-del" in joined(), (
+    assert "boom-reentrant-del" in log_text(), (
         "the re-entrant unraisable must still be logged, not just survive"
     )
     assert [k for k in log_hooks._rate_state if k[0] == "RuntimeError"], (
