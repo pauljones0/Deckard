@@ -46,7 +46,8 @@ def strip_band_geometry(deck_controller: "DeckController", canvas_width: int) ->
             f"{PLUS_CANVAS_WIDTH}; using the derived strip band. Recalibrate "
             f"PLUS_BAND after a key-spacing change."
         )
-    strip_width, strip_height = deck_controller.get_touchscreen_image_size()
+    # The device's own strip size: the band is laid out in the device's frame, the caller turns it.
+    strip_width, strip_height = deck_controller.device_touchscreen_image_size()
     return (deck_controller.key_spacing[1], canvas_width, 0,
             round(strip_height * canvas_width / strip_width))
 

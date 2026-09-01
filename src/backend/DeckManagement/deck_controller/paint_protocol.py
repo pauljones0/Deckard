@@ -85,6 +85,10 @@ class PresentState:
                 and img_hash == self.last_enqueued_hash):
             return False
         native_image = encode()
+        if not native_image:
+            # Empty bytes are a mid-turn straggler; enqueueing it would displace a valid
+            # pending paint with a write that never happens.
+            return False
         self.last_enqueued_hash = img_hash
         tracker = getattr(getattr(media_player, "deck_controller", None), "input_latency", None)
         latency_sample = tracker.current_sample() if tracker is not None else None

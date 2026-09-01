@@ -9,6 +9,7 @@ from PIL import Image
 from fixtures import FaultyFakeDeck, start_watchdog
 
 from src.backend.DeckManagement.BetterDeck import BetterDeck
+from src.backend.DeckManagement.deck_controller.media_writer import encode_native_touchscreen
 from src.backend.DeckManagement.deck_controller.native_encode import _encode_strip_native
 
 ROTATIONS = (0, 90, 180, 270)
@@ -31,11 +32,13 @@ class _StubTouchScreen:
         self.deck_controller = _StubController(deck)
 
 
-def make_strip(mode: str) -> Image.Image:
-    """A black strip with a bright block in its top-left corner."""
+def make_strip(mode: str, size: "tuple[int, int]") -> Image.Image:
+    """A black strip of size with a bright block in its top-left corner.
+    The block follows the strip's aspect, so it is BLOCK_W by BLOCK_H in the device's frame."""
     fill = (0, 0, 0, 255) if mode == "RGBA" else (0, 0, 0)
-    strip = Image.new(mode, STRIP_SIZE, fill)
-    block = Image.new(mode, (BLOCK_W, BLOCK_H),
+    strip = Image.new(mode, size, fill)
+    block_size = (BLOCK_W, BLOCK_H) if size[0] >= size[1] else (BLOCK_H, BLOCK_W)
+    block = Image.new(mode, block_size,
                       (255, 255, 255, 255) if mode == "RGBA" else (255, 255, 255))
     strip.paste(block, (0, 0))
     block.close()
@@ -69,11 +72,18 @@ def check_strip_pixels(mode: str) -> int:
 
     for rotation in ROTATIONS:
         better.set_rotation(rotation)
-        strip = make_strip(mode)
+        logical_size = better.logical_touchscreen_size()
+        expected_logical = (STRIP_SIZE if rotation in (0, 180)
+                            else (STRIP_SIZE[1], STRIP_SIZE[0]))
+        if logical_size != expected_logical:
+            print(f"FAIL({mode}): rotation {rotation}: the composers draw at "
+                  f"{logical_size}, expected {expected_logical}")
+            return 1
+        strip = make_strip(mode, logical_size)
         native = _encode_strip_native(touchscreen, strip)
 
         # The caller keeps its image: the window mirrors the same object.
-        if strip.size != STRIP_SIZE:
+        if strip.size != logical_size:
             print(f"FAIL({mode}): rotation {rotation} resized the caller's "
                   f"image to {strip.size}")
             return 1
@@ -94,8 +104,10 @@ def check_strip_pixels(mode: str) -> int:
         decoded.close()
         strip.close()
 
-        # A 180-degree turn moves the block on both axes; other values leave it.
-        lit = "bottom_right" if rotation == 180 else "top_left"
+        # Where the composite's top-left corner lands on the device; the dark checks below
+        # refuse a one-axis mirror, which would land top-right or bottom-left at 180.
+        lit = {0: "top_left", 90: "bottom_left", 180: "bottom_right",
+               270: "top_right"}[rotation]
         if not means[lit] > 200:
             print(f"FAIL({mode}): rotation {rotation}: the block should sit "
                   f"in the {lit} of the written strip, mean {means[lit]:.1f} "
@@ -113,12 +125,76 @@ def check_strip_pixels(mode: str) -> int:
     return 0
 
 
+def check_rotation_zero_bytes() -> int:
+    """An unturned deck gets the bytes of a plain flatten-and-save, with no resize and no turn.
+    A turn or a resize that creeps into the unturned path changes these bytes."""
+    deck = FaultyFakeDeck(serial_number="strip-identity", model="plus")
+    better = BetterDeck(deck)
+    better.set_rotation(0)
+    touchscreen = _StubTouchScreen(better)
+
+    strip = make_strip("RGBA", STRIP_SIZE)
+    native = _encode_strip_native(touchscreen, strip)
+
+    flattened = Image.new("RGB", strip.size, (0, 0, 0))
+    flattened.paste(strip, (0, 0), strip)
+    with io.BytesIO() as buf:
+        flattened.save(buf, "JPEG", quality=90, subsampling=0)
+        expected = buf.getvalue()
+    flattened.close()
+    strip.close()
+
+    if native != expected:
+        print(f"FAIL(identity): rotation 0 wrote {len(native)} bytes, the "
+              f"unturned pipeline writes {len(expected)}")
+        return 1
+
+    print("PASS: an unturned deck gets byte-identical strip output")
+    return 0
+
+
+def check_mid_turn_straggler() -> int:
+    """A composite shaped for the other orientation encodes to empty bytes.
+    Each drop site reads one turn, so a rotation between compose and encode drops the frame."""
+    deck = BetterDeck(FaultyFakeDeck(serial_number="rot-straggler", model="plus"))
+    touchscreen = _StubTouchScreen(deck)
+    tall_size = (STRIP_SIZE[1], STRIP_SIZE[0])
+
+    deck.set_rotation(0)
+    tall = Image.new("RGB", tall_size, (0, 0, 0))
+    outer = _encode_strip_native(touchscreen, tall)
+    inner = encode_native_touchscreen(deck, tall)
+    tall.close()
+    if outer != b"" or inner != b"":
+        print(f"FAIL(straggler): rotation 0 encoded a {tall_size} composite "
+              f"to {len(outer)} and {len(inner)} bytes, expected empty at "
+              f"both drop sites")
+        return 1
+
+    deck.set_rotation(90)
+    wide = Image.new("RGB", STRIP_SIZE, (0, 0, 0))
+    outer = _encode_strip_native(touchscreen, wide)
+    inner = encode_native_touchscreen(deck, wide)
+    wide.close()
+    if outer != b"" or inner != b"":
+        print(f"FAIL(straggler): rotation 90 encoded a {STRIP_SIZE} composite "
+              f"to {len(outer)} and {len(inner)} bytes, expected empty at "
+              f"both drop sites")
+        return 1
+
+    print("PASS: a composite shaped for the other orientation drops as empty "
+          "bytes")
+    return 0
+
+
 def main() -> int:
     start_watchdog(60, "touchscreen_rotation")
     fixtures.install_stub_globals()
     # Cover transparent RGBA composites and RGB video frames.
     rc = check_strip_pixels("RGBA")
     rc |= check_strip_pixels("RGB")
+    rc |= check_rotation_zero_bytes()
+    rc |= check_mid_turn_straggler()
     return rc
 
 

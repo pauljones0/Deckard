@@ -239,6 +239,10 @@ class StubDeckController:
     def get_touchscreen_image_size(self):
         return (800, 100)
 
+    def device_touchscreen_image_size(self):
+        # The device buffer the write task reads; at rotation 0 it equals the logical size above.
+        return (800, 100)
+
     def is_visual(self) -> bool:
         return self.deck.is_visual()
 

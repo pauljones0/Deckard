@@ -36,7 +36,7 @@ from src.backend.DeckManagement import media_loop
 from src.backend.DeckManagement.media_loop import MEDIA_LOOP_FPS, FrameScheduled
 from src.backend.DeckManagement.Subclasses.SingleKeyAsset import SingleKeyAsset
 from src.backend.DeckManagement.Subclasses.mp4_tile_cache import get_video_md5
-from src.backend.DeckManagement.deck_controller.strip_band import band_layout
+from src.backend.DeckManagement.strip_geometry import StripBand, flat_band, oriented_band
 
 from collections.abc import Generator
 from typing import TYPE_CHECKING, Any, cast, override
@@ -280,6 +280,8 @@ class GifBackground(FrameScheduled):
 
         deck = deck_controller.deck
         self.extend_touchscreen = extend_touchscreen and deck.is_touch()
+        # One rotation read for the frame geometry; the prebuild keep-check compares against it.
+        self.rotation = deck.get_rotation()
 
         # Strip size and box exist only for extended canvas geometry; readers guard both.
         self.strip_size: "tuple[int, int] | None" = None
@@ -289,25 +291,30 @@ class GifBackground(FrameScheduled):
             key_rows, key_cols = deck.key_layout()
             self.key_count = deck.key_count()
             key_w, key_h = deck.key_image_format()['size']
+            # key_layout() already turned with the deck; the asymmetric SD+ gaps must turn with it.
             spacing_x, spacing_y = deck_controller.key_spacing
+            if self.rotation in (90, 270):
+                spacing_x, spacing_y = spacing_y, spacing_x
 
-            grid_w = key_w * key_cols + spacing_x * (key_cols - 1)
-            grid_h = key_h * key_rows + spacing_y * (key_rows - 1)
-            canvas_w, canvas_h, grid_x = grid_w, grid_h, 0
+            grid = (key_w * key_cols + spacing_x * (key_cols - 1),
+                    key_h * key_rows + spacing_y * (key_rows - 1))
 
+            # The same strip_band layout the image and video paths cut from, turned with the deck.
+            band: StripBand = flat_band(grid)
             if self.extend_touchscreen:
-                # Use the shared grid-and-strip union and include grid offset for band overhang.
                 self.strip_size = deck_controller.get_touchscreen_image_size()
-                canvas_w, canvas_h, grid_x, self._strip_box = band_layout(
-                    deck_controller, grid_w, grid_h)
+                band = oriented_band(deck_controller, self.rotation, grid)
+                self._strip_box = band.box
+            origin_x, origin_y = band.key_origin
 
             self._key_regions: "list[tuple[int, int, int, int]]" = []
             for key in range(self.key_count):
                 row, col = divmod(key, key_cols)
-                x = grid_x + col * (key_w + spacing_x)
-                y = row * (key_h + spacing_y)
+                x = origin_x + col * (key_w + spacing_x)
+                y = origin_y + row * (key_h + spacing_y)
                 self._key_regions.append((x, y, x + key_w, y + key_h))
-            canvas_size = (canvas_w, canvas_h)
+
+            canvas_size = band.canvas_size
         else:
             # In strip-background mode it serves whole frames only.
             self.key_count = 0

@@ -129,12 +129,15 @@ def check_rotation_direction() -> int:
 
 
 def check_strip_turn() -> int:
-    """Turn the strip end for end only at 180 degrees.
-    At 90/270 the fixed buffer shape would squash a rotated upright composite."""
+    """The strip turns counter-clockwise by the rotation, PIL's direction, to cancel the physical
+    turn, at the logical size: the device buffer's transpose at the quarter turns."""
     deck = FaultyFakeDeck(serial_number="rot-strip", model="plus")
     wrapped_deck = BetterDeck(deck)
+    width, height = STRIP_SIZE
 
-    expected = {0: 0, 90: 0, 180: 180, 270: 0}
+    expected = {0: 0, 90: 90, 180: 180, 270: 270}
+    expected_size = {0: (width, height), 90: (height, width),
+                     180: (width, height), 270: (height, width)}
     for rotation in ROTATIONS:
         wrapped_deck.set_rotation(rotation)
         turn = wrapped_deck.touchscreen_image_rotation()
@@ -142,8 +145,47 @@ def check_strip_turn() -> int:
             print(f"FAIL(c): rotation {rotation}: strip turn {turn}, "
                   f"expected {expected[rotation]}")
             return 1
+        size = wrapped_deck.logical_touchscreen_size()
+        if size != expected_size[rotation]:
+            print(f"FAIL(c): rotation {rotation}: logical strip size {size}, "
+                  f"expected {expected_size[rotation]}")
+            return 1
+        if wrapped_deck.strip_is_transposed() != (rotation in (90, 270)):
+            print(f"FAIL(c): rotation {rotation}: strip_is_transposed() is "
+                  f"{wrapped_deck.strip_is_transposed()}")
+            return 1
 
-    print("PASS: the strip composite turns end for end at 180 only")
+    # A deck with no strip has nothing to turn and no logical size.
+    plain = BetterDeck(FaultyFakeDeck(serial_number="rot-nostrip",
+                                      model="original"))
+    plain.set_rotation(90)
+    if plain.touchscreen_image_rotation() != 0 or plain.logical_touchscreen_size() is not None:
+        print(f"FAIL(c): a deck with no strip answered turn "
+              f"{plain.touchscreen_image_rotation()} and size "
+              f"{plain.logical_touchscreen_size()}")
+        return 1
+
+    print("PASS: the strip composite turns to reach the device upright, at "
+          "the logical size")
+    return 0
+
+
+def check_slot_order() -> int:
+    """The dial slots run across an upright strip and stack down a turned one.
+    Dial 0 keeps the knob at the end the strip starts at: the top at 90, the bottom at 270."""
+    deck = FaultyFakeDeck(serial_number="rot-slot", model="plus")
+    wrapped_deck = BetterDeck(deck)
+
+    expected = {0: "x", 90: "y-down", 180: "x", 270: "y-up"}
+    for rotation in ROTATIONS:
+        wrapped_deck.set_rotation(rotation)
+        order = wrapped_deck.dial_slot_order()
+        if order != expected[rotation]:
+            print(f"FAIL(h): rotation {rotation}: slot order {order!r}, "
+                  f"expected {expected[rotation]!r}")
+            return 1
+
+    print("PASS: the dial slots divide the axis the user sees")
     return 0
 
 
@@ -159,36 +201,51 @@ def check_touch_value() -> int:
 
     original = {"x": 100, "y": 20, "x_out": 700, "y_out": 80}
 
-    for rotation in (0, 90, 270):
-        wrapped_deck.set_rotation(rotation)
-        mapped = wrapped_deck.logical_touch_value(dict(original))
-        if mapped != original:
-            print(f"FAIL(d): rotation {rotation} moved a touch position to "
-                  f"{mapped}; the strip is written in the device's own "
-                  f"orientation there, so nothing moves")
-            return 1
-
-    wrapped_deck.set_rotation(180)
-    mapped = wrapped_deck.logical_touch_value(original)
-    expected = {
-        "x": width - 1 - original["x"],
-        "y": height - 1 - original["y"],
-        "x_out": width - 1 - original["x_out"],
-        "y_out": height - 1 - original["y_out"],
+    # A reported position turns back clockwise by the rotation, both axes and both drag ends.
+    # 180 mirrors both axes; 90 mirrors the device y into x, 270 mirrors the device x into y.
+    expected_by_rotation = {
+        0: dict(original),
+        90: {"x": height - 1 - original["y"], "y": original["x"],
+             "x_out": height - 1 - original["y_out"], "y_out": original["x_out"]},
+        180: {"x": width - 1 - original["x"], "y": height - 1 - original["y"],
+              "x_out": width - 1 - original["x_out"],
+              "y_out": height - 1 - original["y_out"]},
+        270: {"x": original["y"], "y": width - 1 - original["x"],
+              "x_out": original["y_out"], "y_out": width - 1 - original["x_out"]},
     }
-    if mapped != expected:
-        print(f"FAIL(d): rotation 180 mapped {original} to {mapped}, "
-              f"expected {expected}")
-        return 1
-    if original != {"x": 100, "y": 20, "x_out": 700, "y_out": 80}:
-        print(f"FAIL(d): the event's own dict was edited in place: {original}")
-        return 1
+    for rotation in ROTATIONS:
+        wrapped_deck.set_rotation(rotation)
+        mapped = wrapped_deck.logical_touch_value(original)
+        if mapped != expected_by_rotation[rotation]:
+            print(f"FAIL(d): rotation {rotation} mapped {original} to "
+                  f"{mapped}, expected {expected_by_rotation[rotation]}")
+            return 1
+        logical = wrapped_deck.logical_touchscreen_size()
+        for key, extent in (("x", logical[0]), ("y", logical[1]),
+                            ("x_out", logical[0]), ("y_out", logical[1])):
+            if not 0 <= mapped[key] < extent:
+                print(f"FAIL(d): rotation {rotation}: {key} came out at "
+                      f"{mapped[key]}, off a strip of {logical}")
+                return 1
+        if original != {"x": 100, "y": 20, "x_out": 700, "y_out": 80}:
+            print(f"FAIL(d): the event's own dict was edited in place: "
+                  f"{original}")
+            return 1
 
     # A drag reported left to right on the device runs right to left under the
     # user's hand at 180, which is what the consumer compares.
+    wrapped_deck.set_rotation(180)
+    mapped = wrapped_deck.logical_touch_value(original)
     if not mapped["x"] > mapped["x_out"]:
         print(f"FAIL(d): rotation 180 did not reverse the drag direction: "
               f"{mapped}")
+        return 1
+
+    # A pair transposes together or not at all; a lone axis is carried through.
+    wrapped_deck.set_rotation(90)
+    lone = wrapped_deck.logical_touch_value({"x": 100})
+    if lone != {"x": 100}:
+        print(f"FAIL(d): rotation 90 moved a lone axis to {lone}")
         return 1
 
     # Keys the mapper does not know are carried through untouched.
@@ -202,7 +259,8 @@ def check_touch_value() -> int:
     for rotation in ROTATIONS:
         wrapped_deck.set_rotation(rotation)
         edge = wrapped_deck.logical_touch_value({"x": width, "y": height})
-        if 0 <= edge["x"] < width or 0 <= edge["y"] < height:
+        logical_width, logical_height = wrapped_deck.logical_touchscreen_size()
+        if 0 <= edge["x"] < logical_width or 0 <= edge["y"] < logical_height:
             print(f"FAIL(d): rotation {rotation} moved a touch at "
                   f"({width}, {height}), which is past the strip, onto it: "
                   f"{edge}")
@@ -297,6 +355,7 @@ def main() -> int:
     rc |= check_async_setters()
     rc |= check_rotation_direction()
     rc |= check_strip_turn()
+    rc |= check_slot_order()
     rc |= check_touch_value()
     rc |= check_dial_order()
     rc |= check_event_remap()

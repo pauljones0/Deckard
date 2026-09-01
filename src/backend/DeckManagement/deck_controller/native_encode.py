@@ -36,6 +36,7 @@ the input's own device geometry. Nothing here keeps state of its own.
 import time
 
 from PIL import Image
+from loguru import logger as log
 
 from src.backend.DeckManagement.Subclasses.media_pipeline_profiler import media_prof
 from src.backend.DeckManagement.deck_controller.media_writer import (
@@ -97,18 +98,20 @@ def _encode_tile_native(key: "ControllerKey", tile: Image.Image, video_md5: str,
 def _encode_strip_native(touchscreen: "ControllerTouchScreen", image: Image.Image) -> bytes:
     """Encode the strip as an oriented JPEG, flattening RGBA onto black.
     Preserve the caller's image for preview and close every intermediate."""
+    logical_size = touchscreen.deck_controller.deck.logical_touchscreen_size()
+    # A composite left the wrong size by a turn in flight is dropped as empty bytes, which
+    # the strip ticket reads as nothing to write; the repaint at the new size follows.
+    if logical_size is not None and image.size != logical_size:
+        log.debug(f"dropping a {image.size} strip composite; the deck now "
+                  f"composes at {logical_size}")
+        return b""
     if image.mode == "RGBA":
         device_image = Image.new("RGB", image.size, (0, 0, 0))
         device_image.paste(image, (0, 0), image)
     else:
         device_image = image
-    deck = touchscreen.deck_controller.deck
-    turn = deck.touchscreen_image_rotation()
-    oriented = device_image.rotate(turn) if turn else device_image
     try:
-        return encode_native_touchscreen(deck, oriented)
+        return encode_native_touchscreen(touchscreen.deck_controller.deck, device_image)
     finally:
-        if oriented is not device_image:
-            oriented.close()
         if device_image is not image:
             device_image.close()

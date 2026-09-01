@@ -8,8 +8,14 @@ from loguru import logger as log
 
 import globals as gl
 from src.backend.DeckManagement.Subclasses.mp4_tile_cache import Mp4FrameCache, VID_CACHE
-from src.backend.DeckManagement.deck_controller.strip_band import band_layout, clamp_box
+from src.backend.DeckManagement.deck_controller.strip_band import clamp_box
 from src.backend.DeckManagement.deck_controller.viewport import DEFAULT_VIEW
+from src.backend.DeckManagement.strip_geometry import (
+    STRIP_SIDES,
+    StripBand,
+    flat_band,
+    oriented_band,
+)
 
 # Import typing
 from typing import TYPE_CHECKING, override
@@ -32,18 +38,28 @@ class BackgroundVideoCache(Mp4FrameCache[list[Image.Image]]):
         # Extended frames append a strip slice after the key tiles.
         # Their larger canvas makes them incompatible with plain caches.
         self.extend_touchscreen = extend_touchscreen and self.deck_controller.deck.is_touch()
+        # One rotation read for the whole snapshot; two live reads could straddle a turn.
+        rotation = self.deck_controller.deck.get_rotation()
+        # key_layout() already turned with the deck; the asymmetric SD+ gaps must turn with it.
+        if rotation in (90, 270):
+            self.spacing = (self.spacing[1], self.spacing[0])
+        device_size = (self.deck_controller.device_touchscreen_image_size()
+                       if self.extend_touchscreen else None)
+        # The annotation follows the real value, a (width, height) pair.
         self.strip_size: tuple[int, int] | None = (
-            self.deck_controller.get_touchscreen_image_size()
-            if self.extend_touchscreen else None)
+            ((device_size[1], device_size[0]) if rotation in (90, 270) else device_size)
+            if device_size is not None else None)
         self.entries_per_frame = self.key_count + (1 if self.extend_touchscreen else 0)
-        # _canvas_size() sets the grid offset and strip crop box before any crop.
-        # Both use canvas coordinates because the strip can overhang the grid.
-        self.grid_x = 0
-        self.strip_band_box: "tuple[int, int, int, int] | None" = None
+        # _canvas_size() fills this before any crop, so the render thread reads no controller state.
+        self.band: "StripBand | None" = None
 
+        self.rotation = rotation
         self.key_layout_str = f"{self.key_layout[0]}x{self.key_layout[1]}"
         if self.extend_touchscreen:
-            self.key_layout_str += "+strip"
+            # The band edge is baked into the frames, so the cache name carries it.
+            # Rotation 0 keeps the plain suffix, so its caches stay valid.
+            side = STRIP_SIDES.get(self.rotation, "bottom")
+            self.key_layout_str += "+strip" if side == "bottom" else f"+strip-{side}"
 
         self._legacy_cache_path: str | None = None
 
@@ -70,21 +86,17 @@ class BackgroundVideoCache(Mp4FrameCache[list[Image.Image]]):
         key_width *= key_cols
         key_height *= key_rows
 
-        # Compute the total number of extra non-visible pixels that are obscured by
-        # the bezel of the StreamDeck.
-        total_spacing_x = spacing_x * (key_cols - 1)
-        total_spacing_y = spacing_y * (key_rows - 1)
+        # Count the extra non-visible pixels that the deck bezel hides.
+        grid = (key_width + spacing_x * (key_cols - 1),
+                key_height + spacing_y * (key_rows - 1))
 
-        canvas_width = key_width + total_spacing_x
-        canvas_height = key_height + total_spacing_y
-
-        # Extend to the key-grid and strip union, including gap and overhang.
-        # Snapshot layout here so the render thread does not read controller state.
+        # The same strip_band layout BackgroundImage cuts from, turned with the deck.
+        # Snapshot it here, so the render thread reads no controller state.
+        band = flat_band(grid)
         if self.extend_touchscreen:
-            canvas_width, canvas_height, self.grid_x, self.strip_band_box = \
-                band_layout(self.deck_controller, canvas_width, canvas_height)
-
-        return (canvas_width, canvas_height)
+            band = oriented_band(self.deck_controller, self.rotation, grid)
+        self.band = band
+        return band.canvas_size
 
     @override
     def _on_promoted(self) -> None:
@@ -148,25 +160,30 @@ class BackgroundVideoCache(Mp4FrameCache[list[Image.Image]]):
         # Crop the key tiles and the strip slice out of the canvas frame per
         # request, so no frame data stays in RAM beyond the decoder's buffers.
         canvas = Image.fromarray(cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB))
+        band = self.band
+        origin = (0, 0) if band is None else band.key_origin
         entries = [
-            self.crop_key_image_from_deck_sized_image(canvas, key)
+            self.crop_key_image_from_deck_sized_image(canvas, key, origin)
             for key in range(self.key_count)
         ]
         if self.extend_touchscreen:
-            entries.append(self.crop_strip_from_deck_sized_image(canvas))
+            entries.append(self.crop_strip_from_deck_sized_image(canvas, band))
         return entries
 
-    def crop_strip_from_deck_sized_image(self, image: Image.Image) -> Image.Image:
+    def crop_strip_from_deck_sized_image(self, image: Image.Image,
+                                         band: "StripBand | None" = None) -> Image.Image:
         """The strip's view of the extended canvas, at strip resolution."""
-        if self.strip_band_box is None:
+        band = band or self.band
+        if band is None:
             # Raise if layout was not initialized instead of resizing a 0x0 crop to black.
             raise RuntimeError(
                 "this background video cache has no strip band (the canvas "
                 "size was never computed for an extended cache)")
-        strip_slice = image.crop(clamp_box(self.strip_band_box, image.width, image.height))
+        strip_slice = image.crop(clamp_box(band.box, image.width, image.height))
         return strip_slice.resize(self._require_strip_size(), Image.Resampling.HAMMING)
 
-    def crop_key_image_from_deck_sized_image(self, image: Image.Image, key: int) -> Image.Image:
+    def crop_key_image_from_deck_sized_image(self, image: Image.Image, key: int,
+                                             origin: "tuple[int, int]" = (0, 0)) -> Image.Image:
         key_rows, key_cols = self.key_layout
         key_width, key_height = self.key_size
         spacing_x, spacing_y = self.spacing
@@ -175,9 +192,9 @@ class BackgroundVideoCache(Mp4FrameCache[list[Image.Image]]):
         row = key // key_cols
         col = key % key_cols
 
-        # Offset from grid_x because the strip band can overhang the key grid.
-        start_x = self.grid_x + col * (key_width + spacing_x)
-        start_y = row * (key_height + spacing_y)
+        # origin is where the key grid starts; the band can move it off the canvas corner.
+        start_x = origin[0] + col * (key_width + spacing_x)
+        start_y = origin[1] + row * (key_height + spacing_y)
 
         # Compute the region of the larger deck image that is occupied by the given
         # key, and crop out that segment of the full image.

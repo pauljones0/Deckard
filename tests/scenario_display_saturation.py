@@ -79,6 +79,10 @@ class _StubDeck:
     def is_touch(self):
         return False
 
+    def get_rotation(self):
+        # The cache snapshots one rotation for its grid spacing and band side.
+        return 0
+
 
 class _StubVideoDeckController:
     """Provide saturation, deck, spacing, and alpha-key inputs to the video cache."""

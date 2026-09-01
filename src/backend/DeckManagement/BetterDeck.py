@@ -5,6 +5,8 @@ import traceback
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, TypedDict, TypeVar, cast
 
+from src.backend.DeckManagement.strip_geometry import SlotOrder
+
 if TYPE_CHECKING:
     import asyncio
 
@@ -697,7 +699,7 @@ class BetterDeck():
 
     def _touchscreen_size(self) -> "tuple[int, int] | None":
         """The device's own strip size, or None for a deck that has no
-        touchscreen or reports no size for it."""
+        touchscreen or reports no size or a zero size for it."""
         image_format = getattr(self.deck, "touchscreen_image_format", None)
         if image_format is None:
             return None
@@ -707,34 +709,81 @@ class BetterDeck():
             return None
         if size is None or len(size) != 2 or None in size:
             return None
+        if not size[0] or not size[1]:
+            return None
         return int(size[0]), int(size[1])
 
+    def _strip_turn(self) -> int:
+        """The counter-clockwise turn from the strip the user sees to the device's strip.
+        Every strip surface reads this one value, so no two can disagree; 0 with no strip."""
+        if self._touchscreen_size() is None:
+            return 0
+        return self.rotation
+
     def _strip_is_mirrored(self) -> bool:
-        """Whether both the strip image and its touch positions reverse end for end."""
-        return self.rotation == 180 and self._touchscreen_size() is not None
+        """Whether the strip reaches the device turned end for end."""
+        return self._strip_turn() == 180
+
+    def strip_is_transposed(self) -> bool:
+        """Whether the strip stands on its side, so the composite is as tall as the
+        device's strip is wide."""
+        return self._strip_turn() in (90, 270)
+
+    def logical_touchscreen_size(self) -> "tuple[int, int] | None":
+        """The strip size every strip composer draws at, or None for a deck with no strip.
+        The device's own size at 0 and 180, its transpose at 90 and 270."""
+        size = self._touchscreen_size()
+        if size is None:
+            return None
+        return (size[1], size[0]) if self.strip_is_transposed() else size
+
+    def dial_slot_order(self) -> SlotOrder:
+        """How the dial slots divide the strip the user sees: across it, or down it at 90 and 270.
+        Dial 0 stays at the end the turn carried it to: the top at 90, the bottom at 270."""
+        turn = self._strip_turn()
+        if turn == 90:
+            return "y-down"
+        if turn == 270:
+            return "y-up"
+        return "x"
 
     def touchscreen_image_rotation(self) -> int:
-        """Rotate a composed strip 180 degrees only when the fixed-size strip is mirrored."""
-        return 180 if self._strip_is_mirrored() else 0
+        """Counter-clockwise degrees that turn a composed strip into the device's orientation.
+        At 90 and 270 the composite is the buffer's transpose; the turn runs with expansion."""
+        return self._strip_turn()
 
     def logical_touch_value(self, value: "dict[str, int]") -> "dict[str, int]":
-        """Map reported touch positions to the composed strip without changing the input dict.
-        Only a 180-degree strip mirrors coordinates; off-strip positions stay unchanged."""
-        if not self._strip_is_mirrored() or not isinstance(value, dict):
+        """Map reported touch positions into the composed strip's frame, on a copy of the dict.
+        180 mirrors both axes; 90 and 270 swap them with one mirrored, when both are present."""
+        turn = self._strip_turn()
+        if not turn or not isinstance(value, dict):
             return value
         size = self._touchscreen_size()
         if size is None:
-            # Unreachable while _strip_is_mirrored() answers on the same size. It stays because this
-            # reads the size a second time, and a None here would mirror against nothing.
+            # Unreachable while _strip_turn() reads the same size; a second read, so guard it.
             return value
         width, height = size
+        # The library hands one event dict to every consumer.
         mapped = dict(value)
-        for key in ("x", "x_out"):
-            if key in mapped:
-                mapped[key] = self._mirror_position(mapped[key], width)
-        for key in ("y", "y_out"):
-            if key in mapped:
-                mapped[key] = self._mirror_position(mapped[key], height)
+        if turn == 180:
+            for key in ("x", "x_out"):
+                if key in mapped:
+                    mapped[key] = self._mirror_position(mapped[key], width)
+            for key in ("y", "y_out"):
+                if key in mapped:
+                    mapped[key] = self._mirror_position(mapped[key], height)
+            return mapped
+        for x_key, y_key in (("x", "y"), ("x_out", "y_out")):
+            if x_key not in mapped or y_key not in mapped:
+                # A quarter turn reads each axis off the other; a lone axis passes through unmapped.
+                continue
+            device_x, device_y = mapped[x_key], mapped[y_key]
+            if turn == 90:
+                mapped[x_key] = self._mirror_position(device_y, height)
+                mapped[y_key] = device_x
+            else:
+                mapped[x_key] = device_y
+                mapped[y_key] = self._mirror_position(device_x, width)
         return mapped
 
     @staticmethod

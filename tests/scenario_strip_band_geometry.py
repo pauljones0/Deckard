@@ -8,6 +8,7 @@ import globals as gl
 from src.backend.DeckManagement.deck_controller.strip_band import (
     band_layout, clamp_box, strip_band_geometry,
 )
+from src.backend.DeckManagement.strip_geometry import oriented_band
 
 from PIL import Image
 from StreamDeck.Devices.StreamDeckPlus import StreamDeckPlus
@@ -110,6 +111,41 @@ def main() -> None:
     assert band == (0, grid_h + gap, span, grid_h + gap + band_h), f"band box {band}"
     assert canvas_h == grid_h + gap + band_h
 
+    # Rotation 0 must hand strip_band's measured layout back unchanged, offset and box included.
+    # Asserting through band_layout's outputs keeps a recalibration from breaking this leg.
+    unturned = oriented_band(plus, 0, (grid_w, grid_h))
+    assert unturned.canvas_size == (canvas_w, canvas_h), unturned
+    assert unturned.key_origin == (grid_x, 0), unturned
+    assert unturned.box == band, unturned
+
+    # Every quarter turn is a rigid turn of the same layout: the canvas transposes,
+    # and the grid and the band keep their sizes.
+    for rotation in (90, 180, 270):
+        swapped = rotation in (90, 270)
+        # key_layout() turns with the deck, so the caller's grid transposes at the quarter turns.
+        turned = oriented_band(plus, rotation,
+                               (grid_h, grid_w) if swapped else (grid_w, grid_h))
+        assert turned.canvas_size == ((canvas_h, canvas_w) if swapped
+                                      else (canvas_w, canvas_h)), (rotation, turned)
+        box_w, box_h = band[2] - band[0], band[3] - band[1]
+        t_w, t_h = turned.box[2] - turned.box[0], turned.box[3] - turned.box[1]
+        assert (t_w, t_h) == ((box_h, box_w) if swapped else (box_w, box_h)), (
+            rotation, turned)
+        # The band lies on the edge the user sees it against: left at 90, top at 180, right at 270.
+        edge = {90: turned.box[0] == 0, 180: turned.box[1] == 0,
+                270: turned.box[2] == turned.canvas_size[0]}[rotation]
+        assert edge, f"rotation {rotation} put the band at {turned.box}"
+        # The grid origin is pinned exactly through band_layout's outputs; a fit-on-canvas
+        # bound alone would let a dropped grid_x overhang pass and misalign every key crop.
+        expected_origin = {
+            90: (canvas_h - grid_h, grid_x),
+            180: (canvas_w - grid_x - grid_w, canvas_h - grid_h),
+            270: (0, canvas_w - grid_x - grid_w),
+        }[rotation]
+        assert turned.key_origin == expected_origin, (
+            f"rotation {rotation}: key_origin {turned.key_origin}, "
+            f"expected {expected_origin}")
+
     # A width the calibration does not cover falls back to the derived band.
     fallback = strip_band_geometry(plus, 348)
     assert fallback != CALIBRATED and fallback[1] == 348, (
@@ -130,10 +166,10 @@ def main() -> None:
     cache = BackgroundVideoCache(video_path, deck_controller=plus,
                                  extend_touchscreen=True)
     try:
-        assert cache.strip_band_box == band, (
-            f"video cache must snapshot the band box, got {cache.strip_band_box}")
-        assert cache.grid_x == grid_x, (
-            f"video cache must snapshot the grid offset, got {cache.grid_x}")
+        assert cache.band is not None and cache.band.box == band, (
+            f"video cache must snapshot the band box, got {cache.band}")
+        assert cache.band.key_origin == (grid_x, 0), (
+            f"video cache must snapshot the grid origin, got {cache.band.key_origin}")
         assert cache.out_size == (canvas_w, canvas_h), (
             f"video canvas {cache.out_size}, expected {(canvas_w, canvas_h)}")
     finally:

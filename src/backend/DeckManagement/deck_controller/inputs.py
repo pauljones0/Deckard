@@ -47,6 +47,7 @@ from src.backend.DeckManagement.Subclasses.KeyLabel import KeyLabel
 from src.backend.DeckManagement.Subclasses.KeyLayout import ImageLayout
 from src.backend.DeckManagement.Subclasses.KeyVideo import InputVideo
 from src.backend.DeckManagement.Subclasses.media_pipeline_profiler import media_prof
+from src.backend.DeckManagement.strip_geometry import dial_slot_at, dial_slot_box
 from src.backend.DeckManagement.deck_controller import cover_cache, press_look
 from src.backend.DeckManagement.deck_controller.gif_pipeline import KeyGIF
 from src.backend.DeckManagement.deck_events import DialEvent, KeyEvent, TouchscreenEvent
@@ -951,31 +952,18 @@ class ControllerTouchScreen(ControllerInput["ControllerTouchScreenState", Touchs
         return self.get_active_state().tick_background_video(now)
 
     def get_dial_image_area(self, identifier: Input.Dial) -> tuple[int, int, int, int]:
-        width, height = self.get_screen_dimensions()
+        # The slot in the frame the user sees; the deck decides whether slots run across or down.
+        return dial_slot_box(identifier.index,
+                             len(self.deck_controller.inputs[Input.Dial]),
+                             self.get_screen_dimensions(),
+                             self.deck_controller.deck.dial_slot_order())
 
-        n_dials = len(self.deck_controller.inputs[Input.Dial])
-        dial_index = identifier.index
-
-        start_x = int((dial_index / n_dials) * width)
-        start_y = 0
-        end_x = int(((dial_index + 1) / n_dials) * width)
-        end_y = height
-
-        return start_x, start_y, end_x, end_y
-    
     def get_dial_image_area_size(self) -> tuple[int, int]:
-        width, height = self.get_screen_dimensions()
+        start_x, start_y, end_x, end_y = self.get_dial_image_area(Input.Dial("0"))
+        return end_x - start_x, end_y - start_y
 
-        n_dials = len(self.deck_controller.inputs[Input.Dial])
-
-        return int(width / n_dials), height
-    
     def get_empty_dial_image(self) -> Image.Image:
-        screen_width, screen_height = self.get_screen_dimensions()
-
-        n_dials = len(self.deck_controller.inputs[Input.Dial])
-
-        return Image.new("RGBA", (screen_width // n_dials, screen_height), (0, 0, 0, 0))
+        return Image.new("RGBA", self.get_dial_image_area_size(), (0, 0, 0, 0))
 
     def set_ui_image(self, image: Image.Image) -> None:
         if not mirror_input_image(self.deck_controller, self.identifier, image, ui_port.get().push_input_image):
@@ -1015,7 +1003,7 @@ class ControllerTouchScreen(ControllerInput["ControllerTouchScreenState", Touchs
 
         #TODO get matching actions from the dials
         elif event_type in (TouchscreenEventType.SHORT, TouchscreenEventType.LONG):
-            dial = self.get_dial_for_touch_x(value['x'])
+            dial = self.get_dial_for_touch(value)
             if dial is not None:
                 dial_active_state = dial.get_active_state()
                 if dial_active_state is not None:
@@ -1032,11 +1020,11 @@ class ControllerTouchScreen(ControllerInput["ControllerTouchScreenState", Touchs
                         actions=touch_actions
                     )
 
-    def get_dial_for_touch_x(self, touch_x: float) -> "ControllerDial | None":
-        screen_width = self.deck_controller.get_touchscreen_image_size()[0]
-        n_dials = len(self.deck_controller.inputs[Input.Dial])
-        dial_index = int((touch_x / screen_width) * n_dials)
-
+    def get_dial_for_touch(self, value: "dict[str, int]") -> "ControllerDial | None":
+        # value is already mapped by BetterDeck.logical_touch_value; off the strip reaches no dial.
+        dial_index = dial_slot_at(value, len(self.deck_controller.inputs[Input.Dial]),
+                                  self.get_screen_dimensions(),
+                                  self.deck_controller.deck.dial_slot_order())
         return self.deck_controller.get_input(Input.Dial(str(dial_index)))
     
     def get_screen_dimensions(self) -> tuple[int, int]:

@@ -539,17 +539,27 @@ class DeckController:
         if cache is not None:
             cache_budget.set_min_age(cache, min_age)
 
-    def get_touchscreen_image_size(self) -> tuple[int, int]:
-        if self._touchscreen_image_size is not None:
-            return self._touchscreen_image_size
-        if not self.get_alive():
-            # The same dead-deck contract, and the same fallback caveat, as
-            # get_key_image_size. Callers unpack two ints and none None-checks.
-            return (800, 100)
-        size = self.deck.touchscreen_image_format()["size"]
-        size = max(size[0], 800), max(size[1], 100)
-        self._touchscreen_image_size = size
+    def device_touchscreen_image_size(self) -> tuple[int, int]:
+        """The strip size in the device's own frame; the band calibration is stated in it.
+        A dead deck gets the SD+ fallback without a memo, like get_key_image_size."""
+        size = self._touchscreen_image_size
+        if size is None:
+            if not self.get_alive():
+                return (800, 100)
+            device = self.deck.touchscreen_image_format()["size"]
+            self._touchscreen_image_size = size = (max(device[0], 800), max(device[1], 100))
         return size
+
+    def get_touchscreen_image_size(self) -> tuple[int, int]:
+        # The size every strip composer draws at; the write task reads the device size itself.
+        size = self.device_touchscreen_image_size()
+        return (size[1], size[0]) if self.deck.strip_is_transposed() else size
+
+    def logical_key_spacing(self) -> tuple[int, int]:
+        """The key gaps in the frame the user sees, swapped at 90 and 270 like key_layout().
+        The SD+ pair is asymmetric; a grid turned with the device pair misplaces every crop."""
+        spacing = self.key_spacing
+        return (spacing[1], spacing[0]) if self.deck.get_rotation() in (90, 270) else spacing
 
     # Page loading
 
@@ -1065,7 +1075,7 @@ class DeckController:
             self.deck.set_key_image(i, native_image)
 
         if self.deck.is_touch():
-            touchscreen_size = self.get_touchscreen_image_size()
+            touchscreen_size = self.deck.touchscreen_image_format()["size"]
             empty = Image.new("RGB", touchscreen_size, (0, 0, 0))
             native_image = PILHelper.to_native_touchscreen_format(self.deck, empty)
 

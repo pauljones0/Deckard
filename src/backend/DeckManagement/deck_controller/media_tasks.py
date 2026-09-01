@@ -38,7 +38,8 @@ class MediaPlayerSetTouchscreenImageTask:
             return
         try:
             ticket.writer_started(self.deck_controller)
-            touchscreen_size = self.deck_controller.get_touchscreen_image_size()
+            # The device buffer, not the logical composite; the encode already turned the image.
+            touchscreen_size = self.deck_controller.device_touchscreen_image_size()
             self.deck_controller.deck.set_touchscreen_image(
                 ticket.native_image, x_pos=0, y_pos=0,
                 width=touchscreen_size[0], height=touchscreen_size[1],

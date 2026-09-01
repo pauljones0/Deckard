@@ -100,20 +100,27 @@ def encode_native_key(deck: "BetterDeck", image: "Image.Image", quality: int = K
 
 
 def encode_native_touchscreen(deck: "BetterDeck", image: "Image.Image", quality: int = 90) -> bytes:
-    """Encode a touchscreen at configurable quality without mutating the caller.
+    """Encode a strip composite, given in the frame the user sees, without mutating the caller.
 
     Copying preserves UI reuse; lower quality cuts the largest device write and mutex hold.
     """
     fmt = deck.touchscreen_image_format()
-    if image.size != fmt["size"]:
+    # One rotation read serves the fit, the turn and the size check.
+    turn = (deck.touchscreen_image_rotation() + fmt["rotation"]) % 360
+    logical_size = (fmt["size"][1], fmt["size"][0]) if turn % 180 == 90 else fmt["size"]
+    if image.size != logical_size:
+        if (image.size[1], image.size[0]) == logical_size:
+            # A mid-turn straggler, shaped for the other orientation; empty bytes mean no write.
+            return b""
         image = image.copy()
-        image.thumbnail(fmt["size"])
-    if fmt["rotation"]:
-        image = image.rotate(fmt["rotation"])
-    if fmt["flip"][0]:
-        image = image.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
-    if fmt["flip"][1]:
-        image = image.transpose(Image.Transpose.FLIP_TOP_BOTTOM)
+        image.thumbnail(logical_size)
+    if turn:
+        image = image.rotate(turn, expand=True)
+    if image.size != fmt["size"]:
+        raise ValueError(f"the strip composite is {image.size} after the turn, and the device buffer is {fmt['size']}")
+    for axis, flip in zip((Image.Transpose.FLIP_LEFT_RIGHT, Image.Transpose.FLIP_TOP_BOTTOM), fmt["flip"]):
+        if flip:
+            image = image.transpose(axis)
     with io.BytesIO() as buf:
         save_kwargs = {"quality": quality}
         if fmt["format"] == "JPEG":

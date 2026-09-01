@@ -100,6 +100,16 @@ def main() -> None:
     enqueued, _ = offer(state, writer, TARGET_HASH)
     assert enqueued, "after a reset, identical content must reach the device again"
 
+    # An empty encode is a mid-turn straggler: no writer slot, no hash trace.
+    state, writer = make_present_fixture()
+    enqueued = state.offer(writer, page=None, config_gen=7, img_hash=TARGET_HASH,
+                           encode=lambda: b"")
+    assert enqueued is False, "an empty encode must report nothing enqueued"
+    assert writer.enqueued == [], f"an empty encode reached the slot: {writer.enqueued}"
+    assert state.last_enqueued_hash != TARGET_HASH, (
+        "an empty encode advanced last_enqueued_hash; the dropped paint must "
+        "leave no trace")
+
     print("PASS: scenario_present_state")
 
 

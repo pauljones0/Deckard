@@ -296,20 +296,25 @@ def check_touch_dispatch(controller, model_name: str) -> int:
                   f"the end of the strip, reached {events}")
             return 1
 
-        # A drag drawn from the far end towards the near end of the device's
-        # strip. At 180 the user drew it the other way round.
+        # A drag the user drew right to left, as the device reports it at each rotation:
+        # reversed at 180, a growing device y at 90 and a shrinking one at 270.
+        drag = {
+            0: (width - 1 - device_x, 50, device_x, 50),
+            90: (400, 20, 400, 80),
+            180: (device_x, 50, width - 1 - device_x, 50),
+            270: (400, 80, 400, 20),
+        }[rotation]
         drag_events: "list[str]" = []
         state = touchscreen.get_active_state()
         state.own_actions_event_callback_threaded = (
             lambda event, *a, **k: drag_events.append(str(event)))
         raw.fire_touchscreen_event(
             TouchscreenEventType.DRAG,
-            {"x": width - 1 - device_x, "y": 50, "x_out": device_x, "y_out": 50})
-        expected_drag = (str(Input.Touchscreen.Events.DRAG_RIGHT) if rotation == 180
-                         else str(Input.Touchscreen.Events.DRAG_LEFT))
+            {"x": drag[0], "y": drag[1], "x_out": drag[2], "y_out": drag[3]})
+        expected_drag = str(Input.Touchscreen.Events.DRAG_LEFT)
         if drag_events != [expected_drag]:
-            print(f"FAIL(d): rotation {rotation}: a drag towards the start of "
-                  f"the device's strip dispatched {drag_events}, expected "
+            print(f"FAIL(d): rotation {rotation}: a drag the user drew right "
+                  f"to left dispatched {drag_events}, expected "
                   f"[{expected_drag}]")
             return 1
 

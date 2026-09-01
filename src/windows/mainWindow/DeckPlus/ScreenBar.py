@@ -68,7 +68,7 @@ class ScreenBar(Gtk.Frame):
         # self.image.set_from_file("Assets/800_100.png")
 
         self.image = ScreenBarImage(self)
-        self.image.set_image(Image.new("RGBA", (800, 100), (0, 0, 0, 0)))
+        self.image.set_image(Image.new("RGBA", self.deck_controller.get_touchscreen_image_size(), (0, 0, 0, 0)))
         self.set_child(self.image)
 
         # self.set_child(self.image)
@@ -195,11 +195,13 @@ class ScreenBar(Gtk.Frame):
         width = self.image.get_width()
         height = self.image.get_height()
 
-        # Map xy to 800x100
-        x, y = int(x * 800 / width), int(y * 100 / height)
+        # Map onto the strip the user sees, the frame the deck's own touches arrive in.
+        strip_width, strip_height = self.deck_controller.get_touchscreen_image_size()
+        x, y = int(x * strip_width / width), int(y * strip_height / height)
 
-        x = max(0, min(x, 800))
-        y = max(0, min(y, 100))
+        # Clamp to the last pixel; the size itself is off the strip and reaches no dial.
+        x = max(0, min(x, strip_width - 1))
+        y = max(0, min(y, strip_height - 1))
 
         return x, y
 
@@ -277,9 +279,13 @@ class ScreenBarImage(LazyMapTasks, Gtk.Picture):
     def prepare_mirror_frame(self, image: Image.Image) -> MirrorFrame:
         """Build the paint payload on any caller thread with PIL and GdkPixbuf.
         set_pixbuf_and_del checks mapped widget state on the main thread."""
-        width = 385 #TODO: Find a better way to do this
+        length = 385 #TODO: Find a better way to do this
         thumbnail = image.copy()
-        thumbnail.thumbnail((width, width/8))
+        # The composite is tall on a quarter-turned deck. Bound the long axis either way,
+        # or a tall composite squeezes into a horizontal box and reads as a sliver.
+        box = ((length, length / 8) if image.width >= image.height
+               else (length / 8, length))
+        thumbnail.thumbnail(box)
 
         pixbuf = image2pixbuf(thumbnail.convert("RGBA"), force_transparency=True)
         # The ID only marks order; set_pixbuf_and_del rejects a payload when its ID
