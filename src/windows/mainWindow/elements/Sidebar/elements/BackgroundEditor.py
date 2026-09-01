@@ -41,7 +41,7 @@ import globals as gl
 from typing import Any, Protocol
 
 
-def build_preview_pixbuf(image_path: str | None) -> "GdkPixbuf.Pixbuf | None":
+def build_video_preview_pixbuf(image_path: str | None) -> "GdkPixbuf.Pixbuf | None":
     """Pixbuf for paths Gtk.Picture cannot render directly (videos, via their
     thumbnail); None means set_filename can handle the path itself."""
     if image_path and is_video(image_path):
@@ -53,13 +53,13 @@ def build_preview_pixbuf(image_path: str | None) -> "GdkPixbuf.Pixbuf | None":
 
 
 class _InputBoundRow(Protocol):
-    """What _page_and_input needs of a row: the input it currently edits."""
+    """What _page_identifier_and_state needs of a row: the input it currently edits."""
 
     active_identifier: InputIdentifier | None
     active_state: int | None
 
 
-def _page_and_input(row: _InputBoundRow) -> "tuple[Page, InputIdentifier, int] | None":
+def _page_identifier_and_state(row: _InputBoundRow) -> "tuple[Page, InputIdentifier, int] | None":
     """Return the page, identifier, and state that a row writes, or None.
     All three must be bound because Page setters use them to select the dict path."""
     page = services.require_main_window().get_active_page()
@@ -185,7 +185,7 @@ class ColorRow(Adw.PreferencesRow):
         self.active_state: int | None = None
         # Colour-handler ID, or None while disconnected.
         # Tracking keeps connect and disconnect idempotent.
-        self._color_handler: int | None = None
+        self._color_handler_id: int | None = None
         self.build()
 
     def build(self) -> None:
@@ -208,13 +208,13 @@ class ColorRow(Adw.PreferencesRow):
         self.connect_signals()
 
     def connect_signals(self) -> None:
-        if self._color_handler is None:
-            self._color_handler = self.button.button.connect("notify::rgba", self.on_change_color)
+        if self._color_handler_id is None:
+            self._color_handler_id = self.button.button.connect("notify::rgba", self.on_change_color)
 
     def disconnect_signals(self) -> None:
-        if self._color_handler is not None:
-            self.button.button.disconnect(self._color_handler)
-            self._color_handler = None
+        if self._color_handler_id is not None:
+            self.button.button.disconnect(self._color_handler_id)
+            self._color_handler_id = None
 
     def set_color(self, color_values: list[int]) -> None:
         if len(color_values) == 3:
@@ -224,7 +224,7 @@ class ColorRow(Adw.PreferencesRow):
         self.button.button.set_rgba(color)
 
     def on_change_color(self, *args: object) -> None:
-        target = _page_and_input(self)
+        target = _page_identifier_and_state(self)
         if target is None:
             return
         active_page, identifier, state = target
@@ -241,7 +241,7 @@ class ColorRow(Adw.PreferencesRow):
     def on_revert(self, *args: object) -> None:
         # Ask before disconnecting. A return between the disconnect and the
         # reconnect leaves the button silently unwired.
-        target = _page_and_input(self)
+        target = _page_identifier_and_state(self)
         if target is None:
             return
         active_page, identifier, state = target
@@ -300,7 +300,7 @@ class VideoLoopRow(Adw.PreferencesRow):
         self.active_state: int | None = None
         # The toggle handler id, or None while it is disconnected. A tracked id
         # keeps connect and disconnect idempotent across early-return loads.
-        self._toggle_handler: int | None = None
+        self._toggle_handler_id: int | None = None
         self.build()
 
     def build(self) -> None:
@@ -317,16 +317,16 @@ class VideoLoopRow(Adw.PreferencesRow):
         self.connect_signals()
 
     def connect_signals(self) -> None:
-        if self._toggle_handler is None:
-            self._toggle_handler = self.switch.connect("notify::active", self.on_toggle)
+        if self._toggle_handler_id is None:
+            self._toggle_handler_id = self.switch.connect("notify::active", self.on_toggle)
 
     def disconnect_signals(self) -> None:
-        if self._toggle_handler is not None:
-            self.switch.disconnect(self._toggle_handler)
-            self._toggle_handler = None
+        if self._toggle_handler_id is not None:
+            self.switch.disconnect(self._toggle_handler_id)
+            self._toggle_handler_id = None
 
     def on_toggle(self, *args: object) -> None:
-        target = _page_and_input(self)
+        target = _page_identifier_and_state(self)
         if target is None:
             return
         active_page, identifier, state = target
@@ -368,7 +368,7 @@ class VideoFpsRow(Adw.PreferencesRow):
         self.active_state: int | None = None
         # The change handler id, or None while it is disconnected. A tracked id
         # keeps connect and disconnect idempotent across early-return loads.
-        self._change_handler: int | None = None
+        self._change_handler_id: int | None = None
         # Pending reveal source, or None; all access occurs on the GTK main thread.
         # Spinner, revert, sidebar-load, and idle paths therefore need no lock.
         self._reveal_source: int | None = None
@@ -399,13 +399,13 @@ class VideoFpsRow(Adw.PreferencesRow):
         self.connect_signals()
 
     def connect_signals(self) -> None:
-        if self._change_handler is None:
-            self._change_handler = self.spinner.connect("value-changed", self.on_change)
+        if self._change_handler_id is None:
+            self._change_handler_id = self.spinner.connect("value-changed", self.on_change)
 
     def disconnect_signals(self) -> None:
-        if self._change_handler is not None:
-            self.spinner.disconnect(self._change_handler)
-            self._change_handler = None
+        if self._change_handler_id is not None:
+            self.spinner.disconnect(self._change_handler_id)
+            self._change_handler_id = None
 
     def cancel_reveal(self) -> None:
         """Cancel a pending reveal and clear its source ID.
@@ -418,12 +418,12 @@ class VideoFpsRow(Adw.PreferencesRow):
         """Reveal revert only if the row's currently bound input still has an FPS override.
         Re-read the page because a hidden row can remain bound to an earlier input."""
         self._reveal_source = None
-        target = _page_and_input(self)
+        target = _page_identifier_and_state(self)
         if target is not None:
             self.revert_button.set_visible(self._has_override(*target))
         return GLib.SOURCE_REMOVE
 
-    def _request_revert(self, show: bool) -> None:
+    def _update_revert_visibility(self, show: bool) -> None:
         """Hide revert immediately when no override exists; reveal it after the rate settles.
         Keep visible controls in place; restart only pending reveals on each step."""
         self.cancel_reveal()
@@ -460,9 +460,13 @@ class VideoFpsRow(Adw.PreferencesRow):
         """Return whether the page stores an effective FPS cap.
         Treat a value at the render ceiling as uncapped, including older stored values."""
         if self._uses_media_fps():
-            stored = active_page.has_media_fps(identifier=identifier, state=state)
+            stored = active_page.has_media_fps_override(
+                identifier=identifier, state=state
+            )
         else:
-            stored = active_page.has_background_fps(identifier=identifier, state=state)
+            stored = active_page.has_background_fps_override(
+                identifier=identifier, state=state
+            )
         return stored and self._stored_fps(active_page, identifier, state) < self.MAX_FPS
 
     def _displayed_fps(self, active_page: "Page", identifier: InputIdentifier, state: int) -> int:
@@ -477,7 +481,7 @@ class VideoFpsRow(Adw.PreferencesRow):
         return self.MAX_FPS
 
     def on_change(self, *args: object) -> None:
-        target = _page_and_input(self)
+        target = _page_identifier_and_state(self)
         if target is None:
             return
         active_page, identifier, state = target
@@ -486,12 +490,12 @@ class VideoFpsRow(Adw.PreferencesRow):
         # Choosing it has the same meaning as revert and avoids ineffective caps.
         stored = None if fps >= self.MAX_FPS else fps
         self._write_fps(active_page, identifier, state, stored)
-        self._request_revert(stored is not None)
+        self._update_revert_visibility(stored is not None)
 
     def on_revert(self, *args: object) -> None:
         # Ask before disconnecting. A return between the disconnect and the
         # reconnect leaves the spinner silently unwired.
-        target = _page_and_input(self)
+        target = _page_identifier_and_state(self)
         if target is None:
             return
         active_page, identifier, state = target
@@ -574,7 +578,7 @@ class ImageRow(Adw.PreferencesRow):
         self.button_box.append(self.clear_button)
 
     def on_select_image(self, button: Gtk.Button) -> None:
-        target = _page_and_input(self)
+        target = _page_identifier_and_state(self)
         if target is None:
             return
         active_page, identifier, state = target
@@ -584,7 +588,7 @@ class ImageRow(Adw.PreferencesRow):
     def set_background_image(self, file_path: str) -> None:
         if not file_path or gl.app is None:
             return
-        target = _page_and_input(self)
+        target = _page_identifier_and_state(self)
         if target is None:
             return
         active_page, identifier, state = target
@@ -596,7 +600,7 @@ class ImageRow(Adw.PreferencesRow):
         self.update_preview(file_path)
 
     def on_clear_image(self, button: Gtk.Button) -> None:
-        target = _page_and_input(self)
+        target = _page_identifier_and_state(self)
         if target is None:
             return
         active_page, identifier, state = target
@@ -608,7 +612,7 @@ class ImageRow(Adw.PreferencesRow):
     def update_preview(self, image_path: str | None) -> None:
         # Safe from any thread; decode the thumbnail on the caller.
         # Marshal widget updates onto the GTK main loop.
-        GLib.idle_add(self._apply_preview, image_path, build_preview_pixbuf(image_path))
+        GLib.idle_add(self._apply_preview, image_path, build_video_preview_pixbuf(image_path))
 
     def _apply_preview(self, image_path: str | None, pixbuf: "GdkPixbuf.Pixbuf | None") -> bool:
         if image_path:

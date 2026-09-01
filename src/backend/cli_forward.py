@@ -18,7 +18,7 @@ if TYPE_CHECKING:
     class Transport(Protocol):
         """What forwarding needs from the running instance."""
 
-        def is_running(self) -> bool:
+        def has_running_instance(self) -> bool:
             """Is there an instance to forward to?"""
 
         def change_page(self, serial: str, page: str) -> str:
@@ -170,7 +170,7 @@ class Plan:
 
 # Syntax
 
-def _unsendable(where: str, what: str, value: str) -> str | None:
+def _unsendable_error(where: str, what: str, value: str) -> str | None:
     """Return an error for argv text that the UTF-8 bus cannot carry, else None."""
     try:
         value.encode("utf-8")
@@ -180,7 +180,7 @@ def _unsendable(where: str, what: str, value: str) -> str | None:
     return None
 
 
-def _bad_coords(where: str, coords: str) -> str | None:
+def _coords_error(where: str, coords: str) -> str | None:
     """Validate non-negative x,y syntax without imposing device-specific bounds."""
     if not coords or "," not in coords:
         return (f"Error: Invalid coordinate format in {where}: '{coords}'. "
@@ -208,10 +208,10 @@ def _parse_page_requests(raw: list[Any]) -> tuple[list[tuple[str, str]],
         if not page_name:
             failures.append(f"Error: Invalid page name in {where}: '{page_name}'")
             continue
-        unsendable = (_unsendable(where, "The serial number", serial_number)
-                      or _unsendable(where, "The page name", page_name))
-        if unsendable:
-            failures.append(unsendable)
+        encoding_error = (_unsendable_error(where, "The serial number", serial_number)
+                      or _unsendable_error(where, "The page name", page_name))
+        if encoding_error:
+            failures.append(encoding_error)
             continue
         parsed.append((serial_number, page_name))
     return parsed, failures
@@ -232,14 +232,14 @@ def _parse_state_requests(raw: list[Any]) -> tuple[list[tuple[str, str, str, int
         if not page_name:
             failures.append(f"Error: Invalid page name in {where}: '{page_name}'")
             continue
-        unsendable = (_unsendable(where, "The serial number", serial_number)
-                      or _unsendable(where, "The page name", page_name))
-        if unsendable:
-            failures.append(unsendable)
+        encoding_error = (_unsendable_error(where, "The serial number", serial_number)
+                      or _unsendable_error(where, "The page name", page_name))
+        if encoding_error:
+            failures.append(encoding_error)
             continue
-        bad_coords = _bad_coords(where, coords)
-        if bad_coords is not None:
-            failures.append(bad_coords)
+        coords_error = _coords_error(where, coords)
+        if coords_error is not None:
+            failures.append(coords_error)
             continue
         try:
             state = int(state_number)
@@ -275,14 +275,14 @@ def _parse_emulate_requests(raw: list[Any]) -> tuple[list[tuple[str, str, str, s
         if not page_name:
             failures.append(f"Error: Invalid page name in {where}: '{page_name}'")
             continue
-        unsendable = (_unsendable(where, "The serial number", serial_number)
-                      or _unsendable(where, "The page name", page_name))
-        if unsendable:
-            failures.append(unsendable)
+        encoding_error = (_unsendable_error(where, "The serial number", serial_number)
+                      or _unsendable_error(where, "The page name", page_name))
+        if encoding_error:
+            failures.append(encoding_error)
             continue
-        bad_coords = _bad_coords(where, coords)
-        if bad_coords is not None:
-            failures.append(bad_coords)
+        coords_error = _coords_error(where, coords)
+        if coords_error is not None:
+            failures.append(coords_error)
             continue
         if event not in EMULATE_EVENTS:
             failures.append(
@@ -293,13 +293,13 @@ def _parse_emulate_requests(raw: list[Any]) -> tuple[list[tuple[str, str, str, s
     return parsed, failures
 
 
-def answered_by_a_listing(args: Namespace) -> bool:
+def is_listing_command(args: Namespace) -> bool:
     """Return whether this command exits after a local device or page listing.
     Use named attributes so a renamed flag fails instead of silently forwarding."""
     return bool(args.list_devices or args.list_pages)
 
 
-def unparkable(plan: Plan, message: str) -> list[str]:
+def unparkable_failures(plan: Plan, message: str) -> list[str]:
     """Reject the whole plan when it contains an input that this process cannot apply.
     The caller supplies the reason for no instance, replacement, or listing exit."""
     if not plan.emulate_requests:
@@ -372,19 +372,19 @@ def forward(plan: Plan, transport: Transport) -> list[str]:
     return failures
 
 
-def forward_cli_requests(args: Namespace,
-                         transport: Transport | None = None) -> Verdict:
+def route_cli_requests(args: Namespace,
+                       transport: Transport | None = None) -> Verdict:
     """Park requests for this boot or forward them to the running instance without printing.
     Inputs fail when no running instance can apply them at the requested moment."""
-    if any_instance_verb(args):
+    if has_instance_verb(args):
         # Instance-only verbs take precedence and never park or boot.
         outcome = answer_instance_verbs(args, transport)
         return Verdict(handled=True, failures=outcome.failures, output=outcome.output)
 
-    if answered_by_a_listing(args):
+    if is_listing_command(args):
         # Refuse an adjacent press because a listing is the whole command.
         return Verdict(handled=False,
-                       failures=unparkable(plan_requests(args), LISTING_MESSAGE))
+                       failures=unparkable_failures(plan_requests(args), LISTING_MESSAGE))
 
     plan = plan_requests(args)
     if plan.failures:
@@ -402,14 +402,14 @@ def forward_cli_requests(args: Namespace,
     # Replacement applies only parkable work and makes that decision before any request is parked.
     # Check --close-running before probing because takeover does not depend on current ownership.
     if args.close_running:
-        refusals = unparkable(plan, CLOSE_RUNNING_MESSAGE)
+        refusals = unparkable_failures(plan, CLOSE_RUNNING_MESSAGE)
         if refusals:
             return Verdict(handled=False, failures=refusals)
         park(plan)
         return Verdict(handled=False)
 
-    if not transport.is_running():
-        refusals = unparkable(plan, NOT_RUNNING_MESSAGE)
+    if not transport.has_running_instance():
+        refusals = unparkable_failures(plan, NOT_RUNNING_MESSAGE)
         if refusals:
             return Verdict(handled=False, failures=refusals)
         park(plan)
@@ -454,7 +454,7 @@ class InstanceOutcome:
     output: list[str] = field(default_factory=list)
 
 
-def any_instance_verb(args: Namespace) -> bool:
+def has_instance_verb(args: Namespace) -> bool:
     """Return whether the command has a verb that only a running instance can answer.
     Test single-serial values against None so an explicit empty serial remains a verb."""
     return bool(args.json
@@ -482,18 +482,18 @@ def _plan_instance_verbs(args: Namespace) -> tuple[list[tuple[str, tuple[str, ..
         if attr is None:
             # None means absent; an empty serial remains a verb and is refused as an unknown deck.
             continue
-        bad = _unsendable(flag, "The serial number", attr)
-        if bad:
-            failures.append(bad)
+        validation_error = _unsendable_error(flag, "The serial number", attr)
+        if validation_error:
+            failures.append(validation_error)
         else:
             jobs.append((flag[2:], (attr,)))
 
     if args.set_brightness:
         serial, value = args.set_brightness
         where = "--set-brightness"
-        bad = _unsendable(where, "The serial number", serial)
-        if bad:
-            failures.append(bad)
+        validation_error = _unsendable_error(where, "The serial number", serial)
+        if validation_error:
+            failures.append(validation_error)
         else:
             try:
                 number = int(value)
@@ -516,12 +516,12 @@ def _plan_instance_verbs(args: Namespace) -> tuple[list[tuple[str, tuple[str, ..
         else:
             page = parts[0]
             coords = parts[1] if len(parts) == 2 else ""
-            bad = _unsendable(where, "The page name", page)
-            if not bad and coords:
-                bad = (_unsendable(where, "The coordinates", coords)
-                       or _bad_coords(where, coords))
-            if bad:
-                failures.append(bad)
+            validation_error = _unsendable_error(where, "The page name", page)
+            if not validation_error and coords:
+                validation_error = (_unsendable_error(where, "The coordinates", coords)
+                       or _coords_error(where, coords))
+            if validation_error:
+                failures.append(validation_error)
             else:
                 jobs.append(("list-actions", (page, coords)))
 
@@ -529,17 +529,17 @@ def _plan_instance_verbs(args: Namespace) -> tuple[list[tuple[str, tuple[str, ..
                        ("--duplicate-page", args.duplicate_page)):
         if not pair:
             continue
-        first, second = pair
-        bad = (_unsendable(flag, "The page name", first)
-               or _unsendable(flag, "The new page name", second))
-        if not bad and not first:
-            bad = f"Error: Invalid page name in {flag}: '{first}'"
-        if not bad and not second:
-            bad = f"Error: Invalid page name in {flag}: '{second}'"
-        if bad:
-            failures.append(bad)
+        source_name, new_name = pair
+        validation_error = (_unsendable_error(flag, "The page name", source_name)
+               or _unsendable_error(flag, "The new page name", new_name))
+        if not validation_error and not source_name:
+            validation_error = f"Error: Invalid page name in {flag}: '{source_name}'"
+        if not validation_error and not new_name:
+            validation_error = f"Error: Invalid page name in {flag}: '{new_name}'"
+        if validation_error:
+            failures.append(validation_error)
         else:
-            jobs.append((flag[2:], (first, second)))
+            jobs.append((flag[2:], (source_name, new_name)))
 
     return jobs, failures
 
@@ -664,7 +664,7 @@ def answer_instance_verbs(args: Namespace,
             transport = bus_transport()
         except TransportError as e:
             return InstanceOutcome(failures=[str(e)])
-    if not transport.is_running():
+    if not transport.has_running_instance():
         return InstanceOutcome(failures=[_NOT_RUNNING_INSTANCE_MESSAGE])
     output, run_failures = run_instance_verbs(jobs, transport)
     return InstanceOutcome(failures=run_failures, output=output)
@@ -692,7 +692,7 @@ class _BusTransport:
         self._glib = GLib
         self._connection = Gio.bus_get_sync(Gio.BusType.SESSION, None)
 
-    def is_running(self) -> bool:
+    def has_running_instance(self) -> bool:
         """Check application-name ownership without D-Bus activation.
         Probe errors mean no owner: parkable requests boot, but instance-only verbs fail."""
         try:

@@ -45,9 +45,13 @@ def install_controllers(*controllers):
 
 
 def make_monitor(mode=MODE_SYSTEM_IDLE, minutes=1) -> PresenceMonitor:
-    # idle_detector=False everywhere except the fake-bus checks below. The
+    # enable_idle_detector=False everywhere except the fake-bus checks below. The
     # harness must never reach for the real system bus.
-    return PresenceMonitor(mode=mode, minutes=minutes, idle_detector=False)
+    return PresenceMonitor(
+        mode=mode,
+        idle_minutes=minutes,
+        enable_idle_detector=False,
+    )
 
 
 def set_locked(monitor: PresenceMonitor, locked: bool) -> None:
@@ -262,7 +266,7 @@ def check_constructor_seeds_from_settings() -> None:
     })
     gl.screen_locked = True
     try:
-        monitor = PresenceMonitor(idle_detector=False)
+        monitor = PresenceMonitor(enable_idle_detector=False)
         assert monitor.mode == MODE_SYSTEM_IDLE, (
             f"mode not seeded from AppSettings: {monitor.mode!r}"
         )
@@ -280,7 +284,7 @@ def check_constructor_seeds_from_settings() -> None:
     # And with the shipped default the same restart changes nothing.
     gl.screen_locked = True
     try:
-        monitor = PresenceMonitor(idle_detector=False)
+        monitor = PresenceMonitor(enable_idle_detector=False)
         assert monitor.mode == MODE_SCREENSAVER
         assert monitor.is_quiescent() is False, (
             "the DEFAULT mode must not gate on a locked-at-startup session"
@@ -391,7 +395,7 @@ def check_detector_built_lazily() -> None:
     bus = FakeSystemBus(idle_hint=False)
     previous = with_session_id("31")
     try:
-        monitor = PresenceMonitor(mode=MODE_SCREENSAVER, minutes=1, bus=bus)
+        monitor = PresenceMonitor(mode=MODE_SCREENSAVER, idle_minutes=1, bus=bus)
         assert monitor.idle_detector is None, (
             "the default pause mode built a logind detector"
         )
@@ -428,7 +432,7 @@ def check_detector_resolves_by_session_id() -> None:
     bus = FakeSystemBus(idle_hint=True, idle_since=time.time() - 600)
     previous = with_session_id("31")
     try:
-        monitor = PresenceMonitor(mode=MODE_SYSTEM_IDLE, minutes=1, bus=bus)
+        monitor = PresenceMonitor(mode=MODE_SYSTEM_IDLE, idle_minutes=1, bus=bus)
     finally:
         with_session_id(previous)
 
@@ -456,7 +460,7 @@ def check_detector_falls_back_to_caller_pid() -> None:
     bus = FakeSystemBus(idle_hint=False)
     previous = with_session_id(None)
     try:
-        monitor = PresenceMonitor(mode=MODE_SYSTEM_IDLE, minutes=1, bus=bus)
+        monitor = PresenceMonitor(mode=MODE_SYSTEM_IDLE, idle_minutes=1, bus=bus)
     finally:
         with_session_id(previous)
 
@@ -477,7 +481,7 @@ def check_detector_dispatches_property_changes() -> None:
     bus = FakeSystemBus(idle_hint=False)
     previous = with_session_id("31")
     try:
-        monitor = PresenceMonitor(mode=MODE_SYSTEM_IDLE, minutes=1, bus=bus)
+        monitor = PresenceMonitor(mode=MODE_SYSTEM_IDLE, idle_minutes=1, bus=bus)
     finally:
         with_session_id(previous)
     assert monitor.is_quiescent() is False
@@ -516,7 +520,7 @@ def check_detector_inert_on_dbus_failure() -> None:
     bus = FakeSystemBus(fail_on={"GetSession", "GetSessionByPID"})
     previous = with_session_id("31")
     try:
-        monitor = PresenceMonitor(mode=MODE_SYSTEM_IDLE, minutes=1, bus=bus)
+        monitor = PresenceMonitor(mode=MODE_SYSTEM_IDLE, idle_minutes=1, bus=bus)
     finally:
         with_session_id(previous)
 

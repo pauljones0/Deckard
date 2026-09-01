@@ -136,7 +136,7 @@ def test_three_types_share_their_widgets() -> None:
 # AssetChooser.show_for_path also routes through that stack.
 ALLOWED_STACK_METHODS = {
     # _show_pack_asset is the main-thread widget half of worker-callable routing.
-    "IconPackChooserStack": {"prepare", "show_for_path", "_show_pack_asset",
+    "IconPackChooserStack": {"initialize_page_state", "show_for_path", "_show_pack_asset",
                              "get_is_build_finished", "on_load_finished"},
     "WallpaperPackChooserStack": set(),
     "SDPlusBarWallpaperPackChooserStack": set(),
@@ -167,7 +167,7 @@ def test_no_pack_stack_regrows_the_shared_body() -> None:
         "per-family pack-stack copies came back: " + "; ".join(offences))
 
     # The base must still carry what the subclasses are barred from holding.
-    for name in ("__init__", "build", "prepare"):
+    for name in ("__init__", "build", "initialize_page_state"):
         assert name in vars(GenericPackChooserStack), (
             f"GenericPackChooserStack no longer defines {name}; this check "
             "would pass over nothing")

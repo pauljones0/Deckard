@@ -130,14 +130,14 @@ def main() -> None:
         # 6. The sidebar preview helper, which builds no widget.
         from src.backend.MediaManager import MediaManager
         gl.media_manager = MediaManager()
-        from src.windows.mainWindow.elements.Sidebar.elements.BackgroundEditor import build_preview_pixbuf
-        assert build_preview_pixbuf(video_path) is not None, (
+        from src.windows.mainWindow.elements.Sidebar.elements.BackgroundEditor import build_video_preview_pixbuf
+        assert build_video_preview_pixbuf(video_path) is not None, (
             "video paths must resolve to a thumbnail pixbuf for the preview"
         )
-        assert build_preview_pixbuf(image_path) is None, (
+        assert build_video_preview_pixbuf(image_path) is None, (
             "image paths must return None (set_filename renders them directly)"
         )
-        assert build_preview_pixbuf(None) is None
+        assert build_video_preview_pixbuf(None) is None
 
         print("scenario_touchscreen_video_bg: PASS")
     finally:

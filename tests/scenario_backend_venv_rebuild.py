@@ -492,7 +492,7 @@ def check_launch_checks_the_venv_before_the_argv() -> None:
     plugin.server = types.SimpleNamespace(port=1)
     plugin.PATH = plugin_dir
     plugin._backend_event_hold = types.SimpleNamespace(arm=lambda: None)
-    plugin._backend_launch_gen = 0
+    plugin._backend_launch_generation = 0
     plugin._backend_stop_requested = False
     plugin._backend_via_terminal = False
     plugin._backend_ready = types.SimpleNamespace(clear=lambda: None)

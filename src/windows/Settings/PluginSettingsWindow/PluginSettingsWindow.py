@@ -47,7 +47,7 @@ class PluginSettingsPage(Adw.PreferencesPage):
         self.plugin_base = plugin_base
 
         # Track the tile-click handler so connect and disconnect stay idempotent.
-        self._flow_box_handler: int | None = None
+        self._flow_box_handler_id: int | None = None
 
         self.build()
 
@@ -75,14 +75,14 @@ class PluginSettingsPage(Adw.PreferencesPage):
 
     def connect_flow_box(self, callback: Callable[..., Any]) -> None:
         """Connect one tile-click handler and ignore repeated calls."""
-        if self._flow_box_handler is None:
-            self._flow_box_handler = self.flow_box.connect("child-activated", callback)
+        if self._flow_box_handler_id is None:
+            self._flow_box_handler_id = self.flow_box.connect("child-activated", callback)
 
     def disconnect_flow_box(self) -> None:
         """Drop the click handler. A call while it is already off does nothing."""
-        if self._flow_box_handler is not None:
-            self.flow_box.disconnect(self._flow_box_handler)
-            self._flow_box_handler = None
+        if self._flow_box_handler_id is not None:
+            self.flow_box.disconnect(self._flow_box_handler_id)
+            self._flow_box_handler_id = None
 
     def reset_button_clicked(self, *args: Any) -> None:
         pass

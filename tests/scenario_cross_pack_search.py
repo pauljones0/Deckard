@@ -366,7 +366,7 @@ def test_pack_grid_drills_into_the_results() -> None:
 
     # Only now, with the results on screen, does the page that asked count as
     # current with its entry.
-    assert pack_page._searched_text == "volume", (
+    assert pack_page._rendered_query == "volume", (
         "the pack grid does not know it rendered this query")
 
     # The typing follows the query to the page that now holds it.
@@ -396,16 +396,16 @@ def test_a_dropped_gather_leaves_the_page_behind() -> None:
     pump(0.3)
 
     assert leaf.asset_flow.items is None, "the dropped gather rendered"
-    assert pack_page._searched_text == "", (
-        f"the page recorded {pack_page._searched_text!r} as rendered for a "
+    assert pack_page._rendered_query == "", (
+        f"the page recorded {pack_page._rendered_query!r} as rendered for a "
         f"gather that was dropped; it will never catch itself up")
 
     # Showing the page again therefore searches once more.
     gathered = record_gathers(pack_page)
     release.clear()
     gate.clear()
-    pack_page._search_showing = False
-    pack_page._searched_text = ""
+    pack_page._accepts_search_results = False
+    pack_page._rendered_query = ""
     pack_page.search_entry.set_text("volume")
     pack_page._on_map()
     pump(0.1)
@@ -437,7 +437,7 @@ def test_a_failing_gather_leaves_the_page_behind() -> None:
                "the worker never finished after the failure")
 
     assert leaf.asset_flow.items is None, "a failed gather rendered"
-    assert pack_page._searched_text == "", (
+    assert pack_page._rendered_query == "", (
         "the page counted a failed gather as rendered, so it will never try "
         "again on its own")
 
@@ -475,23 +475,23 @@ def test_pack_label_names_the_pack() -> None:
 
     material = MATERIAL.icons[0]
     tabler = TABLER.icons[0]
-    assert leaf.pack_label_for(material) is None, (
+    assert leaf.pack_subtitle_for(material) is None, (
         "a grid of one pack names that pack on every card, which says nothing")
 
     leaf.load_search_results(pack_page, [material, tabler], "volume")
-    assert leaf.pack_label_for(material) == "Material Icons"
-    assert leaf.pack_label_for(tabler) == "Tabler Icons"
+    assert leaf.pack_subtitle_for(material) == "Material Icons"
+    assert leaf.pack_subtitle_for(tabler) == "Tabler Icons"
 
     # Back to one pack, and the line goes with the search.
     leaf.load_for_pack(MATERIAL)
-    assert leaf.pack_label_for(material) is None, (
+    assert leaf.pack_subtitle_for(material) is None, (
         "a card kept the pack line after the grid went back to one pack")
     print("PASS: a result card names its pack, and only in a search")
 
 
 def test_the_card_is_handed_the_pack_line() -> None:
     """Require the recycler factory to pass each pack label to its card."""
-    source = textwrap.dedent(inspect.getsource(GenericAssetChooserPage.preview_factory))
+    source = textwrap.dedent(inspect.getsource(GenericAssetChooserPage.bind_preview_card))
     handed = [node for node in ast.walk(ast.parse(source))
               if isinstance(node, ast.Call)
               and isinstance(node.func, ast.Attribute)
@@ -502,9 +502,9 @@ def test_the_card_is_handed_the_pack_line() -> None:
     argument = handed[0].args[0]
     assert (isinstance(argument, ast.Call)
             and isinstance(argument.func, ast.Attribute)
-            and argument.func.attr == "pack_label_for"), (
+            and argument.func.attr == "pack_subtitle_for"), (
         "the second line of a card comes from something other than "
-        "pack_label_for, so nothing here can say what it shows")
+        "pack_subtitle_for, so nothing here can say what it shows")
     print("PASS: the card factory hands the pack line to the card")
 
 
@@ -520,14 +520,14 @@ def test_a_real_card_shows_and_clears_the_pack_line() -> None:
     preview = GenericAssetPreview()
 
     leaf.load_search_results(pack_page, [asset], "volume")
-    leaf.preview_factory(preview, asset)
+    leaf.bind_preview_card(preview, asset)
     assert preview.subtitle.get_text() == "Material Icons", (
         f"the card shows {preview.subtitle.get_text()!r} under the name")
     assert preview.subtitle.get_visible() is True, "the pack line is hidden"
 
     # The same card, recycled into a grid of one pack.
     leaf.load_for_pack(MATERIAL)
-    leaf.preview_factory(preview, asset)
+    leaf.bind_preview_card(preview, asset)
     assert preview.subtitle.get_text() == "", (
         f"a recycled card kept {preview.subtitle.get_text()!r} in a grid of "
         f"one pack")
@@ -575,7 +575,7 @@ def test_a_changed_query_searches_again() -> None:
         "bright", ALL_PACKS), 10, "the changed query never gathered again")
 
     assert leaf._pack_search_query == "bright"
-    assert leaf._searched_text == "bright", (
+    assert leaf._rendered_query == "bright", (
         "the results page does not know it rendered the query it asked for")
     assert stack.switches == [], (
         f"the results of a second query moved the window again: {stack.switches}")
@@ -609,7 +609,7 @@ def test_empty_query_returns_to_the_pack_grid() -> None:
         "the results page kept every pack's assets after the search ended")
     assert leaf._pack_search_source is None and leaf._pack_search_query == ""
     assert leaf.empty_label.get_visible() is False
-    assert leaf._searched_text == "", (
+    assert leaf._rendered_query == "", (
         "the page turn is this pass's answer, so the page must count it as "
         "rendered")
 
@@ -702,7 +702,7 @@ def test_teardown_drops_a_gathering_pass() -> None:
     # even read the pack folders.
     discoveries = manager.discoveries
     stale = pack_page._search_generation
-    pack_page._search_showing = True
+    pack_page._accepts_search_results = True
     pack_page._search_generation += 1
     assert pack_page.collect_matching_assets("volume", pack_page, stale) == []
     assert manager.discoveries == discoveries, (
@@ -730,7 +730,7 @@ def test_a_hidden_page_renders_nothing() -> None:
     install_packs(ALL_PACKS)
     pack_page, leaf, stack, asset_manager = make_pair("volume")
     generation = pack_page._search_generation
-    pack_page._search_showing = False
+    pack_page._accepts_search_results = False
     assert pack_page.search_is_current(generation) is False
 
     pack_page._show_matching_assets("volume", pack_page, generation,
@@ -748,19 +748,19 @@ def test_the_render_asks_the_page_it_writes_into() -> None:
     # The user opened a pack while the gather ran.
     leaf.load_for_pack(MATERIAL)
     stack.set_visible_child_name(LEAF_CHILD_NAME)
-    assert leaf.shows_pack_search is False
+    assert leaf.shows_cross_pack_results is False
 
     pack_page._show_matching_assets("volume", pack_page,
                                     pack_page._search_generation,
                                     list(TABLER.icons))
     assert leaf.asset_flow.items == MATERIAL.icons, (
         "a gather replaced the grid of the pack the user had opened")
-    assert pack_page._searched_text == "", (
+    assert pack_page._rendered_query == "", (
         "a render that was refused was recorded as done")
 
     # A results page that is already showing takes the next results.
     leaf.load_search_results(pack_page, list(MATERIAL.icons), "volume")
-    assert leaf.shows_pack_search is True
+    assert leaf.shows_cross_pack_results is True
     pack_page._show_matching_assets("bright", pack_page,
                                     pack_page._search_generation,
                                     list(TABLER.icons))
@@ -913,7 +913,7 @@ def test_every_family_shares_the_search() -> None:
         assert owned == {getattr(GenericPackChooserPage, name)}, (
             f"the pack grids no longer share one {name}: {owned}")
     for name in ("load_search_results", "leave_search_results", "apply_search",
-                 "pack_label_for", "show_empty_notice"):
+                 "pack_subtitle_for", "show_empty_notice"):
         owned = {getattr(cls, name) for cls in leaf_classes}
         assert owned == {getattr(GenericAssetChooserPage, name)}, (
             f"the leaf pages no longer share one {name}: {owned}")

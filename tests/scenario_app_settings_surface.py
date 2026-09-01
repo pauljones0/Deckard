@@ -66,7 +66,7 @@ def fresh_manager(seed: dict) -> SettingsManager:
 class WindowStub:
     """Carry real snapshot, typed-view, and batch-save methods without Adw."""
 
-    app = Settings.app
+    app_settings = Settings.app_settings
     load_json = Settings.load_json
     save_json = Settings.save_json
 
@@ -405,7 +405,7 @@ def check_batch_save_writes_snapshot() -> None:
     other.save()
 
     # A toggle row changes something through the snapshot view, then batch-saves.
-    Settings.app.fget(window).tray_icon = False
+    Settings.app_settings.fget(window).tray_icon = False
     window.save_json()
 
     persisted = read_disk()

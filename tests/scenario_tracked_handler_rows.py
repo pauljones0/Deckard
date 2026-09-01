@@ -24,31 +24,31 @@ class FakeWidget:
     """Record handlers by id and reject function-based disconnection."""
 
     def __init__(self) -> None:
-        self._handlers: dict[int, object] = {}
+        self._handlers_by_id: dict[int, object] = {}
         self._next = 1
         self.raise_on_set = False
 
     def connect(self, signal, handler):
         hid = self._next
         self._next += 1
-        self._handlers[hid] = handler
+        self._handlers_by_id[hid] = handler
         return hid
 
     def disconnect(self, hid):
-        if hid not in self._handlers:
+        if hid not in self._handlers_by_id:
             # GTK warns and leaves the handler in place for an unknown id.
             raise ValueError(f"no handler with id {hid}")
-        del self._handlers[hid]
+        del self._handlers_by_id[hid]
 
     def disconnect_by_func(self, func):
         raise AssertionError("a row disconnected by function, not by tracked id")
 
     def fire(self):
-        for handler in list(self._handlers.values()):
+        for handler in list(self._handlers_by_id.values()):
             handler(self, None)
 
     def handler_count(self):
-        return len(self._handlers)
+        return len(self._handlers_by_id)
 
     def set_text(self, text):
         if self.raise_on_set:
@@ -90,7 +90,7 @@ class FakeToggleWidget(FakeWidget):
 def _make_gen_row(cls, widget):
     """Build only the wiring state required by generative row signal methods."""
     row = object.__new__(cls)
-    row._signal_handlers = {}
+    row._handler_ids = {}
     row._widget = widget
     row._built = True
     row._build_flag_lock = threading.Lock()
@@ -187,7 +187,7 @@ def test_entry_row_reset_leaves_one_handler() -> None:
 
 def _make_scale_row(add_text_entry):
     row = ScaleRow.__new__(ScaleRow)
-    row._handlers = {}
+    row._handler_ids = {}
     row._add_text_entry = add_text_entry
     row._adjustment = FakeWidget()
     row.entry_row = FakeWidget()
@@ -237,7 +237,7 @@ def test_scale_row_reset_reconnects_after_raise() -> None:
 
 def _make_screensaver_group():
     group = ScreensaverGroup.__new__(ScreensaverGroup)
-    group._handlers = {}
+    group._handler_ids = {}
     group.overwrite_expander = FakeWidget()
     group.enable_screensaver_toggle = FakeWidget()
     group.delay_spin = FakeWidget()
@@ -313,7 +313,7 @@ def test_page_editor_group_teardown_is_idempotent() -> None:
 
 def test_plugin_settings_flow_box_wires_once() -> None:
     page = PluginSettingsPage.__new__(PluginSettingsPage)
-    page._flow_box_handler = None
+    page._flow_box_handler_id = None
     page.flow_box = FakeWidget()
 
     def _on_click(*args):

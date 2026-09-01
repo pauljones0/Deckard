@@ -100,7 +100,9 @@ def main() -> None:
         assert controller.animations_gated() is False, (
             "nothing may gate before a presence monitor exists"
         )
-        monitor = PresenceMonitor(mode=MODE_SCREENSAVER, idle_detector=False)
+        monitor = PresenceMonitor(
+            mode=MODE_SCREENSAVER, enable_idle_detector=False
+        )
         gl.presence_monitor = monitor
         set_locked(monitor, True)
         assert controller.animations_gated() is False, (
@@ -110,7 +112,11 @@ def main() -> None:
         monitor.stop()
 
         # Opt in, then lock. Gating engages.
-        monitor = PresenceMonitor(mode=MODE_SYSTEM_IDLE, minutes=1, idle_detector=False)
+        monitor = PresenceMonitor(
+            mode=MODE_SYSTEM_IDLE,
+            idle_minutes=1,
+            enable_idle_detector=False,
+        )
         gl.presence_monitor = monitor
         signature_a = {k: deck.last_op_for(f"key:{k}") for k in range(key_count)}
         assert all(signature_a.values()), "fixture sanity: not every key painted page A"

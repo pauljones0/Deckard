@@ -142,8 +142,8 @@ def check_archive_with_nested_folders() -> None:
     assert icon_names(pack) == {"top.png", "left.png", "right.png", "tiny.png"}, (
         f"the pack holds {sorted(icon_names(pack))}"
     )
-    assert "Base" in pack.pack_structure and "arrows" in pack.pack_structure, (
-        f"the folder structure is {sorted(pack.pack_structure)}"
+    assert "Base" in pack.assets_by_folder and "arrows" in pack.assets_by_folder, (
+        f"the folder structure is {sorted(pack.assets_by_folder)}"
     )
     deep = [icon for icon in pack.get_icons() if os.path.basename(icon.path) == "tiny.png"][0]
     assert os.path.basename(os.path.dirname(deep.path)) == "arrows", (
@@ -169,12 +169,12 @@ def check_wrapper_folder_is_stripped() -> None:
     })
     folder = pack_import.import_icon_pack(archive, "Wrapped")
     pack = packs()[folder]
-    assert "Base" in pack.pack_structure, (
+    assert "Base" in pack.assets_by_folder, (
         f"the one top folder of the archive must go, the structure is "
-        f"{sorted(pack.pack_structure)}"
+        f"{sorted(pack.assets_by_folder)}"
     )
-    assert "arrows" in pack.pack_structure
-    assert "my-icons-main" not in pack.pack_structure
+    assert "arrows" in pack.assets_by_folder
+    assert "my-icons-main" not in pack.assets_by_folder
     print("PASS: an archive built from one folder does not gain a level")
 
 

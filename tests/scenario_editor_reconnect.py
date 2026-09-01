@@ -168,7 +168,7 @@ class FakeSizeRow:
         self.size_spinner = FakeSpinner()
         self.active_identifier = None
         self.active_state = None
-        self._value_handler = None
+        self._value_handler_id = None
         self.connect_signals()
 
 
@@ -186,7 +186,7 @@ class FakeAlignmentRow:
         self.property_name = "valign"
         self.active_identifier = None
         self.active_state = None
-        self._value_handler = None
+        self._value_handler_id = None
         self.connect_signals()
 
 

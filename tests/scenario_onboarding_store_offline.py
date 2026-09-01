@@ -215,10 +215,10 @@ def check_missing_row_names_the_failed_dependency_class() -> None:
     gl.app = None  # so the install parents its prompts on no window
 
     # Answer the set prompt without a real dialog. MissingRow imports
-    # make_set_consent at call time, so patching the module attribute lands.
+    # make_dependency_consent at call time, so patching the module attribute lands.
     asked: list = []
-    original_set_consent = install_consent.make_set_consent
-    install_consent.make_set_consent = lambda parent: (
+    original_set_consent = install_consent.make_dependency_consent
+    install_consent.make_dependency_consent = lambda parent: (
         lambda root_name, plan: (asked.append(root_name), True)[1])
 
     class _Notify:
@@ -258,7 +258,7 @@ def check_missing_row_names_the_failed_dependency_class() -> None:
         pump_main_context()
     finally:
         timer_wheel.schedule = real_schedule
-        install_consent.make_set_consent = original_set_consent
+        install_consent.make_dependency_consent = original_set_consent
 
     assert asked, "the set prompt must have been reached"
     assert installed == ["com_root_Icons"], (
@@ -275,7 +275,7 @@ def check_missing_row_names_the_failed_dependency_class() -> None:
 
 def check_install_failures_toast() -> None:
     from src.windows.Onboarding.OnboardingWindow import OnboardingScreen5
-    from src.backend.notify import Notify
+    from src.backend.notify import Notifier
 
     toasts = []
     gl.app = types.SimpleNamespace(
@@ -287,7 +287,7 @@ def check_install_failures_toast() -> None:
     )
     # The real facade runs here. The onboarding path reports through
     # gl.notify, and its main-thread routing is under test.
-    gl.notify = Notify()
+    gl.notify = Notifier()
 
     def get_plugin_for_id(plugin_id):
         return None  # unresolvable, so the install fails

@@ -452,7 +452,7 @@ def leg_parked_requests_follow_handoff(observer: Observer) -> None:
         wait_for_line(child, "READY")
         assert has_owner(observer.connection, ID_PARKED)
 
-        parked = cli_forward.forward_cli_requests(
+        parked = cli_forward.route_cli_requests(
             argparser.parse_args(PARKED_ARGV), Recorder(running=False))
         assert not parked.handled and not parked.failures, parked
         assert gl.api_page_requests and gl.api_state_requests, (

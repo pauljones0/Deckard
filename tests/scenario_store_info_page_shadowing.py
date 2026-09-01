@@ -35,7 +35,7 @@ def test_inherited_setters_are_not_shadowed() -> None:
 
 
 def test_renamed_setters_exist() -> None:
-    assert callable(vars(InfoPage).get("set_pack_name")), (
+    assert callable(vars(InfoPage).get("set_asset_name")), (
         "InfoPage must expose the renamed pack-name setter"
     )
     assert callable(vars(DescriptionRow).get("set_description_title")), (

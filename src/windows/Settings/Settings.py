@@ -68,7 +68,7 @@ class Settings(Adw.PreferencesWindow):
         self.add(self.plugin_page)
 
     @property
-    def app(self) -> AppSettings:
+    def app_settings(self) -> AppSettings:
         """Return a typed view of this dialog's private settings snapshot.
 
         Rebuild it after load_json() rebinds the underlying dictionary.
@@ -127,7 +127,7 @@ class UIPageGroup(Adw.PreferencesGroup):
         self.auto_config_row.connect("notify::active", self.on_auto_config_row_toggled)
 
     def load_defaults(self) -> None:
-        app = self.settings.app
+        app = self.settings.app_settings
         self.trayicon_row.set_active(app.tray_icon)
         self.emulate_row.set_active(app.emulate_at_double_click)
         self.enable_fps_warnings_row.set_active(app.enable_fps_warnings)
@@ -137,22 +137,22 @@ class UIPageGroup(Adw.PreferencesGroup):
 
 
     def on_trayicon_row_toggled(self, *args: Any) -> None:
-        self.settings.app.tray_icon = self.trayicon_row.get_active()
+        self.settings.app_settings.tray_icon = self.trayicon_row.get_active()
 
         self.settings.save_json()
-        if self.settings.app.tray_icon:
+        if self.settings.app_settings.tray_icon:
             gl.tray_icon.start()
         else:
             gl.tray_icon.stop()
 
     def on_emulate_row_toggled(self, *args: Any) -> None:
-        self.settings.app.emulate_at_double_click = self.emulate_row.get_active()
+        self.settings.app_settings.emulate_at_double_click = self.emulate_row.get_active()
 
         # Save
         self.settings.save_json()
 
     def on_enable_fps_warnings_row_toggled(self, *args: Any) -> None:
-        self.settings.app.enable_fps_warnings = self.enable_fps_warnings_row.get_active()
+        self.settings.app_settings.enable_fps_warnings = self.enable_fps_warnings_row.get_active()
 
         # Save
         self.settings.save_json()
@@ -162,7 +162,7 @@ class UIPageGroup(Adw.PreferencesGroup):
             controller.media_player.set_show_fps_warnings(self.enable_fps_warnings_row.get_active())
 
     def on_allow_white_mode_toggled(self, *args: Any) -> None:
-        self.settings.app.allow_white_mode = self.allow_white_mode.get_active()
+        self.settings.app_settings.allow_white_mode = self.allow_white_mode.get_active()
 
         style_manager = services.require_app().style_manager
         if style_manager is None:
@@ -179,13 +179,13 @@ class UIPageGroup(Adw.PreferencesGroup):
         self.settings.save_json()
 
     def on_show_notifications_toggled(self, *args: Any) -> None:
-        self.settings.app.show_notifications = self.show_notifications.get_active()
+        self.settings.app_settings.show_notifications = self.show_notifications.get_active()
 
         # Save
         self.settings.save_json()
 
     def on_auto_config_row_toggled(self, *args: Any) -> None:
-        self.settings.app.auto_open_action_config = self.auto_config_row.get_active()
+        self.settings.app_settings.auto_open_action_config = self.auto_config_row.get_active()
 
         # Save
         self.settings.save_json()
@@ -219,12 +219,12 @@ class FakeDecksGroup(Adw.PreferencesGroup):
         self.n_fake_decks_row.connect("changed", self.on_n_fake_decks_row_changed)
 
     def load_defaults(self) -> None:
-        self.n_fake_decks_row.set_value(self.settings.app.n_fake_decks)
+        self.n_fake_decks_row.set_value(self.settings.app_settings.n_fake_decks)
 
     def on_n_fake_decks_row_changed(self, *args: Any) -> None:
         #FIXME: For some reason this gets called twice
         # SpinRow returns float, but deck counts are integers.
-        self.settings.app.n_fake_decks = int(self.n_fake_decks_row.get_value())
+        self.settings.app_settings.n_fake_decks = int(self.n_fake_decks_row.get_value())
 
         # Save
         self.settings.save_json()
@@ -294,7 +294,7 @@ class DataPathGroup(Adw.PreferencesGroup):
     def on_data_path_apply(self, *args: Any) -> None:
         new_path = os.path.expanduser(self.data_path.get_text().strip())
 
-        if not self._validate_data_path(new_path):
+        if not self._validate_or_create_data_path(new_path):
             self.data_path.add_css_class("error")
             self.data_path.set_tooltip_text("Path must be absolute and creatable/writable")
             return
@@ -315,7 +315,7 @@ class DataPathGroup(Adw.PreferencesGroup):
         gl.settings_manager.save_static_settings(static_settings)
 
     @staticmethod
-    def _validate_data_path(path: str) -> bool:
+    def _validate_or_create_data_path(path: str) -> bool:
         """Validate an absolute writable directory, creating it if absent.
 
         Run only on explicit apply because this can block the GTK main thread.
@@ -378,13 +378,13 @@ class GeneralPageGroup(Adw.PreferencesGroup):
         self.shrink_on_press.connect("notify::active", self.on_shrink_on_press_changed)
 
     def load_defaults(self) -> None:
-        app = self.settings.app
+        app = self.settings.app_settings
         self.hold_time_row.set_value(app.hold_time)
         self.rolling_labels.set_active(app.rolling_labels)
         self.shrink_on_press.set_active(app.shrink_on_press)
 
     def on_n_fake_decks_row_changed(self, *args: Any) -> None:
-        self.settings.app.hold_time = self.hold_time_row.get_value()
+        self.settings.app_settings.hold_time = self.hold_time_row.get_value()
 
         for controller in services.require_deck_manager().deck_controller:
             controller.hold_time = self.hold_time_row.get_value()
@@ -396,7 +396,7 @@ class GeneralPageGroup(Adw.PreferencesGroup):
         services.require_deck_manager().load_fake_decks()
 
     def on_rolling_labels_changed(self, *args: Any) -> None:
-        self.settings.app.rolling_labels = self.rolling_labels.get_active()
+        self.settings.app_settings.rolling_labels = self.rolling_labels.get_active()
 
         # Save
         self.settings.save_json()
@@ -406,7 +406,7 @@ class GeneralPageGroup(Adw.PreferencesGroup):
             controller.reload_page()
 
     def on_shrink_on_press_changed(self, *args: Any) -> None:
-        self.settings.app.shrink_on_press = self.shrink_on_press.get_active()
+        self.settings.app_settings.shrink_on_press = self.shrink_on_press.get_active()
 
         # Save
         self.settings.save_json()
@@ -460,7 +460,7 @@ class FontRow(Adw.ActionRow):
         self.font_chooser_button = Gtk.FontButton(valign=Gtk.Align.CENTER)
         self.add_suffix(self.font_chooser_button)
 
-        app = self.font_page_group.settings.app
+        app = self.font_page_group.settings.app_settings
 
         desc = get_pango_font_description(app.font_default("font-family"),
                                           app.font_default("font-size"),
@@ -483,7 +483,7 @@ class FontRow(Adw.ActionRow):
         gl.settings_manager.font_defaults["font-weight"] = weight
         gl.settings_manager.font_defaults["font-style"] = style
 
-        self.font_page_group.settings.app.default_font = gl.settings_manager.font_defaults
+        self.font_page_group.settings.app_settings.default_font = gl.settings_manager.font_defaults
         gl.settings_manager.save_font_defaults()
         # save_font_defaults already writes the shared settings; saving this
         # dialog's older snapshot could revert changes from another writer.
@@ -500,7 +500,7 @@ class FontColorRow(Adw.ActionRow):
         self.font_color_chooser_button = Gtk.ColorButton(valign=Gtk.Align.CENTER)
         self.add_suffix(self.font_color_chooser_button)
 
-        font_color = self.font_page_group.settings.app.font_default("font-color")
+        font_color = self.font_page_group.settings.app_settings.font_default("font-color")
         self.font_color_chooser_button.set_rgba(color_values_to_gdk(font_color))
 
         self.font_color_chooser_button.connect("color-set", self.on_set)
@@ -509,7 +509,7 @@ class FontColorRow(Adw.ActionRow):
         font_color = widget.get_rgba()
 
         gl.settings_manager.font_defaults["font-color"] = gdk_color_to_values(font_color)
-        self.font_page_group.settings.app.default_font = gl.settings_manager.font_defaults
+        self.font_page_group.settings.app_settings.default_font = gl.settings_manager.font_defaults
         gl.settings_manager.save_font_defaults()
 
         self.font_page_group.request_page_reload()
@@ -524,7 +524,7 @@ class FontOutlineColorRow(Adw.ActionRow):
         self.outline_color_chooser_button = Gtk.ColorButton(valign=Gtk.Align.CENTER)
         self.add_suffix(self.outline_color_chooser_button)
 
-        outline_color = self.font_page_group.settings.app.font_default("outline-color")
+        outline_color = self.font_page_group.settings.app_settings.font_default("outline-color")
         self.outline_color_chooser_button.set_rgba(color_values_to_gdk(outline_color))
 
         self.outline_color_chooser_button.connect("color-set", self.on_set)
@@ -533,7 +533,7 @@ class FontOutlineColorRow(Adw.ActionRow):
         outline_color = widget.get_rgba()
 
         gl.settings_manager.font_defaults["outline-color"] = gdk_color_to_values(outline_color)
-        self.font_page_group.settings.app.default_font = gl.settings_manager.font_defaults
+        self.font_page_group.settings.app_settings.default_font = gl.settings_manager.font_defaults
         gl.settings_manager.save_font_defaults()
 
         self.font_page_group.request_page_reload()
@@ -549,7 +549,7 @@ class FontOutlineWidthRow:
         self.row.set_title(gl.lm.get("settings-font-outline-width-settings-header"))
         self.row.set_subtitle(gl.lm.get("settings-font-outline-width-settings-subtitle"))
 
-        outline_width = self.font_page_group.settings.app.font_default("outline-width")
+        outline_width = self.font_page_group.settings.app_settings.font_default("outline-width")
         self.row.set_value(round(outline_width))
 
         self.row.connect("changed", self.on_set)
@@ -558,7 +558,7 @@ class FontOutlineWidthRow:
         outline_width = widget.get_value()
 
         gl.settings_manager.font_defaults["outline-width"] = outline_width
-        self.font_page_group.settings.app.default_font = gl.settings_manager.font_defaults
+        self.font_page_group.settings.app_settings.default_font = gl.settings_manager.font_defaults
         gl.settings_manager.save_font_defaults()
 
         self.font_page_group.request_page_reload()
@@ -612,15 +612,15 @@ class StorePageGroup(Adw.PreferencesGroup):
         self.install_scripts.connect("notify::selected", self.on_install_scripts_changed)
 
     def load_defaults(self) -> None:
-        self.auto_update.set_active(self.settings.app.auto_update)
+        self.auto_update.set_active(self.settings.app_settings.auto_update)
         try:
-            index = self.INSTALL_SCRIPT_MODES.index(self.settings.app.install_scripts)
+            index = self.INSTALL_SCRIPT_MODES.index(self.settings.app_settings.install_scripts)
         except ValueError:
             index = 0
         self.install_scripts.set_selected(index)
 
     def on_auto_update_toggled(self, *args: Any) -> None:
-        self.settings.app.auto_update = self.auto_update.get_active()
+        self.settings.app_settings.auto_update = self.auto_update.get_active()
 
         # Save
         self.settings.save_json()
@@ -628,7 +628,7 @@ class StorePageGroup(Adw.PreferencesGroup):
     def on_install_scripts_changed(self, *args: Any) -> None:
         index = self.install_scripts.get_selected()
         if index < len(self.INSTALL_SCRIPT_MODES):
-            self.settings.app.install_scripts = self.INSTALL_SCRIPT_MODES[index]
+            self.settings.app_settings.install_scripts = self.INSTALL_SCRIPT_MODES[index]
             self.settings.save_json()
 
 class CustomContentGroup(BetterPreferencesGroup):
@@ -712,9 +712,9 @@ class CustomContentEntry(Adw.PreferencesRow):
 
         # Flag an already-stored url the store cannot use, so the reason a
         # custom entry never shows up is visible in the row itself.
-        self.refresh_url_validity()
+        self.validate_and_mark_url()
 
-    def refresh_url_validity(self) -> str | None:
+    def validate_and_mark_url(self) -> str | None:
         """Return a URL accepted by the store's parse_repo_url, or mark it invalid.
 
         Main-thread only because validation restyles the row.
@@ -729,7 +729,7 @@ class CustomContentEntry(Adw.PreferencesRow):
         return url
 
     def on_value_changed(self, *args: Any) -> None:
-        url = self.refresh_url_validity()
+        url = self.validate_and_mark_url()
         if url is None:
             # Keep the stored entry while a nonempty URL is invalid; an empty
             # URL remains valid so clearing the field persists.
@@ -823,7 +823,7 @@ class PerformancePageGroup(Adw.PreferencesGroup):
         return self.PAUSE_MODES[index]
 
     def load_defaults(self) -> None:
-        app = self.settings.app
+        app = self.settings.app_settings
         self.n_cached_pages.set_value(app.n_cached_pages)
         self.cache_videos.set_active(app.cache_videos)
         mode = app.animation_pause_mode
@@ -840,7 +840,7 @@ class PerformancePageGroup(Adw.PreferencesGroup):
         )
 
     def on_n_cached_pages_changed(self, *args: Any) -> None:
-        self.settings.app.n_cached_pages = int(self.n_cached_pages.get_value())
+        self.settings.app_settings.n_cached_pages = int(self.n_cached_pages.get_value())
 
         # Save
         self.settings.save_json()
@@ -849,34 +849,34 @@ class PerformancePageGroup(Adw.PreferencesGroup):
         services.require_page_manager().set_pages_to_cache(int(self.n_cached_pages.get_value()))
 
     def on_cache_videos_toggled(self, *args: Any) -> None:
-        self.settings.app.cache_videos = self.cache_videos.get_active()
+        self.settings.app_settings.cache_videos = self.cache_videos.get_active()
 
         # Save
         self.settings.save_json()
 
     def on_animation_pause_mode_changed(self, *args: Any) -> None:
-        self.settings.app.animation_pause_mode = self.get_selected_pause_mode()
+        self.settings.app_settings.animation_pause_mode = self.get_selected_pause_mode()
 
         # Save
         self.settings.save_json()
 
         self.sync_idle_row_sensitivity()
-        self.push_to_presence_monitor()
+        self.sync_presence_settings()
 
     def on_animation_idle_minutes_changed(self, *args: Any) -> None:
-        self.settings.app.animation_idle_minutes = int(self.animation_idle_minutes.get_value())
+        self.settings.app_settings.animation_idle_minutes = int(self.animation_idle_minutes.get_value())
 
         # Save
         self.settings.save_json()
 
-        self.push_to_presence_monitor()
+        self.sync_presence_settings()
 
-    def push_to_presence_monitor(self) -> None:
+    def sync_presence_settings(self) -> None:
         # Push changes at once so the monitor need not wait for a lock or idle event.
         if gl.presence_monitor is not None:
             gl.presence_monitor.set_mode(
-                self.settings.app.animation_pause_mode,
-                self.settings.app.animation_idle_minutes,
+                self.settings.app_settings.animation_pause_mode,
+                self.settings.app_settings.animation_idle_minutes,
             )
 
 
@@ -911,7 +911,7 @@ class SystemGroup(Adw.PreferencesGroup):
         self.lock_on_lock_screen.connect("notify::active", self.on_lock_on_lock_screen_toggled)
 
     def load_defaults(self) -> None:
-        app = self.settings.app
+        app = self.settings.app_settings
         # keep-running is tri-state (None == never asked); the switch only
         # reflects an explicit True.
         self.keep_running.set_active(app.keep_running is True)
@@ -919,13 +919,13 @@ class SystemGroup(Adw.PreferencesGroup):
         self.lock_on_lock_screen.set_active(app.lock_on_lock_screen)
 
     def on_keep_running_toggled(self, *args: Any) -> None:
-        self.settings.app.keep_running = self.keep_running.get_active()
+        self.settings.app_settings.keep_running = self.keep_running.get_active()
 
         # Save
         self.settings.save_json()
 
     def on_autostart_toggled(self, *args: Any) -> None:
-        self.settings.app.autostart = self.autostart.get_active()
+        self.settings.app_settings.autostart = self.autostart.get_active()
 
         setup_autostart(self.autostart.get_active())
 
@@ -933,7 +933,7 @@ class SystemGroup(Adw.PreferencesGroup):
         self.settings.save_json()
 
     def on_lock_on_lock_screen_toggled(self, *args: Any) -> None:
-        self.settings.app.lock_on_lock_screen = self.lock_on_lock_screen.get_active()
+        self.settings.app_settings.lock_on_lock_screen = self.lock_on_lock_screen.get_active()
 
         # Save
         self.settings.save_json()

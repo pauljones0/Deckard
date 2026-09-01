@@ -160,7 +160,7 @@ class FakeCommentGroup:
         self.comment_row = FakeEntryRow()
         self.action = None
         self.index = 0
-        self._comment_handler = None
+        self._comment_handler_id = None
         self.connect_signals()
 
 
@@ -196,7 +196,7 @@ class FakeLabelToggle:
         self.action_row = action_row
         self.indicators = [FakeIndicator() for _ in range(3)]
         self.config_buttons = [FakeCheckButton(i) for i in range(3)]
-        self._label_handlers: dict[int, int] = {}
+        self._label_handler_ids: dict[int, int] = {}
         self.connect_signals()
 
 
@@ -221,8 +221,8 @@ class FakeActionRow:
     def __init__(self) -> None:
         self.allow_image_toggle = FakeToggle()
         self.allow_background_toggle = FakeToggle()
-        self._image_handler = None
-        self._background_handler = None
+        self._image_handler_id = None
+        self._background_handler_id = None
         self.image_toggles = 0
         self.background_toggles = 0
         self.connect_image_signal()

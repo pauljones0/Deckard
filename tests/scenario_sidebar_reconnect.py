@@ -127,7 +127,7 @@ class FakeEventAssignerRow(FakeWidget):
 
     def __init__(self, items) -> None:
         super().__init__()
-        self._selected_handler = None
+        self._selected_handler_id = None
         self._model = FakeModel(items)
         self.selected = None
         self.changes = 0
@@ -259,7 +259,7 @@ class FakeStateSwitcher:
 
     def __init__(self) -> None:
         self.stack = FakeStack()
-        self._switch_handler = None
+        self._switch_handler_id = None
         self.switch_callbacks: list = []
         self.switches: list[int] = []
         self.switch_callbacks.append(lambda: self.switches.append(1))
@@ -406,7 +406,7 @@ class FakeBackgroundRow:
         self.deck_serial_number = "FAKE"
         self.settings_page = FakeSettingsPage()
         self.on_map_tasks: list = []
-        self._handlers: dict[str, int] = {}
+        self._handler_ids: dict[str, int] = {}
         self.enable_switch = FakeSetValueWidget()
         self.media_selector_button = FakeWidget()
         self.add_image_button = FakeWidget()
@@ -468,7 +468,7 @@ class FakeScreensaverRow:
     def __init__(self) -> None:
         self.deck_serial_number = "FAKE"
         self.settings_page = FakeSettingsPage()
-        self._handlers: dict[str, int] = {}
+        self._handler_ids: dict[str, int] = {}
         self.enable_switch = FakeSetValueWidget()
         self.time_spinner = FakeSetValueWidget()
         self.media_selector_button = FakeWidget()
@@ -582,7 +582,7 @@ class FakeRotationRow:
 
     def __init__(self) -> None:
         self.deck_serial_number = "FAKE"
-        self._rotation_handler = None
+        self._rotation_handler_id = None
         self.toggle_group = FakeToggleGroup()
         self.changes = 0
         self.connect_signal()
@@ -600,7 +600,7 @@ class FakeScaleRow:
 
     def __init__(self) -> None:
         self.deck_serial_number = "FAKE"
-        self._scale_handler = None
+        self._scale_handler_id = None
         self.scale = FakeSetValueWidget()
         self.on_map_tasks: list = []
         self.mapped = True

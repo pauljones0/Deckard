@@ -81,20 +81,20 @@ def leg_excess_count() -> int:
     return 0
 
 
-# Leg 2. Eviction removes the lowest page_number entries first. get_page bumps
-# page_number on every access, so a re-touched page outlives an older sibling.
+# Leg 2. Eviction removes the lowest lru_stamp entries first. get_page bumps
+# lru_stamp on every access, so a re-touched page outlives an older sibling.
 def leg_oldest_first() -> int:
     reset_world()
     controller = fresh_controller("budget-oldest")
     gl.page_manager.max_pages = 100
 
-    # Load in order A, B, C, D. page_number ascends A<B<C<D.
+    # Load in order A, B, C, D. lru_stamp ascends A<B<C<D.
     paths = {name: seed_page(f"Order{name}") for name in ("A", "B", "C", "D")}
     for name in ("A", "B", "C", "D"):
         gl.page_manager.get_page(paths[name], controller)
 
-    # Re-touch A. get_page bumps its page_number to the newest. Now the
-    # oldest-by-page_number order is B < C < D < A.
+    # Re-touch A. get_page bumps its lru_stamp to the newest. Now the
+    # oldest-by-lru_stamp order is B < C < D < A.
     gl.page_manager.get_page(paths["A"], controller)
 
     # Make D active, so it is exempt whatever its number. The decision among
@@ -112,12 +112,12 @@ def leg_oldest_first() -> int:
         return 1
     if paths["A"] not in survivors:
         print("FAIL(2): the re-touched (newest) page A was wrongly evicted -- "
-              "page_number bump on access is not respected by the ordering")
+              "lru_stamp bump on access is not respected by the ordering")
         return 1
     if paths["D"] not in survivors:
         print("FAIL(2): the active page D was evicted")
         return 1
-    print("PASS(2): eviction removes the lowest-page_number (oldest-access) "
+    print("PASS(2): eviction removes the lowest-lru_stamp (oldest-access) "
           "pages first")
     return 0
 

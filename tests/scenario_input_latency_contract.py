@@ -517,7 +517,7 @@ def main() -> None:
 
     schedule_sample = adapter_tracker.input_received()
     slot = adapter._mirror_slots[(adapter_controller, strip)]
-    slot._last_drain = float("-inf")
+    slot._last_drain_monotonic_s = float("-inf")
     original_idle_add = ui_adapter_module.GLib.idle_add
 
     def fail_idle_add(*args: object, **kwargs: object) -> int:

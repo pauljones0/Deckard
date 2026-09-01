@@ -324,9 +324,9 @@ def check_send_notification_marshalled() -> None:
 def main() -> None:
     fixtures.start_watchdog(WATCHDOG_SECONDS, label="scenario_notify_facade")
 
-    from src.backend.notify import Notify
+    from src.backend.notify import Notifier
 
-    notify = Notify()
+    notify = Notifier()
     try:
         check_visible_window_gets_toasts(notify)
         check_hidden_window_falls_back(notify)

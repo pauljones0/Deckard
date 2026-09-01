@@ -49,8 +49,9 @@ class PresenceMonitor:
     # Tests can shorten this 30-second balance between active use and CPU savings.
     DECK_ACTIVITY_GRACE_S = 30.0
 
-    def __init__(self, mode: str | None = None, minutes: int | None = None,
-                 idle_detector: bool = True, bus: Gio.DBusConnection | None = None) -> None:
+    def __init__(self, mode: str | None = None, idle_minutes: int | None = None,
+                 enable_idle_detector: bool = True,
+                 bus: Gio.DBusConnection | None = None) -> None:
         # Media threads read this bool without the lock on every tick.
         # A stale read costs one animation tick, and a torn bool read cannot occur.
         self.quiescent: bool = False
@@ -59,7 +60,9 @@ class PresenceMonitor:
 
         seed_mode, seed_minutes = _settings_seed()
         self._mode: str = mode if mode is not None else seed_mode
-        self._minutes: int = max(1, int(minutes if minutes is not None else seed_minutes))
+        self._idle_minutes: int = max(
+            1, int(idle_minutes if idle_minutes is not None else seed_minutes)
+        )
 
         self._idle_hint: bool = False
         # Wall clock (time.time() domain, same as logind's IdleSinceHint,
@@ -73,7 +76,7 @@ class PresenceMonitor:
         # Build logind only for system-idle; each build seeds IdleHint before evaluation.
         # Capture the test opt-out and bus seam for that deferred build.
         self.idle_detector: "LogindIdleDetector | None" = None
-        self._idle_detector_enabled: bool = bool(idle_detector)
+        self._idle_detector_enabled: bool = bool(enable_idle_detector)
         self._idle_detector_bus = bus
         self._detector_lock = threading.Lock()
         if self._mode == MODE_SYSTEM_IDLE:
@@ -95,7 +98,7 @@ class PresenceMonitor:
 
     @property
     def idle_minutes(self) -> int:
-        return self._minutes
+        return self._idle_minutes
 
     # Inputs
 
@@ -127,12 +130,12 @@ class PresenceMonitor:
             return
         self._evaluate()
 
-    def set_mode(self, mode: str, minutes: int | None = None) -> None:
+    def set_mode(self, mode: str, idle_minutes: int | None = None) -> None:
         """Runtime push from the Settings dialog."""
         with self._lock:
             self._mode = mode if mode in (MODE_SCREENSAVER, MODE_SYSTEM_IDLE) else MODE_SCREENSAVER
-            if minutes is not None:
-                self._minutes = max(1, int(minutes))
+            if idle_minutes is not None:
+                self._idle_minutes = max(1, int(idle_minutes))
             mode_now = self._mode
         if mode_now == MODE_SYSTEM_IDLE:
             # Build outside the lock because an injected bus calls back into _evaluate inline.
@@ -173,7 +176,7 @@ class PresenceMonitor:
         """Recompute quiescence from any thread and arm its next automatic change.
         The deadline is the idle delay or the deck-activity grace under a locked screen."""
         with self._lock:
-            was = self.quiescent
+            was_quiescent = self.quiescent
             now = time.time()
             quiescent = False
             rearm_in = None
@@ -192,7 +195,7 @@ class PresenceMonitor:
                 elif self._idle_hint:
                     since = self._idle_since if self._idle_since is not None else now
                     remaining = (max(since, self._last_deck_activity)
-                                 + self._minutes * 60) - now
+                                 + self._idle_minutes * 60) - now
                     if remaining <= 0:
                         quiescent = True
                     else:
@@ -205,7 +208,7 @@ class PresenceMonitor:
                 )
 
             self.quiescent = quiescent
-            changed = quiescent != was
+            changed = quiescent != was_quiescent
 
         if changed:
             log.info(f"Presence: deck animations {'gated' if quiescent else 'live'}")

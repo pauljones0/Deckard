@@ -633,12 +633,12 @@ def check_real_name_row_wires_and_saves() -> None:
             f"the row must refuse more than the switcher can show, its cap is "
             f"{row.get_max_length()}"
         )
-        assert row._apply_handler is not None, (
+        assert row._apply_handler_id is not None, (
             "construction must wire the apply handler, or no name ever saves"
         )
         # A second load, as a page re-map runs, must leave the handler wired.
         row.load_default()
-        assert row._apply_handler is not None, (
+        assert row._apply_handler_id is not None, (
             "a reload must leave the apply handler wired"
         )
 

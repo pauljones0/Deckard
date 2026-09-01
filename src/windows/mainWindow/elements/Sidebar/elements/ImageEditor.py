@@ -109,7 +109,7 @@ class SizeRow(Adw.PreferencesRow):
         self.active_identifier: InputIdentifier = None  # ty: ignore[invalid-assignment]  # late-init: load_for_identifier
         # Value-changed handler ID, or None while disconnected.
         # Tracking prevents duplicate connections and invalid disconnects.
-        self._value_handler: int | None = None
+        self._value_handler_id: int | None = None
         self.build()
 
         self.connect_signals()
@@ -194,13 +194,13 @@ class SizeRow(Adw.PreferencesRow):
         self.update_values()
 
     def connect_signals(self) -> None:
-        if self._value_handler is None:
-            self._value_handler = self.size_spinner.button.connect("value-changed", self.on_size_changed)
+        if self._value_handler_id is None:
+            self._value_handler_id = self.size_spinner.button.connect("value-changed", self.on_size_changed)
 
     def disconnect_signals(self) -> None:
-        if self._value_handler is not None:
-            self.size_spinner.button.disconnect(self._value_handler)
-            self._value_handler = None
+        if self._value_handler_id is not None:
+            self.size_spinner.button.disconnect(self._value_handler_id)
+            self._value_handler_id = None
 
 
 class AlignmentRow(Adw.PreferencesRow):
@@ -212,7 +212,7 @@ class AlignmentRow(Adw.PreferencesRow):
         self.active_state: int = None  # ty: ignore[invalid-assignment]  # late-init: load_for_identifier
         # Value-changed handler ID, or None while disconnected.
         # Tracking prevents an invalid disconnect after a transient load failure.
-        self._value_handler: int | None = None
+        self._value_handler_id: int | None = None
         self.build(label_text)
 
         self.connect_signals()
@@ -289,13 +289,13 @@ class AlignmentRow(Adw.PreferencesRow):
         self.update_values()
 
     def connect_signals(self) -> None:
-        if self._value_handler is None:
-            self._value_handler = self.alignment_spinner.button.connect("value-changed", self.on_alignment_changed)
+        if self._value_handler_id is None:
+            self._value_handler_id = self.alignment_spinner.button.connect("value-changed", self.on_alignment_changed)
 
     def disconnect_signals(self) -> None:
-        if self._value_handler is not None:
-            self.alignment_spinner.button.disconnect(self._value_handler)
-            self._value_handler = None
+        if self._value_handler_id is not None:
+            self.alignment_spinner.button.disconnect(self._value_handler_id)
+            self._value_handler_id = None
 
 class ValignRow(AlignmentRow):
     def __init__(self, sidebar: "Sidebar", **kwargs: Any) -> None:

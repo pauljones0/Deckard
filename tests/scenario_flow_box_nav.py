@@ -91,7 +91,7 @@ def check_nav_pages_a_loaded_box() -> None:
     box: DynamicFlowBox = DynamicFlowBox(Child)
     items = list(range(box.N_ITEMS_PER_PAGE * 2))
     box.set_item_list(items)
-    box.set_factory(factory)
+    box.set_item_binder(factory)
 
     box.show_range(0, box.N_ITEMS_PER_PAGE)
     pump()

@@ -275,7 +275,7 @@ class ActionRowLabelToggle(Gtk.Button):
 
         # Toggled-handler ID by config button index, absent while disconnected.
         # Tracking keeps connect and disconnect idempotent.
-        self._label_handlers: dict[int, int] = {}
+        self._label_handler_ids: dict[int, int] = {}
 
         self.build()
 
@@ -334,14 +334,14 @@ class ActionRowLabelToggle(Gtk.Button):
 
     def connect_signals(self) -> None:
         for i, button in enumerate(self.config_buttons):
-            if i not in self._label_handlers:
-                self._label_handlers[i] = button.connect("toggled", self.on_label_toggled)
+            if i not in self._label_handler_ids:
+                self._label_handler_ids[i] = button.connect("toggled", self.on_label_toggled)
 
     def disconnect_signals(self) -> None:
         for i, button in enumerate(self.config_buttons):
-            handler = self._label_handlers.pop(i, None)
-            if handler is not None:
-                button.disconnect(handler)
+            handler_id = self._label_handler_ids.pop(i, None)
+            if handler_id is not None:
+                button.disconnect(handler_id)
 
     def set_active(self, values: list[bool]) -> None:
         self.disconnect_signals()
@@ -382,8 +382,8 @@ class ActionRow(Adw.ActionRow):
         self.expander = expander
         # Toggled-handler IDs, or None while disconnected.
         # Tracking keeps connect and disconnect idempotent.
-        self._image_handler: int | None = None
-        self._background_handler: int | None = None
+        self._image_handler_id: int | None = None
+        self._background_handler_id: int | None = None
         self.build()
         self.update_allow_box_visibility()
         self.init_dnd()
@@ -563,22 +563,22 @@ class ActionRow(Adw.ActionRow):
         input_state.action_permission_manager.set_label_control_index(i, index_value, True, True)
 
     def connect_image_signal(self) -> None:
-        if self._image_handler is None:
-            self._image_handler = self.allow_image_toggle.connect("toggled", self.on_allow_image_toggled)
+        if self._image_handler_id is None:
+            self._image_handler_id = self.allow_image_toggle.connect("toggled", self.on_allow_image_toggled)
 
     def disconnect_image_signal(self) -> None:
-        if self._image_handler is not None:
-            self.allow_image_toggle.disconnect(self._image_handler)
-            self._image_handler = None
+        if self._image_handler_id is not None:
+            self.allow_image_toggle.disconnect(self._image_handler_id)
+            self._image_handler_id = None
 
     def connect_background_signal(self) -> None:
-        if self._background_handler is None:
-            self._background_handler = self.allow_background_toggle.connect("toggled", self.on_allow_background_toggled)
+        if self._background_handler_id is None:
+            self._background_handler_id = self.allow_background_toggle.connect("toggled", self.on_allow_background_toggled)
 
     def disconnect_background_signal(self) -> None:
-        if self._background_handler is not None:
-            self.allow_background_toggle.disconnect(self._background_handler)
-            self._background_handler = None
+        if self._background_handler_id is not None:
+            self.allow_background_toggle.disconnect(self._background_handler_id)
+            self._background_handler_id = None
 
     def set_image_toggled(self, value: bool) -> None:
         self.disconnect_image_signal()

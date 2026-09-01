@@ -30,10 +30,10 @@ def resolve_expander_list_box(expander: Gtk.Widget) -> Gtk.ListBox | None:
 
 def resolve_preferences_group_list_box(group: Gtk.Widget) -> Gtk.ListBox | None:
     """Return the Adw.PreferencesGroup list box, or None for an off-layout or wrong-type result."""
-    first_box = group.get_first_child()
-    second_box = first_box.get_first_child() if first_box is not None else None
-    third_box = second_box.get_next_sibling() if second_box is not None else None
-    candidate = third_box.get_first_child() if third_box is not None else None
+    outer_box = group.get_first_child()
+    inner_box = outer_box.get_first_child() if outer_box is not None else None
+    list_box_parent = inner_box.get_next_sibling() if inner_box is not None else None
+    candidate = list_box_parent.get_first_child() if list_box_parent is not None else None
     if not isinstance(candidate, Gtk.ListBox):
         return None
     return candidate

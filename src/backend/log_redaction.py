@@ -291,7 +291,7 @@ def _at_host_replacement(match: re.Match[str]) -> str:
     return match.group(0) if token is None else "@" + token
 
 
-def _name_replacement(match: re.Match[str]) -> str:
+def _hostname_replacement(match: re.Match[str]) -> str:
     """Replace a whole match that is a host name on its own."""
     token = _host_token(match.group(0))
     return match.group(0) if token is None else token
@@ -440,7 +440,7 @@ def _compile_rules() -> "list[_Rule]":
             r"(?:" + "|".join(re.escape(suffix) for suffix in _INTERNAL_SUFFIXES) + r")"
             r"(?![\w(-])(?!\.\w)"
         ),
-        _name_replacement,
+        _hostname_replacement,
     ))
 
     # This machine's own name, as a whole word. A following "." is allowed, so

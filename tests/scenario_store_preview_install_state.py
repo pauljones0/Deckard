@@ -219,8 +219,8 @@ class _SetConsentPatch:
     def __enter__(self):
         import src.windows.Store.install_consent as consent
         self._module = consent
-        self._original = consent.make_set_consent
-        consent.make_set_consent = lambda parent: self._ask
+        self._original = consent.make_dependency_consent
+        consent.make_dependency_consent = lambda parent: self._ask
         return self
 
     def _ask(self, root_name, plan):
@@ -228,7 +228,7 @@ class _SetConsentPatch:
         return self.agree
 
     def __exit__(self, *exc):
-        self._module.make_set_consent = self._original
+        self._module.make_dependency_consent = self._original
         return False
 
 

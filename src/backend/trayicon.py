@@ -379,7 +379,7 @@ class StatusNotifierItemService(DBusService):
 
         self.bus = session_bus
         self.dbus_path = path
-        self._watcher_watch_id: int | None = None
+        self._watcher_name_watch_id: int | None = None
 
         if menu_path == "":
             self._menu = DBusMenuService(session_bus, menu_items)
@@ -394,8 +394,8 @@ class StatusNotifierItemService(DBusService):
 
         # A restarted or late watcher does not know prior registrations.
         # Watch its well-known name and announce the item whenever that name gains an owner.
-        if self._watcher_watch_id is None:
-            self._watcher_watch_id = Gio.bus_watch_name_on_connection(
+        if self._watcher_name_watch_id is None:
+            self._watcher_name_watch_id = Gio.bus_watch_name_on_connection(
                 self.bus,
                 'org.kde.StatusNotifierWatcher',
                 Gio.BusNameWatcherFlags.NONE,
@@ -429,9 +429,9 @@ class StatusNotifierItemService(DBusService):
 
     @override
     def unregister(self) -> None:
-        if self._watcher_watch_id is not None:
-            Gio.bus_unwatch_name(self._watcher_watch_id)
-            self._watcher_watch_id = None
+        if self._watcher_name_watch_id is not None:
+            Gio.bus_unwatch_name(self._watcher_name_watch_id)
+            self._watcher_name_watch_id = None
         super().unregister()
         self._menu.unregister()
 

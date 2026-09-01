@@ -123,7 +123,7 @@ def attach(controller, video):
 
 
 def check_absent_key_reads_uncapped(page) -> int:
-    if page.has_media_fps(IDENT, 0):
+    if page.has_media_fps_override(IDENT, 0):
         print("FAIL(default): a freshly seeded page already claims an explicit "
               "media frame rate")
         return 1
@@ -149,9 +149,9 @@ def check_set_then_revert_round_trip(page) -> int:
         return 1
 
     page.set_media_fps(IDENT, 0, 12, update=False)
-    if not page.has_media_fps(IDENT, 0) or page.get_media_fps(IDENT, 0) != 12:
+    if not page.has_media_fps_override(IDENT, 0) or page.get_media_fps(IDENT, 0) != 12:
         print(f"FAIL(set): 12 did not stick: has="
-              f"{page.has_media_fps(IDENT, 0)} get={page.get_media_fps(IDENT, 0)}")
+              f"{page.has_media_fps_override(IDENT, 0)} get={page.get_media_fps(IDENT, 0)}")
         return 1
     if media_dict(page).get("fps") != 12:
         print(f"FAIL(set): the page holds {media_dict(page).get('fps')!r} "
@@ -163,7 +163,7 @@ def check_set_then_revert_round_trip(page) -> int:
         return 1
 
     page.set_media_fps(IDENT, 0, None, update=False)
-    if page.has_media_fps(IDENT, 0):
+    if page.has_media_fps_override(IDENT, 0):
         print("FAIL(revert): the page still claims an explicit frame rate")
         return 1
     if page.get_media_fps(IDENT, 0) != UNCAPPED:
@@ -344,12 +344,12 @@ def check_background_rate_reverts_too(page) -> int:
     """The same row edits a touchscreen background, and its revert must clear
     that key the same way."""
     page.set_background_fps(IDENT, 0, 10, update=False)
-    if not page.has_background_fps(IDENT, 0) or page.get_background_fps(IDENT, 0) != 10:
+    if not page.has_background_fps_override(IDENT, 0) or page.get_background_fps(IDENT, 0) != 10:
         print("FAIL(background): 10 did not stick")
         return 1
 
     page.set_background_fps(IDENT, 0, None, update=False)
-    if page.has_background_fps(IDENT, 0):
+    if page.has_background_fps_override(IDENT, 0):
         print("FAIL(background): the page still claims an explicit frame rate")
         return 1
     if page.get_background_fps(IDENT, 0) != UNCAPPED:

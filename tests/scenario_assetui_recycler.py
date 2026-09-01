@@ -86,7 +86,7 @@ class StubFlow:
         self.flow_box = FakeFlowBox(self.children, self.event_log)
         self.back_button = FakeButton()
         self.next_button = FakeButton()
-        self.factory_func = self._factory
+        self.item_binder = self._factory
         self.thumbnail_loader = NullThumbnailLoader()
 
     def _factory(self, preview, item):

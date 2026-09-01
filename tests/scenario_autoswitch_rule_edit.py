@@ -176,7 +176,7 @@ def _registered(controller: StubDeckController, page_paths: list[str]):
     """Register a stub deck and cache its pages to avoid real Page construction."""
     gl.deck_manager.deck_controller.append(controller)
     gl.page_manager.pages[controller] = {
-        path: {"page": StubPage(path), "page_number": number}
+        path: {"page": StubPage(path), "lru_stamp": number}
         for number, path in enumerate(page_paths)
     }
     try:

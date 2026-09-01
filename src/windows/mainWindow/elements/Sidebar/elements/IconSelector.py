@@ -50,7 +50,7 @@ class IconSelector(Gtk.Box):
 
         # next() gives producer threads unique task IDs.
         # A read-modify-write on latest_task_id could let a stale frame pass.
-        self.task_ids = itertools.count()
+        self._task_id_counter = itertools.count()
         self.latest_task_id: int = None  # ty: ignore[invalid-assignment]  # late-init: the first render task
         self.build()
 
@@ -95,7 +95,7 @@ class IconSelector(Gtk.Box):
 
 
     def get_new_task_id(self) -> int:
-        return next(self.task_ids)
+        return next(self._task_id_counter)
 
     def set_image(self, image: "Image.Image") -> None:
         pixbuf = image2pixbuf(image.convert("RGBA"), force_transparency=True)

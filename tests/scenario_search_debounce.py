@@ -47,12 +47,12 @@ class FakePage:
     run_search = ChooserPage.run_search
     invalidate_search = ChooserPage.invalidate_search
     search_is_current = ChooserPage.search_is_current
-    search_rendered = ChooserPage.search_rendered
+    record_rendered_query = ChooserPage.record_rendered_query
     on_shown = ChooserPage.on_shown
     _on_map = ChooserPage._on_map
     _search_generation = ChooserPage._search_generation
-    _search_showing = ChooserPage._search_showing
-    _searched_text = ChooserPage._searched_text
+    _accepts_search_results = ChooserPage._accepts_search_results
+    _rendered_query = ChooserPage._rendered_query
 
     def __init__(self) -> None:
         self.text = ""
@@ -62,7 +62,7 @@ class FakePage:
     def apply_search(self, query: str) -> None:
         # Record immediate renders; deferred pages record when their work lands.
         self.applied.append(query)
-        self.search_rendered(query)
+        self.record_rendered_query(query)
 
     def type(self, text: str) -> None:
         """What the entry does once its own delay has run out."""
@@ -79,7 +79,7 @@ class RecordingPage(ChooserPage):
 
     def apply_search(self, query: str) -> None:
         self.applied.append(query)
-        self.search_rendered(query)
+        self.record_rendered_query(query)
 
 
 def pump(seconds: float = 0.2) -> None:
@@ -109,7 +109,7 @@ def test_base_holds_the_defaults() -> None:
 
     Constructor wiring can emit before a subclass creates instance attributes.
     """
-    for name, expected in (("_search_generation", 0), ("_search_showing", True)):
+    for name, expected in (("_search_generation", 0), ("_accepts_search_results", True)):
         assert name in vars(ChooserPage), (
             f"ChooserPage no longer declares {name} on the class; an emission "
             f"during the build then raises AttributeError")
@@ -173,7 +173,7 @@ def test_invalidate_stops_passes_and_frees_the_cache() -> None:
     assert asset_search._cached_ranker is not None
 
     page.invalidate_search()
-    assert page._search_showing is False
+    assert page._accepts_search_results is False
     assert asset_search._cached_ranker is None, (
         "the memo of a whole pack survived the page that built it")
 
@@ -231,7 +231,7 @@ def test_a_pass_that_only_starts_work_re_arms_the_catch_up() -> None:
         f"shown again: {page.applied}")
 
     # Once a pass does render, the catch-up settles.
-    page.search_rendered("battery")
+    page.record_rendered_query("battery")
     page.invalidate_search()
     page._on_map()
     pump()
@@ -252,7 +252,7 @@ def test_the_page_settles_its_entry_before_the_catch_up() -> None:
 
     page = SettlingPage()
     page.text = "battery"
-    page._searched_text = ""
+    page._rendered_query = ""
     page._on_map()
     pump()
     assert page.applied == [], (
@@ -269,10 +269,10 @@ def test_the_page_settles_its_entry_before_the_catch_up() -> None:
         if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
                 and node.func.attr == "on_shown"):
             order.append(("on_shown", node.lineno))
-        if isinstance(node, ast.Attribute) and node.attr == "_searched_text":
-            order.append(("_searched_text", node.lineno))
+        if isinstance(node, ast.Attribute) and node.attr == "_rendered_query":
+            order.append(("_rendered_query", node.lineno))
     assert order and order[0][0] == "on_shown", (
-        f"the map handler reads _searched_text before it settles the entry: "
+        f"the map handler reads _rendered_query before it settles the entry: "
         f"{order}")
     print("PASS: a page settles its entry before the catch-up test")
 
@@ -310,14 +310,14 @@ def test_hiding_the_window_invalidates_for_real() -> None:
     window.present()
     pump_until(page.get_mapped, 10, "the page never mapped")
 
-    assert page._search_showing is True, "a mapped page is not searching"
+    assert page._accepts_search_results is True, "a mapped page is not searching"
     page.applied.clear()
 
     generation = page._search_generation
     window.set_visible(False)
     pump_until(lambda: not page.get_mapped(), 10, "the page never unmapped")
 
-    assert page._search_showing is False, (
+    assert page._accepts_search_results is False, (
         "hiding the window left the page searching; the teardown hook is on a "
         "signal that does not fire here")
     assert page._search_generation != generation, (

@@ -78,7 +78,7 @@ class GenerativeUI[T](ABC):
         self._widget = None
         # Store one handler id per connected key to make disconnect idempotent.
         # A reconnect cannot stack a second handler.
-        self._signal_handlers: dict[str, int] = {}
+        self._handler_ids: dict[str, int] = {}
         self._built = False
         self._build_flag_lock = threading.Lock()
         self._build_fn = build
@@ -128,14 +128,14 @@ class GenerativeUI[T](ABC):
     def _track_connect(self, key: str, widget: GObject.Object, signal: str,
                        callback: Callable[..., Any]) -> None:
         """Connect the callback once under key; repeated calls do not stack handlers."""
-        if self._signal_handlers.get(key) is None:
-            self._signal_handlers[key] = widget.connect(signal, callback)
+        if self._handler_ids.get(key) is None:
+            self._handler_ids[key] = widget.connect(signal, callback)
 
     def _track_disconnect(self, key: str, widget: GObject.Object) -> None:
         """Disconnect the handler under key; repeated calls do nothing."""
-        handler = self._signal_handlers.pop(key, None)
-        if handler is not None:
-            widget.disconnect(handler)
+        handler_id = self._handler_ids.pop(key, None)
+        if handler_id is not None:
+            widget.disconnect(handler_id)
 
     @property
     def action_core(self) -> "ActionCore":

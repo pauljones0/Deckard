@@ -33,9 +33,9 @@ SEARCH_DELAY_MS = 300
 class ChooserPage(Gtk.Stack):
     # _build can emit before a subclass initializes, so these defaults are class-level
     _search_generation = 0
-    _search_showing = True
+    _accepts_search_results = True
     # Last rendered query, used to catch up only grids that changed while hidden
-    _searched_text = ""
+    _rendered_query = ""
 
     def __init__(self) -> None:
         super().__init__(margin_start=15, margin_end=15, margin_top=15, margin_bottom=15)
@@ -133,7 +133,7 @@ class ChooserPage(Gtk.Stack):
 
         Pages override apply_search so this shared staleness guard stays active.
         """
-        if not self._search_showing:
+        if not self._accepts_search_results:
             # The entry held this emission for its delay, and the page stopped
             # showing in between. It renders again when it is shown.
             return
@@ -151,16 +151,16 @@ class ChooserPage(Gtk.Stack):
         self.apply_search(query)
         return False
 
-    def search_rendered(self, query: str) -> None:
+    def record_rendered_query(self, query: str) -> None:
         """Record a query only after its results are visible.
 
         A dropped worker pass must leave this stale so the next map catches up.
         """
-        self._searched_text = query
+        self._rendered_query = query
 
     def search_is_current(self, generation: int) -> bool:
         """Whether this visible page still owns the specified search generation."""
-        return generation == self._search_generation and self._search_showing
+        return generation == self._search_generation and self._accepts_search_results
 
     def focus_search_entry(self) -> bool:
         """Focus the entry and move its cursor to the end to preserve the query."""
@@ -170,16 +170,16 @@ class ChooserPage(Gtk.Stack):
 
     def invalidate_search(self, *args: Any) -> None:
         """Invalidate pending searches and release their scoring cache until remap."""
-        self._search_showing = False
+        self._accepts_search_results = False
         self._search_generation += 1
         asset_search.release_cache()
 
     def _on_map(self, *args: Any) -> None:
         """Render only an entry that changed while the page was hidden."""
-        self._search_showing = True
+        self._accepts_search_results = True
         # Settle the entry before deciding whether the visible query needs catch-up
         self.on_shown()
-        if self.search_entry.get_text() == self._searched_text:
+        if self.search_entry.get_text() == self._rendered_query:
             return
         self._search_generation += 1
         self.run_search(self._search_generation)

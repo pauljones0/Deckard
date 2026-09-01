@@ -318,7 +318,7 @@ def _wiring_plugin(hold: BackendEventHold) -> PluginBase:
     plugin.backend = None
     plugin.backend_connection = None
     plugin.backend_process = None
-    plugin._backend_launch_gen = 0
+    plugin._backend_launch_generation = 0
     plugin._backend_stop_requested = False
     plugin._backend_via_terminal = False
     plugin._backend_ready = threading.Event()
@@ -452,7 +452,7 @@ def check_release_happens_before_the_plugin_hook() -> None:
     plugin.backend = None
     plugin.backend_connection = None
     plugin.backend_process = None
-    plugin._backend_launch_gen = 0
+    plugin._backend_launch_generation = 0
     plugin._backend_stop_requested = False
     plugin._backend_via_terminal = False
     plugin._backend_ready = threading.Event()

@@ -57,7 +57,7 @@ def make_stubs(recorder: Recorder):
                 invalidate_filter=lambda *a, **k: None,
             )
 
-        def set_factory(self, *a, **k): pass
+        def set_item_binder(self, *_args, **_kwargs): pass
         def set_filter_func(self, *a, **k): pass
         def set_sort_func(self, *a, **k): pass
         def set_item_list(self, *a, **k): pass
@@ -547,7 +547,7 @@ def check_stack_drain_marshals() -> int:
         def select_asset(self, path): pass
 
     stack = IconPackChooserStack.__new__(IconPackChooserStack)
-    stack.prepare()
+    stack.initialize_page_state()
     stack.pack_chooser = types.SimpleNamespace(build_finished=False)
     stack.leaf_chooser = StubLeaf()
     stack.set_visible_child = lambda child: None

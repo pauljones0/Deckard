@@ -545,7 +545,7 @@ class BrightnessRow(_Row):
         self.scale = _Widget(0)
         # The real row is in this state by the time load_default runs. It defers
         # itself to map, which is after __init__ connected the handler.
-        self._scale_handler = None
+        self._scale_handler_id = None
         self.connect_signal()
 
     def connect_signal(self):
@@ -570,7 +570,7 @@ class SaturationRow(_Row):
         from src.windows.mainWindow.elements.DeckSettings.DeckGroup import Saturation
         self._real = Saturation
         self.scale = _Widget(1.0)
-        self._scale_handler = None
+        self._scale_handler_id = None
         self.connect_signal()
 
     def connect_signal(self):
@@ -593,7 +593,7 @@ class RotationRow(_Row):
         from src.windows.mainWindow.elements.DeckSettings.DeckGroup import Rotation
         self._real = Rotation
         self.toggle_group = _Widget(0)
-        self._rotation_handler = None
+        self._rotation_handler_id = None
         self.connect_signal()
 
     def connect_signal(self):
@@ -855,7 +855,7 @@ class PageScreensaverGroup:
         self.media_selector_button = _Widget()
         self.updates = 0
         # The tracked handler ids the real connect and disconnect keep.
-        self._handlers = {}
+        self._handler_ids = {}
         self._signal_bindings = MethodType(ScreensaverGroup._signal_bindings, self)
         for name in _PAGE_SCREENSAVER_HANDLERS:
             setattr(self, name, MethodType(getattr(ScreensaverGroup, name), self))

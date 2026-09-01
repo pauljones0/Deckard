@@ -416,7 +416,7 @@ class GenericPackChooserPage(_ChooserBuildPage, Generic[PackT, StackT]):
         if asset_search.is_empty_query(query):
             # The pack grid is the whole answer to an empty query, and it is
             # on screen now.
-            self.search_rendered(query)
+            self.record_rendered_query(query)
             return
         # Search every pack for assets; record rendering only when results land
         self.search_across_packs(query, self, self._search_generation)
@@ -520,11 +520,11 @@ class GenericPackChooserPage(_ChooserBuildPage, Generic[PackT, StackT]):
             return False
         leaf = self.get_leaf_chooser()
         on_pack_grid = self.stack.get_visible_child_name() == PACK_CHOOSER_CHILD_NAME
-        if not on_pack_grid and not leaf.shows_pack_search:
+        if not on_pack_grid and not leaf.shows_cross_pack_results:
             # Do not replace a drilled-in pack grid with obsolete cross-pack results
             return False
         leaf.load_search_results(self, assets, query)
-        requester.search_rendered(query)
+        requester.record_rendered_query(query)
         if on_pack_grid:
             # Switch only for the first results to avoid restarting each transition
             self.stack.set_visible_child_name(self.LEAF_CHILD_NAME)
@@ -573,7 +573,7 @@ class GenericAssetChooserPage(_ChooserBuildPage, Generic[PackT, AssetT, PreviewT
         self.asset_manager = asset_manager
         self.stack = stack
 
-        # None until select_asset picks one. preview_factory only compares
+        # None until select_asset picks one. bind_preview_card only compares
         # it, so None matches nothing.
         self.selected_path: str | None = None
 
@@ -613,7 +613,7 @@ class GenericAssetChooserPage(_ChooserBuildPage, Generic[PackT, AssetT, PreviewT
         self.type_box.set_visible(False)
 
         self.asset_flow = self.FLOW_BOX_CLASS(self.PREVIEW_CLASS, self)
-        self.asset_flow.set_factory(self.preview_factory)
+        self.asset_flow.set_item_binder(self.bind_preview_card)
         self.asset_flow.set_filter_func(self.filter_func)
         self.asset_flow.set_sort_func(self.sort_func)
         # The flow box brings its own ScrolledWindow and pagination; the
@@ -639,7 +639,7 @@ class GenericAssetChooserPage(_ChooserBuildPage, Generic[PackT, AssetT, PreviewT
             self.load_search_results(*pending)
 
     @property
-    def shows_pack_search(self) -> bool:
+    def shows_cross_pack_results(self) -> bool:
         """Whether this grid may receive cross-pack results instead of one pack."""
         return self._pack_search_source is not None
 
@@ -649,7 +649,7 @@ class GenericAssetChooserPage(_ChooserBuildPage, Generic[PackT, AssetT, PreviewT
             self.empty_label.set_visible(visible)
 
     def load_for_pack(self, pack: PackT) -> None:
-        if self.shows_pack_search:
+        if self.shows_cross_pack_results:
             # Clear the cross-pack query before loading one drilled-in pack
             self._pack_search_source = None
             self._pack_search_query = ""
@@ -697,14 +697,14 @@ class GenericAssetChooserPage(_ChooserBuildPage, Generic[PackT, AssetT, PreviewT
         self.asset_manager.back_button.set_visible(False)
         # The page turn is what this pass renders, so the entry and what the
         # page believes it shows agree again.
-        self.search_rendered(self.search_entry.get_text())
+        self.record_rendered_query(self.search_entry.get_text())
         if source is not None:
             # The typing follows the query back to the grid that owns it.
             GLib.idle_add(source.focus_search_entry)
 
-    def pack_label_for(self, asset: AssetT) -> str | None:
+    def pack_subtitle_for(self, asset: AssetT) -> str | None:
         """The pack subtitle for cross-pack results, else None."""
-        if not self.shows_pack_search:
+        if not self.shows_cross_pack_results:
             return None
         return cast(str, asset.pack.name)
 
@@ -723,12 +723,12 @@ class GenericAssetChooserPage(_ChooserBuildPage, Generic[PackT, AssetT, PreviewT
         asset = self.get_child_asset(child)
         self.asset_manager.deliver_selection(getattr(asset, self.ASSET_PATH_ATTR))
 
-    def preview_factory(self, preview: PreviewT, asset: AssetT) -> None:
+    def bind_preview_card(self, preview: PreviewT, asset: AssetT) -> None:
         # Called from DynamicFlowBox._apply_range's main-loop callback.
         self.bind_preview(preview, asset)
         if isinstance(preview, Preview):
             # Always replace a recycled card's cross-pack subtitle
-            preview.set_subtitle(self.pack_label_for(asset))
+            preview.set_subtitle(self.pack_subtitle_for(asset))
         if self.selected_path == getattr(asset, self.ASSET_PATH_ATTR):
             # The recycler that calls this is the flow box itself, so it
             # exists; the class default keeps the annotation optional.
@@ -761,7 +761,7 @@ class GenericAssetChooserPage(_ChooserBuildPage, Generic[PackT, AssetT, PreviewT
         # Back to the first page: the grid it shows now holds the matches of
         # the query the user has replaced.
         self.asset_flow.show_range(0, self.asset_flow.N_ITEMS_PER_PAGE)
-        self.search_rendered(query)
+        self.record_rendered_query(query)
 
     def get_assets(self, pack: PackT) -> list[AssetT]:
         """The assets of the pack, in the order the grid receives them."""
@@ -787,7 +787,7 @@ class GenericPackChooserStack(Gtk.Stack, Generic[LeafT]):
     LEAF_CHOOSER_CLASS: "type[LeafT]" = None  # ty: ignore[invalid-assignment]  # late-init: subclass override, e.g. IconPacks.Stack
     LEAF_CHILD_TITLE: str = None  # ty: ignore[invalid-assignment]  # late-init: subclass override, e.g. IconPacks.Stack
 
-    # prepare must create callback state before either page starts its build worker
+    # initialize_page_state must create callback state before either page starts its build worker
     _prepared = False
 
     @property
@@ -799,19 +799,19 @@ class GenericPackChooserStack(Gtk.Stack, Generic[LeafT]):
         super().__init__(*args, **kwargs)
         self.asset_manager = asset_manager
 
-        self.prepare()
+        self.initialize_page_state()
         self._prepared = True
         self.build()
 
-    def prepare(self) -> None:
+    def initialize_page_state(self) -> None:
         """Create shared state before page constructors start their workers."""
 
     def build(self) -> None:
         if not self._prepared:
             raise RuntimeError(
-                f"{type(self).__name__}.build() ran before prepare(). Each page "
+                f"{type(self).__name__}.build() ran before initialize_page_state(). Each page "
                 "starts a build worker in its constructor, and that worker "
-                "reaches state prepare() creates.")
+                "reaches state initialize_page_state() creates.")
         self.pack_chooser = self.PACK_CHOOSER_CLASS(self, self.asset_manager)
         self.add_titled(self.pack_chooser, PACK_CHOOSER_CHILD_NAME, "Chooser")
 

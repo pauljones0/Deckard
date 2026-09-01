@@ -543,7 +543,7 @@ def leg_cli_transport_reaches_service(controller) -> None:
     transport = cli_forward.bus_transport()
 
     def drive(answers: dict) -> None:
-        answers["running"] = transport.is_running()
+        answers["running"] = transport.has_running_instance()
         answers["page"] = transport.change_page(SERIAL, "Alpha")
         # Read where the deck ended up before the next call moves it. The page
         # was loaded before the reply was sent, so this is settled.
@@ -589,7 +589,7 @@ def leg_instance_never_answers(controller) -> None:
     api._bus.unpublish_object(api.DBUS_OBJECT_PATH)
 
     def drive_missing_object(answers: dict) -> None:
-        answers["running"] = transport.is_running()
+        answers["running"] = transport.has_running_instance()
         # Drive the whole forwarding path, so the assertion covers the sentence
         # a person reads rather than a constant this file names.
         answers["failures"] = cli_forward.forward(

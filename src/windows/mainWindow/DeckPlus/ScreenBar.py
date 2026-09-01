@@ -262,12 +262,12 @@ class ScreenBarImage(LazyMapTasks, Gtk.Picture):
 
         # next() gives producer threads unique IDs, but latest-ID stores can publish out of
         # order. A later frame corrects stale paint; one producer is normal.
-        self.task_ids = itertools.count()
+        self._task_id_counter = itertools.count()
         # None until the first frame is queued.
         self.latest_task_id: int | None = None
 
     def get_new_task_id(self) -> int:
-        return next(self.task_ids)
+        return next(self._task_id_counter)
 
     def set_image(self, image: Image.Image) -> None:
         # Callable from any thread for map replay and coalesced live frames.
@@ -316,12 +316,12 @@ class ScreenBarImage(LazyMapTasks, Gtk.Picture):
             return None
         # Use this widget's controller because map replay can run off the main loop.
         # Looking up the visible deck there would read GTK state from the wrong thread.
-        touch_screen = self.screenbar.deck_controller.get_input(Input.Touchscreen("sd-plus"))
-        if touch_screen is None:
+        touchscreen = self.screenbar.deck_controller.get_input(Input.Touchscreen("sd-plus"))
+        if touchscreen is None:
             return None
 
         icon_selector = sidebar.key_editor.icon_selector
-        dial_image = image.crop(touch_screen.get_dial_image_area(identifier))
+        dial_image = image.crop(touchscreen.get_dial_image_area(identifier))
         pixbuf = image2pixbuf(dial_image.convert("RGBA"), force_transparency=True)
         # Reading the ID after its store can pick up a newer producer's ID and drop this frame.
         # The next frame corrects it; one producer per screenbar is normal.

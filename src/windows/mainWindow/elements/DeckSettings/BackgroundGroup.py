@@ -80,7 +80,7 @@ class BackgroundMediaRow(LazyMapTasks, Adw.PreferencesRow):
 
         # Handler ID by widget key, absent while disconnected.
         # Tracking keeps connect and disconnect idempotent.
-        self._handlers: dict[str, int] = {}
+        self._handler_ids: dict[str, int] = {}
 
         self.build()
 
@@ -201,15 +201,15 @@ class BackgroundMediaRow(LazyMapTasks, Adw.PreferencesRow):
 
     def connect_signals(self) -> None:
         for key, widget, signal, callback in self._signal_bindings():
-            if self._handlers.get(key) is None:
-                self._handlers[key] = widget.connect(signal, callback)
+            if self._handler_ids.get(key) is None:
+                self._handler_ids[key] = widget.connect(signal, callback)
 
 
     def disconnect_signals(self) -> None:
         for key, widget, _signal, _callback in self._signal_bindings():
-            handler = self._handlers.pop(key, None)
-            if handler is not None:
-                widget.disconnect(handler)
+            handler_id = self._handler_ids.pop(key, None)
+            if handler_id is not None:
+                widget.disconnect(handler_id)
 
 
     def load_defaults(self) -> None:
@@ -316,7 +316,7 @@ class BackgroundMediaRow(LazyMapTasks, Adw.PreferencesRow):
         if page is not None:
             controller.load_background(page=page)
 
-    def _deck_background_shows(self) -> bool:
+    def _deck_background_is_visible(self) -> bool:
         """Return whether the deck background is visible instead of an active page override.
         When false, deck-view edits only update stored deck settings."""
         page = self.settings_page.deck_controller.active_page
@@ -348,7 +348,7 @@ class BackgroundMediaRow(LazyMapTasks, Adw.PreferencesRow):
         """Preview a showing still in place when no page override hides the deck background.
         Video, GIF, and non-showing slideshow frames wait for commit."""
         background = self.settings_page.deck_controller.background
-        if self._deck_background_shows() and background.showing_path() == path:
+        if self._deck_background_is_visible() and background.showing_path() == path:
             background.update_view(view)
 
     def on_view_commit(self, path: str, view: "tuple[float, float, float]") -> None:
@@ -368,7 +368,7 @@ class BackgroundMediaRow(LazyMapTasks, Adw.PreferencesRow):
             settings.set("background", "view", view_as_setting(view))
         settings.save()
 
-        if not self._deck_background_shows():
+        if not self._deck_background_is_visible():
             return
         background = self.settings_page.deck_controller.background
         if background.showing_path() == path:

@@ -21,7 +21,7 @@ class UIPort:
     def push_input_image(self, controller: "DeckController",
                          identifier: "InputIdentifier",
                          image: "Image.Image",
-                         latency_sample: "LatencySample | None" = None) -> "bool | InputImageDropRecorded":
+                         latency_sample: "LatencySample | None" = None) -> "bool | RecordedInputImageDrop":
         """Mirror images: True accepts, False needs dirty-marking; recorded drops are pre-counted.
         Never raise; the adapter dirty-marks later unmap or rebuild drops after acceptance."""
         return False
@@ -93,7 +93,7 @@ class UIPort:
 
 
 @dataclass(frozen=True, slots=True)
-class InputImageDropRecorded:
+class RecordedInputImageDrop:
     """A push failure whose adapter already accounted for the frame drop."""
 
     recorded_drop: bool = True

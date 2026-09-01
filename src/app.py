@@ -533,12 +533,12 @@ class App(Adw.Application):
 
         # Both gate-thread prompts marshal to GTK.
         # Confirm the full set before download and each plugin script before execution.
-        from src.windows.Store.install_consent import make_consent, make_set_consent
+        from src.windows.Store.install_consent import make_install_script_consent, make_dependency_consent
         window = self._dialog_parent()
         report = dependencies.install_with_dependencies(
             store_backend, dependencies.plugin_item(plugin),
-            confirm_set=make_set_consent(window),
-            ask_install_script=make_consent(window))
+            confirm_set=make_dependency_consent(window),
+            ask_install_script=make_install_script_consent(window))
         if report.declined:
             self.set_working(False)
             return

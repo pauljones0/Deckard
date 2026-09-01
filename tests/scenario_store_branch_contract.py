@@ -183,7 +183,7 @@ def test_settings_row_refuses_bad_url() -> None:
             self.tooltip = text
 
     class FakeRow:
-        refresh_url_validity = CustomContentEntry.refresh_url_validity
+        validate_and_mark_url = CustomContentEntry.validate_and_mark_url
 
         def __init__(self, text: str):
             self.url = FakeEntryRow(text)
@@ -191,7 +191,7 @@ def test_settings_row_refuses_bad_url() -> None:
     for url in UNUSABLE_URLS:
         assert parse_repo_url(url) is None, f"test data {url!r} is actually parseable"
         row = FakeRow(url)
-        assert row.refresh_url_validity() is None, (
+        assert row.validate_and_mark_url() is None, (
             f"the settings row must refuse {url!r} instead of storing it"
         )
         assert "error" in row.url.css_classes, f"{url!r} must be flagged in the row"
@@ -203,7 +203,7 @@ def test_settings_row_refuses_bad_url() -> None:
         ("", ""),  # clearing a row must always take effect
     ):
         row = FakeRow(text)
-        assert row.refresh_url_validity() == stored, (
+        assert row.validate_and_mark_url() == stored, (
             f"{text!r} must be stored as {stored!r}"
         )
         assert "error" not in row.url.css_classes

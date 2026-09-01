@@ -359,11 +359,14 @@ class OnboardingScreen5(Gtk.Box):
                 continue
             # Recommended plugins can run setup code, so use store consent prompts.
             # The set prompt includes all dependencies.
-            from src.windows.Store.install_consent import make_consent, make_set_consent
+            from src.windows.Store.install_consent import (
+                make_dependency_consent,
+                make_install_script_consent,
+            )
             report = dependencies.install_with_dependencies(
                 backend, dependencies.plugin_item(plugin),
-                confirm_set=make_set_consent(prompt_parent),
-                ask_install_script=make_consent(prompt_parent))
+                confirm_set=make_dependency_consent(prompt_parent),
+                ask_install_script=make_install_script_consent(prompt_parent))
             if not report.ok:
                 log.error(f"Onboarding: failed to install {plugin_data.plugin_name}: {report!r}")
                 # Name the item that actually failed, which can be something

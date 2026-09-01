@@ -87,17 +87,17 @@ class _MirrorSlot:
     A backlogged loop drops superseded frames unconverted and paints the newest.
     """
 
-    __slots__ = ("_interval", "_lock", "_pending", "_armed", "_last_drain")
+    __slots__ = ("_interval_s", "_lock", "_pending", "_armed", "_last_drain_monotonic_s")
 
-    def __init__(self, interval: float = 0.0) -> None:
+    def __init__(self, interval_s: float = 0.0) -> None:
         # Set a minimum drain interval; zero follows the loop, while a delayed
         # callback still flushes the last frame of a burst.
-        self._interval = interval
+        self._interval_s = interval_s
         self._lock = threading.Lock()
         self._pending: object | None = None
         self._armed: bool = False
         # Infinitely far in the past, so the first frame paints at once.
-        self._last_drain: float = float("-inf")
+        self._last_drain_monotonic_s: float = float("-inf")
 
     def offer(self, payload: object,
               on_superseded: "Callable[[object], None] | None" = None) -> float | None:
@@ -112,7 +112,8 @@ class _MirrorSlot:
                 delay = None
             else:
                 self._armed = True
-                delay = max(0.0, self._interval - (time.monotonic() - self._last_drain))
+                elapsed_s = time.monotonic() - self._last_drain_monotonic_s
+                delay = max(0.0, self._interval_s - elapsed_s)
         if displaced is not None and on_superseded is not None:
             on_superseded(displaced)
         return delay
@@ -126,7 +127,7 @@ class _MirrorSlot:
             payload, self._pending = self._pending, None
             self._armed = False
             if payload is not None:
-                self._last_drain = time.monotonic()
+                self._last_drain_monotonic_s = time.monotonic()
             return payload
 
     def disarm(self) -> None:
@@ -292,7 +293,7 @@ class GtkUIAdapter(ui_port.UIPort):
     # Render mirror
 
     @override
-    def push_input_image(self, controller: "DeckController", identifier: "InputIdentifier", image: "Image.Image | None", latency_sample: "LatencySample | None" = None) -> "bool | ui_port.InputImageDropRecorded":
+    def push_input_image(self, controller: "DeckController", identifier: "InputIdentifier", image: "Image.Image | None", latency_sample: "LatencySample | None" = None) -> "bool | ui_port.RecordedInputImageDrop":
         try:
             if image is None or not self._window_mapped:
                 return False
@@ -308,10 +309,10 @@ class GtkUIAdapter(ui_port.UIPort):
             key = (controller, identifier)
             slot = self._mirror_slots.get(key)
             if slot is None:
-                interval = (TOUCHSCREEN_UI_INTERVAL_S
-                            if isinstance(identifier, Input.Touchscreen)
-                            else KEY_UI_INTERVAL_S)
-                slot = self._mirror_slots.setdefault(key, _MirrorSlot(interval))
+                interval_s = (TOUCHSCREEN_UI_INTERVAL_S
+                              if isinstance(identifier, Input.Touchscreen)
+                              else KEY_UI_INTERVAL_S)
+                slot = self._mirror_slots.setdefault(key, _MirrorSlot(interval_s))
 
             frame = _MirrorFrame(image, latency_sample)
 
@@ -337,7 +338,7 @@ class GtkUIAdapter(ui_port.UIPort):
                 _discard_mirror_frame(controller, slot.discard(), "ui_schedule_failed")
                 mark_dirty(controller, identifier)
                 log.warning(f"Could not schedule the {identifier} mirror frame")
-                return ui_port.InputImageDropRecorded()
+                return ui_port.RecordedInputImageDrop()
             except BaseException:
                 # Clean the slot, but do not swallow SystemExit or KeyboardInterrupt.
                 _discard_mirror_frame(controller, slot.discard(), "ui_schedule_failed")

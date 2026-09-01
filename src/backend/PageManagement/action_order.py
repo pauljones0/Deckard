@@ -88,9 +88,11 @@ def move_action(page: "Page", identifier: "InputIdentifier", state: int,
         return False
 
     count = len(actions)
-    loaded = page.action_objects.get(identifier.input_type, {}).get(identifier.json_identifier, {})
+    input_actions_by_state = page.action_objects.get(
+        identifier.input_type, {}
+    ).get(identifier.json_identifier, {})
     # An empty registry stands for no registry: nothing loaded, nothing shown.
-    registry = loaded.get(state) or None
+    registry = input_actions_by_state.get(state) or None
     slots = row_slots(registry, count)
 
     if source_index == dest_index:
@@ -113,7 +115,7 @@ def move_action(page: "Page", identifier: "InputIdentifier", state: int,
     state_dict["actions"] = move_item(actions, source_slot, dest_slot)
 
     if registry is not None:
-        loaded[state] = reorder_action_objects(registry, slot_map)
+        input_actions_by_state[state] = reorder_action_objects(registry, slot_map)
 
     # Remap only present control keys; absence means no assigned permission.
     for key in CONTROL_KEYS:

@@ -92,7 +92,7 @@ IMPORTED: frozenset[str] = frozenset({
     "App", "LocaleManager", "AssetManagerBackend", "AssetManager",
     "MediaManager", "PageManagerBackend", "SettingsManager", "DeckManager",
     "PluginManager", "IconPackManager", "WallpaperPackManager",
-    "SDPlusBarWallpaperPackManager", "StoreBackend", "Notify", "SignalManager",
+    "SDPlusBarWallpaperPackManager", "StoreBackend", "Notifier", "SignalManager",
     "WindowGrabber", "Wayland", "GnomeExtensions", "Store",
     "FlatpakPermissionManager", "PageManager", "LockScreenManager",
     "PresenceMonitor", "TrayIcon", "Logger",
@@ -118,7 +118,7 @@ TABLES: tuple[tuple[str, frozenset[str]], ...] = (
     ("MACHINERY", MACHINERY),
 )
 
-ADDING_A_SLOT = (
+ADD_SLOT_GUIDANCE = (
     f"Adding one is two edits in one change: declare it in {GLOBALS_MODULE}, and add "
     f"it to FROZEN_SLOTS in {THIS_SCRIPT}. Prefer not adding one: a new service is "
     "constructor-injected by default -- build it as a local in "
@@ -330,7 +330,7 @@ def check_declarations(failures: list[str]) -> set[str]:
         failures.append(
             f"{GLOBALS_MODULE}: declares `{name}`, which no table in {THIS_SCRIPT} "
             f"lists. The `gl` inventory is frozen: it grows by deliberate edit, never "
-            f"by arriving. {ADDING_A_SLOT}"
+            f"by arriving. {ADD_SLOT_GUIDANCE}"
         )
 
     for name in sorted(listed - declared):
@@ -475,7 +475,7 @@ def check_stores(path: Path, failures: list[str], type_stores_used: set) -> int:
                 problems.append((
                     line,
                     f"{where}:{line}: assigns `gl.{name}`, which is not a frozen slot. "
-                    f"{ADDING_A_SLOT}",
+                    f"{ADD_SLOT_GUIDANCE}",
                 ))
             return
         if isinstance(node, (ast.Tuple, ast.List)):
@@ -518,7 +518,7 @@ def check_stores(path: Path, failures: list[str], type_stores_used: set) -> int:
                         f"{where}:{node.lineno}: `{node.func.id}(gl, ...)` writes a slot "
                         "under a name this check cannot see, which is exactly what the "
                         "freeze exists to prevent. Name the slot in the source "
-                        f"(`gl.thing = ...`). {ADDING_A_SLOT}",
+                        f"(`gl.thing = ...`). {ADD_SLOT_GUIDANCE}",
                     ))
 
     failures.extend(message for _, message in sorted(problems))

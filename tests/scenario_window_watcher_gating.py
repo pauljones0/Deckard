@@ -449,7 +449,7 @@ def check_gate_off_restores_auto_loaded_decks() -> None:
     # Pre-seed the page cache, so the restore's get_page is a cache hit. A
     # miss would construct a real Page against this stub deck.
     gl.page_manager.pages[controller] = {
-        manual_path: {"page": StubPage(manual_path), "page_number": 0},
+        manual_path: {"page": StubPage(manual_path), "lru_stamp": 0},
     }
 
     try:

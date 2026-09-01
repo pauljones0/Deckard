@@ -44,9 +44,9 @@ class CustomAssetChooserFlowBox(DynamicFlowBox[AssetPreview, dict[str, Any]]):
         self.set_hexpand(True)
 
         self.asset_chooser:"CustomAssetChooser" = asset_chooser
-        self.selected_asset: str = None  # ty: ignore[invalid-assignment]  # late-init: on_child_activated
+        self.selected_asset_path: str = None  # ty: ignore[invalid-assignment]  # late-init: on_child_activated
 
-        self.set_factory(self.preview_factory)
+        self.set_item_binder(self.bind_asset_preview)
         # Hook names must differ from the base slots that hold installed callables
         self.set_filter_func(self._filter_asset)
         self.set_sort_func(self._sort_assets)
@@ -68,14 +68,14 @@ class CustomAssetChooserFlowBox(DynamicFlowBox[AssetPreview, dict[str, Any]]):
         self.refresh()
 
     def select_asset(self, path: str) -> None:
-        self.selected_asset = path
+        self.selected_asset_path = path
 
-    def preview_factory(self, preview: AssetPreview, asset: dict[str, Any]) -> None:
+    def bind_asset_preview(self, preview: AssetPreview, asset: dict[str, Any]) -> None:
         # The recycler pools base_class instances, which this box sets to
         # AssetPreview, and the generic base delivers them as themselves.
         asset_preview = preview
         asset_preview.set_asset(self, asset)
-        if self.selected_asset == asset.get("internal-path"):
+        if self.selected_asset_path == asset.get("internal-path"):
             self.flow_box.select_child(asset_preview)
 
     def _filter_asset(self, asset: dict[str, Any]) -> bool:

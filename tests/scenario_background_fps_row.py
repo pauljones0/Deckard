@@ -159,7 +159,7 @@ class FakePage:
     def get_background_image(self, identifier, state):
         return self.background_image
 
-    def has_media_fps(self, identifier, state):
+    def has_media_fps_override(self, identifier, state):
         return self.media_fps is not None
 
     def get_media_fps(self, identifier, state):
@@ -173,7 +173,7 @@ class FakePage:
         self.media_fps = fps
         self.writes.append(("media", fps))
 
-    def has_background_fps(self, identifier, state):
+    def has_background_fps_override(self, identifier, state):
         return self.background_fps is not None
 
     def get_background_fps(self, identifier, state):
@@ -200,7 +200,7 @@ class FakeFpsRow:
     connect_signals = VideoFpsRow.connect_signals
     disconnect_signals = VideoFpsRow.disconnect_signals
     _reveal_revert = VideoFpsRow._reveal_revert
-    _request_revert = VideoFpsRow._request_revert
+    _update_revert_visibility = VideoFpsRow._update_revert_visibility
     _uses_media_fps = VideoFpsRow._uses_media_fps
     _write_fps = VideoFpsRow._write_fps
     _stored_fps = VideoFpsRow._stored_fps
@@ -212,7 +212,7 @@ class FakeFpsRow:
         self.revert_button = FakeRevert()
         self.active_identifier = None
         self.active_state = None
-        self._change_handler = None
+        self._change_handler_id = None
         self._reveal_source = None
         self.visible = None
         self.connect_signals()
