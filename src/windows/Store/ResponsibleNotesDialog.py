@@ -51,7 +51,7 @@ class ResponsibleNotesDialog(Adw.MessageDialog):
     def on_response(self, dialog: Adw.MessageDialog, response: str) -> None:
         app_settings = gl.settings_manager.app()
         agreed = (response == "agree")
-        app_settings.responsibility_notes_agreed = agreed
+        app_settings.responsibility_notes_accepted = agreed
         app_settings.save()
 
         if callable(self.callback):

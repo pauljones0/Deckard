@@ -1,22 +1,5 @@
-"""Pins the key-callback remapper against out-of-grid touch buttons.
-
-The Stream Deck Neo has an 8-key grid (2x4) plus two touch buttons, which the
-driver reports through the ordinary key callback at physical indexes 8 and 9,
-past the grid. BetterDeck installs a remapper that must:
-
-  (a) still map every grid index 0..rows*cols-1 to its correct logical key at
-      every rotation, and
-  (b) never dispatch a grid key for a touch button. Routed through the grid
-      rotation arithmetic, physical 9 at rotation 90 comes out as logical 1 (a
-      real grid key), physical 8 at rotation 180 as logical -1. Those buttons
-      have no grid position and no touch-button input path, so the remapper
-      drops them.
-
-The scenario drives the remapper BetterDeck.set_key_callback installs, firing
-physical indexes 0..9 through the fake transport at each rotation, and checks
-both properties. There is no Neo hardware; the arithmetic reproduction stands
-alone.
-"""
+"""Map all Neo grid keys bijectively at each rotation and drop touch buttons.
+Physical indexes 8 and 9 are outside the 2x4 grid and must never dispatch keys."""
 import fixtures  # noqa: F401  (import first: sets up the isolated data dir)
 
 from fixtures import FaultyFakeDeck, start_watchdog

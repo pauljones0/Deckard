@@ -1,8 +1,5 @@
-"""InputVideo.get_next_frame() must advance sequentially while the cache builds.
-
-Wall-clock picking engages only once the cache reports complete, because a
-jumped index makes a building cache walk every frame in between.
-"""
+"""Advance InputVideo sequentially until its cache completes.
+Wall-clock jumps during a build would decode each skipped intermediate frame."""
 import threading
 
 import fixtures
@@ -10,11 +7,7 @@ from src.backend.DeckManagement.Subclasses.KeyVideo import InputVideo
 
 
 class StubKeyVideoCache:
-    """Mimics the KeyVideoCache surface InputVideo reads.
-
-    That is n_frames, is_cache_complete() and get_frame(n). It counts how many
-    times each frame index is decoded, so amplification is directly assertable.
-    """
+    """Count calls to the KeyVideoCache surface that InputVideo uses."""
 
     def __init__(self, n_frames: int):
         self.n_frames = n_frames
@@ -36,51 +29,47 @@ class StubKeyVideoCache:
 
 
 def make_video(n_frames: int, fps: float = 10.0, loop: bool = True) -> InputVideo:
-    v = InputVideo.__new__(InputVideo)
-    v.fps = fps
-    v.loop = loop
-    v.natural_speed = False  # key and dial semantics, where fps is the playback rate
-    v.active_frame = -1
-    v._play_start = None
-    v._last_frame_tick = None
-    v.video_cache = StubKeyVideoCache(n_frames)
-    v._close_lock = threading.Lock()  # __init__ sets this; __new__ bypasses it
-    return v
+    video = InputVideo.__new__(InputVideo)
+    video.fps = fps
+    video.loop = loop
+    video.natural_speed = False  # key and dial semantics, where fps is the playback rate
+    video.active_frame = -1
+    video._play_start = None
+    video._last_frame_tick = None
+    video.video_cache = StubKeyVideoCache(n_frames)
+    video._close_lock = threading.Lock()  # __init__ sets this; __new__ bypasses it
+    return video
 
 
 def main() -> None:
     fixtures.start_watchdog(60, label="scenario_keyvideo_build")
     T0 = 1_000_000.0
 
-    # Building phase. Sequential advance by one, with one get_frame call per
-    # get_next_frame() call, however large the wall-clock jump between ticks
-    # is, which models a slow media loop.
-    v = make_video(n_frames=5, fps=10.0, loop=True)
+    # Advance one frame and decode once per build tick despite clock jumps.
+    looping_video = make_video(n_frames=5, fps=10.0, loop=True)
 
     ticks = [T0, T0 + 0.01, T0 + 50.0, T0 + 50.02, T0 + 9000.0]  # erratic, to stress the sequential advance
     expected_sequence = [0, 1, 2, 3, 4]  # sequential, independent of the now argument
     for i, now in enumerate(ticks):
-        frame = v.get_next_frame(now=now)
+        frame = looping_video.get_next_frame(now=now)
         assert frame == expected_sequence[i], (
             f"building phase must advance sequentially regardless of wall-clock "
             f"jumps: tick {i} expected frame {expected_sequence[i]}, got {frame}"
         )
-        assert v.active_frame == expected_sequence[i]
+        assert looping_video.active_frame == expected_sequence[i]
 
-    # No amplification. Exactly one decode per tick and one per frame index,
-    # never more. The failure mode is a jump that causes extra get_frame calls
-    # to walk through the skipped intermediate indices.
-    assert len(v.video_cache.call_log) == len(ticks), (
+    # Clock jumps must not decode skipped intermediate frame indexes.
+    assert len(looping_video.video_cache.call_log) == len(ticks), (
         f"expected exactly {len(ticks)} get_frame calls (one per tick), "
-        f"got {len(v.video_cache.call_log)}: {v.video_cache.call_log}"
+        f"got {len(looping_video.video_cache.call_log)}: {looping_video.video_cache.call_log}"
     )
-    assert all(count == 1 for count in v.video_cache.decode_counts.values()), (
-        f"each frame index must be requested exactly once, got {v.video_cache.decode_counts}"
+    assert all(count == 1 for count in looping_video.video_cache.decode_counts.values()), (
+        f"each frame index must be requested exactly once, got {looping_video.video_cache.decode_counts}"
     )
 
     # One more tick wraps, because loop is True and n_frames is 5.
-    wrapped = v.get_next_frame(now=T0 + 9000.1)
-    assert wrapped == 0 and v.active_frame == 0, f"building-phase loop wrap: expected 0, got {wrapped}"
+    wrapped = looping_video.get_next_frame(now=T0 + 9000.1)
+    assert wrapped == 0 and looping_video.active_frame == 0, f"building-phase loop wrap: expected 0, got {wrapped}"
 
     # Non-looping build. active_frame may run past n_frames, because the clamp
     # in get_frame handles it, and it must not wrap.
@@ -92,80 +81,73 @@ def main() -> None:
 
     # Flip to complete. Wall-clock picking engages, seeded from the current
     # position, so it continues from the build phase rather than restarting.
-    v.video_cache._complete = True
-    pre_switch_active_frame = v.active_frame  # 0, from the wrap above
-    v.video_cache.call_log.clear()
-    v.video_cache.decode_counts.clear()
+    looping_video.video_cache._complete = True
+    pre_switch_active_frame = looping_video.active_frame  # 0, from the wrap above
+    looping_video.video_cache.call_log.clear()
+    looping_video.video_cache.decode_counts.clear()
 
     t0 = T0 + 20000.0
-    first_complete = v.get_next_frame(now=t0)
-    # The seed formula is _play_start = now - (active_frame + 1) / fps, so the
-    # first wall-clock pick continues one frame past where sequential advance
-    # left off. Tolerate a one-frame float wobble at the exact boundary, because
-    # reconstructing that term is not bit-exact at large wall-clock magnitudes.
-    # BackgroundVideo uses the same formula unmodified.
-    expected_first = (pre_switch_active_frame + 1) % v.video_cache.n_frames
-    acceptable = {expected_first, (expected_first - 1) % v.video_cache.n_frames}
+    first_complete = looping_video.get_next_frame(now=t0)
+    # Seed from the next build frame and allow one-frame boundary float error.
+    # BackgroundVideo uses the same play-start formula.
+    expected_first = (pre_switch_active_frame + 1) % looping_video.video_cache.n_frames
+    acceptable = {expected_first, (expected_first - 1) % looping_video.video_cache.n_frames}
     assert first_complete in acceptable, (
         f"wall-clock pick must seed from the build-phase position: "
         f"expected one of {acceptable}, got {first_complete}"
     )
 
-    # A wall-clock jump now genuinely jumps the frame, with no amplification
-    # concern once complete, because get_frame is a free lookup. 0.7 s at fps 10
-    # is 7 frames ahead, wrapping modulo 5.
-    jumped = v.get_next_frame(now=t0 + 0.7)
+    # After completion, jump seven frames for 0.7 seconds at 10 fps.
+    jumped = looping_video.get_next_frame(now=t0 + 0.7)
     # Compute directly from the wall-clock formula rather than re-deriving the
     # frame arithmetic by hand, so frame = int((now - play_start) * fps).
-    expected_jumped = int((t0 + 0.7 - v._play_start) * v.fps) % v.video_cache.n_frames
+    expected_jumped = int((t0 + 0.7 - looping_video._play_start) * looping_video.fps) % looping_video.video_cache.n_frames
     assert jumped == expected_jumped, f"expected wall-clock jump to frame {expected_jumped}, got {jumped}"
     # It must be a single free lookup, not a walk through intermediates.
-    assert len(v.video_cache.call_log) == 2, (
+    assert len(looping_video.video_cache.call_log) == 2, (
         f"wall-clock phase must do exactly one get_frame per get_next_frame call, "
-        f"got {v.video_cache.call_log}"
+        f"got {looping_video.video_cache.call_log}"
     )
 
     # Gap clamp once complete. A tick gap over 1 s, from a page-away resume,
     # shifts the timebase instead of fast-forwarding, mirroring BackgroundVideo.
-    last_tick_before = v._last_frame_tick
-    play_start_before = v._play_start
+    last_tick_before = looping_video._last_frame_tick
+    play_start_before = looping_video._play_start
     GAP = 5.0
-    v.get_next_frame(now=last_tick_before + GAP)
-    expected_play_start = play_start_before + (GAP - 1.0 / v.fps)
-    assert abs(v._play_start - expected_play_start) < 1e-9, (
+    looping_video.get_next_frame(now=last_tick_before + GAP)
+    expected_play_start = play_start_before + (GAP - 1.0 / looping_video.fps)
+    assert abs(looping_video._play_start - expected_play_start) < 1e-9, (
         f"gap clamp did not shift _play_start as expected: "
-        f"{v._play_start} != {expected_play_start}"
+        f"{looping_video._play_start} != {expected_play_start}"
     )
 
-    # natural_speed. Playback runs at the source fps, and fps is only a render
-    # cap that quantizes the pick, so composites re-triggered by other animated
-    # content within a cap window return the same frame.
-    vn = make_video(n_frames=100, fps=5.0, loop=True)  # cap=5
-    vn.natural_speed = True
-    vn.video_cache.source_fps = 20.0  # native speed, 4x the cap
-    vn.video_cache._complete = True
+    # Natural speed uses source fps; configured fps only quantizes render picks.
+    natural_speed_video = make_video(n_frames=100, fps=5.0, loop=True)  # cap=5
+    natural_speed_video.natural_speed = True
+    natural_speed_video.video_cache.source_fps = 20.0  # native speed, 4x the cap
+    natural_speed_video.video_cache._complete = True
 
-    tn = T0 + 40000.0
-    vn.get_next_frame(now=tn)
-    base = vn._play_start
+    natural_speed_start = T0 + 40000.0
+    natural_speed_video.get_next_frame(now=natural_speed_start)
+    base = natural_speed_video._play_start
     # The position advances at the source fps, so after 1 s it must be about 20
     # frames on, not 5, which is what fps-as-speed would give.
-    f_1s = vn.get_next_frame(now=tn + 1.0)
-    assert f_1s == int(int((tn + 1.0 - base) * 5.0) / 5.0 * 20.0) % 100, (
+    f_1s = natural_speed_video.get_next_frame(now=natural_speed_start + 1.0)
+    assert f_1s == int(int((natural_speed_start + 1.0 - base) * 5.0) / 5.0 * 20.0) % 100, (
         f"natural-speed pick mismatch: got {f_1s}"
     )
     assert f_1s >= 15, (
         f"natural_speed must advance at source fps (~20 frames/s), got {f_1s} after 1s"
     )
     # Within one cap window, 0.2 s at cap 5, the pick must not advance.
-    f_a = vn.get_next_frame(now=tn + 2.00)
-    f_b = vn.get_next_frame(now=tn + 2.19)
-    assert f_a == f_b, (
-        f"picks within one 1/cap window must be identical (render cap), got {f_a} then {f_b}"
+    window_start_frame = natural_speed_video.get_next_frame(now=natural_speed_start + 2.00)
+    same_window_frame = natural_speed_video.get_next_frame(now=natural_speed_start + 2.19)
+    assert window_start_frame == same_window_frame, (
+        f"picks within one 1/cap window must be identical (render cap), got {window_start_frame} then {same_window_frame}"
     )
     # The next window advances by source_fps over cap frames, which is 4.
-    f_c = vn.get_next_frame(now=tn + 2.21)
-    assert f_c != f_a, "the next cap window must advance the pick"
+    next_window_frame = natural_speed_video.get_next_frame(now=natural_speed_start + 2.21)
+    assert next_window_frame != window_start_frame, "the next cap window must advance the pick"
 
     print("PASS: scenario_keyvideo_build")
 

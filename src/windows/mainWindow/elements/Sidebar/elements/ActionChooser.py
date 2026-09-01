@@ -83,9 +83,8 @@ class ActionChooser(Gtk.Box):
         self.search_entry.connect("search-changed", self.on_search_changed)
         self.main_box.append(self.search_entry)
 
-        # Create this before the PluginGroup. Its update() refreshes this
-        # label through update_empty_state(), and that update runs from the
-        # PluginGroup constructor and at every store install and uninstall.
+        # Create this before PluginGroup because its constructor updates the empty state.
+        # Store install and uninstall updates use the same label.
         self.empty_state_label = Gtk.Label(
             wrap=True,
             justify=Gtk.Justification.CENTER,
@@ -102,18 +101,15 @@ class ActionChooser(Gtk.Box):
         self.main_box.append(self.open_store_button)
 
     def update_empty_state(self, n_plugins: int) -> None:
-        """Explains an empty action list instead of leaving a blank page.
-
-        It distinguishes 'plugins failed to load', 'plugins disabled by the
-        version gate' and 'nothing installed'. Main-thread only (called from
-        PluginGroup.update, which store code dispatches via GLib.idle_add)."""
+        """Explain an empty list as failed, version-disabled, or absent plugins.
+        Main-thread only; store code dispatches PluginGroup.update through GLib.idle_add."""
         if n_plugins > 0:
             self.empty_state_label.set_visible(False)
             return
 
         n_failed, n_disabled = 0, 0
         if gl.plugin_manager is not None:
-            n_failed, n_disabled = gl.plugin_manager.get_load_health()
+            n_failed, n_disabled = gl.plugin_manager.get_load_issue_counts()
 
         if n_failed > 0:
             text = (f"No actions available -- {n_failed} plugin{'s' if n_failed != 1 else ''} "
@@ -187,9 +183,9 @@ class PluginGroup(BetterPreferencesGroup):
         if plugin_manager is None:
             # Nothing to offer before main.create_global_objects() builds it.
             return
-        for plugin_id, plugin_dir in dict(plugin_manager.get_plugins()).items():
-            plugin_name = plugin_dir["object"].plugin_name
-            expander = PluginExpander(self, plugin_name, plugin_dir)
+        for plugin_id, plugin_registration in dict(plugin_manager.get_plugins()).items():
+            plugin_name = plugin_registration["object"].plugin_name
+            expander = PluginExpander(self, plugin_name, plugin_registration)
             self.add(expander)
             self.expander.append(expander)
 
@@ -240,10 +236,8 @@ class PluginGroup(BetterPreferencesGroup):
             # Show all
             return True
 
-        # Compare the rounded score. rapidfuzz returns a float, and a ratio
-        # of exactly 20 comes back as 19.999999999999996, one unit in the last
-        # place below the threshold. The round keeps such a match visible. The
-        # sort still uses the unrounded scores, which rank more finely.
+        # Round for the threshold because rapidfuzz can return 19.999999999999996 for 20.
+        # Sorting keeps the unrounded score for finer ranking.
         if round(expander.highest_fuzz_score) >= MIN_ACTION_FUZZY_SCORE:
             return True
 
@@ -258,11 +252,11 @@ class PluginGroup(BetterPreferencesGroup):
             expander.invalidate_filter()
 
 class ActionChooserExpander(BetterExpander):
-    def __init__(self, plugin_group: PluginGroup, plugin_name: str, plugin_dir: "PluginRegistration") -> None:
+    def __init__(self, plugin_group: PluginGroup, plugin_name: str, plugin_registration: "PluginRegistration") -> None:
         super().__init__()
         self.plugin_group = plugin_group
         self.plugin_name = plugin_name
-        self.plugin_dir = plugin_dir
+        self.plugin_registration = plugin_registration
 
         self.input_type: InputIdentifier = None  # ty: ignore[invalid-assignment]  # late-init: show
 
@@ -326,8 +320,8 @@ class ActionChooserExpander(BetterExpander):
         self.invalidate_sort()
 
 class PluginExpander(ActionChooserExpander):
-    def __init__(self, plugin_group: PluginGroup, plugin_name: str, plugin_dir: "PluginRegistration") -> None:
-        super().__init__(plugin_group, plugin_name, plugin_dir)
+    def __init__(self, plugin_group: PluginGroup, plugin_name: str, plugin_registration: "PluginRegistration") -> None:
+        super().__init__(plugin_group, plugin_name, plugin_registration)
         self.build()
         self.add_action_holders()
 
@@ -335,19 +329,19 @@ class PluginExpander(ActionChooserExpander):
     def build(self) -> None:
         # Texts
         self.set_title(self.plugin_name)
-        self.set_subtitle(self.plugin_dir["object"].plugin_id)
+        self.set_subtitle(self.plugin_registration["object"].plugin_id)
 
-        self.add_prefix(self.plugin_dir["object"].get_selector_icon())
+        self.add_prefix(self.plugin_registration["object"].get_selector_icon())
 
     def add_action_holders(self) -> None:
-        action_holders: set[ActionHolder] = set(self.plugin_dir["object"].action_holders.values())
-        action_holder_groups: set[ActionHolderGroup] = self.plugin_dir["object"].action_holder_groups
+        action_holders: set[ActionHolder] = set(self.plugin_registration["object"].action_holders.values())
+        action_holder_groups: set[ActionHolderGroup] = self.plugin_registration["object"].action_holder_groups
 
         added_holders: set[ActionHolder] = set()
 
         # Add Groups
         for group in action_holder_groups:
-            action_group = ActionGroupExpander(group, self.plugin_group, self.plugin_name, self.plugin_dir)
+            action_group = ActionGroupExpander(group, self.plugin_group, self.plugin_name, self.plugin_registration)
             action_group.add_css_class("action-chooser-item")
             action_group.add_css_class("action-chooser-group")
 
@@ -406,14 +400,11 @@ class PluginExpander(ActionChooserExpander):
         self.invalidate_filter()
 
     def set_group_identifier(self, input_type: InputIdentifier, group: ActionHolderGroup, row: "ActionGroupExpander") -> bool:
-        # A later option can hide groups here, through
-        # group.get_min_input_compatibility(input_type) against
-        # ActionInputSupport.UNSUPPORTED and row.hide().
         return True
 
 class ActionGroupExpander(ActionChooserExpander):
-    def __init__(self, holder_group: ActionHolderGroup, plugin_group: PluginGroup, plugin_name: str, plugin_dir: "PluginRegistration") -> None:
-        super().__init__(plugin_group, plugin_name, plugin_dir)
+    def __init__(self, holder_group: ActionHolderGroup, plugin_group: PluginGroup, plugin_name: str, plugin_registration: "PluginRegistration") -> None:
+        super().__init__(plugin_group, plugin_name, plugin_registration)
         self.holder_group: ActionHolderGroup = holder_group
         self.build()
         self.add_action_holders()
@@ -449,9 +440,8 @@ class ActionGroupExpander(ActionChooserExpander):
         # in the expanded state. The code below sets the icon.
         image = self.get_arrow_image()
         if image is None:
-            # The internal expander tree of libadwaita does not match the
-            # shape that get_arrow_image walks, so the arrow keeps its default
-            # state.
+            # libadwaita's internal tree can differ from the shape get_arrow_image walks.
+            # Keep the default arrow state when the image is unavailable.
             return
         if self.get_expanded():
             image.set_css_classes(["expander-arrow-activated"])

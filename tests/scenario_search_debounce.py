@@ -1,16 +1,6 @@
-"""Pins how a chooser page decides when to search, and when to stop.
+"""Check chooser search debounce, generation coalescing, and invalidation.
 
-Gtk.SearchEntry owns the wait for the typing to stop: it holds its
-search-changed emission back for its own delay, and the page widens that
-delay because one pass scores and sorts a whole icon pack. The page owns two
-things only. A pass carries the generation it was queued with, so two
-emissions in one turn of the loop cost one pass. And a page that stops showing
-invalidates every pass in flight, because the entry can deliver an emission
-after the window has gone.
-
-The pure-logic legs drive the base methods over a stand-in page. The legs that
-prove the hooks fire build a real page in a real window, which is what a
-teardown hook connected to the wrong signal fails.
+Gtk.SearchEntry owns the pack-search delay; unmap invalidates all pending passes.
 """
 import fixtures  # noqa: F401  (import first: isolated --data tempdir)
 
@@ -48,22 +38,21 @@ MIN_SUBCLASSES_SCANNED = 7
 
 
 class FakePage:
-    """A chooser page reduced to what the search decision touches.
+    """A chooser page reduced to the base search decision methods.
 
-    It takes the base methods themselves, so a change to either reaches these
-    checks. apply_search is the hook a real page overrides.
+    apply_search is the override hook.
     """
 
     on_search_changed = ChooserPage.on_search_changed
     run_search = ChooserPage.run_search
     invalidate_search = ChooserPage.invalidate_search
     search_is_current = ChooserPage.search_is_current
-    search_rendered = ChooserPage.search_rendered
+    record_rendered_query = ChooserPage.record_rendered_query
     on_shown = ChooserPage.on_shown
     _on_map = ChooserPage._on_map
     _search_generation = ChooserPage._search_generation
-    _search_showing = ChooserPage._search_showing
-    _searched_text = ChooserPage._searched_text
+    _accepts_search_results = ChooserPage._accepts_search_results
+    _rendered_query = ChooserPage._rendered_query
 
     def __init__(self) -> None:
         self.text = ""
@@ -71,11 +60,9 @@ class FakePage:
         self.search_entry = types.SimpleNamespace(get_text=lambda: self.text)
 
     def apply_search(self, query: str) -> None:
-        # A page that renders here says so. One that starts work which renders
-        # later says so when that work lands, and this stand-in models the
-        # first kind.
+        # Record immediate renders; deferred pages record when their work lands.
         self.applied.append(query)
-        self.search_rendered(query)
+        self.record_rendered_query(query)
 
     def type(self, text: str) -> None:
         """What the entry does once its own delay has run out."""
@@ -92,7 +79,7 @@ class RecordingPage(ChooserPage):
 
     def apply_search(self, query: str) -> None:
         self.applied.append(query)
-        self.search_rendered(query)
+        self.record_rendered_query(query)
 
 
 def pump(seconds: float = 0.2) -> None:
@@ -118,13 +105,11 @@ def pump_until(condition, timeout: float, what: str) -> None:
 
 
 def test_base_holds_the_defaults() -> None:
-    """Both must be class attributes.
+    """Require search defaults on the class.
 
-    ChooserPage._build connects on_search_changed from the constructor, before
-    a subclass reaches its own attributes, so an emission can arrive before any
-    instance attribute exists.
+    Constructor wiring can emit before a subclass creates instance attributes.
     """
-    for name, expected in (("_search_generation", 0), ("_search_showing", True)):
+    for name, expected in (("_search_generation", 0), ("_accepts_search_results", True)):
         assert name in vars(ChooserPage), (
             f"ChooserPage no longer declares {name} on the class; an emission "
             f"during the build then raises AttributeError")
@@ -132,12 +117,10 @@ def test_base_holds_the_defaults() -> None:
     print("PASS: the base declares its search state on the class")
 
 
-def test_the_entry_owns_the_wait() -> None:
-    """The page must not hold a timer of its own beside the entry's.
+def test_search_entry_owns_debounce_delay() -> None:
+    """Require Gtk.SearchEntry to own the only debounce timer.
 
-    Gtk.SearchEntry already waits for the typing to stop. A second wait on top
-    of it coalesces nothing and only delays the answer, and it delays a
-    cleared entry too, which GTK reports at once.
+    A second timer adds latency, including after GTK reports a cleared entry.
     """
     page = RecordingPage()
     assert page.search_entry.get_search_delay() == SEARCH_DELAY_MS, (
@@ -158,10 +141,9 @@ def test_the_entry_owns_the_wait() -> None:
 
 
 def test_generation_guard_drops_an_overtaken_pass() -> None:
-    """Two emissions in one turn of the loop cost one pass.
+    """Coalesce two same-turn emissions into the newer pass.
 
-    A cleared entry reports at once, so it can land in the same turn as a
-    delayed emission. Only the newer of the two may render.
+    An immediate clear can share a turn with a delayed emission.
     """
     page = FakePage()
     page.type("bat")
@@ -191,7 +173,7 @@ def test_invalidate_stops_passes_and_frees_the_cache() -> None:
     assert asset_search._cached_ranker is not None
 
     page.invalidate_search()
-    assert page._search_showing is False
+    assert page._accepts_search_results is False
     assert asset_search._cached_ranker is None, (
         "the memo of a whole pack survived the page that built it")
 
@@ -225,14 +207,10 @@ def test_invalidate_stops_passes_and_frees_the_cache() -> None:
           "catches up only when the query moved")
 
 
-def test_a_pass_that_only_starts_work_re_arms_the_catch_up() -> None:
-    """A page whose pass renders later must not read as current yet.
+def test_unrendered_search_runs_again_on_show() -> None:
+    """Do not mark a deferred search current before its render lands.
 
-    The pages that search across the packs only start a gather in
-    apply_search. Recorded as rendered at that point, a gather that is dropped
-    or that fails leaves the page believing it shows the query: showing it
-    again finds nothing to catch up with, the grid keeps the results of the
-    query before, and only another keystroke recovers it.
+    A dropped or failed gather must run again when the page is shown.
     """
     class DeferringPage(FakePage):
         def apply_search(self, query: str) -> None:
@@ -253,7 +231,7 @@ def test_a_pass_that_only_starts_work_re_arms_the_catch_up() -> None:
         f"shown again: {page.applied}")
 
     # Once a pass does render, the catch-up settles.
-    page.search_rendered("battery")
+    page.record_rendered_query("battery")
     page.invalidate_search()
     page._on_map()
     pump()
@@ -263,13 +241,10 @@ def test_a_pass_that_only_starts_work_re_arms_the_catch_up() -> None:
     print("PASS: only a pass that rendered settles the catch-up")
 
 
-def test_the_page_settles_its_entry_before_the_catch_up() -> None:
-    """on_shown runs inside the map handler, before the catch-up test.
+def test_on_shown_precedes_search_catch_up() -> None:
+    """Run on_shown before the map handler tests for catch-up.
 
-    A page that empties its entry as it shows must do so first. Settled after,
-    the catch-up pass searches for a query the page throws away in the same
-    handler, which for a search across the packs is a whole gather started and
-    invalidated at once.
+    This prevents a gather for a query that on_shown clears.
     """
     class SettlingPage(FakePage):
         def on_shown(self) -> None:
@@ -277,7 +252,7 @@ def test_the_page_settles_its_entry_before_the_catch_up() -> None:
 
     page = SettlingPage()
     page.text = "battery"
-    page._searched_text = ""
+    page._rendered_query = ""
     page._on_map()
     pump()
     assert page.applied == [], (
@@ -294,22 +269,18 @@ def test_the_page_settles_its_entry_before_the_catch_up() -> None:
         if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
                 and node.func.attr == "on_shown"):
             order.append(("on_shown", node.lineno))
-        if isinstance(node, ast.Attribute) and node.attr == "_searched_text":
-            order.append(("_searched_text", node.lineno))
+        if isinstance(node, ast.Attribute) and node.attr == "_rendered_query":
+            order.append(("_rendered_query", node.lineno))
     assert order and order[0][0] == "on_shown", (
-        f"the map handler reads _searched_text before it settles the entry: "
+        f"the map handler reads _rendered_query before it settles the entry: "
         f"{order}")
     print("PASS: a page settles its entry before the catch-up test")
 
 
-def test_search_is_current_answers_both_halves() -> None:
-    """The staleness test a pass carries off the main thread.
+def test_search_is_current_requires_generation_and_visibility() -> None:
+    """Reject worker results after a generation change or page hide.
 
-    A search that gathers on a worker asks this before it renders. It must
-    answer False for both ways a pass goes stale: a later pass moved the
-    generation on, and the page stopped showing. A test on the generation
-    alone would render into a page nobody sees, because hiding a page keeps
-    the generation it invalidated with.
+    Generation alone is insufficient because a hidden page keeps its new value.
     """
     page = FakePage()
     generation = page._search_generation
@@ -328,13 +299,10 @@ def test_search_is_current_answers_both_halves() -> None:
     print("PASS: the staleness test answers the generation and the page alike")
 
 
-def test_hiding_the_window_invalidates_for_real() -> None:
-    """The hook must be on a signal that fires while a pass is pending.
+def test_window_unmap_invalidates_pending_search() -> None:
+    """Require invalidation on unmap while queued work still holds the page.
 
-    A destroy-connected hook cannot: a widget that is not a window emits
-    destroy from dispose, and anything still holding the page, a queued pass
-    among them, keeps dispose from running. Hiding the window unmaps the page,
-    which is what this leg drives.
+    A destroy hook waits for dispose and cannot stop that pending work.
     """
     window = Gtk.Window()
     page = RecordingPage()
@@ -342,14 +310,14 @@ def test_hiding_the_window_invalidates_for_real() -> None:
     window.present()
     pump_until(page.get_mapped, 10, "the page never mapped")
 
-    assert page._search_showing is True, "a mapped page is not searching"
+    assert page._accepts_search_results is True, "a mapped page is not searching"
     page.applied.clear()
 
     generation = page._search_generation
     window.set_visible(False)
     pump_until(lambda: not page.get_mapped(), 10, "the page never unmapped")
 
-    assert page._search_showing is False, (
+    assert page._accepts_search_results is False, (
         "hiding the window left the page searching; the teardown hook is on a "
         "signal that does not fire here")
     assert page._search_generation != generation, (
@@ -455,11 +423,10 @@ def subclass_defs() -> list[tuple[str, ast.ClassDef]]:
     return found
 
 
-def test_no_page_overrides_the_handler() -> None:
-    """A page overrides apply_search, never on_search_changed.
+def test_pages_do_not_override_search_handlers() -> None:
+    """Require pages to override apply_search, not the guarded handler.
 
-    An override of the handler bypasses the staleness guard and the
-    invalidation for that page, and nothing else would report it.
+    Handler overrides bypass staleness and invalidation.
     """
     subclasses = subclass_defs()
     assert len(subclasses) >= MIN_SUBCLASSES_SCANNED, (
@@ -483,15 +450,15 @@ def main() -> int:
     fixtures.start_watchdog(60, label="scenario_search_debounce")
 
     test_base_holds_the_defaults()
-    test_the_entry_owns_the_wait()
+    test_search_entry_owns_debounce_delay()
     test_generation_guard_drops_an_overtaken_pass()
     test_invalidate_stops_passes_and_frees_the_cache()
-    test_a_pass_that_only_starts_work_re_arms_the_catch_up()
-    test_the_page_settles_its_entry_before_the_catch_up()
-    test_search_is_current_answers_both_halves()
-    test_hiding_the_window_invalidates_for_real()
+    test_unrendered_search_runs_again_on_show()
+    test_on_shown_precedes_search_catch_up()
+    test_search_is_current_requires_generation_and_visibility()
+    test_window_unmap_invalidates_pending_search()
     test_hooks_are_wired()
-    test_no_page_overrides_the_handler()
+    test_pages_do_not_override_search_handlers()
 
     print("ALL PASS: scenario_search_debounce")
     return 0

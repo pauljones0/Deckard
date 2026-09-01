@@ -1,10 +1,5 @@
-"""
-Unit-tier scenario for the single timer wheel in src/backend/timer_wheel.py.
-
-One daemon scheduler thread backs a min-heap of due times, and 50 concurrent
-schedule calls start no further thread. A cancel is idempotent and safe after a
-fire.
-"""
+"""Verify timer timing, idempotent cancellation, one scheduler under 50
+concurrent calls, callback isolation, heap compaction, and the default wheel."""
 
 # A fired callback runs off the scheduler thread, so a slow one cannot delay an
 # unrelated due timer.
@@ -26,9 +21,7 @@ def check_fires_within_tolerance() -> None:
 
     assert fixtures.wait_until(lambda: len(fired_at) == 1, timeout=2.0), "timer never fired"
     delta = fired_at[0] - t0
-    # A loose lower bound, because a 0.1s schedule must impose a real delay,
-    # and a generous liveness ceiling. A tight threshold around 0.1s flakes on
-    # scheduler granularity and on a loaded runner.
+    # Loose bounds tolerate scheduler granularity and loaded runners.
     assert 0.02 <= delta <= 1.5, f"timer fired outside tolerance: {delta:.3f}s (expected ~0.1s)"
 
     print(f"PASS: schedule() fires within tolerance ({delta:.3f}s for a 0.1s delay)")
@@ -77,9 +70,7 @@ def check_one_thread_for_many_schedules() -> None:
     assert scheduler_thread.name == "ConcurrentTestWheel"
     assert scheduler_thread.daemon, "the scheduler thread must be a daemon thread"
 
-    # 50 threads racing to schedule on one wheel at once. The delay is long
-    # enough that none of them fires, and so spawns a dispatch thread, before
-    # the thread count is sampled below.
+    # The long delay prevents callback threads before the thread-count sample.
     barrier = threading.Barrier(50)
     handles = []
     handles_lock = threading.Lock()
@@ -112,7 +103,7 @@ def check_one_thread_for_many_schedules() -> None:
     print("PASS: one TimerWheel == one scheduler thread, even under 50 concurrent schedule() calls")
 
 
-def check_slow_callback_delays_no_other_timer() -> None:
+def check_callback_isolation() -> None:
     wheel = timer_wheel.TimerWheel(name="SlowCallbackWheel")
     timeline = []
     timeline_lock = threading.Lock()
@@ -129,9 +120,7 @@ def check_slow_callback_delays_no_other_timer() -> None:
         with timeline_lock:
             timeline.append(("fast", time.monotonic()))
 
-    # slow_cb is due first and blocks for 0.5s. fast_cb is due 0.1s later and
-    # must fire on schedule. A scheduler thread that ran callbacks inline
-    # would hold fast_cb until slow_cb returns.
+    # The later fast callback must run before the earlier slow callback ends.
     wheel.schedule(0.05, slow_cb, name="slow")
     wheel.schedule(0.15, fast_cb, name="fast")
 
@@ -148,10 +137,7 @@ def check_slow_callback_delays_no_other_timer() -> None:
     fast_ts = next(ts for name, ts in timeline if name == "fast")
     slow_end_ts = next(ts for name, ts in timeline if name == "slow_end")
 
-    # The claim is about order. The unrelated fast timer must fire while the
-    # slow callback is still blocked, which happens only when a callback
-    # dispatches off the scheduler thread. Asserting the event order rather
-    # than a wall-clock threshold cannot flake on a loaded runner.
+    # Event order proves off-scheduler dispatch without a tight timing limit.
     assert fast_ts < slow_end_ts, (
         f"the slow callback delayed the unrelated timer: fast fired at "
         f"{fast_ts - t0:.3f}s, not before the slow callback finished at "
@@ -176,6 +162,53 @@ def check_module_level_default_wheel_smoke() -> None:
     print("PASS: module-level timer_wheel.schedule() smoke check")
 
 
+def check_cancelled_timer_compaction() -> None:
+    """Cancelling timers behind a long-lived front timer compacts their heap
+    entries and releases their closures."""
+    import weakref
+
+    wheel = timer_wheel.TimerWheel(name="CompactWheel")
+    # A long-lived timer far in the future, at the front of the heap.
+    front = wheel.schedule(3600.0, lambda: None, name="front")
+
+    # A batch of later timers whose callbacks close over a tracked object, so
+    # a retained handle keeps its closure and its object alive.
+    class _Tracked:
+        pass
+
+    handles = []
+    refs = []
+    for _ in range(200):
+        obj = _Tracked()
+        refs.append(weakref.ref(obj))
+        handles.append(wheel.schedule(1800.0, lambda o=obj: o, name="later"))
+
+    heap_before = len(wheel._heap)
+    for handle in handles:
+        handle.cancel()
+
+    # The compaction fired during the cancels: the heap dropped the cancelled
+    # entries, keeping the still-live front timer.
+    assert len(wheel._heap) < heap_before, (
+        f"the heap did not compact: {len(wheel._heap)} entries after cancelling "
+        f"200 of {heap_before}")
+    assert any(item[2] is front for item in wheel._heap), (
+        "compaction dropped the live front timer")
+
+    # The cancelled handles' closures are gone, so their tracked objects are
+    # collectable. Drop the local strong refs and collect.
+    del handles, obj
+    import gc
+    gc.collect()
+    alive = sum(1 for ref in refs if ref() is not None)
+    assert alive == 0, (
+        f"{alive} cancelled-timer closures are still retained after compaction")
+
+    front.cancel()
+    print("PASS: cancelling behind a long-lived timer compacts the heap and "
+          "frees the closures")
+
+
 def main() -> None:
     fixtures.start_watchdog(WATCHDOG_SECONDS, label="scenario_timer_wheel")
 
@@ -183,7 +216,8 @@ def main() -> None:
     check_cancel_before_fire_prevents()
     check_cancel_after_fire_is_noop()
     check_one_thread_for_many_schedules()
-    check_slow_callback_delays_no_other_timer()
+    check_callback_isolation()
+    check_cancelled_timer_compaction()
     check_module_level_default_wheel_smoke()
 
     print("PASS: scenario_timer_wheel")

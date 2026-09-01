@@ -1,8 +1,5 @@
-"""Shared fixtures for the headless harness.
-
-Import this module first, before src or globals. globals.py resolves DATA_PATH
-from argv at import time, and this module points argv at a fresh temp dir.
-"""
+"""Shared fixtures that set a temporary DATA_PATH for the headless harness.
+Import before src or globals because globals.py reads argv at import."""
 import atexit
 import json
 import os
@@ -75,11 +72,7 @@ class _StubDeckSettings(DeckSettings):
 
 
 class StubSettingsManager:
-    """Minimal gl.settings_manager stand-in for the unit tier.
-
-    Implements get_app_settings(), get_deck_settings() and
-    save_deck_settings(), the only methods the harness code paths call.
-    """
+    """Unit-tier settings manager for app and deck operations under test."""
 
     def __init__(self, app_settings: dict = None):
         self._app_settings = app_settings if app_settings is not None else {}
@@ -106,11 +99,7 @@ class StubSettingsManager:
 
 
 class StubDeckManager:
-    """Stands in for gl.deck_manager and the DeckController deck_manager arg.
-
-    Only .deck_controller is dereferenced. The stub records calls, so a
-    scenario can assert that no removal happened.
-    """
+    """Deck manager stand-in that records connection and removal calls."""
 
     def __init__(self):
         self.deck_controller: list = []
@@ -126,30 +115,21 @@ class StubDeckManager:
         self.connect_calls += 1
 
     def close_all(self) -> None:
-        """Delegate to the real close protocol.
-
-        This stub and DeckManager.close_all both call close_all_controllers(),
-        so a scenario through the stub drives production code.
-        """
+        """Delegate to the production close_all_controllers protocol."""
         from src.backend.DeckManagement.DeckManager import close_all_controllers
 
         close_all_controllers(self.deck_controller)
 
 
-# Tier-mixing guard. The unit and integration tiers install different,
-# incompatible gl.* graphs. A real DeckController built after
-# install_stub_globals() dereferences stub collaborators that lack what it
-# needs, and the failure is order-dependent. Each installer refuses loudly.
+# Unit and integration tiers install incompatible gl.* graphs.
+# Refuse mixed installation before order-dependent collaborator failures occur.
 _stub_globals_installed = False
 _integration_globals_installed = False
 
 
 def install_stub_globals(app_settings: dict = None) -> StubDeckManager:
-    """Install a StubSettingsManager and StubDeckManager for the unit tier.
-
-    Returns the StubDeckManager for assertions. Refuses if the integration
-    tier is already installed, because the two gl.* graphs are incompatible.
-    """
+    """Install unit-tier globals and return the deck manager.
+    Refuse installation after the incompatible integration tier."""
     global _stub_globals_installed
     if _integration_globals_installed:
         raise RuntimeError(
@@ -174,9 +154,7 @@ class StubBackground:
         self.slideshow = None
 
     def slideshow_tick(self, now=None):
-        # The media tick calls this every pass. A real Background returns False
-        # here too whenever no slideshow is set, so a deck with a single-image
-        # or no background never advances anything.
+        # Match a real background with no slideshow
         return False
 
 
@@ -191,11 +169,7 @@ class StubScreenSaver:
 
 
 class _QuietInputState:
-    """Quiet input state for MediaPlayerThread._needs_key_ticks.
-
-    No videos and no scrolling labels, so the live run() loop keeps its
-    animated-content branch off.
-    """
+    """Input state with no video or scrolling labels for key-tick tests."""
     key_video = None
     video = None
     background_video = None
@@ -212,12 +186,8 @@ _QUIET_STATE = _QuietInputState()
 
 
 class StubInput:
-    """Minimal ControllerKey and ControllerTouchScreen stand-in.
-
-    Owns the present state _reset_dedup_hashes resets and the write boundary
-    stamps. update() goes through it, the way a real input's paint path does,
-    and forces the paint: the unit tier renders no content to dedup against.
-    """
+    """Input stand-in with production present-state tracking.
+    update() forces paint; the unit tier has no content to deduplicate."""
 
     def __init__(self, controller: "StubDeckController", index: int, touchscreen: bool = False):
         self.controller = controller
@@ -242,11 +212,7 @@ class StubInput:
 
 
 class StubDeckController:
-    """Unit-tier stand-in for what MediaPlayerThread's judge and queues read.
-
-    The write-result and repaint methods bind to the real DeckController
-    functions below this class, so no hand-written copy can drift from them.
-    """
+    """Unit-tier controller with production write and repaint methods."""
 
     def __init__(self, deck=None, serial: str = "stub-serial-1", n_keys: int = 0, has_touchscreen: bool = False):
         self.deck = deck if deck is not None else FaultyFakeDeck(serial_number=serial)
@@ -277,14 +243,8 @@ class StubDeckController:
         return self.deck.is_visual()
 
     def _release_handle(self) -> None:
-        """Unit-tier stand-in for DeckController._release_handle.
-
-        The stub holds the raw FaultyFakeDeck, where the real controller holds
-        a BetterDeck around it, so it releases through the free function the
-        wrapper's method delegates to. ClearAndClose calls this by name, on
-        the media thread, so it swallows what production swallows: a deck
-        whose close() raises must not kill the writer loop.
-        """
+        """Release the raw unit-tier deck through the BetterDeck helper.
+        Swallow close failures so ClearAndClose cannot stop the writer."""
         from src.backend.DeckManagement.BetterDeck import release_device_handle
 
         try:
@@ -293,11 +253,7 @@ class StubDeckController:
             print(f"stub _release_handle: failed to release the deck handle: {e}")
 
     def _write_blank_frames(self) -> None:
-        """Unit-tier stand-in for DeckController._write_blank_frames.
-
-        Writes a blank marker to every key and the touchscreen. The Clear and
-        ClearAndClose control messages call it by name, so the stub needs it.
-        """
+        """Write a blank marker to each key and the touchscreen."""
         if not self.is_visual():
             return
         for i in range(self.deck.key_count()):
@@ -306,16 +262,10 @@ class StubDeckController:
             size = self.get_touchscreen_image_size()
             self.deck.set_touchscreen_image(b"\x00" * 16, x_pos=0, y_pos=0, width=size[0], height=size[1])
 
-    # _reset_dedup_hashes, _schedule_full_repaint, _run_pending_repaint and
-    # _on_write_result bind to the real DeckController functions below this
-    # class. Do not re-implement them here; a copy drifts silently.
+    # Bind write and repaint methods to DeckController; do not copy them
 
     def update_all_inputs(self, gen=None) -> None:
-        """Mirror the key and touchscreen fan-out of update_all_inputs.
-
-        Bumps the test-only repaint_count. The real _run_pending_repaint calls
-        this once per fired repaint, so the count stays exact.
-        """
+        """Update all inputs and count each full repaint."""
         for t in self.inputs:
             for i in self.inputs[t]:
                 i.update()
@@ -335,11 +285,8 @@ _stub_methods_bound = False
 
 
 def _bind_real_deckcontroller_methods() -> None:
-    """Bind the write-result and repaint protocol to the real DeckController.
-
-    A hand-written copy drifts silently. The lazy import keeps psutil and
-    mem_telemetry out of the main loop the pure-DBus scenarios pump.
-    """
+    """Bind the production write-result and repaint protocol to the stub.
+    Import lazily to keep psutil and mem_telemetry out of D-Bus scenarios."""
     global _stub_methods_bound
     if _stub_methods_bound:
         return
@@ -354,11 +301,8 @@ def _bind_real_deckcontroller_methods() -> None:
 
 
 def make_stub_controller(serial: str = "stub-serial-1", n_keys: int = 0, has_touchscreen: bool = False):
-    """Build a StubDeckController over a fresh FaultyFakeDeck.
-
-    The MediaPlayerThread is wired but not started, so a unit scenario drives
-    perform_media_player_tasks() directly and stays deterministic.
-    """
+    """Build a stub controller with an unstarted MediaPlayerThread.
+    Unit scenarios drive perform_media_player_tasks() directly."""
     from src.backend.DeckManagement.DeckController import MediaPlayerThread
 
     _bind_real_deckcontroller_methods()
@@ -389,11 +333,7 @@ def make_test_png(path: str, size=(72, 72), color=(255, 0, 0)) -> str:
 
 def make_test_mp4(path: str, size=(200, 100), n_frames=30, fps=15,
                   color=(64, 128)) -> str:
-    """Build a tiny video whose blue channel varies per frame.
-
-    Consecutive frames hash differently, so the write point does not dedup
-    them. color is the fixed (green, red) pair, which makes two files distinct.
-    """
+    """Build a video with distinct frame hashes and a fixed green-red pair."""
     import cv2
     import numpy as np
     os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -437,11 +377,8 @@ def seed_page_with_background_and_screensaver(
     page_name: str, media_path: str, screensaver_media_path: str,
     screensaver_time_delay: int = 60, data_dir: str = None,
 ) -> str:
-    """Seed a background page that also persists the screensaver settings.
-
-    load_page() re-reads the screensaver config from the page on every load and
-    overwrites media_path. Without this, a second hide() resets the path to None.
-    """
+    """Seed background and screensaver settings in one page.
+    Persist the path because each load overwrites screensaver media_path."""
     data_dir = data_dir if data_dir is not None else gl.DATA_PATH
     pages_dir = os.path.join(data_dir, "pages")
     os.makedirs(pages_dir, exist_ok=True)
@@ -472,11 +409,8 @@ def seed_page_with_background_and_screensaver(
 
 
 def seed_page(page_name: str = "Main", data_dir: str = None) -> str:
-    """Write a minimal, action-free page JSON into the temp pages folder.
-
-    Empty keys, dials and touchscreens, so load_action_objects() never touches
-    gl.plugin_manager. Idempotent. Returns the page path.
-    """
+    """Idempotently write an action-free page and return its path.
+    Empty inputs prevent load_action_objects() from using gl.plugin_manager."""
     data_dir = data_dir if data_dir is not None else gl.DATA_PATH
     pages_dir = os.path.join(data_dir, "pages")
     os.makedirs(pages_dir, exist_ok=True)
@@ -488,11 +422,8 @@ def seed_page(page_name: str = "Main", data_dir: str = None) -> str:
 
 
 def _install_integration_globals() -> None:
-    """Populate the minimum gl.* graph that DeckController.__init__ reads.
-
-    Idempotent across several headless controllers in one process. Refuses if
-    the unit tier is already installed, because the two graphs are incompatible.
-    """
+    """Idempotently install the globals required by DeckController.
+    Refuse installation after the incompatible unit tier."""
     global _integration_globals_installed
     if _integration_globals_installed:
         return
@@ -519,15 +450,8 @@ def _install_integration_globals() -> None:
 
 def make_headless_controller(serial: str = "headless-1", key_layout=None, page_name: str = "Main",
                              model=None):
-    """Build a real DeckController over a FaultyFakeDeck, the integration tier.
-
-    No GTK main loop and no hardware. Seeds one empty page first, so
-    load_default_page() at the end of __init__ has something to load.
-
-    model names a deck shape: a preset name such as "xl" or "plus", a
-    FakeDeckModel of its own, or None for the default shape every scenario
-    without an opinion gets.
-    """
+    """Build an integration-tier DeckController with a seeded empty page.
+    model accepts a preset name, FakeDeckModel, or None for the default."""
     _install_integration_globals()
     seed_page(page_name)
 
@@ -549,11 +473,7 @@ def raw_deck(controller) -> FaultyFakeDeck:
 
 
 def wait_until(predicate, timeout: float = 3.0, interval: float = 0.02) -> bool:
-    """Poll predicate() until it is truthy or timeout elapses.
-
-    Returns whether it became true. A scenario settles as fast as the media
-    thread runs, which a fixed sleep cannot do.
-    """
+    """Poll predicate() until it is true or timeout elapses."""
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if predicate():
@@ -563,11 +483,7 @@ def wait_until(predicate, timeout: float = 3.0, interval: float = 0.02) -> bool:
 
 
 def start_watchdog(seconds: float, label: str = "scenario") -> None:
-    """Start a daemon thread that ends the process after seconds, with os._exit.
-
-    A deadlock in the code under test must fail fast and name the scenario.
-    run_all.py's subprocess timeout is longer and prints no specific message.
-    """
+    """Exit after a bounded delay and identify a deadlocked scenario."""
     def _fire():
         time.sleep(seconds)
         print(f"FAIL: {label} watchdog fired after {seconds}s -- likely deadlock", flush=True)
@@ -578,15 +494,8 @@ def start_watchdog(seconds: float, label: str = "scenario") -> None:
 
 
 def has_usable_display() -> bool:
-    """True only when GTK can build a widget in this process.
-
-    Gtk.init_check() answers True on a headless host where
-    Gdk.Display.get_default() stays None. Adw.init() then aborts the
-    process (SIGSEGV) or the first widget raises RuntimeError. A scenario
-    that constructs widgets must skip when this returns False, so the suite
-    is safe with no display. gi is imported here, not at module load, so the
-    many non-GTK scenarios pay nothing for it.
-    """
+    """Return whether GTK has both successful initialization and a display.
+    Import gi lazily so non-GTK scenarios do not load it."""
     import gi
     gi.require_version("Gtk", "4.0")
     gi.require_version("Gdk", "4.0")
@@ -614,20 +523,14 @@ def teardown(controller) -> None:
         tick_thread.join(timeout=2.0)
 
 
-# Stub plugin manager and latch action, for the wipe-restore scenarios. These
-# drive the real DeckController, Page, ControllerKey and ActionCore lifecycle
-# with one action injected through a stub gl.plugin_manager. The harness
-# installs no plugin_manager otherwise, so an action page needs this shim.
+# Stub plugin manager and latch action for wipe-restore scenarios
+# Action pages need this graph because the harness has no plugin manager.
 
 STUB_ACTION_ID = "dev_test_LatchAction"
 
 
 def make_latch_action_class():
-    """Return a fresh LatchAction subclass of the real ActionCore.
-
-    LatchAction paints state 1 once and never calls set_media again, the worst
-    case for the state wipe. A fresh subclass closes icon_path over one test.
-    """
+    """Return a fresh ActionCore subclass that paints state 1 only once."""
     # Import here, not at module scope. ActionCore is dead weight for the unit
     # tier, and its module graph must stay out of the pure-DBus scenarios.
     from src.backend.PluginManager.ActionCore import ActionCore
@@ -662,14 +565,8 @@ def make_latch_action_class():
 
 
 class _StubActionHolder:
-    """Minimal ActionHolder stand-in.
-
-    The page loader calls init_and_get_action() and reads action_core, which
-    tells it whether an object already loaded into the same slot still fits
-    this holder. A second load of one page takes that branch. get_is_compatible()
-    is the real holder's own gate inside init_and_get_action, which this
-    replaces, so nothing calls the copy below.
-    """
+    """ActionHolder stand-in for initial and repeated page loads.
+    Exposes action_core so the loader can reuse a compatible slot object."""
 
     def __init__(self, action_cls, action_id: str, icon_path):
         self.action_core = action_cls
@@ -714,11 +611,8 @@ _FAKE_PLUGIN_BASE = _types.SimpleNamespace(PATH="/tmp", backend=None)
 
 
 def install_stub_plugin_manager(action_cls, icon_path, action_id: str = STUB_ACTION_ID):
-    """Install a stub gl.plugin_manager that resolves action_id to action_cls.
-
-    Returns the stub. Call it before make_headless_controller(), because
-    load_default_page() runs at the end of DeckController.__init__.
-    """
+    """Install a plugin manager that maps action_id to action_cls.
+    Install it before DeckController.__init__ loads the default page."""
     holder = _StubActionHolder(action_cls, action_id, icon_path)
     gl.plugin_manager = _StubPluginManager(holder, action_id)
     return gl.plugin_manager

@@ -1,9 +1,5 @@
-"""
-Single-slot task races must not lose frames.
-
-The drain, the Clear, the write-cap putback and the two slot wipes all take
-_slot_lock, so a producer assigning concurrently either wins or blocks.
-"""
+"""Verify coherent slots when producers race drain, Clear, and write-cap
+putback; verify both slot wipes and page-generation-before-slot lock ordering."""
 
 # A hooked touchscreen_task property fires a real producer inside each window,
 # so every interleave is deterministic rather than left to the scheduler.
@@ -15,17 +11,9 @@ import time
 from fixtures import start_watchdog
 
 
-def hook_types(media_player):
-    """Subclass the real class with a hooked touchscreen_task property and swap
-    the instance's __class__.
-
-    An armed hook fires on a read.
-    """
-    # It captures the value first, lets a producer thread run a real
-    # add_touchscreen_task, then returns what it captured, which is the
-    # producer-in-the-window interleave.
-    # _read_hook fires once, and _read_hook_on_nth fires on the Nth read of
-    # the slot, which is how a check targets the putback's own None check.
+def install_touchscreen_read_hooks(media_player):
+    """Install a touchscreen-task property that fires an armed read hook."""
+    # Return the pre-producer value to expose a deterministic check-and-set race.
     base = type(media_player)
 
     class Hooked(base):
@@ -41,11 +29,7 @@ def hook_types(media_player):
                     target_n, target_hook = nth
                     if count == target_n:
                         self.__dict__["_read_hook_on_nth"] = None
-                        # Return the value captured before the producer
-                        # ran, which is the check-then-act window. The
-                        # caller's None check sees None, the producer
-                        # assigns a newer frame, and an unlocked putback then
-                        # clobbers it with the older deferred frame.
+                        # Return the value captured before the producer ran.
                         target_hook()
                         return value
                 hook = self.__dict__.get("_read_hook")
@@ -67,14 +51,14 @@ def hook_types(media_player):
     return media_player
 
 
-def check_drain_half() -> int:
+def check_touchscreen_drain_race() -> int:
     from src.backend.DeckManagement.InputIdentifier import Input
 
     controller, media_player, _ = fixtures.make_stub_controller(
         serial="slotrace-1", has_touchscreen=True
     )
     touch = controller.inputs[Input.Touchscreen][0]
-    media_player = hook_types(media_player)
+    media_player = install_touchscreen_read_hooks(media_player)
 
     produced = threading.Event()
 
@@ -124,7 +108,7 @@ def check_drain_half() -> int:
     return 0
 
 
-def check_clear_half() -> int:
+def check_image_clear_race() -> int:
     from src.backend.DeckManagement.InputIdentifier import Input
     from src.backend.DeckManagement.DeckController import ClearMsg
 
@@ -183,22 +167,17 @@ def check_clear_half() -> int:
     return 0
 
 
-def check_writecap_putback() -> int:
-    """The write cap defers an over-budget touchscreen frame back into the
-    single slot while that slot is still None. The check and the set must be
-    atomic. A producer assigning a newer frame in between wins, and the older
-    deferred frame never reaches the device."""
+def check_write_cap_putback_race() -> int:
+    """A newer producer frame wins an atomic over-budget putback race."""
     from src.backend.DeckManagement.InputIdentifier import Input
 
     controller, media_player, _ = fixtures.make_stub_controller(
         serial="slotrace-3", has_touchscreen=True
     )
     touch = controller.inputs[Input.Touchscreen][0]
-    media_player = hook_types(media_player)
+    media_player = install_touchscreen_read_hooks(media_player)
 
-    # Force the over-budget branch. A recent last write against the default
-    # 20Hz cap defers the seeded frame rather than writing it, so the frame
-    # flows into the putback where the race lives.
+    # A recent write forces the seeded frame into the over-budget putback.
     media_player._last_touch_write = time.time()
 
     produced = threading.Event()
@@ -262,10 +241,8 @@ def check_writecap_putback() -> int:
 
 
 def check_slot_wipes() -> int:
-    """clear_media_player_tasks and _exec_clear_and_close both wipe the
-    single slot under _slot_lock, so a concurrent producer leaves a coherent
-    slot, either wiped or holding a whole task. The producer here runs before
-    the wipe, so each wipe wins and neither call deadlocks."""
+    """Directly clear through both slot-wipe paths and exercise the one nested
+    page-generation-before-slot lock order."""
     from src.backend.DeckManagement.InputIdentifier import Input
     from src.backend.DeckManagement.DeckController import DeckController
 
@@ -283,9 +260,7 @@ def check_slot_wipes() -> int:
             img_hash=1,
         )
 
-    # clear_media_player_tasks acquires _page_gen_lock and then _slot_lock,
-    # which is the one nested ordering. It must not deadlock and must wipe
-    # the slot. The real DeckController method runs with the stub as self.
+    # Exercise the page-generation then slot-lock ordering through the real method.
     seed()
     DeckController.clear_media_player_tasks(controller, gen=controller._page_load_generation)
     if media_player.touchscreen_task is not None:
@@ -306,9 +281,9 @@ def check_slot_wipes() -> int:
 
 def main() -> int:
     start_watchdog(40, "touchscreen_slot_race")
-    rc = check_drain_half()
-    rc |= check_clear_half()
-    rc |= check_writecap_putback()
+    rc = check_touchscreen_drain_race()
+    rc |= check_image_clear_race()
+    rc |= check_write_cap_putback_race()
     rc |= check_slot_wipes()
     return rc
 

@@ -140,9 +140,7 @@ class InfoPage(Gtk.Box):
         self.image_group.set_visible(False)
         self.video_group.set_visible(True)
 
-        # Update the UI content. cv2 raises nothing for a corrupt or
-        # unreadable video. It fails to open the file, or it reports zeroes,
-        # so the checks below raise instead and reach the unknown fallback.
+        # Treat cv2 open failures and zero dimensions as unreadable video
         try:
             vid = cv2.VideoCapture(path)
             try:

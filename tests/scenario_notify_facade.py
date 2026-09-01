@@ -1,10 +1,5 @@
-"""
-Pins the gl.notify facade and the send_notification threading contract.
-
-The facade toasts a report when the main window is visible, and sends a desktop
-notification when the window is hidden or absent. It decides on the main
-thread, queues a call made before gl.app exists, and delivers once.
-"""
+"""Check notification routing, main-thread delivery, and pre-app deferral.
+Each report must arrive exactly once as a toast or desktop notification."""
 
 # The app and the window are stubs here, with no GTK widgets and no display.
 import threading
@@ -183,9 +178,7 @@ def check_pre_app_deferral(notify) -> None:
 
 
 class _FlipOnAppend(list):
-    """Makes the race deterministic. When the facade appends its deferred
-    task, on_activate already published the app. With drain_before_remove the
-    drain also runs before the facade can reclaim the task."""
+    """Publish the app during append and optionally drain before task reclamation."""
 
     def __init__(self, app, drain_before_remove: bool = False):
         super().__init__()
@@ -206,9 +199,7 @@ class _FlipOnAppend(list):
 
 
 def check_drain_race_exactly_once(notify) -> None:
-    """In the append-and-drain race, gl.app flips between the facade's None
-    check and its append. Whichever side owns the task, the report lands
-    exactly once."""
+    """Require exactly one delivery when app publication races deferred append."""
     original_tasks = gl.app_loading_finished_tasks
 
     # In interleaving A the drain finished before the append lands. The
@@ -228,14 +219,16 @@ def check_drain_race_exactly_once(notify) -> None:
 
         # In interleaving B the drain pops the task before the reclaim. The
         # reclaim backs off, so exactly one delivery happens.
-        app2 = Recorder(visible=True)
+        drain_owned_app = Recorder(visible=True)
         gl.app = None
-        gl.app_loading_finished_tasks = _FlipOnAppend(app2, drain_before_remove=True)
+        gl.app_loading_finished_tasks = _FlipOnAppend(
+            drain_owned_app, drain_before_remove=True
+        )
         call_from_worker(notify.error, "boot-window report")
         pump()
-        assert [(kind, text) for kind, text, _ in app2.toasts] == [
+        assert [(kind, text) for kind, text, _ in drain_owned_app.toasts] == [
             ("error", "boot-window report")
-        ], f"drain-owned delivery must happen exactly once: {app2.toasts}"
+        ], f"drain-owned delivery must happen exactly once: {drain_owned_app.toasts}"
     finally:
         gl.app_loading_finished_tasks = original_tasks
 
@@ -243,9 +236,7 @@ def check_drain_race_exactly_once(notify) -> None:
 
 
 def check_routing_decided_on_main_thread(notify) -> None:
-    # The window is visible at call time and hidden when the idle callback
-    # runs. A decision at call time raises an invisible toast. The decision
-    # inside the callback picks the desktop notification.
+    # Route by visibility at delivery time, not worker call time.
     app = Recorder(visible=True)
     gl.app = app
 
@@ -277,10 +268,7 @@ def check_routing_decided_on_main_thread(notify) -> None:
 
 
 def check_send_notification_marshalled() -> None:
-    """The facade's fallback leg calls App.send_notification from the idle
-    callback, and store installs and asset updates call it from worker
-    threads. The settings read, the Gio.Notification construction and the
-    super() call all run on the main thread."""
+    """Run settings reads, Gio.Notification construction, and delivery on main."""
     from src.app import App
 
     settings_reads: list[threading.Thread] = []
@@ -296,9 +284,7 @@ def check_send_notification_marshalled() -> None:
     gl.settings_manager = types.SimpleNamespace(
         get_app_settings=get_app_settings,
         app=lambda: AppSettings(get_app_settings()))
-    # super().send_notification resolves through the MRO to Gio.Application.
-    # The patch there keeps the real method body under test and records the
-    # delivery. A real send needs a registered application.
+    # Patch Gio.Application to keep App.send_notification under test without registration.
     Gio.Application.send_notification = lambda self, app_id, notif: sends.append(
         threading.current_thread())
 
@@ -340,9 +326,9 @@ def check_send_notification_marshalled() -> None:
 def main() -> None:
     fixtures.start_watchdog(WATCHDOG_SECONDS, label="scenario_notify_facade")
 
-    from src.backend.notify import Notify
+    from src.backend.notify import Notifier
 
-    notify = Notify()
+    notify = Notifier()
     try:
         check_visible_window_gets_toasts(notify)
         check_hidden_window_falls_back(notify)

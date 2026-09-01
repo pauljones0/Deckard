@@ -35,9 +35,8 @@ class LockScreenManager:
 
     @log.catch
     def setup(self) -> None:
-        # XDG_CURRENT_DESKTOP holds a colon-separated list ("ubuntu:GNOME",
-        # "GNOME-Classic:GNOME"), so match one component. A match on the whole
-        # string misses these sessions and lock detection never starts.
+        # Match each colon-separated XDG_CURRENT_DESKTOP component so values
+        # such as ubuntu:GNOME and GNOME-Classic:GNOME start lock detection.
         env_components = desktop_components()
         if "gnome" in env_components:
             self.detector = GnomeLockScreenDetector(self)
@@ -50,31 +49,18 @@ class LockScreenManager:
         else:
             self.detector = LogindLockScreenDetector(self)
 
-        # The detectors above only wire up the signal. A session already
-        # locked when the app starts sends no lock signal, so read the
-        # current state once here and lock() at once when it reads locked.
-        # Decks enumerated after this read the seeded gl.screen_locked at init
-        # and come up on the screen saver; decks already enumerated get locked
-        # by the lock() call. The read runs here, on the setup daemon thread,
-        # so a slow bus never holds app startup.
+        # Seed the current state because an existing lock sends no new signal.
+        # Run the read on this setup daemon so a slow bus does not block startup.
         self.detector.read_initial_lock_state()
 
     @log.catch
     def lock(self, active: bool, initial: bool = False) -> None:
         """Apply a lock change.
-
-        initial marks the one-shot startup read, which runs on the setup
-        daemon thread. Its deck work goes to the main loop, because the deck
-        loop below touches the screen saver and the interaction flag, which
-        are main-thread surfaces. The signal-driven path leaves initial False:
-        GDBus dispatches those callbacks on the main loop already.
-        """
+        initial moves startup deck work to the main loop; signals already run there."""
         gl.screen_locked = active
         if gl.presence_monitor:
-            # Tell the monitor before the screensaver work below reads the
-            # lock. Catch here, because this method's @log.catch returns on an
-            # exception, which stops the lock from reaching allow_interaction,
-            # the screensaver, and self.locked.
+            # Notify presence before screen-saver work reads the lock.
+            # Isolate failure so @log.catch does not stop the remaining lock update.
             try:
                 gl.presence_monitor.on_lock_changed(active)
             except Exception:
@@ -92,23 +78,13 @@ class LockScreenManager:
         
         log.info(f"Locking screen: {active}")
 
-        # Commit the tracked state at the transition, before the deck loop can
-        # return early. The startup initial-state read locks while no deck
-        # manager exists yet; the guard below then returns without deck work.
-        # Setting self.locked here keeps it in step with gl.screen_locked, so
-        # the first real unlock is not read as a no-op and its deck loop runs
-        # on the decks that enumerated after the read.
+        # Commit before deck work can return early when startup has no manager.
+        # This keeps the first later unlock from being mistaken for a no-op.
         self.locked = active
 
         if initial:
-            # The startup read runs on the setup daemon thread. A deck
-            # manager that already exists by then would take the deck loop
-            # off the main thread, so queue it instead. The loop runs when
-            # the main loop next idles, whether or not it pumps yet. The
-            # idle re-reads self.locked when it fires: a real lock change
-            # can land between the queue and the fire (signals dispatch at a
-            # higher priority than idles), and applying the captured startup
-            # state would overwrite the newer one.
+            # Queue startup deck work on the main loop and read self.locked when it runs.
+            # A higher-priority signal can otherwise make a captured startup state stale.
             GLib.idle_add(lambda: self._apply_to_decks(self.locked))
             return
 
@@ -116,11 +92,8 @@ class LockScreenManager:
 
     @log.catch
     def _apply_to_decks(self, active: bool) -> bool:
-        """Show or hide the screen saver on every deck. Main thread only.
-
-        Returns GLib.SOURCE_REMOVE, so it also serves as a one-shot idle
-        callback.
-        """
+        """Show or hide every deck's screen saver on the main thread.
+        Return GLib.SOURCE_REMOVE so this also serves as a one-shot idle callback."""
         deck_manager = gl.deck_manager
         if deck_manager is None:
             return GLib.SOURCE_REMOVE

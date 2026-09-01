@@ -23,11 +23,8 @@ gi.require_version("Adw", "1")
 
 
 class OutdatedActionRow(MissingRow):
-    # The signature matches the sibling MissingActionButtonRow, and the call
-    # site in ActionManager.load_for_actions. A signature of the form (index,
-    # state, coords, dial, touch) predates InputIdentifier and passes coords
-    # to a parent that has no such parameter, which raises TypeError for every
-    # outdated action.
+    # Match MissingActionButtonRow and ActionManager.load_for_actions.
+    # Pass InputIdentifier because the parent has no separate coordinates parameter.
     def __init__(self, action_id:str, identifier: InputIdentifier | None, state:int, index: int):
         super().__init__(
             action_id=action_id,

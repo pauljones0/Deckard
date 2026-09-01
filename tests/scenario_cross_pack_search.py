@@ -1,20 +1,4 @@
-"""Pins the search that reaches across every pack of one asset type.
-
-A query typed into the pack grid gathers the assets of all of its packs on a
-worker thread, ranks the merged names with one ranker, and shows the matches
-in the leaf page. The leaf page then owns the query: a changed one gathers
-again, an emptied one goes back to the pack grid.
-
-The legs drive the real classes over stand-ins for the widgets, so most of the
-file is logic and threads. No GTK widget is built, and no display is needed,
-except in the one leg that binds a real card: it says SKIP without a display,
-and the structural leg beside it covers the same wiring anywhere.
-
-The staleness aborts each have an observable, because a guard that only makes
-a later assertion redundant is a guard a mutant can delete unnoticed. The
-packs count the scans they take, and the render callback counts the times it
-is reached.
-"""
+"""Verify ranked, asynchronous search across every pack of one asset type."""
 import fixtures  # noqa: F401  (import first: isolated --data tempdir)
 
 import ast
@@ -63,12 +47,7 @@ REAL_IMAGE = os.path.join(REPO_ROOT, "Assets", "Onboarding", "icon.png")
 # records what they did to it.
 
 class FakeEntry:
-    """A search entry that holds text and records the focus it was given.
-
-    Gtk.SearchEntry delays its search-changed emission, and the legs below
-    drive on_search_changed themselves where an emission matters, so this
-    stand-in emits nothing of its own.
-    """
+    """Hold search text and focus state without emitting delayed GTK signals."""
 
     def __init__(self, text: str = "") -> None:
         self.text = text
@@ -154,11 +133,7 @@ class FakeAssetManager:
 
 
 class FakePack:
-    """One icon pack. get_icons is what the leaf page asks it for.
-
-    It counts the scans it takes, which is what shows whether a gather left
-    off where a guard says it should have.
-    """
+    """Count each icon scan so stale-gather aborts are observable."""
 
     def __init__(self, name: str, names: list[str], gate: "threading.Event | None" = None,
                  release: "threading.Event | None" = None) -> None:
@@ -185,7 +160,7 @@ class FakeIcon:
         self.name = path.rsplit("/", 1)[-1].rsplit(".", 1)[0]
 
 
-class FakeManager:
+class FakeIconPackManager:
     def __init__(self, packs: list[FakePack]) -> None:
         self.packs = packs
         self.discoveries = 0
@@ -195,9 +170,7 @@ class FakeManager:
         return {pack.name: pack for pack in self.packs}
 
 
-# The corpus. The same name appears in more than one pack, and each pack
-# holds a name the others do not, so a merge that drops or duplicates a pack
-# shows up in the result.
+# Include duplicate and pack-unique names to expose merge errors.
 MATERIAL = FakePack("Material Icons",
                     ["volume_up", "volume_down", "brightness", "settings"])
 TABLER = FakePack("Tabler Icons",
@@ -207,8 +180,8 @@ SIMPLE = FakePack("simple-icons",
 ALL_PACKS = [MATERIAL, TABLER, SIMPLE]
 
 
-def install_packs(packs: list[FakePack]) -> FakeManager:
-    manager = FakeManager(packs)
+def install_packs(packs: list[FakePack]) -> FakeIconPackManager:
+    manager = FakeIconPackManager(packs)
     gl.icon_pack_manager = manager
     return manager
 
@@ -222,9 +195,7 @@ def make_pack_page(entry_text: str = "", stack: "FakeStack | None" = None,
     page.stack = stack if stack is not None else FakeStack()
     page.stack.leaf_chooser = leaf
     page.asset_manager = asset_manager if asset_manager is not None else FakeAssetManager()
-    # Nothing is set up for the one-worker handoff here on purpose: that state
-    # carries class-level defaults, because the base connects the search entry
-    # before a subclass has run a line of its own.
+    # Leave worker handoff state on class defaults for pre-subclass emissions.
     return page
 
 
@@ -255,11 +226,7 @@ def make_pair(entry_text: str = ""):
 
 
 def record_gathers(page: IconPackChooser) -> list[str]:
-    """Record the queries a page actually gathers for.
-
-    The worker reads the method off the instance, so this stands in front of
-    the real one.
-    """
+    """Record queries while forwarding each gather to the instance method."""
     gathered: list[str] = []
     real = page.collect_matching_assets
 
@@ -353,7 +320,7 @@ def test_aggregation_merges_and_ranks() -> None:
           f"from {len(ALL_PACKS)} packs")
 
 
-def test_a_query_that_matches_nothing() -> None:
+def test_unmatched_query_shows_empty_results() -> None:
     install_packs(ALL_PACKS)
     pack_page, leaf, stack, asset_manager = make_pair("tshirt")
     pack_page.apply_search("tshirt")
@@ -372,7 +339,7 @@ def test_a_query_that_matches_nothing() -> None:
     print("PASS: a query no pack answers says so on the results page")
 
 
-def test_pack_grid_drills_into_the_results() -> None:
+def test_pack_search_opens_results() -> None:
     """A non-empty query on the pack grid opens the results page."""
     install_packs(ALL_PACKS)
     pack_page, leaf, stack, asset_manager = make_pair("volume")
@@ -399,7 +366,7 @@ def test_pack_grid_drills_into_the_results() -> None:
 
     # Only now, with the results on screen, does the page that asked count as
     # current with its entry.
-    assert pack_page._searched_text == "volume", (
+    assert pack_page._rendered_query == "volume", (
         "the pack grid does not know it rendered this query")
 
     # The typing follows the query to the page that now holds it.
@@ -413,14 +380,8 @@ def test_pack_grid_drills_into_the_results() -> None:
     print("PASS: a query on the pack grid drills into the results across packs")
 
 
-def test_a_dropped_gather_leaves_the_page_behind() -> None:
-    """A gather that never renders must not settle the catch-up.
-
-    Settled at the start, a page turn mid-gather leaves the grid on the
-    results of the query before while the page believes it is current: showing
-    it again finds nothing to catch up with, and page two of that grid filters
-    by a query nobody can see.
-    """
+def test_invalidated_gather_remains_unrendered() -> None:
+    """Keep a page stale when its gather is invalidated before rendering."""
     gate, release = threading.Event(), threading.Event()
     held = FakePack("Held Icons", ["volume_mute"], gate=gate, release=release)
     install_packs([held])
@@ -435,16 +396,16 @@ def test_a_dropped_gather_leaves_the_page_behind() -> None:
     pump(0.3)
 
     assert leaf.asset_flow.items is None, "the dropped gather rendered"
-    assert pack_page._searched_text == "", (
-        f"the page recorded {pack_page._searched_text!r} as rendered for a "
+    assert pack_page._rendered_query == "", (
+        f"the page recorded {pack_page._rendered_query!r} as rendered for a "
         f"gather that was dropped; it will never catch itself up")
 
     # Showing the page again therefore searches once more.
     gathered = record_gathers(pack_page)
     release.clear()
     gate.clear()
-    pack_page._search_showing = False
-    pack_page._searched_text = ""
+    pack_page._accepts_search_results = False
+    pack_page._rendered_query = ""
     pack_page.search_entry.set_text("volume")
     pack_page._on_map()
     pump(0.1)
@@ -460,7 +421,7 @@ def test_a_dropped_gather_leaves_the_page_behind() -> None:
     print("PASS: a dropped gather leaves the page knowing it fell behind")
 
 
-def test_a_failing_gather_leaves_the_page_behind() -> None:
+def test_failed_gather_remains_unrendered() -> None:
     """A gather that raises must fail the same way a dropped one does."""
     install_packs(ALL_PACKS)
     pack_page, leaf, stack, asset_manager = make_pair("volume")
@@ -476,7 +437,7 @@ def test_a_failing_gather_leaves_the_page_behind() -> None:
                "the worker never finished after the failure")
 
     assert leaf.asset_flow.items is None, "a failed gather rendered"
-    assert pack_page._searched_text == "", (
+    assert pack_page._rendered_query == "", (
         "the page counted a failed gather as rendered, so it will never try "
         "again on its own")
 
@@ -491,13 +452,8 @@ def test_a_failing_gather_leaves_the_page_behind() -> None:
     print("PASS: a gather that raises leaves the page able to try again")
 
 
-def test_the_results_grid_reproduces_the_search_order() -> None:
-    """The grid's own filter and sort must agree with the search.
-
-    The page filters and sorts what it is handed, every time it renders a
-    range. Ranked one way and rendered another, the grid would answer a
-    different question on its second page than on its first.
-    """
+def test_results_preserve_search_order() -> None:
+    """Keep the results grid filter and ordering equal to the search ranking."""
     install_packs(ALL_PACKS)
     pack_page, leaf, stack, asset_manager = make_pair("volume")
     assets = pack_page.collect_matching_assets("volume", pack_page,
@@ -513,56 +469,47 @@ def test_the_results_grid_reproduces_the_search_order() -> None:
     print("PASS: the results grid renders the order the search ranked")
 
 
-def test_pack_label_names_the_pack() -> None:
+def test_search_result_shows_pack_label() -> None:
     install_packs(ALL_PACKS)
     pack_page, leaf, stack, asset_manager = make_pair()
 
     material = MATERIAL.icons[0]
     tabler = TABLER.icons[0]
-    assert leaf.pack_label_for(material) is None, (
+    assert leaf.pack_subtitle_for(material) is None, (
         "a grid of one pack names that pack on every card, which says nothing")
 
     leaf.load_search_results(pack_page, [material, tabler], "volume")
-    assert leaf.pack_label_for(material) == "Material Icons"
-    assert leaf.pack_label_for(tabler) == "Tabler Icons"
+    assert leaf.pack_subtitle_for(material) == "Material Icons"
+    assert leaf.pack_subtitle_for(tabler) == "Tabler Icons"
 
     # Back to one pack, and the line goes with the search.
     leaf.load_for_pack(MATERIAL)
-    assert leaf.pack_label_for(material) is None, (
+    assert leaf.pack_subtitle_for(material) is None, (
         "a card kept the pack line after the grid went back to one pack")
     print("PASS: a result card names its pack, and only in a search")
 
 
-def test_the_card_is_handed_the_pack_line() -> None:
-    """The label must reach the card, not only exist on the page.
-
-    Structural, because the one call that carries it sits in the factory the
-    recycler drives, and deleting that call changes nothing a stub grid can
-    see.
-    """
-    source = textwrap.dedent(inspect.getsource(GenericAssetChooserPage.preview_factory))
+def test_binder_sets_pack_label() -> None:
+    """Require the recycler binder to pass each pack label to its card."""
+    source = textwrap.dedent(inspect.getsource(GenericAssetChooserPage.bind_preview_card))
     handed = [node for node in ast.walk(ast.parse(source))
               if isinstance(node, ast.Call)
               and isinstance(node.func, ast.Attribute)
               and node.func.attr == "set_subtitle"]
     assert len(handed) == 1, (
-        f"the card factory makes {len(handed)} calls that set the second line; "
+        f"the card binder makes {len(handed)} calls that set the second line; "
         f"without one a result card never names its pack")
     argument = handed[0].args[0]
     assert (isinstance(argument, ast.Call)
             and isinstance(argument.func, ast.Attribute)
-            and argument.func.attr == "pack_label_for"), (
+            and argument.func.attr == "pack_subtitle_for"), (
         "the second line of a card comes from something other than "
-        "pack_label_for, so nothing here can say what it shows")
-    print("PASS: the card factory hands the pack line to the card")
+        "pack_subtitle_for, so nothing here can say what it shows")
+    print("PASS: the card binder hands the pack line to the card")
 
 
-def test_a_real_card_shows_and_clears_the_pack_line() -> None:
-    """The recycled card is the case that matters.
-
-    The pool binds a card from a search across the packs into a grid of one
-    pack, where the line it carried would name the wrong thing.
-    """
+def test_recycled_card_clears_pack_label() -> None:
+    """Clear the pack label when a search card is recycled into one pack."""
     if not Gtk.init_check():
         print("SKIP(real-card): no display; the structural leg above still ran")
         return
@@ -573,14 +520,14 @@ def test_a_real_card_shows_and_clears_the_pack_line() -> None:
     preview = GenericAssetPreview()
 
     leaf.load_search_results(pack_page, [asset], "volume")
-    leaf.preview_factory(preview, asset)
+    leaf.bind_preview_card(preview, asset)
     assert preview.subtitle.get_text() == "Material Icons", (
         f"the card shows {preview.subtitle.get_text()!r} under the name")
     assert preview.subtitle.get_visible() is True, "the pack line is hidden"
 
     # The same card, recycled into a grid of one pack.
     leaf.load_for_pack(MATERIAL)
-    leaf.preview_factory(preview, asset)
+    leaf.bind_preview_card(preview, asset)
     assert preview.subtitle.get_text() == "", (
         f"a recycled card kept {preview.subtitle.get_text()!r} in a grid of "
         f"one pack")
@@ -589,7 +536,7 @@ def test_a_real_card_shows_and_clears_the_pack_line() -> None:
     print("PASS: a real card shows the pack line and clears it when recycled")
 
 
-def test_selection_delivers_the_per_pack_payload() -> None:
+def test_search_selection_matches_pack_payload() -> None:
     """A pick from the results must deliver what a pick from a pack does."""
     install_packs(ALL_PACKS)
     pack_page, leaf, stack, asset_manager = make_pair()
@@ -612,10 +559,8 @@ def test_selection_delivers_the_per_pack_payload() -> None:
     print(f"PASS: both paths deliver the same payload ({per_pack[0]!r})")
 
 
-def test_a_changed_query_searches_again() -> None:
-    """The results grid holds one query's answer, so a new query is a new
-    search. A filter of what is there could only ever narrow, and a user who
-    deletes a letter asks for more."""
+def test_changed_query_restarts_search() -> None:
+    """Gather again when the results-page query changes."""
     install_packs(ALL_PACKS)
     pack_page, leaf, stack, asset_manager = make_pair("volume")
     assets = pack_page.collect_matching_assets("volume", pack_page,
@@ -630,7 +575,7 @@ def test_a_changed_query_searches_again() -> None:
         "bright", ALL_PACKS), 10, "the changed query never gathered again")
 
     assert leaf._pack_search_query == "bright"
-    assert leaf._searched_text == "bright", (
+    assert leaf._rendered_query == "bright", (
         "the results page does not know it rendered the query it asked for")
     assert stack.switches == [], (
         f"the results of a second query moved the window again: {stack.switches}")
@@ -645,7 +590,7 @@ def test_a_changed_query_searches_again() -> None:
           "one renders")
 
 
-def test_empty_query_returns_to_the_pack_grid() -> None:
+def test_empty_query_restores_pack_grid() -> None:
     install_packs(ALL_PACKS)
     pack_page, leaf, stack, asset_manager = make_pair("volume")
     assets = pack_page.collect_matching_assets("volume", pack_page,
@@ -664,7 +609,7 @@ def test_empty_query_returns_to_the_pack_grid() -> None:
         "the results page kept every pack's assets after the search ended")
     assert leaf._pack_search_source is None and leaf._pack_search_query == ""
     assert leaf.empty_label.get_visible() is False
-    assert leaf._searched_text == "", (
+    assert leaf._rendered_query == "", (
         "the page turn is this pass's answer, so the page must count it as "
         "rendered")
 
@@ -682,21 +627,15 @@ def test_empty_query_returns_to_the_pack_grid() -> None:
     print("PASS: an emptied query goes back to the pack grid")
 
 
-def test_the_pack_grid_clears_the_query_it_drilled_in_with() -> None:
-    """This grid filters its own cards on the same query.
-
-    Left there, the query would show a pack grid narrowed to whatever pack is
-    named like it, which is usually no pack at all.
-    """
+def test_return_to_pack_grid_clears_query() -> None:
+    """Clear the search query when navigation returns to the pack grid."""
     install_packs(ALL_PACKS)
     pack_page, leaf, stack, asset_manager = make_pair("volume")
     pack_page.on_shown()
     assert pack_page.search_entry.get_text() == "", (
         "the query the grid drilled in with survived the way back")
 
-    # It is the base's hook, which runs inside the map handler before the
-    # catch-up pass. Connected as a second map handler instead, it would run
-    # after that pass had already started a gather for the dying query.
+    # The base hook clears the query before the map handler starts catch-up.
     assert IconPackChooser.on_shown is GenericPackChooserPage.on_shown
     source = textwrap.dedent(inspect.getsource(GenericPackChooserPage.__init__))
     connects = [node for node in ast.walk(ast.parse(source))
@@ -709,7 +648,7 @@ def test_the_pack_grid_clears_the_query_it_drilled_in_with() -> None:
     print("PASS: coming back to the pack grid empties the query")
 
 
-def test_a_pack_drill_in_drops_the_search() -> None:
+def test_pack_navigation_clears_cross_pack_search() -> None:
     install_packs(ALL_PACKS)
     pack_page, leaf, stack, asset_manager = make_pair()
     leaf.load_search_results(pack_page, list(MATERIAL.icons), "volume")
@@ -724,14 +663,8 @@ def test_a_pack_drill_in_drops_the_search() -> None:
     print("PASS: drilling into one pack drops the search that filled the grid")
 
 
-def test_teardown_drops_a_gathering_pass() -> None:
-    """A page turn or a hidden window mid-gather renders nothing.
-
-    Each abort carries an observable, because an abort whose only effect is to
-    make a later guard redundant can be deleted with every assertion still
-    passing. The packs count their scans, and the render callback counts the
-    times it is reached.
-    """
+def test_teardown_cancels_gather() -> None:
+    """Abort discovery, gathering, and rendering when teardown stales a pass."""
     gate, release = threading.Event(), threading.Event()
     held = FakePack("Held Icons", ["volume_mute"], gate=gate, release=release)
     later = FakePack("Later Icons", ["volume_up"])
@@ -769,7 +702,7 @@ def test_teardown_drops_a_gathering_pass() -> None:
     # even read the pack folders.
     discoveries = manager.discoveries
     stale = pack_page._search_generation
-    pack_page._search_showing = True
+    pack_page._accepts_search_results = True
     pack_page._search_generation += 1
     assert pack_page.collect_matching_assets("volume", pack_page, stale) == []
     assert manager.discoveries == discoveries, (
@@ -792,16 +725,12 @@ def test_teardown_drops_a_gathering_pass() -> None:
     print("PASS: a teardown mid-gather drops the render, at all three guards")
 
 
-def test_a_hidden_page_renders_nothing() -> None:
-    """_search_showing is half of the guard.
-
-    A hidden window keeps its generation, so a guard on the generation alone
-    would render into a page nobody sees.
-    """
+def test_hidden_page_rejects_render() -> None:
+    """Reject renders for hidden pages even when their generation is current."""
     install_packs(ALL_PACKS)
     pack_page, leaf, stack, asset_manager = make_pair("volume")
     generation = pack_page._search_generation
-    pack_page._search_showing = False
+    pack_page._accepts_search_results = False
     assert pack_page.search_is_current(generation) is False
 
     pack_page._show_matching_assets("volume", pack_page, generation,
@@ -811,34 +740,27 @@ def test_a_hidden_page_renders_nothing() -> None:
     print("PASS: a page that stopped showing renders nothing")
 
 
-def test_the_render_asks_the_page_it_writes_into() -> None:
-    """The guard on the requester is not a guard on the target.
-
-    It holds only because a Gtk.Stack unmaps the child it leaves, which
-    invalidates the page that asked. That is GTK's behaviour, one
-    set_transition_type away from an overlap, and not a promise this module
-    makes. A window that drilled into one pack while a gather ran must keep
-    that pack's grid.
-    """
+def test_render_checks_target_page() -> None:
+    """Require the render target to still show cross-pack results."""
     install_packs(ALL_PACKS)
     pack_page, leaf, stack, asset_manager = make_pair("volume")
 
     # The user opened a pack while the gather ran.
     leaf.load_for_pack(MATERIAL)
     stack.set_visible_child_name(LEAF_CHILD_NAME)
-    assert leaf.shows_pack_search is False
+    assert leaf.shows_cross_pack_results is False
 
     pack_page._show_matching_assets("volume", pack_page,
                                     pack_page._search_generation,
                                     list(TABLER.icons))
     assert leaf.asset_flow.items == MATERIAL.icons, (
         "a gather replaced the grid of the pack the user had opened")
-    assert pack_page._searched_text == "", (
+    assert pack_page._rendered_query == "", (
         "a render that was refused was recorded as done")
 
     # A results page that is already showing takes the next results.
     leaf.load_search_results(pack_page, list(MATERIAL.icons), "volume")
-    assert leaf.shows_pack_search is True
+    assert leaf.shows_cross_pack_results is True
     pack_page._show_matching_assets("bright", pack_page,
                                     pack_page._search_generation,
                                     list(TABLER.icons))
@@ -848,13 +770,8 @@ def test_the_render_asks_the_page_it_writes_into() -> None:
           "that asked")
 
 
-def test_one_worker_serves_the_newest_query() -> None:
-    """Three quick queries must not start three scans at once.
-
-    A gather reads every pack folder of the installation. A thread per pass
-    puts as many of those scans in flight as the user types pauses, and all
-    but the last are thrown away.
-    """
+def test_worker_keeps_latest_query() -> None:
+    """Run one gather worker and retain only its newest pending query."""
     gate, release = threading.Event(), threading.Event()
     held = FakePack("Held Icons", ["volume_mute"], gate=gate, release=release)
     manager = install_packs([held, MATERIAL])
@@ -879,24 +796,17 @@ def test_one_worker_serves_the_newest_query() -> None:
     print("PASS: one gather runs at a time and the newest query wins")
 
 
-def test_the_worker_flag_survives_a_raise_outside_the_catch() -> None:
-    """The flag that says a gather runs must fall whatever ends the worker.
-
-    The narrow catch covers the gather. A raise from anywhere else in the
-    worker, which is the marshal of the render and the logger inside that
-    catch, would otherwise leave the flag set for the life of the window:
-    every later request posts itself and returns, and the search never runs
-    again.
-    """
+def test_worker_flag_clears_after_uncaught_raise() -> None:
+    """Clear the worker-running flag for failures outside the gather catch."""
     install_packs(ALL_PACKS)
     pack_page, leaf, stack, asset_manager = make_pair("volume")
 
-    def raising_past_the_catch(query, requester, generation):
+    def raise_outside_gather_catch(query, requester, generation):
         # Not an Exception, so the arm that catches a failed gather does not
         # see it. It stands in for a raise from the marshal below that arm.
         raise KeyboardInterrupt("deliberate: a raise the worker does not catch")
 
-    pack_page.collect_matching_assets = raising_past_the_catch
+    pack_page.collect_matching_assets = raise_outside_gather_catch
     print("NOTE: the next 'Exception in thread' report is DELIBERATE -- this "
           "leg raises past the worker's catch and checks it recovers.")
     pack_page.search_across_packs("volume", pack_page, pack_page._search_generation)
@@ -915,12 +825,8 @@ def test_the_worker_flag_survives_a_raise_outside_the_catch() -> None:
     print("PASS: a raise past the worker's catch leaves the search able to run")
 
 
-def test_a_request_that_arrives_as_the_worker_dies_is_taken_up() -> None:
-    """The dying worker hands the flag on rather than dropping the request.
-
-    A request that arrives while a worker is on its way out finds the flag
-    set, so it posts itself and starts nothing. Something has to pick it up.
-    """
+def test_worker_exit_starts_pending_request() -> None:
+    """Start a pending request when the current gather worker exits."""
     install_packs(ALL_PACKS)
     pack_page, leaf, stack, asset_manager = make_pair("volume")
     gathered = record_gathers(pack_page)
@@ -930,7 +836,8 @@ def test_a_request_that_arrives_as_the_worker_dies_is_taken_up() -> None:
     pack_page._search_pending = ("volume", pack_page, pack_page._search_generation)
     pack_page._release_search_worker()
 
-    pump_until(lambda: leaf.asset_flow.items is not None, 10,
+    # Await both idle rendering and the worker flag because they finish on different threads.
+    pump_until(lambda: leaf.asset_flow.items is not None and not pack_page._search_running, 10,
                "the request that arrived as the worker died was dropped")
     assert gathered == ["volume"], gathered
     assert pack_page._search_running is False
@@ -943,13 +850,8 @@ def test_a_request_that_arrives_as_the_worker_dies_is_taken_up() -> None:
     print("PASS: a request left by a dying worker is taken up")
 
 
-def test_the_search_state_carries_class_defaults() -> None:
-    """The base connects the search entry from its own constructor.
-
-    An emission can therefore reach apply_search, and so this state, before a
-    subclass has run a line of its own. Every field it touches needs a default
-    on the class, as the flow boxes and the pending requests already have.
-    """
+def test_search_state_has_class_defaults() -> None:
+    """Provide class defaults for search state used during base construction."""
     for name in ("_search_lock", "_search_pending", "_search_running",
                  "pack_flow"):
         assert name in vars(GenericPackChooserPage), (
@@ -971,12 +873,8 @@ def test_the_search_state_carries_class_defaults() -> None:
           "defaults")
 
 
-def test_a_search_that_lands_before_the_grid_is_held() -> None:
-    """The leaf page builds its grid inside a main-loop callback.
-
-    A search that lands first has nowhere to render, and dropping it loses
-    what the user asked for.
-    """
+def test_prebuild_results_wait_for_grid() -> None:
+    """Hold search results until the main-loop callback builds the leaf grid."""
     install_packs(ALL_PACKS)
     pack_page, leaf, stack, asset_manager = make_pair()
     leaf.asset_flow = None
@@ -1004,12 +902,8 @@ def test_a_search_that_lands_before_the_grid_is_held() -> None:
     print("PASS: a search that lands before the grid is held and drains once")
 
 
-def test_every_family_shares_the_search() -> None:
-    """Icons, wallpapers and SD+ bar wallpapers search the same way.
-
-    Each family names its classes and its packs; none of them owns a copy of
-    the search.
-    """
+def test_asset_families_share_search() -> None:
+    """Share one search implementation across all asset-pack families."""
     pack_classes = (IconPackChooser, WallpaperPackChooser, SDPlusBarWallpaperPackChooser)
     leaf_classes = (IconChooserPage, WallpaperChooserPage, SDPlusBarWallpaperChooserPage)
 
@@ -1019,7 +913,7 @@ def test_every_family_shares_the_search() -> None:
         assert owned == {getattr(GenericPackChooserPage, name)}, (
             f"the pack grids no longer share one {name}: {owned}")
     for name in ("load_search_results", "leave_search_results", "apply_search",
-                 "pack_label_for", "show_empty_notice"):
+                 "pack_subtitle_for", "show_empty_notice"):
         owned = {getattr(cls, name) for cls in leaf_classes}
         assert owned == {getattr(GenericAssetChooserPage, name)}, (
             f"the leaf pages no longer share one {name}: {owned}")
@@ -1032,7 +926,7 @@ def test_every_family_shares_the_search() -> None:
     print("PASS: all three asset families share one search across packs")
 
 
-def test_the_gather_stays_off_the_main_thread() -> None:
+def test_gather_runs_off_main_thread() -> None:
     """The gather reads a whole installation, so it may not run on the loop."""
     install_packs(ALL_PACKS)
     pack_page, leaf, stack, asset_manager = make_pair("volume")
@@ -1066,30 +960,30 @@ def main() -> int:
     fixtures.start_watchdog(60, label="scenario_cross_pack_search")
 
     test_aggregation_merges_and_ranks()
-    test_a_query_that_matches_nothing()
-    test_pack_grid_drills_into_the_results()
-    test_a_dropped_gather_leaves_the_page_behind()
-    test_a_failing_gather_leaves_the_page_behind()
-    test_the_results_grid_reproduces_the_search_order()
-    test_pack_label_names_the_pack()
-    test_the_card_is_handed_the_pack_line()
-    test_selection_delivers_the_per_pack_payload()
-    test_a_changed_query_searches_again()
-    test_empty_query_returns_to_the_pack_grid()
-    test_the_pack_grid_clears_the_query_it_drilled_in_with()
-    test_a_pack_drill_in_drops_the_search()
-    test_teardown_drops_a_gathering_pass()
-    test_a_hidden_page_renders_nothing()
-    test_the_render_asks_the_page_it_writes_into()
-    test_one_worker_serves_the_newest_query()
-    test_the_worker_flag_survives_a_raise_outside_the_catch()
-    test_a_request_that_arrives_as_the_worker_dies_is_taken_up()
-    test_the_search_state_carries_class_defaults()
-    test_a_search_that_lands_before_the_grid_is_held()
-    test_every_family_shares_the_search()
-    test_the_gather_stays_off_the_main_thread()
+    test_unmatched_query_shows_empty_results()
+    test_pack_search_opens_results()
+    test_invalidated_gather_remains_unrendered()
+    test_failed_gather_remains_unrendered()
+    test_results_preserve_search_order()
+    test_search_result_shows_pack_label()
+    test_binder_sets_pack_label()
+    test_search_selection_matches_pack_payload()
+    test_changed_query_restarts_search()
+    test_empty_query_restores_pack_grid()
+    test_return_to_pack_grid_clears_query()
+    test_pack_navigation_clears_cross_pack_search()
+    test_teardown_cancels_gather()
+    test_hidden_page_rejects_render()
+    test_render_checks_target_page()
+    test_worker_keeps_latest_query()
+    test_worker_flag_clears_after_uncaught_raise()
+    test_worker_exit_starts_pending_request()
+    test_search_state_has_class_defaults()
+    test_prebuild_results_wait_for_grid()
+    test_asset_families_share_search()
+    test_gather_runs_off_main_thread()
     # Last: it initialises GTK, which the legs above do without.
-    test_a_real_card_shows_and_clears_the_pack_line()
+    test_recycled_card_clears_pack_label()
 
     print("ALL PASS: scenario_cross_pack_search")
     return 0

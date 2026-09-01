@@ -33,7 +33,6 @@ from src.backend.Store import asset_types
 from src.windows.Store.AssetPage import StoreAssetPage, StoreAssetPreview
 from src.windows.Store.StoreData import StoreAssetData
 
-# Typing
 from typing import Any, override
 
 
@@ -48,12 +47,7 @@ class PluginPage(StoreAssetPage):
 
 
 class PluginPreview(StoreAssetPreview):
-    """One plugin card.
-
-    update() reinstalls through install_plugin, which deregisters the old
-    version only after the download succeeds. A failed update therefore leaves
-    the old version installed and registered, and no recovery reload runs.
-    """
+    """A plugin card whose failed reinstall keeps the registered old version."""
 
     # A plugin card takes no red border. The store already shows an
     # incompatible plugin in the incompatible section.
@@ -61,37 +55,23 @@ class PluginPreview(StoreAssetPreview):
 
     @override
     def _install_kwargs(self) -> "dict[str, Any]":
-        # Only a plugin carries an install script, so only a plugin install
-        # prompts. The dialog is transient for the store window and answered
-        # on the main loop; install() itself runs on a download worker.
-        from src.windows.Store.install_consent import make_consent
-        return {"ask_install_script": make_consent(self.store)}
+        # Plugin scripts require main-loop consent before worker installation
+        from src.windows.Store.install_consent import make_install_script_consent
+        return {"ask_install_script": make_install_script_consent(self.store)}
 
     @staticmethod
     @override
     def get_install_state_for(asset_data: StoreAssetData) -> int:
-        """0 is not installed, 1 is installed, and 2 is update available.
+        """Return 0 absent, 1 current or unsafe to update, else 2.
 
-        An installed plugin whose pinned store version is incompatible reads
-        as state 1. is_compatible is then False, because prepare_plugin pins
-        the newest commit of another app major when no compatible one exists.
-        That update would replace a working plugin with an incompatible build,
-        which get_plugins_to_update also refuses on the auto-update path.
-
-        The parameter widens to the whole catalog family, because it overrides
-        the data-only gate. Every field it reads is one that all four classes
-        carry.
+        An incompatible pinned build must not replace a working installed plugin.
         """
         if asset_data.local_sha is None:
             return 0
         if asset_data.local_sha == asset_data.commit_sha:
             return 1
         if asset_data.commit_sha is None:
-            # The remote tip is unresolved, because get_last_commit returned
-            # None for a branch-pinned plugin, after a 429 or an empty answer.
-            # A None commit_sha differs from local_sha, which would show an
-            # update-available badge whose install can only return 404. No
-            # known target exists to update to.
+            # An unresolved remote tip has no valid update target
             return 1
         if asset_data.is_compatible is False:
             return 1

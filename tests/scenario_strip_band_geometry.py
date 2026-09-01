@@ -1,11 +1,6 @@
-"""The touchscreen strip band of an extended background uses the
-strip_band-owned layout.
+"""Use strip_band layout for extended touchscreen backgrounds.
 
-An SD+ answers the device-calibrated band. Its strip view is wider than the
-key grid, so the extended canvas covers the union and the grid sits at an
-offset inside it; the image path and the video-cache path must cut the same
-band and the same offset key tiles. Every other touch deck keeps the derived
-band, where the layout degenerates to the old grid-width canvas.
+SD+ uses calibrated union geometry; other touch decks use the derived grid width.
 """
 import fixtures  # must be first; isolates DATA_PATH before import globals
 import globals as gl
@@ -25,10 +20,9 @@ CALIBRATED_CANVAS_W = 828
 
 
 class FakePlus(FaultyFakeDeck, StreamDeckPlus):
-    """A FaultyFakeDeck whose type also reads as a StreamDeckPlus.
+    """A FaultyFakeDeck that also has StreamDeckPlus type identity.
 
-    Never instantiated: instances get here by __class__ reassignment, so no
-    StreamDeckPlus constructor or transport runs.
+    __class__ reassignment avoids the StreamDeckPlus constructor and transport.
     """
 
 
@@ -68,9 +62,7 @@ def check_image_layout(controller) -> None:
         f"extended canvas {canvas.size}, expected {(canvas_w, canvas_h)}")
     background.close()
 
-    # Mark the exact band region green and key 0's grid region red on a
-    # canvas-sized source, then check the strip is all green and tile 0 all
-    # red: band box and grid offset both land where the layout says.
+    # Mark the band green and key 0 red to verify band and grid offsets.
     marked = Image.new("RGB", (canvas_w, canvas_h), (0, 0, 0))
     marked.paste(Image.new("RGB", (band[2] - band[0], band[3] - band[1]), (0, 255, 0)),
                  (band[0], band[1]))
@@ -100,10 +92,8 @@ def main() -> None:
     fixtures.start_watchdog(60, label="scenario_strip_band_geometry")
 
     plus = make_controller("band-plus", plus=True)
-    # The calibrated span and xoff are absolute canvas pixels, so the SD+
-    # grid must still be the width they were measured at. A key-spacing
-    # change moves this width and needs a device recalibration; this pin
-    # breaks instead of letting the band drift silently.
+    # Calibration requires the measured SD+ grid width.
+    # Any spacing change requires device recalibration instead of silent drift.
     grid_w, grid_h = grid_size(plus)
     assert grid_w == CALIBRATED_CANVAS_W, (
         f"SD+ grid width {grid_w} left the calibrated {CALIBRATED_CANVAS_W}; "

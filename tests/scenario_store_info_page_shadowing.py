@@ -1,21 +1,6 @@
-"""
-Regression test for the info rows overriding inherited widget members.
+"""Verify that store information rows do not shadow inherited widget members."""
 
-InfoPage defined set_name, which GTK already defines on every widget, and
-DescriptionRow and AttributeRow defined set_title, which Adw.PreferencesRow
-already defines. Either override silently changes what the inherited call does.
-
-The rows also held their caption in self.title, one name away from the title
-the row inherits. PyGObject keeps GObject properties behind .props, so that
-attribute never wrote the property, but the two names read as one thing and
-mean two. The rows now hold the caption in title_str, and the checks below
-hold that name so the collision cannot come back.
-"""
-
-# The setters now carry intention-revealing names, so the inherited GTK methods
-# stay reachable. The class-dictionary checks read no widget state, and the
-# label checks build single rows, so no window is realized and no store data is
-# fetched.
+# Class dictionaries and isolated rows verify the names without realizing a window.
 import fixtures  # noqa: F401  (isolated --data tempdir; import first)
 
 import gi
@@ -50,7 +35,7 @@ def test_inherited_setters_are_not_shadowed() -> None:
 
 
 def test_renamed_setters_exist() -> None:
-    assert callable(vars(InfoPage).get("set_pack_name")), (
+    assert callable(vars(InfoPage).get("set_asset_name")), (
         "InfoPage must expose the renamed pack-name setter"
     )
     assert callable(vars(DescriptionRow).get("set_description_title")), (
@@ -64,7 +49,7 @@ def test_renamed_setters_exist() -> None:
     )
 
 
-def test_rows_hold_their_caption_under_a_name_of_their_own() -> None:
+def test_rows_store_caption_in_distinct_attribute() -> None:
     attribute_row = AttributeRow(title="Name:", attr="Error")
     assert attribute_row.title_label.get_label() == "Name:"
     assert attribute_row.attribute_label.get_label() == "Error"
@@ -91,7 +76,7 @@ def test_rows_hold_their_caption_under_a_name_of_their_own() -> None:
     )
 
 
-def test_renamed_setters_drive_the_same_labels() -> None:
+def test_renamed_setters_update_existing_labels() -> None:
     attribute_row = AttributeRow(title="Name:", attr="Error")
     attribute_row.set_attribute_title("Author:")
     attribute_row.set_attribute("core447")
@@ -123,8 +108,8 @@ def main() -> None:
     fixtures.start_watchdog(30, label="scenario_store_info_page_shadowing")
     test_inherited_setters_are_not_shadowed()
     test_renamed_setters_exist()
-    test_rows_hold_their_caption_under_a_name_of_their_own()
-    test_renamed_setters_drive_the_same_labels()
+    test_rows_store_caption_in_distinct_attribute()
+    test_renamed_setters_update_existing_labels()
     print("scenario_store_info_page_shadowing: PASS")
 
 

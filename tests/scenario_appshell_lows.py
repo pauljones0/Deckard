@@ -1,8 +1,4 @@
-"""Regression checks for the grouped low-severity app-shell findings.
-
-Every check drives a real method unbound on plain stub objects, so no GTK
-widget is built and no display is needed.
-"""
+"""Exercise app-shell methods on stubs without building GTK widgets."""
 import fixtures  # noqa: F401  (must be first: isolates the data dir)
 
 import inspect
@@ -11,7 +7,7 @@ from types import MethodType
 import globals as gl
 
 
-class Obj:
+class StubObject:
     """Attribute bag."""
     def __init__(self, **kwargs):
         self.__dict__.update(kwargs)
@@ -50,12 +46,12 @@ def check_hide_error_targets_stack_child() -> None:
     key_editor = object()
     configurator_stack = object()
     set_calls = []
-    main_stack = Obj(
+    main_stack = StubObject(
         get_visible_child=lambda: error_page,
         set_visible_child=lambda child: set_calls.append(child),
         set_transition_duration=lambda ms: None,
     )
-    stub = Obj(
+    stub = StubObject(
         main_stack=main_stack,
         error_page=error_page,
         key_editor=key_editor,
@@ -75,7 +71,7 @@ def check_hide_error_targets_stack_child() -> None:
 def check_deck_name_dedup() -> None:
     from src.windows.mainWindow.elements.DeckStack import DeckStack
 
-    stub = Obj(deck_attributes={}, deck_names=[], deck_numbers=[])
+    stub = StubObject(deck_attributes={}, deck_names=[], deck_numbers=[])
     # The title resolution runs through two more methods of the stack, and the
     # base title reads the deck settings for a chosen name.
     stub.base_title = MethodType(DeckStack.base_title, stub)
@@ -83,13 +79,13 @@ def check_deck_name_dedup() -> None:
     stub.unique_title = MethodType(DeckStack.unique_title, stub)
 
     def make_controller(serial):
-        deck = Obj(
+        deck = StubObject(
             deck_type=lambda: "Stream Deck MK.2",
             get_serial_number=lambda: serial,
         )
         # get_page_attributes reads the cached serial accessor of the
         # controller, not the device.
-        return Obj(deck=deck, serial_number=lambda: serial)
+        return StubObject(deck=deck, serial_number=lambda: serial)
 
     saved_sm = getattr(gl, "settings_manager", None)
     gl.settings_manager = fixtures.StubSettingsManager()
@@ -110,12 +106,7 @@ def check_deck_name_dedup() -> None:
 
 
 def check_page_selector_no_selection_guard() -> None:
-    """No selection must never fall back to a page.
-
-    The selector held a Gtk.ComboBox index, whose no-selection value -1
-    indexed the model from the end and so picked the last page. The selection
-    is a page path now, and None must stay a no-op on both paths.
-    """
+    """Treat a None page selection as a no-op on both selector paths."""
     from src.backend import services
     from src.windows.mainWindow.elements.PageSelector import PageSelector
 
@@ -127,8 +118,8 @@ def check_page_selector_no_selection_guard() -> None:
             "the backend for a page"
         )
 
-    deck_stack = Obj(get_visible_child=lambda: None)
-    stub = Obj(main_window=Obj(leftArea=Obj(deck_stack=deck_stack)))
+    deck_stack = StubObject(get_visible_child=lambda: None)
+    stub = StubObject(main_window=StubObject(leftArea=StubObject(deck_stack=deck_stack)))
     saved_require = services.require_page_manager
     services.require_page_manager = exploding_page_manager
     try:
@@ -136,20 +127,19 @@ def check_page_selector_no_selection_guard() -> None:
     finally:
         services.require_page_manager = saved_require
 
-    # The page-settings button with nothing selected: the manager opens and
-    # no page is activated in it. lists_page() answers True for anything, so
-    # only the empty selection can stop the path here.
+    # Open the manager without activating a page when selection is empty.
+    # lists_page accepts every value, so only the None guard stops activation.
     activate = Recorder()
     open_manager = Recorder()
     saved_window = gl.page_manager_window
-    gl.page_manager_window = Obj(page_selector=Obj(activate_page=activate))
+    gl.page_manager_window = StubObject(page_selector=StubObject(activate_page=activate))
     try:
-        stub2 = Obj(
+        settings_open_stub = StubObject(
             selected_page_path=None,
             lists_page=lambda path: True,
             on_click_open_page_manager=open_manager,
         )
-        PageSelector.on_click_open_page_settings(stub2, button=None)
+        PageSelector.on_click_open_page_settings(settings_open_stub, button=None)
     finally:
         gl.page_manager_window = saved_window
 
@@ -170,7 +160,7 @@ def check_deck_manager_usb_callback_guards() -> None:
 
     # A disconnect event before the UI exists must not raise.
     gl.app = None
-    stub = Obj(deck_controller=[])
+    stub = StubObject(deck_controller=[])
     try:
         dm_mod.DeckManager.on_disconnect(
             stub, "dev", {"ID_VENDOR_ID": dm_mod.ELGATO_VENDOR_ID}
@@ -183,10 +173,7 @@ def check_deck_manager_usb_callback_guards() -> None:
     finally:
         gl.app = saved_app
 
-    # add_newly_connected_deck must reach the call that re-checks whether any
-    # deck is available. A trailing dot in recursive_hasattr(gl, "app.main_win.")
-    # always reads False and skips it. The call goes through a port, not a direct
-    # main_win poke, so the recorder is a port.
+    # Verify add_newly_connected_deck refreshes availability through the UI port.
     from src.backend import ui_port
 
     class _RecordingPort(ui_port.UIPort):
@@ -207,17 +194,15 @@ def check_deck_manager_usb_callback_guards() -> None:
     port = _RecordingPort()
     ui_port.install(port)
     saved_ctor = dm_mod.DeckController
-    dm_mod.DeckController = lambda manager, deck: Obj(deck=deck)
+    dm_mod.DeckController = lambda manager, deck: StubObject(deck=deck)
     try:
-        # DeckManager wraps the controller construction in
-        # _init_deck_controller_with_retry(). Stub it, so the method reaches the
-        # availability refresh this test verifies.
-        stub = Obj(
+        # Stub controller construction so the method reaches the UI refresh.
+        stub = StubObject(
             deck_controller=[],
             fake_deck_controller=[],
-            _init_deck_controller_with_retry=lambda deck: Obj(deck=deck),
+            _init_deck_controller_with_retry=lambda deck: StubObject(deck=deck),
         )
-        dm_mod.DeckManager.add_newly_connected_deck(stub, deck=Obj())
+        dm_mod.DeckManager.add_newly_connected_deck(stub, deck=StubObject())
     finally:
         dm_mod.DeckController = saved_ctor
         ui_port.install(None)
@@ -242,33 +227,35 @@ def check_deck_group_active_page_guards() -> None:
     gl.settings_manager = fixtures.StubSettingsManager()
     try:
         set_brightness = Recorder()
-        controller = Obj(active_page=None, set_brightness=set_brightness)
-        stub = Obj(
+        controller = StubObject(active_page=None, set_brightness=set_brightness)
+        stub = StubObject(
             deck_serial_number="SN1",
-            settings_page=Obj(deck_controller=controller),
+            settings_page=StubObject(deck_controller=controller),
         )
-        Brightness.on_value_changed_idle(stub, Obj(get_value=lambda: 42))
+        Brightness.on_value_changed_idle(stub, StubObject(get_value=lambda: 42))
         assert set_brightness.calls == [((42,), {})], (
             f"with no active page nothing can overwrite brightness -- the "
             f"slider value must be applied, got {set_brightness.calls!r}"
         )
 
-        stub2 = Obj(settings_page=Obj(deck_controller=Obj(active_page=None)))
-        assert Screensaver.page_overwrites_screensaver(stub2) is False, (
+        screensaver_guard_stub = StubObject(
+            settings_page=StubObject(deck_controller=StubObject(active_page=None))
+        )
+        assert Screensaver.page_overwrites_screensaver(screensaver_guard_stub) is False, (
             "no active page means 'not overwritten'"
         )
 
-        # update_image is the screensaver asset picker callback. It must not
-        # reload the screensaver against a None active_page, because
-        # load_screensaver dereferences page.dict and would raise.
+        # Skip screensaver reload when no active page can supply page.dict.
         load_screensaver = Recorder()
-        controller3 = Obj(active_page=None, load_screensaver=load_screensaver)
-        stub3 = Obj(
+        image_update_controller = StubObject(
+            active_page=None, load_screensaver=load_screensaver
+        )
+        image_update_stub = StubObject(
             deck_serial_number="SN1",
             set_thumbnail=Recorder(),
-            settings_page=Obj(deck_controller=controller3),
+            settings_page=StubObject(deck_controller=image_update_controller),
         )
-        Screensaver.update_image(stub3, "/some/screensaver.png")
+        Screensaver.update_image(image_update_stub, "/some/screensaver.png")
         assert load_screensaver.calls == [], (
             "with no active page there is nothing to reload the screensaver "
             f"against -- load_screensaver must be skipped, got "
@@ -290,13 +277,13 @@ def check_udev_probe_spawn_form() -> None:
 
     saved_subprocess = ow_mod.subprocess
     saved_is_flatpak = ow_mod.is_flatpak
-    ow_mod.subprocess = Obj(
+    ow_mod.subprocess = StubObject(
         check_output=fake_check_output,
         CalledProcessError=saved_subprocess.CalledProcessError,
     )
     try:
         ow_mod.is_flatpak = lambda: True
-        version = ow_mod.OnboardingWindow.get_udev_version(Obj())
+        version = ow_mod.OnboardingWindow.get_udev_version(StubObject())
         assert recorded[-1] == ["flatpak-spawn", "--host", "udevadm", "--version"], (
             f"inside flatpak the probe must run udevadm on the HOST via "
             f"flatpak-spawn, got {recorded[-1]!r}"
@@ -307,7 +294,7 @@ def check_udev_probe_spawn_form() -> None:
         )
 
         ow_mod.is_flatpak = lambda: False
-        ow_mod.OnboardingWindow.get_udev_version(Obj())
+        ow_mod.OnboardingWindow.get_udev_version(StubObject())
         assert recorded[-1] == ["udevadm", "--version"], recorded[-1]
     finally:
         ow_mod.subprocess = saved_subprocess
@@ -318,9 +305,9 @@ def check_udev_probe_spawn_form() -> None:
 def check_asset_manager_drops_callback_refs() -> None:
     from src.windows.AssetManager.AssetManager import AssetManager
 
-    action = Obj(name="opener-action")  # stands in for the pinned action/page
+    action = StubObject(name="opener-action")  # stands in for the pinned action/page
     callback = Recorder()
-    stub = Obj(
+    stub = StubObject(
         callback_func=callback,
         callback_args=(action,),
         callback_kwargs={"k": action},
@@ -345,25 +332,23 @@ def check_asset_manager_drops_callback_refs() -> None:
 
 
 def check_flowbox_drops_callback_refs() -> None:
-    # The second delivery path is CustomAssets/FlowBox.on_child_activated. It
-    # captures the callback, then nulls the manager refs before it spawns the
-    # delivery thread. Stub threading.Thread, so the capture is synchronous and
-    # no real thread runs.
+    # Capture callback data before clearing manager references and dispatching.
+    # Stub Thread so this check remains synchronous.
     import src.windows.AssetManager.CustomAssets.FlowBox as fb_mod
 
-    action = Obj(name="opener-action")  # stands in for the pinned action/page
+    action = StubObject(name="opener-action")  # stands in for the pinned action/page
     callback = Recorder()
-    asset_manager = Obj(
+    asset_manager = StubObject(
         callback_func=callback,
         callback_args=(action,),
         callback_kwargs={"k": action},
         hide=Recorder(),
     )
-    stub = Obj(
-        asset_chooser=Obj(asset_manager=asset_manager),
+    stub = StubObject(
+        asset_chooser=StubObject(asset_manager=asset_manager),
         callback_thread=Recorder(),  # thread target; captured, never run here
     )
-    child = Obj(asset={"internal-path": "/some/custom.png"})
+    child = StubObject(asset={"internal-path": "/some/custom.png"})
 
     captured = {}
 

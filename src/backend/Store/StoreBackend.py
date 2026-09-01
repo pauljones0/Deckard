@@ -59,7 +59,7 @@ from src.backend.Store.asset_types import (
     SD_PLUS_BAR,
     WALLPAPER,
 )
-from src.backend.Store import install_reload, install_script, json_root
+from src.backend.Store import install_recovery, install_reload, install_script, json_root
 from src.backend.Store.prepare_pool import PreparePool
 from src.backend.Store.catalog_entry import COMMIT_SHA_RE, resolve_pinned_revision
 from src.backend.Store.data_type import DataType
@@ -67,25 +67,14 @@ from src.backend.Store.store_result import Err, ErrReason, Ok, StoreFetchError, 
 
 
 class _ResolvedVersion(NamedTuple):
-    """What version resolution decides before a fetch of an entry. It names
-    whether a compatible release exists, which commit to fetch, and, for a
-    plugin only, the branch a custom entry pins. Version resolution returns
-    None when no compatible or newest release exists, and the catalog then
-    drops the entry. _prepare_asset tells the two apart by type."""
+    """A resolved commit, compatibility verdict, and optional plugin branch."""
     compatible: bool
     commit: str | None
     branch: str | None
 
 
 def same_repository(a: RepoRef | None, b: RepoRef | None) -> bool:
-    """Whether two parsed store urls name the same GitHub repository.
-
-    The comparison sites call this, and parse_repo_url never does. GitHub
-    treats an owner and a repository name case-insensitively, so a tree
-    stamped from acme/Widget must match a catalog entry spelled Acme/Widget.
-    The cache keys built from the same helpers stay byte-compatible with what
-    is already on disk.
-    """
+    """Compare GitHub repository identities without case sensitivity."""
     if a is None or b is None:
         return False
     return (a.user.casefold(), a.repo.casefold()) == (b.user.casefold(), b.repo.casefold())
@@ -97,13 +86,7 @@ def repository_key(ref: RepoRef) -> tuple[str, str]:
 
 
 class InstalledAsset(NamedTuple):
-    """One directory under an asset directory, read locally.
-
-    asset_id is the directory name. install_* installs over that name, and
-    download_repo validates the staged tree against it. manifest_id is what
-    the tree on disk claims to be. The two agree for a canonical install, and
-    differ for a copy kept aside under another name.
-    """
+    """Local asset metadata, including directory and manifest identities."""
     asset_id: str
     path: str
     sha: str                  # "" when neither .git nor VERSION can be read
@@ -113,15 +96,7 @@ class InstalledAsset(NamedTuple):
 
 
 class UpdateCheck(NamedTuple):
-    """Everything the question "does this catalog entry need an update" needs.
-    That is the installed asset the entry names, the sha that asset sits at,
-    and the sha it should sit at.
-
-    Every other field a store entry carries (name, descriptions, tags,
-    licence, thumbnail) only displays the entry, and each one costs a
-    request. This narrow tuple keeps a launch off the network for an entry
-    the user never installed.
-    """
+    """The local and target state needed to decide whether an update exists."""
     url: str
     ref: RepoRef
     asset_id: str | None      # None when the entry is not installed
@@ -135,18 +110,11 @@ class StoreBackend:
     STORE_REPO_URL = "https://github.com/StreamController/StreamController-Store" #"https://github.com/StreamController/StreamController-Store"
     STORE_CACHE_PATH = "Store/cache"
 
-    # The official catalog is read at this exact commit of the store
-    # repository, never at a branch tip or through versions.json. A
-    # hash-shape entry auto-updates to whatever the catalog pins, so the
-    # catalog itself must not move without review. Bump only after
-    # scripts/vet_store_pin.py has diffed the candidate against this value
-    # and its minimum-app-version gate passed; put the diff in the MR.
+    # Read the official catalog only at this vetted commit, never a branch tip.
+    # Validate replacements with scripts/vet_store_pin.py and the app-version gate.
     STORE_PIN = "aac7c77cc74f92c46bcd816fe07963d3cff641c3"
 
-    # Names the repository that a tree came from. Every install writes it
-    # next to VERSION. The catalog names repositories, and an install
-    # directory takes its name from a manifest id, so without this stamp only
-    # a fetch of every entry's remote manifest connects the two.
+    # Connect an installed manifest id to its source repository without a fetch.
     ORIGIN_FILE = "ORIGIN"
 
     WALLPAPERS_FILE = "Wallpapers.json"
@@ -155,57 +123,28 @@ class StoreBackend:
     SDPLUSWALLPAPERS_FILE = "SDPlusBarWallpapers.json"
 
 
-    # Caps the concurrent GitHub fetches. It is high enough to overlap the
-    # catalog's 150 or so small requests, which dominate store load time, and
-    # low enough to look unlike a scrape burst to raw.githubusercontent. It
-    # aliases the shared session's pool size, so the semaphore cap and the
-    # connection pool cannot drift apart. A cap above the pool would make the
-    # surplus threads open throwaway connections.
+    # Keep the fetch semaphore and shared connection pool at the same limit.
     MAX_CONCURRENT_REQUESTS = http_client.POOL_MAXSIZE
 
-    # Whitelist for a manifest-supplied asset id, which is the "id" field of
-    # a plugin, an icon or a wallpaper. Such an id comes from a remote
-    # manifest.json and becomes one path component under the app's data
-    # directories, including an rmtree target and an install target. An id
-    # must start alphanumeric, which rejects ".", ".." and a hidden
-    # directory, and may continue with [A-Za-z0-9._-] only, which rejects
-    # "/", "\\", whitespace and an absolute path. The length cap keeps it a
-    # sane directory name.
+    # Permit one non-hidden path component of at most 128 safe characters.
     ASSET_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 
     @classmethod
     def is_safe_asset_id(cls, asset_id: object) -> TypeGuard[str]:
-        """Whether a manifest-supplied id is safe as a single path component.
-        Reject a bad id and never normalize it. An id that fails this check
-        comes from a hostile or broken manifest. A quiet repair would install
-        into, or delete, a path the author never named."""
+        """Check a manifest id as one path component without normalizing it."""
         return isinstance(asset_id, str) and bool(cls.ASSET_ID_PATTERN.fullmatch(asset_id))
 
-    # The one commit-sha shape gate, shared with the pin resolver so a
-    # revision the catalog resolves is one the install accepts. The
-    # rationale sits on the pattern in catalog_entry.
+    # Use the same commit-sha shape for catalog resolution and installation.
     COMMIT_SHA_PATTERN = COMMIT_SHA_RE
 
-    # A branch or ref name from a remote store catalog (plugin["branch"]).
-    # Even as an argv token it must carry no shell metacharacter, newline,
-    # NUL, or leading "-", which git reads as an option. The pattern stays
-    # wide enough for a real ref name, with slashes, dots and inner dashes,
-    # and rejects whitespace and every shell-significant character.
+    # Accept common ref characters but reject whitespace, shell syntax, and leading dashes.
     SAFE_REF_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,254}$")
 
-    # What sits installed on disk, per asset directory. One update-check pass
-    # (process_store_data with include_images False) scans it once, rather
-    # than once per catalog entry. It stays None outside such a pass, and
-    # prepare_* then scans for itself, so nothing depends on the snapshot. A
-    # whole-dict assignment is atomic, so a worker reads this pass's snapshot
-    # or no snapshot. It sits on the class, so an instance built without
-    # __init__, which the test harness does, reads the same default.
+    # Cache installed assets only during one update-check pass.
+    # Replacing the complete mapping lets workers see this snapshot or no snapshot.
     _installed_index: "dict[str, dict[str, InstalledAsset]] | None" = None
 
-    # The install directories that no catalog entry claimed this session, so
-    # the fallback walk stops visiting them again. Each change rebinds this
-    # set rather than mutates it, so two instances never share the
-    # class-level default.
+    # Do not repeat full-catalog searches for unclaimed installs this session.
     _unresolvable_installs: "frozenset[str]" = frozenset()
 
     @classmethod
@@ -214,17 +153,13 @@ class StoreBackend:
 
     @classmethod
     def is_safe_ref_name(cls, ref_name: object) -> TypeGuard[str]:
-        """Whether a remote-catalog branch or ref name is safe to pass to
-        git. It rejects a shell metacharacter, whitespace, a newline and a
-        leading dash. A catalog branch of "main; rm -rf ~" then injects no
-        shell, and git reads no option."""
+        """Check a remote ref for safe use as a git argument."""
         return isinstance(ref_name, str) and bool(cls.SAFE_REF_PATTERN.fullmatch(ref_name))
 
     def __init__(self) -> None:
         self.store_cache = StoreCache()
 
-        # Every fetch path shares this: the catalog prepare_* tasks and the
-        # UI install and update threads. It caps store HTTP concurrency.
+        # Limit HTTP concurrency across catalog, install, and update threads.
         self._fetch_limiter = threading.Semaphore(self.MAX_CONCURRENT_REQUESTS)
 
         self._prepare_pool = PreparePool(self.MAX_CONCURRENT_REQUESTS)
@@ -234,7 +169,7 @@ class StoreBackend:
         threading.Thread(target=self._fetch_official_authors_background, daemon=True).start()
 
     def shutdown(self) -> None:
-        """Release the fan-out pool, on app quit; see PreparePool."""
+        """Release the catalog preparation pool."""
         self._prepare_pool.shutdown()
 
     def _fetch_official_authors_background(self) -> None:
@@ -257,36 +192,27 @@ class StoreBackend:
                 if not url:
                     continue
                 if parse_repo_url(url) is None:
-                    # Skip an unparseable store url here. It otherwise
-                    # raises an opaque "x not in list" out of the cache-key
-                    # helper, through fetch_and_parse_store_json, which
-                    # catches json errors only, and out of the catalog load.
-                    # One bad settings entry then blanks every store page.
+                    # Isolate an invalid custom-store setting from the catalog load.
                     log.error(f"Skipping custom store {url!r}: not a store repository url")
                     continue
                 custom_branch = store.get("branch")
                 if not isinstance(custom_branch, str) or not custom_branch:
-                    # A third-party store follows the "main" convention. The
-                    # official store instead reads STORE_PIN, a vetted
-                    # commit of this app's own store repository, which a
-                    # custom repository does not share. The two defaults
-                    # differ for that reason.
+                    # Custom stores default to main; the official store uses its vetted pin.
                     custom_branch = "main"
                 stores.append((url, custom_branch))
 
         return stores
     
-    def get_custom_plugins(self) -> list[tuple[str, str]]:
+    def get_custom_plugins(self) -> list[tuple[str, str | None]]:
+        # Preserve None to request the custom plugin repository's default branch.
         settings = gl.settings_manager.app()
 
-        plugins: list[tuple[str, str]] = []
+        plugins: list[tuple[str, str | None]] = []
         if settings.enable_custom_plugins:
             for plugin in settings.custom_plugins:
                 url = plugin.get("url")
                 if not url:
-                    # An empty row, added in the settings window and never
-                    # filled in. Skip it silently, like get_stores does,
-                    # because it is no error.
+                    # Ignore an incomplete settings row.
                     continue
                 if parse_repo_url(url) is None:
                     log.error(f"Skipping custom plugin {url!r}: not a store repository url")
@@ -296,20 +222,11 @@ class StoreBackend:
         return plugins
     
     def get_official_store_branch(self) -> str:
-        """The ref every official-store fetch reads: STORE_PIN, a vetted
-        commit of the store repository. The catalog never moves because
-        upstream edited a branch or versions.json; it moves when the pin
-        is bumped, after the review scripts/vet_store_pin.py supports.
-        The name says branch because get_stores consumes (url, ref) pairs
-        that a branch name also fits."""
+        """Return the vetted commit used for every official catalog fetch."""
         return self.STORE_PIN
 
     def request_from_url(self, url: str) -> "requests.Response":
-        # Callers run on worker threads, the prepare pool and the UI install
-        # threads. Connection and body read both stay inside the limiter, so
-        # a catalog load cannot look like a scrape burst; the shared session
-        # retries a 429/5xx inside the adapter, holding the same slot.
-        # Returns the read Response, or raises StoreFetchError.
+        # Hold one fetch slot through connection, retries, and body read.
         pool = getattr(self, "_prepare_pool", None)  # __new__-built test backends carry no pool
         if pool is not None and pool.stopping:
             raise StoreFetchError(url, "the store backend is shutting down")
@@ -321,15 +238,7 @@ class StoreBackend:
                         req.content  # read the body while the connection is open
                         return req
                     log.error(f"Request to {url} failed with status code {req.status_code}")
-                    # Read the error body too, and then discard it. A close
-                    # of a streamed response whose body nothing read closes
-                    # the socket instead of returning it to the shared
-                    # session's pool. A catalog carries many valid 404s,
-                    # because attribution.json is optional and most entries
-                    # miss it, and each one would then cost the next fetch a
-                    # fresh TCP and TLS handshake, which the pooled session
-                    # exists to avoid. A GitHub error body is a few bytes,
-                    # and the 200 body above already reads without a bound.
+                    # Drain error bodies so streamed-response close returns sockets to the pool.
                     req.content
                     raise StoreFetchError(url, f"status code {req.status_code}")
                 finally:
@@ -345,8 +254,8 @@ class StoreBackend:
         Parameters:
             repo_url (str): The URL of the repository.
             file_path (str): The path of the file in the repository.
-            branch_name: The name of the branch or commit sha in the repository. Defaults to "main".
-                         None yields a URL no fetch can serve; the caller's error path covers it.
+            branch_name (str, optional): Branch or commit; defaults to "main".
+                         None builds an unservable URL for caller error handling.
 
         Returns:
             str: The constructed URL for the specified file path in the repository's branch.
@@ -366,38 +275,31 @@ class StoreBackend:
                         data_type: DataType = DataType.TEXT,
                         force_refetch: bool = False) -> "str | bytes":
         """
-        Retrieves the content of a remote file from a GitHub repository.
+        Retrieve a remote file from a GitHub repository.
 
         Parameters:
             repo_url (str): The URL of the GitHub repository.
             file_path (str): The path to the file within the repository.
-            branch_name (str, optional): The name of the branch to read the file from. Defaults to "main".
-                                         A commit hash also works here.
+            branch_name (str, optional): Branch or commit; defaults to "main".
 
         Returns:
             str: The content of the remote file.
 
         Note:
-            - The store cache holds each fetched file, so a repeated read costs no request.
-            - A url on another domain than github.com becomes a
-              raw.githubusercontent.com url.
+            - Cached files avoid repeated requests.
+            - github.com URLs are rewritten to raw.githubusercontent.com.
         """
-        # Literal modes, so the cache's read and write overloads can tell
-        # which of the two things open_cache_file hands back.
+        # Keep literal modes for the cache read and write overloads.
         read_mode: Literal["r", "rb"] = "r"
         write_mode: Literal["w", "wb"] = "w"
         if data_type == DataType.CONTENT:
             read_mode, write_mode = "rb", "wb"
         elif data_type != DataType.TEXT:
-            # A raw string a dynamic caller pushes past the type once fell off
-            # both branches below and returned None. Treat it as text and say so.
+            # Treat a dynamic invalid mode as text instead of returning None.
             log.error(f"Unexpected store data_type {data_type!r}; treating it as text")
             data_type = DataType.TEXT
 
-        # data_type belongs to the cache key. Without it a binary fetch
-        # (data_type="content") of a repo path lands under the same index
-        # entry as a text fetch of that path, and one cache file then opens
-        # in conflicting modes, by the order of the callers.
+        # Separate text and binary cache entries for the same repository path.
         is_cached = False
         if not force_refetch:
             is_cached = self.store_cache.is_cached(
@@ -418,13 +320,10 @@ class StoreBackend:
         except StoreFetchError:
             answer = None  # offline or 429, so run the fallback path below
         if answer is None:
-            # Fall back to the cached copy, even after the caller forced a
-            # refetch, because a slightly stale catalog beats an empty or
-            # errored store page. The entry's fetched age bounds this. Its
-            # "date" field is a last-use clock that every read renews, so
-            # that field cannot bound staleness.
+            # Permit stale fallback after a failed forced fetch.
+            # Bound staleness by fetched time because reads renew the last-use clock.
             if self.store_cache.is_cached(url=repo_url, branch=branch_name, path=file_path, data_type=data_type):
-                fetched = self.store_cache.get_fetched_date(url=repo_url, branch=branch_name, path=file_path, data_type=data_type)
+                fetched = self.store_cache.get_fetched_timestamp(url=repo_url, branch=branch_name, path=file_path, data_type=data_type)
                 if fetched is not None and time.time() - fetched <= StoreCache.DAYS_TO_KEEP * 24 * 60 * 60:
                     log.warning(f"Serving cached copy of {file_path} from {repo_url} after failed fetch")
                     with self.store_cache.open_cache_file(url=repo_url, branch=branch_name, path=file_path, data_type=data_type, mode=read_mode) as f:
@@ -443,18 +342,8 @@ class StoreBackend:
             return cast(bytes, answer.content)
 
     def get_last_commit(self, repo_url: str, branch_name: str = "main") -> "str | None":
-        """Resolves the tip sha of a branch via the GitHub API.
-
-        Runs under the fetch semaphore, like every sibling fetch.
-        prepare_plugin calls this for every branch-pinned custom plugin during
-        the catalog fan-out, and an uncapped requests.get() would evade the
-        cap.
-
-        Returns the sha str. It returns None when no sha resolves, for a url
-        that names no repository, a non-200 answer, or an empty or
-        unparseable commit list. A network failure raises StoreFetchError, like
-        request_from_url does.
-        """
+        """Resolve a branch tip under the fetch limit.
+        Return None for an invalid or empty response; raise StoreFetchError on network failure."""
         ref = parse_repo_url(repo_url)
         if ref is None:
             log.error(f"Cannot resolve a commit of {repo_url!r}: not a store repository url")
@@ -482,25 +371,19 @@ class StoreBackend:
         return cast("str | None", commits[0].get("sha"))
     
     def get_official_authors(self) -> list[str]:
-        # Read at the same pin as the catalog, so the authors view and the
-        # entries it verifies are one snapshot. A pinned commit is
-        # immutable, so the cache may serve it and no refetch is forced.
+        # Read authors at the immutable catalog pin for one consistent snapshot.
         authors_json = self.get_remote_file(self.STORE_REPO_URL, "OfficialAuthors.json", self.STORE_PIN)
-        # The catalog file is a list of GitHub usernames; the cast trusts that shape.
         return cast(list[str], json.loads(authors_json))
 
     def fetch_and_parse_store_json(self, url: str, filename: str, branch: str, n_stores_with_errors: int = 0) -> "tuple[Any, int]":
         try:
-            # A catalog at a pinned commit is immutable, so the cache may
-            # serve it with no staleness bound, and the store then works
-            # offline. A branch ref moves, so it stays a forced fetch.
+            # Refetch moving refs but allow immutable commits to work from cache.
             refetch = COMMIT_SHA_RE.fullmatch(branch) is None
             store_file_json = self.get_remote_file(url, filename, branch, force_refetch=refetch)
             store_file_json = json.loads(store_file_json)
             return store_file_json, n_stores_with_errors
         except StoreFetchError:
-            # The catalog is unreachable and no fresh cache exists. Count
-            # this store as failed. The fetch layer logged the reason.
+            # Count a catalog with no usable cache as failed.
             n_stores_with_errors += 1
             return None, n_stores_with_errors
         except (json.decoder.JSONDecodeError, TypeError) as e:
@@ -509,33 +392,13 @@ class StoreBackend:
             return None, n_stores_with_errors
 
     def process_store_data(self, filename: str, process_func: Callable[..., Any], get_custom_func: Callable[..., Any] | None, data_class: "type[StoreDataT]", include_images: bool = True, base_dir: str | None = None) -> "list[StoreDataT] | None":
-        """Fetches the catalog file from every configured store and prepares
-        each entry on the fan-out pool.
-
-        include_images picks which view of an entry this builds, and does
-        more than attach a thumbnail.
-
-        True builds the store window's view. It describes every entry in full,
-        with its manifest, attribution and thumbnail, because the window shows
-        every entry.
-
-        False builds the update check's view. It reads only what decides
-        whether an entry is installed and out of date. An entry that is not
-        installed costs no request of its own, and nothing fetches or decodes
-        an image. The objects it returns are incomplete store entries, with
-        their display fields unset.
-
-        base_dir names the asset directory this catalog installs into. The
-        update-check view needs it to identify an install made before the
-        origin stamp existed. The store window's view ignores it.
-        """
+        """Fetch configured catalogs and prepare entries on the fan-out pool.
+        Without images, base_dir supplies legacy identity for the local-first update view."""
         n_stores_with_errors = 0
         data_list = []
 
         if not include_images:
-            # This opens an update-check pass. The fan-out below then scans
-            # each asset directory once for the whole pass, rather than once
-            # per catalog entry.
+            # Scan each asset directory once for this update-check pass.
             self._installed_index = {}
         try:
             stores = self.get_stores()
@@ -546,52 +409,43 @@ class StoreBackend:
                     data_list.extend(store_file_json)
 
             if n_stores_with_errors >= len(stores):
-                # Every configured store's catalog fetch failed. None means
-                # "no catalog at all", which _as_store_result turns into an
-                # Err. An empty list means the stores answered and listed
-                # nothing.
+                # Distinguish total fetch failure from a valid empty catalog.
                 return None
 
             custom_entries = [{"url": url, "branch": branch}
                               for url, branch in (get_custom_func() if get_custom_func is not None else [])]
 
             if not include_images and base_dir is not None:
-                # Before the fan-out, so every entry below decides locally.
+                # Resolve legacy installs before workers make local update decisions.
                 self.resolve_unstamped_installs(base_dir, data_list + custom_entries)
 
-            futures = [self._prepare_pool.submit(process_func, data, include_images, True) for data in data_list]
+            futures = [self._prepare_pool.submit(process_func, entry, include_images, True) for entry in data_list]
             futures += [self._prepare_pool.submit(process_func, asset, include_images, False)
                         for asset in custom_entries]
 
-            # Collect each future on its own. One bad store entry must not
-            # raise out of the fan-out and blank the page, because the page's
-            # @log.catch load() would swallow it and leave the spinner up.
+            # Isolate each entry failure so one bad entry cannot blank the page.
             results = []
             for future in futures:
                 try:
                     results.append(future.result())
                 except CancelledError:
-                    continue  # the quit released the pool, so end quietly
+                    continue
                 except Exception as e:
-                    # Drop this entry alone, for a StoreFetchError from its
-                    # fetch and for any other fault. Only a whole-store
-                    # failure, below, is an error.
+                    # Drop only the failed entry; total catalog failure is handled separately.
                     log.error(f"Store item preparation failed: {e!r}")
             narrowed: list[StoreDataT] = [result for result in results if isinstance(result, data_class)]
 
             return narrowed
         finally:
             if not include_images:
-                # Drop the snapshot with the pass that took it. A later
-                # prepare_* must never decide against an earlier snapshot.
+                # Do not reuse an installed-assets snapshot across passes.
                 self._installed_index = None
 
-    def _as_store_result(self, data: "list[StoreDataT] | None") -> "StoreResult[list[StoreDataT]]":
-        # Turn the None that process_store_data returns into the typed
-        # channel. Err means that every configured store's fetch failed.
-        if data is None:
+    def _as_store_result(self, catalog_entries: "list[StoreDataT] | None") -> "StoreResult[list[StoreDataT]]":
+        # Convert total catalog failure to the typed error channel.
+        if catalog_entries is None:
             return Err(ErrReason.NO_CONNECTION, "no store catalog could be fetched")
-        return Ok(data)
+        return Ok(catalog_entries)
 
     def get_all_plugins(self, include_images: bool = True) -> StoreResult[list[PluginData]]:
         return self._as_store_result(self.process_store_data(self.PLUGIN_FILE, self.prepare_plugin, self.get_custom_plugins, PluginData, include_images, gl.PLUGIN_DIR))
@@ -606,34 +460,25 @@ class StoreBackend:
         return self._as_store_result(self.process_store_data(self.SDPLUSWALLPAPERS_FILE, self.prepare_sd_plus_bar_wallpaper, None, SDPlusBarWallpaperData, include_images, self.sd_plus_bar_wallpapers_dir()))
     
     def get_manifest(self, url: str, commit: "str | None") -> "dict[str, Any] | None":
-        manifest = self.get_remote_file(url, "manifest.json", commit)  # raises on a failed fetch
-        return json_root.json_object(manifest, f"manifest.json in {url}")  # None for a non-object root
+        manifest = self.get_remote_file(url, "manifest.json", commit)
+        return json_root.json_object(manifest, f"manifest.json in {url}")
 
     def get_attribution(self, url: str, commit: "str | None") -> dict[str, Any]:
         try:
             result = self.get_remote_file(url, "attribution.json", commit)
         except StoreFetchError:
-            return {}  # An optional file, so a failed fetch reads as empty
+            return {}
         try:
-            return json_root.json_object(result, f"attribution.json in {url}") or {}  # empty for a non-object root
+            return json_root.json_object(result, f"attribution.json in {url}") or {}
         except (json.decoder.JSONDecodeError, TypeError):
             return {}
 
     def _resolve_asset_version(self, entry: dict[str, Any], desc: AssetTypeDescriptor, url: str) -> "_ResolvedVersion | None":
-        """Decide the commit an entry should be fetched at.
-
-        A non-plugin entry always pins a revision. A plugin entry can
-        omit one, which a branch-pinned custom plugin does, and a plugin entry
-        alone resolves a branch tip. Returns a _ResolvedVersion, or None when
-        no revision resolves and the catalog drops the entry. An unreachable
-        branch tip raises out of get_last_commit, and the fan-out's collect
-        loop drops that entry.
-        """
+        """Resolve an entry's commit and optional plugin branch.
+        Return None for no valid pin; let branch-fetch failures reach the per-entry handler."""
         branch: "str | None" = entry.get("branch") if desc.is_plugin else None
         if branch is not None:
-            # The branch arm wins over any pin, the way the update check
-            # and the install identification read it, so the three sites
-            # agree on an entry that carries both a branch and a pin.
+            # Give a plugin branch precedence over a pin at every resolution site.
             return _ResolvedVersion(True, self.get_last_commit(url, branch), branch)
 
         compatible = True
@@ -648,9 +493,7 @@ class StoreBackend:
         return _ResolvedVersion(compatible, commit, None)
 
     def _fetch_thumbnail(self, url: str, thumbnail_path: Any, ref: "str | None") -> "Image.Image | None":
-        # List the entry without an image rather than drop it, because
-        # get_web_image turns a failed fetch into None. This is the one image
-        # guard, and it keeps _prepare_asset to a single line.
+        # Keep entries whose thumbnail fetch fails.
         return self.get_web_image(url, thumbnail_path, ref)
 
     def _translate_descriptions(self, manifest: dict[str, Any]) -> "tuple[str | None, str | None]":
@@ -660,23 +503,11 @@ class StoreBackend:
         )
 
     def _prepare_asset(self, entry: dict[str, Any], desc: AssetTypeDescriptor, include_image: bool = True, verified: bool = False) -> "StoreData | None":
-        """Turn one catalog entry into the descriptor's dataclass. This is
-        the one implementation behind prepare_plugin, prepare_icon,
-        prepare_wallpaper and prepare_sd_plus_bar_wallpaper.
-
-        include_image picks the view. False builds what the update check reads
-        (see check_entry_for_update) and fetches nothing for display. True
-        builds the full store-window row, with the manifest, then the
-        thumbnail, then the attribution. desc carries everything
-        type-specific, which is the install directory, the dataclass, its id,
-        name and version field names, and whether a branch applies.
-        """
+        """Prepare one descriptor-specific catalog entry.
+        Excluding images builds only the fields needed for an update decision and install."""
         base_dir = getattr(self, desc.base_dir_attr)()
         if not include_image:
-            # The update-check view holds the fields that get_*_to_update
-            # reads and install_* needs. Every field left unset here (name,
-            # descriptions, tags, licence, thumbnail) costs a request and only
-            # ever gets displayed.
+            # Omit display-only fields that require remote data.
             checked = self.check_entry_for_update(entry, base_dir)
             if not isinstance(checked, UpdateCheck):
                 return checked
@@ -695,9 +526,7 @@ class StoreBackend:
             return desc.data_cls(**fields)
 
         if "url" not in entry:
-            # One diagnostic for a url-less entry of any type. The three
-            # non-plugin types dropped such an entry silently, and the plugin
-            # path reached this point as an opaque KeyError.
+            # Report and isolate a URL-less catalog entry.
             log.error(f"Skipping store entry without a url: {entry!r}")
             return None
         url = entry["url"]
@@ -707,41 +536,31 @@ class StoreBackend:
 
         resolved = self._resolve_asset_version(entry, desc, url)
         if not isinstance(resolved, _ResolvedVersion):
-            # None means no version resolved, and process_store_data drops
-            # the entry.
             return resolved
         compatible, commit, branch = resolved
-        # A plugin entry with no version map and no branch leaves this None.
-        # The fetch layer accepts it: a None ref builds an invalid raw URL,
-        # the request fails, and the per-entry handling drops the entry.
+        # A plugin with no pin or branch gets an invalid fetch and is dropped per entry.
         ref_for_fetch: "str | None" = commit or branch
 
-        manifest = self.get_manifest(url, ref_for_fetch)  # raises on a failed fetch
+        manifest = self.get_manifest(url, ref_for_fetch)
         if not manifest:
             log.error(f"manifest failed to load for repository {url}")
             return None
 
         thumbnail_path: Any = manifest.get("thumbnail")
         image = self._fetch_thumbnail(url, thumbnail_path, ref_for_fetch)
-        attribution = self.get_attribution(url, ref_for_fetch).get("generic", {})  # TODO: Choose correct attribution
+        attribution = self.get_attribution(url, ref_for_fetch).get("generic", {})
 
         translated_description, translated_short_description = self._translate_descriptions(manifest)
 
         author = ref.user
 
-        # These values come from JSON. The manifest and attribution
-        # documents carry no types, and each missing field below becomes None
-        # and feeds a StoreData field that src/windows/Store/StoreData.py
-        # declares non-optional. Bind them through Any locals rather than
-        # restate a type they do not have.
+        # Keep untyped JSON values in Any locals instead of asserting non-optional field types.
         descriptions: Any = manifest.get("descriptions") or None
         short_descriptions: Any = manifest.get("short-descriptions") or None
         tags: Any = manifest.get("tags") or None
         license_descriptions: Any = attribution.get("licence-descriptions", attribution.get("descriptions")) or None
 
-        # A fetch of the remote manifest identified this entry, which costs
-        # a request. Record the link while it is known, so the update check
-        # identifies the same install with no fetch.
+        # Persist identity discovered by this manifest fetch for later local checks.
         self.note_installed_origin(base_dir, manifest.get("id"), url)
 
         full_fields: dict[str, Any] = {
@@ -761,8 +580,6 @@ class StoreBackend:
             "tags": tags,
 
             "thumbnail": thumbnail_path or None,
-            # _fetch_thumbnail turns a failed fetch into None, so it is the
-            # one guard here and a second "or None" adds nothing.
             "image": image,
 
             "copyright": attribution.get("copyright") or None,
@@ -791,7 +608,6 @@ class StoreBackend:
             with open(fetch_head_path, 'r') as file:
                 lines = file.readlines()
 
-                # The first line holds the latest commit hash.
                 if lines:
                     latest_commit_hash = lines[0].split()[0]
                     return latest_commit_hash
@@ -814,26 +630,11 @@ class StoreBackend:
         return os.path.join(gl.DATA_PATH, "sd_plus_bar_wallpapers")
 
     def scan_installed_assets(self, base_dir: str) -> dict[str, InstalledAsset]:
-        """Maps an install directory name to an InstalledAsset for
-        everything under base_dir. This is the whole local half of the update
-        check, and it makes no request.
-
-        Every field serves identity or the verdict. The ORIGIN stamp names
-        the repository the tree came from. The local manifest id says whether
-        the directory holds the canonical install of that tree. A renamed
-        copy answers with the id it was copied from. The sha names the commit
-        the tree sits on. is_symlink marks a checkout the user manages rather
-        than an install this app owns.
-
-        This skips an unsafe name, which also skips a dot-prefixed leftover
-        from _swap_into_place.
-        """
+        """Build local update metadata for safe asset directories under base_dir."""
         index: dict[str, InstalledAsset] = {}
         try:
             names = os.listdir(base_dir)
         except OSError:
-            # An asset class the user never installed from has no directory.
-            # That means nothing is installed, and is no error.
             return index
         for asset_id in names:
             if not self.is_safe_asset_id(asset_id):
@@ -852,16 +653,8 @@ class StoreBackend:
         return index
 
     def installed_assets(self, base_dir: str) -> dict[str, InstalledAsset]:
-        """The current pass's snapshot for base_dir. It scans once on first
-        use. Outside a pass, which a lone prepare_* call is, it scans afresh
-        every time.
-
-        Two workers that reach an unscanned directory together both scan and
-        both store. The results are equivalent snapshots taken moments apart,
-        so that race costs one extra listing. Two overlapping passes that
-        clear each other's snapshot cost the same, because the snapshot is a
-        cache and never the authority.
-        """
+        """Return the pass snapshot for base_dir, or scan when no pass exists.
+        Concurrent first scans can duplicate one listing because the snapshot is only a cache."""
         snapshot = self._installed_index
         if snapshot is None:
             return self.scan_installed_assets(base_dir)
@@ -872,9 +665,7 @@ class StoreBackend:
         return index
 
     def read_origin(self, asset_path: str) -> RepoRef | None:
-        """The repository an installed tree came from, as download_repo and
-        clone_repo stamped it. This reduces the url to a RepoRef, so a url in
-        one spelling still matches a catalog entry in another."""
+        """Read and normalize an installed tree's source repository."""
         try:
             with open(os.path.join(asset_path, self.ORIGIN_FILE)) as f:
                 return parse_repo_url(f.readline().strip())
@@ -883,10 +674,7 @@ class StoreBackend:
 
     @staticmethod
     def read_local_manifest_id(asset_path: str) -> str | None:
-        """The id an installed tree claims for itself. It equals the
-        directory name for a canonical install, which install_* creates and
-        _staged_tree_acceptable enforces. It differs for a renamed directory
-        and for a copy kept aside."""
+        """Read the id that an installed tree claims for itself."""
         try:
             with open(os.path.join(asset_path, "manifest.json")) as f:
                 asset_id = json.load(f).get("id")
@@ -895,40 +683,19 @@ class StoreBackend:
         return asset_id if isinstance(asset_id, str) else None
 
     def stamp_origin(self, asset_path: str, repo_url: str) -> None:
-        """Record which repository an installed tree came from.
-
-        The catalog cannot supply this link. A catalog entry names a
-        repository. An install directory takes its name from a manifest id.
-        Nothing else on disk connects the two without a fetch of the remote
-        manifest. Every install writes this stamp, and the first
-        identification of an older install backfills it, so the update check
-        answers "is this entry installed" from local state alone.
-
-        Never written into a symlinked directory, which is a checkout the
-        user manages, and this app does not write into it.
-        """
+        """Record an installed tree's source repository without writing through symlinks."""
         if os.path.islink(asset_path):
             return
         try:
             with open(os.path.join(asset_path, self.ORIGIN_FILE), "w") as f:
                 f.write(f"{repo_url}\n")
         except OSError as e:
-            # The app works without the stamp. Identity falls back to the
-            # manifest lookup that wrote the stamp.
+            # Continue without the optimization; manifest lookup can recover identity.
             log.warning(f"Could not stamp the origin of {asset_path}: {e}")
 
     def note_installed_origin(self, base_dir: str, asset_id: object, repo_url: str) -> None:
-        """Backfill the origin stamp of an install that something else
-        identified. A full prepare fetches the manifest anyway, so the
-        identification happens once rather than once per launch.
-
-        A stamp that disagrees with the url that just identified the tree
-        gets overwritten. A renamed or transferred repository otherwise keeps
-        a stamp that no catalog entry claims, and the install then stops
-        receiving updates. Where a broken catalog lists one asset id under two
-        urls, the last prepare to identify the tree wins. The sweep resolves
-        the same collision in catalog order.
-        """
+        """Backfill or correct the source stamp of an identified canonical install.
+        When catalogs duplicate an id, the last full preparation overwrites the stamp."""
         if not self.is_safe_asset_id(asset_id) or not isinstance(repo_url, str):
             return
         ref = parse_repo_url(repo_url)
@@ -942,18 +709,8 @@ class StoreBackend:
         self.stamp_origin(asset_path, repo_url)
 
     def match_installed_asset(self, ref: RepoRef, installed: "dict[str, InstalledAsset]") -> "InstalledAsset | None":
-        """The install a catalog entry refers to, out of everything stamped
-        with its repository.
-
-        Only a canonical directory can answer, which is one whose name
-        equals the id its own manifest claims. A copy kept aside, such as
-        com_x_Alpha_backup, carries the same origin stamp and otherwise
-        claims the entry. An install over it cannot work. download_repo
-        refuses a staged tree whose manifest id differs from the directory
-        name, so every launch would download an archive and throw it away. An
-        install with no readable manifest stays eligible. It is broken rather
-        than misnamed, and a reinstall repairs it.
-        """
+        """Find the sole canonical install stamped with a repository.
+        Keep an install with no readable manifest eligible so a reinstall can repair it."""
         candidates = [asset for asset in installed.values() if same_repository(asset.origin, ref)]
         if not candidates:
             return None
@@ -975,37 +732,8 @@ class StoreBackend:
         return None
 
     def resolve_unstamped_installs(self, base_dir: str, entries: list[Any]) -> None:
-        """Identifies an install that the origin stamp cannot answer for.
-        This fetches a candidate entry's manifest, matches its id against the
-        directory names, and stamps what it identifies. No later pass looks
-        it up again.
-
-        A directory stays pending while it carries no stamp. An install made
-        before the stamp existed carries no stamp. A directory also stays
-        pending while its stamp names a repository that no entry in this
-        catalog claims. A renamed or transferred repository otherwise keeps a
-        stamp that nothing matches, and the install then stops receiving
-        updates, which is the failure the stamp prevents.
-
-        This runs once per update-check pass, before the fan-out, and only
-        while something is pending. An entry whose repository name appears in
-        a pending directory's id goes first, because an asset id usually ends
-        in its repository name. The walk stops once every pending directory is
-        claimed, so the usual cost is one fetch per unresolved install rather
-        than one per catalog entry. Where a broken catalog lists one asset id
-        under two urls, the first entry in catalog order wins, because the
-        sort is stable and a claimed directory leaves pending.
-
-        A directory that nothing claims costs one full walk, which is one
-        small fetch per entry and no image work. It then counts as
-        unresolvable for the rest of the session, so no later pass repeats
-        the walk. That memory never persists, so a store that was merely
-        unreachable gets another chance at the next launch.
-
-        A symlinked directory never goes pending. Nothing auto-updates it, so
-        nothing needs to identify it, and this app does not write into a tree
-        it does not own.
-        """
+        """Identify unstamped installs before an update pass; the first catalog claimant wins.
+        Skip symlinks and suppress repeated full-catalog misses only for this session."""
         installed = self.installed_assets(base_dir)
         claimed = set()
         for entry in entries:
@@ -1022,24 +750,19 @@ class StoreBackend:
         if not pending:
             return
 
-        def plausible_first(entry: dict[str, Any]) -> int:
+        def claim_priority(entry: dict[str, Any]) -> int:
             entry_ref = parse_repo_url(entry.get("url"))
             if entry_ref is None:
                 return 2
             return 0 if any(entry_ref.repo.lower() in asset_id.lower() for asset_id in pending) else 1
 
-        for entry in sorted(entries, key=plausible_first):
+        for entry in sorted(entries, key=claim_priority):
             if not pending:
                 return
             try:
                 self._claim_pending_install(entry, pending, installed)
             except Exception as e:
-                # The same contract as the prepare fan-out's collect loop.
-                # One bad entry must not raise out of the pass. Remote data
-                # reaches a json parse, where a truncated manifest or an error
-                # page fails, and a version parse, where a catalog key like
-                # "latest" fails. This pre-pass runs before every leg of
-                # update_everything, so a raise here stops all four legs.
+                # Isolate malformed remote data so one entry cannot stop every update leg.
                 log.error(f"Could not identify installs from store entry {entry.get('url')!r}: {e!r}")
 
         if pending:
@@ -1049,23 +772,19 @@ class StoreBackend:
             )
 
     def _claim_pending_install(self, entry: dict[str, Any], pending: "dict[str, InstalledAsset]", installed: "dict[str, InstalledAsset]") -> None:
-        """One entry's turn at the pending directories. This fetches its
-        manifest and stamps a pending directory that the id names. It raises
-        whatever the remote data raises, and the caller catches per entry."""
+        """Stamp the pending directory named by one entry's remote manifest."""
         ref = parse_repo_url(entry.get("url"))
         if ref is None:
             return
         url = entry["url"]
-        # Read the manifest at the revision the entry points at. For a
-        # branch-pinned entry the branch name is revision enough, so this
-        # identification costs no tip lookup.
+        # Use a branch directly for identity without resolving its tip.
         revision = entry.get("branch")
         if revision is None:
             pinned = resolve_pinned_revision(entry)
             if pinned is None:
                 return
             revision = pinned.sha
-        manifest = self.get_manifest(url, revision)  # raises into the per-entry catch
+        manifest = self.get_manifest(url, revision)
         if not manifest:
             return
         asset_id = manifest.get("id")
@@ -1075,39 +794,15 @@ class StoreBackend:
         if asset is None:
             return
         if asset.manifest_id is not None and asset.manifest_id != asset.asset_id:
-            # No install can land on a directory whose name differs from
-            # the id it claims, because the staged-id check refuses it.
+            # Do not claim a renamed copy as the canonical install.
             return
         self.stamp_origin(asset.path, url)
-        # Keep the pass snapshot current. Every entry checked after this one
-        # must see the directory as stamped.
+        # Publish the new stamp to later checks in this pass.
         installed[asset_id] = asset._replace(origin=ref)
 
     def check_entry_for_update(self, entry: dict[str, Any], base_dir: str) -> "UpdateCheck | None":
-        """Resolves one catalog entry against what is installed under
-        base_dir, fetching nothing the update decision does not need.
-
-        Identity comes from the ORIGIN stamp that every install carries. The
-        entry names a repository, the stamp names the directory that came
-        from that repository, and the directory's VERSION names the commit it
-        sits on. All of that is local, so an entry the user never installed
-        costs nothing beyond the catalog that named it. Its manifest,
-        attribution and thumbnail only ever served the display.
-
-        Identity must not come from a match of the catalog's commit shas
-        against what is installed. The store rewrites an entry's sha in place
-        under the same version key. The sha an install sits on then leaves
-        the listing at the moment an update exists.
-
-        One case still costs a request. A branch-pinned entry, which a custom
-        plugin is, names a branch rather than a version map, and its tip must
-        resolve.
-
-        This answers from stamps alone, so it is complete only inside a pass
-        that ran resolve_unstamped_installs first, which process_store_data
-        does for the update-check view. A direct call reads an install with a
-        missing or stale stamp as not installed.
-        """
+        """Resolve one catalog entry against source stamps and local versions.
+        Only a branch-pinned entry needs a request, and a full pass resolves legacy stamps first."""
         ref = self.repo_ref_for_entry(entry.get("url"))
         if ref is None:
             return None
@@ -1117,18 +812,14 @@ class StoreBackend:
         branch = entry.get("branch")
         compatible = True
         if branch is not None:
-            # An unreachable tip raises out of get_last_commit and the
-            # fan-out drops the entry, rather than write a failure into
-            # commit_sha.
+            # Let an unreachable branch tip drop this entry through the fan-out handler.
             target = self.get_last_commit(url, branch)
         else:
             pinned = resolve_pinned_revision(entry)
             if pinned is None:
                 log.error(f"Skipping store entry {url!r}: it pins no version")
                 return None
-            # On no version match for this app major, the resolution pins
-            # the newest one, the way prepare_* does, and the caller
-            # refuses to install it.
+            # Preserve the newest incompatible pin for display while blocking installation.
             target = pinned.sha
             compatible = pinned.compatible
 
@@ -1137,23 +828,15 @@ class StoreBackend:
             return UpdateCheck(url, ref, None, None, target, branch, compatible)
 
         if asset.is_symlink:
-            # A symlinked install is a checkout the user manages, which a
-            # dev workflow points at a working tree. An install over it
-            # replaces the link with a downloaded copy and takes the working
-            # tree out of the plugin directory, so auto-update skips it. The
-            # store window still offers the update.
+            # Auto-update must not replace a user-managed symlink with a downloaded tree.
             log.info(f"Skipping auto-update of {asset.asset_id}: it is a symlink to a tree this app does not own")
             return UpdateCheck(url, ref, None, None, target, branch, compatible)
 
-        # An empty sha means that neither .git nor VERSION could be read,
-        # from a half-written or hand-copied tree. It matches no commit, so
-        # the entry reads as outdated and a reinstall repairs it.
+        # Treat an unreadable local version as outdated so reinstall can repair it.
         return UpdateCheck(url, ref, asset.asset_id, asset.sha, target, branch, compatible)
 
     def get_local_sha_for_id(self, base_dir: str, asset_id: object) -> str | None:
-        """get_local_sha behind the asset-id whitelist. An unsafe or missing
-        manifest id never probes the filesystem, and reads as not installed,
-        which is None."""
+        """Read a local version only for a safe asset id."""
         if not self.is_safe_asset_id(asset_id):
             return None
         return self.get_local_sha(os.path.join(base_dir, asset_id))
@@ -1190,10 +873,9 @@ class StoreBackend:
         try:
             result = self.get_remote_file(url, path, branch, data_type=DataType.CONTENT)
         except StoreFetchError:
-            return None  # Offline or rate-limited, and logged. List with no image.
+            return None
         except Exception as e:
-            # Catch Exception, so a pool worker still honours SystemExit and
-            # KeyboardInterrupt.
+            # Preserve SystemExit and KeyboardInterrupt in pool workers.
             log.error(f"Failed to fetch image {path} from {url}: {e}")
             return None
         try:
@@ -1203,19 +885,12 @@ class StoreBackend:
             return None
     
     def repo_ref_for_entry(self, url: object) -> RepoRef | None:
-        """Parses a catalog/settings entry's url, reporting the skip.
-
-        A store entry carries whatever the catalog json or the user's
-        settings hold. An entry that names no usable repository drops here,
-        rather than raise through the prepare fan-out as an opaque
-        "x not in list".
-        """
+        """Parse a catalog or settings URL and report an invalid entry."""
         ref = parse_repo_url(url)
         if ref is None:
             log.error(f"Skipping store entry {url!r}: not a store repository url")
         return ref
 
-    ## Install
     def subp_call(self, args: list[str]) -> int:
         return subprocess.call(args)
 
@@ -1224,7 +899,7 @@ class StoreBackend:
         with zipfile.ZipFile(zip_path, 'r') as zip_ref:
             zip_contents = zip_ref.namelist()
             for item in zip_contents:
-                if not item.endswith("/"): # A directory name ends with /
+                if not item.endswith("/"):
                     continue
                 if item.count("/") > 1:
                     continue
@@ -1242,19 +917,7 @@ class StoreBackend:
         return extracted_folder_name
 
     def zip_has_unsafe_members(self, zip_path: str) -> bool:
-        """A second check on the member paths of a downloaded archive.
-
-        This app downloads a GitHub-generated .zip archive only. CPython's
-        zipfile strips a leading "/" and ".." during extraction, so that
-        library is the first guard. This check keeps a later change safe, such
-        as another archive source, or a tar or other format that CPython does
-        not sanitize the same way. A member whose normalized path is absolute,
-        or which resolves outside the extraction root, fails the whole
-        archive.
-
-        The rule itself lives in archive_safety, so the pack import and this
-        download read one set of member names as acceptable.
-        """
+        """Reject archive members that are absolute or escape the extraction root."""
         unsafe = archive_safety.first_unsafe_member(zip_path)
         if unsafe is None:
             return False
@@ -1271,32 +934,11 @@ class StoreBackend:
             with contextlib.suppress(OSError):
                 os.remove(path)
 
+
     def _staged_tree_acceptable(self, staging_tree: str, expected_id: str | None,
                                 gate_app_version: bool = True) -> bool:
-        """The one staged-manifest gate, before a staged tree can swap over
-        an install. Two checks on the staged manifest:
-
-        Identity. When the caller knows the asset id it installs, and that
-        id also names the install directory, the downloaded tree's manifest
-        must agree. A drift between catalog and repository, or a hostile
-        manifest, must never swap over the installed pack. Only this check
-        needs expected_id; a caller without one accepts any identity, and
-        then an unreadable manifest too, as it always has. Every production
-        caller passes an id; the no-id arm is depth, not a flow.
-
-        Compatibility, when gate_app_version. A staged plugin tree whose
-        manifest requires a newer app version is refused before the swap.
-        The loader refuses to load such a tree, so the swap would replace a
-        working install with a dead one; a hash-shape catalog pin carries
-        no version map, so this is the one gate between a bad pin and a
-        bricked install. The compare is the loader's own minimum-version
-        half, base versions with pre-release tags stripped, failing open on
-        a value it cannot parse the way the loader does. The loader's other
-        half, the app-version major match, reads a value a plugin may pass
-        in code, so the staged manifest alone cannot decide it and this
-        gate does not try. Pack installers pass False: no loader ever
-        refuses a pack, and a stale minimum in a pack manifest must not
-        make the pack uninstallable."""
+        """Require the expected manifest id and, for plugins, a supported minimum app version.
+        Callers without an id accept unreadable manifests; packs skip minimum-version gating."""
         try:
             with open(os.path.join(staging_tree, "manifest.json")) as f:
                 manifest = json.load(f)
@@ -1322,54 +964,16 @@ class StoreBackend:
                 return False
         return True
 
-    def _swap_into_place(self, staging_tree: str, directory: str) -> None:
-        """Replace directory with the fully staged tree, and delete the old
-        install only after the new one is in place.
-
-        This first moves the staged tree next to the destination. That move is
-        the one step that can cross a filesystem, because an environment
-        variable can put PLUGIN_DIR on another device. It runs while the old
-        install stays intact. The two renames that follow share a parent
-        and are atomic. The transient siblings carry a dot prefix, so the
-        plugin and pack directory scanners never read a crash leftover as a
-        real install. The next install of the same asset sweeps a leftover."""
-        parent = os.path.dirname(os.path.abspath(directory))
-        name = os.path.basename(os.path.normpath(directory))
-        os.makedirs(parent, exist_ok=True)
-        new_tree = os.path.join(parent, f".{name}.deckard-new")
-        old_tree = os.path.join(parent, f".{name}.deckard-old")
-        self._remove_leftover(new_tree)
-        self._remove_leftover(old_tree)
-
-        shutil.move(staging_tree, new_tree)
-        moved_old_aside = False
-        try:
-            if os.path.lexists(directory):
-                os.replace(directory, old_tree)
-                moved_old_aside = True
-            os.replace(new_tree, directory)
-        except Exception:
-            # Put the old install back, then report the failure.
-            if moved_old_aside and not os.path.lexists(directory):
-                os.replace(old_tree, directory)
-            shutil.rmtree(new_tree, ignore_errors=True)
-            raise
-        self._remove_leftover(old_tree)
+    def recover_interrupted_installs(self) -> None:
+        """Repair half-swapped installs before plugin and pack scans."""
+        install_recovery.recover_interrupted_installs(
+            [self.plugins_dir(), self.icons_dir(),
+             self.wallpapers_dir(), self.sd_plus_bar_wallpapers_dir()])
 
     def download_repo(self, repo_url:str, directory:str, commit_sha:str | None = None, branch_name:str | None = None, expected_id:str | None = None,
                       gate_app_version: bool = True) -> StoreResult[None]:
-        """Returns Ok(None) on success, or an Err that names the failure.
-        INSTALL_FAILED covers a hard failure, such as a missing git on the
-        devel clone path or an unresolvable branch. INVALID_ASSET covers a
-        staged tree that fails the expected_id manifest check. NO_CONNECTION
-        covers a network or archive fault. This stays inside the backend. The
-        install_* methods alone call it, and they hand the Err to the UI.
-
-        The install is transactional. It downloads, extracts, validates and
-        VERSION-stamps the new tree in a staging area, and then _swap_into_place
-        moves it into directory. The delete of the previous tree happens only
-        after the new one lands, so any failure leaves the old install
-        untouched."""
+        """Use INVALID_ASSET for manifests and NO_CONNECTION for network or archive faults.
+        Use INSTALL_FAILED when Git is missing or a clone/ref command fails."""
         if not is_flatpak() and gl.argparser.parse_args().devel:
             return self.clone_repo(repo_url, directory, commit_sha, branch_name, expected_id, gate_app_version)
 
@@ -1382,19 +986,15 @@ class StoreBackend:
         projectname = ref.repo.lower()
         sha = commit_sha
         if commit_sha is None and branch_name is not None:
-            # Resolve the sha that gets written into VERSION.
             try:
                 sha = self.get_last_commit(repo_url, branch_name)
             except StoreFetchError:
                 return Err(ErrReason.NO_CONNECTION, f"could not resolve branch {branch_name!r} of {repo_url}")
             if sha is None:
-                # Fail here rather than build a ".../None.zip" url, which
-                # 404s later and logs a misleading reason.
+                # Report an unresolved branch before constructing an invalid archive URL.
                 log.error(f"Could not resolve branch {branch_name!r} of {repo_url}")
                 return Err(ErrReason.INSTALL_FAILED, f"branch {branch_name!r} of {repo_url} has no commits")
         if sha is None:
-            # The caller gave neither a commit sha nor a branch, so nothing
-            # exists to download.
             log.error(f"Refusing to download {repo_url}: no commit sha and no branch")
             return Err(ErrReason.INSTALL_FAILED, f"no commit sha and no branch for {repo_url}")
 
@@ -1402,28 +1002,20 @@ class StoreBackend:
 
         zip_path = os.path.join(gl.DATA_PATH, "cache", f"{projectname}-{sha}.zip")
 
-        # The helper creates the cache directory, raises on an HTTP error
-        # status, and moves the archive onto zip_path only once the whole body
-        # arrived, so a failed download poisons no later run.
+        # Publish the archive path only after the complete download arrives.
         try:
             http_client.download_to_file(zip_url, zip_path, timeout=30)
         except Exception as e:
             log.error(e)
             return Err(ErrReason.NO_CONNECTION, f"download of {projectname} failed: {e}")
 
-        ## Extract
         extracted_folder = None
         try:
-            # Resolve the folder name from the zip listing before the
-            # unpack, so the cleanup below also covers a failure mid-extract.
-            # A github url ignores case, so the name can differ from
-            # projectname.
+            # Resolve the case-preserved root before extraction so cleanup covers partial work.
             extracted_folder_name = self.get_main_folder_of_zip(zip_path)
             if extracted_folder_name is None:
-                # The helper found no single root folder in the archive.
                 raise ValueError("could not determine the archive's root folder")
-            # Refuse a traversal or absolute member before
-            # shutil.unpack_archive writes to disk.
+            # Reject unsafe members before extraction writes to disk.
             if self.zip_has_unsafe_members(zip_path):
                 log.error(f"Refusing to extract {projectname}: archive contains unsafe member paths")
                 return Err(ErrReason.NO_CONNECTION, f"{projectname} archive contains unsafe member paths")
@@ -1432,26 +1024,20 @@ class StoreBackend:
                 shutil.rmtree(extracted_folder)
             shutil.unpack_archive(zip_path, os.path.join(gl.DATA_PATH, "cache"))
 
-            # Validate and complete the staged tree before it reaches the
-            # install location. VERSION must exist before the swap. A tree
-            # without VERSION reads as local_sha None, which means not
-            # installed, so a crash after the swap and before a late VERSION
-            # write leaves an install that nothing retries.
+            # Validate and stamp the staging tree before the atomic swap publishes it.
             if not self._staged_tree_acceptable(extracted_folder, expected_id, gate_app_version):
                 return Err(ErrReason.INVALID_ASSET, f"staged {projectname} tree failed the manifest checks")
             with open(os.path.join(extracted_folder, "VERSION"), "w") as f:
                 f.write(sha)
-            # Stamp the staging tree, like VERSION above, so the swap
-            # publishes the install and its origin together.
+            # Publish origin and version together with the tree.
             self.stamp_origin(extracted_folder, repo_url)
 
-            self._swap_into_place(extracted_folder, directory)
+            install_recovery.swap_into_place(extracted_folder, directory)
         except Exception as e:
             log.error(f"Failed to extract/install {projectname}: {e}")
             return Err(ErrReason.NO_CONNECTION, f"failed to extract/install {projectname}: {e}")
         finally:
-            # Leave no archive and no extracted temp folder behind, and let
-            # no cleanup failure replace the outcome of the try block.
+            # Remove temporary data without replacing the install outcome on cleanup failure.
             try:
                 if os.path.exists(zip_path):
                     os.remove(zip_path)
@@ -1465,14 +1051,9 @@ class StoreBackend:
     def clone_repo(self, repo_url:str, local_path:str, commit_sha:str | None = None, branch_name:str | None = None, expected_id:str | None = None,
                    gate_app_version: bool = True) -> StoreResult[None]:
         if commit_sha is not None:
-            # Clone the main branch first.
             branch_name = None
 
-        # commit_sha and branch_name come from the remote store catalog, as
-        # plugin["commits"][version] and plugin["branch"]. A catalog branch of
-        # "main; <cmd>" injects a shell wherever a command line reads it.
-        # Validate both here and pass them to git as argv tokens, with no
-        # shell, through git -C below.
+        # Validate catalog refs and pass them to git only as argv tokens.
         if commit_sha is not None and not self.is_safe_commit_sha(commit_sha):
             log.error(f"Refusing to clone {repo_url}: malformed commit sha {commit_sha!r}")
             return Err(ErrReason.INVALID_ASSET, f"malformed commit sha {commit_sha!r}")
@@ -1480,52 +1061,29 @@ class StoreBackend:
             log.error(f"Refusing to clone {repo_url}: unsafe branch/ref name {branch_name!r}")
             return Err(ErrReason.INVALID_ASSET, f"unsafe branch/ref name {branch_name!r}")
 
-        # Check for git, which most Linux systems have.
         if shutil.which("git") is None:
             log.error("Git is not installed on this system. Please install it.")
             return Err(ErrReason.INSTALL_FAILED, "git is not installed on this system")
 
-        # The same transactional contract as download_repo. Clone and
-        # prepare in a staging directory under cache/, then swap. A removal
-        # first destroys the existing install before the clone can fail.
+        # Clone and validate in staging before replacing the existing install.
         staging = os.path.join(gl.DATA_PATH, "cache", f".clone-staging.{os.path.basename(os.path.normpath(local_path))}")
         os.makedirs(os.path.join(gl.DATA_PATH, "cache"), exist_ok=True)
         self._remove_leftover(staging)
 
         try:
-            # Clone the newest commit of the default branch.
             rc = self.subp_call(["git", "clone", repo_url, staging])
             if rc != 0 or not os.path.isdir(staging):
                 log.error(f"git clone of {repo_url} failed with exit code {rc}")
                 return Err(ErrReason.INSTALL_FAILED, f"git clone of {repo_url} failed (exit {rc})")
 
-            # Add both the final home and the staging clone to the safe
-            # directory list, so git logs no dubious-ownership warning. The
-            # pull, reset and checkout below all run in staging.
-            # FIXME: Check if not already added
+            # Mark final and staging paths safe before repository operations.
             self.subp_call(["git", "config", "--global", "--add", "safe.directory", os.path.abspath(local_path)])
             self.subp_call(["git", "config", "--global", "--add", "safe.directory", os.path.abspath(staging)])
 
-            # Run git pull to create .git/FETCH_HEAD, which the update check
-            # reads. git -C takes argv tokens and runs no shell.
+            # Create FETCH_HEAD for the local-version reader without a shell.
             self.subp_call(["git", "-C", staging, "pull"])
 
-            # Set the repository to the given commit_sha, and check the rc
-            # for the reason the checkout below does. An unreachable catalog
-            # sha, after an upstream force-push or a collected commit, leaves
-            # staging on the default-branch tip. That tree then passes
-            # validation, takes a VERSION stamp of a sha it does not hold, and
-            # installs as a success, which ships a wrong tree.
-            #
-            # Fail hard rather than fall back to the default tip. Every other
-            # git failure in this function does the same, for the clone rc,
-            # the checkout rc and a missing git, and each returns
-            # INSTALL_FAILED. The non-devel path already answers this exact
-            # failure the same way, because download_repo builds
-            # ".../<sha>.zip", which 404s on an unreachable sha and fails the
-            # install. A fallback here would leave the devel clone path as the
-            # one place in the store where an unreachable sha still installs
-            # something.
+            # Fail an unreachable commit instead of installing and mis-stamping the default tip.
             if commit_sha is not None:
                 rc = self.subp_call(["git", "-C", staging, "reset", "--hard", commit_sha])
                 if rc != 0:
@@ -1533,22 +1091,17 @@ class StoreBackend:
                               f"(commit unreachable?) -- refusing to install the default-branch tip")
                     return Err(ErrReason.INSTALL_FAILED, f"git reset --hard {commit_sha!r} failed (exit {rc})")
             elif branch_name is not None:
-                # Use checkout rather than switch. A custom plugin can pin a
-                # tag, or any detachable ref, which git switch refuses without
-                # --detach. Check the rc. An ignored rc ships the
-                # default-branch tip stamped as the ref whenever the ref the
-                # user typed does not exist.
+                # Checkout supports detachable refs.
+                # Reject failure instead of using the default tip.
                 rc = self.subp_call(["git", "-C", staging, "checkout", branch_name])
                 if rc != 0:
                     log.error(f"git checkout {branch_name!r} failed with exit code {rc} for {repo_url}")
                     return Err(ErrReason.INSTALL_FAILED, f"git checkout {branch_name!r} failed (exit {rc})")
 
-            # Keep the order of download_repo. Validate the staged tree,
-            # then stamp VERSION, then swap.
+            # Validate, stamp, then swap, in the same order as archive installation.
             if not self._staged_tree_acceptable(staging, expected_id, gate_app_version):
                 return Err(ErrReason.INVALID_ASSET, "staged tree failed the manifest checks")
 
-            # Write the version stamp.
             version_stamp = commit_sha or branch_name
             if version_stamp is None:
                 log.error(f"Refusing to stamp VERSION for {repo_url}: no commit sha and no branch")
@@ -1557,7 +1110,7 @@ class StoreBackend:
                 f.write(version_stamp)
             self.stamp_origin(staging, repo_url)
 
-            self._swap_into_place(staging, local_path)
+            install_recovery.swap_into_place(staging, local_path)
         except Exception as e:
             log.error(f"Failed to stage devel clone of {repo_url}: {e}")
             return Err(ErrReason.NO_CONNECTION, f"failed to stage devel clone of {repo_url}: {e}")
@@ -1572,9 +1125,7 @@ class StoreBackend:
         plugin_id = plugin_data.plugin_id
 
         if not self.is_safe_asset_id(plugin_id):
-            # The id names the install directory, which download_repo
-            # replaces by a swap. A traversal id such as "../../.." must never
-            # reach that join.
+            # Reject traversal before the id is joined to the install directory.
             log.error(f"Refusing to install plugin with unsafe id {plugin_id!r} from {url}")
             return Err(ErrReason.INVALID_ASSET, f"unsafe plugin id {plugin_id!r}")
 
@@ -1584,10 +1135,8 @@ class StoreBackend:
 
         local_path = os.path.join(gl.PLUGIN_DIR, plugin_id)
 
-        # Decide the install steps before the download swaps the tree, so a
-        # decline never destroys a working install: a declined update keeps
-        # the registered version rather than replace it with one whose
-        # dependencies never got installed; a fresh install proceeds bare.
+        # Decide scripts before download so a declined update stays intact.
+        # A fresh install proceeds without declined scripts.
         plugin_manager = gl.plugin_manager
         is_update = plugin_manager is not None and plugin_manager.get_plugin_by_id(plugin_id) is not None
         run_scripts = install_script.decide_install_scripts(
@@ -1598,57 +1147,41 @@ class StoreBackend:
         response = self.download_repo(repo_url=url, directory=local_path, commit_sha=plugin_data.commit_sha, branch_name=plugin_data.branch, expected_id=plugin_id)
 
         if isinstance(response, Err):
-            return response  # no script run and no reload on a partial tree
+            return response
 
-        # On an update the new tree already sits in place. Deregister the old
-        # version now, which also purges sys.modules, so load_plugins imports
-        # the new code; deregistering before the download would need a
-        # recovery reload on a failed fetch.
+        # Deregister only after a successful swap so failed updates keep the old plugin active.
         if is_update:
             try:
                 self.uninstall_plugin(plugin_id, remove_from_pages=False, remove_files=False)
             except Exception as e:
                 log.error(f"Deregistering the old version of {plugin_id} failed: {e}")
 
-        # The install steps run only through the gate, which owns the
-        # confinement, timeout, process-group kill and loopback-guard
-        # re-injection; run_scripts was decided pre-download.
+        # Run all plugin install steps through the confinement and timeout gate.
         outcome = install_script.run_install_steps(local_path, plugin_id, run=run_scripts)
         if outcome not in (install_script.Outcome.RAN, install_script.Outcome.NO_STEPS):
             log.warning(f"Install steps of {plugin_id}: {outcome.value}")
 
-        # The reload drops the import-finder caches (a dependency the steps
-        # just pip-installed must import in this process) and surfaces a
-        # plugin that failed to come up. The UI and deck refresh below run
-        # either way, or an update that already deregistered the old version
-        # would leave the chooser and the decks showing it.
+        # Reload after cache invalidation, then refresh UI and decks even on load failure.
         load_error = install_reload.reload_after_install(plugin_id)
 
-        # A version-gated plugin installs without an error, but the reload
-        # puts it in disabled_plugins; tell the user now, or the next
-        # launch's disabled toast is the first feedback.
+        # Report a newly disabled plugin during this install session.
         if load_error is None:
             self.notify_if_installed_disabled(plugin_id)
 
-        # Update the UI.
         sidebar = services.sidebar()
         if sidebar is not None:
             GLib.idle_add(sidebar.action_chooser.plugin_group.update)
 
-        # Update the page on every deck; check both, so an auto-update
-        # raises no error here.
+        # Refresh active pages only on available decks and controllers.
         for controller in (gl.deck_manager.deck_controller if gl.deck_manager is not None else []):
             if hasattr(controller, "active_page"):
                 if controller.active_page is not None:
-                    # Load the action objects.
                     controller.active_page.load_action_objects()
                     controller.load_page(controller.active_page)
 
         if load_error is not None:
-            # No install signal, no success log; the error toast is the report.
             return Ok(None)
 
-        # Tell the plugin actions.
         gl.signal_manager.trigger_signal(Signals.PluginInstall, plugin_data.plugin_id)
 
         log.success(f"Plugin {plugin_id} installed successfully under: {local_path} with sha: {plugin_data.commit_sha}")
@@ -1656,10 +1189,8 @@ class StoreBackend:
 
     @staticmethod
     def notify_if_installed_disabled(plugin_id: str) -> bool:
-        """Tells the user at once when the register() gate disabled the
-        plugin that just installed, which puts it in disabled_plugins rather
-        than plugins. Without this call the next launch's startup toast gives
-        the first feedback. Returns whether it told the user."""
+        """Report when registration disabled the newly installed plugin.
+        Return whether a notification was sent."""
         if plugin_id in PluginBase.plugins:
             return False
         entry = PluginBase.disabled_plugins.get(plugin_id)
@@ -1681,19 +1212,12 @@ class StoreBackend:
         return True
 
     def uninstall_plugin(self, plugin_id:str, remove_from_pages:bool = False, remove_files:bool = True) -> None:
-        # 1. Remove every action object from every cached page of every
-        # controller, and not from the active page alone. A visited page that
-        # still sits in the page cache otherwise holds dead plugin action
-        # objects alive with no teardown. Take the snapshot through the
-        # _pages_lock accessor. A loop over gl.page_manager.pages races
-        # load_page, discard_controller and clear_old_cached_pages, which
-        # mutate the dict from other threads.
+        # Use the locked page snapshot to remove dead actions from every cached page.
         for page in (gl.page_manager.all_cached_pages() if gl.page_manager is not None else []):
             page.remove_plugin_action_objects(plugin_id=plugin_id)
             if remove_from_pages:
                 page.remove_plugin_actions_from_json(plugin_id=plugin_id)
 
-        # 2. Inform the plugin base.
         plugin_manager = gl.plugin_manager
         if plugin_manager is None:
             return None
@@ -1701,16 +1225,11 @@ class StoreBackend:
         plugin = plugin_manager.get_plugin_by_id(plugin_id)
         if plugin is None:
             return None
-        # Capture the real import folder now. on_uninstall() and the rmtree
-        # below can remove the directory, and the symlink branch can rewrite
-        # plugin.PATH. The sys.modules purge below needs the real
-        # "plugins.<folder>" prefix, which differs from plugin_id, the
-        # manifest id, once someone renames the folder.
+        # Capture the import folder before uninstall hooks or symlink handling change the path.
         plugin_folder = os.path.basename(os.path.normpath(plugin.PATH))
         if remove_files:
             plugin.on_uninstall()
             
-            # 3. Remove the plugin folder.
             if os.path.islink(plugin.PATH):
                 symlink_target = os.readlink(plugin.PATH)
                 log.warning(f"Plugin {plugin.plugin_name} is inside a Symlink!")
@@ -1718,7 +1237,6 @@ class StoreBackend:
 
             shutil.rmtree(plugin.PATH)
 
-        # 4. Delete the plugin base object.
         # plugin_obj = gl.plugin_manager.get_plugin_by_id(plugin_id)
         plugin_manager.remove_plugin_from_list(plugin)
 
@@ -1740,56 +1258,36 @@ class StoreBackend:
         # for controller in gl.deck_manager.deck_controller:
             # controller.active_page.update_inputs_with_actions_from_plugin(plugin_id)
 
-        # Update the page on every deck; check both, so an auto-update
-        # raises no error here.
+        # Refresh active pages only on available decks and controllers.
         for controller in (gl.deck_manager.deck_controller if gl.deck_manager is not None else []):
             if hasattr(controller, "active_page"):
                 if controller.active_page is not None:
-                    # Load the action objects.
                     controller.active_page.load_action_objects()
                     controller.load_page(controller.active_page)
 
-    # The three data-only pack types, which are the icon pack, the wallpaper
-    # pack and the SD+ bar wallpaper pack, share one install and uninstall
-    # pair, and the descriptor selects the type. Each one joins a
-    # manifest-supplied id under a data directory, and then removes or
-    # replaces the result, so each one must reject an unsafe id. A traversal
-    # id would give a data-only pack a filesystem-wide delete, with no code
-    # execution. The plugin install and uninstall pair above stays separate,
-    # because it runs pip and __install__.py, and drives the plugin-manager
-    # deregister and reload, which a pack does not need.
+    # Share safe install and removal for data-only packs; plugins need script and reload handling.
 
-    def _install_asset(self, data: "IconData | WallpaperData | SDPlusBarWallpaperData", desc: AssetTypeDescriptor) -> StoreResult[None]:
-        """Download one data-only asset into its per-type directory. Returns
-        the StoreResult of download_repo, which is Ok(None) or an Err, or
-        Err(INVALID_ASSET) for an unsafe id or a missing url. The plugin
-        installer reports the same failure for those two conditions.
-
-        Nothing deletes the installed pack first. download_repo stages and
-        validates the new tree, and swaps it over the installed one at the
-        end. A failed download leaves the installed pack in place. An
-        uninstall first would lose the pack when a download failed
-        mid-update."""
-        asset_id = data.asset_id
+    def _install_asset(self, asset: "IconData | WallpaperData | SDPlusBarWallpaperData", desc: AssetTypeDescriptor) -> StoreResult[None]:
+        """Transactionally install one data-only asset into its type directory.
+        Return INVALID_ASSET for an unsafe id or missing URL."""
+        asset_id = asset.asset_id
         if not self.is_safe_asset_id(asset_id):
-            log.error(f"Refusing to install {desc.display_name} with unsafe id {asset_id!r} from {data.github}")
+            log.error(f"Refusing to install {desc.display_name} with unsafe id {asset_id!r} from {asset.github}")
             return Err(ErrReason.INVALID_ASSET, f"unsafe {desc.display_name} id {asset_id!r}")
 
-        github = data.github
+        github = asset.github
         if github is None:
             log.error(f"Refusing to install {desc.display_name} {asset_id!r}: no repository url")
             return Err(ErrReason.INVALID_ASSET, f"no repository url for {desc.display_name} {asset_id!r}")
 
         asset_path = os.path.join(getattr(self, desc.base_dir_attr)(), asset_id)
-        # Packs skip the app-version gate: no loader refuses a pack, so a
-        # stale minimum in a pack manifest must not block its install.
-        return self.download_repo(repo_url=github, directory=asset_path, commit_sha=data.commit_sha, expected_id=asset_id,
+        # Ignore plugin compatibility metadata for data-only packs.
+        return self.download_repo(repo_url=github, directory=asset_path, commit_sha=asset.commit_sha, expected_id=asset_id,
                                   gate_app_version=False)
 
-    def _uninstall_asset(self, data: "IconData | WallpaperData | SDPlusBarWallpaperData", desc: AssetTypeDescriptor) -> "int | None":
-        """Delete one data-only asset's installed directory. Returns 400 for
-        an unsafe id, and None otherwise."""
-        asset_id = data.asset_id
+    def _uninstall_asset(self, asset: "IconData | WallpaperData | SDPlusBarWallpaperData", desc: AssetTypeDescriptor) -> "int | None":
+        """Delete one data-only asset, or return 400 for an unsafe id."""
+        asset_id = asset.asset_id
         if not self.is_safe_asset_id(asset_id):
             log.error(f"Refusing to uninstall {desc.display_name} with unsafe id {asset_id!r}")
             return 400
@@ -1817,12 +1315,7 @@ class StoreBackend:
         return self._uninstall_asset(sd_plus_bar_wallpaper_data, SD_PLUS_BAR)
 
     def get_plugin_for_id(self, plugin_id: "str | None") -> "PluginData | None":
-        """The catalog plugin with this id, or None, which an unreachable
-        store also gives. get_all_plugins returns a StoreResult, so this
-        narrows an Err rather than iterates it. A loop over an Err raises
-        TypeError under an @log.catch. The @log.catch swallows the TypeError
-        and strands the caller with a stuck install spinner, or with an
-        onboarding page that never loads."""
+        """Return a catalog plugin by id, or None on lookup or catalog failure."""
         result = self.get_all_plugins()
         if isinstance(result, Err):
             log.error(f"Cannot resolve plugin {plugin_id!r}: {result.detail or result.reason.value}")
@@ -1832,13 +1325,8 @@ class StoreBackend:
                 return plugin
         return None
 
-    ## Updates
     def _get_assets_to_update(self, desc: AssetTypeDescriptor) -> "StoreResult[list[StoreData]]":
-        """The installed assets of one class that have a newer, compatible
-        and known target version. This is the shared update-check decision.
-        The update-check view fetches no thumbnail, and makes no request for a
-        catalog entry that was never installed. It dispatches through the
-        public get_all_* name, so a test stub of that name applies."""
+        """Return installed assets with a newer, compatible, known target version."""
         result = getattr(self, desc.get_all_attr)(include_images=False)
         if isinstance(result, Err):
             return result
@@ -1847,25 +1335,14 @@ class StoreBackend:
         to_update: "list[StoreData]" = []
         for asset in assets:
             if asset.local_sha is None:
-                # The asset is not installed.
                 continue
             if asset.local_sha == asset.commit_sha:
-                # The asset is up to date.
                 continue
             if asset.commit_sha is None:
-                # No known target. That happens for a branch-pinned plugin
-                # whose tip did not resolve, and for an entry of any type with
-                # a "branch" key or a null version map, because
-                # check_entry_for_update reads a branch for every type. A None
-                # target cannot install, so this skip avoids a doomed download
-                # and changes neither the count nor the disk.
+                # Skip entries with no installable target revision.
                 continue
             if asset.is_compatible is False:
-                # prepare pins the newest incompatible commit when no
-                # compatible version exists, so the store still lists the
-                # entry. An auto-update onto it replaces a working asset with
-                # a build for another app major. Skip it and report it. The
-                # store UI's update button reads the same verdict.
+                # Keep the working asset when only an incompatible target exists.
                 log.warning(
                     f"Skipping update of {desc.display_name} {asset.asset_id}: pinned version "
                     f"{asset.commit_sha} is not compatible with app version {gl.app_version}"
@@ -1876,12 +1353,7 @@ class StoreBackend:
         return Ok(to_update)
 
     def _update_all(self, desc: AssetTypeDescriptor) -> StoreResult[int]:
-        """Reinstall every out-of-date asset of one class. Returns Ok(n)
-        with the number of reinstalls that succeeded, or the catalog's Err
-        when the catalog was unreachable. Every reinstall goes through the
-        install method, so this deregisters nothing itself. For a plugin the
-        installer deregisters the old version only after a good download. A
-        failed update leaves the old version on disk and registered."""
+        """Reinstall outdated assets and return the success count or catalog error."""
         to_update = getattr(self, desc.get_to_update_attr)()
         if isinstance(to_update, Err):
             return to_update
@@ -1890,9 +1362,7 @@ class StoreBackend:
         install = getattr(self, desc.install_attr)
         for asset in to_update.value:
             result = install(asset)
-            # install_* answers one StoreResult, and a success is an Ok.
-            # Narrow the result rather than test its truth. An Err is truthy,
-            # so a truth test would count a failure as a success.
+            # Narrow the result because Err is truthy.
             if isinstance(result, Err):
                 log.error(f"Failed to update {desc.display_name} {asset.asset_id}: {result!r}")
                 continue
@@ -1901,8 +1371,7 @@ class StoreBackend:
         return Ok(n_updated)
 
     def get_plugins_to_update(self) -> "StoreResult[list[PluginData]]":
-        # The descriptor dispatches through getattr, so the element type is
-        # asserted per wrapper.
+        # Restore the descriptor-specific element type after dynamic dispatch.
         return cast("StoreResult[list[PluginData]]", self._get_assets_to_update(PLUGIN))
 
     def update_all_plugins(self) -> StoreResult[int]:
@@ -1927,19 +1396,12 @@ class StoreBackend:
         return cast("StoreResult[list[SDPlusBarWallpaperData]]", self._get_assets_to_update(SD_PLUS_BAR))
 
     def update_all_sd_plus_bar_wallpapers(self) -> StoreResult[int]:
-        """Returns Ok with the number of SD+ bar wallpapers updated, or an
-        Err."""
+        """Return the number of SD+ bar wallpapers updated, or an error."""
         return self._update_all(SD_PLUS_BAR)
 
     def update_everything(self) -> StoreResult[int]:
-        """Returns Ok with the number of assets updated, or the first
-        Err."""
-        # Run every class's update leg, and aggregate afterwards. Each leg
-        # dispatches through the public update_all_* name, so a test stub of
-        # any of them applies. They run in ASSET_TYPES order, which puts
-        # plugins first, the one leg that reloads the plugin manager. An Err
-        # from any leg becomes the overall Err, and otherwise the successful
-        # counts sum.
+        """Return the total assets updated, or the first error."""
+        # Run plugins first, preserve public-method dispatch, then aggregate all results.
         results = [getattr(self, desc.update_all_attr)() for desc in ASSET_TYPES]
         for result in results:
             if isinstance(result, Err):

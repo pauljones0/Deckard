@@ -1,10 +1,5 @@
-"""
-The quiescence gate never touches the deck screensaver.
-
-The physical deck stays visible while the monitor is locked, so the
-screensaver's animation is the intended content and animations_gated carries a
-not screen_saver.showing term.
-"""
+"""Keep screensaver animation active while a locked monitor leaves the deck visible.
+The quiescence gate must not suppress this intended content."""
 
 # On hide() the restored page must paint every key once, transparent ones
 # included, and only then go quiet.
@@ -27,10 +22,7 @@ def distinct_key_frames(deck) -> set:
 
 
 def wait_until_quiet(deck, quiet_for: float = 0.5, timeout: float = 10.0) -> bool:
-    """Waits until no device write has landed for quiet_for seconds.
-
-    The settle window's length depends on how fast the page-load tasks drain,
-    which is not a constant on a loaded machine."""
+    """Wait until device writes stop for quiet_for seconds on a loaded machine."""
     # The invariant is that the loop goes quiet, not that it goes quiet within
     # a fixed number of milliseconds.
     deadline = time.monotonic() + timeout
@@ -79,7 +71,11 @@ def main() -> None:
         controller.screen_saver.show()
         assert controller.screen_saver.showing is True
 
-        monitor = PresenceMonitor(mode=MODE_SYSTEM_IDLE, minutes=1, idle_detector=False)
+        monitor = PresenceMonitor(
+            mode=MODE_SYSTEM_IDLE,
+            idle_minutes=1,
+            enable_idle_detector=False,
+        )
         gl.presence_monitor = monitor
         gl.screen_locked = True
         monitor.on_lock_changed(True)

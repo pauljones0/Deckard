@@ -34,9 +34,8 @@ from loguru import logger as log
 # Read once at import, so this debugging knob cannot change behavior mid-run.
 _STRONG_CALLBACKS = os.environ.get("SC_STRONG_CALLBACKS") == "1"
 
-# An entry is either the callback itself (strong) or a weakref.WeakMethod
-# (weak). Both shapes resolve to the live callable (or None) via
-# _resolve_entry below.
+# An entry is a strong callback or a weak bound method.
+# Both resolve to a live callable or None through _resolve_entry.
 _Entry = object
 
 
@@ -44,24 +43,28 @@ def _is_bound_method(cb: Callable[..., Any]) -> bool:
     return hasattr(cb, "__self__") and hasattr(cb, "__func__")
 
 
-def describe_callback(cb: Callable[..., Any]) -> str:
-    """Give a printable identity for a live callback.
+def _same_callback(a: Callable[..., Any], b: Callable[..., Any]) -> bool:
+    """Compare bound methods by owner and function identity, and others by identity.
+    Never call plugin equality while the registry lock is held."""
+    if a is b:
+        return True
+    a_self = getattr(a, "__self__", None)
+    a_func = getattr(a, "__func__", None)
+    if a_self is None or a_func is None:
+        return False
+    return a_self is getattr(b, "__self__", None) and a_func is getattr(b, "__func__", None)
 
-    Public because the synchronous signal fan-out names a failed handler with
-    the same string the prune log uses.
-    """
+
+def describe_callback(cb: Callable[..., Any]) -> str:
+    """Return the callback identity used by signal failure and prune logs."""
     qualname: str = getattr(cb, "__qualname__", None) or repr(cb)
     module = getattr(cb, "__module__", None)
     return f"{module}.{qualname}" if module else qualname
 
 
 class _WeakMethodEntry(weakref.WeakMethod[Any]):
-    """A WeakMethod that keeps a printable description of its method.
-
-    A dead WeakMethod resolves to None and cannot name its target, so __new__
-    captures the description for the prune log. This subclass drops the
-    __slots__ of WeakMethod, so description lives in the instance __dict__.
-    """
+    """Keep a method description after the weak target dies.
+    The subclass instance dictionary stores the description for prune logs."""
 
     description: str
 
@@ -75,17 +78,13 @@ def _resolve_entry(entry: _Entry) -> Callable[..., Any] | None:
     """Return the live callable an entry refers to, or None if it died."""
     if isinstance(entry, weakref.WeakMethod):
         return entry()
-    # _Entry is object, because an entry is either a WeakMethod or the plain
-    # callable _make_entry stored. This arm is the second of those.
+    # The non-WeakMethod entry is the strong callable stored by _make_entry.
     return cast("Callable[..., Any]", entry)
 
 
 class CallbackRegistry:
-    """Thread-safe collection of callables. It stores bound methods weakly.
-
-    add() and remove() mutate under a lock. snapshot() returns the live
-    callables and drops the entries whose owner the collector took.
-    """
+    """Store bound methods weakly in a thread-safe callback collection.
+    Mutations and snapshots lock; snapshots also prune dead entries."""
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
@@ -98,20 +97,17 @@ class CallbackRegistry:
         return cb
 
     def add(self, cb: Callable[..., Any]) -> bool:
-        """Add cb unless an equal live entry is already present.
-
-        Returns True after an add and False after a dedupe. Also prunes the
-        entries that died in the meantime.
-        """
+        """Add a unique live callback and prune dead entries.
+        Return True after an add and False after deduplication."""
         with self._lock:
             kept = []
             already_present = False
             for entry in self._entries:
                 live = _resolve_entry(entry)
                 if live is None:
-                    continue  # the owner is gone, so prune it
+                    continue
                 kept.append(entry)
-                if live is cb or live == cb:
+                if _same_callback(live, cb):
                     already_present = True
             self._entries = kept
             if already_present:
@@ -119,9 +115,8 @@ class CallbackRegistry:
             try:
                 entry = self._make_entry(cb)
             except TypeError:
-                # WeakMethod refuses an owner that is not weak-referenceable
-                # (a __slots__ class without __weakref__). Store it strong,
-                # because a refused connect costs more than a pinned owner.
+                # Keep owners without weak-reference support connected strongly.
+                # This includes __slots__ classes without __weakref__.
                 log.debug(
                     f"CallbackRegistry: owner of {cb!r} is not weak-referenceable "
                     f"(__slots__ without __weakref__); storing a strong reference"
@@ -137,18 +132,14 @@ class CallbackRegistry:
             for entry in self._entries:
                 live = _resolve_entry(entry)
                 if live is None:
-                    continue  # the owner is gone, so prune it
-                if live is cb or live == cb:
-                    continue  # the entry to remove
+                    continue
+                if _same_callback(live, cb):
+                    continue
                 kept.append(entry)
             self._entries = kept
 
     def snapshot(self) -> list[Callable[..., Any]]:
-        """Return the live callables and prune the dead entries.
-
-        Each prune logs at DEBUG. A bound method whose owner is unreferenced
-        loses its subscription at the next gc pass, with no other trace.
-        """
+        """Return live callbacks, prune dead entries, and log each prune."""
         pruned: list[str] = []
         with self._lock:
             kept = []
@@ -156,18 +147,13 @@ class CallbackRegistry:
             for entry in self._entries:
                 live = _resolve_entry(entry)
                 if live is None:
-                    # The owner is gone, so prune it. Only a dead
-                    # _WeakMethodEntry resolves to None, so it has a
-                    # description.
+                    # Only a dead _WeakMethodEntry resolves to None.
                     pruned.append(getattr(entry, "description", repr(entry)))
                     continue
                 kept.append(entry)
                 live_callbacks.append(live)
             self._entries = kept
-        # Log outside the lock, because a sink must not re-enter the registry
-        # while snapshot() holds it. The same pass drops the entry, so one process
-        # logs it once. Two threads that race snapshot() on one dead entry log
-        # it twice and corrupt no state.
+        # Log outside the lock so a sink cannot re-enter the locked registry.
         for description in pruned:
             log.debug(
                 f"CallbackRegistry: pruning dead callback {description} "
@@ -176,7 +162,6 @@ class CallbackRegistry:
         return live_callbacks
 
     def __iter__(self) -> Iterator[Callable[..., Any]]:
-        # Direct iteration gives the same live and pruned view as snapshot().
         return iter(self.snapshot())
 
     def __len__(self) -> int:

@@ -1,11 +1,5 @@
-"""Pins the backend pack trees: discovery, attribution order and the leaf key.
-
-The icon, wallpaper and SD+ bar wallpaper families are near-identical copies of
-one design, and no scenario covered them. Discovery reads a family folder under
-the data dir and drops a pack that a manifest cannot describe. Attribution falls
-back default, then general, then generic. The leaf key differs between the
-families by design: an icon reads the basename of its file, a wallpaper reads
-the path of its file relative to the pack root.
+"""Verify icon, wallpaper, and SD+ pack discovery and default/general/generic fallback.
+Drop invalid packs; key icons by basename and wallpapers by relpath.
 """
 import fixtures  # noqa: F401  (import first: sets up the isolated data dir)
 
@@ -70,14 +64,8 @@ def write_json(path: str, content: dict) -> None:
 
 
 def build_pack(family, pack_name: str, assets=(), attribution=None, thumbnail=True) -> str:
-    """Write one complete pack folder and return its path.
-
-    An entry in assets is a path relative to the asset folder, so a name with a
-    separator in it lands in a subfolder. attribution writes attribution.json
-    when it is not None. thumbnail writes thumb.png and names it in the
-    manifest. The asset and thumbnail files hold marker bytes: these paths
-    check that a file is there and never decode one.
-    """
+    """Write a complete pack with marker assets and an optional marker thumbnail.
+    Asset names are relative; None omits attribution and false thumbnail omits the preview."""
     pack_path = os.path.join(family_root(family), pack_name)
     asset_root = os.path.join(pack_path, ASSET_FOLDER)
     os.makedirs(asset_root, exist_ok=True)
@@ -114,9 +102,8 @@ DEFAULT_ENTRY = {"copyright": "by-default"}
 GENERAL_ENTRY = {"copyright": "by-general"}
 GENERIC_ENTRY = {"copyright": "by-generic"}
 
-# Each case is (pack name, attribution.json content or None, expected result).
-# A pack reads one attribution.json per instance and caches it, so every case
-# takes its own pack folder.
+# Each case gets its own pack because attribution data is cached per instance.
+# Tuple fields: pack name, attribution content or None, expected result.
 FALLBACK_CASES = (
     ("all-three", {"default": DEFAULT_ENTRY, "general": GENERAL_ENTRY,
                    "generic": GENERIC_ENTRY}, DEFAULT_ENTRY),
@@ -128,11 +115,7 @@ FALLBACK_CASES = (
 
 
 def check_empty_family_dir() -> int:
-    """Discovery on a data dir with no family folder yet.
-
-    Runs before any pack exists, so it asserts the folder is absent first and
-    says so when a later check has already created one.
-    """
+    """Verify discovery creates an absent family folder and returns no packs."""
     rc = 0
     for family in FAMILIES:
         root = family_root(family)
@@ -174,15 +157,12 @@ def check_discovery() -> int:
             # Hidden entries are transient install-swap trees, not packs.
             build_pack(family, ".install-swap", assets=["logo.png"])
 
-            # A folder with no manifest.json.
             os.makedirs(os.path.join(root, "no-manifest"), exist_ok=True)
 
-            # A manifest that never names the asset folder.
             path = os.path.join(root, "no-asset-key")
             os.makedirs(path, exist_ok=True)
             write_json(os.path.join(path, "manifest.json"), {"name": "no-asset-key"})
 
-            # A manifest that names a folder which is not on disk.
             path = os.path.join(root, "missing-folder")
             os.makedirs(path, exist_ok=True)
             write_json(os.path.join(path, "manifest.json"),
@@ -210,9 +190,8 @@ def check_discovery() -> int:
                     print(f"FAIL(2): {family.label} pack alpha listed {alpha_found}")
                     family_rc = 1
 
-                # The scan reads the asset folder and one level below it, and
-                # the reader of a folder skips a directory, so the file two
-                # levels down stays out of the list.
+                # The scan descends one folder; the folder reader skips nested
+                # directories, so files two levels down stay out of the list.
                 beta_found = sorted(os.path.basename(a.path) for a in family.assets(packs["beta"]))
                 if beta_found != ["wide.png"]:
                     print(f"FAIL(2): {family.label} pack beta listed {beta_found}, expected "
@@ -231,9 +210,8 @@ def check_discovery() -> int:
                           f"its thumbnail path was asked for")
                     family_rc = 1
         finally:
-            # The rejected folders have made their point. They go whatever the
-            # checks above did, so one warning per rejected pack per call stays
-            # out of the output a failure prints.
+            # Remove rejected folders after failures to prevent repeated warnings
+            # from obscuring later failure output.
             for name in rejected:
                 shutil.rmtree(os.path.join(root, name), ignore_errors=True)
         rc |= family_rc
@@ -285,11 +263,8 @@ def check_leaf_attribution_fallback() -> int:
 
 
 def check_leaf_attribution_key() -> int:
-    """The leaf key forks: an icon reads its basename, a wallpaper its relpath.
-
-    One attribution.json carries both spellings plus a default, so the entry a
-    family picks names the key it built, and a miss shows as the default.
-    """
+    """Verify icons use basenames and wallpapers use pack-relative paths.
+    One file carries both keys and a default so the selected key or a miss is visible."""
     rc = 0
     asset_rel_path = os.path.join("sub", "logo.png")
     basename_key = os.path.basename(asset_rel_path)

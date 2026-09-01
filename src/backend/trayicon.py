@@ -7,9 +7,8 @@ from gi.repository import Gio, GLib
 
 from loguru import logger as log
 
-# One tray menu entry. The hyphenated D-Bus property names force the
-# functional syntax. Every key is optional except that add_menu_item always
-# sets id.
+# Hyphenated D-Bus properties require functional TypedDict syntax.
+# All menu-entry keys are optional, but add_menu_item always sets id.
 MenuItem = TypedDict("MenuItem", {
     "id": int,
     "label": str,
@@ -111,15 +110,8 @@ class DBusService:
 
     def register(self) -> None:
         if self.registration_id is not None:
-            # This object already registered. A second register() with no
-            # unregister() between them, which TrayIcon.initialize() and the
-            # Settings-panel start() together produce, orphans the earlier
-            # object registration on the connection. Return early and keep the
-            # existing registration. Do not unregister and register again
-            # here. self.unregister() dispatches to
-            # StatusNotifierItemService.unregister(), which also calls
-            # self._menu.unregister() and leaves the tray menu object dead,
-            # because the base register() registers the SNI object alone.
+            # Keep the registration; a duplicate would orphan its bus object.
+            # Do not unregister: the override removes the menu, while this restores only SNI.
             return
         self.registration_id = self.bus.register_object(
             object_path=self.object_path,
@@ -310,17 +302,14 @@ class DBusMenuService(DBusService):
         return (ret,)
 
     def GetProperty(self, idx: int, name: str) -> tuple[GLib.Variant]:
-        # A one-tuple, like every other method here: on_method_call packs the
-        # result into a variant of the out-arg signature, which for this method
-        # is "(v)". A bare variant does not fit that and the pack raises, so no
-        # reply ever reached the caller.
+        # Return a one-tuple because on_method_call packs the declared (v) out signature.
+        # A bare variant does not fit that tuple and prevents a reply.
         if idx in self.idToItems:
             props = DBusMenuService.itemPropsToDbus(self.idToItems[idx])
             if name in props:
                 return (props[name],)
-        # The interface declares one out arg and no absent value, so there is
-        # nothing truthful to answer here. Name the cause rather than fail
-        # later inside the variant pack.
+        # The interface declares one required out value and has no absent representation.
+        # Raise the cause here instead of failing later during variant packing.
         raise GLib.Error(f"menu item {idx} has no property {name!r}")
 
     def Event(self, idx: int, event_id: str, data: Any, timestamp: int) -> None:
@@ -390,7 +379,7 @@ class StatusNotifierItemService(DBusService):
 
         self.bus = session_bus
         self.dbus_path = path
-        self._watcher_watch_id: int | None = None
+        self._watcher_name_watch_id: int | None = None
 
         if menu_path == "":
             self._menu = DBusMenuService(session_bus, menu_items)
@@ -403,15 +392,10 @@ class StatusNotifierItemService(DBusService):
         self._menu.register()
         super().register()
 
-        # A single RegisterStatusNotifierItem call loses the icon for the
-        # rest of the app's life whenever the StatusNotifierWatcher restarts,
-        # after a plasmashell or waybar crash, or appears late, as GNOME's
-        # AppIndicator support does. A fresh watcher instance knows no item
-        # that an earlier instance registered. Watch the well-known name
-        # instead, and announce the item again each time the name gains an
-        # owner.
-        if self._watcher_watch_id is None:
-            self._watcher_watch_id = Gio.bus_watch_name_on_connection(
+        # A restarted or late watcher does not know prior registrations.
+        # Watch its well-known name and announce the item whenever that name gains an owner.
+        if self._watcher_name_watch_id is None:
+            self._watcher_name_watch_id = Gio.bus_watch_name_on_connection(
                 self.bus,
                 'org.kde.StatusNotifierWatcher',
                 Gio.BusNameWatcherFlags.NONE,
@@ -445,9 +429,9 @@ class StatusNotifierItemService(DBusService):
 
     @override
     def unregister(self) -> None:
-        if self._watcher_watch_id is not None:
-            Gio.bus_unwatch_name(self._watcher_watch_id)
-            self._watcher_watch_id = None
+        if self._watcher_name_watch_id is not None:
+            Gio.bus_unwatch_name(self._watcher_name_watch_id)
+            self._watcher_name_watch_id = None
         super().unregister()
         self._menu.unregister()
 

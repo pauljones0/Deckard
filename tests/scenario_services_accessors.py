@@ -1,9 +1,6 @@
-"""
-Pins the typed gl accessors in src/backend/services.py.
+"""Check typed gl accessors for argument forwarding and live slot reads.
 
-An accessor is a one-line forward, so it breaks by forwarding less than the raw
-expression did. A dropped argument, a cached slot or a None branch turned into
-a crash are the shapes. Every check below aims at one of them.
+Optional accessors must preserve each None branch.
 """
 
 # The accessors know nothing about GTK, and neither does this scenario.
@@ -36,18 +33,17 @@ LOCALE_CSV = (
 
 
 def build_locale_manager() -> LocaleManager:
-    """A real LocaleManager over a two-locale CSV in the harness temp data
-    dir. The checks compare tr() against the production get(), so a stub with
-    a recording get() would prove nothing."""
+    """Build a real LocaleManager over a two-locale temporary CSV.
+
+    Compare tr() with production get() rather than a recording stub.
+    """
     path = os.path.join(gl.DATA_PATH, "services_accessors_locales.csv")
     with open(path, "w", encoding="utf-8") as f:
         f.write(LOCALE_CSV)
     lm = LocaleManager(csv_path=path)
     lm.set_language("de_DE")
     lm.set_fallback_language("en_US")
-    # No CSV row can produce a key whose fallback-locale value is None,
-    # because the reader stores strings, so real locale data never reaches
-    # the fallback parameter. Building the entry by hand is the only cover.
+    # CSV values are strings, so inject None to reach the fallback parameter.
     lm.locale_data["fallback-only"] = {"de_DE": None, "en_US": None}
     return lm
 
@@ -159,9 +155,7 @@ def check_main_window_covers_both_absences() -> None:
     running.main_win = window
     assert services.main_window() is window
 
-    # Teardown does not null the attribute. App._destroy_main_window destroys
-    # the widget and leaves it bound, so a destroyed window still reads as
-    # present. A slot-clearing fix must change the accessor docstring too.
+    # _destroy_main_window leaves the destroyed widget bound, so it remains present.
     window.destroyed = True
     assert services.main_window() is window, (
         "a destroyed-but-bound main_win still comes back: nothing unbinds it"
@@ -212,9 +206,7 @@ def check_sidebar_and_deck_stack_accessors() -> None:
     assert services.sidebar() is None, "no app means no sidebar"
     assert services.deck_stack() is None, "no app means no deck stack"
 
-    # An app with no window: still None. main_window() reads main_win with
-    # getattr, so a dropped window-None guard would dereference None one call
-    # later and raise right here.
+    # An app without a window stays None instead of dereferencing a missing chain.
     running = FakeApp()
     gl.app = running
     assert not hasattr(running, "main_win"), "the fixture's premise: main_win is unbound"
@@ -245,7 +237,9 @@ def check_settings_accessors_pass_through() -> None:
     manager = fixtures.StubSettingsManager(app_settings={"general": {"hold-time": 0.75}})
     gl.settings_manager = manager
 
-    assert services.settings() is manager, "settings() must be the manager itself"
+    assert services.settings_manager() is manager, (
+        "settings_manager() must return the manager itself"
+    )
 
     view = services.app_settings()
     assert isinstance(view, AppSettings)
@@ -264,10 +258,10 @@ def check_settings_accessors_pass_through() -> None:
     # Per-call slot read.
     replacement = fixtures.StubSettingsManager(app_settings={"general": {"hold-time": 0.25}})
     gl.settings_manager = replacement
-    assert services.settings() is replacement
+    assert services.settings_manager() is replacement
     assert services.app_settings().hold_time == 0.25
 
-    print("PASS: settings()/app_settings()/deck_settings() pass through unwrapped")
+    print("PASS: settings_manager()/app_settings()/deck_settings() pass through unwrapped")
 
 
 def check_page_manager_pair() -> None:
@@ -291,9 +285,10 @@ def check_page_manager_pair() -> None:
 
 
 def check_runtime_imports_are_globals_only() -> None:
-    """Any layer can import this module. That holds only while its runtime
-    imports are globals plus stdlib. A first-party import is a cycle risk,
-    and, for the engine closure, a toolkit risk."""
+    """Require runtime imports to stay limited to globals and the standard library.
+
+    First-party imports risk cycles and toolkit imports in the engine closure.
+    """
     tree = ast.parse(open(MODULE_PATH, encoding="utf-8").read(), MODULE_PATH)
 
     type_checking_bodies: set[int] = set()

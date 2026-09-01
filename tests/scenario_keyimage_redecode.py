@@ -1,8 +1,4 @@
-"""InputImage must not re-decode from disk on every composite.
-
-A source smaller than the ask can never satisfy the check, so the native size
-is memoized. A swapped-out image is dropped, not closed, for live readers.
-"""
+"""Avoid repeated InputImage decodes and preserve in-flight image readers."""
 import fixtures  # noqa: F401  (import first: sets up the isolated data dir)
 
 import os
@@ -19,10 +15,7 @@ from src.backend.DeckManagement.Subclasses.KeyImage import InputImage
 
 
 class StubInput:
-    """Just enough ControllerInput for InputImage.
-
-    Saturation, an active state with a composed layout, and the tile size.
-    """
+    """Provide InputImage with saturation, layout, state, and tile size."""
 
     def __init__(self, layout_size: float):
         self.deck_controller = types.SimpleNamespace(
@@ -40,12 +33,8 @@ class StubInput:
 
 
 def leg_concurrent_swap() -> int:
-    """Two threads on one InputImage, a compositor and a resizer.
-
-    The compositor reads pixels off the reference get_raw_image() hands it,
-    as the resize of add_image_to_background does, while the resizer forces
-    genuine re-decode swaps. An in-flight composite must always complete.
-    """
+    """Read pixels while another thread forces InputImage re-decode swaps.
+    Each in-flight composite must retain a usable image reference."""
     big_path = os.path.join(gl.DATA_PATH, "concurrent_src.png")
     # A large source, so every re-decode yields a fresh, still-open image the
     # compositor can be caught reading.
@@ -60,9 +49,7 @@ def leg_concurrent_swap() -> int:
     stop = threading.Event()
 
     def reseed_for_next_swap():
-        # Re-arm the swap path. Shrink the retained copy and forget the
-        # memoized native size, so the next get_raw_image() re-decodes and
-        # swaps again. The clamp would otherwise settle after one decode.
+        # Shrink the copy and clear native size to force another decode swap.
         key_image.image = key_image.image.resize((64, 64))
         key_image._source_native_size = None
 
@@ -104,14 +91,14 @@ def leg_concurrent_swap() -> int:
     for t in threads:
         t.join(timeout=5)
 
-    alive = [t.name for t in threads if t.is_alive()]
-    if alive:
-        print(f"FAIL(3): threads did not finish (deadlock/hang?): {alive}")
+    live_threads = [t.name for t in threads if t.is_alive()]
+    if live_threads:
+        print(f"FAIL(3): threads did not finish (deadlock/hang?): {live_threads}")
         return 1
-    closed_use = [e for e in errors if "closed image" in e]
-    if closed_use:
+    closed_image_errors = [e for e in errors if "closed image" in e]
+    if closed_image_errors:
         print(f"FAIL(3): a composite operated on a closed image under the "
-              f"concurrent swap: {closed_use[0]}")
+              f"concurrent swap: {closed_image_errors[0]}")
         return 1
     if errors:
         print(f"FAIL(3): unexpected error under the concurrent swap: {errors[0]}")
@@ -159,16 +146,16 @@ def main() -> int:
     print(f"PASS: unsatisfiable source decoded {opens[0]}x across 31 composites")
 
     # 2. Hand out a reference, force a swap, then use the reference.
-    stub2 = StubInput(layout_size=1.0)
+    swap_stub = StubInput(layout_size=1.0)
     big_path = os.path.join(gl.DATA_PATH, "big.png")
     Image.new("RGBA", (600, 600), (200, 30, 30, 255)).save(big_path)
     with Image.open(big_path) as im:
-        key_image2 = InputImage(stub2, im.convert("RGBA").resize((80, 80)),
-                                path=big_path)
+        swapped_key_image = InputImage(swap_stub, im.convert("RGBA").resize((80, 80)),
+                                       path=big_path)
 
-    held = key_image2.get_raw_image()
-    stub2._layout.size = 6.0  # now needs more than the 80px retained copy
-    key_image2.get_raw_image()  # triggers the re-decode swap
+    held = swapped_key_image.get_raw_image()
+    swap_stub._layout.size = 6.0  # now needs more than the 80px retained copy
+    swapped_key_image.get_raw_image()  # triggers the re-decode swap
     try:
         held.resize((10, 10))  # any operation on a closed image raises
     except ValueError as e:

@@ -40,23 +40,16 @@ if TYPE_CHECKING:
 
 
 class IconPackChooserStack(GenericPackChooserStack[IconChooserPage]):
-    """The icon-pack stack, which is the one stack a pre-selection reaches.
-
-    AssetChooser.show_for_path routes every non-custom path here, so this
-    stack alone defers that request until both of its pages have built.
-    """
+    """Defer non-custom path selection until both icon-pack pages are built."""
 
     PACK_CHOOSER_CLASS = IconPackChooser
     LEAF_CHOOSER_CLASS = IconChooserPage
     LEAF_CHILD_TITLE = "Icon Chooser"
 
     @override
-    def prepare(self) -> None:
+    def initialize_page_state(self) -> None:
         self.on_loads_finished_tasks: list[Callable[[], Any]] = []
-        # Serializes the two build_finished flags with the deferred-task
-        # queue. See on_load_finished and show_for_path. The pack chooser and
-        # the icon chooser each build on their own worker thread, and both
-        # call on_load_finished, so two threads can enter this drain at once.
+        # Serialize both worker completion flags with the deferred-task queue
         self._loads_lock = threading.Lock()
 
     def show_for_path(self, path: str | None) -> None:
@@ -66,27 +59,18 @@ class IconPackChooserStack(GenericPackChooserStack[IconChooserPage]):
             return
         with self._loads_lock:
             if not self.get_is_build_finished():
-                # Defer under the same lock that on_load_finished drains
-                # with. The task either reaches a snapshot, or it reads the
-                # flag as True here and dispatches at once.
+                # The shared lock puts the task in the drain or after completion
                 self.on_loads_finished_tasks.append(lambda: self.show_for_path(path))
                 return
         if gl.icon_pack_manager is None:
-            # Same reading as IconPackChooserPage.get_packs: the boot order
-            # keeps the window shut until the manager exists, and the type
-            # still allows None. With no packs there is nothing to select.
+            # Boot keeps this window closed until the optional manager exists
             return
         packs = gl.icon_pack_manager.get_icon_packs()
         for pack in packs.values():
             icons = pack.get_icons()
             for icon in icons:
                 if icon.path == path:
-                    # The scan above reads pack data and runs on whichever
-                    # thread asked. The lines it hands over drive widgets, and
-                    # GTK4 takes calls from the main thread only, so they run
-                    # there. run_on_main runs inline when the caller already
-                    # holds the main thread, so the direct call from the window
-                    # and the deferred one from a build worker both work.
+                    # Marshal widget updates; run_on_main stays inline for main callers
                     run_on_main(self._show_pack_asset, pack, path)
                     return
 
@@ -103,13 +87,9 @@ class IconPackChooserStack(GenericPackChooserStack[IconChooserPage]):
                 and hasattr(self, "leaf_chooser") and self.leaf_chooser.build_finished)
 
     def on_load_finished(self) -> None:
-        """Run from both build worker threads, the pack one and the icon one.
+        """Drain deferred tasks once after both build workers finish.
 
-        It snapshots and clears the deferred-task queue in one step under the
-        lock. A show_for_path that read a flag as False then cannot add its
-        task after this drain took the snapshot. Two callers cannot run or
-        remove the same task twice. The tasks run outside the lock, because
-        they re-enter show_for_path, which takes the same lock.
+        Snapshot under the lock, then run outside it because tasks re-enter the lock.
         """
         with self._loads_lock:
             if not self.get_is_build_finished():
@@ -120,7 +100,5 @@ class IconPackChooserStack(GenericPackChooserStack[IconChooserPage]):
             try:
                 task()
             except Exception as e:
-                # A task marshals to the main loop, which can time out. The
-                # caller is the tail of a build worker, so a raise here would
-                # end that thread instead of the one task.
+                # Isolate a timed-out main-loop marshal from the build worker
                 log.opt(exception=True).warning(f"Deferred icon-pack task failed: {e}")

@@ -26,6 +26,7 @@ from copy import copy
 from PIL import Image, ImageDraw, ImageOps, ImageFont
 from loguru import logger as log
 
+from src.backend.DeckManagement.media_loop import MEDIA_LOOP_FPS
 from src.backend.DeckManagement.ImageHelpers import hides_background
 from src.backend.DeckManagement.InputIdentifier import Input
 from src.backend.DeckManagement.Subclasses.KeyLabel import KeyLabel
@@ -42,13 +43,8 @@ if TYPE_CHECKING:
     from src.backend.DeckManagement.deck_controller.inputs import ControllerInput
 
     class ComposedKeyLabel(KeyLabel):
-        """A KeyLabel that went through LabelManager.inject_defaults(). Every
-        field carries a value, so the render path reads them with no None
-        check. It exists under TYPE_CHECKING only and adds no class at
-        runtime; inject_defaults() returns the object it filled in. The type
-        carries the invariant from the one place that sets it to the eight
-        places that rely on it.
-        """
+        """TYPE_CHECKING-only KeyLabel whose fields are set by inject_defaults.
+        The type carries the no-None invariant without adding a runtime class."""
         text: str
         font_size: float
         font_name: str
@@ -60,47 +56,26 @@ if TYPE_CHECKING:
         alignment: str
 
     class ComposedImageLayout(ImageLayout):
-        """An ImageLayout after LayoutManager.inject_defaults(). Same
-        contract and same TYPE_CHECKING-only reason as ComposedKeyLabel."""
+        """TYPE_CHECKING-only ImageLayout whose fields are set by inject_defaults."""
         valign: float
         halign: float
         fill_mode: str
         size: float
 
 
-# Shared text measurement for label layout and scroll detection. textbbox
-# computes layout only and never touches the pixels, and it matches what the
-# per-key render's own draw context reports. font.getbbox is single-line and
-# counts '\n' toward the width, which triggers a phantom scroll.
+# Share multiline-aware textbbox measurement between layout and scroll detection.
+# font.getbbox treats newlines as width and can cause false scrolling.
 _label_measure_draw = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
 
 
 class _RecordingTooLarge(Exception):
-    """A label's glyph masks passed the retention budget during a recording.
-
-    The caller drops the partial recording and pins the label to the direct
-    per-frame draw. draw_bitmap raises it, so the abort also stops the
-    rasterization, which is the expensive half."""
+    """Signal during rasterization that glyph masks exceed the retention budget.
+    The caller drops the partial recording and uses direct per-frame drawing."""
 
 
 class _BitmapRecorder:
-    """Capture the bitmap blits that ImageDraw.text() issues, instead of
-    running them.
-
-    ImageDraw.text() runs two steps. FreeType rasterizes the stroked glyph
-    run into a coverage mask, which is expensive. A blit then puts that mask
-    on the target with a solid ink, which is cheap. A static label re-runs
-    both on every media tick, although only the pixels under it change. This
-    object stands in for the draw core while text() runs and records the blit
-    arguments, so a later frame replays the blit against the rasterized mask.
-    It delegates everything else to the real core, including draw_ink(),
-    which ImageDraw._getink() calls to resolve the fill colors, so the
-    recorded ink matches a direct draw.
-
-    max_ops and max_bytes are the hard retention bound. text() emits one blit
-    per line per pass, so the retained bytes and the FreeType work both scale
-    with the line count, and this recording runs on the sole device writer.
-    Past either bound it raises _RecordingTooLarge at once."""
+    """Record ImageDraw bitmap blits while delegating ink resolution and other core operations.
+    Raise _RecordingTooLarge when operation or mask-byte limits are crossed."""
     __slots__ = ("_core", "ops", "_max_ops", "_max_bytes", "_bytes")
 
     def __init__(self, core: Any, max_ops: int, max_bytes: int) -> None:
@@ -145,50 +120,25 @@ class LabelManager:
         self.page_labels: dict[str, "KeyLabel"] = {}
         self.action_labels: dict[str, "KeyLabel"] = {}
         self.scroll_wait = 25
-        # Monotonic stamp for the three latch-style memos below, whose stored
-        # value carries no identity of its own. The media thread fills them on
-        # the render path and the UI or plugin threads drop them on the edit
-        # path, with no lock. A plain None latch loses that race and pins the
-        # pre-edit value forever. The reader sees None, composes, the editor
-        # invalidates, then the reader stores. So a builder reads the epoch
-        # before it composes and publishes (epoch, value), and a reader accepts
-        # the memo only while the stamp equals the current epoch. The counter
-        # never decreases, so two collapsed increments still leave the epoch
-        # past every stamp captured before the change.
-        # _bbox_cache, _scroll_strips and _static_ops need no epoch. See
-        # _bump_label_epoch().
+        # Stamp lock-free memos so render cannot publish a pre-edit value after invalidation.
+        # Content-keyed bbox, strip, and static-operation caches do not need this epoch.
         self._label_epoch: int = 0
-        # (epoch, {position: text width}) for the labels that scroll, which
-        # means wider than the key with rolling labels enabled. None means
-        # recompute.
-        # get_has_scroll_labels() derives from this.
+        # Epoch-stamped widths for labels that overflow while rolling is enabled; None recomputes.
         self._scroll_widths_cache: tuple[int, dict[str, int]] | None = None
         # (epoch, bool): whether any composed label has non-empty text.
         self._has_visible_labels_cache: tuple[int, bool] | None = None
-        # {position: (cache key, strip image, ax, ay)}: the label text and
-        # outline rasterized once onto a transparent strip. A scroll frame
-        # composites a window of it instead of a draw.text, which costs
-        # ~2.5ms per key.
+        # Cache rasterized transparent strips and anchors for scrolling labels.
         self._scroll_strips: "dict[str, tuple[tuple[object, ...], Image.Image, float, float]]" = {}
-        # {position: (cache key, blit ops or None)}: the static label's glyph
-        # masks, rasterized once and replayed per frame. A per-tick draw.text
-        # with stroke costs ~820us per key, ~50% of the tick on a populated
-        # animated page. None ops pins this position to the direct draw.
+        # Cache static-label glyph blits; a None value pins that key to direct drawing.
         self._static_ops: "dict[str, tuple[tuple[object, ...], tuple[tuple[object, ...], ...] | None]]" = {}
-        # {position: (cache key, (w, h))}: the textbbox measurement of the
-        # composed label. The FreeType layout pass is the second-biggest
-        # per-frame cost, after the raster.
+        # Cache composed-label textbbox measurements by position and content key.
         self._bbox_cache: "dict[str, tuple[tuple[object, ...], tuple[int, int]]]" = {}
-        # (epoch, {position: KeyLabel}): the merged page, action and default
-        # labels. See get_composed_labels() for the invalidation contract.
+        # Cache merged page, action, and default labels under the label epoch.
         self._composed_labels_cache: tuple[int, dict[str, "ComposedKeyLabel"]] | None = None
 
         self.init_labels()
-        # Rolling-label animation state per position: the scroll offset in
-        # whole pixels, and the wall-clock deadline of the next advance. None
-        # means fresh, and starts with the leading hold. Wall clock, not tick
-        # count, so an event wake that pushes the loop past its nominal FPS
-        # cannot change the scroll speed.
+        # Track each rolling offset and next wall-clock step; None starts with the leading hold.
+        # Wall time keeps speed stable when event wakes exceed nominal loop rate.
         self.frames: "dict[str, _ScrollFrame]" = {
             "top": {"position": 0, "next_step_at": None},
             "center": {"position": 0, "next_step_at": None},
@@ -201,47 +151,20 @@ class LabelManager:
             self.action_labels[position] = KeyLabel(self.controller_input)
  
     def _bump_label_epoch(self) -> None:
-        """Retire the latch-style label memos. Move the epoch, then drop
-        them.
-
-        Every site that changes what a composed label looks like must call
-        this. A drop without an epoch move reopens the store-after-clear
-        window. An epoch move without a drop leaves the pre-edit value
-        reachable until the next publish. One method keeps the two together.
-
-        _bbox_cache, _scroll_strips and _static_ops need no epoch and do not
-        reset here. Each entry stores its own content key beside the value,
-        and every reader re-checks that key on the hit path. The keys cover
-        every input to the value. The bbox key holds the text, the resolved
-        font file, which encodes family, weight and style, and the size. The
-        blit and strip keys add the colors, the outline, the alignment, the
-        anchor, the absolute draw coordinates and the target geometry. An
-        equal key means equal pixels. A store after a clear can therefore
-        resurrect only two kinds of entry. The first is still correct for the
-        current label. The second has a key that does not match, and the next
-        reader rebuilds it. The size caps below bound the retained bytes. The
-        reset calls that do exist release memory early."""
+        """Advance the epoch before dropping latch memos to reject concurrent stale publication.
+        Leave content-keyed bbox, strip, and blit entries for readers to validate independently."""
         self._label_epoch += 1
         self._scroll_widths_cache = None
         self._has_visible_labels_cache = None
         self._composed_labels_cache = None
 
     def get_label_epoch(self) -> int:
-        """The current label epoch. It moves whenever what a composed label
-        looks like changes, so a cache of a finished composite can hold it as
-        the label half of its stamp instead of comparing label objects."""
+        """Return the stamp that changes whenever composed-label appearance changes."""
         return self._label_epoch
 
     def invalidate_scroll_caches(self) -> None:
-        """Drop the derived label caches so the next render recomputes scroll
-        detection and geometry. Any path that mutates a label's attributes in
-        place, and not through set_page_label or set_action_label, must call
-        this. Page.set_label_* pokes page_labels[pos] directly and is such a
-        path. Without it get_scroll_label_widths() keeps the old overflow set
-        and the render composites a stale strip: a shortened label scrolls
-        forever, and a lengthened one never starts until a page reload. This
-        is cheap. The widths and visible flags recompute lazily, and the
-        strip, bbox and static dicts re-key on demand."""
+        """Invalidate derived label caches after any in-place attribute mutation.
+        This prevents stale overflow state and strips; widths and visibility rebuild lazily."""
         self._bump_label_epoch()
         self._bbox_cache.clear()
         self._scroll_strips.clear()
@@ -256,13 +179,7 @@ class LabelManager:
 
     def _on_label_written(self, position: str, update: bool,
                           notify_editor: bool = False) -> None:
-        """The bookkeeping a write to either label store owes.
-
-        The epoch moves whenever what a composed label looks like changes, and
-        the static-blit memo is keyed on nothing that would notice a text or
-        style edit, so it is dropped with the move. Both setters run this, so a
-        third writer cannot land one half without the other.
-        """
+        """Advance label state and clear static blits after either label store changes."""
         self._bump_label_epoch()
         self._static_ops.clear()
         if notify_editor:
@@ -301,11 +218,7 @@ class LabelManager:
         self._on_label_written(position, update, notify_editor=True)
 
     def update_label_editor(self) -> None:
-        """Kept as the caller-facing name; the widget work belongs to the
-        adapter. Page.set_label_* calls this on every label styling change,
-        at 8 sites, and the trailing update_input repaint runs after it. So
-        this must stay a plain forwarder that never raises.
-        """
+        """Forward label visual changes to the UI adapter without local widget work."""
         ui_port.get().on_input_visuals_changed(
             self.controller_input.deck_controller, self.controller_input.identifier,
             self.controller_input.state, "labels")
@@ -340,7 +253,6 @@ class LabelManager:
         
         label = copy(self.action_labels.get(position)) or KeyLabel(self.controller_input)
 
-        # Set to page values
         page_label = self.page_labels.get(position)
         if page_label is not None:
             if use_page_label_properties["text"]:
@@ -366,60 +278,28 @@ class LabelManager:
         return self.fix_invalid(injected)
     
     def get_composed_labels(self) -> dict[str, "ComposedKeyLabel"]:
-        """The merged page, action and default labels for all three
-        positions, memoized.
-
-        The merge costs three KeyLabel copies plus the nine settings reads of
-        inject_defaults, about 60us per key per media tick. An animated
-        background pays that on every frame, although the labels change only
-        when something sets one.
-
-        Every label mutation goes through set_page_label, set_action_label or
-        clear_labels, or, on the in-place editor path, Page.set_label_*,
-        which calls invalidate_scroll_caches(). All of them reach
-        _bump_label_epoch(), which retires this memo even against a render
-        that is halfway through a compose.
-
-        A change to the app-wide font defaults is not a label mutation and
-        needs no separate channel. All four Settings writers that touch
-        gl.settings_manager.font_defaults call
-        page_manager.reload_all_pages(). A page reload runs
-        create_n_states(), which replaces every input state object and every
-        LabelManager with it. A font-defaults change destroys the object that
-        holds this memo, and that covers dials and touchscreens too.
-        get_scroll_label_widths() documents the weaker assumption for the
-        rolling-labels toggle.
-
-        The returned KeyLabels are shared, so treat them as read-only.
-        get_composed_label() returns a fresh object per call for a caller
-        that mutates one, such as the label editor."""
+        """Return epoch-memoized merged labels for all positions as shared read-only objects.
+        Label edits retire it; font-default changes replace managers during page reload."""
         memo = self._composed_labels_cache
         if memo is not None and memo[0] == self._label_epoch:
             return memo[1]
-        # Read the epoch before the compose and stamp with it. An
-        # invalidation during the compose moves the epoch past this stamp, so
-        # the store below publishes a value that every reader rejects.
+        # Capture epoch first so concurrent invalidation makes this publication stale.
         epoch = self._label_epoch
         labels = {
             position: self.get_composed_label(position)
             for position in ("top", "center", "bottom")
         }
         self._composed_labels_cache = (epoch, labels)
-        # Return the dict built here, not the attribute, so a concurrent
-        # publish cannot swap the result mid-call.
+        # Return this local generation so concurrent publication cannot swap the result mid-call.
         return labels
 
     
     def inject_defaults(self, label: "KeyLabel") -> "ComposedKeyLabel":
-        """Fill every unset field from the app-wide font defaults, in place.
-        Returns the same object, retyped; no field is left for a reader to
-        None-check. See ComposedKeyLabel."""
+        """Fill unset defaults and return the same object as ComposedKeyLabel."""
         if label.text is None:
             label.text = ""
         if label.color is None:
-            # Use a list, not a tuple. The field declares list[int] and the
-            # settings path yields a JSON list, so a tuple fallback makes the
-            # runtime type depend on the branch that filled it.
+            # Use a list so fallback and JSON settings have the declared runtime type.
             label.color = gl.settings_manager.font_defaults.get("font-color") or [255, 255, 255, 255]
         if label.font_name is None:
             label.font_name = gl.settings_manager.font_defaults.get("font-family") or gl.fallback_font
@@ -440,8 +320,7 @@ class LabelManager:
     
     def fix_invalid(self, label: "ComposedKeyLabel") -> "ComposedKeyLabel":
         if not isinstance(label.text, str):
-            # Plugins set label text untyped, so the runtime repair stays
-            # even though the annotation reads it as impossible.
+            # Repair untyped plugin values even though the annotation excludes them.
             label.text = str(label.text)
 
         return label
@@ -453,10 +332,7 @@ class LabelManager:
         return self.controller_input.get_image_size()[0]
 
     def get_has_visible_labels(self) -> bool:
-        # add_labels_to_image draws a label only when its text is non-empty.
-        # A stale False sends ControllerKey._tile_passthrough_ok down the
-        # bare-tile path, so the labelled key renders as an empty tile until
-        # the next invalidation. The epoch stamp stops that.
+        # Stamp visibility so stale False cannot hide a newly nonempty label.
         memo = self._has_visible_labels_cache
         if memo is not None and memo[0] == self._label_epoch:
             return memo[1]
@@ -467,37 +343,23 @@ class LabelManager:
         return visible
 
     def _measure_text(self, position: str, label: "ComposedKeyLabel") -> tuple[int, int]:
-        """(w, h) of the composed label's rendered text block, cached per
-        position. Scroll detection and the render path both measure here, so
-        they cannot disagree about whether a label overflows."""
+        """Return cached rendered text-block size shared by scroll detection and drawing."""
         font = label.get_font()
         key = (label.text, getattr(font, "path", None), getattr(font, "size", None))
         cached = self._bbox_cache.get(position)
         if cached is not None and cached[0] == key:
             return cached[1]
         _, _, w, h = _label_measure_draw.textbbox((0, 0), label.text, font=font)
-        # textbbox declares floats because it adds a possibly fractional
-        # origin. This call anchors at integer (0, 0) with an integer glyph
-        # bbox, so the values are already ints and int() changes nothing.
+        # Cast the float annotation; integer origin and glyph bounds make values integral.
         measured = (int(w), int(h))
         self._bbox_cache[position] = (key, measured)
         return measured
 
     def get_scroll_label_widths(self) -> dict[str, int]:
-        """Text widths of the composed labels that scroll, which means
-        rolling labels are enabled and the rendered text is wider than the
-        input. This measures with the same multiline-aware textbbox the
-        render path uses, so detection cannot flag a label that the render
-        draws statically. That mismatch holds the media loop at full FPS on
-        identical frames."""
-        # A label edit reaches invalidate_scroll_caches(), through
-        # set_page_label, set_action_label or the Page.set_label_* setters. A
-        # rolling-labels toggle reaches reload_page(), which rebuilds these
-        # managers. A rolling-labels change outside the Settings dialog, from
-        # a direct settings.json edit or a plugin, does not reload the page,
-        # and leaves this cache stale until the next label edit or page load.
-        # That path is not a supported runtime toggle. The epoch stamp stops
-        # a store after a concurrent edit from pinning the pre-edit set.
+        """Return widths of enabled rolling labels wider than their input.
+        Use the render path's multiline measurement to prevent false full-rate scrolling."""
+        # Label edits invalidate by epoch; supported rolling changes rebuild on page reload.
+        # Direct file or plugin toggles can remain stale because runtime use is unsupported.
         memo = self._scroll_widths_cache
         if memo is not None and memo[0] == self._label_epoch:
             return memo[1]
@@ -521,12 +383,13 @@ class LabelManager:
     def get_has_scroll_labels(self) -> bool:
         return bool(self.get_scroll_label_widths())
 
-    # The scroll cadence in wall time, not loop iterations. At the nominal
-    # 30 FPS it advances 1px per two ticks and holds for scroll_wait ticks.
-    # Wall clock keeps the speed stable when event wakes push the loop past
-    # its nominal rate.
-    _NOMINAL_TICK_RATE = 30.0
-    SCROLL_STEP_SECONDS = 2.0 / _NOMINAL_TICK_RATE
+    # Define nominal rate without class-body arithmetic because import-floor tests use stub imports.
+    # Methods derive wall-time cadence so event wakes do not change scroll speed.
+    _NOMINAL_TICK_RATE = MEDIA_LOOP_FPS
+
+    @property
+    def SCROLL_STEP_SECONDS(self) -> float:
+        return 2.0 / self._NOMINAL_TICK_RATE
 
     def _scroll_hold_start_seconds(self) -> float:
         return self.scroll_wait * 2.0 / self._NOMINAL_TICK_RATE
@@ -535,19 +398,14 @@ class LabelManager:
         return self.scroll_wait / self._NOMINAL_TICK_RATE
 
     def tick_scroll_labels(self) -> bool:
-        """Advance the rolling-label animation and report whether a visible
-        scroll offset changed, which means a re-render. This is the only place
-        that moves scroll state, because rendering is pure. The hold plateaus
-        and the between-step ticks then cost integer and time math here,
-        instead of a composite that the hash de-dup drops."""
+        """Advance rolling-label state and report whether a visible offset changed.
+        Keep rendering pure and avoid composites during holds or between steps."""
         changed = False
         now = time.monotonic()
         available_width = self.get_available_width()
         for position, w in self.get_scroll_label_widths().items():
             frame = self.frames[position]
-            # The sweep runs from x=start, 10px right of centered, down to
-            # one pixel past x=stop, 10px left of centered. So overshoot is
-            # start minus stop.
+            # Sweep from 10 pixels right of center to one pixel past 10 pixels left.
             overshoot = w - available_width + 20
             next_at = frame.get("next_step_at")
             if next_at is None:
@@ -557,8 +415,7 @@ class LabelManager:
             if now < next_at:
                 continue
             if frame["position"] > overshoot:
-                # The trailing hold elapsed. Snap back to the start and
-                # hold.
+                # After the trailing hold, reset and start the leading hold.
                 frame["position"] = 0
                 frame["next_step_at"] = now + self._scroll_hold_start_seconds()
             else:
@@ -567,61 +424,27 @@ class LabelManager:
                     frame["next_step_at"] = now + self._scroll_hold_end_seconds()
                 else:
                     stepped = next_at + self.SCROLL_STEP_SECONDS
-                    # Re-anchor instead of a burst to catch up after a loop
-                    # stall from a page switch or a suspend.
+                    # Re-anchor after a long stall instead of advancing in a catch-up burst.
                     if stepped < now - 0.5:
                         stepped = now
                     frame["next_step_at"] = stepped
             changed = True
         return changed
 
-    # A precomposed strip costs width x key height x 4 bytes, retained per
-    # label position per state for the whole sweep. Strip width scales with
-    # text length. A pasted 50k-character label retains ~95 MB and stalls the
-    # sole-writer media thread for seconds. Past this width the label falls
-    # back to the direct per-frame draw, which retains nothing and pays raster
-    # CPU per frame. 4096 px is ~290 'm' glyphs at font 15, and caps the strip
-    # near ~1.6 MB on a 100px-tall SD+ dial image.
+    # Limit retained scroll-strip width to 4096 pixels, about 1.6 MiB at 100 pixels high.
+    # Wider labels use direct drawing to prevent unbounded memory and sole-writer stalls.
     _MAX_STRIP_WIDTH = 4096
-    # The width cap bounds one axis only. Strip height tracks the composed
-    # text block, so a 2000-line label measures ~42000 px tall and costs a
-    # ~700 MB strip. 4 MiB leaves ~2.5x headroom over the widest strip the
-    # width cap allows, 4096 x 100 x 4 = 1.6 MB on an SD+ dial image, and it
-    # rejects the tall case.
+    # Cap each RGBA strip at 4 MiB because multiline labels can exceed the height limit.
     _MAX_STRIP_BYTES = 4 * 1024 * 1024
 
-    # The same bound for the recorded static-label blits. A glyph mask costs
-    # 1 byte per pixel, not the 4 of an RGBA canvas, but it scales with the
-    # line count the same way. The recording also costs FreeType time on the
-    # sole device writer. Measured headless, 500 lines gave 1000 blits, 430 KB
-    # and 0.22 s; 2000 lines gave 4000 blits, 2.0 MB and 1.06 s; 20k lines
-    # gave 32 MB and a 5 s media-thread stall.
-    #
-    # 512 KiB per position is ~6x the largest readable label on an input. A
-    # 200x200 dial image full of glyphs costs ~40k px per pass, ~80 KB for the
-    # stroke and fill pair. It also covers a single-line label stretched to
-    # the full 4096 px width cap, ~240 KB. Three positions give a 1.5 MiB
-    # ceiling per input state, bounded on both axes. 512 ops is 256 lines
-    # times the stroke and fill passes; a label that tall is past any key.
-    #
-    # Two checks apply it. _label_ops_budget_ok runs before the recording,
-    # from measurements the render already has, and a hard abort inside the
-    # recorder bounds the wall time.
+    # Cap each static recording at 512 KiB and 512 blits to bound masks and stalls.
+    # A cheap estimate rejects first; _BitmapRecorder enforces exact limits during rasterization.
     _MAX_LABEL_MASK_BYTES = 512 * 1024
     _MAX_LABEL_OPS = 512
 
     def _label_ops_budget_ok(self, label: "ComposedKeyLabel", w: int, h: int) -> bool:
-        """Whether a recording of this label's blits is worth the retention
-        and the media-thread stall, decided from measurements the caller
-        already has, with no rasterization.
-
-        text() masks each line separately, and it runs the whole thing twice
-        when there is an outline. The op count is therefore 2 per line. The
-        stroke padding costs per line, not once per block. That
-        over-estimates the real mask total, about 2x on measured cases,
-        because a mask is the glyph run's tight bbox and not the block
-        rectangle. An over-estimate is the safe direction here, because
-        _BitmapRecorder enforces the exact bound."""
+        """Estimate recording operation and mask limits without rasterization.
+        Count two passes and stroke per line; exact enforcement follows this safe estimate."""
         lines = label.text.count("\n") + 1
         if lines * 2 > self._MAX_LABEL_OPS:
             return False
@@ -632,22 +455,8 @@ class LabelManager:
 
     def _composite_scroll_strip(self, image: Image.Image, position: str, label: "ComposedKeyLabel",
                                 w: int, h: int, x_position: float, y_position: float) -> None:
-        """Draw a scrolling label by compositing a window of its precomposed
-        text strip at this tick's offset. The strip rasterizes once per
-        (text, font, colors) and serves every frame of the sweep. A direct
-        draw.text with stroke costs ~2.5ms per frame, and the composite
-        ~0.014ms. The pixels are identical, because the target coordinates
-        keep constant fractional parts across the sweep and bake them into
-        the strip. The paste offset is therefore always a whole pixel.
-
-        The composite matches a direct draw for opaque ink only. Only the
-        plugin set_label API or hand-edited page JSON can set a
-        semi-transparent fill or outline. Such ink blends with straight-alpha
-        OVER here, and with PIL's coverage blend in draw.text. A scrolling
-        frame therefore differs from the static draw. _draw_static_label
-        caches one layer lower, the glyph masks rather than a composited
-        strip, which is exact for any ink; it needs a fixed paste position,
-        so it does not generalize back to the sweep."""
+        """Composite a cached scroll strip after baking fractional placement.
+        It matches direct drawing only for opaque ink; transparent ink blends differently."""
         font = label.get_font()
         outline_width = label.outline_width
         pad = outline_width + 6
@@ -656,11 +465,7 @@ class LabelManager:
         strip_height = int(h) + 2 * pad + 1
         if strip_width > self._MAX_STRIP_WIDTH or \
                 strip_width * strip_height * 4 > self._MAX_STRIP_BYTES:
-            # Pathological label. Skip the strip cache and draw the text
-            # directly at the scroll offset. This retains nothing and keeps
-            # the pixels correct, at the cost of raster CPU per frame. The
-            # byte test covers a many-line label, whose block grows
-            # vertically and slips past the width cap.
+            # Draw over-limit labels directly; the byte test also catches excessive height.
             self._scroll_strips.pop(position, None)
             ImageDraw.Draw(image).text((x_position, y_position), text=label.text,
                                        font=font, anchor="mm", align=label.alignment,
@@ -678,9 +483,7 @@ class LabelManager:
         if cached is None or cached[0] != key:
             ax = pad + w / 2
             ay = ay_base + dy
-            # Antialiased edge pixels blend toward the canvas color.
-            # Pre-fill with the outermost ink color at alpha 0, so the strip
-            # edges match a direct draw onto the key image.
+            # Use transparent outer-ink RGB so antialiased strip edges match direct drawing.
             edge = tuple(label.outline_color[:3]) if outline_width > 0 else tuple(label.color[:3])
             strip = Image.new("RGBA", (int(w) + 2 * pad + 1, int(h) + 2 * pad + 1), edge + (0,))
             ImageDraw.Draw(strip).text((ax, ay), text=label.text, font=font,
@@ -694,9 +497,8 @@ class LabelManager:
 
         px = round(x_position - ax)
         py = round(y_position - ay)
-        # Crop to the visible window. In-place alpha_composite needs a
-        # non-negative destination and does the correct straight-alpha OVER.
-        # A paste with a mask under-writes the alpha on antialiased edges.
+        # Crop to a nonnegative destination for straight-alpha OVER.
+        # Masked paste would underwrite alpha on antialiased edges.
         crop_left, crop_top = max(0, -px), max(0, -py)
         crop_right = min(strip.width, image.width - px)
         crop_bottom = min(strip.height, image.height - py)
@@ -714,36 +516,8 @@ class LabelManager:
     def _draw_static_label(self, image: Image.Image, draw: ImageDraw.ImageDraw,
                            position: str, label: "ComposedKeyLabel", w: int, h: int,
                            x_position: float, y_position: float, anchor: str) -> None:
-        """Draw a non-scrolling label by replaying its cached glyph blits.
-
-        A static label's pixels are a pure function of the text, the font,
-        the colors, the outline, the alignment and the image geometry. None
-        of those change between media ticks. A per-frame draw.text()
-        re-rasterizes the stroked glyph run at ~820us per key, ~50% of the
-        whole tick on a populated page over an animated background. This
-        records the rasterization once, through _BitmapRecorder standing in
-        for the draw core, and a later frame replays only the mask blits at
-        ~11us.
-
-        The replay issues the identical C blits, with the identical masks,
-        inks and absolute coordinates that draw.text() issues, in the same
-        order. So this path is exact for any ink and needs no
-        semi-transparent carve-out, unlike the scroll strip. A precomposed
-        RGBA strip cannot be exact here. Where a partly covered fill pixel
-        overdraws a partly covered stroke pixel, the strip collapses two
-        coverage blends into one straight-alpha value, measured up to 19/255
-        off a direct draw.
-
-        It falls back to the direct draw, and retains no cache, for a label
-        past the width cap or past the retention and op budget, and if PIL's
-        text() stops routing through draw_bitmap.
-
-        The non-RGB and non-RGBA guard keeps behavior parity, not a working
-        fallback. The recorded ink resolves for the target mode, a palette
-        index for "P" and a packed int for "RGB" and "RGBA", so a recording
-        is valid only on the mode that took it. An "L" target raises, because
-        a direct draw.text with an RGBA fill tuple onto an "L" image is a
-        TypeError. In the app every label target is RGBA."""
+        """Replay cached glyph blits in original order for RGB or RGBA targets.
+        Draw directly when limits fail, mode differs, or PIL bypasses draw_bitmap."""
         if image.mode not in ("RGB", "RGBA") or \
                 int(w) + 2 * (label.outline_width + 6) + 1 > self._MAX_STRIP_WIDTH or \
                 not self._label_ops_budget_ok(label, w, h):
@@ -757,9 +531,7 @@ class LabelManager:
             return
 
         font = label.get_font()
-        # The image size and the measured text give the x, y and anchor. The
-        # key holds them directly, so a resized deck image or a re-measured
-        # label cannot replay blits at stale coordinates.
+        # Key coordinates and geometry so resize or remeasurement cannot replay stale blits.
         key = (label.text, getattr(font, "path", None), label.font_size,
                tuple(label.color), label.outline_width, tuple(label.outline_color),
                label.alignment, anchor, x_position, y_position,
@@ -768,14 +540,9 @@ class LabelManager:
         if cached is None or cached[0] != key:
             ops = self._record_label_blits(
                 image, label, font, (x_position, y_position), anchor)
-            # Memoize a failed recording as None under the same key. The
-            # attempt costs hundreds of milliseconds, so it must not repeat
-            # on every frame of an animated background.
+            # Memoize recording failure to avoid repeating an expensive attempt on each frame.
             self._static_ops[position] = (key, ops)
-            # Only a recording that produced replayable blits counts as a
-            # cache miss. A failed one counts as a fallback below. One
-            # counter for both makes a permanently-uncacheable label read as
-            # a healthy warm cache in the profile.
+            # Count replayable recordings as misses; failed recordings are fallbacks.
             if media_prof and ops is not None:
                 media_prof.count("label_ops_miss")
         else:
@@ -784,8 +551,7 @@ class LabelManager:
                 media_prof.count("label_ops_hit")
 
         if ops is None:
-            # No recording is available for this label. Draw it directly,
-            # and do not attempt the recording again on every frame.
+            # Draw directly after a memoized recording failure.
             if media_prof:
                 media_prof.count("label_ops_fallback")
             draw.text((x_position, y_position), text=label.text, font=font,
@@ -800,30 +566,8 @@ class LabelManager:
 
     def _record_label_blits(self, image: Image.Image, label: "ComposedKeyLabel", font: "ImageFont.FreeTypeFont",
                             xy: tuple[float, float], anchor: str) -> "tuple[tuple[object, ...], ...] | None":
-        """Run draw.text() against a throwaway target whose draw core only
-        records the mask blits, and return them. None means not recordable,
-        so the caller draws directly.
-
-        The probe target matches the real image's mode, because the ink
-        resolves for the mode. It matches the real size because the probe is
-        also the interception tripwire. A recording is safe to replay only if
-        the recorder saw the whole draw, and a blank probe is the proof.
-        Anything text() writes through another channel lands on this probe as
-        residue, and only a full-size probe still shows it. PIL's
-        embedded-color route pastes onto the target image directly and
-        bypasses the draw core. A 1x1 probe records the identical ops,
-        because text() derives the blit coordinates from xy, anchor and mask
-        rather than from the canvas. That probe still clips every escaped
-        write away, and it blinds this check.
-
-        So the bar is non-empty ops and a blank probe. An empty ops list
-        alone catches total loss only. A stroke pass that records while the
-        fill pass escapes would cache an outline-only label forever.
-
-        Residue detection is one-sided, because black ink on an "RGB" probe
-        is invisible to getbbox(), so it can never reject a good recording,
-        only miss a bad one. Every in-app label target is RGBA, where escaped
-        ink moves the alpha channel off zero."""
+        """Record draw.text blits on a full-size, mode-matched blank probe.
+        Require ops and no residue; this proof is reliable only for RGBA targets."""
         try:
             probe_image = Image.new(image.mode, image.size)
             probe = ImageDraw.Draw(probe_image)
@@ -837,26 +581,19 @@ class LabelManager:
             ops = tuple(recorder.ops)
             residue = probe_image.getbbox()
         except _RecordingTooLarge as too_large:
-            # Expected for a pathological label that passed the cheap
-            # pre-check. Drop the partial recording here, and the caller pins
-            # the label to the direct draw.
+            # Drop a partial over-budget recording and let the caller pin direct drawing.
             log.info(f"Label blit recording exceeded the retention budget "
                      f"({too_large}); falling back to the per-frame draw for "
                      f"this label")
             return None
         except Exception:
-            # Use log.opt(exception=True), not exc_info. loguru has no
-            # exc_info keyword and treats it as a format argument, which
-            # drops the traceback this fallback exists to surface.
+            # Use log.opt(exception=True); loguru treats exc_info as formatting.
             log.opt(exception=True).warning(
                 "Label blit recording failed; falling back to the per-frame "
                 "draw for this label")
             return None
         if not ops or residue is not None:
-            # No blit at all for non-empty text, or pixels on the probe.
-            # Both mean PIL took a path this recorder does not model, such as
-            # embedded-color glyphs. A replay erases the label, or keeps only
-            # the intercepted half.
+            # Empty ops or residue means replay would lose all or part of an unmodeled path.
             log.warning(
                 f"Label blit recording did not intercept the whole draw "
                 f"({len(ops)} ops, probe residue {residue}); falling back to "
@@ -867,10 +604,7 @@ class LabelManager:
     def add_labels_to_image(self, image: Image.Image) -> Image.Image:
         # image = image.rotate(self.deck.get_rotation()*-1)
         if not self.get_has_visible_labels():
-            # Nothing to draw. Return the caller's own image, not a key-sized
-            # RGBA copy per frame. ControllerKey.get_current_image knows the
-            # result can be its input and skips the matching close() calls.
-            # Every other caller passes it straight through.
+            # Return the original when empty; ControllerKey does not close that input.
             return image
 
         draw = ImageDraw.Draw(image)
@@ -886,7 +620,6 @@ class LabelManager:
 
             w, h = self._measure_text(label, labels[label])
 
-            # The static and scrolling paths share the vertical placement.
             if label == LabelPosition.TOP:
                 y_position = h/2 + 3
             elif label == LabelPosition.BOTTOM:
@@ -895,17 +628,13 @@ class LabelManager:
                 y_position = (image.height - 0) / 2
 
             if label in scroll_widths:
-                # Rolling label. Composite the precomposed strip at this
-                # tick's offset. Only tick_scroll_labels() advances the
-                # scroll state, because rendering is pure, so a paint from a
-                # key press or a page load cannot disturb the animation.
+                # Composite without advancing so incidental paints do not alter animation.
                 start = image.width / 2 - (image.width - w) / 2 + 10
                 x_position = start - self.frames[label]["position"]
                 self._composite_scroll_strip(image, label, labels[label], w, h,
                                              x_position, y_position)
                 continue
 
-            # Set the x position from the alignment.
             padding = 3
             if alignment == Alignment.LEFT:
                 x_position = padding
@@ -917,7 +646,6 @@ class LabelManager:
                 x_position = image.width / 2
                 anchor_x = "m"
 
-            # The anchor is the x-anchor plus "m" for the vertical middle.
             anchor = anchor_x + "m"
 
             self._draw_static_label(image, draw, label, labels[label], w, h,
@@ -925,13 +653,9 @@ class LabelManager:
 
         del draw
 
-        # The copy exists for ControllerKey.get_current_image. This method
-        # draws in place, and that caller closes the buffer it passed in as
-        # soon as the labelled result is a different object. The touchscreen
-        # caller rebinds the name and never closes, so the copy is redundant
-        # on that path. Only an input that carries a label reaches here.
+        # Return a copy so ControllerKey can close its input and preserve the result.
+        # Touchscreen callers do not close the input, but only labelled inputs reach this copy.
         return image.copy()
-        # return image.copy().rotate(self.deck.get_rotation())
 
 
 class LayoutManager:
@@ -941,16 +665,8 @@ class LayoutManager:
         self.action_layout = ImageLayout()
         self.page_layout = ImageLayout()
 
-        # (token, layout key, resized image, cover verdict) for the resized
-        # foreground of a static asset. It stays valid while the caller passes
-        # the same asset object, the same backing source image and the same
-        # layout geometry; an in-place re-decode swaps the source image. One
-        # tuple, so a concurrent update swaps it atomically.
-        #
-        # The cover verdict says the paste of this foreground leaves no pixel
-        # of the background visible. It belongs here because it is a function
-        # of exactly what the layout key already pins, so it is computed with
-        # the resize and thrown away with it.
+        # Atomically cache token, layout key, resized static foreground, and cover verdict.
+        # Source identity catches in-place re-decode; the verdict expires with resize inputs.
         self._fg_cache: "tuple[object, tuple[object, ...], Image.Image, bool] | None" = None
 
     def clear(self) -> None:
@@ -971,7 +687,6 @@ class LayoutManager:
         
         layout = copy(self.action_layout) or ImageLayout()
 
-        # Set to page values
         page_layout = self.page_layout
         if use_page_layout_properties["valign"]:
             layout.valign = page_layout.valign
@@ -985,8 +700,7 @@ class LayoutManager:
         return self.inject_defaults(layout)
     
     def inject_defaults(self, layout: ImageLayout) -> "ComposedImageLayout":
-        """Fill every unset field, in place, and return the same object
-        retyped. See ComposedImageLayout."""
+        """Fill every unset field in place and return the same object as ComposedImageLayout."""
         if layout.valign is None:
             layout.valign = 0
         if layout.halign is None:
@@ -1020,36 +734,22 @@ class LayoutManager:
             self.controller_input.state, "layout")
 
     def get_covering_foreground(self) -> "tuple[object, ...] | None":
-        """The cached foreground entry when the last composite through
-        add_image_to_background pasted a foreground that hides the whole
-        background, else None.
-
-        The entry is an opaque token to its caller, which compares it by
-        identity: the layout key inside it pins the asset, its backing image,
-        the alignment, the composed size and the background geometry, so one
-        identity check stands for all of them. Only the static-image path
-        publishes an entry, and both early returns of add_image_to_background
-        drop it, so an entry never outlives a composite that skipped the
-        paste."""
+        """Return the cache entry only when its last paste covered the background.
+        Static-image paths publish it, and no-paste paths clear it."""
         cached = self._fg_cache
         if cached is None or not cached[3]:
             return None
         return cached
 
     def foreground_proved_bare(self, cache_token: object) -> bool:
-        """Whether the entry cache_token last built says its paste left some
-        of the background visible.
-
-        It answers False when there is no entry for cache_token, because an
-        absent entry proves nothing either way. A caller uses it to skip work
-        that only a covering foreground can ever need."""
+        """Return whether this token's cached paste left background visible.
+        Return false without a matching entry because absence proves neither result."""
         cached = self._fg_cache
         return cached is not None and cached[0] is cache_token and not cached[3]
 
     def add_image_to_background(self, image: Image.Image | None, background: Image.Image, cache_token: object = None) -> Image.Image:
         if image is None:
-            # No paste happened, so no entry may claim this composite covered
-            # the background. See get_covering_foreground().
+            # Clear cover evidence when no foreground paste occurs.
             self._fg_cache = None
             return background
         layout = self.get_composed_layout()
@@ -1061,25 +761,8 @@ class LayoutManager:
             self._fg_cache = None
             return background.copy()
 
-        # The resized foreground depends only on the source asset and the
-        # layout, not on the background, which can animate. cache_token is the
-        # asset object itself, and the identity check below holds it alive, so
-        # it cannot collide the way a freed id() can.
-        #
-        # cache_token alone cannot key the resized foreground.
-        # InputImage._ensure_fits_composed() re-decodes and swaps its backing
-        # image in place, so the asset object stays identical while its pixels
-        # change to a higher resolution. fg_key must also track which source
-        # image it resized, or a composite after the swap gets the stale
-        # low-res entry. A swap only grows the image today, so image_size
-        # already differs across one, but a same-size re-decode would not
-        # change image_size. id(image) states the dependency explicitly, and
-        # while cache_token is alive it holds a strong reference to image, so
-        # no other object can take this id.
-        # background.size joins the key because the margins, and with them the
-        # cover verdict, depend on it, and image_size alone does not pin it: a
-        # layout size that grows while the tile shrinks leaves image_size where
-        # it was.
+        # Key layout, source identity, and geometry to reject stale re-decodes.
+        # The live token prevents id reuse; background size pins margins and cover status.
         fg_key = (layout.fill_mode, layout.halign, layout.valign, image_size,
                   id(image), image.size, background.size)
         image_resized = None
@@ -1105,12 +788,9 @@ class LayoutManager:
         left_margin = int((background.width - image_resized.width) * (halign + 1) / 2)
         top_margin = int((background.height - image_resized.height) * (valign + 1) / 2)
 
-        # The verdict rides the resize, so its alpha scan runs once per cached
-        # foreground and never per frame. The store sits after the margins
-        # because the verdict needs them.
+        # Cache the cover scan with the resize after computing its required margins.
         if cache_token is None:
-            # There is nothing to key an entry on, so no entry may claim this
-            # composite. See get_covering_foreground().
+            # Without a token, clear cover evidence because no stable cache identity exists.
             self._fg_cache = None
         elif resized:
             self._fg_cache = (cache_token, fg_key, image_resized,
@@ -1166,9 +846,7 @@ class BackgroundManager:
         return self.get_color_is_set(self.page_color)
     
     def get_composed_color(self) -> list[int]:
-        # get_color_is_set reports False for None, so the is-not-None tests
-        # are implied. They are explicit here so the returns are provably
-        # non-None.
+        # Keep explicit None checks so static analysis proves non-None return values.
         page_color = self.page_color
         action_color = self.action_color
         if self.get_use_page_background() and page_color is not None and self.get_color_is_set(page_color):

@@ -34,20 +34,21 @@ from src.backend import services
 import globals as gl
 
 # Import own modules
+from src.backend.DeckManagement.HelperMethods import is_image
 from src.backend.DeckManagement.ImageHelpers import image2pixbuf
+from src.backend.DeckManagement.deck_controller.background_media import (
+    background_canvas_size, resolve_background_entries,
+)
+from src.backend.DeckManagement.deck_controller.viewport import (
+    media_entries, normalize_view, view_as_setting,
+)
+from src.windows.mainWindow.elements.ViewportDialog import ViewportDialog
 from src.windows.mainWindow.lazy_map import LazyMapTasks
 
 
 def _slideshow_summary_text(image_count: int) -> str:
-    """The label under the slideshow controls. Two or more images make a
-    rotation; fewer means the single-image background is in effect. A free
-    function, not a method, so the settings-page test can drive load_defaults
-    without binding it onto its row stub.
-
-    The label is cosmetic, so it reads empty when no locale manager is
-    installed. Only the settings-row test reaches that state, because it drives
-    load_defaults without the build() that reads every other localized string.
-    """
+    """Return the slideshow label; two or more images form a rotation.
+    Return an empty cosmetic label when no locale manager is installed."""
     lm = gl.lm
     if lm is None:
         return ""
@@ -77,11 +78,9 @@ class BackgroundMediaRow(LazyMapTasks, Adw.PreferencesRow):
         self.on_map_tasks = []
         self.connect("map", self.on_map)
 
-        # The handler id per widget key, absent while that widget is
-        # disconnected. Tracked ids keep connect and disconnect idempotent: a
-        # disconnect while already off cannot raise, and a reconnect cannot
-        # stack a second handler.
-        self._handlers: dict[str, int] = {}
+        # Handler ID by widget key, absent while disconnected.
+        # Tracking keeps connect and disconnect idempotent.
+        self._handler_ids: dict[str, int] = {}
 
         self.build()
 
@@ -112,9 +111,14 @@ class BackgroundMediaRow(LazyMapTasks, Adw.PreferencesRow):
         self.media_selector_button = Gtk.Button(label=gl.lm.get("deck.background-group.media-select-label"), css_classes=["page-settings-media-selector"])
         self.media_selector.append(self.media_selector_button)
 
-        # Slideshow controls. Add appends an image to the rotation, seeding the
-        # list from the single media-path so the first added image joins the
-        # existing background. Clear drops the list back to the single image.
+        # Pan and zoom selected media; this button has no reloadable state to mute.
+        self.adjust_view_button = Gtk.Button(label=gl.lm.get("deck.background-group.adjust-view"),
+                                             margin_top=10, halign=Gtk.Align.CENTER)
+        self.adjust_view_button.connect("clicked", self.on_adjust_view)
+        self.media_selector.append(self.adjust_view_button)
+
+        # Add seeds the rotation from the single background before appending an image.
+        # Clear returns to the single-image background.
         self.slideshow_buttons = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, halign=Gtk.Align.CENTER,
                                          spacing=10, margin_top=10)
         self.config_box.append(self.slideshow_buttons)
@@ -197,15 +201,15 @@ class BackgroundMediaRow(LazyMapTasks, Adw.PreferencesRow):
 
     def connect_signals(self) -> None:
         for key, widget, signal, callback in self._signal_bindings():
-            if self._handlers.get(key) is None:
-                self._handlers[key] = widget.connect(signal, callback)
+            if self._handler_ids.get(key) is None:
+                self._handler_ids[key] = widget.connect(signal, callback)
 
 
     def disconnect_signals(self) -> None:
         for key, widget, _signal, _callback in self._signal_bindings():
-            handler = self._handlers.pop(key, None)
-            if handler is not None:
-                widget.disconnect(handler)
+            handler_id = self._handler_ids.pop(key, None)
+            if handler_id is not None:
+                widget.disconnect(handler_id)
 
 
     def load_defaults(self) -> None:
@@ -215,13 +219,10 @@ class BackgroundMediaRow(LazyMapTasks, Adw.PreferencesRow):
             return
         self.disconnect_signals()
         try:
-            # One read, and read-only: the missing keys show the deck-settings
-            # schema's defaults without being written into the file. Persisting
-            # them here is what made a deck background loop or not depending on
-            # whether anyone had ever opened this page.
+            # Read one section without persisting missing schema defaults.
+            # Opening this page must not change deck background behavior.
             config = gl.settings_manager.deck(self.deck_serial_number).section("background")
 
-            # Update ui
             self.enable_switch.set_active(config["enable"])
             self.config_box.set_visible(config["enable"])
             self.loop_switch.set_active(config["loop"])
@@ -230,7 +231,7 @@ class BackgroundMediaRow(LazyMapTasks, Adw.PreferencesRow):
             self.extend_touchscreen_box.set_visible(self.settings_page.deck_controller.deck.is_touch())
             self.interval_spinner.set_value(config["slideshow-interval"])
             self.shuffle_switch.set_active(config["slideshow-order"] == "shuffle")
-            image_paths = [p for p in config["media-paths"] if isinstance(p, str) and p]
+            image_paths = [p for p, _view in media_entries(config["media-paths"])]
             self.slideshow_count_label.set_label(_slideshow_summary_text(len(image_paths)))
             # Show the first slideshow image when no single media-path is set,
             # so a slideshow-only background still has a thumbnail.
@@ -241,40 +242,9 @@ class BackgroundMediaRow(LazyMapTasks, Adw.PreferencesRow):
             # wired, or every later change to this row is dropped silently.
             self.connect_signals()
 
-    def load_defaults_from_page(self) -> None:
-        # The early return below disables this method, so the unguarded
-        # active_page.dict["background"] reads that follow never run. Guard
-        # them before anything calls this method again. The dead body stays
-        # as the record of what that guard has to cover.
-        return
-        if not hasattr(self.settings_page.deck_page.deck_controller, "active_page"):
-            return
-        if self.settings_page.deck_page.deck_controller.active_page is None:
-            return
-        
-        original_values = None
-        if "background" in self.settings_page.deck_page.deck_controller.active_page:
-            original_values = self.settings_page.deck_page.deck_controller.active_page.dict["background"]
-
-        overwrite = self.settings_page.deck_page.deck_controller.active_page.dict["background"].setdefault("overwrite", False)
-        show = self.settings_page.deck_page.deck_controller.active_page.dict["background"].setdefault("show", False)
-        file_path = self.settings_page.deck_page.deck_controller.active_page.dict["background"].setdefault("media-path", None)
-
-        # Save if changed
-        if original_values != self.settings_page.deck_page.deck_controller.active_page:
-            self.settings_page.deck_page.deck_controller.active_page.save()
-
-        self.overwrite_switch.set_active(overwrite)
-        self.enable_switch.set_active(show)
-
-        # Set config box state
-        self.config_box.set_visible(overwrite)
-
-        self.set_thumbnail(file_path)
-
     def on_toggle_enable(self, toggle_switch: Gtk.Switch, state: bool) -> None:
         config = gl.settings_manager.deck(self.deck_serial_number)
-        config.set("background", "enable", state)
+        config.set_section_value("background", "enable", state)
         # Save
         config.save()
         # Update
@@ -287,12 +257,10 @@ class BackgroundMediaRow(LazyMapTasks, Adw.PreferencesRow):
 
     def on_toggle_loop(self, toggle_switch: Gtk.Switch, state: bool) -> None:
         settings = gl.settings_manager.deck(self.deck_serial_number)
-        settings.set("background", "loop", state)
+        settings.set_section_value("background", "loop", state)
 
-        # Save
         settings.save()
 
-        # Update
         controller = self.settings_page.deck_controller
         page = controller.active_page
         if page is not None:
@@ -300,7 +268,7 @@ class BackgroundMediaRow(LazyMapTasks, Adw.PreferencesRow):
 
     def on_toggle_extend_touchscreen(self, toggle_switch: Gtk.Switch, state: bool) -> None:
         settings = gl.settings_manager.deck(self.deck_serial_number)
-        settings.set("background", "extend-to-touchscreen", state)
+        settings.set_section_value("background", "extend-to-touchscreen", state)
 
         # Save
         settings.save()
@@ -313,7 +281,7 @@ class BackgroundMediaRow(LazyMapTasks, Adw.PreferencesRow):
 
     def on_change_fps(self, spinner: Gtk.SpinButton) -> None:
         settings = gl.settings_manager.deck(self.deck_serial_number)
-        settings.set("background", "fps", spinner.get_value_as_int())
+        settings.set_section_value("background", "fps", spinner.get_value_as_int())
 
         # Save
         settings.save()
@@ -330,9 +298,11 @@ class BackgroundMediaRow(LazyMapTasks, Adw.PreferencesRow):
         services.require_app().let_user_select_asset(default_path=media_path, callback_func=self.update_image)
 
     def update_image(self, file_path: "str | None") -> None:
-        self.set_thumbnail(file_path)   
+        self.set_thumbnail(file_path)
         settings = gl.settings_manager.deck(self.deck_serial_number)
-        settings.set("background", "media-path", file_path)
+        settings.set_section_value("background", "media-path", file_path)
+        # Reset the view when media changes because the crop belongs to the selected image.
+        settings.set_section_value("background", "view", None)
         settings.save()
 
         controller = self.settings_page.deck_controller
@@ -346,6 +316,72 @@ class BackgroundMediaRow(LazyMapTasks, Adw.PreferencesRow):
         if page is not None:
             controller.load_background(page=page)
 
+    def _deck_background_is_visible(self) -> bool:
+        """Return whether the deck background is visible instead of an active page override.
+        When false, deck-view edits only update stored deck settings."""
+        page = self.settings_page.deck_controller.active_page
+        if page is None:
+            return True
+        page_background = page.dict.get("settings", {}).get("background", {})
+        return not (page_background.get("overwrite", False) and page_background.get("show", False))
+
+    def on_adjust_view(self, button: Gtk.Button) -> None:
+        settings = gl.settings_manager.deck(self.deck_serial_number)
+        # Use all existing list images, or the configured single path when none remain.
+        # Stop only when no nonempty path is configured.
+        entries = resolve_background_entries(settings.section("background"))
+        if not entries:
+            return
+
+        controller = self.settings_page.deck_controller
+        dialog = ViewportDialog(
+            entries,
+            canvas_size=lambda: background_canvas_size(
+                controller, controller.background.extend_to_touchscreen),
+            on_live=self.on_view_live,
+            on_commit=self.on_view_commit,
+        )
+        dialog.connect("closed", lambda d: d.close_cleanly())
+        dialog.present(self)
+
+    def on_view_live(self, path: str, view: "tuple[float, float, float]") -> None:
+        """Preview a showing still in place when no page override hides the deck background.
+        Video, GIF, and non-showing slideshow frames wait for commit."""
+        background = self.settings_page.deck_controller.background
+        if self._deck_background_is_visible() and background.showing_path() == path:
+            background.update_view(view)
+
+    def on_view_commit(self, path: str, view: "tuple[float, float, float]") -> None:
+        settings = gl.settings_manager.deck(self.deck_serial_number)
+        list_entries = [(p, v) for p, v in media_entries(settings.get("background", "media-paths"))
+                        if is_image(p)]
+        if list_entries:
+            # Rewrite valid list entries in order, using plain strings for default-view entries.
+            rewritten: "list[Any]" = []
+            for entry_path, entry_view in list_entries:
+                use = view if entry_path == path else entry_view
+                as_dict = view_as_setting(use)
+                rewritten.append(entry_path if as_dict is None
+                                 else {"path": entry_path, "view": as_dict})
+            settings.set_section_value("background", "media-paths", rewritten)
+        else:
+            settings.set_section_value("background", "view", view_as_setting(view))
+        settings.save()
+
+        if not self._deck_background_is_visible():
+            return
+        background = self.settings_page.deck_controller.background
+        if background.showing_path() == path:
+            # The still on screen: re-crop in place, no decode, no reload.
+            background.update_view(view)
+        elif background.set_slideshow_view(path, view):
+            # Store the view for the frame's next turn; reloading would jump to the first frame.
+            return
+        else:
+            # A video or GIF bakes the view into its frame cache; only a full
+            # reload rebuilds that.
+            self._reload_background()
+
     def on_add_image(self, button: Gtk.Button) -> None:
         media_path = gl.settings_manager.deck(self.deck_serial_number).get("background", "media-path")
         services.require_app().let_user_select_asset(default_path=media_path, callback_func=self.append_image)
@@ -356,36 +392,38 @@ class BackgroundMediaRow(LazyMapTasks, Adw.PreferencesRow):
         settings = gl.settings_manager.deck(self.deck_serial_number)
         paths = list(settings.get("background", "media-paths") or [])
         if not paths:
-            # Seed the rotation from the single background already set, so the
-            # first added image joins it rather than starting a fresh list of
-            # one that hides the existing image.
+            # Seed from the single background so the first added image does not hide it.
+            # Move its view into the list entry and clear the spent single-media view key.
             current = settings.get("background", "media-path")
             if current:
-                paths.append(current)
+                current_view = view_as_setting(normalize_view(settings.get("background", "view")))
+                paths.append(current if current_view is None
+                             else {"path": current, "view": current_view})
+                settings.set_section_value("background", "view", None)
         paths.append(file_path)
-        settings.set("background", "media-paths", paths)
+        settings.set_section_value("background", "media-paths", paths)
         settings.save()
 
-        image_count = len([p for p in paths if isinstance(p, str) and p])
+        image_count = len(media_entries(paths))
         self.slideshow_count_label.set_label(_slideshow_summary_text(image_count))
         self._reload_background()
 
     def on_clear_slideshow(self, button: Gtk.Button) -> None:
         settings = gl.settings_manager.deck(self.deck_serial_number)
-        settings.set("background", "media-paths", [])
+        settings.set_section_value("background", "media-paths", [])
         settings.save()
         self.slideshow_count_label.set_label(_slideshow_summary_text(0))
         self._reload_background()
 
     def on_change_interval(self, spinner: Gtk.SpinButton) -> None:
         settings = gl.settings_manager.deck(self.deck_serial_number)
-        settings.set("background", "slideshow-interval", spinner.get_value_as_int())
+        settings.set_section_value("background", "slideshow-interval", spinner.get_value_as_int())
         settings.save()
         self._reload_background()
 
     def on_toggle_shuffle(self, toggle_switch: Gtk.Switch, state: bool) -> None:
         settings = gl.settings_manager.deck(self.deck_serial_number)
-        settings.set("background", "slideshow-order", "shuffle" if state else "in-order")
+        settings.set_section_value("background", "slideshow-order", "shuffle" if state else "in-order")
         settings.save()
         self._reload_background()
 

@@ -1,0 +1,6 @@
+# Tools for flatpak/ci/generate_python_manifest.py.
+-r requirements-build-tools.txt
+
+pip-tools==7.6.1
+PyYAML==6.0.2
+req2flatpak==0.2.0

@@ -1,16 +1,4 @@
-"""Revision resolution for one store catalog entry.
-
-A catalog entry pins the commit to fetch in one of two shapes. The old
-shape maps app versions to commit shas under "commits". The new shape
-carries one flat sha under "hash", and only the manifest's
-minimum-app-version gates compatibility for it. Both shapes are live in
-the official store: catalog refs from before the migration carry only
-"commits", the current ref carries "hash", and a few entries carry both.
-Three consumers make the pin decision: the catalog listing, the update
-check and the install identification. This module is the one
-implementation behind all three, so their shape precedence cannot drift
-apart.
-"""
+"""Shared resolution for flat-hash and app-version-map catalog pins."""
 
 import re
 from collections.abc import Collection
@@ -21,44 +9,20 @@ from packaging import version
 
 import globals as gl
 
-# A git commit sha holds exactly 40 hex characters. A pinned sha becomes
-# a raw url segment, a cache-key component, and a git argv token, so one
-# pattern gates every pin arm: a malformed value must fail loudly rather
-# than reach a url, a cache path, or "git reset --hard". The install
-# gate, StoreBackend.is_safe_commit_sha, applies this same pattern, so a
-# revision this module resolves is one the install accepts.
+# Require one 40-character hexadecimal commit shape for resolution and installation.
 COMMIT_SHA_RE = re.compile(r"^[0-9a-fA-F]{40}$")
 
 
 class PinnedRevision(NamedTuple):
-    """The commit an entry pins, and whether a compatible release backs it.
-
-    compatible is False when only the version map resolved and no version
-    in it matches this app. The store still lists such an entry, and
-    refuses to install it. A "hash" pin resolves as compatible: the shape
-    carries no version map to judge against. The store window still
-    badges a manifest that requires a newer app, but the update path
-    trusts the pin, so a catalog ref must only pin what the app can run.
-    """
+    """A pinned commit and its app-version-map compatibility verdict.
+    A valid flat hash wins over any version map and resolves as compatible."""
     sha: str
     compatible: bool
 
 
 def resolve_pinned_revision(entry: dict[str, Any]) -> PinnedRevision | None:
-    """Decide the revision one catalog entry pins. Returns None when the
-    entry pins nothing valid, and the caller drops or skips the entry.
-
-    "hash" wins over "commits" when an entry carries both. On such mixed
-    entries the map keys hold the plugin's own versions, not app
-    versions, so the map's app-major verdict means nothing there; the
-    flat sha is the field the migrated catalog maintains. An invalid
-    "hash" falls back to the map, so one malformed field cannot hide an
-    entry the map still resolves.
-
-    A garbage version key raises out of the version parse, like the
-    per-version decision always has, and every caller catches or drops
-    per entry.
-    """
+    """Resolve a valid flat hash, ignoring any version map, or return None.
+    Fall back to the map for an invalid hash and let malformed version keys raise."""
     sha = entry.get("hash")
     if sha is not None:
         if _is_commit_sha(sha):

@@ -1,97 +1,6 @@
 #!/usr/bin/env python3
-"""Slot freeze for globals.py. The gl inventory must not grow unnoticed.
-
-Run it the same way CI does, from anywhere:
-
-    python scripts/check_gl_slots.py
-
-Exit 0 means globals.py declares exactly the names the tables below list, and
-every gl.<name> = ... in the governed trees targets a declared slot. Exit 1
-prints one message per problem and names the fix.
-
-Every part of the app imports globals, so any module can mint a process-wide
-slot with one assignment and nothing reports it. Such a slot is an implicit
-dependency edge that no reader sees, no rename follows, and no test stubs.
-This check does not shrink the inventory and does not stop an addition. It
-makes an addition two edits in one diff, with a reviewer present.
-
-A new service needs no slot. Build it as a local in main.create_global_objects
-and pass it to whatever needs it, the way the page manager backend takes the
-settings manager as a constructor argument. The dependency then appears in a
-signature, where a reader finds it, a rename follows it, and a test substitutes
-it. A slot is for state with no owner.
-
-The declaration pin. The set of names globals.py binds at module scope must
-equal FROZEN_SLOTS plus INCIDENTAL plus IMPORTED plus MACHINERY, exactly. Both
-directions fail. A new declaration fails until a table lists it, and a table
-entry whose declaration is gone fails until the entry goes too.
-
-The assignment pin. In every governed file, each attribute store on the module
-alias must name a FROZEN_SLOTS entry. That covers gl.X = ..., the augmented
-form, for gl.X in ..., and with ... as gl.X. A store to an IMPORTED, INCIDENTAL
-or MACHINERY name fails too, because those names are not API. The one exception
-is MODULE_TYPE_STORES, granted per file and per attribute, for a store that
-reaches the machinery of the module object rather than its inventory.
-
-setattr(gl, ...) and delattr(gl, ...) fail, because a computed slot name is
-invisible to this check. del gl.X fails too, because it makes the frozen
-inventory false at runtime.
-
-This check does not police attribute reads. What may be read from gl, and by
-which layer, is a separate question with a separate guard.
-
-This check does not police a change to the contents of a slot, such as
-gl.loggers[...] = ... or an append to a queue. Those are the semantics of those
-slots. gl.__dict__[...] = ... reaches the module namespace, but it is a
-subscript store as well, and this check does not see it. Nothing in the tree
-writes that way.
-
-A declaration is a target of an assignment, an annotated assignment, an
-augmented assignment, a for, a with ... as, a walrus, or a type alias, plus an
-import and a module-scope def or class name. The walk collects them over the
-module body at any nesting depth, and it stops at a function, class or lambda
-body, because a name bound in there is a local. It still walks the parts of a
-def that evaluate where the def sits, which are the decorators, the default
-arguments, the annotations and the base classes, because a walrus in one of
-them binds module scope. It subtracts the names that a module-scope del
-removes, which is why the version-reading helper that globals.py deletes after
-use is in no table. It does not collect an except ... as name, because Python
-deletes the handler name when the handler exits.
-
-fallback_font has no name in the source. The module __getattr__ of globals.py
-resolves it on the first read and caches it with
-globals()["fallback_font"] = value. The walk collects a write into the
-namespace dict under a literal key, so that slot is pinned in both directions.
-A deleted caching line fails the check until the table entry goes too.
-
-A guard that fails open reads as green and covers nothing, so this check also
-fails when its own footing moves. Each of these is a loud failure that names
-the fix, and never a silent skip: a missing or empty globals.py, a governed
-root that is not a directory, a governed file that is not a file, a symlinked
-directory under a root, because the walk does not descend into one and every
-store inside it would go unseen, a file that does not parse, a name in two
-tables at once, and an import statement that names globals and that this check
-cannot resolve to an alias.
-
-This check does not see the module reached without an import statement, such as
-importlib.import_module("globals"), __import__("globals") or
-sys.modules["globals"]. It does not see an alias laundered through another
-name, such as x = gl, vars(gl), or a helper that takes the module as a
-parameter. The threat model is the well-meaning change. Every slot that arrived
-in this tree arrived as a plain gl.name = value. A check that chased every
-indirection would approximate the interpreter and would still lose. This one
-makes the ordinary path visible and leaves the rare ones to review.
-
-This check also does not see what a class installed through a
-MODULE_TYPE_STORES exemption then does. A swapped __class__ decides how every
-read of the module behaves, and a __getattr__ on it that caches its answer into
-the module namespace mints a name that outlives the restore. That is why the
-exemption names one file and one attribute at a time, and why review grants it
-to a class somebody read, not to a shape.
-
-This module imports from the standard library only, because it runs in the bare
-python:3.13-slim image of CI beside compileall, with nothing installed.
-"""
+"""Pin globals.py names/gl stores; reject invalid input/imports and computed/deleted slots.
+Skip reads/mutations/dynamic/laundered aliases and per-file module-type exemptions."""
 from __future__ import annotations
 
 import ast
@@ -104,20 +13,12 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 GLOBALS_MODULE = "globals.py"
 THIS_SCRIPT = "scripts/check_gl_slots.py"
 
-# What the assignment pin walks. It is wider than the type-check roots,
-# because a test scenario that invents a slot still invents a slot.
-#
-# Three groups stay ungoverned. The remaining root-level modules, appinfo.py,
-# rebrand_migration.py and globals.py, import before globals exists, or are
-# globals. scripts/ is tooling that never runs in the app process. Third-party
-# plugins live outside the tree and form a compatibility surface. Widen these
-# tuples when any of that stops being true.
+# Govern app trees and tests because any process can invent a slot.
+# Exclude pre-globals root modules, tooling, globals itself, and external plugins.
 GOVERNED_FILES = ("main.py", "autostart.py", "cli_args.py")
 GOVERNED_TREES = ("src", "GtkHelper", "locales", "tests")
 
-# The frozen inventory holds every process-wide slot, and nothing else. It is
-# the only table the assignment pin accepts as a store target. The note on each
-# entry says what lives there, not who reads it.
+# Only FROZEN_SLOTS accepts stores; each entry describes its value, not its readers.
 FROZEN_SLOTS: dict[str, str] = {
     # Import-time constants and paths, resolved in globals.py's own body.
     "MAIN_PATH": "install root, assigned by main.py before anything reads it",
@@ -173,19 +74,16 @@ FROZEN_SLOTS: dict[str, str] = {
     "api_state_requests": "state changes parked by the CLI until a deck appears",
 }
 
-# Names that leak out of a block in the globals.py body and become module
-# attributes. Python does not scope a with or an if. They are not API, nothing
-# may assign them, and they exist here only so the declaration pin balances.
-# Delete the entry together with the leak.
+# with and if bindings leak into the module but are not assignable API.
+# Keep each incidental entry only while the corresponding binding exists.
 INCIDENTAL: frozenset[str] = frozenset({
     "settings",           # static settings dict, from the with open(...) block
     "f",                  # the file handle that block opened
     "top_level_folder",   # parent of PLUGIN_DIR, bound only on the nix path
 })
 
-# Modules and type names that globals.py imports. A runtime import is an
-# ordinary attribute of the module, so gl.os resolves. The rest bind only under
-# TYPE_CHECKING and never exist at runtime. Neither kind is a slot.
+# Runtime imports become module attributes; TYPE_CHECKING imports do not exist at runtime.
+# Neither kind is a slot.
 IMPORTED: frozenset[str] = frozenset({
     # runtime
     "json", "os", "sys", "threading", "appinfo", "deque", "log", "argparser",
@@ -194,7 +92,7 @@ IMPORTED: frozenset[str] = frozenset({
     "App", "LocaleManager", "AssetManagerBackend", "AssetManager",
     "MediaManager", "PageManagerBackend", "SettingsManager", "DeckManager",
     "PluginManager", "IconPackManager", "WallpaperPackManager",
-    "SDPlusBarWallpaperPackManager", "StoreBackend", "Notify", "SignalManager",
+    "SDPlusBarWallpaperPackManager", "StoreBackend", "Notifier", "SignalManager",
     "WindowGrabber", "Wayland", "GnomeExtensions", "Store",
     "FlatpakPermissionManager", "PageManager", "LockScreenManager",
     "PresenceMonitor", "TrayIcon", "Logger",
@@ -205,14 +103,8 @@ MACHINERY: frozenset[str] = frozenset({
     "__getattr__",   # serves and caches fallback_font on first read
 })
 
-# Attribute stores that reach the machinery of the module object rather than
-# the inventory that globals.py declares, listed per file that makes one. A
-# rebind of __class__ to a ModuleType subclass is the documented way to give a
-# module custom attribute behaviour, and the store adds no name to the declared
-# inventory, so the declaration pin is unaffected. What the installed class
-# then does is outside the reach of this check, so the exemption names one file
-# and one attribute at a time. gl.__dict__ = {} in the same file still fails,
-# and so does gl.__class__ in any other file.
+# Exempt module-object machinery stores per file and attribute because they add no declared slot.
+# Installed-class behavior is out of scope; other files and inventory attributes still fail.
 MODULE_TYPE_STORES: dict[str, frozenset[str]] = {
     # Installs a recording module to pin which slots the render engine reads,
     # and restores the original class in a finally.
@@ -226,7 +118,7 @@ TABLES: tuple[tuple[str, frozenset[str]], ...] = (
     ("MACHINERY", MACHINERY),
 )
 
-ADDING_A_SLOT = (
+ADD_SLOT_GUIDANCE = (
     f"Adding one is two edits in one change: declare it in {GLOBALS_MODULE}, and add "
     f"it to FROZEN_SLOTS in {THIS_SCRIPT}. Prefer not adding one: a new service is "
     "constructor-injected by default -- build it as a local in "
@@ -267,11 +159,7 @@ def parse(path: Path, failures: list[str]) -> ast.Module | None:
 
 def declared_names(tree: ast.Module) -> set[str]:
     """Names that tree binds at module scope, minus the ones it deletes.
-
-    The walk enters every compound statement, because a binding inside one is
-    still module scope. It stops at a def, class or lambda boundary. It makes
-    two exceptions. A global declaration reaches module scope from anywhere,
-    and a globals()["name"] = ... write caches the lazy slot.
+    Enter compounds but not local scopes; include global and literal globals() writes.
     """
     bound: set[str] = set()
     deleted: set[str] = set()
@@ -300,11 +188,7 @@ def declared_names(tree: ast.Module) -> set[str]:
 
     def walrus(node: ast.AST) -> None:
         """Collect walrus targets from expressions that evaluate at module scope.
-
-        A walrus binds where its expression evaluates. For a walrus inside a
-        comprehension that is the scope around the comprehension, so a
-        module-scope comprehension can mint a module attribute. A lambda body is
-        its own scope, and this walk does not enter it.
+        A module-scope comprehension can bind outside itself; a lambda body cannot.
         """
         for field, value in ast.iter_fields(node):
             if isinstance(node, ast.Lambda) and field == "body":
@@ -319,9 +203,8 @@ def declared_names(tree: ast.Module) -> set[str]:
     def descend(node: ast.stmt) -> None:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             bound.add(node.name)
-            # The body binds locals, not module attributes. The decorators,
-            # default arguments, annotations and base classes evaluate where the
-            # statement sits, so a walrus in one binds module scope.
+            # Function and class bodies bind locals.
+            # Decorators, defaults, annotations, and bases can bind module walruses.
             walrus(node)
             return
 
@@ -356,9 +239,8 @@ def declared_names(tree: ast.Module) -> set[str]:
                 if isinstance(element, ast.Name):
                     deleted.add(element.id)
 
-        # Generic descent, so the walk reaches a statement shape this check has
-        # never seen. It does not collect an except ... as name, because Python
-        # deletes the handler name when the handler exits.
+        # Descend through unknown statement shapes.
+        # Do not collect except-as names because Python deletes them after the handler.
         for child in ast.iter_child_nodes(node):
             if isinstance(child, ast.stmt):
                 descend(child)
@@ -385,12 +267,7 @@ def declared_names(tree: ast.Module) -> set[str]:
 
 def check_tables(failures: list[str]) -> None:
     """Reject a table that overlaps another one, or that is empty.
-
-    This also holds MODULE_TYPE_STORES to the two properties that keep it from
-    exempting a slot. MODULE_TYPE_STORES is not one of TABLES, because TABLES
-    say what a name in globals.py is, and this one names attributes of the
-    module object. The overlap check therefore misses it, and one plain name
-    added to it would excuse every store of a real slot.
+    MODULE_TYPE_STORES must contain only non-inventory dunders so it cannot exempt real slots.
     """
     exempted = {name for names in MODULE_TYPE_STORES.values() for name in names}
     for name in sorted(exempted):
@@ -426,10 +303,7 @@ def check_tables(failures: list[str]) -> None:
 
 
 def check_declarations(failures: list[str]) -> set[str]:
-    """Pin the module-scope names of globals.py to the tables.
-
-    Returns the names it found.
-    """
+    """Pin globals.py module names to the tables and return the names found."""
     path = REPO_ROOT / GLOBALS_MODULE
     if not path.is_file():
         failures.append(
@@ -456,7 +330,7 @@ def check_declarations(failures: list[str]) -> set[str]:
         failures.append(
             f"{GLOBALS_MODULE}: declares `{name}`, which no table in {THIS_SCRIPT} "
             f"lists. The `gl` inventory is frozen: it grows by deliberate edit, never "
-            f"by arriving. {ADDING_A_SLOT}"
+            f"by arriving. {ADD_SLOT_GUIDANCE}"
         )
 
     for name in sorted(listed - declared):
@@ -527,10 +401,7 @@ def module_aliases(
     tree: ast.Module, where: str, problems: list[tuple[int, str]]
 ) -> set[str]:
     """Names that this file binds the globals module to.
-
-    The house form is import globals as gl, and it is the only form that lets
-    the assignment pin see a store. This reports the other two forms, because a
-    skip is how a guard stops covering a file without a word.
+    Accept import globals as gl and report forms whose stores the checker cannot see.
     """
     aliases: set[str] = set()
 
@@ -568,9 +439,7 @@ def module_aliases(
 
 def check_stores(path: Path, failures: list[str], type_stores_used: set) -> int:
     """Pin every gl attribute store in one file to FROZEN_SLOTS.
-
-    Returns the count, and records into type_stores_used which
-    MODULE_TYPE_STORES exemptions this file needed.
+    Return the count and record used MODULE_TYPE_STORES exemptions.
     """
     where = relative(path)
     type_stores = MODULE_TYPE_STORES.get(where, frozenset())
@@ -578,9 +447,8 @@ def check_stores(path: Path, failures: list[str], type_stores_used: set) -> int:
     if tree is None:
         return 0
 
-    # Collect the problems with their line numbers and report them in source
-    # order. The walk visits by node shape, and out-of-order findings read as
-    # noise.
+    # Collect line numbers and report in source order.
+    # AST walking groups by node shape instead of source position.
     problems: list[tuple[int, str]] = []
     aliases = module_aliases(tree, where, problems)
     if not aliases:
@@ -607,7 +475,7 @@ def check_stores(path: Path, failures: list[str], type_stores_used: set) -> int:
                 problems.append((
                     line,
                     f"{where}:{line}: assigns `gl.{name}`, which is not a frozen slot. "
-                    f"{ADDING_A_SLOT}",
+                    f"{ADD_SLOT_GUIDANCE}",
                 ))
             return
         if isinstance(node, (ast.Tuple, ast.List)):
@@ -650,7 +518,7 @@ def check_stores(path: Path, failures: list[str], type_stores_used: set) -> int:
                         f"{where}:{node.lineno}: `{node.func.id}(gl, ...)` writes a slot "
                         "under a name this check cannot see, which is exactly what the "
                         "freeze exists to prevent. Name the slot in the source "
-                        f"(`gl.thing = ...`). {ADDING_A_SLOT}",
+                        f"(`gl.thing = ...`). {ADD_SLOT_GUIDANCE}",
                     ))
 
     failures.extend(message for _, message in sorted(problems))
@@ -659,9 +527,7 @@ def check_stores(path: Path, failures: list[str], type_stores_used: set) -> int:
 
 def check_type_store_use(type_stores_used: set, failures: list[str]) -> None:
     """Drop a MODULE_TYPE_STORES entry once its store is gone.
-
-    An exemption that outlives its store is a standing permission that nobody
-    uses, and a standing permission is how the next one arrives unremarked.
+    Reject unused standing exemptions.
     """
     for where, names in sorted(MODULE_TYPE_STORES.items()):
         for name in sorted(names):

@@ -1,13 +1,7 @@
-"""
-Regression test for install and update results across the store backend.
+"""Verify StoreResult contracts for offline store installs and updates."""
 
-The four install_* entry points answer a StoreResult, Ok(None) on success and
-an Err naming the failure otherwise. No network is involved.
-"""
-
-# Each update_all_* narrows on Ok, never on truthiness, and returns Ok(count)
-# or propagates the Err. update_everything returns Ok(sum) or the first leg's
-# Err.
+# update_all_* counts Ok results and continues after Err values.
+# update_everything alone returns the first failed leg; all methods narrow because Err is truthy.
 
 import fixtures  # noqa: F401  (isolated --data tempdir; import first)
 import globals as gl  # noqa: F401
@@ -26,7 +20,7 @@ class RecordingPluginManager:
     def generate_action_index(self): self.calls.append("generate_action_index")
     def get_plugins(self): return {}
     def get_plugin_by_id(self, plugin_id, include_disabled=True): return None
-    def load_error_of(self, folder): return None
+    def get_load_error(self, folder): return None
 
 
 def _make_backend() -> StoreBackend:
@@ -69,7 +63,7 @@ def test_install_plugin_failure_skips_reload() -> None:
     )
 
 
-def test_update_all_plugins_counts_never_predeletes() -> None:
+def test_plugin_updates_count_successes_without_predelete() -> None:
     fixtures.install_stub_globals()
     sb = _make_backend()
 
@@ -106,7 +100,7 @@ def test_update_all_plugins_counts_never_predeletes() -> None:
     )
 
 
-def test_update_everything_checks_all_four_legs() -> None:
+def test_update_everything_propagates_asset_results() -> None:
     sb = _make_backend()
 
     # The _update_all_assets app-action toasts success only on an Ok. This
@@ -237,9 +231,7 @@ def test_install_icon_propagates_download_result() -> None:
 
 
 def test_install_load_failure_refreshes_but_stays_silent() -> None:
-    # A plugin whose reload fails after install must still refresh the UI
-    # and decks (an update already deregistered the old version), but fire
-    # no install signal and log no success for a plugin nobody can use.
+    # Refresh after a reload failure, but emit no install signal for an unusable plugin.
     fixtures.install_stub_globals()
     gl.plugin_manager = RecordingPluginManager()
 
@@ -280,8 +272,8 @@ def main() -> None:
     fixtures.start_watchdog(30, label="scenario_store_install_contract")
     test_install_load_failure_refreshes_but_stays_silent()
     test_install_plugin_failure_skips_reload()
-    test_update_all_plugins_counts_never_predeletes()
-    test_update_everything_checks_all_four_legs()
+    test_plugin_updates_count_successes_without_predelete()
+    test_update_everything_propagates_asset_results()
     test_update_all_sd_plus_successes()
     test_update_all_icons_counts_only_successes()
     test_install_icon_propagates_download_result()

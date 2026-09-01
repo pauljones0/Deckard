@@ -1,8 +1,4 @@
-"""Corrupt-but-present JSON must not become silent data loss on the read side.
-
-The loader quarantines the corrupt file and heals from the backup, whatever
-use_backup says. A failed quarantine still heals, and never clobbers a copy.
-"""
+"""Verify that corrupt JSON is quarantined and healed without data loss."""
 import fixtures  # noqa: F401  (import first: sets up the isolated data dir)
 
 import json
@@ -11,6 +7,7 @@ from unittest import mock
 
 import globals as gl
 from fixtures import seed_page, start_watchdog
+from loguru import logger as log
 from src.backend.PageManagement import page_flush
 
 
@@ -19,7 +16,7 @@ def corrupt(path: str) -> None:
         f.write('{"keys": {"0x0"')  # truncated mid-token
 
 
-def check_page_backup_heal() -> int:
+def check_page_heals_from_backup() -> int:
     path = seed_page("CorruptWithBackup")
     marker = {"keys": {}, "background": {"marker": "from-backup"}}
 
@@ -29,7 +26,12 @@ def check_page_backup_heal() -> int:
         json.dump(marker, f)
 
     corrupt(path)
-    data = gl.page_manager.get_page_data(path)
+    records: list[str] = []
+    sink = log.add(lambda m: records.append(str(m)), level="WARNING")
+    try:
+        data = gl.page_manager.get_page_data(path)
+    finally:
+        log.remove(sink)
 
     if data.get("background", {}).get("marker") != "from-backup":
         print(f"FAIL(1): corrupt page did not heal from backup, got: {data}")
@@ -37,11 +39,16 @@ def check_page_backup_heal() -> int:
     if not os.path.exists(path + ".corrupt"):
         print("FAIL(1): corrupt original was not preserved at .corrupt")
         return 1
+    backup_path = os.path.join(backup_dir, os.path.basename(path))
+    if not any("Corrupt page" in r and path in r and backup_path in r for r in records):
+        print("FAIL(1): the heal logged no warning naming the primary and the "
+              "backup it served from")
+        return 1
     print("PASS: corrupt page heals from backup; original quarantined")
     return 0
 
 
-def check_page_no_backup_quarantine() -> int:
+def check_page_without_backup_is_quarantined() -> int:
     path = seed_page("CorruptNoBackup")
     corrupt(path)
 
@@ -57,7 +64,7 @@ def check_page_no_backup_quarantine() -> int:
     return 0
 
 
-def check_migrations_torn() -> int:
+def check_torn_migrations_recovery() -> int:
     from src.backend.Migration.Migrator import Migrator
 
     os.makedirs(os.path.dirname(Migrator.SETTINGS_DIR), exist_ok=True)
@@ -86,7 +93,7 @@ def check_migrations_torn() -> int:
     return 0
 
 
-def check_sweep_survives_poison() -> int:
+def check_asset_sweep_survives_corrupt_page() -> int:
     asset = os.path.join(gl.DATA_PATH, "asset.png")
     with open(asset, "wb") as f:
         f.write(b"png")
@@ -114,10 +121,7 @@ def check_sweep_survives_poison() -> int:
 
 
 def _seed_page_with_backup(name: str, content: dict) -> str:
-    """Write a real page and a validated backup, then corrupt the primary.
-
-    Returns the page path.
-    """
+    """Write a page and backup, corrupt the primary, and return its path."""
     path = seed_page(name)
     backup_dir = os.path.join(gl.page_manager.PAGE_PATH, "backups")
     os.makedirs(backup_dir, exist_ok=True)
@@ -129,19 +133,14 @@ def _seed_page_with_backup(name: str, content: dict) -> str:
     return path
 
 
-def check_set_page_settings_no_gut() -> int:
-    # The settings writers read with use_backup=False and save the result back.
-    # A corrupt page must heal from the backup, so the write preserves keys and
-    # background instead of gutting them to a settings-only dict.
+def check_set_page_settings_preserves_page() -> int:
+    # Healing must preserve page content before the settings writer saves it back.
     content = {"keys": {"0x0": {"states": {"0": {}}}}, "background": {"path": "wall.png"}}
     path = _seed_page_with_backup("SettingsWriterHeal", content)
 
     gl.page_manager.set_page_settings(path, {"brightness": 42})
 
-    # A settings write is an edit of the page, marked with the flush seam and
-    # written on its timer. The heal has just left this path with no primary,
-    # because the loader quarantined it, so the file exists again only once that
-    # write goes out.
+    # Flush the delayed edit because quarantine removed the primary file.
     page_flush.get().flush_path(path)
     with open(path) as f:
         after = json.load(f)
@@ -196,7 +195,7 @@ def check_heal_when_quarantine_fails() -> int:
     return 0
 
 
-def check_quarantine_no_clobber() -> int:
+def check_quarantine_preserves_prior_copy() -> int:
     # A second corruption must not destroy the first .corrupt copy.
     from src.backend.SettingsManager import SettingsManager
 
@@ -233,19 +232,55 @@ def check_quarantine_no_clobber() -> int:
     return 0
 
 
+def check_wrong_root_type_heals() -> int:
+    # Reject valid JSON whose root type does not match the requested schema.
+    from src.backend import settings_store
+
+    store = settings_store.get()
+    failures = 0
+    for label, payload in (("list-root", "[1, 2, 3]"),
+                           ("scalar-root", "42"),
+                           ("null-root", "null")):
+        path = os.path.join(gl.DATA_PATH, f"wrongroot_{label}.json")
+        with open(path, "w") as f:
+            f.write(payload)
+        data, corrupt = store.load_file(path, root=dict)
+        if data != {} or not corrupt:
+            print(f"FAIL(8): {label} not treated as corrupt: data={data!r} corrupt={corrupt}")
+            failures = 1
+        if os.path.exists(path) or not os.path.exists(path + ".corrupt"):
+            print(f"FAIL(8): {label} was not quarantined aside")
+            failures = 1
+
+    # A correctly-rooted list surface must still load unchanged.
+    list_path = os.path.join(gl.DATA_PATH, "goodlist.json")
+    with open(list_path, "w") as f:
+        f.write("[1, 2, 3]")
+    data, corrupt = store.load_file(list_path, root=list)
+    if data != [1, 2, 3] or corrupt:
+        print(f"FAIL(8): a valid list-rooted file was rejected: data={data!r} corrupt={corrupt}")
+        failures = 1
+
+    if failures:
+        return 1
+    print("PASS: wrong-root JSON heals to an empty root; a valid list root still loads")
+    return 0
+
+
 def main() -> int:
     start_watchdog(30, "corrupt_json_fallback")
     fixtures._install_integration_globals()
     rc = 0
     for check in (
-        check_page_backup_heal,
-        check_page_no_backup_quarantine,
-        check_migrations_torn,
-        check_sweep_survives_poison,
-        check_set_page_settings_no_gut,
+        check_page_heals_from_backup,
+        check_page_without_backup_is_quarantined,
+        check_torn_migrations_recovery,
+        check_asset_sweep_survives_corrupt_page,
+        check_set_page_settings_preserves_page,
         check_get_page_settings_heals,
         check_heal_when_quarantine_fails,
-        check_quarantine_no_clobber,
+        check_quarantine_preserves_prior_copy,
+        check_wrong_root_type_heals,
     ):
         try:
             rc |= check()

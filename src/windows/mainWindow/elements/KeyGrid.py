@@ -38,6 +38,7 @@ from loguru import logger as log
 # Imort globals
 from src.backend import services
 
+from src.backend.DeckManagement.deck_events import KeyEvent
 import globals as gl
 
 # Import own modules
@@ -96,11 +97,8 @@ class KeyGrid(Gtk.Grid):
                 self.buttons[x][y] = button
 
     def load_from_changes(self) -> None:
-        # Apply the changes that arrived before this widget existed, or while
-        # the window was hidden. Each entry is a dirty marker and not a stored
-        # PIL image, so this composites the current frame for each dirty
-        # identifier and pushes it through the set-image path that a live
-        # update uses.
+        # Replay changes received before this widget existed or while the window was hidden.
+        # Each entry is a dirty marker, so composite the current frame through the live path.
         if not hasattr(self.deck_controller, "ui_image_changes_while_hidden"):
             return
         tasks = self.deck_controller.ui_image_changes_while_hidden
@@ -116,12 +114,8 @@ class KeyGrid(Gtk.Grid):
                 with contextlib.suppress(KeyError):
                     tasks.pop(identifier)
             elif isinstance(identifier, Input.Touchscreen):
-                # ScreenBar.load_from_changes normally consumes this entry,
-                # because it owns the widget that shows it. When the map
-                # handler of that widget has not run, or never runs, consume
-                # the entry here instead of leaking it. The tasks.pop() call
-                # carries the same guard as the Key branch above, so the first
-                # widget wins and the second does nothing.
+                # Consume touchscreen work here if ScreenBar's map handler does not.
+                # The guarded pop lets the first widget win without leaking the entry.
                 screenbar = self._find_screenbar()
                 if screenbar is not None:
                     self._push_current_image(identifier, screenbar.image)
@@ -129,18 +123,10 @@ class KeyGrid(Gtk.Grid):
                         tasks.pop(identifier)
 
     def _find_screenbar(self) -> "ScreenBar | None":
-        """The sibling screenbar, found by a walk up the widget tree.
-
-        The lookup is duck-typed, because an import of DeckStackChild or
-        DeckConfig here is a cycle, and the engine caches no child to read.
-        The parent chain is a plain Gtk.Widget with no static screenbar
-        attribute, so this stays a string existence check where the other UI
-        reachability guards became typed accessors.
-        """
-        # The lookup may fail. During __init__ this grid is not in the widget
-        # tree, because DeckConfig.build appends the grid before the screenbar
-        # exists, so the touchscreen replay waits for
-        # ScreenBar.load_from_changes.
+        """Find the sibling screenbar by a duck-typed walk up the widget tree.
+        A typed import would create a cycle, and Gtk.Widget exposes no screenbar attribute."""
+        # This grid is outside the widget tree during construction, before the screenbar exists.
+        # A failed lookup leaves touchscreen replay to ScreenBar.load_from_changes.
         widget = self.get_parent()
         while widget is not None:
             if recursive_hasattr(widget, "screenbar.image"):
@@ -237,10 +223,9 @@ class KeyButton(Gtk.Frame):
     def state(self) -> int:
         key = self.get_key()
         if key is None:
-            # The controller holds no input under this identifier, which a
-            # stale identifier or a changed deck model both produce. State 0
-            # exists on every input, so the caller reads the default one.
-            log.warning(f"No input {self.identifier} on deck {self._deck_name()}; reading state 0")
+            # A stale identifier or changed deck model can leave this input absent.
+            # Return state 0 because every input defines it as the default.
+            log.warning(f"No input {self.identifier} on deck {self._deck_serial()}; reading state 0")
             return 0
         return key.state
 
@@ -260,9 +245,8 @@ class KeyButton(Gtk.Frame):
     def on_button_accept(self, drop: Gtk.DropTarget, user_data: Gdk.Drop) -> bool:
         return True
 
-    # GTK4 passes the dropped value to the drop signal, not the content
-    # provider. Here that value is a KeyButton or a Gdk.FileList. See
-    # set_gtypes above.
+    # GTK4 passes the dropped value, not its content provider, to this signal.
+    # set_gtypes limits that value to KeyButton or Gdk.FileList.
     def on_button_drop(self, drop: Gtk.DropTarget, value: "KeyButton | Gdk.FileList", x: float, y: float) -> "bool | None":
         # value IS drop.get_value(): GTK passes the dropped value to the
         # signal, so the narrowing reads the parameter it forwards.
@@ -289,14 +273,8 @@ class KeyButton(Gtk.Frame):
             return
         dropped_identifier = dropped_button.identifier
 
-        # The swap is one edit of the page, and not two assignments with a
-        # save around each. Both halves are read and written inside the block,
-        # so no writer sees a page where one key holds the content of the
-        # other and its own content is nowhere. A deferred write between two
-        # assignments puts that broken state on disk. Both sections also read
-        # under the same lock, so a half-stale copy cannot overwrite a page
-        # edit from a plugin thread. Nothing here touches the file, because
-        # the reloads below run outside the block, without the lock.
+        # Swap both keys in one locked page edit so no writer sees or persists a partial state.
+        # Read both sections under that lock; reload and file work stay outside it.
         with active_page.edit() as page_dict:
             own_section = page_dict.setdefault(self.identifier.input_type, {})
             dropped_section = page_dict.setdefault(dropped_identifier.input_type, {})
@@ -308,10 +286,8 @@ class KeyButton(Gtk.Frame):
 
         active_page.switch_actions_of_inputs(self.identifier, dropped_identifier)
 
-        # Both keys repaint, one identifier at a time. Each reload writes the
-        # page out before it reads the page again, so the swap is on disk when
-        # these calls return. A save after them writes back only the content
-        # that the last reload read from the file.
+        # Repaint both keys one at a time after the edit writes the swap.
+        # Each reload reads the written page before the next reload runs.
         active_page.reload_similar_pages(self.identifier, reload_self=True)
         active_page.reload_similar_pages(dropped_identifier, reload_self=True)
 
@@ -319,9 +295,8 @@ class KeyButton(Gtk.Frame):
         if gl.app is not None:
             gl.app.main_win.sidebar.update()
 
-    # value is the dropped Gdk.FileList and not the ContentProvider.
-    # on_button_drop routes here only when drop.get_value() is a Gdk.FileList,
-    # because GTK passes the value to the drop signal, not the provider.
+    # GTK passes the dropped Gdk.FileList value, not its ContentProvider.
+    # on_button_drop calls this only after that type check.
     def handle_file_drop(self, drop: Gtk.DropTarget, value: Gdk.FileList, x: float, y: float) -> "bool | None":
         files = value.get_files()
         if len(files) > 1:
@@ -330,15 +305,13 @@ class KeyButton(Gtk.Frame):
         
         file = files[0]
         url = file.get_uri()
-        # A remote drop carries a uri and no local path. The importer owns
-        # that case, validates the extension and tells the user, so this code
-        # must not return early.
+        # A remote drop has a URI but no local path.
+        # Let the importer validate it and notify the user instead of returning early.
         path = file.get_path()
 
         internal_path = gl.asset_manager_backend.add_custom_media_set_by_ui(url=url, path=path)
-        # Any result that is not a path means a refusal. The import can answer
-        # a rejected url with -1, which passes an is None test and reaches the
-        # media path of the key.
+        # Treat every non-string or empty result as refusal.
+        # A rejected URL can return -1, so a None-only check is insufficient.
         if not isinstance(internal_path, str) or internal_path == "":
             return False
 
@@ -382,28 +355,18 @@ class KeyButton(Gtk.Frame):
         
 
     def set_image(self, image: "Image.Image") -> None:
-        # Callable from any thread. This is the map-time replay path. A live
-        # frame arrives through the UI adapter, which calls the same two
-        # halves and coalesces the paints into one per input. The idle takes
-        # the default priority, because a high-priority pixbuf update on every
-        # frame starves the layout and draw of the main loop.
+        # Callable from any thread for map replay and coalesced live frames.
+        # Use default idle priority so frame updates do not starve main-loop layout and drawing.
         GLib.idle_add(self.paint_mirror_frame, self.prepare_mirror_frame(image))
         # image.close()
         # image = None
         # del image
 
     def prepare_mirror_frame(self, image: "Image.Image") -> "GdkPixbuf.Pixbuf | None":
-        """The paint-ready payload for paint_mirror_frame.
-
-        Any thread may call it. image2pixbuf uses only PIL and GdkPixbuf, so
-        the conversion runs on the caller. The caller is the media thread for
-        a live frame. Only the widget change needs the loop.
-        """
-        # This carries no staleness stamp, unlike the screenbar. One slot
-        # coalesces the live frames of a key, so they cannot queue out of
-        # order, and the only other producer is the map-time replay, which
-        # dispatches in attach order. An inversion between the two costs one
-        # stale frame, and the next repaint corrects it.
+        """Build the paint-ready pixbuf on any caller thread with PIL and GdkPixbuf.
+        Live frames arrive after latest-wins selection; map replay can call from its own thread."""
+        # This has no staleness stamp because one slot coalesces each key's live frames.
+        # Map replay can invert one frame, but the next repaint corrects it.
         return image2pixbuf(image.convert("RGBA"), force_transparency=True)
 
     def paint_mirror_frame(self, pixbuf: "GdkPixbuf.Pixbuf | None") -> bool:
@@ -417,10 +380,8 @@ class KeyButton(Gtk.Frame):
         # because a paint on a disposed widget crashes GTK.
         try:
             if not self.get_mapped():
-                # This is a late failure. push_input_image already returned
-                # True for this frame, so the engine did not dirty-mark it.
-                # Record the drop here, or load_from_changes has nothing to
-                # replay on the remap and the preview goes stale.
+                # push_input_image already accepted this frame, so record this late drop.
+                # Without the marker, remapping cannot replay it and the preview stays stale.
                 self._mark_dropped()
                 return False
             self.image.set_from_pixbuf(self.pixbuf)
@@ -479,9 +440,9 @@ class KeyButton(Gtk.Frame):
         if not gl.settings_manager.app().emulate_at_double_click:
             return
         
-        self.key_grid.deck_controller.event_callback(self.identifier, True)
+        self.key_grid.deck_controller.event_callback(self.identifier, KeyEvent(pressed=True))
         # Release key after 100ms
-        GLib.timeout_add(100, self.key_grid.deck_controller.event_callback, self.identifier, False)
+        GLib.timeout_add(100, self.key_grid.deck_controller.event_callback, self.identifier, KeyEvent(pressed=False))
 
     def set_border_active(self, visible: bool) -> None:
         if visible:
@@ -534,10 +495,8 @@ class KeyButton(Gtk.Frame):
         return False
 
     def on_paste(self, *args: Any) -> bool:
-        # No is_local() check on the clipboard. Refusing a clipboard this
-        # instance does not own breaks copy and paste on KDE under Wayland,
-        # where ownership reads as foreign. Telling the two apart needs the
-        # value itself, through read_value_async.
+        # Do not reject foreign ownership; KDE Wayland reports valid copied data as foreign.
+        # Only read_value_async can distinguish the value.
 
         # Remove the old action objects. Several actions can share one action
         # base, and nothing else tells those actions apart.
@@ -574,25 +533,22 @@ class KeyButton(Gtk.Frame):
         services.require_main_window().sidebar.load_for_identifier(self.identifier, self.state)
         return False
 
-    def _deck_name(self) -> str:
-        """The deck this widget draws, for a log line. Reads the cached serial
-        rather than the device, so a log on a missing input cannot itself
-        reach hardware."""
+    def _deck_serial(self) -> str:
+        """Return the cached deck serial for logging.
+        Do not access hardware while reporting a missing input."""
         controller = self.key_grid.deck_controller
         return str(getattr(controller, "_serial_number", None) or "unknown")
 
     def get_key(self) -> "ControllerKey | None":
-        """The controller input this widget stands for, or None when the
-        controller carries no input under the identifier. get_input answers
-        None for a stale identifier and for a deck model that has no such
-        input, so the None is a real answer, not an error."""
+        """Return this widget's controller input, or None for an absent identifier.
+        Stale identifiers and deck models without that input are normal None results."""
         controller = self.key_grid.deck_controller
         return controller.get_input(self.identifier)
 
     def remove_media(self) -> None:
         key = self.get_key()
         if key is None:
-            log.warning(f"No input {self.identifier} on deck {self._deck_name()}; nothing to remove media from")
+            log.warning(f"No input {self.identifier} on deck {self._deck_serial()}; nothing to remove media from")
             return
         state = key.get_active_state()
 
@@ -676,11 +632,8 @@ class KeyButtonContextMenu(Gtk.PopoverMenu):
         self.set_menu_model(self.main_menu)
 
     def on_close(self, popover: Gtk.PopoverMenu) -> None:
-        # Unparent on an idle, not here. This code runs inside the closed
-        # signal emission, and an unparent of the popover during that emission
-        # can dispose the emitter under GTK. The idle also lets fast repeated
-        # right-clicks each schedule their own unparent without a race, and
-        # the guard queues one per menu.
+        # Unparent on idle because doing it during the closed signal can dispose its emitter.
+        # The guard limits repeated right-clicks to one queued unparent per menu.
         if self._unparenting:
             return
         self._unparenting = True
@@ -693,7 +646,6 @@ class KeyButtonContextMenu(Gtk.PopoverMenu):
         GLib.idle_add(_do_unparent)
 
     def on_open(self) -> None:
-        # Inert. MainWindow.add_accel_actions is inert too, and each
-        # KeyButton serves these keys through a Gtk.ShortcutController of
-        # its own, added in init_shortcuts.
+        # MainWindow does not add accelerator actions.
+        # Each KeyButton serves these keys through its own Gtk.ShortcutController.
         return

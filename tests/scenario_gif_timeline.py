@@ -1,8 +1,4 @@
-"""KeyGIF.get_next_frame() must pick the time-correct frame by wall clock.
-
-A cumulative-delay timeline is bisected, so variable per-frame delays work
-where a single-fps factor would not. Bypasses __init__ to stay pure arithmetic.
-"""
+"""Check wall-clock frame selection on a variable-delay GIF timeline."""
 import itertools
 
 import fixtures
@@ -42,9 +38,7 @@ def main() -> None:
         just_after = g.get_next_frame(now=T0 + edge + 0.001)
         assert just_after == i + 1, f"just-after edge {edge}: expected frame {i + 1}, got {just_after}"
 
-    # Loop wraparound. Past the total of 1.8 s the time wraps modulo the total.
-    # Step in increments under 1 s to exercise the mod-wrap arithmetic rather
-    # than the gap-reseed path, which has its own check below.
+    # Use subsecond steps to test modulo wrap without triggering gap reseeding.
     g_wrap = make_gif([100, 500, 200, 1000], loop=True)
     assert g_wrap.get_next_frame(now=T0) == 0  # seed, elapsed 0
     assert g_wrap.get_next_frame(now=T0 + 0.9) == 3  # elapsed .9 -> frame 3
@@ -53,9 +47,7 @@ def main() -> None:
     wrapped2 = g_wrap.get_next_frame(now=T0 + 2.45)  # elapsed 2.45 -> t=0.65 in the 2nd cycle -> frame 2
     assert wrapped2 == 2, f"loop wraparound mid next cycle: expected frame 2, got {wrapped2}"
 
-    # Non-loop clamp. Once elapsed reaches the total, pin to the last frame and
-    # stay there. The same sub-second stepping reaches the end without tripping
-    # the gap-reseed path.
+    # Non-loop playback stays on its final frame after total duration.
     g_noloop = make_gif([100, 500, 200, 1000], loop=False)
     assert g_noloop.get_next_frame(now=T0) == 0
     assert g_noloop.get_next_frame(now=T0 + 0.9) == 3
@@ -65,10 +57,7 @@ def main() -> None:
     assert clamped2 == 3, f"non-loop clamp past the total: expected last frame (3), got {clamped2}"
     assert g_noloop.active_frame == 3
 
-    # Gap re-seed. A gap over 1 s between picks, from a page-away or a suspend,
-    # must shift the timebase, so playback resumes near where it left off
-    # instead of jumping forward by the whole raw elapsed gap. This mirrors the
-    # get_next_tiles gap clamp of BackgroundVideo.
+    # A gap over one second shifts the timebase instead of advancing by the raw gap.
     g_gap = make_gif([100, 500, 200, 1000], loop=True)
     g_gap.get_next_frame(now=T0)  # primes _play_start, always frame 0
     before_gap = g_gap.get_next_frame(now=T0 + 0.3)  # elapsed 0.3 -> frame 1

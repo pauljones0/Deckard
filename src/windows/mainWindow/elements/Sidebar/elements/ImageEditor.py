@@ -107,10 +107,9 @@ class SizeRow(Adw.PreferencesRow):
         super().__init__(**kwargs)
         self.sidebar = sidebar
         self.active_identifier: InputIdentifier = None  # ty: ignore[invalid-assignment]  # late-init: load_for_identifier
-        # The value-changed handler id, or None while it is disconnected. A
-        # tracked id keeps connect and disconnect idempotent: a second connect
-        # cannot double-wire, and a disconnect while already off cannot raise.
-        self._value_handler: int | None = None
+        # Value-changed handler ID, or None while disconnected.
+        # Tracking prevents duplicate connections and invalid disconnects.
+        self._value_handler_id: int | None = None
         self.build()
 
         self.connect_signals()
@@ -148,9 +147,8 @@ class SizeRow(Adw.PreferencesRow):
 
             self.update_values()
         finally:
-            # Every lookup above may return early. The reconnect must still run,
-            # or the spinner stays silently unable to save for the life of the
-            # window.
+            # Reconnect after every early return or exception.
+            # Otherwise the spinner cannot save again for the life of the window.
             self.connect_signals()
 
     def update_values(self, composed_label: ImageLayout | None = None) -> None:
@@ -196,13 +194,13 @@ class SizeRow(Adw.PreferencesRow):
         self.update_values()
 
     def connect_signals(self) -> None:
-        if self._value_handler is None:
-            self._value_handler = self.size_spinner.button.connect("value-changed", self.on_size_changed)
+        if self._value_handler_id is None:
+            self._value_handler_id = self.size_spinner.button.connect("value-changed", self.on_size_changed)
 
     def disconnect_signals(self) -> None:
-        if self._value_handler is not None:
-            self.size_spinner.button.disconnect(self._value_handler)
-            self._value_handler = None
+        if self._value_handler_id is not None:
+            self.size_spinner.button.disconnect(self._value_handler_id)
+            self._value_handler_id = None
 
 
 class AlignmentRow(Adw.PreferencesRow):
@@ -212,11 +210,9 @@ class AlignmentRow(Adw.PreferencesRow):
         self.property_name = property_name
         self.active_identifier: InputIdentifier = None  # ty: ignore[invalid-assignment]  # late-init: load_for_identifier
         self.active_state: int = None  # ty: ignore[invalid-assignment]  # late-init: load_for_identifier
-        # The value-changed handler id, or None while it is disconnected. A
-        # tracked id keeps connect and disconnect idempotent: a disconnect while
-        # already off cannot raise TypeError, so one transient load failure can
-        # no longer wedge the whole sidebar.
-        self._value_handler: int | None = None
+        # Value-changed handler ID, or None while disconnected.
+        # Tracking prevents an invalid disconnect after a transient load failure.
+        self._value_handler_id: int | None = None
         self.build(label_text)
 
         self.connect_signals()
@@ -293,13 +289,13 @@ class AlignmentRow(Adw.PreferencesRow):
         self.update_values()
 
     def connect_signals(self) -> None:
-        if self._value_handler is None:
-            self._value_handler = self.alignment_spinner.button.connect("value-changed", self.on_alignment_changed)
+        if self._value_handler_id is None:
+            self._value_handler_id = self.alignment_spinner.button.connect("value-changed", self.on_alignment_changed)
 
     def disconnect_signals(self) -> None:
-        if self._value_handler is not None:
-            self.alignment_spinner.button.disconnect(self._value_handler)
-            self._value_handler = None
+        if self._value_handler_id is not None:
+            self.alignment_spinner.button.disconnect(self._value_handler_id)
+            self._value_handler_id = None
 
 class ValignRow(AlignmentRow):
     def __init__(self, sidebar: "Sidebar", **kwargs: Any) -> None:

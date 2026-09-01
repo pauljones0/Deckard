@@ -1,10 +1,4 @@
-"""
-Every Page.set_label_* styling setter reaches the UI port, then repaints.
-
-Each of the eight setters forwards to on_input_visuals_changed with the aspect
-"labels", then runs its trailing update_input. The port call must come first,
-because a raise in the forwarder would abort the repaint.
-"""
+"""Verify each label-style setter notifies the UI port before repainting."""
 
 # Each setter must also work with no UI attached.
 import fixtures
@@ -37,15 +31,12 @@ class RecordingPort(ui_port.UIPort):
         self.journal.append(("port", controller, identifier, state, aspect))
 
 
-def check_font_family_every_controller(page, identifier, state) -> None:
-    """The family must land on every controller the page covers and survive a
-    state switch. The setter writes KeyLabel.font_name; a write to font_family
-    grows a stray attribute instead of raising."""
-    second = fixtures.make_headless_controller(serial="label-setters-2")
+def check_font_family_on_same_page_controllers(page, identifier, state) -> None:
+    """Apply font_name on each same-page controller and retain it across a state switch."""
+    other_controller = fixtures.make_headless_controller(serial="label-setters-2")
     try:
-        # get_controller_input_states iterates every controller with no page
-        # filter. That unscoped broadcast is existing behavior, not a
-        # page-scoped guarantee this scenario pins.
+        # The second controller shares the active page, so the page-scoped
+        # lookup must include its input state.
         covered = page.get_controller_input_states(identifier, state)
         serials = [s.controller_input.deck_controller.serial_number() for s in covered]
         assert "label-setters-2" in serials, (
@@ -73,7 +64,7 @@ def check_font_family_every_controller(page, identifier, state) -> None:
 
         # A family set while state 1 is inactive must be what state 1 renders
         # once it becomes active.
-        c_input = second.get_input(identifier)
+        c_input = other_controller.get_input(identifier)
         c_input.add_new_state(switch=False)
         assert 1 in c_input.states, "could not create a second input state"
         assert c_input.state == 0, "add_new_state(switch=False) switched anyway"
@@ -88,7 +79,7 @@ def check_font_family_every_controller(page, identifier, state) -> None:
 
         print("PASS: font-family reaches every controller and survives a state switch")
     finally:
-        fixtures.teardown(second)
+        fixtures.teardown(other_controller)
 
 
 def main() -> None:
@@ -168,7 +159,7 @@ def main() -> None:
 
         print(f"PASS: {len(SETTERS)} label setters reach the port then repaint")
 
-        check_font_family_every_controller(page, identifier, state)
+        check_font_family_on_same_page_controllers(page, identifier, state)
     finally:
         ui_port.install(None)
         fixtures.teardown(controller)

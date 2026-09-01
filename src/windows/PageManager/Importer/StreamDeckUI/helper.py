@@ -35,6 +35,5 @@ def hex_to_rgba255(color_hex: str | None) -> list[int] | None:
     color = Gdk.RGBA()
     if not color.parse(color_hex):
         raise ValueError(f"Could not parse color: {color_hex!r}")
-    # int() truncation (not round()) to match the previous
-    # matplotlib.colors.to_rgba()-based conversion's rounding behavior.
+    # Use int() truncation to preserve the matplotlib conversion output.
     return [int(x * 255) for x in (color.red, color.green, color.blue, color.alpha)]

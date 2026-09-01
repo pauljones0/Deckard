@@ -1,16 +1,9 @@
-"""Equivalence matrix for the four store prepare families.
-
-prepare_plugin, prepare_icon, prepare_wallpaper and
-prepare_sd_plus_bar_wallpaper are thin wrappers over one _prepare_asset,
-selected by an AssetTypeDescriptor.
-"""
+"""Verify the four descriptor-driven store asset families."""
 
 # All four run through one stubbed fetch layer, and the constructed Data is
 # asserted field for field.
 
-# The same descriptor drives install, uninstall and the update legs, so those
-# are pinned here as well. Every expected table below is a literal, never read
-# off the descriptor, so a descriptor whose field names drift disagrees.
+# Literal expectations verify descriptor-driven prepare, install, uninstall, and update fields.
 import dataclasses
 import json
 import os
@@ -44,9 +37,7 @@ COMMIT_SHA = "c0ffee" + "0" * 34
 INCOMPAT_SHA = "dead" + "b" * 36
 BRANCH_SHA = "b12345" + "a" * 34
 
-# The one manifest and attribution every type is fed. Version resolution keys
-# off the commit map, so the manifest's own "version" is a distinct value and
-# a confusion between the commit sha and the manifest version shows up here.
+# The distinct manifest version and commit SHA expose field confusion.
 MANIFEST = {
     "id": "com_acme_Widget",
     "name": "Widget",
@@ -83,9 +74,7 @@ TYPES = [
      "id", "name", "version", False),
 ]
 
-# The install and update side. The public method names are hard-coded here
-# and never read off the descriptor, so a descriptor whose attr drifts breaks
-# the dispatch these drive. Every install answers one Ok(None) success value.
+# Hard-coded public method names expose descriptor dispatch drift.
 # (key, data_cls, id_field, get_all, get_to_update, update_all, install, install_success).
 UPDATE_TYPES = [
     ("plugin", PluginData, "plugin_id", "get_all_plugins", "get_plugins_to_update",
@@ -99,10 +88,7 @@ UPDATE_TYPES = [
      "install_sd_plus_bar_wallpaper", Ok(None)),
 ]
 
-# The five update-decision branches, against one fixture set per type. Only
-# the last one, installed with a newer known sha and compatible, is offered
-# for update. The no-known-target branch is reachable for every type but is
-# not observable, because a None target can never install successfully.
+# Only an installed, compatible entry with a different known SHA is offered for update.
 # (tag, local_sha, commit_sha, is_compatible, offered_for_update).
 DECISION_FIXTURES = [
     ("not_installed", None, "newsha", True, False),
@@ -115,9 +101,7 @@ DECISION_FIXTURES = [
 
 def _stub_globals() -> None:
     fixtures.install_stub_globals()
-    # Echo the "en" translation, so the long and short descriptions carry
-    # distinct values through _translate_descriptions. A None-returning stub
-    # would leave that pairing invisible.
+    # Distinct translated values expose a long and short description swap.
     gl.lm = SimpleNamespace(get_custom_translation=lambda translations: (translations or {}).get("en"))
 
 
@@ -211,7 +195,7 @@ def _expected_update(data_cls, id_field, *, verified: bool):
     })
 
 
-def test_full_view_matrix_identical() -> None:
+def test_full_view_matches_each_asset_schema() -> None:
     """With include_image True, all four wrappers build the same row from the
     same manifest, attribution and thumbnail, field for field."""
     _stub_globals()
@@ -228,7 +212,7 @@ def test_full_view_matrix_identical() -> None:
         assert actual.image is IMAGE, f"full/{key}: image must be the stubbed object"
 
 
-def test_update_view_matrix_identical() -> None:
+def test_update_view_matches_each_asset_schema() -> None:
     """With include_image False the update-check row is built field for
     field, with nothing installed and no display field fetched or set."""
     _stub_globals()
@@ -305,9 +289,7 @@ def test_branch_field_gated_by_is_plugin() -> None:
 
 
 def test_failed_thumbnail_lists_without_image() -> None:
-    """A thumbnail fetch that fails must not drop the row. It is listed with
-    image None, for every type, which is why _fetch_thumbnail is the single
-    image guard."""
+    """Keep every asset row with image None after a thumbnail failure."""
     _stub_globals()
     sb = _make_backend()
     _reset_dirs(sb)
@@ -325,9 +307,7 @@ def test_failed_thumbnail_lists_without_image() -> None:
 
 
 def test_fetches_receive_resolved_ref() -> None:
-    """The manifest, thumbnail and attribution are all fetched at one
-    resolved ref. That ref is the commit sha for a version-map entry, and the
-    branch tip for the plugin branch arm. This pins ref_for_fetch."""
+    """Fetch the manifest, thumbnail, and attribution at one resolved commit."""
     _stub_globals()
     sb = _make_backend()
     _reset_dirs(sb)
@@ -344,9 +324,7 @@ def test_fetches_receive_resolved_ref() -> None:
     assert refs["attribution"] == [COMMIT_SHA], f"attribution fetched at {refs['attribution']!r}, want {COMMIT_SHA!r}"
     assert refs["image"] == [COMMIT_SHA], f"thumbnail fetched at {refs['image']!r}, want {COMMIT_SHA!r}"
 
-    # On the plugin branch arm the resolved branch tip, a sha, feeds all
-    # three rather than the branch name. Both are truthy, so the order of a
-    # "commit or branch" expression decides which one wins.
+    # The resolved branch-tip SHA must take priority over the branch name.
     for bucket in refs.values():
         bucket.clear()
     sb.prepare_plugin({"url": URL, "branch": "main"}, include_image=True, verified=False)
@@ -356,9 +334,7 @@ def test_fetches_receive_resolved_ref() -> None:
 
 
 def test_prepare_backfills_origin_stamp() -> None:
-    """A full prepare identifies an install through its manifest, which is
-    the expensive way. It records the origin link for the update check to
-    reuse. An install directory with no ORIGIN stamp gets one written."""
+    """Backfill ORIGIN after a full prepare identifies an unstamped install."""
     _stub_globals()
     sb = _make_backend()
     _reset_dirs(sb)
@@ -387,9 +363,7 @@ def test_prepare_backfills_origin_stamp() -> None:
 
 
 def test_manifest_fetch_error_propagates() -> None:
-    """A StoreFetchError from the manifest fetch propagates unchanged out of
-    every wrapper, so process_store_data's per-future collect drops just that
-    entry."""
+    """Propagate a manifest StoreFetchError from every prepare wrapper."""
     _stub_globals()
     sb = _make_backend()
     _reset_dirs(sb)
@@ -409,9 +383,7 @@ def test_manifest_fetch_error_propagates() -> None:
 
 
 def test_unparseable_url_and_missing_url_become_none() -> None:
-    """An entry whose url names no repository is dropped as None. The url
-    guard covers plugins too, so a url-less plugin entry is a logged skip
-    rather than a KeyError."""
+    """Return None for unparseable and missing repository URLs."""
     _stub_globals()
     sb = _make_backend()
     _reset_dirs(sb)
@@ -431,9 +403,7 @@ def test_unparseable_url_and_missing_url_become_none() -> None:
 
 
 def test_unpinned_entry_filtered() -> None:
-    """When an entry pins nothing, prepare returns None and
-    process_store_data's isinstance filter drops it, so the catalog list
-    omits the entry."""
+    """Filter an entry that has no resolvable pin from the catalog."""
     _stub_globals()
     sb = _make_backend()
     _reset_dirs(sb)
@@ -458,9 +428,7 @@ def test_unpinned_entry_filtered() -> None:
 
 
 def test_canonical_properties_map_fields() -> None:
-    """The asset_id, asset_name and asset_version properties read each type's
-    own fields. Shared backend code and log lines use those names instead of
-    getattr on a per-type field name."""
+    """Map each asset family's fields through the canonical properties."""
     cases = [
         (PluginData(plugin_id="pi", plugin_name="pn", plugin_version="pv"), "pi", "pn", "pv"),
         (IconData(icon_id="ii", icon_name="in", icon_version="iv"), "ii", "in", "iv"),
@@ -477,9 +445,7 @@ def test_canonical_properties_map_fields() -> None:
 
 
 def test_update_decision_matrix_per_type() -> None:
-    """The five-branch update decision, run against one fixture set for every
-    type through the real get_*_to_update. Only the compatible, newer entry
-    with a known sha is offered, and its identity is read off asset_id."""
+    """Offer only the compatible, installed entry with a different known SHA."""
     _stub_globals()
     sb = _make_backend()
 
@@ -499,9 +465,7 @@ def test_update_decision_matrix_per_type() -> None:
 
 
 def test_update_all_counts_only_successful_installs() -> None:
-    """update_all_* counts a reinstall only when the install answers Ok. Both
-    failure legs return an Err, and an Err is truthy, so a truthiness check
-    would count one. The protocol is narrowing on the result type."""
+    """Count only Ok reinstall results because Err values are truthy."""
     _stub_globals()
     sb = _make_backend()
 
@@ -538,10 +502,8 @@ def test_update_all_counts_only_successful_installs() -> None:
         )
 
 
-def test_update_everything_dispatches_legs() -> None:
-    """update_everything sums every class's update_all_* leg, reached by its
-    public name in ASSET_TYPES order. That pins the loop, its order with
-    plugins reloading first, and each descriptor's update_all_attr."""
+def test_update_everything_dispatches_asset_updates() -> None:
+    """Dispatch and sum all update legs in ASSET_TYPES order, with plugins first."""
     _stub_globals()
     sb = _make_backend()
 
@@ -564,9 +526,7 @@ def test_update_everything_dispatches_legs() -> None:
 
 
 def test_install_passes_dir_and_expected_id() -> None:
-    """Every installer hands download_repo the per-type install directory and
-    the asset id as expected_id. A swapped base_dir_attr names the wrong
-    type's tree and fails here."""
+    """Pass each asset ID and family directory to download_repo."""
     _stub_globals()
     sb = _make_backend()
 
@@ -632,7 +592,7 @@ def test_install_refuses_unsafe_id_and_url() -> None:
         )
 
 
-def test_uninstall_removes_dir_keeps_returns() -> None:
+def test_uninstall_removes_directory_and_preserves_result() -> None:
     """The three data-only uninstallers rmtree the per-type directory and
     return None. An unsafe id returns 400 and touches nothing."""
     _stub_globals()
@@ -666,8 +626,8 @@ def test_uninstall_removes_dir_keeps_returns() -> None:
 
 def main() -> None:
     fixtures.start_watchdog(60, label="scenario_store_asset_families")
-    test_full_view_matrix_identical()
-    test_update_view_matrix_identical()
+    test_full_view_matches_each_asset_schema()
+    test_update_view_matches_each_asset_schema()
     test_incompatible_entry_flags_but_still_builds()
     test_plugin_branch_arm_resolves_and_records_branch()
     test_branch_field_gated_by_is_plugin()
@@ -680,10 +640,10 @@ def main() -> None:
     test_canonical_properties_map_fields()
     test_update_decision_matrix_per_type()
     test_update_all_counts_only_successful_installs()
-    test_update_everything_dispatches_legs()
+    test_update_everything_dispatches_asset_updates()
     test_install_passes_dir_and_expected_id()
     test_install_refuses_unsafe_id_and_url()
-    test_uninstall_removes_dir_keeps_returns()
+    test_uninstall_removes_directory_and_preserves_result()
     print("scenario_store_asset_families: PASS")
 
 

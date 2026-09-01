@@ -1,9 +1,4 @@
-"""
-An exception during a store install must not wedge every later download.
-
-The real StorePreview.perform_download_threaded takes a lock, so the
-currently_downloading flag clears whatever the operation did.
-"""
+"""Verify that failed and concurrent preview downloads release their shared lock."""
 
 # A download after a failure therefore completes promptly, and two concurrent
 # downloads never overlap.

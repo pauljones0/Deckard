@@ -1,10 +1,4 @@
-"""
-The no-blank contract, the second half of the wipe-restore behavior.
-
-set_media stamps the painting action on the state. load_from_input_dict
-detaches owned media before create_n_states, and restores it when that same
-action still drives the recreated state.
-"""
+"""Detach owned media before create_n_states and restore it only to the same action."""
 
 # The blank only appears through the async load pipeline, so the check runs
 # bounded trials with a wait_until seam.
@@ -39,17 +33,13 @@ def main() -> None:
 
         blanks = []
         for i in range(TRIALS):
-            # A fresh page per trial whose key carries the LatchAction as its
-            # image-control action. Loading it runs the action's on_ready
-            # (which paints once via set_media) on the action-executor thread,
-            # racing create_n_states' state wipe on the load thread.
+            # Race the action-executor set_media call against create_n_states
+            # on the page-load thread with a fresh page each trial.
             action_page = gl.page_manager.get_page(
                 fixtures.seed_action_page(f"LatchR{i}", key_ident), controller)
             controller.load_page(action_page, allow_reload=True)
-            # Wait on a deterministic seam, not a fixed sleep, for either the
-            # image to appear or the load to settle. With the restore in
-            # place the image is present after settling. Without it the image
-            # never appears, because the deduping on_update never repaints.
+            # Poll the image seam because a fixed sleep cannot order both threads.
+            # Deduplicated on_update does not provide a later repaint.
             painted = wait_until(lambda: active_image() is not None, timeout=3)
             if not painted:
                 blanks.append(i)

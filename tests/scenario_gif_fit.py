@@ -1,7 +1,6 @@
-"""KeyGIF must fit every decoded frame to at most twice the key tile size.
+"""Check the two-times-tile frame bound, alpha, aspect ratio, and coalescing.
 
-Retaining full source-resolution RGBA frames costs 41 to 200 MB per GIF key.
-Alpha survives the fit, the aspect ratio holds, and the source fd is closed.
+Construction must also release the source file descriptor.
 """
 import os
 
@@ -14,11 +13,7 @@ from src.backend.DeckManagement.DeckController import KeyGIF
 
 
 class _StubDeckController:
-    """Exposes exactly what KeyGIF.__init__ reads.
-
-    Those are get_key_image_size() and get_display_saturation(), which returns
-    the default factor here.
-    """
+    """Expose the key size and default display saturation read by KeyGIF."""
 
     def __init__(self, key_size: tuple[int, int]):
         self._key_size = key_size
@@ -38,11 +33,7 @@ class _StubControllerKey:
 
 
 def _make_test_gif(path: str, size=(320, 320), n_frames: int = 6) -> None:
-    """A small animated GIF with a transparent background and a shifting disc.
-
-    It is well above twice any tile size this test uses, so the fit has work to
-    do. It carries real alpha for the preservation assertion.
-    """
+    """Build distinct alpha frames large enough to require fitting."""
     frames = []
     for i in range(n_frames):
         frame = Image.new("RGBA", size, (0, 0, 0, 0))
@@ -56,7 +47,7 @@ def _make_test_gif(path: str, size=(320, 320), n_frames: int = 6) -> None:
     )
 
 
-def check_large_gif_is_fit() -> None:
+def check_large_gif_is_fitted() -> None:
     gif_path = os.path.join(gl.DATA_PATH, "media", "large_test.gif")
     os.makedirs(os.path.dirname(gif_path), exist_ok=True)
     _make_test_gif(gif_path, size=(320, 320), n_frames=6)
@@ -81,9 +72,7 @@ def check_large_gif_is_fit() -> None:
             )
             assert frame.mode == "RGBA", f"frame {i}: expected RGBA, got {frame.mode}"
 
-        # Alpha is preserved. The disc is opaque and the surrounding background
-        # is fully transparent, and both must still be present after the decode
-        # and the fit, on every frame.
+        # Every fitted frame must retain fully transparent and fully opaque pixels.
         for i, frame in enumerate(gif.frames):
             alphas = frame.getchannel("A").getextrema()
             assert alphas[0] == 0, f"frame {i}: fully-transparent background did not survive fitting (min alpha {alphas[0]})"
@@ -99,11 +88,7 @@ def check_large_gif_is_fit() -> None:
 
 
 def _count_open_fds_to(path: str) -> int:
-    """Count the file descriptors in this process pointing at path.
-
-    Resolved through the /proc/self/fd symlinks. A real fd count, not an
-    attribute proxy, so a leaked source PIL handle is caught directly.
-    """
+    """Count process descriptors that resolve to the specified path."""
     real = os.path.realpath(path)
     count = 0
     for entry in os.listdir("/proc/self/fd"):
@@ -117,11 +102,7 @@ def _count_open_fds_to(path: str) -> int:
 
 
 def check_gif_preserves_aspect_ratio() -> None:
-    """A non-square GIF must keep its aspect ratio through the fit.
-
-    KeyGIF fits with ImageOps.contain, which shrinks to the budget and
-    preserves the source ratio. A 2 to 1 source must not be squished square.
-    """
+    """Check shrink-only fitting of a two-to-one source into a square budget."""
     gif_path = os.path.join(gl.DATA_PATH, "media", "wide_test.gif")
     os.makedirs(os.path.dirname(gif_path), exist_ok=True)
     # 320x160 is 2 to 1, well above the 144x144 budget for a 72 px tile.
@@ -158,18 +139,11 @@ def check_gif_preserves_aspect_ratio() -> None:
 
 
 def check_disposal_method_1_gif() -> None:
-    """A disposal-method-1 GIF must decode to coalesced frames.
-
-    With disposal 1 each frame composites onto the previous result rather than
-    a cleared canvas. A decode that reads raw frame buffers then loses the
-    pixels of earlier frames. The fitted frames must stay RGBA and keep them.
-    """
+    """Check that disposal-method-1 frames retain prior pixels after fitting."""
     gif_path = os.path.join(gl.DATA_PATH, "media", "disposal1_test.gif")
     os.makedirs(os.path.dirname(gif_path), exist_ok=True)
 
-    # Build incremental frames. Frame k paints k+1 opaque stripes on a
-    # transparent base, and with disposal 1 each is drawn over the prior, so a
-    # correctly coalesced decode shows a non-decreasing opaque area.
+    # Each disposal-1 frame adds a stripe, so coalesced opaque area cannot decrease.
     size = (160, 160)
     n_frames = 4
     frames = []
@@ -194,10 +168,7 @@ def check_disposal_method_1_gif() -> None:
     try:
         assert len(gif.frames) == n_frames, f"expected {n_frames} decoded frames, got {len(gif.frames)}"
 
-        # The coalescing check. The count of opaque pixels must be
-        # non-decreasing across frames, because each incremental frame adds a
-        # stripe over the prior. A decode that treated disposal 1 as a clear
-        # would show a constant single-stripe area instead.
+        # A cleared-frame decode would show one stripe instead of cumulative area.
         opaque_counts = []
         for i, frame in enumerate(gif.frames):
             assert frame.mode == "RGBA", f"frame {i}: expected RGBA, got {frame.mode}"
@@ -211,9 +182,7 @@ def check_disposal_method_1_gif() -> None:
                 f"frame {i} has {opaque_counts[i]} opaque px vs frame {i-1}'s "
                 f"{opaque_counts[i-1]} -- earlier content was lost"
             )
-        # The last frame must have strictly more opaque area than the first,
-        # four stripes against one, which proves real incremental accumulation
-        # rather than a vacuously equal sequence.
+        # Strict growth prevents a constant-area sequence from passing vacuously.
         assert opaque_counts[-1] > opaque_counts[0], (
             "the final coalesced frame must contain more opaque content than "
             "the first -- disposal=1 accumulation was not decoded"
@@ -224,12 +193,7 @@ def check_disposal_method_1_gif() -> None:
 
 
 def check_source_fd_released() -> None:
-    """The source fd must be released once construction returns.
-
-    Count the open fds pointing at the source file through /proc/self/fd
-    before and after construction. KeyGIF opens the source for the decode loop
-    only and closes it in a finally, so zero fds may point at it afterwards.
-    """
+    """Check that no process descriptor points to the source after construction."""
     gif_path = os.path.join(gl.DATA_PATH, "media", "fd_test.gif")
     os.makedirs(os.path.dirname(gif_path), exist_ok=True)
     _make_test_gif(gif_path, size=(200, 200), n_frames=5)
@@ -275,12 +239,10 @@ def check_small_gif_keeps_source_size() -> None:
 
 
 def main() -> None:
-    # KeyGIF reads performance.cache-videos at construction. Every fixture here
-    # renders alpha, so they all keep the frame list this scenario is about,
-    # and the stub tier only has to exist to be read.
+    # Provide the cache setting read at construction; alpha keeps these GIFs in RAM.
     fixtures.install_stub_globals({"performance": {"cache-videos": True}})
     fixtures.start_watchdog(60, label="scenario_gif_fit")
-    check_large_gif_is_fit()
+    check_large_gif_is_fitted()
     check_small_gif_keeps_source_size()
     check_gif_preserves_aspect_ratio()
     check_disposal_method_1_gif()

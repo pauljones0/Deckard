@@ -1,7 +1,5 @@
-"""DeckController.clear() must reset dedup state before it writes the blanks.
-
-A repaint of visually identical content after a clear must reach the device.
-Two identical touchscreen composites without a clear must write once.
+"""Require clear and failed writes to reset dedup state before repaint.
+Identical touchscreen composites without an intervening clear must write once.
 """
 import time
 
@@ -15,9 +13,8 @@ def main() -> None:
     try:
         run_legs(controller, deck)
     finally:
-        # Without this a failed assertion leaves the controller and its writer
-        # alive, the process hangs, and the watchdog reports a deadlock that
-        # never happened.
+        # Stop the writer after an assertion so the watchdog does not report a
+        # false deadlock.
         fixtures.teardown(controller)
     print("PASS: scenario_dedup_coherence")
 
@@ -44,15 +41,13 @@ def run_legs(controller, deck) -> None:
     assert deck.current_seq() == seq_before_noop, (
         "fixture sanity: identical repaint without a clear should hash-skip"
     )
-    # The skip returns before the UI mirror too. With no UI attached the port
-    # refuses each push and the input dirty-marks itself, so a marker here
-    # would mean the skip stopped short of the whole paint.
+    # A hash skip must also bypass the UI mirror; a refused headless push would
+    # otherwise leave a dirty marker.
     assert key0.identifier not in controller.ui_image_changes_while_hidden, (
         "a hash-skipped repaint must not push the in-app preview either"
     )
 
-    # The dedup-coherence fix. A clear() then a repaint of identical content
-    # must reach the device instead of being hash-skipped.
+    # A clear followed by identical content must repaint instead of hash-skipping.
     controller.clear()
 
     def blank_landed():
@@ -104,9 +99,8 @@ def run_legs(controller, deck) -> None:
             f"{len(extra_ts_writes)} additional write(s)"
         )
 
-    # A write that raised must leave the present state where it was. The
-    # deterministic tier from here on: stop the live writer and drain by hand,
-    # or the loop races these assertions.
+    # After a failed write, retain the prior present state; stop the live writer
+    # and drain manually to avoid races.
     controller.media_player.stop(timeout=3.0)
     controller.media_player.perform_media_player_tasks()  # drain the leftovers
 
@@ -128,9 +122,7 @@ def run_legs(controller, deck) -> None:
         "otherwise the key keeps whatever survived the failure"
     )
 
-    # The strip has its own write and its own present stamp, so it needs the
-    # same check. A stamp on this failure path leaves the strip showing the
-    # content of a write the transport rejected.
+    # Apply the same failed-write rule to the strip's separate present stamp.
     if controller.deck.is_touch():
         from src.backend.DeckManagement.InputIdentifier import Input
 

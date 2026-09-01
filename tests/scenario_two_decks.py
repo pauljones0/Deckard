@@ -1,9 +1,5 @@
-"""
-Integration scenario for two fake decks stormed at once.
-
-Two independent headless controllers, each over its own FaultyFakeDeck, are
-switched concurrently from separate threads.
-"""
+"""Verify independent journals, dedup state, and final content while two fake
+deck controllers switch pages concurrently."""
 
 # Each deck's journal must reflect only its own controller's pages, with no
 # sequence counter, journal or dedup state leaking across controller instances.
@@ -16,9 +12,7 @@ import globals as gl
 
 
 def _settle_on(controller, deck, page, key_count):
-    """Loads one page alone, waits for every key to repaint, returns the
-    per-key hash signature (see scenario_switch_storm's helper of the same
-    shape)."""
+    """Load a page, wait for all keys, and return their hash signature."""
     deck.clear_journal()
     controller.load_page(page, allow_reload=True)
 
@@ -57,22 +51,20 @@ def main() -> None:
     d2_page_a = gl.page_manager.get_page(fixtures.seed_page_with_background("D2PageA", blue), controller2)
     d2_page_b = gl.page_manager.get_page(fixtures.seed_page_with_background("D2PageB", yellow), controller2)
 
-    sig1_a = _settle_on(controller1, deck1, d1_page_a, key_count1)
-    sig1_b = _settle_on(controller1, deck1, d1_page_b, key_count1)
-    sig2_a = _settle_on(controller2, deck2, d2_page_a, key_count2)
-    sig2_b = _settle_on(controller2, deck2, d2_page_b, key_count2)
+    deck1_page_a_signature = _settle_on(controller1, deck1, d1_page_a, key_count1)
+    deck1_page_b_signature = _settle_on(controller1, deck1, d1_page_b, key_count1)
+    deck2_page_a_signature = _settle_on(controller2, deck2, d2_page_a, key_count2)
+    deck2_page_b_signature = _settle_on(controller2, deck2, d2_page_b, key_count2)
 
     # Cross-controller signatures must never collide (sanity. Proves the two
     # decks are genuinely independent fixtures, not sharing a journal).
     for k in range(min(key_count1, key_count2)):
-        others = {sig2_a[k], sig2_b[k]}
-        assert sig1_a[k] not in others and sig1_b[k] not in others, (
+        others = {deck2_page_a_signature[k], deck2_page_b_signature[k]}
+        assert deck1_page_a_signature[k] not in others and deck1_page_b_signature[k] not in others, (
             f"key {k}: controller1 and controller2 produced overlapping hashes"
         )
 
-    # Reset each to a neutral page before storming (see scenario_switch_storm
-    # for why. The dedup guard would otherwise no-op a repeat of already-
-    # displayed content).
+    # Neutral pages prevent deduplication of an already displayed storm target.
     d1_neutral = gl.page_manager.get_page(fixtures.seed_page("D1Neutral"), controller1)
     d2_neutral = gl.page_manager.get_page(fixtures.seed_page("D2Neutral"), controller2)
     _settle_on(controller1, deck1, d1_neutral, key_count1)
@@ -90,30 +82,30 @@ def main() -> None:
     t2.join(timeout=30)
     assert not t1.is_alive() and not t2.is_alive(), "storm threads did not finish in time"
 
-    final1 = sig1_a if (N - 1) % 2 == 0 else sig1_b
-    final2 = sig2_a if (N - 1) % 2 == 0 else sig2_b
+    deck1_final_signature = deck1_page_a_signature if (N - 1) % 2 == 0 else deck1_page_b_signature
+    deck2_final_signature = deck2_page_a_signature if (N - 1) % 2 == 0 else deck2_page_b_signature
 
-    def settled1():
+    def deck1_settled():
         return all(deck1.last_op_for(f"key:{k}") is not None for k in range(key_count1))
 
-    def settled2():
+    def deck2_settled():
         return all(deck2.last_op_for(f"key:{k}") is not None for k in range(key_count2))
 
-    assert fixtures.wait_until(settled1, timeout=15), "controller1 did not settle"
-    assert fixtures.wait_until(settled2, timeout=15), "controller2 did not settle"
+    assert fixtures.wait_until(deck1_settled, timeout=15), "controller1 did not settle"
+    assert fixtures.wait_until(deck2_settled, timeout=15), "controller2 did not settle"
     time.sleep(0.5)
 
     for k in range(key_count1):
         last = deck1.last_op_for(f"key:{k}")
-        assert last[4] == final1[k], f"deck1 key {k}: expected final content, got {last}"
-        assert last[4] not in (sig2_a[k], sig2_b[k]) if k < key_count2 else True, (
+        assert last[4] == deck1_final_signature[k], f"deck1 key {k}: expected final content, got {last}"
+        assert last[4] not in (deck2_page_a_signature[k], deck2_page_b_signature[k]) if k < key_count2 else True, (
             f"deck1 key {k}: journal shows deck2's content -- cross-deck bleed"
         )
 
     for k in range(key_count2):
         last = deck2.last_op_for(f"key:{k}")
-        assert last[4] == final2[k], f"deck2 key {k}: expected final content, got {last}"
-        assert last[4] not in (sig1_a[k], sig1_b[k]) if k < key_count1 else True, (
+        assert last[4] == deck2_final_signature[k], f"deck2 key {k}: expected final content, got {last}"
+        assert last[4] not in (deck1_page_a_signature[k], deck1_page_b_signature[k]) if k < key_count1 else True, (
             f"deck2 key {k}: journal shows deck1's content -- cross-deck bleed"
         )
 

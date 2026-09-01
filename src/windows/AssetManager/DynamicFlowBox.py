@@ -25,35 +25,27 @@ from collections.abc import Callable
 from typing import Any, Generic, TypeVar, cast
 
 T = TypeVar("T")
-# The pooled child widget class. Gtk.FlowBox wraps a plain widget in its own
-# FlowBoxChild, so a pool class below that bound would reach the factory as
-# the wrapper and not as itself.
+# Bound pooled widgets to FlowBoxChild so the binder receives them, not wrappers
 WidgetT = TypeVar("WidgetT", bound=Gtk.FlowBoxChild)
 
 from loguru import logger as log
 
 from src.windows.AssetManager.thumbnail_loader import build_loader
 
-# The three hooks that a chooser installs on a flow box. All three are
-# optional. A box without them shows its items unfiltered and unsorted, and
-# show_range refuses to run without a factory.
+# Optional filter and sort hooks preserve input; show_range requires a binder
 FilterFunc = Callable[[T], bool]
 SortFunc = Callable[[T, T], int]
-FactoryFunc = Callable[[WidgetT, T], None]
+ItemBinder = Callable[[WidgetT, T], None]
 
 class DynamicFlowBox(Gtk.Box, Generic[WidgetT, T]):
-    # The page offset the nav buttons step. show_range owns it from the first
-    # pack on. The class default covers the window before that, where a nav
-    # click has no page to step from. It stays a class default rather than a
-    # constructor assignment, so a subclass that wants another first page can
-    # still declare one and have it read.
+    # Class default lets subclasses choose the first page before show_range owns it
     current_start_index: int = 0
 
     def __init__(self, base_class: "type[WidgetT]", *args: Any, **kwargs: Any):
         """
         base_class: The class of the items in the flow box. Its constructor is not allowed to require any arguments because empty
                     placeholder objects will be created in the flowbox.
-                    You have to use the factory to configure the items.
+                    You have to use the binder to configure the items.
         """
         super().__init__(*args, **kwargs)
         self.set_orientation(Gtk.Orientation.VERTICAL)
@@ -65,11 +57,9 @@ class DynamicFlowBox(Gtk.Box, Generic[WidgetT, T]):
 
         self.sort_func: SortFunc[T] | None = None
         self.filter_func: FilterFunc[T] | None = None
-        self.factory_func: "FactoryFunc[WidgetT, T] | None" = None
+        self.item_binder: "ItemBinder[WidgetT, T] | None" = None
 
-        # Decodes this grid's thumbnails off the main loop. Its epoch and its
-        # pending stack are the grid's own, so a page flip here cancels only
-        # this grid's stale decodes; the cache and the worker pool are shared.
+        # Per-grid epochs cancel local stale work; cache and workers stay shared
         self.thumbnail_loader = build_loader()
 
         self.build()
@@ -109,10 +99,7 @@ class DynamicFlowBox(Gtk.Box, Generic[WidgetT, T]):
     def generate_placeholders(self) -> None:
         for i in range(self.N_ITEMS_PER_PAGE):
             placeholder = self.base_class()
-            # A pooled preview hands its thumbnail decode to this grid's loader.
-            # The attribute lives on Preview; setattr keeps this base generic
-            # over any child class, and a child that never reads it just ignores
-            # the value.
+            # setattr keeps this generic when a child ignores Preview's loader slot
             setattr(placeholder, "_thumbnail_loader", self.thumbnail_loader)
             self.flow_box.append(placeholder)
 
@@ -140,59 +127,43 @@ class DynamicFlowBox(Gtk.Box, Generic[WidgetT, T]):
     
 
     def show_range(self, start: int, end: int) -> None:
-        if not callable(self.factory_func):
-            raise ValueError("factory_func must be callable")
+        if not callable(self.item_binder):
+            raise ValueError("item_binder must be callable")
 
         self.current_start_index = start
 
-        # The whole rebind runs as one main-loop callback. A show of the
-        # recycled children here, with a separate idle per child for the bind,
-        # leaves a gap in which a click activates the asset of the earlier
-        # page, or the None asset of a fresh placeholder, which raises
-        # TypeError in on_child_activated. A child that the old page selected
-        # also keeps its GTK selection while it shows a different asset. The
-        # same main loop dispatches the input events, so one callback leaves
-        # no moment where a half-rebound pool is clickable. The filter and
-        # sort functions read GTK state, such as the search entry, so
-        # get_items_to_show runs on the main thread as well, at apply time.
+        # Rebind the full pool in one main-loop turn so no stale child is clickable
+        # Filter and sort also stay here because they read GTK state
         GLib.idle_add(self._apply_range, start, end)
 
     def _apply_range(self, start: int, end: int) -> bool:
-        factory_func = self.factory_func
-        if factory_func is None:
+        item_binder = self.item_binder
+        if item_binder is None:
             # show_range refuses to schedule without one, so a None here
             # means a clear between the schedule and this idle dispatch.
             return False
         items = self.get_items_to_show()
         page_items = items[start:end]
 
-        # A new page. Cancel the decodes the last page asked for and had not
-        # finished, so a straggler from it neither runs nor paints over this
-        # page, and this page's own requests below take priority on the pool.
+        # Cancel stale decodes before this page queues higher-priority requests
         self.thumbnail_loader.begin_generation()
 
         # Clear the selection of the earlier page or filter before the rebind
-        # of the pool. The factory selects the matching child again.
+        # of the pool. The binder selects the matching child again.
         self.flow_box.unselect_all()
 
         for i in range(self.N_ITEMS_PER_PAGE):
             preview = self.flow_box.get_child_at_index(i)
             if preview is None:
                 break
-            # The pool holds base_class instances only:
-            # generate_placeholders built it from base_class and nothing else
-            # appends to it, so the child is a WidgetT.
+            # Only base_class instances enter this pool, so the child is WidgetT
             preview = cast("WidgetT", preview)
             if i < len(page_items):
-                # Bind before the show, so a child becomes clickable only
-                # with its new asset. The guard keeps one bad item from
-                # aborting the rest of the rebind. A child whose bind failed
-                # stays hidden, or a click reaches the asset of the earlier
-                # page.
+                # Bind before showing; hide failures and continue the remaining pool
                 try:
-                    factory_func(preview, page_items[i])
+                    item_binder(preview, page_items[i])
                 except Exception as e:
-                    log.opt(exception=True).error(f"Asset factory failed for item {i}: {e}")
+                    log.opt(exception=True).error(f"Asset binder failed for item {i}: {e}")
                     preview.set_visible(False)
                     continue
                 preview.set_visible(True)
@@ -202,26 +173,17 @@ class DynamicFlowBox(Gtk.Box, Generic[WidgetT, T]):
 
         self.back_button.set_sensitive(start > 0)
         self.next_button.set_sensitive(end < len(items))
-        return False  # one-shot idle
+        return False
 
 
     def on_next(self, *args: object) -> None:
-        self.step_to(self.current_start_index + self.N_ITEMS_PER_PAGE)
+        self.show_page_at(self.current_start_index + self.N_ITEMS_PER_PAGE)
 
     def on_back(self, *args: object) -> None:
-        self.step_to(self.current_start_index - self.N_ITEMS_PER_PAGE)
+        self.show_page_at(self.current_start_index - self.N_ITEMS_PER_PAGE)
 
-    def step_to(self, start: int) -> None:
-        """Show the page that begins at start, or do nothing if there is none.
-
-        The nav buttons reach show_range only through here. A start outside
-        the item list stops, so a step off either end leaves the page that
-        shows in place. A box that has loaded nothing yet has no items, so
-        every start is outside and the step stops there too. The buttons of
-        such a box are insensitive until _apply_range makes them meaningful,
-        which is what keeps a user from reaching this at all; the guard covers
-        a direct call.
-        """
+    def show_page_at(self, start: int) -> None:
+        """Show the page at start, or preserve the current page when out of range."""
         if start < 0 or start >= len(self.get_items_to_show()):
             return
         self.show_range(start, start + self.N_ITEMS_PER_PAGE)
@@ -230,8 +192,8 @@ class DynamicFlowBox(Gtk.Box, Generic[WidgetT, T]):
     def set_item_list(self, items: list[T]) -> None:
         self.items = items
 
-    def set_factory(self, factory_func: "FactoryFunc[WidgetT, T]") -> None:
-        self.factory_func = factory_func
+    def set_item_binder(self, item_binder: "ItemBinder[WidgetT, T]") -> None:
+        self.item_binder = item_binder
 
     def set_sort_func(self, sort_func: SortFunc[T]) -> None:
         self.sort_func = sort_func

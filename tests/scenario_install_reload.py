@@ -1,17 +1,5 @@
-"""A dependency installed mid-process is importable by the install reload.
-
-The store's install steps can pip-install a plugin's requirements, and the
-import finders cache directory listings, so a package that lands in a
-site directory after the finder scanned it can stay invisible until the
-caches drop. The reload the install runs must drop them, or the plugin
-imports only after an app restart.
-
-The staleness in the field depends on filesystem mtime granularity, so the
-first check manufactures it deterministically: it primes the finder on a
-directory, writes a module into it, and pins the directory's mtime back to
-the primed value, which is exactly the state a pip install finishing within
-the same mtime tick leaves behind.
-"""
+"""Invalidate finder caches before loading dependencies installed in-process.
+Recreate same-mtime staleness by restoring the primed directory timestamp."""
 import fixtures  # must be first; isolates DATA_PATH before import globals
 
 import importlib
@@ -44,7 +32,7 @@ def prime_stale_dir(name: str) -> str:
     return tmp
 
 
-def check_stale_cache_hides_the_module() -> None:
+def check_stale_finder_cache() -> None:
     prime_stale_dir("reload_dep_a")
     try:
         importlib.import_module("reload_dep_a")
@@ -58,7 +46,7 @@ def check_stale_cache_hides_the_module() -> None:
     print("PASS: a stale finder cache hides a fresh module until the caches drop")
 
 
-class RecordingManager:
+class RecordingPluginManager:
     def __init__(self, dep_name: str, error: "str | None" = None) -> None:
         self.dep_name = dep_name
         self.error = error
@@ -76,7 +64,7 @@ class RecordingManager:
     def generate_action_index(self) -> None:
         self.calls.append("index")
 
-    def load_error_of(self, folder: str) -> "str | None":
+    def get_load_error(self, folder: str) -> "str | None":
         self.calls.append(f"error:{folder}")
         return self.error
 
@@ -89,9 +77,9 @@ class RecordingNotify:
         self.errors.append(body)
 
 
-def check_reload_sees_the_fresh_dependency() -> None:
+def check_fresh_dependency_reload() -> None:
     prime_stale_dir("reload_dep_b")
-    manager = RecordingManager("reload_dep_b")
+    manager = RecordingPluginManager("reload_dep_b")
     old_manager = gl.plugin_manager
     gl.plugin_manager = manager
     try:
@@ -104,8 +92,8 @@ def check_reload_sees_the_fresh_dependency() -> None:
     print("PASS: the install reload imports a dependency installed mid-process")
 
 
-def check_load_failure_reaches_the_user() -> None:
-    manager = RecordingManager("reload_dep_b", error="import failed: no module")
+def check_load_failure_notification() -> None:
+    manager = RecordingPluginManager("reload_dep_b", error="import failed: no module")
     notify = RecordingNotify()
     old_manager, old_notify = gl.plugin_manager, gl.notify
     gl.plugin_manager = manager
@@ -122,12 +110,10 @@ def check_load_failure_reaches_the_user() -> None:
 
 def main() -> None:
     fixtures.start_watchdog(60, label="scenario_install_reload")
-    # The staleness-precondition check runs LAST: on an interpreter whose
-    # finders do not cache this way it fails alone, after the checks that
-    # actually pin the fix have reported.
-    check_reload_sees_the_fresh_dependency()
-    check_load_failure_reaches_the_user()
-    check_stale_cache_hides_the_module()
+    # Run the platform-dependent stale-cache precondition after behavior checks.
+    check_fresh_dependency_reload()
+    check_load_failure_notification()
+    check_stale_finder_cache()
     print("PASS: scenario_install_reload")
 
 

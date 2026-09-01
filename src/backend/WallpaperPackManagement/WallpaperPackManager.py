@@ -15,10 +15,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 from typing import override
 
-from src.backend.PackManagement.pack_family import PackManager
+from src.backend.PackManagement.pack_family import PackDiscovery
 from src.backend.WallpaperPackManagement.WallpaperPack import WallpaperPack
 
-class WallpaperPackManager(PackManager[WallpaperPack]):
+class WallpaperPackManager(PackDiscovery[WallpaperPack]):
     """Discovery for the wallpaper packs under the data path."""
 
     DATA_DIR = "wallpapers"

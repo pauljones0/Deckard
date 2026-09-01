@@ -1,34 +1,12 @@
-"""Headless coverage for GtkHelper widget rows and their GenerativeUI wrappers.
-
-Three plugin-facing defects sit under this scenario:
-
-  * ComboRow.get_selected_item tested the wrong no-selection sentinel (-1).
-    GTK4 reports "nothing selected" as Gtk.INVALID_LIST_POSITION, so the guard
-    never fired and only the get_item_at fallback returned None by accident.
-
-  * The GenerativeUI ToggleRow wrapper called widget methods that do not exist
-    (get_toggle, add, set_active, set_active_name) or routed a remove through
-    the inherited Adw.ActionRow.remove, which raises TypeError on a None toggle
-    and leaves a real toggle in the group.
-
-  * ScaleRow.round_digits round-trips a decimal-place count, not a bool.
-
-The ComboRow guard runs through the unbound method with a duck-typed self, so
-it needs no widget and no display. The widget checks build real Adw rows, which
-aborts a headless host with no display, so they run only when a display exists
-(hugo provides one through xvfb).
-"""
+"""Verify GtkHelper row sentinels, ToggleRow methods, and ScaleRow round digits.
+Run widget construction only when a display is available."""
 import fixtures  # noqa: F401  (import first: sets up the isolated data dir)
 
 from src.backend.PluginManager.ActionCore import ActionCore
 
 
 class _FakeAction(ActionCore):
-    """Stand-in action whose settings live in a plain dict.
-
-    Follows scenario_genui_lazy: get_settings/set_settings back onto a dict, so
-    the GenerativeUI value layer needs no real page entry.
-    """
+    """Store action settings in a dict so GenerativeUI needs no page entry."""
 
     def __init__(self, page):
         super().__init__(
@@ -40,31 +18,25 @@ class _FakeAction(ActionCore):
             state=0,
             input_ident=None,
         )
-        self._fake_settings: dict = {}
+        self._settings: dict = {}
 
     def get_settings(self):
-        return self._fake_settings
+        return self._settings
 
     def set_settings(self, settings: dict):
-        self._fake_settings = settings
+        self._settings = settings
 
 
 def check_combo_row_no_selection_sentinel() -> None:
-    """get_selected_item maps the no-selection sentinel to None via its guard.
-
-    The method reads self.get_selected() and self.get_item_at() only, so a
-    duck-typed self drives it with no widget. get_item_at answers a non-None
-    sentinel, so the guard is the only path that can return None for the
-    no-selection case. A guard that tests -1 falls through to get_item_at and
-    returns the sentinel instead.
-    """
+    """Map Gtk.INVALID_LIST_POSITION to None before item lookup.
+    A duck-typed self makes the sentinel guard the only None-return path."""
     from gi.repository import Gtk
 
     from GtkHelper.ComboRow import ComboRow, ComboRowItem
 
     sentinel = ComboRowItem("sentinel")
 
-    class _Fake:
+    class _ComboRowStub:
         def __init__(self, selected):
             self._selected = selected
 
@@ -74,14 +46,14 @@ def check_combo_row_no_selection_sentinel() -> None:
         def get_item_at(self, index):
             return sentinel
 
-    no_selection = _Fake(Gtk.INVALID_LIST_POSITION)
+    no_selection = _ComboRowStub(Gtk.INVALID_LIST_POSITION)
     result = ComboRow.get_selected_item(no_selection)
     assert result is None, (
         "get_selected_item must return None for INVALID_LIST_POSITION, "
         f"got {result!r}"
     )
 
-    selected = _Fake(1)
+    selected = _ComboRowStub(1)
     result = ComboRow.get_selected_item(selected)
     assert result is sentinel, (
         "get_selected_item must return the item at a valid selection index"
@@ -90,11 +62,7 @@ def check_combo_row_no_selection_sentinel() -> None:
 
 
 def check_toggle_row_widget_remove_guards() -> None:
-    """The widget ToggleRow tolerates an out-of-range index and unknown name.
-
-    get_toggle(out_of_range) answers None and the toggle group rejects a None
-    remove with TypeError, so remove_at and remove_with_name must guard None.
-    """
+    """Ignore out-of-range indexes and unknown names instead of removing None."""
     from gi.repository import Adw
 
     from GtkHelper.ToggleRow import ToggleRow
@@ -119,11 +87,7 @@ def check_toggle_row_widget_remove_guards() -> None:
 
 
 def check_genui_togglerow_wrapper(page) -> None:
-    """The GenerativeUI ToggleRow wrapper drives the real widget methods.
-
-    Every wrapper method below hit a name the widget does not carry, or the
-    inherited Adw.ActionRow.remove, before the fix.
-    """
+    """Drive each GenerativeUI ToggleRow operation through its widget API."""
     from gi.repository import Adw
 
     from GtkHelper.GenerativeUI.ToggleRow import ToggleRow
@@ -177,11 +141,7 @@ def check_genui_togglerow_wrapper(page) -> None:
 
 
 def check_scalerow_round_digits_int() -> None:
-    """round_digits is an int decimal-place count that round-trips, -1 disables.
-
-    It mirrors Gtk.Scale.get_round_digits/set_round_digits, so a plugin can
-    read round_digits and assign it back without a type mismatch.
-    """
+    """Round-trip round_digits as an integer decimal-place count; -1 disables it."""
     from GtkHelper.ScaleRow import ScaleRow
 
     row = ScaleRow(value=0.0, min=0.0, max=10.0, round_digits=3)

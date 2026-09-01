@@ -1,19 +1,5 @@
-"""
-A non-integer state key in a page json must not strand an action.
-
-initialize_actions runs load_event_overrides on the caller thread before it
-schedules the ready callback. That path reaches Page.get_action_dict, which
-scans every state key and coerces it with int(). A corrupt page json can hold a
-state key that is not an integer; a bare int() then raises, the raise unwinds
-through the @log.catch on initialize_actions, and the action is left with
-on_ready_called True and on_ready_finished False for the life of the page --
-its tick and on_update redraw gates never open. The scan must skip the bad key
-and reach the real state instead.
-
-The write path scans the same keys: set_action_dict backs set_action_settings
-and set_action_event_assigment, so a bare int() there breaks every plugin that
-persists settings or an event assignment on a corrupt page.
-"""
+"""Skip non-integer page state keys during action reads and writes.
+Initialization must still finish for a valid state after a corrupt key."""
 
 # fixtures must import first: it points argv at an isolated data dir.
 import fixtures
@@ -28,8 +14,7 @@ ACTION_ID = "dev_test::BadStateStrand"
 
 
 class StrandProbeAction(ActionCore):
-    """Uses the real load_event_overrides, the strand path under test. on_ready
-    records that it ran, so the ready handshake is observable."""
+    """Use real event overrides and record completion of the ready handshake."""
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -49,9 +34,7 @@ def main() -> int:
         assert page is not None, "controller loaded no page"
         ident = Input.Key("0x0")
 
-        # A non-integer state key, ordered before the real "0" so the scan hits
-        # it first. Both states carry a non-empty actions list, or the inner
-        # loop never reaches the int() coercion.
+        # Put a populated invalid key before state 0 so each scan reaches it.
         page.dict.setdefault(ident.input_type, {})[ident.json_identifier] = {
             "states": {
                 BAD_STATE_KEY: {"actions": [{"id": ACTION_ID}]},
@@ -70,8 +53,7 @@ def main() -> int:
         )
         page.action_objects.setdefault(ident.input_type, {})[ident.json_identifier] = {0: {0: action}}
 
-        # Mutation witness: the bad key is genuinely int-hostile, so a bare
-        # int() over it raises. This is what strands the action pre-fix.
+        # Confirm that the invalid key cannot be converted to an integer.
         raised = False
         try:
             int(BAD_STATE_KEY)
@@ -79,23 +61,19 @@ def main() -> int:
             raised = True
         assert raised, "the bad state key parses as an int -- this test proves nothing"
 
-        # The scan must skip the bad key and return the real state's dict rather
-        # than raise. Pre-fix this call raises ValueError.
+        # Skip the invalid key and resolve the valid state's action.
         found = page.get_action_dict(action_object=action)
         assert found == {"id": ACTION_ID}, (
             f"get_action_dict returned {found!r}, not the state-0 action dict -- "
             "the bad-key skip must still resolve the real state"
         )
 
-        # The strand entry point: load_event_overrides walks the same path.
-        # Pre-fix it raises out of the ready handshake.
+        # Event assignment reads use the same state scan.
         assert page.get_action_event_assignments(action_object=action) == {}, (
             "get_action_event_assignments must resolve past the bad key"
         )
 
-        # End to end: initialize_actions must carry the action to a finished
-        # ready. Pre-fix the int() raise unwinds through @log.catch and leaves
-        # on_ready_finished False forever.
+        # Initialization must complete the ready handshake after the invalid key.
         assert not action.on_ready_called, "fresh action already claimed ready"
         page.initialize_actions()
 
@@ -109,9 +87,7 @@ def main() -> int:
         )
         assert action.ready_ran, "on_ready never ran despite the finished flag"
 
-        # The write path scans the same state keys. A plugin persisting its
-        # settings or an event assignment must survive the bad key too, and the
-        # value must land on the real state's action dict.
+        # Settings and event assignment writes must target the valid state.
         page.set_action_settings(action_object=action, settings={"probe": 1})
         assert page.get_action_settings(action_object=action) == {"probe": 1}, (
             "set_action_settings did not persist onto the real state's dict"

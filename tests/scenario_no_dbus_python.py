@@ -1,10 +1,5 @@
-"""
-Regression fence against dbus-python anywhere in the tree.
-
-The tree uses Gio for bus work and dasbus where a proxy layer helps. The scan
-matches the import forms and the GLib mainloop glue class, on word boundaries,
-in every tracked *.py.
-"""
+"""Reject dbus-python imports and main-loop glue in every tracked Python file.
+Match imports and GLib glue on word boundaries; bus code must use Gio or dasbus."""
 
 # It assembles the needles at runtime, so this file never matches itself.
 import os

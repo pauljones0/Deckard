@@ -48,10 +48,9 @@ class IconSelector(Gtk.Box):
         self.active_identifier: InputIdentifier = None  # ty: ignore[invalid-assignment]  # late-init: load_for_identifier
         self.active_state: int = None  # ty: ignore[invalid-assignment]  # late-init: load_for_identifier
 
-        # next() on a count is atomic. A read-modify-write on latest_task_id
-        # gives two frames the same id, because the producers are threads, and
-        # a stale frame then passes the check in set_pixbuf_and_del.
-        self.task_ids = itertools.count()
+        # next() gives producer threads unique task IDs.
+        # A read-modify-write on latest_task_id could let a stale frame pass.
+        self._task_id_counter = itertools.count()
         self.latest_task_id: int = None  # ty: ignore[invalid-assignment]  # late-init: the first render task
         self.build()
 
@@ -96,7 +95,7 @@ class IconSelector(Gtk.Box):
 
 
     def get_new_task_id(self) -> int:
-        return next(self.task_ids)
+        return next(self._task_id_counter)
 
     def set_image(self, image: "Image.Image") -> None:
         pixbuf = image2pixbuf(image.convert("RGBA"), force_transparency=True)
@@ -184,4 +183,3 @@ class IconSelector(Gtk.Box):
             self.image.add_css_class("icon-selector-image-key")
 
         self.remove_button.set_visible(self.has_image_to_remove())
-

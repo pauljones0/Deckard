@@ -1,8 +1,4 @@
-"""Scenario for three deck-lifecycle defects.
-
-An opaque key gets its first paint after a page switch. close() joins plugin
-teardown hooks with a bound, and cancels an in-flight background load.
-"""
+"""Check initial opaque paint and bounded cleanup of background loads and hooks."""
 import fixtures  # noqa: F401  (import first: sets up the isolated data dir)
 
 import concurrent.futures
@@ -20,12 +16,7 @@ from src.backend.DeckManagement.InputIdentifier import Input
 
 
 def _drain_to_quiescence(media_player, timeout: float = 5.0) -> None:
-    """Drain the media-player task slots until they stay empty, bounded.
-
-    A lone drain is a mid-burst snapshot: the writer can enqueue a fresh batch
-    right after it. Drain in a loop and return only once the task, image and
-    touchscreen slots are all empty at once, so the caller reads a settled
-    queue and not a partial burst."""
+    """Drain all media-player task slots together until empty or timed out."""
     deadline = time.monotonic() + timeout
     while True:
         media_player.perform_media_player_tasks()
@@ -38,11 +29,7 @@ def _drain_to_quiescence(media_player, timeout: float = 5.0) -> None:
 
 
 def _expected_native_hash(controller, key) -> str:
-    """The journal fingerprint the device should receive for key.
-
-    Computed by encoding the current composed image through the exact path
-    ControllerKey.update() uses, so a check can assert the new page's color.
-    """
+    """Encode the current key image through the device path and hash its bytes."""
     image = key.get_current_image()
     if image.mode == "RGBA":
         rgb = Image.new("RGB", image.size, (0, 0, 0))
@@ -57,16 +44,8 @@ def _expected_native_hash(controller, key) -> str:
 def check_opaque_initial_paint() -> int:
     controller = make_headless_controller(serial="trio-11")
     try:
-        # Deterministic tier. Stop AND join the live writer, then drive the
-        # drain by hand, or the live loop races the assertions. Join, not just
-        # stop: a write failure on the fake deck arms a pending full repaint,
-        # and the writer runs it through update_all_inputs() while
-        # background.video is still None. That takes the all-keys branch and
-        # enqueues every key, the non-opaque ones with the same transparent
-        # frame. Under load that burst can land after a lone drain and reach the
-        # device on the next drain, which then fails the "no non-opaque device
-        # write" check below. A joined writer can enqueue no more, and the drain
-        # to quiescence settles the queue before the check arms.
+        # Stop and join the writer before a manual quiescent drain; stopping
+        # alone permits a pending full repaint to race the assertions.
         controller.media_player.stop(timeout=3.0)
         controller.media_player.join(timeout=3.0)
         _drain_to_quiescence(controller.media_player)
@@ -82,16 +61,13 @@ def check_opaque_initial_paint() -> int:
         try:
             deck = raw_deck(controller)
             deck.clear_journal()
-            # A real page switch delivers new content. The page stays here, so
-            # drop the dedup hashes or the repaint is skipped as identical.
+            # Clear dedup hashes because this fixed page stands in for a switch
+            # that delivers new content.
             controller._reset_dedup_hashes()
-            # Reference hash taken before the paint, because get_current_image
-            # is stable for the current color. This is what the device should
-            # receive for the opaque key.
+            # Hash the stable current color before the device paint.
             expected_hash = _expected_native_hash(controller, opaque_key)
             controller.update_all_inputs()
-            # Read the settled journal, not a mid-burst snapshot. The writer is
-            # joined, so this pass empties the queue and it stays empty.
+            # Read the journal only after the joined writer's queue stays empty.
             _drain_to_quiescence(controller.media_player)
 
             writes = deck.ops_by_name("set_key_image")
@@ -111,9 +87,8 @@ def check_opaque_initial_paint() -> int:
                   f"bg-video branch (would fight the video loop): "
                   f"{others_written}")
             return 1
-        # Check the content, not just the presence. The write must carry the
-        # bytes of the new opaque color, not the previous page's stale content.
-        # The journal records _hash_bytes(native) at index 4.
+        # Compare the journal's native-byte hash at index 4 to reject stale
+        # previous-page content.
         written_hash = opaque_writes[-1][4]
         if written_hash != expected_hash:
             print(f"FAIL(a): opaque key was painted, but with the WRONG "
@@ -170,22 +145,15 @@ def check_close_gen_invalidation() -> int:
 
 
 def check_close_load_race() -> int:
-    """A load already past its gen gate, parked inside the prebuild.
-
-    The gen bump and future.cancel() in close() do not cover it. Its freshly
-    built BackgroundVideo would land on self.background.video after the step-7
-    sweep and leak. This drives that interleaving through apply_prebuilt.
+    """Close while a load holds the background lock during prebuild.
+    The resumed load must reject its payload before close acquires the lock to sweep.
     """
     controller = make_headless_controller(serial="trio-15race")
     page = controller.active_page
     background = controller.background
 
     class _FakeVideo:
-        """Stands in for a prebuilt BackgroundVideo.
-
-        close() is what the fix must call on the orphaned payload, which
-        mirrors the real cv2 capture release.
-        """
+        """Record release of an orphaned prebuilt video payload."""
         def __init__(self):
             self.closed = False
             self.video_path = "/fake/race.mp4"
@@ -198,21 +166,17 @@ def check_close_load_race() -> int:
     past_gate = threading.Event()   # load has passed the gen-gate, is prebuilding
     release = threading.Event()     # test lets the parked prebuild finish
 
-    def blocking_prebuild(path, fps=30, loop=True, allow_keep=True):
-        # Called from set_from_path, which load_background calls after its
-        # _page_is_current(gen) gate, so this is past the gate. Park here, as a
-        # real multi-second decode would, until the test has run the close()
-        # sweep, then hand back a fresh video payload for apply_prebuilt.
+    def blocking_prebuild(path, fps=30, loop=True, allow_keep=True, view=None):
+        # Park past the generation gate while the load holds the background lock;
+        # close sets _closing, then waits for this lock before it can sweep.
         past_gate.set()
         release.wait(timeout=5)
         return ("video", fake_video)
 
     background.prebuild_from_path = blocking_prebuild
 
-    # set_video would close a previous video, so make sure there is none. Give
-    # the real video branch of apply_prebuilt a set_video that records the attach
-    # faithfully, because the real one calls update_all_inputs and needs a live
-    # deck.
+    # Start without a previous video and record attachment without the real
+    # set_video call, which needs a live deck for update_all_inputs.
     background.video = None
     attached = {}
     background.set_video = lambda video, update=True: attached.__setitem__("video", video)
@@ -229,10 +193,8 @@ def check_close_load_race() -> int:
         release.set()
         return 1
 
-    # Close the deck while the load is parked past its gate. close() sets
-    # _closing, bumps gen, cancels the future, and sweeps the background under
-    # _background_load_lock. Once the loader is released, the _closing re-check
-    # in apply_prebuilt must suppress the attach and close the orphaned payload.
+    # The resumed load sees _closing and rejects its payload before releasing
+    # the lock, after which close can acquire the lock and sweep.
     closer = threading.Thread(
         target=lambda: controller.close(remove_media=True), name="race-close", daemon=True)
     closer.start()

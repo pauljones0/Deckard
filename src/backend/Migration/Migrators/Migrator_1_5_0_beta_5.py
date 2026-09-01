@@ -18,6 +18,8 @@ import json
 import os
 from typing import override
 
+from loguru import logger as log
+
 import globals as gl
 
 class Migrator_1_5_0_beta_5(Migrator):
@@ -40,23 +42,27 @@ class Migrator_1_5_0_beta_5(Migrator):
             if not page_path.endswith(".json"):
                 continue
             page_path = os.path.join(pages_dir, page_path)
-            with open(page_path, "r") as f:
-                page = json.load(f)
+            # Leave a corrupt or unreadable page unchanged so the remaining pages still migrate.
+            try:
+                with open(page_path, "r") as f:
+                    page = json.load(f)
 
-            for key in page.get("keys", {}):
-                if "states" in page["keys"][key]:
-                    continue
+                for key in page.get("keys", {}):
+                    if "states" in page["keys"][key]:
+                        continue
 
-                key_dict = page["keys"][key].copy()
-                page["keys"][key].clear()
+                    key_dict = page["keys"][key].copy()
+                    page["keys"][key].clear()
 
-                page["keys"][key]["states"] = {}
-                page["keys"][key]["states"]["0"] = key_dict
+                    page["keys"][key]["states"] = {}
+                    page["keys"][key]["states"]["0"] = key_dict
 
-                page["keys"][key]["states"]["0"].setdefault("image-control-action", 0)
-                page["keys"][key]["states"]["0"].setdefault("label-control-actions", [0, 0, 0])
+                    page["keys"][key]["states"]["0"].setdefault("image-control-action", 0)
+                    page["keys"][key]["states"]["0"].setdefault("label-control-actions", [0, 0, 0])
 
-            atomic_write_json(page_path, page)
+                atomic_write_json(page_path, page)
+            except (OSError, ValueError) as e:
+                log.warning(f"Skipping page during migration, left unchanged: {page_path}: {e}")
 
     def migrate_plugin_settings(self) -> None:
         if not os.path.exists(gl.PLUGIN_DIR):
@@ -68,21 +74,17 @@ class Migrator_1_5_0_beta_5(Migrator):
             try:
                 with open(old_settings_path, "r") as f:
                     settings = json.load(f)
-            except Exception as e:
+            except (OSError, ValueError) as e:
+                # Leave an unreadable old file in place for retry and continue with other plugins.
+                log.warning(f"Skipping plugin settings during migration, left unchanged: {old_settings_path}: {e}")
                 continue
 
             new_settings_path = os.path.join(gl.DATA_PATH, "settings", "plugins", plugin_dir_name, "settings.json")
-            # Write the migrated copy to the new path first, and remove the old
-            # file only after that copy is on disk. An existing new path holds
-            # the current settings, so leave it alone rather than overwrite it
-            # with the stale pre-beta.5 copy.
+            # Write the new copy before removal; an existing destination contains current settings.
+            # Never overwrite it with the stale pre-beta.5 copy.
             if not os.path.exists(new_settings_path):
-                # atomic_write_json commits through a same-directory temp file,
-                # an fsync and an os.replace, and it creates the parent
-                # directory. A crash leaves the old file whole or the new file
-                # complete. A write failure propagates and keeps os.remove
-                # below out of reach.
+                # The atomic write creates parents and publishes a complete file after fsync.
+                # A failure propagates before the old file can be removed.
                 atomic_write_json(new_settings_path, settings)
 
-            # The new path now holds a complete copy, so remove the old file.
             os.remove(old_settings_path)

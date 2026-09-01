@@ -1,8 +1,4 @@
-"""Scenario for src/backend/log_redaction.py.
-
-A loguru core patcher scrubs every record, message and folded traceback,
-before any sink formats it. install_exception_hooks() must install it.
-"""
+"""Require the core patcher to scrub messages and tracebacks before all sinks."""
 import fixtures  # must be first; isolates DATA_PATH before any src import
 
 import getpass
@@ -18,18 +14,12 @@ from src.backend.log_redaction import redact_record, scrub
 
 UT = "<user>"  # the token scrub() substitutes for the username
 
-# The real account, captured before any override. The end-to-end block below
-# drives the process's own traceback, whose frame paths live under this home,
-# so scrub() must know it to redact them.
+# Capture the real account before overrides so end-to-end traceback paths redact.
 REAL_HOME = os.path.expanduser("~")
 REAL_USER = getpass.getuser()
 
-# Injected identity for the unit checks. scrub() compiles its home and username
-# rules from the environment, so the unit assertions pin a known home and user
-# rather than read the runner's account. That keeps them deterministic under any
-# runner, a freshly created CI user or root included, whose home (root's is
-# /root, whose dirname is "/") and short username would otherwise skew the
-# constructed paths and the expected strings.
+# Compile unit checks against a fixed identity instead of the runner's account.
+# This also avoids root-home and short-username boundary differences.
 INJ_HOME = "/home/deckard_ci_user"
 INJ_USER = "deckard_ci_user"
 INJ_HOST = "deckard-ci-box"  # this machine's name, injected, never the runner's
@@ -43,17 +33,8 @@ _REAL_HOSTNAME_CANDIDATES = log_redaction._hostname_candidates
 
 
 def _compile_rules_for(home: str, user: str, hostname: str = INJ_HOST) -> None:
-    """Recompile scrub()'s module rules against a chosen identity.
-
-    scrub() builds its home, username and machine-name patterns from the
-    environment at import. The unit checks want a fixed identity so their
-    expected strings do not depend on the runner's account, and the end-to-end
-    block wants the real account so it redacts the process's own traceback frame
-    paths. This swaps the compiled rules between the two.
-
-    The machine name is injected in both, because the runner's own name could be
-    any word and a rule on it would rewrite unrelated text in these checks.
-    """
+    """Recompile scrub rules for a selected home, user, and injected hostname.
+    Unit checks need fixed values; end-to-end checks need the real account paths."""
     os.environ["HOME"] = home
     os.environ["USER"] = user
     os.environ["LOGNAME"] = user
@@ -69,9 +50,8 @@ def check_scrub_unit() -> None:
     # Boundary guards. A longer username sharing the prefix must not be
     # clipped, and dot-suffix siblings must not collapse into the tilde form.
     assert scrub(HOME + "ette/f") == HOME + "ette/f", "prefix-sharing sibling user must survive"
-    # The injected home is a normal two-segment path, so basename is the user and
-    # dirname is a real parent, never "/". A sibling dir of home keeps its suffix
-    # and hides the username.
+    # The injected home has a real parent and a username basename.
+    # A sibling directory must keep its suffix while hiding that username.
     assert os.path.basename(HOME) == USER
     parent = os.path.dirname(HOME)
     assert scrub(HOME + ".old/f") == f"{parent}/{UT}.old/f", (
@@ -94,9 +74,8 @@ def check_scrub_unit() -> None:
     assert scrub("https://alice@example.com/a") == "https://***@<host>/a"
     assert "<host>/a/b" in scrub("https://alice:hunter2@example.com/a/b?x=1")
 
-    # Secret params in the equals form. Unambiguous names match anywhere and
-    # tolerate spaces. A bare key equals matches only when query-anchored,
-    # because key is deck vocabulary and key=3 in a debug message must survive.
+    # Unambiguous secret names match equals forms anywhere and tolerate spaces.
+    # Bare ``key=`` matches only in queries because deck debug fields must survive.
     assert scrub("GET /repo?access_token=abc123&x=1") == "GET /repo?access_token=***&x=1"
     assert scrub("retry with token=tok-9") == "retry with token=***"
     assert scrub("retry with token = tok-9") == "retry with token=***", (
@@ -114,10 +93,8 @@ def check_scrub_unit() -> None:
         "deck 'key' dict field must survive the colon rule"
     )
 
-    # The colon form may carry an HTTP scheme word in an unquoted value, from a
-    # header dump that pairs a scheme word with a credential. A non-Authorization
-    # key must keep the scheme word and drop the credential after it, never star
-    # the scheme word alone and leave the secret behind it.
+    # An unquoted colon value can contain a scheme word followed by a credential.
+    # Keep the scheme word and remove the credential, including non-Authorization keys.
     assert scrub("token: Token abc123") == "token: Token ***", (
         "a scheme word in a colon value must keep the scheme and drop the secret"
     )
@@ -129,10 +106,8 @@ def check_scrub_unit() -> None:
     )
     assert "dXNlcjpwYXNz" not in scrub("api_key: Basic dXNlcjpwYXNz")
 
-    # A secret colon value that BEGINS with a scheme keyword followed by a
-    # non-space delimiter is one whole credential, not a scheme word with a
-    # credential after it. The mandatory-scheme form above keeps the scheme word
-    # only when whitespace follows it, so these must redact whole and never leak.
+    # A scheme prefix followed by a non-space delimiter is one whole credential.
+    # Preserve a scheme word only when whitespace separates it from the secret.
     assert scrub("token: token-abc123") == "token: ***", (
         "a value that starts with a scheme word plus a delimiter is a whole "
         "secret and must redact, not leak"
@@ -184,18 +159,15 @@ def check_scrub_unit() -> None:
         "'basic' is prose vocabulary -- only redact it in header context"
     )
 
-    # The no-scheme branch must never consume a bare scheme word as the value.
-    # A credential that merely starts with those letters is not a scheme word
-    # and must still be redacted.
+    # The no-scheme branch must not consume a bare scheme word.
+    # A longer credential with that prefix must still redact.
     assert scrub("Authorization: basicauthvalue123") == "Authorization: ***"
     assert scrub("Authorization: tokenvalue99") == "Authorization: ***"
     assert scrub("Authorization: bearertoken.abc") == "Authorization: ***"
 
 
 def check_host_unit() -> None:
-    """Hosts and addresses. Every value here is invented: a documentation range
-    from RFC 5737, a private range, or a made-up name. None of them comes from
-    the machine this runs on."""
+    """Check invented documentation, private, and local host values only."""
     # A url host, in any scheme. The scheme, the port and the path stay, so a
     # broker failure still names the service.
     assert scrub("mqtt://ha.local:1883/topic") == "mqtt://<host>:1883/topic"
@@ -229,9 +201,8 @@ def check_host_unit() -> None:
     assert scrub("mount nas.internal:445") == "mount <host>:445"
     assert scrub("broker mosquitto.lan reachable") == "broker <host> reachable"
 
-    # user@host. The host rules run before the username rule, so both halves go
-    # in one pass. A single-label host after an "@" stays: a bare word there is
-    # as often prose as a machine.
+    # Host rules run before username rules so both user@host parts redact in one pass.
+    # A single-label host stays because the bare word can be prose.
     assert scrub(f"{USER}@ha.local") == f"{UT}@<host>", (
         "user@host must scrub whole, not leave the username behind the token"
     )
@@ -298,10 +269,8 @@ def check_host_unit() -> None:
         "reversed = frames[::-1]",
         "stride = frames[::2]",
         "File \"~/dev/Deckard/src/backend/log_redaction.py\", line 12 in scrub",
-        # A traceback folds source lines and reprs into the log, so a suffix
-        # rule on the router defaults .box and .home would rename this app's own
-        # types and attributes and make a shared traceback lie. Both suffixes
-        # stay out of the list, and the router names below stay whole with them.
+        # Tracebacks include source and repr text, so .box and .home are not host suffixes.
+        # Treating them as suffixes would rewrite application types and attributes.
         "<Gtk.Box object at 0x7f0a1c2b3c00>",
         "class DeckStack(Gtk.Box):",
         "children: list[Gtk.Box] = []",
@@ -311,24 +280,14 @@ def check_host_unit() -> None:
     ):
         assert scrub(kept) == kept, f"must not redact: {kept}"
 
-    # A deliberate trade-off, pinned so a change to it is a visible edit. A
-    # four-part version is a valid address and the ipaddress module cannot tell
-    # the two apart, so it redacts. A three-part version never reaches the
-    # check, and a "v" prefix keeps a four-part one whole.
+    # A bare four-part version is indistinguishable from an address and redacts.
+    # Three-part versions and ``v``-prefixed four-part versions stay unchanged.
     assert scrub("plugin version 1.2.3.4") == "plugin version <ip>"
 
 
 def check_scrub_bounded_cost() -> None:
-    """A long line must cost time in proportion to its length, never to its
-    square.
-
-    A log line carries text a plugin, a device or a remote server chose, and
-    scrub() runs on the thread that logs it. The url rule once scanned to the
-    end of a run of scheme characters from every position inside that run, which
-    made a 32 KB line cost over a second and stalled the logging thread for it.
-    The bound below sits far above the linear cost and far under the quadratic
-    one, so it pins the class and still passes on a loaded runner.
-    """
+    """Require scrub cost to scale linearly for a 32 KB adversarial line.
+    The 0.2-second bound allows runner load but rejects repeated suffix rescans."""
     adversarial = "a." * 16384  # 32 KB of scheme characters, and no "://"
     start = time.perf_counter()
     scrubbed = scrub(adversarial)
@@ -382,12 +341,8 @@ def check_hostname_candidates() -> None:
 
 
 def check_scrub_idempotent() -> None:
-    """scrub(scrub(x)) must equal scrub(x) over the whole corpus.
-
-    The auth-header rule can backtrack out of its optional scheme group and
-    consume the scheme word itself on a second pass, so any pipeline that
-    scrubs twice would mangle every header it had already redacted.
-    """
+    """Require scrub to be idempotent across the full test corpus.
+    A second pass must not consume an already-redacted authorization scheme."""
     corpus = [
         # Auth headers, every scheme, both delimiters, quoted and bare.
         "Authorization: Basic dXNlcjpwYXNz",
@@ -423,15 +378,13 @@ def check_scrub_idempotent() -> None:
         "authorization: Token abc123",
         "token: plainsecret9",
         "x-api-key: sk-plainsecret9",
-        # Colon values that BEGIN with a scheme word plus a delimiter. These are
-        # whole secrets, so they redact to a single mask, and a re-scrub of that
-        # mask must not grow it.
+        # Scheme-prefixed colon values with a delimiter are whole secrets.
+        # They redact to one mask that must not grow on a second pass.
         "token: token-abc123",
         "token: bearer.reset.jwt",
         "api_key: basic/creds99",
-        # Hosts and addresses. A token such as "<host>" must not read as a host
-        # on the second pass, and a scrubbed user@host must not grow a second
-        # token.
+        # Redaction tokens must not match host rules on a second pass.
+        # A scrubbed user@host must not gain another token.
         "mqtt://ha.local:1883/topic",
         "http://192.168.1.50:8123/api/states",
         "http://[fd12:3456::9]:1883/x",
@@ -469,10 +422,8 @@ def check_scrub_idempotent() -> None:
             f"scrub() is not idempotent for {text!r}: "
             f"pass 1 -> {once!r}, pass 2 -> {scrub(once)!r}"
         )
-        # The equality above covers the second pass. This covers the first one,
-        # which equality cannot: a rule that consumed a token another rule had
-        # just written leaves a doubled marker, which reads as two redactions of
-        # one value. The auth-header rules produced exactly "*** ***" that way.
+        # Equality covers the second pass; doubled-token checks cover the first pass.
+        # One value must not produce adjacent redaction markers.
         for token in ("***", "<host>", "<ip>", UT):
             assert f"{token}{token}" not in once and f"{token} {token}" not in once, (
                 f"pass 1 doubled the {token} marker for {text!r}: {once!r}"
@@ -495,14 +446,8 @@ def main() -> None:
     check_hostname_candidates()
     check_scrub_idempotent()
 
-    # The real boot wiring, and nothing else. main() only ever calls
-    # install_exception_hooks(), and redaction must ride along. This does not
-    # call install_log_redaction(), so reverting the piggyback inside
-    # install_exception_hooks() turns this red.
-    #
-    # The traceback below is the process's own, so its frame paths live under
-    # the real account home. Recompile scrub()'s rules against that account so
-    # the folded traceback redacts, then assert on the real identity here.
+    # Exercise only the real boot entry point, which must install redaction.
+    # Recompile for the real account so the process traceback paths redact.
     _compile_rules_for(REAL_HOME, REAL_USER)
 
     log_hooks.install_exception_hooks()
@@ -513,10 +458,8 @@ def main() -> None:
     log_hooks.install_exception_hooks()  # idempotent
     assert logger._core.patcher is redact_record
 
-    # A real file sink plus a capture sink. Both must receive scrubbed text.
-    # backtrace and diagnose are on here, because they are the loudest possible
-    # exception expansion, so a patcher that failed to clear the record would
-    # leak the most here.
+    # Both file and capture sinks must receive scrubbed text.
+    # Enable backtrace and diagnose to expose the largest exception record.
     log_dir = os.path.join(fixtures.DATA_DIR, "logs")
     os.makedirs(log_dir, exist_ok=True)
     log_path = os.path.join(log_dir, "logs.log")
@@ -531,11 +474,8 @@ def main() -> None:
     logger.info("HA settings: {'host': 'ha.local', 'port': 8123, 'access_token': 'eyJlongtoken'}")
     logger.info("MQTT connect to 192.168.1.50:1883 failed")
     logger.info(f"deck registered on {INJ_HOST}")
-    # A traceback-frame line under home, logged directly, so the home->~ frame
-    # redaction is exercised wherever the checkout lives. The process's own
-    # traceback frames only carry ~ when the checkout is under $HOME; CI checks
-    # out under /builds, so this controlled line, not the boom() frames, is
-    # what proves a home-rooted frame path redacts to ~/.
+    # Log a controlled home-rooted frame because CI can check out outside $HOME.
+    # This line proves that frame paths redact to ~/ on every runner.
     logger.info(f'  File "{REAL_HOME}/plugins/demo/main.py", line 7 in fetch')
 
     # An uncaught thread exception through the real hook. The message, the

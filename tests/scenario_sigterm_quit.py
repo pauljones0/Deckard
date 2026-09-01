@@ -1,8 +1,6 @@
-"""
-Wiring scenario for SIGTERM and SIGHUP running App.on_quit's teardown.
+"""Check SIGTERM and SIGHUP routing through App.on_quit.
 
-Plugin backends spawn with start_new_session=True, so no killpg aimed at the
-app's group reaches them and only terminate_all_backends does.
+Backend sessions evade app-group killpg, so SIGTERM must call terminate_all_backends.
 """
 
 # The checks drive the real methods unbound on stub objects, because
@@ -23,7 +21,7 @@ from src.app import App
 from gi.repository import GLib  # noqa: E402
 
 
-class Obj:
+class _StubNamespace:
     """Attribute bag."""
     def __init__(self, **kwargs):
         self.__dict__.update(kwargs)
@@ -40,9 +38,10 @@ class Recorder:
 
 
 class _ForcedExit(BaseException):
-    """Stands in for os._exit, so a check observes the exit instead of dying
-    with the process. It is a BaseException, so an except Exception in the
-    code under test cannot swallow it."""
+    """Represent os._exit without ending the test process.
+
+    BaseException prevents the code under test from catching it as Exception.
+    """
 
     def __init__(self, code):
         super().__init__(code)
@@ -51,18 +50,16 @@ class _ForcedExit(BaseException):
 
 @contextlib.contextmanager
 def no_real_exit():
-    """Turns os._exit into a raise for the duration. src.app calls it through
-    the same module object, so this patch covers on_quit and force_quit.
-    Without it a check that ran a real teardown would exit and report a false
-    PASS."""
+    """Replace os._exit with _ForcedExit for on_quit and force_quit.
+
+    This prevents a real teardown from ending the scenario with a false pass.
+    """
     saved = os._exit
     main_thread = threading.main_thread()
 
     def _fake_exit(code):
         if threading.current_thread() is not main_thread:
-            # fixtures' deadlock watchdog hard-exits from its own daemon
-            # thread. Raising there would only kill that thread and leave the
-            # hang it was meant to break in place, so let it through.
+            # Let the watchdog hard-exit; raising on its daemon would preserve the hang.
             saved(code)
         raise _ForcedExit(code)
 
@@ -79,20 +76,15 @@ class _ReachedAppQuit(BaseException):
 
 
 class _ProbeDone(BaseException):
-    """Sentinel raised from a stub gl.loggers to stop a driven on_quit once
-    it is past the section under test. Everything below it needs a real app
-    to stand on."""
+    """Stop driven on_quit after the tested section.
+
+    The remaining path requires a real app.
+    """
 
 
 class QuitRecorder:
-    """Stands in for App as the handler's self, and records every on_quit call
-    with the args its route passed.
-
-    The routes differ. Hence on_quit(self, *args).
-    """
-    # A GLib unix-signal source and a queued Ctrl+C pass no args, the Gio quit
-    # action passes (action, param), and a signal.signal fallback passes
-    # (signum, frame).
+    """Record each routed on_quit call and its route-specific arguments."""
+    # GLib and queued Ctrl+C pass no args; Gio and signal.signal pass two.
 
     # The real wrappers the signals are registered against, under test unbound
     # on this stub exactly like the other App methods here.
@@ -103,10 +95,7 @@ class QuitRecorder:
         self.calls = []
         self.loop = None
         self.force_quits = 0
-        # The two pieces of App state _on_sigint reads. This stub's on_quit
-        # does not latch _quit_started, because it must stay re-runnable, so
-        # every check that delivers a SIGINT clears _sigint_first_at itself.
-        # Otherwise a later first press counts as a follow-up to an old stamp.
+        # Keep on_quit rerunnable; each SIGINT check resets its first-press stamp.
         self._quit_started = False
         self._sigint_first_at = None
 
@@ -117,10 +106,7 @@ class QuitRecorder:
         self.calls.append(args)
         if self.loop is not None:
             self.loop.quit()
-        # Mirrors the real on_quit's return value of None, which GLib reads
-        # as SOURCE_REMOVE. _on_unix_signal wraps it and returns
-        # SOURCE_CONTINUE, so the source and GLib's sigaction survive the
-        # latch's early return.
+        # None mirrors on_quit; _on_unix_signal must convert it to SOURCE_CONTINUE.
         return None
 
 
@@ -151,14 +137,11 @@ def check_sigint_stays_python_handler() -> QuitRecorder:
 
 
 def check_sigint_defers_teardown(recorder: QuitRecorder) -> None:
-    """The SIGINT handler must queue on_quit, not run it.
+    """Require the Python SIGINT handler to queue on_quit.
 
-    A Python-level handler runs between bytecodes on the main thread, so it can
-    interrupt any statement in the app.
+    Direct teardown could interrupt any main-thread statement between bytecodes.
     """
-    # Running the teardown there would destroy the window on top of an
-    # unrelated stack frame, so the handler hands on_quit to the main loop
-    # instead.
+    # Queue teardown to avoid destroying the window on an unrelated stack frame.
     recorder._sigint_first_at = None
     before = len(recorder.calls)
     recorder._on_sigint(signal.SIGINT, None)
@@ -178,14 +161,11 @@ def check_sigint_defers_teardown(recorder: QuitRecorder) -> None:
 
 
 def check_sigint_escalates_on_wedged_loop(recorder: QuitRecorder) -> None:
-    """A Ctrl+C left undispatched must force the quit, and only that one.
+    """Force quit only after a prior Ctrl+C remains undispatched past the bound.
 
-    On a wedged loop the idle never dispatches, and TERM and HUP are loop
-    sources too, so nothing short of SIGKILL ends the process.
+    TERM and HUP also cannot dispatch on a wedged loop.
     """
-    # The escalation gates on elapsed time and on the quit-started latch, and
-    # it restores SIG_DFL first so a force_quit that itself wedges stays
-    # killable.
+    # Gate on elapsed time and the quit latch; restore SIG_DFL before force_quit.
     import src.app as app_mod
 
     recorder._sigint_first_at = None
@@ -256,11 +236,9 @@ def check_sigint_escalates_on_wedged_loop(recorder: QuitRecorder) -> None:
 
 
 def report_signal_path(signum: int, name: str) -> None:
-    """Print which of the two mechanisms register_signal_handlers landed on.
+    """Report whether registration used GLib or signal.signal.
 
-    GLib's sigaction is invisible to signal.getsignal(), so a SIG_DFL reading
-    means the GLib unix-signal source is armed. Anything else means
-    unix_signal_add degraded to signal.signal on this runtime.
+    SIG_DFL from getsignal means GLib's hidden sigaction is armed.
     """
     # This is informational, because degrading is a supported outcome.
     handler = signal.getsignal(signum)
@@ -291,9 +269,7 @@ def check_unix_signal_keeps_source_armed() -> None:
 
 
 def check_signal_reaches_on_quit(recorder: QuitRecorder, signum: int, name: str) -> None:
-    # A SIGINT delivery must look like a first press. This stub's on_quit
-    # never latches _quit_started, so a stamp carried over from an earlier
-    # check would age past the threshold and take the escalation.
+    # Reset the stub stamp so SIGINT is always a first press in this check.
     recorder._sigint_first_at = None
     loop = GLib.MainLoop()
     recorder.loop = loop
@@ -329,10 +305,9 @@ def check_signal_reaches_on_quit(recorder: QuitRecorder, signum: int, name: str)
 
 
 def check_unix_signal_add_degrades() -> None:
-    """A symbol that resolves but blows up on call must still degrade.
+    """Degrade when unix_signal_add resolves but raises on invocation.
 
-    unix_signal_add runs from App.__init__ through register_signal_handlers, so
-    anything it lets escape aborts startup outright.
+    Escaping registration errors abort App construction.
     """
     # A refused signum, a GLib built without UNIX signal support, or an
     # argument mismatch between the two spellings all raise at call time.
@@ -359,11 +334,9 @@ def check_unix_signal_add_degrades() -> None:
 
 
 def check_degraded_fallback_reaches_quit(recorder: QuitRecorder) -> None:
-    """The path with no GLib unix-signal source must still run the teardown.
+    """Run teardown through signal.signal when no GLib source is available.
 
-    It must run after the GLib-source checks, because signal.signal overwrites
-    GLib's sigaction for these signums and the source path is then unreachable
-    in this process.
+    Test this last because signal.signal replaces GLib's sigaction.
     """
     import src.app as app_mod
 
@@ -386,15 +359,13 @@ def check_degraded_fallback_reaches_quit(recorder: QuitRecorder) -> None:
 def check_quit_is_idempotent() -> None:
     import src.app as app_mod
 
-    stub = Obj(_quit_started=True)
+    stub = _StubNamespace(_quit_started=True)
     dbus = Recorder()
     saved_dbus = app_mod.stop_dbus_service
     app_mod.stop_dbus_service = dbus
     try:
         with no_real_exit():
-            # Without the guard the fall-through dies further down the
-            # teardown, because the harness has no main_win and no
-            # gl.signal_manager. The recorder below is the verdict.
+            # The guard must return before this stub reaches its missing app state.
             with contextlib.suppress(BaseException):
                 App.on_quit(stub)
     finally:
@@ -415,19 +386,16 @@ def check_quit_tolerates_missing_main_win() -> None:
     def _trigger_signal(*args, **kwargs):
         raise _ReachedAppQuit()
 
-    # No main_win, so this is a quit before on_activate. The real
-    # App._destroy_main_window binds to the stub, because its
-    # missing-attribute branch is what this check exercises. force_quit and
-    # the timer wheel are stubs, or a real schedule() would leave a live 6s
-    # timer running for the rest of the scenario.
-    stub = Obj(_quit_started=False, force_quit=Recorder())
+    # Exercise pre-activation quit with the real missing-window branch.
+    # Stub the timer wheel so no live 6s watchdog remains.
+    stub = _StubNamespace(_quit_started=False, force_quit=Recorder())
     stub._destroy_main_window = lambda: App._destroy_main_window(stub)
     saved_dbus = app_mod.stop_dbus_service
     saved_timer_wheel = app_mod.timer_wheel
     saved_sm = getattr(gl, "signal_manager", None)
     app_mod.stop_dbus_service = Recorder()
-    app_mod.timer_wheel = Obj(schedule=Recorder())
-    gl.signal_manager = Obj(trigger_signal_sync=_trigger_signal)
+    app_mod.timer_wheel = _StubNamespace(schedule=Recorder())
+    gl.signal_manager = _StubNamespace(trigger_signal_sync=_trigger_signal)
     reached = False
     try:
         with no_real_exit():
@@ -477,18 +445,16 @@ class _RaisingLoggers:
         raise _ProbeDone()
 
 
-def drive_on_quit(signal_manager, store_cache=None, watchdog=None) -> Obj:
-    """Run the real App.on_quit unbound on a stub, down to the log-sink loop.
+def drive_on_quit(signal_manager, store_cache=None, watchdog=None) -> _StubNamespace:
+    """Run App.on_quit on a stub through the log-sink boundary.
 
-    Everything on_quit touches before that cut is stubbed out. Returns the
-    stub, the Recorder standing in for timer_wheel.schedule, and the one
-    standing in for stop_boot_rescan, which dates how far the teardown got.
+    Return probes for the watchdog and stop_boot_rescan order.
     """
     import src.app as app_mod
     from src.backend import ui_port
 
     watchdog = Recorder() if watchdog is None else watchdog
-    stub = Obj(_quit_started=False, force_quit=lambda: None)
+    stub = _StubNamespace(_quit_started=False, force_quit=lambda: None)
     stub._destroy_main_window = lambda: App._destroy_main_window(stub)
 
     saved = {
@@ -503,10 +469,10 @@ def drive_on_quit(signal_manager, store_cache=None, watchdog=None) -> Obj:
     }
     stop_boot_rescan = Recorder()
     app_mod.stop_dbus_service = Recorder()
-    app_mod.timer_wheel = Obj(schedule=watchdog)
+    app_mod.timer_wheel = _StubNamespace(schedule=watchdog)
     gl.signal_manager = signal_manager
-    gl.deck_manager = Obj(stop_boot_rescan=stop_boot_rescan)
-    gl.store_backend = None if store_cache is None else Obj(store_cache=store_cache)
+    gl.deck_manager = _StubNamespace(stop_boot_rescan=stop_boot_rescan)
+    gl.store_backend = None if store_cache is None else _StubNamespace(store_cache=store_cache)
     gl.loggers = _RaisingLoggers()
     reached = False
     try:
@@ -530,19 +496,15 @@ def drive_on_quit(signal_manager, store_cache=None, watchdog=None) -> Obj:
         "that follow cannot be trusted; something on the teardown path raised "
         "before the cut"
     )
-    return Obj(stub=stub, watchdog=watchdog, stop_boot_rescan=stop_boot_rescan)
+    return _StubNamespace(stub=stub, watchdog=watchdog, stop_boot_rescan=stop_boot_rescan)
 
 
-def check_appquit_handlers_isolated() -> None:
-    """A raising AppQuit handler must not deny its peers the notification.
+def check_app_quit_handlers_isolated() -> None:
+    """Isolate failures among synchronous AppQuit observers.
 
-    The fan-out is synchronous, because the process exits moments later, and
-    its observers are strangers to each other.
+    Async fan-out may complete before exit, but completion is not guaranteed.
     """
-    # Three failure shapes run here: a plain exception, a sys.exit, and a
-    # handler whose failure cannot be named, because an rpyc netref raises
-    # again from inside the error path. A bound method sits behind them, so
-    # the weak retrieval path is covered too.
+    # Cover Exception, SystemExit, unnameable netref failure, and weak bound method.
     import sys
     import weakref
 
@@ -558,9 +520,10 @@ def check_appquit_handlers_isolated() -> None:
             ran.append("bound")
 
     class _NetrefLikeHandler:
-        """Nameable while its simulated connection is up, unnameable once its
-        hook has run. A real netref is alive at connect_signal time and dead
-        when the fan-out reports that it failed."""
+        """Become unnameable after the simulated connection drops.
+
+        This matches a netref that dies between registration and error reporting.
+        """
 
         connected = True
 
@@ -615,17 +578,15 @@ def check_appquit_handlers_isolated() -> None:
 
 
 def check_quit_drains_store_cache_index() -> None:
-    """on_quit must flush the deferred store index, behind the watchdog.
+    """Flush the deferred store index after the quit watchdog is armed.
 
-    Without the flush, the deferred read-clock renewals of the last store
-    browse are lost on every quit. os._exit(0) skips the atexit hook, and the
-    debounce timer is a daemon.
+    os._exit skips atexit and the debounce timer is a daemon.
     """
     # A flush before the watchdog is armed parks the quit forever on a wedged
     # filesystem.
     watchdog = Recorder()
     probe = _StoreCacheProbe(watchdog)
-    result = drive_on_quit(Obj(trigger_signal_sync=Recorder()),
+    result = drive_on_quit(_StubNamespace(trigger_signal_sync=Recorder()),
                            store_cache=probe, watchdog=watchdog)
     stub = result.stub
 
@@ -653,12 +614,12 @@ def check_quit_drains_store_cache_index() -> None:
 def check_force_quit_terminates_backends() -> None:
     saved_pm = getattr(gl, "plugin_manager", None)
     terminate = Recorder()
-    gl.plugin_manager = Obj(terminate_all_backends=terminate)
+    gl.plugin_manager = _StubNamespace(terminate_all_backends=terminate)
     code = None
     try:
         with no_real_exit():
             try:
-                App.force_quit(Obj())
+                App.force_quit(_StubNamespace())
             except _ForcedExit as e:
                 code = e.code
 
@@ -674,11 +635,11 @@ def check_force_quit_terminates_backends() -> None:
         def _wedged():
             raise RuntimeError("backend registry is wedged")
 
-        gl.plugin_manager = Obj(terminate_all_backends=_wedged)
+        gl.plugin_manager = _StubNamespace(terminate_all_backends=_wedged)
         code = None
         with no_real_exit():
             try:
-                App.force_quit(Obj())
+                App.force_quit(_StubNamespace())
             except _ForcedExit as e:
                 code = e.code
         assert code == 1, (
@@ -691,9 +652,7 @@ def check_force_quit_terminates_backends() -> None:
 
 
 def main() -> None:
-    # Line-buffered output. Several checks below fail by dying from the
-    # signal, and run_all.py captures stdout through a pipe, so a
-    # block-buffered scenario would report an exit code with no output.
+    # Line-buffer output so signal deaths retain diagnostics in run_all's pipe.
     sys.stdout.reconfigure(line_buffering=True)
     fixtures.start_watchdog(60, label="scenario_sigterm_quit")
     recorder = check_sigint_stays_python_handler()
@@ -703,16 +662,13 @@ def main() -> None:
     report_signal_path(signal.SIGTERM, "SIGTERM")
     report_signal_path(signal.SIGHUP, "SIGHUP")
     check_unix_signal_keeps_source_armed()
-    # Each signal is delivered twice. The second delivery proves the first
-    # dispatch left the source and GLib's sigaction in place. Otherwise
-    # SIG_DFL is back and this kill takes the interpreter down, which
-    # run_all.py reports as a failure.
+    # Deliver twice to prove the first dispatch preserved the source and sigaction.
     for signum, name in ((signal.SIGTERM, "SIGTERM"), (signal.SIGHUP, "SIGHUP")):
         check_signal_reaches_on_quit(recorder, signum, name)
         check_signal_reaches_on_quit(recorder, signum, f"{name} (second delivery)")
     check_quit_is_idempotent()
     check_quit_tolerates_missing_main_win()
-    check_appquit_handlers_isolated()
+    check_app_quit_handlers_isolated()
     check_quit_drains_store_cache_index()
     check_force_quit_terminates_backends()
     check_unix_signal_add_degrades()

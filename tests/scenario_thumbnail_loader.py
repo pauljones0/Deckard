@@ -1,24 +1,5 @@
-"""The off-main thumbnail loader decodes on a pool, cancels stale work, and
-delivers on the main loop in batches.
-
-ThumbnailLoader takes its decode, its apply, its marshal, its cache and its pool
-as arguments, so the whole thing drives here with a fake decoder that records
-its order, a fake pool that runs its tasks on demand, and a fake marshal that
-stands in for the main loop. No GTK widget, no real image, no display.
-
-The checks pin the six promises the page-flip stall fix rests on:
-
-- a decode is deferred to the pool, never run inline where the request is made;
-- the newest request decodes first (LIFO);
-- a target that is gone takes no decode and no delivery, and raises nothing;
-- a repeat is served from the cache with no second decode;
-- a page flip cancels the requests it overtook and the results it overtook;
-- a wave of finished decodes is delivered in one marshalled pass, not one each.
-
-The last check also proves build_loader() wires the shared DeadlinePool and the
-shared ByteLRUCache, so the real path reuses those primitives rather than a bare
-thread pool or a second cache.
-"""
+"""Verify pooled LIFO decoding; targets removed before decode cancel decoding
+and delivery, while targets removed after decode cancel only delivery."""
 import fixtures  # noqa: F401  (import first: isolated --data tempdir)
 
 import gc
@@ -32,13 +13,7 @@ from src.windows.AssetManager.thumbnail_loader import (
 
 
 class FakePool:
-    """Collects submitted tasks and runs them only when told.
-
-    Each task the loader submits is one "decode the newest pending" call. The
-    test runs them in submit order, which is FIFO, on purpose: the loader must
-    still decode the items in LIFO order, because each task takes the newest
-    entry off the stack when it runs, not when it was submitted.
-    """
+    """Collect tasks for FIFO execution while each takes the newest decode."""
 
     def __init__(self):
         self.tasks: list = []
@@ -49,8 +24,7 @@ class FakePool:
         return None
 
     def run_all(self):
-        # Snapshot: a task the loader submits during this drain waits for the
-        # next call, which models a pool that is already busy.
+        # Tasks submitted during this drain wait for the next call.
         pending, self.tasks = self.tasks, []
         for task in pending:
             task()
@@ -59,13 +33,8 @@ class FakePool:
         self.shutdowns += 1
 
 
-class FakeMain:
-    """Stands in for the main loop.
-
-    marshal() queues a callback rather than running it, so a wave of decodes
-    accumulates before the flush drains them. in_marshal is set while a queued
-    callback runs, so apply can prove it only ever runs from the main loop.
-    """
+class FakeMainLoop:
+    """Queue callbacks so decodes accumulate before a main-loop flush."""
 
     def __init__(self):
         self.queued: list = []
@@ -93,7 +62,7 @@ class Target:
 class Recorder:
     """A fake decode and a fake apply that record what ran and when."""
 
-    def __init__(self, main: FakeMain):
+    def __init__(self, main: FakeMainLoop):
         self.main = main
         self.decoded: list[str] = []
         self.delivered: list[tuple[object, bytes | None]] = []
@@ -105,20 +74,19 @@ class Recorder:
 
     def apply(self, target, data) -> None:
         if not self.main.in_marshal:
-            # apply reached a target without going through the marshal, which
-            # on the real path is an off-main touch of a GTK widget.
+            # The real path would touch a GTK widget off the main thread.
             self.applied_off_main = True
         self.delivered.append((target, data))
 
 
-def make_loader(main: FakeMain, recorder: Recorder, pool: FakePool,
+def make_loader(main: FakeMainLoop, recorder: Recorder, pool: FakePool,
                 cache: ByteLRUCache) -> ThumbnailLoader:
     return ThumbnailLoader(decode=recorder.decode, apply=recorder.apply,
                            marshal=main.marshal, cache=cache, pool=pool)
 
 
-def fresh():
-    main = FakeMain()
+def make_loader_fixture():
+    main = FakeMainLoop()
     recorder = Recorder(main)
     pool = FakePool()
     cache = ByteLRUCache(max_bytes=8 * 1024 * 1024)
@@ -127,9 +95,8 @@ def fresh():
 
 
 def check_decode_is_deferred() -> int:
-    """A miss submits to the pool; it does not decode inline on the caller's
-    thread. Kills a mutation that decodes on the main loop."""
-    main, recorder, pool, cache, loader = fresh()
+    """A miss submits to the pool instead of decoding on the caller's thread."""
+    main, recorder, pool, cache, loader = make_loader_fixture()
     target = Target()
     loader.request("k", target)
     if recorder.decoded:
@@ -150,8 +117,8 @@ def check_decode_is_deferred() -> int:
 
 
 def check_lifo_order() -> int:
-    """The newest request decodes first. Kills LIFO->FIFO."""
-    main, recorder, pool, cache, loader = fresh()
+    """The newest request decodes first."""
+    main, recorder, pool, cache, loader = make_loader_fixture()
     targets = {name: Target() for name in ("a", "b", "c")}
     for name in ("a", "b", "c"):
         loader.request(name, targets[name])
@@ -172,9 +139,8 @@ def check_lifo_order() -> int:
 
 
 def check_weakref_cancels_before_decode() -> int:
-    """A target gone before its task runs takes no decode and no delivery, and
-    raises nothing. Kills a dropped weak-ref check on the decode side."""
-    main, recorder, pool, cache, loader = fresh()
+    """A target gone before its task runs takes no decode, delivery, or raise."""
+    main, recorder, pool, cache, loader = make_loader_fixture()
     target = Target()
     loader.request("k", target)
     del target
@@ -195,9 +161,8 @@ def check_weakref_cancels_before_decode() -> int:
 
 
 def check_weakref_cancels_before_delivery() -> int:
-    """A target gone after its decode but before the flush takes no delivery.
-    Kills a dropped weak-ref check on the delivery side."""
-    main, recorder, pool, cache, loader = fresh()
+    """A target gone after decode but before the flush takes no delivery."""
+    main, recorder, pool, cache, loader = make_loader_fixture()
     target = Target()
     loader.request("k", target)
     pool.run_all()
@@ -217,9 +182,8 @@ def check_weakref_cancels_before_delivery() -> int:
 
 
 def check_cache_serves_repeat() -> int:
-    """A repeat of a decoded key is served from the cache, with no second
-    decode, and still delivers. Kills a bypassed cache."""
-    main, recorder, pool, cache, loader = fresh()
+    """A repeated key is delivered from the cache without another decode."""
+    main, recorder, pool, cache, loader = make_loader_fixture()
     first = Target()
     loader.request("k", first)
     pool.run_all()
@@ -227,7 +191,6 @@ def check_cache_serves_repeat() -> int:
 
     second = Target()
     loader.request("k", second)
-    # A hit needs no pool task.
     if pool.tasks:
         print(f"FAIL(cache): a cache hit queued {len(pool.tasks)} pool tasks, "
               f"expected 0 -- the repeat must be served from the cache")
@@ -248,9 +211,8 @@ def check_cache_serves_repeat() -> int:
 
 
 def check_page_flip_cancels_pending() -> int:
-    """A page flip drops the requests it overtook: a not-yet-decoded request is
-    cancelled. Kills a page-flip that leaves stale pending in place."""
-    main, recorder, pool, cache, loader = fresh()
+    """A page flip cancels requests that have not decoded."""
+    main, recorder, pool, cache, loader = make_loader_fixture()
     stale = Target()
     loader.request("stale", stale)
     loader.begin_generation()
@@ -269,9 +231,8 @@ def check_page_flip_cancels_pending() -> int:
 
 
 def check_page_flip_drops_stale_result() -> int:
-    """A result decoded before a flip does not paint after it, and a request
-    made after the flip does. Kills an ignored epoch at delivery."""
-    main, recorder, pool, cache, loader = fresh()
+    """A page flip drops old decoded results but permits new requests."""
+    main, recorder, pool, cache, loader = make_loader_fixture()
     old = Target()
     loader.request("old", old)
     pool.run_all()  # decoded under the old epoch, waiting for the flush
@@ -297,9 +258,8 @@ def check_page_flip_drops_stale_result() -> int:
 
 
 def check_batched_delivery() -> int:
-    """A wave of finished decodes is delivered in one marshalled pass, and every
-    delivery runs on the main loop. Kills one-idle-each and an off-main apply."""
-    main, recorder, pool, cache, loader = fresh()
+    """A decode wave is delivered in one marshalled main-loop pass."""
+    main, recorder, pool, cache, loader = make_loader_fixture()
     targets = [Target() for _ in range(5)]
     for i, target in enumerate(targets):
         loader.request(f"k{i}", target)
@@ -323,18 +283,8 @@ def check_batched_delivery() -> int:
 
 
 def check_real_pixbuf_roundtrip() -> int:
-    """The real serialize and deserialize preserve a pixbuf byte for byte.
-
-    The scenario above drives the loader with a fake decoder, so the real
-    GdkPixbuf round trip never runs there. This leg runs it on a real pixbuf,
-    with no display: GdkPixbuf.Pixbuf.new needs none.
-
-    250px RGB pads its rowstride from 750 to 752, so the pixel buffer carries
-    two bytes of padding per row that width times channels does not account for.
-    A serializer that assumes rowstride equals width times channels corrupts
-    exactly this case, so the leg asserts the whole buffer and every dimension
-    survive the round trip unchanged.
-    """
+    """Serialization preserves all pixbuf bytes and dimensions, including a
+    padded RGB rowstride."""
     import gi
 
     gi.require_version("GdkPixbuf", "2.0")

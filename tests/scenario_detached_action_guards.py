@@ -1,12 +1,4 @@
-"""A detached action answers its readers instead of raising.
-
-Page.clear_action_objects tears an action down and detaches its page, because
-the page describes the live phase and that teardown ends it. Every reader of
-action.page therefore has to answer for a detached action. The readers that
-dereferenced it raised AttributeError instead, on the teardown path and from
-the sidebar, and the slot's annotation hid that by claiming a page is always
-there.
-"""
+"""Require detached actions to return off-page values instead of raising."""
 
 import threading
 import types
@@ -21,11 +13,7 @@ from src.backend.PluginManager.ActionCore import ActionCore  # noqa: E402
 
 
 def _action(page: "Page | None") -> ActionCore:
-    """An ActionCore with the state its teardown and its page readers touch.
-
-    __init__ needs a deck controller, a plugin and a real page, and none of
-    that takes part in the contract under test.
-    """
+    """Build only the ActionCore state used by teardown and page readers."""
     action = ActionCore.__new__(ActionCore)
     action.page = page
     action.state = 0
@@ -97,12 +85,7 @@ def check_detached_readers_answer() -> None:
 
 
 def check_presence_still_decides_the_index() -> None:
-    """An attached action that is not on the deck's active page answers -1.
-
-    A page reference alone does not make an action live. Without the presence
-    check an off-page action reports a real position, and the label, image and
-    background permissions compare their control index against that.
-    """
+    """Require an attached but inactive-page action to report index -1."""
 
     class _Screensaver:
         showing = False
@@ -153,12 +136,8 @@ def check_presence_still_decides_the_index() -> None:
     print("PASS: presence, and not the page reference alone, decides the action index")
 
 
-def check_attached_readers_still_reach_the_page() -> None:
-    """The guards did not cut the live path off from its page.
-
-    A guard that answered the detached case by never reading the page would
-    make an attached action look detached too.
-    """
+def check_attached_actions_read_and_write_page() -> None:
+    """Require attached actions to continue reading and writing through their page."""
     reads: list = []
 
     class _Page:
@@ -205,7 +184,7 @@ def main() -> None:
     check_clear_action_objects_detaches()
     check_detached_readers_answer()
     check_presence_still_decides_the_index()
-    check_attached_readers_still_reach_the_page()
+    check_attached_actions_read_and_write_page()
 
     print("PASS: scenario_detached_action_guards")
 

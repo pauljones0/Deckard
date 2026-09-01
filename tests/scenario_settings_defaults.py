@@ -2,10 +2,8 @@
 Pins the app-settings DEFAULTS table.
 """
 
-# SettingsManager owns one DEFAULTS table and AppSettings reads and writes
-# through it, so a transcription slip fails here. store.custom-stores defaults
-# to a list, the value the writer appends to, and system.keep-running has no
-# default, so None means never asked.
+# Pin DEFAULTS and AppSettings to one schema, including list-valued custom stores.
+# system.keep-running uses None for "never asked".
 import fixtures  # noqa: F401  (isolates gl.DATA_PATH before anything reads it)
 import globals as gl
 
@@ -89,8 +87,8 @@ PROPERTIES = {
     "animation_pause_mode": ("performance", "animation-pause-mode"),
     "animation_idle_minutes": ("performance", "animation-idle-minutes"),
     "auto_update": ("store", "auto-update"),
-    "install_scripts": ("store", "install-scripts"),
-    "responsibility_notes_agreed": ("store", "responsibility-notes-agreed"),
+    "install_script_policy": ("store", "install-scripts"),
+    "responsibility_notes_accepted": ("store", "responsibility-notes-agreed"),
     "enable_custom_stores": ("store", "enable-custom-stores"),
     "enable_custom_plugins": ("store", "enable-custom-plugins"),
     "custom_stores": ("store", "custom-stores"),
@@ -122,8 +120,8 @@ SAMPLES = {
     "animation_pause_mode": "system-idle",
     "animation_idle_minutes": 17,
     "auto_update": False,
-    "install_scripts": "never",
-    "responsibility_notes_agreed": True,
+    "install_script_policy": "never",
+    "responsibility_notes_accepted": True,
     "enable_custom_stores": True,
     "enable_custom_plugins": True,
     "custom_stores": [{"url": "https://example.invalid", "branch": "main"}],
@@ -176,7 +174,7 @@ def check_empty_settings_read_as_defaults() -> None:
     print("PASS: empty settings read back as the pinned defaults")
 
 
-def check_custom_stores_is_list() -> None:
+def check_custom_store_and_plugin_defaults_are_lists() -> None:
     """StoreBackend and the Settings dialog must agree on the type. The
     dialog appends to a list, so the default is a list."""
     app = AppSettings({})
@@ -243,9 +241,10 @@ def check_round_trip_through_dict() -> None:
 
 
 def check_unknown_keys_rejected_both_ways() -> None:
-    """DEFAULTS is the schema on writes as well as reads. A misspelled key
-    must raise on set() as it does on get(), and the runtime-computed keys
-    CustomContentGroup uses must keep working."""
+    """Use DEFAULTS as the read and write schema.
+
+    Reject misspellings while retaining CustomContentGroup's computed keys.
+    """
     app = AppSettings({})
 
     for section, key in (("general", "hold-tmie"), ("nope", "hold-time")):
@@ -255,7 +254,7 @@ def check_unknown_keys_rejected_both_ways() -> None:
         except KeyError:
             pass
         try:
-            app.set(section, key, 1)
+            app.set_section_value(section, key, 1)
             raise AssertionError(f"set({section!r}, {key!r}) did not raise")
         except KeyError:
             pass
@@ -263,7 +262,7 @@ def check_unknown_keys_rejected_both_ways() -> None:
 
     # The generic path CustomContentGroup depends on stays open.
     for runtime_key in ("enable-custom-stores", "enable-custom-plugins"):
-        app.set("store", runtime_key, True)
+        app.set_section_value("store", runtime_key, True)
         assert app.get("store", runtime_key) is True
 
     print("PASS: unknown keys raise KeyError on get and set")
@@ -291,7 +290,7 @@ def check_wraps_shared_dict() -> None:
 if __name__ == "__main__":
     check_table_matches_expectations()
     check_empty_settings_read_as_defaults()
-    check_custom_stores_is_list()
+    check_custom_store_and_plugin_defaults_are_lists()
     check_keep_running_tri_state()
     check_mutable_defaults_are_not_shared()
     check_round_trip_through_dict()

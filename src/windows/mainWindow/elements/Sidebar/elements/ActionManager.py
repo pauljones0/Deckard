@@ -133,10 +133,8 @@ class ActionExpanderRow(BetterExpander):
         self.load_for_actions(actions.values())
 
     def load_for_actions(self, actions: "Collection[ActionCore | NoActionHolderFound | ActionOutdated | None]") -> None:
-        # An empty (None) slot falls through every branch below, as it always
-        # did for the registry values this receives.
-        # The two rows below key by the loaded state, which load_for_identifier
-        # binds before it calls here.
+        # Ignore empty slots that match none of the action variants.
+        # Missing and outdated rows require the state bound by load_for_identifier.
         active_state = self.active_state
         number_of_actions = len(actions)
         for i, action in enumerate(actions):
@@ -181,13 +179,8 @@ class ActionExpanderRow(BetterExpander):
             row.index = i
 
     def action_rows(self) -> list[Any]:
-        """The rows that stand for an action, in the order they are shown.
-
-        The add button is a row of the same list and stands for no action, so
-        it is never one of these. Every other row holds one entry of the page's
-        actions list, which covers the rows for an action whose plugin is
-        missing or outdated, so a position here is an action index.
-        """
+        """Return action rows in display order, excluding the add button.
+        Missing and outdated rows retain their positions as page action indexes."""
         rows = self.get_rows() or []
         return [row for row in rows if row is not self.add_action_button]
 
@@ -215,12 +208,8 @@ class ActionExpanderRow(BetterExpander):
 
     def apply_drop(self, source_index: int, dest_index: int,
                    identifier: "InputIdentifier | None", state: "int | None") -> bool:
-        """Run a planned drop from the idle the drop handler queues.
-
-        The sidebar can load another input or another state between the drop and
-        this idle. The planned rows then name a list that nobody dropped
-        anything on, so the drop goes no further.
-        """
+        """Run a queued drop only if its input and state are still active.
+        The sidebar can load another target before this idle runs."""
         if identifier != self.active_identifier or state != self.active_state:
             return GLib.SOURCE_REMOVE
 
@@ -237,11 +226,8 @@ class ActionExpanderRow(BetterExpander):
         self.move_row(row, rows.index(row) + offset)
 
     def move_row(self, row: "ActionRow", dest_index: int) -> None:
-        """Move one action row to dest_index, and take the page and the deck with it.
-
-        A destination outside the action rows is a no-op, which is what the
-        first row asks for on a move up and the last row on a move down.
-        """
+        """Move one action row and apply the order to the page and deck.
+        Ignore destinations outside the action rows, including moves beyond either end."""
         rows = self.action_rows()
         if row not in rows:
             return
@@ -256,23 +242,16 @@ class ActionExpanderRow(BetterExpander):
         if not self.reorder_actions(source_index, dest_index):
             return
 
-        # reorder_child_after puts the row on the far side of its neighbour,
-        # which is below the neighbour for a row that starts above it and above
-        # the neighbour for a row that starts below it. The row at dest_index
-        # is therefore the neighbour to name in both directions.
+        # reorder_child_after places the row on the far side of its neighbour.
+        # The row at dest_index is the correct neighbour in both directions.
         self.reorder_child_after(row, rows[dest_index])
 
-        # Keep row.index in step with the new visual order. The sidebar rebuild
-        # runs at idle priority, because the page-change notification queues it
-        # with GLib.idle_add, so a second move can dispatch before that rebuild
-        # lands and read a stale index.
+        # Update row indexes before the idle-priority sidebar rebuild.
+        # A second move can otherwise read a stale index.
         self.update_indices()
 
     def reorder_actions(self, source_index: int, dest_index: int) -> bool:
-        """Write the new order to the page, and load the page onto the deck.
-
-        Answers whether the page changed.
-        """
+        """Write the new order, load the page onto the deck, and report a change."""
         controller = services.require_main_window().get_active_controller()
         if controller is None:
             return False
@@ -289,36 +268,14 @@ class ActionExpanderRow(BetterExpander):
         controller.load_page(page)
         return True
 
-    def update_comment_for_index(self, action_index: int) -> None:
-        visible_child = services.require_main_window().leftArea.deck_stack.get_visible_child()
-        if visible_child is None:
-            return
-        controller = visible_child.deck_controller
-        page = controller.active_page
-        identifier = self.active_identifier
-        state = self.active_state
-        if page is None or identifier is None or state is None:
-            return
-        comment = page.get_action_comment(index=action_index, state=state, identifier=identifier)
-        rows = self.get_rows()
-        if not 0 <= action_index < len(rows):
-            # The sidebar rebuild runs at idle priority, so a comment update can
-            # name a row a later rebuild already dropped. An index past the rows
-            # then names nothing, and must move nothing rather than raise.
-            return
-        rows[action_index].set_comment(comment)
-
-
 class ActionRowLabelToggle(Gtk.Button):
     def __init__(self, action_row: "ActionRow"):
         self.action_row = action_row
         super().__init__(tooltip_text="Control which labels are controlled by this action")
 
-        # The toggled-handler id per config button index, absent while that
-        # button is disconnected. Tracked ids keep connect and disconnect
-        # idempotent: a disconnect while already off cannot raise, and a
-        # reconnect cannot stack a second handler.
-        self._label_handlers: dict[int, int] = {}
+        # Toggled-handler ID by config button index, absent while disconnected.
+        # Tracking keeps connect and disconnect idempotent.
+        self._label_handler_ids: dict[int, int] = {}
 
         self.build()
 
@@ -377,14 +334,14 @@ class ActionRowLabelToggle(Gtk.Button):
 
     def connect_signals(self) -> None:
         for i, button in enumerate(self.config_buttons):
-            if i not in self._label_handlers:
-                self._label_handlers[i] = button.connect("toggled", self.on_label_toggled)
+            if i not in self._label_handler_ids:
+                self._label_handler_ids[i] = button.connect("toggled", self.on_label_toggled)
 
     def disconnect_signals(self) -> None:
         for i, button in enumerate(self.config_buttons):
-            handler = self._label_handlers.pop(i, None)
-            if handler is not None:
-                button.disconnect(handler)
+            handler_id = self._label_handler_ids.pop(i, None)
+            if handler_id is not None:
+                button.disconnect(handler_id)
 
     def set_active(self, values: list[bool]) -> None:
         self.disconnect_signals()
@@ -423,12 +380,10 @@ class ActionRow(Adw.ActionRow):
         self.active_identifier = None
         self.total_rows = total_rows
         self.expander = expander
-        # The toggled-handler ids, or None while a toggle is disconnected. A
-        # tracked id keeps connect and disconnect idempotent: a disconnect while
-        # already off cannot raise, and a reconnect cannot stack a second
-        # handler.
-        self._image_handler: int | None = None
-        self._background_handler: int | None = None
+        # Toggled-handler IDs, or None while disconnected.
+        # Tracking keeps connect and disconnect idempotent.
+        self._image_handler_id: int | None = None
+        self._background_handler_id: int | None = None
         self.build()
         self.update_allow_box_visibility()
         self.init_dnd()
@@ -503,6 +458,16 @@ class ActionRow(Adw.ActionRow):
         self.allow_box.set_visible(True) #TODO
         return
 
+    def _control_index_for_toggle(self, active: bool) -> "tuple[bool, int | None]":
+        """Return whether to write a control permission and its filtered action index.
+        Write None when off; skip -1 or None indexes from screensaver or absent actions."""
+        if not active:
+            return True, None
+        own = self.action_object.get_own_action_index()
+        if own is None or own < 0:
+            return False, None
+        return True, own
+
     def on_allow_image_toggled(self, button: Gtk.ToggleButton) -> None:
         for child in self.expander.get_rows():
             if child is self:
@@ -527,7 +492,9 @@ class ActionRow(Adw.ActionRow):
             log.error("Input state not found")
             return
         
-        new_value = self.index if button.get_active() else None
+        write, new_value = self._control_index_for_toggle(button.get_active())
+        if not write:
+            return
         input_state.action_permission_manager.set_image_control_index(new_value, True, True)
 
         if page is not None:
@@ -556,7 +523,9 @@ class ActionRow(Adw.ActionRow):
             log.error("Input state not found")
             return
         
-        new_value = self.index if button.get_active() else None
+        write, new_value = self._control_index_for_toggle(button.get_active())
+        if not write:
+            return
         input_state.action_permission_manager.set_background_control_index(new_value, True, True)
 
         if page is not None:
@@ -586,27 +555,30 @@ class ActionRow(Adw.ActionRow):
             log.error("Input state not found")
             return
         
-        index_value = self.action_object.get_own_action_index() if value else None
-
+        # Same guard as the image and background toggles: a -1 or None own
+        # index (screensaver showing, or the action absent) must not be stored.
+        write, index_value = self._control_index_for_toggle(value)
+        if not write:
+            return
         input_state.action_permission_manager.set_label_control_index(i, index_value, True, True)
 
     def connect_image_signal(self) -> None:
-        if self._image_handler is None:
-            self._image_handler = self.allow_image_toggle.connect("toggled", self.on_allow_image_toggled)
+        if self._image_handler_id is None:
+            self._image_handler_id = self.allow_image_toggle.connect("toggled", self.on_allow_image_toggled)
 
     def disconnect_image_signal(self) -> None:
-        if self._image_handler is not None:
-            self.allow_image_toggle.disconnect(self._image_handler)
-            self._image_handler = None
+        if self._image_handler_id is not None:
+            self.allow_image_toggle.disconnect(self._image_handler_id)
+            self._image_handler_id = None
 
     def connect_background_signal(self) -> None:
-        if self._background_handler is None:
-            self._background_handler = self.allow_background_toggle.connect("toggled", self.on_allow_background_toggled)
+        if self._background_handler_id is None:
+            self._background_handler_id = self.allow_background_toggle.connect("toggled", self.on_allow_background_toggled)
 
     def disconnect_background_signal(self) -> None:
-        if self._background_handler is not None:
-            self.allow_background_toggle.disconnect(self._background_handler)
-            self._background_handler = None
+        if self._background_handler_id is not None:
+            self.allow_background_toggle.disconnect(self._background_handler_id)
+            self._background_handler_id = None
 
     def set_image_toggled(self, value: bool) -> None:
         self.disconnect_image_signal()
@@ -633,19 +605,8 @@ class ActionRow(Adw.ActionRow):
         self.expander.move_row_by(self, 1)
 
     def init_dnd(self) -> None:
-        """Let the user drag this row onto another one to reorder the actions.
-
-        The up and down buttons stay, because a drag needs a pointer and they
-        do not.
-
-        Only a row that stands for a loaded action takes a drag or a drop. The
-        row for an action whose plugin is missing or outdated holds a place in
-        the list and accepts neither. That costs almost nothing, because a drop
-        on the upper half of a row names the same place as a drop on the lower
-        half of the row above it. The one place a drag cannot name is the end of
-        a list that ends in such a row. The up and down buttons reach it, one
-        step at a time.
-        """
+        """Enable drag reordering between loaded action rows.
+        Missing or outdated rows reject drag; buttons preserve non-drag access to list ends."""
         dnd_source = Gtk.DragSource()
         dnd_source.set_actions(Gdk.DragAction.MOVE)
         dnd_source.connect("prepare", self.on_dnd_prepare)
@@ -706,10 +667,8 @@ class ActionRow(Adw.ActionRow):
             return False
         source_index, dest_index = plan
 
-        # Move on an idle, not here. This handler runs inside the drop, and the
-        # move rebuilds every row of the list, which takes the widget the
-        # handler belongs to out of the tree mid-drop. The input and the state
-        # travel with the plan, because the sidebar can load another one first.
+        # Move on idle because rebuilding rows inside the drop removes this handler's widget.
+        # Carry input and state because the sidebar can load another target first.
         GLib.idle_add(self.expander.apply_drop, source_index, dest_index,
                       self.expander.active_identifier, self.expander.active_state)
         return True
@@ -727,13 +686,11 @@ class ActionRow(Adw.ActionRow):
         else:
             self.left_bottom_box.set_visible(True)
 
-        # comment_label is the widget build() puts in left_bottom_box;
-        # there has never been a comment_row (AttributeError on every call).
+        # build() stores the comment widget as comment_label.
         self.comment_label.set_label(comment)
 
 class AddActionButtonRow:
     def __init__(self, expander: ActionExpanderRow) -> None:
-        # super().__init__(css_classes=["no-padding"])
         self.expander: ActionExpanderRow = expander
         self.button = Adw.ButtonRow(title=gl.lm.get("action-editor-add-new-action"), css_classes=["suggested-action", "add-action-button"])
         # self.button = Gtk.Button(hexpand=True, vexpand=True, overflow=Gtk.Overflow.HIDDEN,

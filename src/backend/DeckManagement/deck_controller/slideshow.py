@@ -1,21 +1,6 @@
-"""The wallpaper-slideshow timing and index model.
+"""Track wallpaper-slideshow order, current path, and caller-supplied timing.
 
-A deck background can hold an ordered list of still images that rotate on an
-interval. This class owns which image shows now, when the next one is due, and
-the order they follow. It owns no image data, no file I/O and no toolkit. The
-render path builds the image for current_path() and swaps it; this class only
-says which path and when.
-
-The model takes the current time from the caller, so it has no clock and no
-sleep. The media-player tick passes a monotonic reading each pass, and a test
-passes a value it controls. due() answers whether the interval has elapsed,
-advance() moves to the next image and re-seeds the timebase, and maybe_advance()
-pairs the two.
-
-Cancellation is not a method here. The render path drops its reference to the
-model when the page changes or the deck tears down, and a dropped model never
-ticks again.
-"""
+The model owns no images, I/O, toolkit, clock, sleep, or cancellation."""
 from __future__ import annotations
 
 import random
@@ -28,19 +13,12 @@ SHUFFLE = "shuffle"
 
 
 class Slideshow:
-    """An ordered rotation over a list of image paths.
-
-    A list of one image, or of none, never advances: the interval means
-    nothing without a second image to move to. A zero or negative interval
-    also never advances, so a misconfigured interval holds the first image
-    rather than flickering.
-    """
+    """Rotate image paths in order or by shuffled cycles.
+    Fewer than two paths or a nonpositive interval never advances."""
 
     def __init__(self, paths: Sequence[str], interval: float, order: str = IN_ORDER,
                  rng: "random.Random | None" = None) -> None:
-        # Keep only real, non-empty path strings. A None or an empty entry in
-        # the stored list must not become a frame the render path tries to
-        # load.
+        # Remove only non-string and empty entries; the render path checks files later.
         self.paths: list[str] = [p for p in paths if isinstance(p, str) and p]
         self.interval: float = max(0.0, float(interval))
         self.order: str = order if order in (IN_ORDER, SHUFFLE) else IN_ORDER
@@ -55,11 +33,11 @@ class Slideshow:
         # Monotonic time of the last advance or the seed, or None before the
         # timebase is set. due() reads None as "not yet armed".
         self._last_advance: float | None = None
-        # The page this rotation was loaded for. An opaque handle the render
-        # layer sets and reads by identity; the model never looks inside it. It
-        # lets the media tick refuse to advance a rotation whose page is no
-        # longer active, the way the background video guards its own repaint.
+        # Keep an opaque page identity so media ticks reject an inactive page's rotation.
         self.page: object | None = None
+        # Per-image viewports keyed by path; missing entries use the default view.
+        # The render layer reads them when each frame enters the rotation.
+        self.views: dict[str, tuple[float, float, float]] = {}
 
     def _build_sequence(self) -> list[int]:
         indices = list(range(len(self.paths)))
@@ -84,17 +62,12 @@ class Slideshow:
         return self.paths[self.index]
 
     def seed(self, now: float) -> None:
-        """Start the interval clock from now. The render path calls this once
-        it has installed the first frame, so the first swap lands one interval
-        later and not at once."""
+        """Seed after installing the first frame so the first swap waits one interval."""
         self._last_advance = now
 
     def due(self, now: float) -> bool:
-        """Whether the interval has elapsed since the last advance or seed.
-
-        False for a list that cannot rotate (fewer than two images), for a
-        non-positive interval, and before the timebase is seeded.
-        """
+        """Return whether the seeded interval elapsed.
+        Return false for fewer than two images, nonpositive interval, or no seed."""
         if self.interval <= 0 or len(self.paths) <= 1:
             return False
         if self._last_advance is None:
@@ -102,13 +75,8 @@ class Slideshow:
         return now - self._last_advance >= self.interval
 
     def advance(self, now: float) -> "str | None":
-        """Move to the next image, re-seed the timebase from now, and return
-        the new current path.
-
-        The position wraps at the end of the sequence. A shuffle reshuffles on
-        the wrap so the next cycle differs, and avoids replaying the image the
-        last cycle ended on as the first of the new one.
-        """
+        """Advance, reseed, and return the current path, wrapping at sequence end.
+        Shuffle rebuilds each cycle and prevents the boundary image from repeating."""
         if len(self.paths) <= 1:
             # Nothing to move to. Re-seed so a caller that calls advance()
             # directly does not spin, and return the one image unchanged.
@@ -128,9 +96,7 @@ class Slideshow:
         return self.current_path()
 
     def maybe_advance(self, now: float) -> "str | None":
-        """Advance and return the new path when the interval has elapsed, or
-        None when it has not. The render path swaps the background only on a
-        non-None return."""
+        """Return the advanced path when due, or None when no background swap is needed."""
         if not self.due(now):
             return None
         return self.advance(now)

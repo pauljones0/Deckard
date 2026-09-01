@@ -25,34 +25,21 @@ import globals as gl
 
 from src.windows.AssetManager import asset_search
 
-# How long the entry waits for the typing to stop before it says the search
-# changed. Gtk.SearchEntry owns this wait; its default is 150 ms. A pass here
-# scores and sorts a whole icon pack, which is thousands of names, so the wait
-# is longer than the default. It applies to typing only: GTK reports a cleared
-# entry at once, so emptying the box brings the whole grid back with no wait.
+# Wait longer than GTK's 150 ms default because a pass scores thousands of names
+# GTK still reports a cleared entry immediately
 SEARCH_DELAY_MS = 300
 
 
 class ChooserPage(Gtk.Stack):
-    # The search entry connects on_search_changed inside _build, which runs
-    # from this constructor, so both of these must exist before __init__ of
-    # any subclass reaches its own attributes.
+    # _build can emit before a subclass initializes, so these defaults are class-level
     _search_generation = 0
-    _search_showing = True
-    # The query of the last pass that rendered. A page compares it against the
-    # entry when it is shown again, so a grid that fell behind while it was
-    # hidden catches up and one that did not keeps the page it was on.
-    _searched_text = ""
+    _accepts_search_results = True
+    # Last rendered query, used to catch up only grids that changed while hidden
+    _rendered_query = ""
 
     def __init__(self) -> None:
         super().__init__(margin_start=15, margin_end=15, margin_top=15, margin_bottom=15)
-        # The entry holds an emission back for its delay, so one can arrive
-        # after this page stopped showing, and a pass then renders into a page
-        # on its way out. A window that hides unmaps its pages, which covers
-        # the hide, the close and the destroy paths alike. The destroy signal
-        # does not: a widget that is not a window emits it from dispose, and
-        # anything that still holds the page, such as a queued pass, keeps
-        # dispose from running at all.
+        # Unmap invalidates delayed emissions before they render into a hidden page
         self.connect("map", self._on_map)
         self.connect("unmap", self.invalidate_search)
         self._build()
@@ -142,21 +129,16 @@ class ChooserPage(Gtk.Stack):
         pass
 
     def on_search_changed(self, entry: Gtk.SearchEntry) -> None:
-        """Queue a pass over the query the entry now holds.
+        """Queue the current query after the entry delay.
 
-        The entry owns the wait for the typing to stop, so this runs once per
-        pause and not once per keystroke. A page overrides apply_search, never
-        this method: the staleness guard belongs to every page that carries a
-        search entry, and an override here loses it.
+        Pages override apply_search so this shared staleness guard stays active.
         """
-        if not self._search_showing:
+        if not self._accepts_search_results:
             # The entry held this emission for its delay, and the page stopped
             # showing in between. It renders again when it is shown.
             return
         self._search_generation += 1
-        # One turn of the loop, not a wait of its own. A cleared entry reports
-        # at once and a delayed emission can land in the same turn, and the
-        # guard below then leaves one pass of the two.
+        # One loop turn lets the generation guard merge immediate and delayed emissions
         GLib.idle_add(self.run_search, self._search_generation)
 
     def run_search(self, generation: int) -> bool:
@@ -167,88 +149,43 @@ class ChooserPage(Gtk.Stack):
             return False
         query = self.search_entry.get_text()
         self.apply_search(query)
-        return False  # one-shot idle
+        return False
 
-    def search_rendered(self, query: str) -> None:
-        """Record that this page now shows what query asks for.
+    def record_rendered_query(self, query: str) -> None:
+        """Record a query only after its results are visible.
 
-        A page calls this when a pass has put the query on screen, and never
-        when it has only started the work. _on_map compares the entry against
-        what this records, so a pass that gathers off the main thread and is
-        dropped before it renders must leave it alone. Recorded too early, a
-        dropped pass leaves the page believing it is current: the grid keeps
-        the results of the query before, and only another keystroke recovers
-        it, because showing the page again finds nothing to catch up with.
+        A dropped worker pass must leave this stale so the next map catches up.
         """
-        self._searched_text = query
+        self._rendered_query = query
 
     def search_is_current(self, generation: int) -> bool:
-        """Whether a pass queued with generation is still the one to render.
-
-        A pass that gathers off the main thread asks this before it renders,
-        and the main-loop callback that renders asks it again, because the
-        query can move on in between. A later pass, a page turn and a hidden
-        window all answer False. It is the one staleness test a page outside
-        this one may use, so a search that spans two pages guards on the page
-        whose entry holds the query.
-        """
-        return generation == self._search_generation and self._search_showing
+        """Whether this visible page still owns the specified search generation."""
+        return generation == self._search_generation and self._accepts_search_results
 
     def focus_search_entry(self) -> bool:
-        """Take the typing to this page's entry. A one-shot idle callback.
-
-        The cursor goes to the end of the text, because grabbing the focus of
-        an entry selects everything it holds and the next keystroke would then
-        replace the query rather than extend it.
-        """
+        """Focus the entry and move its cursor to the end to preserve the query."""
         self.search_entry.grab_focus()
         self.search_entry.set_position(-1)
-        return False  # one-shot idle
+        return False
 
     def invalidate_search(self, *args: Any) -> None:
-        """Stop searching until this page shows again.
-
-        Every pass in flight goes stale, and so does an emission the entry
-        still holds. The scoring cache goes too: it memoizes the names of a
-        whole pack, which a hidden window has no use for.
-        """
-        self._search_showing = False
+        """Invalidate pending searches and release their scoring cache until remap."""
+        self._accepts_search_results = False
         self._search_generation += 1
         asset_search.release_cache()
 
     def _on_map(self, *args: Any) -> None:
-        """Catch the grid up with the entry, if it fell behind while hidden.
-
-        The entry can be typed into or cleared while this page is hidden, and
-        such a pass is dropped, so the grid would otherwise show the query of
-        the last time the page was up. A query that has not moved renders
-        nothing: a pass restarts the grid at its first page, and switching
-        between the tabs of this window maps a page each time.
-        """
-        self._search_showing = True
-        # Before the catch-up test, so a page that settles its entry as it
-        # shows is compared against the entry it ends up with. Settled after,
-        # the pass below would search for a query this page is about to throw
-        # away.
+        """Render only an entry that changed while the page was hidden."""
+        self._accepts_search_results = True
+        # Settle the entry before deciding whether the visible query needs catch-up
         self.on_shown()
-        if self.search_entry.get_text() == self._searched_text:
+        if self.search_entry.get_text() == self._rendered_query:
             return
         self._search_generation += 1
         self.run_search(self._search_generation)
 
     def on_shown(self) -> None:
-        """Subclass hook: settle the entry as this page shows.
-
-        It runs on the main thread, inside the map handler and before the
-        catch-up pass. A page that keeps whatever the entry holds leaves it
-        alone.
-        """
+        """Settle the entry on the main thread before the map catch-up pass."""
 
     def apply_search(self, query: str) -> None:
-        """Subclass hook: show what query asks for.
-
-        It runs on the main thread, once the typing stops. A page with no
-        grid to filter leaves it alone. A page that renders here says so with
-        search_rendered; one that starts work which renders later says so
-        when that work lands.
-        """
+        """Show the query on the main thread and record it only after rendering."""

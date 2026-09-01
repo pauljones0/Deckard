@@ -1,22 +1,5 @@
-"""update_all_inputs must paint an opaque key on the device under a video.
-
-With a background video set, update_all_inputs leaves the keys to the
-per-frame video loop and syncs the in-app previews only. That loop never
-repaints a key whose composed color is fully opaque, because an opaque tile
-hides the video and nothing about that key changes between frames. So the
-opaque key alone gets its device paint here, on the spot, or the deck keeps
-the previous page's content on it until someone presses it.
-
-A key that is not fully opaque must stay with the video loop and take the
-preview-only path, even when its content just changed.
-
-This overlaps scenario_deck_lifecycle_trio.check_opaque_initial_paint on
-purpose, and neither covers the other. That one drives a stopped writer and
-a hand-drained queue, and proves the content assertion is not vacuous by
-varying the color. This one runs against the live writer, pins the alpha
-boundary one step below opaque, and proves the silence on the non-opaque
-keys is the branch and not a hash skip, by repainting one of them directly.
-"""
+"""Paint fully opaque keys immediately under video while other keys stay preview-only.
+Alpha 254 must remain on the video path, and a direct update must still paint it."""
 import time
 
 import fixtures
@@ -27,14 +10,8 @@ from src.backend.DeckManagement.InputIdentifier import Input
 
 
 class _FakeBGVideo:
-    """Truthy stand-in for a decoded background video (the real object is a
-    BackgroundVideo).
-
-    page is deliberately not the deck's active page, so the media loop's own
-    frame branch treats it as belonging elsewhere and renders nothing from
-    it. Every device write in this scenario is then one the code under test
-    asked for. Only .close() is touched, by teardown.
-    """
+    """Use a non-active page so the live media loop performs no device writes.
+    This leaves only writes requested by the code under test."""
 
     page = None
 
@@ -62,9 +39,7 @@ def main() -> None:
             lambda: deck.last_op_for(f"key:{opaque.index}") is not None, timeout=3)
         time.sleep(0.1)
 
-        # All three keys get new content. Only the first is fully opaque, and
-        # the second sits one step below it, where the video loop still owns
-        # the key.
+        # Give all keys new content; alpha 254 remains owned by the video loop.
         opaque.get_active_state().background_manager.set_page_color(
             [10, 20, 30, 255], update=False)
         boundary.get_active_state().background_manager.set_page_color(
@@ -104,9 +79,7 @@ def main() -> None:
                 f"written here, got {len(extra)} device write(s)"
             )
 
-        # Control leg. The silence above must come from the opacity branch and
-        # not from dedup: the boundary key's content is new, so its own
-        # update() writes it.
+        # A direct boundary-key update proves prior silence came from opacity routing, not dedup.
         seq_before_direct = deck.current_seq()
         boundary.update()
         ok = fixtures.wait_until(

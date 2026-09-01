@@ -1,10 +1,4 @@
-"""
-Regression test for Change Page and Run Command on one button.
-
-ControllerKey snapshots the state and the resolved action objects at key DOWN.
-It then dispatches every event of the gesture to that snapshot, whatever page
-swaps happen in between.
-"""
+"""Verify each key gesture stays on its DOWN-time action snapshot."""
 
 # Stub actions sit on two real Pages over a fake deck, with a recorder on page
 # B's same key to catch bleed.
@@ -82,7 +76,7 @@ class RunCommandLikeAction(RecordingAction):
             self.registered_down = False
 
 
-def inject(page, ident: Input.Key, actions: list) -> None:
+def inject_actions(page, ident: Input.Key, actions: list) -> None:
     """Places stub action objects where get_all_actions_for_input reads them,
     at action_objects[input_type][json_identifier][state][index]."""
     per_state = page.action_objects.setdefault(ident.input_type, {}).setdefault(ident.json_identifier, {})
@@ -115,8 +109,8 @@ def main() -> None:
             tag="page_b_recorder",
             deck_controller=controller, page=page_b, input_ident=ident)
 
-        inject(page_a, ident, [change_action, run_action])
-        inject(page_b, ident, [bleed_recorder])
+        inject_actions(page_a, ident, [change_action, run_action])
+        inject_actions(page_b, ident, [bleed_recorder])
 
         # Press 1. DOWN flips the page mid-gesture.
         deck.fire_key_event(0, True)
@@ -161,16 +155,12 @@ def main() -> None:
         assert bleed_recorder.received == [], \
             f"gesture bleed onto page B on press 2: {bleed_recorder.received}"
 
-        # Press 3. The origin page is evicted mid-gesture. The key handler
-        # holds the pressed page only for the length of the callback, so the
-        # origin page is evictable while the key is down. The dispatch loop
-        # must skip the torn-down snapshot members and still serve a healthy
-        # one. sentinel is detached from page A before the eviction, so
-        # clear_action_objects never tears it down.
+        # Press 3. Evict the origin page mid-gesture, then skip torn-down
+        # snapshot members while still dispatching to a detached healthy one.
         sentinel = RecordingAction(
             tag="snapshot_sentinel",
             deck_controller=controller, page=page_a, input_ident=ident)
-        inject(page_a, ident, [change_action, run_action, sentinel])
+        inject_actions(page_a, ident, [change_action, run_action, sentinel])
 
         controller.load_page(page_a)
         assert fixtures.wait_until(lambda: controller.active_page is page_a)
@@ -210,7 +200,7 @@ def main() -> None:
         survivor = RecordingAction(
             tag="survivor",
             deck_controller=controller, page=page_b, input_ident=ident_iso)
-        inject(page_b, ident_iso, [raiser, survivor])
+        inject_actions(page_b, ident_iso, [raiser, survivor])
 
         deck.fire_key_event(1, True)  # physical key 1 is "1x0" on the 2x4 layout
         assert fixtures.wait_until(lambda: DOWN in survivor.received)
@@ -222,17 +212,14 @@ def main() -> None:
         assert SHORT_UP in survivor.received
         assert UP in raiser.received  # the raiser itself was still dispatched
 
-        # The screensaver engages mid-hold and the gesture dies with the
-        # stash. show() confiscates the whole input set, so the physical
-        # release lands on the replacement key and is swallowed. The stashed
-        # key's hold timer must not stay armed and fire HOLD_START into its
-        # pinned snapshot after the finger left.
+        # A screensaver replaces inputs and swallows the physical release, so
+        # it must cancel the stashed key's hold timer and gesture snapshot.
         controller.hold_time = 0.5
         ident_ss = Input.Key("2x0")
         ss_recorder = RecordingAction(
             tag="ss_recorder",
             deck_controller=controller, page=page_b, input_ident=ident_ss)
-        inject(page_b, ident_ss, [ss_recorder])
+        inject_actions(page_b, ident_ss, [ss_recorder])
 
         key_held = controller.get_input(ident_ss)
         deck.fire_key_event(2, True)  # physical key 2 is "2x0" on the 2x4 layout

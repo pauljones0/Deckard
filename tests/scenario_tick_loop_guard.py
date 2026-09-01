@@ -1,16 +1,5 @@
-"""
-The action tick loop survives a per-input failure and keeps ticking.
-
-tick_actions walks every input on the deck and dispatches one tick each. A
-raise on that walk used to leave the while loop, and the thread that carries
-it, so one broken input stopped every animated action on the deck for the life
-of the process. The guard catches the failure, names the input, rate-limits the
-traceback, and walks on.
-
-A plugin's own on_tick() runs on the action pool and never on this thread, so
-the failure injected here is the dispatch itself: the active-state read the
-loop performs per input.
-"""
+"""Verify that action tick dispatch contains per-input and whole-walk failures,
+reports named rate-limited tracebacks, and does not stop the tick thread."""
 
 # The guard sits per input, not around the walk, so a deterministic failure on
 # one input cannot starve the inputs that follow it in the walk order.
@@ -26,9 +15,7 @@ from src.backend.DeckManagement.InputIdentifier import Input
 # Under run_all.py's 90 s per-scenario default, so a stuck leg reports itself
 # before the harness kills the process with no leg diagnostic.
 WATCHDOG_SECONDS = 60
-# The thread DeckController gives tick_actions. Failures are injected on that
-# thread only, because every other caller of the same method says nothing
-# about this loop.
+# Inject failures only on the thread that runs tick_actions.
 TICK_THREAD = "tick_actions"
 # Tick period for the run. The loop re-reads it every walk and floors its wait
 # at 0.1s, so this buys about ten walks a second and no faster.
@@ -47,14 +34,7 @@ OBSERVED_WALKS = 25
 
 
 class TickCounter:
-    """Counts tick-thread dispatches per input, and raises for one of them.
-
-    The patch sits on the controller input, because get_active_state() is what
-    the walk calls first and what a broken state table breaks. Other threads
-    reach the same method through the media tick and the update path, where a
-    raise would say nothing about this loop, so the injection reads the calling
-    thread.
-    """
+    """Count tick-thread dispatches and raise from one active-state read."""
 
     def __init__(self, controller_input, raising: bool):
         self.controller_input = controller_input
@@ -86,12 +66,7 @@ class TickCounter:
 
 
 class RaisingScreenSaverView:
-    """Forwards to the real screensaver and raises on the tick thread's read.
-
-    The walk reads screen_saver.showing before it touches any input. A raise
-    there belongs to no input, so it proves the arm around the walk. Every
-    other reader, on every other thread, gets the real object's answer.
-    """
+    """Raise on the tick thread's screensaver read and forward all other access."""
 
     def __init__(self, real):
         object.__setattr__(self, "_real", real)
@@ -109,7 +84,7 @@ def marker_records(records: list[str], marker: str = MARKER) -> int:
     return sum(marker in record for record in records)
 
 
-def leg_raising_input_does_not_stop_the_walk(controller, records, raiser, observer) -> None:
+def check_input_failure_isolation(controller, records, raiser, observer) -> None:
     """A failing input costs its own tick, and nothing else on the deck."""
     assert fixtures.wait_until(lambda: raiser.count() >= 3, timeout=20.0), (
         f"the failing input was dispatched only {raiser.count()} times -- the "
@@ -146,7 +121,7 @@ def leg_raising_input_does_not_stop_the_walk(controller, records, raiser, observ
           "input in the walk and still ticks the input behind it")
 
 
-def leg_the_log_is_rate_limited(controller, records, raiser) -> None:
+def check_log_rate_limit(controller, records, raiser) -> None:
     """A failure on every walk must not write a traceback on every walk."""
     records.clear()
     started = time.monotonic()
@@ -157,9 +132,7 @@ def leg_the_log_is_rate_limited(controller, records, raiser) -> None:
         f"window -- too few to tell a rate limit from an idle loop")
     elapsed = time.monotonic() - started
     failures = raiser.count() - before
-    # One record may land as the window opens, and one per interval after
-    # that. The bound comes from the measured elapsed time, so a loaded
-    # machine that walks slowly does not turn this into a timing assert.
+    # Derive the record bound from elapsed time to tolerate a slow runner.
     allowed = int(elapsed / controller.TICK_ERROR_LOG_INTERVAL_S) + 1
     written = marker_records(records)
     assert written <= allowed, (
@@ -186,11 +159,8 @@ def leg_suppressed_failures_are_reported(controller, records, raiser) -> None:
     print("  leg PASS: the suppressed failures ride as a count on a later record")
 
 
-def leg_the_walk_itself_may_raise(controller, records, raiser, observer) -> None:
-    """A failure outside any input costs one walk, and never the thread.
-
-    This leg runs last. It stops every input tick while the injection stands.
-    """
+def check_walk_failure_isolation(controller, records, raiser, observer) -> None:
+    """A failure outside all inputs costs one walk but not the thread."""
     real_screen_saver = controller.screen_saver
     records.clear()
     walked = observer.count()
@@ -204,9 +174,7 @@ def leg_the_walk_itself_may_raise(controller, records, raiser, observer) -> None
             "a raise outside any input killed the tick thread")
         assert any("the input walk" in record for record in records if MARKER in record), (
             "the record blames an input for a failure that belongs to the walk")
-        # At most the one walk that was already past the screensaver read when
-        # the injection landed. Anything more means the per-input dispatch
-        # kept running, and the record above came from somewhere else.
+        # Permit only a walk that passed the read before the injection landed.
         assert observer.count() <= walked + 1, (
             f"the walk dispatched {observer.count() - walked} inputs while "
             f"every screensaver read raised -- this leg measures the arm "
@@ -241,11 +209,11 @@ def main() -> None:
     # against many failures and the run stays short.
     controller.TICK_DELAY = FAST_TICK_DELAY
     try:
-        leg_raising_input_does_not_stop_the_walk(controller, records, raiser, observer)
-        leg_the_log_is_rate_limited(controller, records, raiser)
+        check_input_failure_isolation(controller, records, raiser, observer)
+        check_log_rate_limit(controller, records, raiser)
         leg_suppressed_failures_are_reported(controller, records, raiser)
         # Last: it stops every input tick while it runs.
-        leg_the_walk_itself_may_raise(controller, records, raiser, observer)
+        check_walk_failure_isolation(controller, records, raiser, observer)
     finally:
         raiser.remove()
         observer.remove()

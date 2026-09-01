@@ -2,10 +2,7 @@
 Auto-update must not replace an installed plugin with an incompatible build.
 """
 
-# When no compatible version exists, prepare_plugin pins the newest
-# incompatible commit and marks the entry is_compatible False, so the store can
-# still list it. get_plugins_to_update skips and reports such an entry, and
-# get_install_state_for reads it as installed rather than update-available.
+# List incompatible pins, but exclude them from updates and update-available UI state.
 
 import fixtures  # noqa: F401  (isolated --data tempdir; import first)
 import globals as gl  # noqa: F401
@@ -87,9 +84,7 @@ def test_update_all_plugins_never_installs_incompatible() -> None:
 
 
 def test_install_state_for_incompatible_update_reads_installed() -> None:
-    """The store UI derives the install button from the same verdict. An
-    installed plugin whose only newer pinned version is incompatible reads
-    as installed, never as update-available."""
+    """Show an installed plugin as installed when its only newer pin is incompatible."""
     from src.windows.Store.Plugins.PluginPage import PluginPreview
 
     state_for = PluginPreview.get_install_state_for

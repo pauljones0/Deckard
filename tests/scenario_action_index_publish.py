@@ -1,13 +1,5 @@
-"""The action index publishes in one step.
-
-A store install rebuilds the action index on its worker thread while a page
-load resolves action ids on another. A reader that finds no holder for an
-installed action stores a NoActionHolderFound placeholder that outlives the
-rebuild, so the rebuild must never expose an empty or a half-filled index.
-
-The interleaving here comes from a hook inside the rebuild, and not from a
-sleep, so each check drives the window it describes on every run.
-"""
+"""Verify action-index rebuilds publish one complete replacement.
+Hooks expose concurrent windows without sleeps; missing placeholders persist."""
 
 import threading
 import types
@@ -26,11 +18,7 @@ HOLDER_C = types.SimpleNamespace(action_id=f"{PLUGIN_ID}::C")
 
 
 def seed_registry() -> dict:
-    """Put one plugin with two action holders in the enabled registry.
-
-    generate_action_index reads PluginBase.plugins through get_plugins, and it
-    touches the "object" entry and its action_holders alone.
-    """
+    """Seed one enabled plugin with two action holders."""
     PluginBase.plugins.clear()
     PluginBase.disabled_plugins.clear()
     holders = {f"{PLUGIN_ID}::A": HOLDER_A, f"{PLUGIN_ID}::B": HOLDER_B}
@@ -40,12 +28,7 @@ def seed_registry() -> dict:
 
 
 def check_publication_slot() -> None:
-    """The rebuild publishes into the slot every reader shares.
-
-    action_index is a class attribute, and the in-place rebuild it replaces
-    wrote there. A publish through the instance shadows that slot, and a
-    reader that reaches the class keeps the index it had before for good.
-    """
+    """Verify the rebuild publishes through the shared class attribute."""
     seed_registry()
     pm = PluginManager()
     pm.generate_action_index()
@@ -58,13 +41,8 @@ def check_publication_slot() -> None:
     print("PASS: the rebuild publishes into the shared action index slot")
 
 
-def check_rebuild_replaces_the_index() -> None:
-    """A rebuild adds an installed holder and drops an uninstalled one.
-
-    A fix that only removes the clear() would merge every rebuild into the
-    previous index, so an uninstalled plugin's actions stay resolvable and
-    resolve to holders of a plugin that is gone.
-    """
+def check_rebuild_replaces_index() -> None:
+    """Verify each rebuild adds installed holders and drops uninstalled ones."""
     holders = seed_registry()
     pm = PluginManager()
     pm.generate_action_index()
@@ -86,13 +64,8 @@ def check_rebuild_replaces_the_index() -> None:
     print("PASS: a rebuild replaces the index instead of merging into it")
 
 
-def check_same_thread_reader_inside_the_rebuild() -> None:
-    """A read from inside the rebuild resolves the holder.
-
-    get_plugins runs after the point where a clear-then-refill has already
-    emptied the published index, so a probe there lands in the window under
-    test on every run.
-    """
+def check_reentrant_read_during_rebuild() -> None:
+    """Probe a same-thread read from inside the rebuild window."""
     seed_registry()
     pm = PluginManager()
     pm.generate_action_index()
@@ -120,13 +93,8 @@ def check_same_thread_reader_inside_the_rebuild() -> None:
     print("PASS: a read inside the rebuild resolves the installed holder")
 
 
-def check_concurrent_reader_inside_the_rebuild() -> None:
-    """A reader thread parked inside the rebuild resolves the holder.
-
-    The hook releases the reader and waits for its answer before the rebuild
-    can publish, so the read provably happens while the rebuild is in flight.
-    Both waits are bounded, and nothing sleeps.
-    """
+def check_concurrent_read_during_rebuild() -> None:
+    """Park a bounded reader inside the rebuild before publication."""
     seed_registry()
     pm = PluginManager()
     pm.generate_action_index()
@@ -174,9 +142,9 @@ def main() -> None:
     fixtures.start_watchdog(60, label="scenario_action_index_publish")
 
     check_publication_slot()
-    check_rebuild_replaces_the_index()
-    check_same_thread_reader_inside_the_rebuild()
-    check_concurrent_reader_inside_the_rebuild()
+    check_rebuild_replaces_index()
+    check_reentrant_read_during_rebuild()
+    check_concurrent_read_during_rebuild()
 
     print("PASS: scenario_action_index_publish")
 

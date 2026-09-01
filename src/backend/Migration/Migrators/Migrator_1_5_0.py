@@ -18,6 +18,8 @@ import json
 import os
 from typing import override
 
+from loguru import logger as log
+
 import globals as gl
 
 class Migrator_1_5_0(Migrator):
@@ -46,26 +48,31 @@ class Migrator_1_5_0(Migrator):
             if not deck_path.endswith(".json"):
                 continue
             deck_path = os.path.join(gl.DATA_PATH, "settings", "decks", deck_path)
-            with open(deck_path, "r") as f:
-                deck = json.load(f)
+            # Isolate each deck-settings file: a corrupt or unreadable one is
+            # left in place and logged, so the rest still migrate.
+            try:
+                with open(deck_path, "r") as f:
+                    deck = json.load(f)
 
-            background_path = deck.get("background", {}).get("path", "")
-            if background_path is None:
-                background_path = ""
-            if "Core447::Material Icons" in background_path:
-                deck["background"]["path"] = deck["background"]["path"].replace("Core447::Material Icons", "com_core447_MaterialIcons")
-            if "Core447::Pixabay Favorites" in background_path:
-                deck["background"]["path"] = deck["background"]["path"].replace("Core447::Pixabay Favorites", "com_core447_PixabayFavorites")
+                background_path = deck.get("background", {}).get("path", "")
+                if background_path is None:
+                    background_path = ""
+                if "Core447::Material Icons" in background_path:
+                    deck["background"]["path"] = deck["background"]["path"].replace("Core447::Material Icons", "com_core447_MaterialIcons")
+                if "Core447::Pixabay Favorites" in background_path:
+                    deck["background"]["path"] = deck["background"]["path"].replace("Core447::Pixabay Favorites", "com_core447_PixabayFavorites")
 
-            screensaver_path = deck.get("screensaver", {}).get("path", "")
-            if screensaver_path is None:
-                screensaver_path = ""
-            if "Core447::Material Icons" in screensaver_path:
-                deck["screensaver"]["path"] = deck["screensaver"]["path"].replace("Core447::Material Icons", "com_core447_MaterialIcons")
-            if "Core447::Pixabay Favorites" in screensaver_path:
-                deck["screensaver"]["path"] = deck["screensaver"]["path"].replace("Core447::Pixabay Favorites", "com_core447_PixabayFavorites")
+                screensaver_path = deck.get("screensaver", {}).get("path", "")
+                if screensaver_path is None:
+                    screensaver_path = ""
+                if "Core447::Material Icons" in screensaver_path:
+                    deck["screensaver"]["path"] = deck["screensaver"]["path"].replace("Core447::Material Icons", "com_core447_MaterialIcons")
+                if "Core447::Pixabay Favorites" in screensaver_path:
+                    deck["screensaver"]["path"] = deck["screensaver"]["path"].replace("Core447::Pixabay Favorites", "com_core447_PixabayFavorites")
 
-            atomic_write_json(deck_path, deck)
+                atomic_write_json(deck_path, deck)
+            except (OSError, ValueError) as e:
+                log.warning(f"Skipping deck settings during migration, left unchanged: {deck_path}: {e}")
 
     def migrate_pages(self) -> None:
         pages_dir = os.path.join(gl.DATA_PATH, "pages")
@@ -76,62 +83,66 @@ class Migrator_1_5_0(Migrator):
             if not page_path.endswith(".json"):
                 continue
             page_path = os.path.join(pages_dir, page_path)
-            with open(page_path, "r") as f:
-                page = json.load(f)
+            # Isolate each page: a corrupt or unreadable one is left in place
+            # and logged, so the rest still migrate.
+            try:
+                self._migrate_one_page(page_path)
+            except (OSError, ValueError) as e:
+                log.warning(f"Skipping page during migration, left unchanged: {page_path}: {e}")
 
-            background_path = page.get("background", {}).get("path", "")
-            if background_path is None:
-                background_path = ""
-            if "Core447::Material Icons" in background_path:
-                page["background"]["path"] = page["background"]["path"].replace("Core447::Material Icons", "com_core447_MaterialIcons")
-            if "Core447::Pixabay Favorites" in background_path:
-                page["background"]["path"] = page["background"]["path"].replace("Core447::Pixabay Favorites", "com_core447_PixabayFavorites")
+    def _migrate_one_page(self, page_path: str) -> None:
+        with open(page_path, "r") as f:
+            page = json.load(f)
 
-            screensaver_path = page.get("screensaver", {}).get("path", "")
-            if screensaver_path is None:
-                screensaver_path = ""
-            if "Core447::Material Icons" in screensaver_path:
-                page["screensaver"]["path"] = page["screensaver"]["path"].replace("Core447::Material Icons", "com_core447_MaterialIcons")
-            if "Core447::Pixabay Favorites" in screensaver_path:
-                page["screensaver"]["path"] = page["screensaver"]["path"].replace("Core447::Pixabay Favorites", "com_core447_PixabayFavorites")
+        background_path = page.get("background", {}).get("path", "")
+        if background_path is None:
+            background_path = ""
+        if "Core447::Material Icons" in background_path:
+            page["background"]["path"] = page["background"]["path"].replace("Core447::Material Icons", "com_core447_MaterialIcons")
+        if "Core447::Pixabay Favorites" in background_path:
+            page["background"]["path"] = page["background"]["path"].replace("Core447::Pixabay Favorites", "com_core447_PixabayFavorites")
 
-            for key in page.get("keys", {}):
-                key_dict = page["keys"][key]
-                # Migrator_1_5_0_beta_5 sorts first (1.5.0-beta.5 < 1.5.0) and
-                # nests each key's labels and media under states.0, so handle
-                # the nested shape and the flat one. Rewrite the key dict
-                # itself as well, because beta_5 skips a key that already has states,
-                # so stray top-level labels and media stay behind. The id() set
-                # stops a second pass over a flat key, which is its own state.
-                rewrite_dicts = []
-                seen_ids = set()
-                for candidate in ([key_dict] + list(key_dict.get("states", {}).values())):
-                    if not isinstance(candidate, dict) or id(candidate) in seen_ids:
-                        continue
-                    seen_ids.add(id(candidate))
-                    rewrite_dicts.append(candidate)
+        screensaver_path = page.get("screensaver", {}).get("path", "")
+        if screensaver_path is None:
+            screensaver_path = ""
+        if "Core447::Material Icons" in screensaver_path:
+            page["screensaver"]["path"] = page["screensaver"]["path"].replace("Core447::Material Icons", "com_core447_MaterialIcons")
+        if "Core447::Pixabay Favorites" in screensaver_path:
+            page["screensaver"]["path"] = page["screensaver"]["path"].replace("Core447::Pixabay Favorites", "com_core447_PixabayFavorites")
 
-                for state_dict in rewrite_dicts:
-                    for label in state_dict.get("labels", {}):
-                        if state_dict["labels"][label].get("text") == "":
-                            state_dict["labels"][label]["text"] = None
+        for key in page.get("keys", {}):
+            key_dict = page["keys"][key]
+            # Handle both the flat shape and beta.5's nested states, including stray top-level data.
+            # Track identities because a flat key is its own state and must be rewritten once.
+            rewrite_targets = []
+            seen_ids = set()
+            for candidate in ([key_dict] + list(key_dict.get("states", {}).values())):
+                if not isinstance(candidate, dict) or id(candidate) in seen_ids:
+                    continue
+                seen_ids.add(id(candidate))
+                rewrite_targets.append(candidate)
 
-                        if state_dict["labels"][label].get("font-family") == "":
-                            state_dict["labels"][label]["font-family"] = None
+            for state_dict in rewrite_targets:
+                for label in state_dict.get("labels", {}):
+                    if state_dict["labels"][label].get("text") == "":
+                        state_dict["labels"][label]["text"] = None
 
-                        if state_dict["labels"][label].get("font-size") == 15:
-                            state_dict["labels"][label]["font-size"] = None
+                    if state_dict["labels"][label].get("font-family") == "":
+                        state_dict["labels"][label]["font-family"] = None
 
-                        if state_dict["labels"][label].get("color") == [255, 255, 255, 255]:
-                            state_dict["labels"][label]["color"] = None
+                    if state_dict["labels"][label].get("font-size") == 15:
+                        state_dict["labels"][label]["font-size"] = None
 
-                    media_path = state_dict.get("media", {}).get("path", "")
-                    if media_path is None:
-                        media_path = ""
-                    if "Core447::Material Icons" in media_path:
-                        state_dict["media"]["path"] = state_dict["media"]["path"].replace("Core447::Material Icons", "com_core447_MaterialIcons")
+                    if state_dict["labels"][label].get("color") == [255, 255, 255, 255]:
+                        state_dict["labels"][label]["color"] = None
 
-                    if "Core447::Pixabay Favorites" in media_path:
-                        state_dict["media"]["path"] = state_dict["media"]["path"].replace("Core447::Pixabay Favorites", "com_core447_PixabayFavorites")
+                media_path = state_dict.get("media", {}).get("path", "")
+                if media_path is None:
+                    media_path = ""
+                if "Core447::Material Icons" in media_path:
+                    state_dict["media"]["path"] = state_dict["media"]["path"].replace("Core447::Material Icons", "com_core447_MaterialIcons")
 
-            atomic_write_json(page_path, page)
+                if "Core447::Pixabay Favorites" in media_path:
+                    state_dict["media"]["path"] = state_dict["media"]["path"].replace("Core447::Pixabay Favorites", "com_core447_PixabayFavorites")
+
+        atomic_write_json(page_path, page)

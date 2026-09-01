@@ -1,12 +1,23 @@
-from http.server import HTTPServer
+import contextlib
+from http.server import ThreadingHTTPServer
+import os
+import secrets
 import threading
-from datetime import datetime
 
+from loguru import logger as log
+
+import globals as gl
+from src.backend import ui_port
 from src.backend.DeckManagement.deck_controller.controller import DeckController
 from src.backend.DeckManagement.Subclasses.RemoteDeck import RemoteDeck
 from src.backend.DeckManagement.Subclasses.RemoteDecksLocalServerHandler import create_handler
 
 PORT = 8765
+TOKEN_FILE_NAME = "remote_deck_token"
+# Loopback is the default bind. The server carries real deck control, so it
+# leaves the host only when the user sets this variable themselves.
+LAN_ENV_VAR = "DECKARD_REMOTE_DECK_LAN"
+
 from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from PIL import Image
@@ -14,23 +25,40 @@ if TYPE_CHECKING:
     from src.backend.DeckManagement.DeckManager import DeckManager
 
 class RemoteDeckManager:
-    def __init__(self, deck_manager: "DeckManager"):
+    def __init__(self, deck_manager: "DeckManager", port: int = PORT):
         self.deck_manager = deck_manager
+        self.port = port
         self.deck_controllers: list[DeckController] = []
-        self.httpd: HTTPServer | None = None
+        self.httpd: ThreadingHTTPServer | None = None
         self.server_thread: threading.Thread | None = None
         # create_handler builds the class at runtime, so Any is its real type.
         self.handler_class: Any = None
         self._is_running = False
 
-    def start(self) -> None:
+    @property
+    def token_path(self) -> str:
+        return os.path.join(gl.DATA_PATH, TOKEN_FILE_NAME)
+
+    def start(self) -> bool:
+        """Bind the server and register the remote deck.
+        A bind failure returns false but can leave the token file written before the bind."""
         if self._is_running:
-            return
+            return True
+        try:
+            self.start_server()
+        except OSError as error:
+            log.error(f"Remote Decks did not start: port {self.port} is unavailable ({error}). Continuing without Remote Decks.")
+            self.handler_class = None
+            self.httpd = None
+            ui_port.get().notify_user(
+                f"Port {self.port} is in use. Close the other program or change the port, then re-enable Remote Decks.",
+                title="Remote Decks did not start")
+            return False
         self._is_running = True
-        self.start_server()
 
         deck = RemoteDeck(self, serial_number="remote-deck-1", deck_type="Remote Deck 1")
         self.deck_controllers.append(DeckController(self.deck_manager, deck))
+        return True
 
     def stop(self) -> None:
         if not self._is_running:
@@ -39,58 +67,57 @@ class RemoteDeckManager:
         self.stop_server()
 
         self.deck_controllers.clear()
-    
+
+
+    def _write_token(self) -> str:
+        """Write a new per-run access token readable only by the owning user."""
+        token = secrets.token_urlsafe(32)
+        fd = os.open(self.token_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as f:
+            f.write(token)
+        return token
 
     def start_server(self) -> None:
-        """Start the HTTP server in a separate thread."""
-        server_address = ('0.0.0.0', PORT)
-        self.handler_class = create_handler(self)
-        self.httpd = HTTPServer(server_address, self.handler_class)
+        """Bind and start the HTTP server on its own thread. Raises OSError
+        when the bind fails; the caller owns the recovery."""
+        token = self._write_token()
+        host = "0.0.0.0" if os.environ.get(LAN_ENV_VAR) == "1" else "127.0.0.1"
+        self.handler_class = create_handler(self, token)
+        # Bind before any state commits. ThreadingHTTPServer keeps one slow
+        # or held connection from blocking every other request.
+        self.httpd = ThreadingHTTPServer((host, self.port), self.handler_class)
 
-        print("=" * 60)
-        print("Local Network Python Server")
-        print("=" * 60)
-        print(f"Server started on port {PORT}")
-        print(f"Server time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        print("\nEndpoints:")
-        print(f"  GET  http://localhost:{PORT}/status")
-        print(f"  GET  http://localhost:{PORT}/images")
-        print(f"  GET  http://localhost:{PORT}/images/{{button_id}}")
-        print(f"  POST http://localhost:{PORT}/message")
-        print(f"  POST http://localhost:{PORT}/button")
-        print("\nWaiting for connections from Next.js web app...")
-        print("Press Ctrl+C to stop the server")
-        print("=" * 60)
-        print()
+        log.info(f"Remote Decks server listening on {host}:{self.port}; every request needs the token from {self.token_path} in the X-Deckard-Token header; set {LAN_ENV_VAR}=1 before launch to serve the local network")
 
         # A separate thread runs the server, so it does not block the caller.
         self.server_thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
         self.server_thread.start()
 
     def stop_server(self) -> None:
-        """Stop the HTTP server."""
+        """Stop the HTTP server and retire this run's token."""
         if self.httpd:
-            print("\n\nStopping Remote Deck Server...")
+            log.info("Stopping the Remote Decks server")
             self.httpd.shutdown()
             self.httpd = None
             if self.server_thread:
                 self.server_thread.join(timeout=5)
                 self.server_thread = None
+        with contextlib.suppress(OSError):
+            os.remove(self.token_path)
 
     def on_key_event(self, key: int, state: bool) -> None:
-        print(f"Remote Deck Manager: Key event: {key}, {state}")
-        print(self.deck_controllers)
+        log.debug(f"Remote deck key event: {key}, {state}")
         for deck_controller in self.deck_controllers:
             raw_deck = deck_controller.deck.deck
             # The handle holds no callback until the controller installs its
-            # key remapper. A browser key event can arrive before that.
+            # key remapper. A client key event can arrive before that.
             if raw_deck.key_callback is not None:
                 raw_deck.key_callback(raw_deck, key, state)
-    
+
     def send_button_image(self, button_id: int, image: "Image.Image") -> None:
         """
         Send a PIL image for a specific button to the browser.
-        
+
         Args:
             button_id: The button identifier (e.g., row * 5 + col)
             image: PIL Image object

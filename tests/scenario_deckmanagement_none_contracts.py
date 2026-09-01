@@ -1,8 +1,4 @@
-"""Regression scenario for four DeckManagement contract bugs.
-
-Each one is a declaration that claimed a value could never be absent, or
-claimed the wrong shape, while the code around it disagreed.
-"""
+"""Check optional values and container shapes in DeckManagement contracts."""
 import fixtures  # noqa: F401  (isolated data dir + sys.path, house convention)
 
 from src.backend.DeckManagement.HelperMethods import is_video
@@ -44,10 +40,7 @@ def check_remote_deck_key_callback_slot() -> None:
 
 
 class _StubController:
-    """Just enough of DeckController for ScreenSaver.__init__.
-
-    The constructor only stores the reference.
-    """
+    """Provide the controller reference stored by ScreenSaver construction."""
 
 
 def check_screensaver_stash_is_mapping() -> None:
@@ -67,7 +60,7 @@ def check_screensaver_stash_is_mapping() -> None:
     assert screen_saver.media_path is None
 
 
-def check_unusable_path_composes_none() -> None:
+def check_unusable_path_composes_to_none() -> None:
     # Neither an image nor an SVG, and not on disk at all.
     media = Media.from_path("/nonexistent/not-an-image.txt")
 
@@ -80,7 +73,7 @@ def check_unusable_path_composes_none() -> None:
     )
 
 
-def check_is_video_none_false() -> None:
+def check_none_is_not_video() -> None:
     result = is_video(None)
     assert result is False, (
         f"is_video(None) is declared `-> bool` and must return False, got {result!r}"
@@ -92,8 +85,8 @@ def main() -> None:
     check_remote_deck_is_not_touch()
     check_remote_deck_key_callback_slot()
     check_screensaver_stash_is_mapping()
-    check_unusable_path_composes_none()
-    check_is_video_none_false()
+    check_unusable_path_composes_to_none()
+    check_none_is_not_video()
     print("PASS: scenario_deckmanagement_none_contracts")
 
 

@@ -1,11 +1,4 @@
-"""logs/faulthandler.log must stay bounded across a long-lived install.
-
-redirect_faulthandler() opens the file append and never shrinks it, so the
-boot markers and crash dumps of every past session would accumulate without a
-bound. _bound_fault_log() trims the file at boot to keep the most recent
-content under a size cap, in place, so a running instance's registered
-faulthandler fd stays valid.
-"""
+"""Check in-place faulthandler log bounds and preservation of live file descriptors."""
 import fixtures  # must be first; isolates DATA_PATH before any src import
 
 import faulthandler
@@ -23,8 +16,7 @@ BOOT_MARKER = "===== boot "
 
 
 def seed_multi_boot(path: str, sessions: int) -> None:
-    """Write a multi-session faulthandler.log with a marker and a dump per
-    session, each session tagged so the trim's keep/drop boundary is visible."""
+    """Write tagged boot records that expose the trim boundary."""
     with open(path, "w") as f:
         for i in range(1, sessions + 1):
             f.write(f"{BOOT_MARKER}2026-01-{i:02d}T00:00:00 pid={1000 + i} =====\n")
@@ -76,15 +68,13 @@ def check_bound_unit() -> None:
             assert "session8payload" in content, "most recent session was dropped"
             assert "session1payload" not in content, "oldest session survived the trim"
             assert content.lstrip().startswith(TRIM_NOTICE), "no trim notice at the head"
-            # The kept content starts at a whole boot marker, so no dump is
-            # sliced mid-line.
+            # Keep content from a complete boot marker instead of a partial dump.
             body = content.split("\n", 1)[1]  # drop the notice line
             assert body.startswith(BOOT_MARKER), (
                 "kept content must start at a whole boot marker, not mid-dump"
             )
 
-            # The live fd still writes into the file a reader would open, which
-            # proves the inode was preserved.
+            # A write through the old fd must remain visible at the original path.
             os.write(live_fd, b"LIVE_DUMP_AFTER_TRIM\n")
             with open(path) as f:
                 assert "LIVE_DUMP_AFTER_TRIM" in f.read(), (
@@ -116,9 +106,7 @@ def check_bound_unit() -> None:
 
 
 def check_bound_integration() -> None:
-    """redirect_faulthandler() bounds the file at boot, then scrubs it, so a
-    long-lived install cannot grow it without limit and the kept content is
-    still PII-redacted."""
+    """Check that startup bounds and redacts retained fault-log content."""
     log_hooks._FAULT_LOG_MAX_BYTES = 600
     log_dir = os.path.join(fixtures.DATA_DIR, "logs")
     os.makedirs(log_dir, exist_ok=True)
@@ -134,8 +122,7 @@ def check_bound_integration() -> None:
     with open(path) as f:
         content = f.read()
 
-    # Bounded: the kept content plus this boot's appended marker is far below
-    # the seeded size, and the raw PII in the kept tail was scrubbed.
+    # The retained tail is smaller and redacted before the new marker is appended.
     assert len(content) < seeded, "redirect_faulthandler did not bound the file"
     assert HOME not in content, "kept content was not scrubbed after the trim"
     assert 'File "~/' in content, "frame paths must survive as ~-relative"

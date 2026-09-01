@@ -1,0 +1,132 @@
+"""Verify transient page-write retries and permanent-error retirement."""
+import fixtures  # noqa: F401  (must be first: isolates DATA_PATH before globals)
+
+from typing import Any  # noqa: E402
+
+from src.backend.PageManagement import page_flush  # noqa: E402
+from src.backend.PageManagement.page_flush import PageFlush  # noqa: E402
+from fixtures import start_watchdog  # noqa: E402
+
+
+class ManualScheduler:
+    """Fires nothing on its own. The test decides when a timer runs."""
+
+    def __init__(self):
+        self.armed: list = []
+
+    def schedule(self, delay_s, callback):
+        handle = object()
+        self.armed.append((handle, callback))
+        return handle
+
+    def cancel(self, handle):
+        self.armed = [(h, c) for (h, c) in self.armed if h is not handle]
+
+    def fire_all(self):
+        due = self.armed
+        self.armed = []
+        for _handle, callback in due:
+            callback()
+
+
+class FakeSource:
+    """A minimal PageFlushSource the seam can flush."""
+
+    def __init__(self, path: str):
+        self.json_path = path
+        self.backups = 0
+
+    def snapshot_for_save(self) -> dict[str, Any]:
+        return {"keys": {}}
+
+    def move_key_to_end(self, dictionary: dict[str, Any], key: str) -> None:
+        pass
+
+    def make_backup(self, json_path: str) -> None:
+        self.backups += 1
+
+
+def main() -> int:
+    start_watchdog(30, "page_flush_retry")
+
+    path = "/tmp/deckard-scenario-retry/page.json"
+
+    # A programmable stand-in for the atomic write. Each call pops the next
+    # outcome: an exception type to raise, or None to succeed and record.
+    outcomes: list = []
+    writes: list[str] = []
+
+    def fake_atomic_write_json(file_path, data, indent=4):
+        outcome = outcomes.pop(0)
+        if outcome is not None:
+            raise outcome
+        writes.append(file_path)
+
+    real_write = page_flush.atomic_write_json
+    page_flush.atomic_write_json = fake_atomic_write_json
+
+    clock = [0.0]
+    failures: list[str] = []
+    try:
+        # --- Transient failure retains and retries ------------------------
+        sched = ManualScheduler()
+        flush = PageFlush(scheduler=sched, clock=lambda: clock[0])
+        src = FakeSource(path)
+        flush.mark_dirty(src)
+
+        # First write fails transiently; the edit must stay pending.
+        outcomes[:] = [OSError("disk full")]
+        flush.flush_path(path)
+        if flush.pending_source(path) is not src:
+            failures.append("a transient write failure dropped the pending edit")
+        if writes:
+            failures.append("a failed write was recorded as written")
+
+        # The seam re-armed a retry. Fire it with a good outcome; it persists.
+        outcomes[:] = [None]
+        sched.fire_all()
+        if flush.pending_source(path) is not None:
+            failures.append("a successful retry did not retire the edit")
+        if writes != [path]:
+            failures.append(f"the retry did not write the page: {writes}")
+
+        # --- Quit flush persists a still-pending edit ---------------------
+        quit_scheduler = ManualScheduler()
+        quit_flush = PageFlush(scheduler=quit_scheduler, clock=lambda: clock[0])
+        quit_source = FakeSource(path)
+        quit_flush.mark_dirty(quit_source)
+        outcomes[:] = [OSError("temporarily unavailable")]
+        quit_flush.flush_path(path)  # transient fail, retained
+        writes.clear()
+        outcomes[:] = [None]
+        quit_flush.flush_all()  # the quit path retries and succeeds
+        if writes != [path]:
+            failures.append(f"quit flush did not persist the retained edit: {writes}")
+        if quit_flush.pending_source(path) is not None:
+            failures.append("quit flush left the edit pending after a good write")
+
+        # --- Permanent serialization failure is retired -------------------
+        serialization_scheduler = ManualScheduler()
+        serialization_flush = PageFlush(
+            scheduler=serialization_scheduler, clock=lambda: clock[0]
+        )
+        serialization_source = FakeSource(path)
+        serialization_flush.mark_dirty(serialization_source)
+        outcomes[:] = [TypeError("not JSON serializable")]
+        serialization_flush.flush_path(path)
+        if serialization_flush.pending_source(path) is not None:
+            failures.append("a permanent serialization failure was not retired")
+    finally:
+        page_flush.atomic_write_json = real_write
+
+    if failures:
+        for f in failures:
+            print(f"FAIL: {f}")
+        return 1
+    print("PASS: a transient write failure retries and persists; a permanent "
+          "one is retired")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

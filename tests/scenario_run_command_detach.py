@@ -1,9 +1,5 @@
-"""
-run_command detaches a command line without forking the interpreter.
-
-It Popens the command line directly, so shell semantics such as redirection and
-&& survive, and it reaps the child on a throwaway daemon thread.
-"""
+"""Detach a shell command without forking the interpreter.
+Preserve shell syntax and reap the direct child on a daemon thread."""
 
 # The call never blocks its caller, run_command(None) is a silent no-op, and an
 # unspawnable command is logged rather than raised.
@@ -41,19 +37,18 @@ def main() -> None:
     # Shell-only syntax, a redirection and an && chain. Neither survives an
     # argv-list rewrite, so the string and shell contract must hold.
     marker = os.path.join(gl.DATA_PATH, "run_command_marker")
-    second = os.path.join(gl.DATA_PATH, "run_command_marker_2")
+    copied_marker = os.path.join(gl.DATA_PATH, "run_command_marker_2")
     assert not os.path.exists(marker)
 
-    # The fork check samples while the command is still in flight. A fork
-    # wrapper is short-lived and active_children() reaps as a side effect, so
-    # a single check afterwards would miss it.
+    # Sample while the command runs because active_children() reaps short-lived
+    # wrappers and a later check could miss one.
     forked = []
 
     def _command_finished() -> bool:
         forked.extend(multiprocessing.active_children())
-        return os.path.exists(second)
+        return os.path.exists(copied_marker)
 
-    run_command(f"echo detached > '{marker}' && cp '{marker}' '{second}'")
+    run_command(f"echo detached > '{marker}' && cp '{marker}' '{copied_marker}'")
 
     assert fixtures.wait_until(_command_finished, timeout=15.0, interval=0.005), (
         "the shell command never ran -- run_command must keep its "
@@ -63,9 +58,7 @@ def main() -> None:
         assert f.read().strip() == "detached", "redirection did not produce the expected content"
     print("PASS: shell semantics (redirection + &&) survive")
 
-    # The interpreter is never forked. Forking the whole app, with GTK,
-    # plugins, deck threads and open HID handles, to spawn a shell is what
-    # this scenario forbids.
+    # Do not fork the interpreter with its GTK, plugin, deck, and HID state.
     assert forked == [], f"run_command forked the interpreter: {forked!r}"
     print("PASS: no multiprocessing child -- the interpreter is not forked")
 
@@ -98,9 +91,8 @@ def main() -> None:
     run_command(None)
     print("PASS: run_command(None) is a silent no-op")
 
-    # An unspawnable command is logged, not raised. cwd is the only spawn
-    # input a caller cannot see, so point HOME at a directory that does not
-    # exist and the exec fails in the parent.
+    # Use a missing HOME-derived cwd to make spawning fail in the parent.
+    # The failure must be logged instead of raised.
     real_home = os.environ.get("HOME")
     os.environ["HOME"] = os.path.join(gl.DATA_PATH, "home that is not there")
     try:

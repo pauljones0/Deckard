@@ -1,8 +1,6 @@
-"""
-Screensaver media must loop when the config carries no explicit loop key.
+"""Screensaver media must loop when its config has no loop key.
 
-Every media-layer default says True, so a screensaver config written before the
-loop toggle existed loops as well, at page level and at deck level.
+The True default applies at page and deck level.
 """
 
 # An explicit "loop": false still wins, and the defaulted value reaches the
@@ -100,9 +98,7 @@ def main() -> None:
             "the default must not override a persisted toggle"
         )
 
-        # A deck config with no loop key. The deck branch runs when deck
-        # settings enable the screensaver and the page does not overwrite it,
-        # so the page seeded here is a plain one.
+        # Use a plain page so the enabled deck-level config supplies the value.
         deck_settings = controller.get_deck_settings()
         deck_settings["screensaver"] = {
             "enable": True,

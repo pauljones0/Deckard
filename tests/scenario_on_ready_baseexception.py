@@ -1,12 +1,4 @@
-"""
-A BaseException from on_ready must not lose the redraw.
-
-Page._run_ready_callbacks catches Exception around on_ready and opens the ready
-gate in a finally, but runs the redraw (on_update) after the try. A BaseException
--- which the except does not catch -- then unwinds past the redraw, so the action
-never repaints even though its gate is open. on_update belongs in the finally, so
-it runs whatever on_ready raised.
-"""
+"""Run the redraw and open the ready gate when on_ready raises BaseException."""
 
 # fixtures must import first: it points argv at an isolated data dir.
 import fixtures
@@ -95,12 +87,12 @@ def main() -> int:
         saved = Page._run_ready_callbacks
         Page._run_ready_callbacks = _prefix_run_ready_callbacks
         try:
-            action2 = _make_action(controller, page)
+            prefix_action = _make_action(controller, page)
             with contextlib.suppress(_ReadyAbort):
-                page._run_ready_callbacks(action2)
-            assert action2.ready_entered, "pre-fix leg: on_ready never ran"
-            assert action2.on_ready_finished, "pre-fix leg: gate must still open"
-            assert not action2.redrawn, (
+                page._run_ready_callbacks(prefix_action)
+            assert prefix_action.ready_entered, "pre-fix leg: on_ready never ran"
+            assert prefix_action.on_ready_finished, "pre-fix leg: gate must still open"
+            assert not prefix_action.redrawn, (
                 "the pre-fix body ran the redraw anyway -- the fix is not "
                 "load-bearing and this scenario proves nothing"
             )

@@ -104,8 +104,6 @@ class FlatpakPermissionManager:
 
         return command
     
-    # The default was the string "None", so the is-None substitution below
-    # never fired and the dialog carried a literal "None" description.
     def show_dbus_permission_request_dialog(self, name: str, bus: str="session", description: str | None = None) -> None:
         if not self.get_is_flatpak():
             return

@@ -1,31 +1,6 @@
 #!/usr/bin/env python3
-"""Find annotations that raise at import time on the deployment floor.
-
-Run me with the deployment interpreter, not the venv:
-
-    python3.13 scripts/check_eager_annotations.py
-
-CI runs this in test:compile, whose image is python:3.13-slim, which is the
-floor the flatpak and the AUR package both target.
-
-Python 3.14 defers annotation evaluation (PEP 649); 3.13 evaluates a parameter
-and return annotation at def time. The local .venv is 3.14 and every shipped
-build is 3.13. An annotation that names something the runtime does not have
-therefore imports fine for a developer and raises for a user. The type
-checker never imports, ruff never imports, and compileall compiles without
-executing, so nothing else in the gate sees it.
-
-Two failures are reported:
-
-- NameError: the annotation's root name has no runtime binding at module level.
-  A name bound only under `if TYPE_CHECKING`, or imported inside a function
-  body, counts as absent, because that is exactly the case that raises.
-- AttributeError: the annotation reads an attribute off a stdlib module that
-  the module does not carry at runtime, e.g. a typeshed-only name.
-
-String annotations are skipped: they are never evaluated. A module carrying
-`from __future__ import annotations` is skipped whole, for the same reason.
-"""
+"""Find eager NameError/stdlib AttributeError on deployment 3.13; skip strings/future modules.
+Do not use 3.14; ast.walk sees direct import aliases at any depth except top-level TYPE_CHECKING."""
 from __future__ import annotations
 
 import ast
@@ -38,7 +13,7 @@ SKIP_DIRS = {".git", ".venv", "__pycache__", "aur-deckard-git", ".claude"}
 
 
 def module_level_runtime_bindings(tree: ast.Module) -> set[str]:
-    """Names bound at module scope at runtime, TYPE_CHECKING blocks excluded."""
+    """Names ast.walk sees under top-level statements, excluding top-level TYPE_CHECKING."""
     names: set[str] = set()
 
     def is_type_checking(test: ast.expr) -> bool:
@@ -68,14 +43,8 @@ def module_level_runtime_bindings(tree: ast.Module) -> set[str]:
 
 
 def annotations_of(tree: ast.Module) -> list[tuple[int, ast.expr]]:
-    """Only the annotations the interpreter actually evaluates.
-
-    A parameter and a return annotation evaluate when the def executes, and a
-    module-level or class-level AnnAssign evaluates where it sits. An AnnAssign
-    inside a function body is never evaluated (PEP 526), whether on a local or
-    on self.x. A name that does not exist there is therefore harmless. Verified
-    on 3.13 before this exclusion was written.
-    """
+    """Parameters, returns, and module/class AnnAssign nodes evaluated by the interpreter.
+    Exclude function-body AnnAssign nodes under PEP 526."""
     out: list[tuple[int, ast.expr]] = []
 
     def walk_body(body: list[ast.stmt], in_function: bool) -> None:
@@ -163,9 +132,8 @@ def main() -> int:
     failures = 0
     scanned = 0
     for path in sorted(root.rglob("*.py")):
-        # Relative to the root, never the absolute path: the repo itself can
-        # sit under a directory whose name is in the skip list, and matching on
-        # absolute parts then skips the whole tree and reports success.
+        # Match skip names on root-relative parts.
+        # An absolute checkout path can contain a skip name and hide the whole tree.
         if any(part in SKIP_DIRS for part in path.relative_to(root).parts):
             continue
         try:

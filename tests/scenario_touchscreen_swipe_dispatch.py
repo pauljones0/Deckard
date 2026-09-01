@@ -1,10 +1,5 @@
-"""
-Regression test for SD+ touchscreen swipe dispatch.
-
-A touchscreen DRAG event travels the whole pipeline into
-ActionBase.event_callback, whose compatibility mapping must reach a legacy
-action's on_key_down. The same mapping carries a strip tap and the key events.
-"""
+"""Verify legacy ActionBase dispatch for touchscreen drags, strip taps, and
+key events while preserving raw events for callback overrides."""
 
 # A real DeckController over a fake SD+ fires the callbacks.
 import fixtures
@@ -98,9 +93,7 @@ def main() -> None:
             "DRAG_RIGHT never reached the legacy action's on_key_down"
         )
 
-        # 3. The control. The overriding action saw both raw drag events, so
-        # delivery reaches the action layer and only the compatibility
-        # mapping can lose them.
+        # The override receiving both raw drags isolates compatibility mapping.
         assert fixtures.wait_until(
             lambda: observer.seen_events.count(Input.Touchscreen.Events.DRAG_LEFT) == 1
             and observer.seen_events.count(Input.Touchscreen.Events.DRAG_RIGHT) == 1,

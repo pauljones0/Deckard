@@ -40,9 +40,8 @@ class DeckSettingsButton(Gtk.Button):
             self.label.set_label("Key Grid")
 
     def refresh_state(self) -> None:
-        # Not update_state: Gtk.Accessible gives every widget that method,
-        # and an override of it swallows the states and values a caller
-        # passes for the accessibility tree.
+        # Do not use update_state because Gtk.Accessible already defines it.
+        # Overriding it would swallow accessibility states and values.
         deck_stack_child = self.main_window.leftArea.deck_stack.get_visible_child()
         if deck_stack_child is None:
             return

@@ -46,7 +46,6 @@ from src.windows.Store.Preview import StorePreview
 from src.windows.Store.StoreData import StoreAssetData
 from src.windows.Store.StorePage import StorePage
 
-# Typing
 from typing import TYPE_CHECKING, Any, cast, override
 if TYPE_CHECKING:
     from src.windows.Store.Store import Store
@@ -58,9 +57,7 @@ import globals as gl
 class StoreAssetPage(StorePage):
     """One tab of the store window, for the asset class its descriptor names."""
 
-    # A class attribute, and not only the instance one __init__ writes, so a
-    # subclass pins its asset class for good and a page that a test builds
-    # with __new__ still answers a descriptor.
+    # Class-level so each subclass permanently names its asset descriptor
     descriptor: AssetTypeDescriptor
 
     def __init__(self, store: "Store", descriptor: "AssetTypeDescriptor | None" = None) -> None:
@@ -68,9 +65,7 @@ class StoreAssetPage(StorePage):
         if descriptor is not None:
             self.descriptor = descriptor
 
-        # Both sections take the placeholder. The incompatible section holds a
-        # search entry of its own, and a section without the placeholder shows
-        # an unlabelled one.
+        # Label both independent compatible and incompatible search entries
         placeholder = gl.lm.get(self.descriptor.search_placeholder_key)
         self.compatible_section.search_entry.set_placeholder_text(placeholder)
         self.incompatible_section.search_entry.set_placeholder_text(placeholder)
@@ -85,7 +80,7 @@ class StoreAssetPage(StorePage):
             # _load_guarded turns this into the error page and re-arms the
             # tab, the same as any other failure this fetch can raise.
             raise RuntimeError("the store backend is unavailable")
-        # The descriptor names the fetch, so a stubbed get_all_* answers here.
+        # Resolve the descriptor's fetch method at call time
         result: StoreResult[list[StoreAssetData]] = getattr(backend, self.descriptor.get_all_attr)()
         if isinstance(result, Err):
             self.show_connection_error()
@@ -107,13 +102,7 @@ class StoreAssetPage(StorePage):
         return False
 
     def preview_cls(self) -> "type[StoreAssetPreview]":
-        """The card class this tab builds, resolved when it is asked for.
-
-        The descriptor carries the name, and the lookup runs against the
-        module that defines this page class. A class captured at import time
-        would run past the recording stub that the off-main construction test
-        puts in that module.
-        """
+        """Resolve the descriptor's card class from the page module at call time."""
         page_module = sys.modules[type(self).__module__]
         return cast("type[StoreAssetPreview]",
                     getattr(page_module, self.descriptor.preview_cls_name))
@@ -126,9 +115,7 @@ class StoreAssetPage(StorePage):
 class StoreAssetPreview(StorePreview):
     """One card in a store tab, for the asset class its page names."""
 
-    # An incompatible asset takes a red border round its card. The plugin card
-    # carries none, because the incompatible section already separates those
-    # and a border on every card of a whole section says nothing.
+    # Data-only incompatible cards use a red border; plugin cards override this
     shows_incompatible_border = True
 
     def __init__(self, page: StoreAssetPage, asset_data: StoreAssetData) -> None:
@@ -164,11 +151,7 @@ class StoreAssetPreview(StorePreview):
 
     @staticmethod
     def get_install_state_for(asset_data: StoreAssetData) -> int:
-        """0 is not installed, 1 is installed, and 2 is update available.
-
-        A data-only asset compares the commit it was installed from against
-        the commit the catalog pins.
-        """
+        """Return 0 absent, 1 at the catalog commit, or 2 when it differs."""
         if asset_data.local_sha is None:
             return 0
         if asset_data.local_sha == asset_data.commit_sha:
@@ -177,16 +160,9 @@ class StoreAssetPreview(StorePreview):
 
     @override
     def install(self) -> bool:
-        """Run on the download worker thread. Returns True on a real install.
+        """Install the consented dependency set on a worker and report real success.
 
-        A failed install returns an Err, and the button keeps its previous
-        state instead of moving to installed. A 400, a 404 or an offline
-        download must not read as installed.
-
-        A manifest may name other store items, and then one prompt names the
-        whole set before anything downloads. A refusal downloads nothing and
-        leaves the button as it was. A failure part-way through leaves what
-        already installed in place and says which items those are.
+        Refusal or failure preserves button state; partial installs remain and are reported.
         """
         backend = self.store.backend
         noun = self.descriptor.display_name
@@ -195,23 +171,18 @@ class StoreAssetPreview(StorePreview):
             log.error(f"Store backend unavailable; cannot install {asset_id}")
             self.notify_install_failure()
             return False
-        from src.windows.Store.install_consent import make_set_consent
+        from src.windows.Store.install_consent import make_dependency_consent
         report = dependencies.install_with_dependencies(
             backend, dependencies.CatalogItem(self.descriptor, self.asset_data),
-            confirm_set=make_set_consent(self.store), **self._install_kwargs())
+            confirm_set=make_dependency_consent(self.store), **self._install_kwargs())
         if report.declined:
             # Nothing downloaded, so the button keeps the state it had.
             return False
         if not report.ok:
             log.error(f"Failed to install {noun} {asset_id}: {report.error!r}")
-            # The plain notification names this card's own asset, so it is
-            # right only when this asset is what failed and nothing else was
-            # touched. Anything else needs the detail: something else failed,
-            # or something landed and stays installed. The title then takes
-            # the class of the item that actually failed, so a pack pulled in
-            # by a plugin is not reported as a plugin.
+            # Use dependency detail when another item failed or any item installed
             failed_is_this_card = (report.failed is not None
-                                   and report.failed.data is self.asset_data)
+                                   and report.failed.asset is self.asset_data)
             if report.installed or not failed_is_this_card:
                 name = self.asset_data.asset_name or asset_id or noun
                 failed_noun = dependencies.failure_noun(report, noun)
@@ -225,9 +196,7 @@ class StoreAssetPreview(StorePreview):
         return True
 
     def _install_kwargs(self) -> "dict[str, Any]":
-        """Extra keyword arguments for the install of one item. Empty for a
-        data-only pack; a plugin subclass adds the install script consent
-        prompt, which only a plugin install takes."""
+        """Extra install arguments; only plugin subclasses add script consent."""
         return {}
 
     def notify_install_failure(self) -> None:
@@ -240,10 +209,7 @@ class StoreAssetPreview(StorePreview):
     def uninstall(self) -> None:
         uninstall_attr = self.descriptor.uninstall_attr
         if uninstall_attr is None:
-            # The row names no record-taking uninstall, so this class removes
-            # an install by another key and its preview owes an uninstall of
-            # its own. Reaching here means that override is missing, and
-            # calling anything with the record would pass the wrong argument.
+            # A descriptor without record-based uninstall requires a preview override
             raise NotImplementedError(
                 f"{self.descriptor.display_name} takes no record-passing "
                 f"uninstall; {type(self).__name__} must define its own")
@@ -264,8 +230,7 @@ class StoreAssetPreview(StorePreview):
         page = self.store_page
         page.set_info_visible(True)
 
-        # Update info page
-        page.info_page.set_pack_name(self.asset_data.asset_name)
+        page.info_page.set_asset_name(self.asset_data.asset_name)
         page.info_page.set_description(self.asset_data.description)
         page.info_page.set_author(self.asset_data.author)
         page.info_page.set_version(self.asset_data.asset_version)
@@ -273,8 +238,6 @@ class StoreAssetPreview(StorePreview):
         page.info_page.set_license(self.asset_data.license)
         page.info_page.set_copyright(self.asset_data.copyright)
         page.info_page.set_original_url(self.asset_data.original_url)
-        # get_custom_translation answers "" for an absent block, which is
-        # None, and None for an empty one, so both reach the setter as they
-        # are.
+        # Preserve the translation layer's distinct absent and empty results
         page.info_page.set_license_description(
             gl.lm.get_custom_translation(self.asset_data.license_descriptions))

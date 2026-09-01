@@ -1,8 +1,5 @@
-"""Integration scenario for ActionCore teardown.
-
-clean_up() must be complete and idempotent, and the framework must call it at
-every drop site, even when a plugin on_removed_from_cache override raises.
-"""
+"""Verify complete, idempotent ActionCore teardown at framework drop sites.
+Cleanup must continue when a plugin removal hook raises."""
 import time
 
 import fixtures  # noqa: F401  (import first: sets up the isolated data dir)
@@ -18,11 +15,7 @@ from src.Signals.Signals import PageDelete
 
 
 class _FakeGenUI(GenerativeUI):
-    """Minimal concrete GenerativeUI for the harness, with no signal wiring.
-
-    with_widget=True builds a throwaway Gtk.Label, so clean_up() exercises both
-    the never-built and the built half of its destroy batch.
-    """
+    """Exercise cleanup for both built and unbuilt GenerativeUI objects."""
 
     def __init__(self, action_core: "ActionCore", var_name: str, with_widget: bool = False):
         def build():
@@ -42,11 +35,7 @@ class _FakeGenUI(GenerativeUI):
 
 
 class _FakeAction(ActionCore):
-    """Stand-in for a plugin action, constructed directly.
-
-    clean_up() never dereferences plugin_base, deck_controller or input_ident,
-    so dummy values are enough.
-    """
+    """Provide dummy collaborators that clean_up does not dereference."""
 
     def __init__(self, page, raise_in_hook: bool = False):
         super().__init__(
@@ -68,11 +57,7 @@ class _FakeAction(ActionCore):
 
 
 def _pump_glib(timeout: float = 2.0) -> None:
-    """Service the queued GLib.idle_add callbacks.
-
-    Nothing here runs a GTK main loop, so the idle-queued destroy pass of
-    clean_up() needs a manual pump.
-    """
+    """Service idle-queued cleanup without a running GTK main loop."""
     ctx = GLib.MainContext.default()
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline and ctx.pending():
@@ -97,7 +82,7 @@ def check_idempotent(page) -> None:
     action._release_backend_resources = _counting_release
 
     action.clean_up()
-    action.clean_up()  # must be a silent no-op
+    action.clean_up()
 
     assert action._cleaned_up is True
     assert len(release_calls) == 1, f"_release_backend_resources ran {len(release_calls)} times, expected 1"
@@ -132,9 +117,7 @@ def check_hook_raises_still_cleans_up(page) -> None:
     cb = lambda *a, **k: None
     action.connect(PageDelete, cb)
 
-    # Drop it through a real framework site. Page-cache eviction calls the same
-    # method, PageManagerBackend.clear_old_cached_pages, which calls
-    # page.clear_action_objects().
+    # Exercise page.clear_action_objects, which page-cache eviction also calls.
     page.action_objects.setdefault("keys", {})["fake-teardown-test"] = {0: {0: action}}
 
     page.clear_action_objects()

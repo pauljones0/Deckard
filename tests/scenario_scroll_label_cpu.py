@@ -1,8 +1,6 @@
-"""
-Regression test for the scroll-label CPU cost.
+"""Check the scroll-label CPU budget.
 
-get_has_scroll_labels honors the rolling-labels setting and measures with the
-multiline-aware textbbox the render uses.
+Detection honors rolling-labels and uses the render path's multiline textbbox.
 """
 
 # A key re-renders only when its own offset moved, and the scrolling text
@@ -18,9 +16,10 @@ WIDE_TEXT = "m" * 24
 
 
 def _make_controller(serial: str, rolling: bool):
-    """App settings must be in place before labels are composed, because the
-    scroll caches read them lazily. The page load must settle before the
-    scenario sets labels, or load_all_inputs wipes them."""
+    """Set app settings before lazy scroll-cache reads.
+
+    Let page loading settle before labels are set, or load_all_inputs wipes them.
+    """
     fixtures._install_integration_globals()
     settings = gl.settings_manager.get_app_settings()
     settings.setdefault("general", {})["rolling-labels"] = rolling
@@ -97,9 +96,7 @@ def check_multiline_no_phantom_scroll() -> None:
         lm = key.get_active_state().label_manager
         available = lm.get_available_width()
 
-        # Build a two-line label whose lines fit but whose single-line
-        # getbbox measurement overflows, because the newline counts toward
-        # the width. That is the phantom-scroll shape.
+        # Build fitting lines whose combined single-line getbbox width overflows.
         from src.backend.DeckManagement.Subclasses.KeyLabel import KeyLabel
         probe = KeyLabel(controller_input=key, text="m", font_size=15)
         font = lm.get_composed_label("center").get_font()
@@ -108,10 +105,8 @@ def check_multiline_no_phantom_scroll() -> None:
         while measure.textbbox((0, 0), line + "m", font=font)[2] <= available * 0.9:
             line += "m"
         text = f"{line}\n{line}"
-        # Measure the premise with the BASIC layout engine. raqm 0.11 and
-        # later refuse a control character, while BASIC counts the newline
-        # glyph toward the width, and the harness must not depend on the host
-        # shaping stack.
+        # Use BASIC because raqm 0.11 rejects the newline control character.
+        # BASIC counts it in width and avoids dependence on the host shaping stack.
         basic_font = ImageFont.truetype(
             font.path, font.size, layout_engine=ImageFont.Layout.BASIC)
         _, _, single_line_w, _ = basic_font.getbbox(text)
@@ -221,15 +216,8 @@ def check_strip_matches_direct_draw() -> None:
         w, h = lm._measure_text("center", label)
         assert lm.get_has_scroll_labels()
 
-        # The media thread advances frames["center"]["position"] on its own
-        # tick, and this check pins that offset and compares the strip
-        # composite against a direct draw computed from the pinned value. A
-        # concurrent scroll advance between the pin and add_labels_to_image's
-        # read of the offset draws a different frame than the reference, and
-        # the byte deviation then blows past the bound. Under load the window
-        # between the pin and the read widens and it fails. In the running app
-        # one thread owns every render, so stop the media thread and let this
-        # thread pin and render each offset alone.
+        # Stop the media thread so each pinned offset and its reference stay atomic.
+        # The running app also has one render owner.
         controller.media_player.stop(timeout=5.0)
         assert not controller.media_player.running, (
             "premise: the media thread must stop, so this thread alone owns "
@@ -263,10 +251,10 @@ def check_strip_matches_direct_draw() -> None:
 
 
 def check_label_edit_invalidates_detection() -> None:
-    """A label edit through Page.set_label_* mutates the KeyLabel in place
-    and bypasses set_page_label's cache invalidation. Without an explicit
-    invalidate a shortened label keeps scrolling and a lengthened one never
-    starts until a page reload."""
+    """Require in-place Page.set_label_* edits to invalidate scroll detection.
+
+    Shortened labels must stop and lengthened labels must start without reload.
+    """
     from src.backend.DeckManagement.InputIdentifier import Input
 
     controller = _make_controller("scrolllbl-e", rolling=True)
@@ -324,10 +312,10 @@ def check_label_edit_invalidates_detection() -> None:
 
 
 def check_pathological_label_strip_capped() -> None:
-    """The precomposed strip is width by key height by 4 bytes of RGBA,
-    retained per label, and its width scales with the text length. Past the
-    width cap the render falls back to a direct draw, which retains nothing
-    and still produces the right pixels."""
+    """Cap each retained RGBA strip by width.
+
+    Text past the cap must use an equivalent direct draw with no retained strip.
+    """
     from src.backend.DeckManagement.InputIdentifier import Input
     from src.backend.DeckManagement.DeckController import LabelManager
 
@@ -338,15 +326,8 @@ def check_pathological_label_strip_capped() -> None:
         size = key.get_image_size()
         cap = LabelManager._MAX_STRIP_WIDTH
 
-        # Both wide labels below are scroll-flagged, so the media thread
-        # advances frames["center"]["position"] on its own tick. This check
-        # pins that offset and, for the pathological label, compares the
-        # capped direct-draw fallback against a direct draw computed from the
-        # pinned value. A concurrent advance between the pin and the render's
-        # read of the offset draws a different frame than the reference and the
-        # deviation blows past the bound; under load the window widens. In the
-        # running app one thread owns every render, so stop the media thread
-        # and let this thread pin and render each offset alone.
+        # Stop the media thread so pinned offsets cannot advance during comparison.
+        # The running app also has one render owner.
         controller.media_player.stop(timeout=5.0)
         assert not controller.media_player.running, (
             "premise: the media thread must stop, so this thread alone owns "

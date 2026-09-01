@@ -1,10 +1,4 @@
-"""launch_backend seeds plugin venvs with the loopback guard.
-
-inject_backend_guard writes the guard module plus a .pth line into a venv's
-site-packages, idempotently, and never raises into the launch path.
-backend_guard_env carries the same guard over PYTHONPATH for a venv-less
-child.
-"""
+"""Check idempotent loopback-guard injection through .pth and PYTHONPATH."""
 import os
 import subprocess
 import sys
@@ -62,12 +56,7 @@ def check_injection_into_skeleton() -> None:
 
 
 def check_pth_vector_in_real_venv() -> None:
-    """The .pth line imports the guard at interpreter start.
-
-    PYTHONPATH tests cannot cover this vector, so one real venv pins it. The
-    venv is built without pip, which keeps it fast; the guard import needs no
-    third-party package until a server class actually loads.
-    """
+    """Check startup import through .pth in a real venv built without pip."""
     venv_path = os.path.join(gl.DATA_PATH, "real-venv")
     subprocess.run([sys.executable, "-m", "venv", "--without-pip", venv_path],
                    check=True, timeout=60)

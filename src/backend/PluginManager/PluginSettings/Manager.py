@@ -61,11 +61,7 @@ class Manager(Generic[AssetT]):
     # Getter
 
     def get_asset(self, key: str, skip_override: bool = False) -> AssetT | None:
-        """Return the override of an asset, or the asset itself.
-
-        :param key: The key of the asset
-        :param skip_override: Return the asset and read no override
-        :return: An Asset or None
+        """Return an asset's override unless skip_override is true.
         """
         if skip_override:
             return self._assets.get(key, None)
@@ -108,12 +104,12 @@ class Manager(Generic[AssetT]):
         return out
 
     def load_json(self, json_data: dict[str, Any]) -> None:
-        data = json_data.get(self._json_key, None)
+        serialized_assets = json_data.get(self._json_key, None)
 
-        if not data:
+        if not serialized_assets:
             return
 
-        for key, value in data.items():
+        for key, value in serialized_assets.items():
             asset = self._asset_type.from_json(value)
             if asset is None:
                 # The concrete asset classes always build one; the base

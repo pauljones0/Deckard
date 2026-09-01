@@ -13,7 +13,7 @@ You should have received a copy of the GNU General Public License
 along with this program. If not, see <https://www.gnu.org/licenses/>.
 """
 
-from src.backend.WindowGrabber.Integration import Integration
+from src.backend.WindowGrabber.Integration import Integration, QUERY_TIMEOUT_MS
 from src.backend.WindowGrabber.Window import Window
 
 import json
@@ -32,17 +32,14 @@ class Gnome(Integration):
         super().__init__(window_grabber=window_grabber)
 
         self.proxy: Gio.DBusProxy | None = None
-        # 0 is GObject's "no handler" id, so it also means "not watching".
-        # This integration owns no thread, and the FocusedWindowChanged
-        # subscription is the watch.
+        # GObject handler id 0 means no handler and thus not watching.
+        # The FocusedWindowChanged subscription is this integration's complete watch state.
         self._signal_handler_id: int = 0
         self.connect_dbus()
 
     def install_extension(self) -> None:
-        # Pass a bare uuid string, like OnboardingWindow.on_install_button_click
-        # and like the InstallRemoteExtension "(s)" signature that
-        # GnomeExtensions marshals it into. A uuid inside a list matches no
-        # entry from get_installed_extensions, which kills the check below.
+        # Pass the bare UUID required by InstallRemoteExtension's (s) signature.
+        # A UUID inside a list cannot match an installed-extension string.
         uuid = "streamcontroller@core447.com"
         installed_extensions = gl.gnome_extensions.get_installed_extensions()
 
@@ -56,9 +53,8 @@ class Gnome(Integration):
         try:
             self.proxy = Gio.DBusProxy.new_for_bus_sync(
                 Gio.BusType.SESSION,
-                # The extension exports no properties worth a cache, and
-                # auto-start would D-Bus-activate org.gnome.Shell itself when
-                # the extension is absent.
+                # The extension has no properties to cache.
+                # Disable auto-start so an absent extension does not activate GNOME Shell.
                 Gio.DBusProxyFlags.DO_NOT_LOAD_PROPERTIES | Gio.DBusProxyFlags.DO_NOT_AUTO_START,
                 None,
                 "org.gnome.Shell",
@@ -66,9 +62,8 @@ class Gnome(Integration):
                 "org.gnome.Shell.Extensions.StreamController",
                 None
             )
-            # Gio builds a proxy for a name that nobody owns. Without this
-            # check an absent extension reads as connected, and every window
-            # query raises instead of returning an empty result.
+            # Gio builds proxies for unowned names, so verify the owner here.
+            # An absent extension must make window queries return an empty result.
             if self.proxy.get_name_owner() is None:
                 self.proxy = None
                 raise RuntimeError("nothing owns org.gnome.Shell on the session bus")
@@ -87,18 +82,8 @@ class Gnome(Integration):
     @log.catch
     @override
     def stop_watching(self) -> None:
-        """Drops the shell's window-change subscription.
-
-        This returns at once, because there is no thread to join. The proxy
-        stays, because the page editor queries its matching-window list
-        through it while no rule is enabled.
-
-        This has a known limitation. A built GDBusProxy keeps its match rule
-        on the session bus, so the shell still delivers FocusedWindowChanged to this
-        process and this method drops it. That costs a message on an open
-        connection, and no process spawn or poll. It applies only after
-        something builds the proxy, which a session with no rules never does.
-        """
+        """Drop the local handler but keep the proxy for one-shot queries.
+        The proxy retains its match rule, so delivered signals are discarded while stopped."""
         proxy = self.proxy
         handler_id = self._signal_handler_id
         self._signal_handler_id = 0
@@ -127,12 +112,8 @@ class Gnome(Integration):
         try:
             answer = json.loads(self.call("GetAllWindows"))
         except (GLib.Error, IndexError, TypeError, json.JSONDecodeError):
-            # The extension can be absent or the wrong version, and this app
-            # does not ship it. Each step of call() can fail, with a
-            # GLib.Error (no such method or interface, or the call failed),
-            # an IndexError (a
-            # reply body with no values, and call() indexes [0]), a TypeError
-            # (a first value that json.loads refuses), and a JSONDecodeError.
+            # Treat an absent or incompatible extension as no windows.
+            # Handle GLib errors, empty replies, and JSON type or decode errors.
             return []
         windows: list[Window] = []
         
@@ -150,7 +131,7 @@ class Gnome(Integration):
         try:
             answer = json.loads(self.call("GetFocusedWindow"))
         except (GLib.Error, IndexError, TypeError, json.JSONDecodeError):
-            # The same set as get_all_windows(). See the note there.
+            # Handle the same extension and reply failures as get_all_windows.
             return None
         wm_class = answer.get("wm_class")
         title = answer.get("title")
@@ -159,15 +140,14 @@ class Gnome(Integration):
     def call(self, method_name: str) -> str:
         proxy = self.proxy
         if proxy is None:
-            # Reachable only when the proxy goes away between the caller's
-            # get_is_connected() and here. Raise GLib.Error, which both
-            # callers read as "the call failed". An AttributeError on None
-            # would escape their except clause.
+            # The proxy can disappear after get_is_connected returns.
+            # Raise GLib.Error because both callers handle it, unlike AttributeError.
             raise GLib.Error("no D-Bus proxy for the GNOME extension")
-        return cast(str, proxy.call_sync(method_name, None, Gio.DBusCallFlags.NONE, -1, None).unpack()[0])
+        # Bound Shell calls so the autoswitch poll or GTK main thread cannot block forever.
+        # Timeout raises GLib.Error, which both callers handle.
+        return cast(str, proxy.call_sync(method_name, None, Gio.DBusCallFlags.NONE, QUERY_TIMEOUT_MS, None).unpack()[0])
 
     def get_is_connected(self) -> bool:
-        # Check the live owner, not only that a proxy exists. GDBusProxy
-        # tracks the name owner, so this turns False once the Shell or the
-        # extension's exporter leaves the bus.
+        # Check the tracked live owner, not only that a proxy exists.
+        # This becomes false when Shell or the extension exporter leaves the bus.
         return self.proxy is not None and self.proxy.get_name_owner() is not None

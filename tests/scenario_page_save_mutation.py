@@ -1,10 +1,4 @@
-"""
-Page.save must persist a consistent snapshot.
-
-A save while another thread mutates page.dict must not raise, and must leave
-valid JSON on disk. Stripping "object" from action entries must not touch the
-live dict.
-"""
+"""Verify page saves snapshot concurrent mutations without changing live data."""
 
 # Saves for one json_path serialize across Page objects, which two controllers
 # showing one page hold separately.
@@ -53,9 +47,8 @@ def main() -> int:
     stop = threading.Event()
 
     def mutator():
-        # Batches, not single add and delete pairs, so the dict size differs
-        # from its iteration-start size for most of each GIL slice. A lone
-        # add and delete restores the size before the reader looks.
+        # Use batches so dict size differs from its iteration-start size for
+        # most of each GIL slice.
         i = 0
         while not stop.is_set():
             batch = [f"mut-{i}-{j}x9" for j in range(25)]
@@ -68,17 +61,12 @@ def main() -> int:
     t = threading.Thread(target=mutator, daemon=True)
     t.start()
     try:
-        # The mutator holds the GIL in tight batches, so one round already
-        # spans tens of scheduler slices with the dict at a size the round did
-        # not start from. A snapshot that walked the live dict raises on the
-        # second round at the latest, measured against this same setup, so the
-        # rounds below sit far past the point where the race is caught. More of
-        # them buy nothing and cost ~0.45 s each.
+        # Twenty rounds repeatedly expose a snapshot that walks the live dict
+        # while keeping scenario time bounded.
         for i in range(20):
             try:
-                # save() marks the page. The serialization, and the
-                # RuntimeError this pins, happen in the flush, asked for here
-                # so every round checks the property.
+                # Flush after each save because serialization and its possible
+                # RuntimeError occur in the flush.
                 page.save()
                 page_flush.get().flush_path(path)
             except RuntimeError as e:
@@ -104,19 +92,18 @@ def main() -> int:
         return 1
 
     # C. Same-path saves serialize across Page objects.
-    path2 = seed_page("SaveShared")
-    page_a = Page(json_path=path2, deck_controller=StubController("save-shared-a"))
-    page_b = Page(json_path=path2, deck_controller=StubController("save-shared-b"))
+    shared_path = seed_page("SaveShared")
+    page_a = Page(json_path=shared_path, deck_controller=StubController("save-shared-a"))
+    page_b = Page(json_path=shared_path, deck_controller=StubController("save-shared-b"))
 
     events = []
     ev_lock = threading.Lock()
     in_critical = threading.Event()
 
-    def instrument(page_obj, name):
-        # Hook the snapshot, which every flush takes under the save lock.
-        # The backup is taken once per file per session, so a second flush
-        # never reaches it and leaves no second critical section to observe.
-        orig = page_obj.get_without_action_objects
+    def instrument_snapshot(page_obj, name):
+        # Hook the snapshot that every flush takes under the save lock; backup
+        # creation is only once per file and cannot observe both sections.
+        orig = page_obj.snapshot_for_save
 
         def probe():
             with ev_lock:
@@ -128,20 +115,18 @@ def main() -> int:
                 events.append((name, "exit", time.monotonic()))
             return snapshot
 
-        page_obj.get_without_action_objects = probe
+        page_obj.snapshot_for_save = probe
 
-    instrument(page_a, "a")
-    instrument(page_b, "b")
+    instrument_snapshot(page_a, "a")
+    instrument_snapshot(page_b, "b")
 
-    def saver(page_obj, wait_for_the_other):
-        # One pending record exists per path, so the second marker must
-        # arrive while the first flush is already inside the critical
-        # section. Otherwise the two coalesce into one write and leave no
-        # ordering to observe. The gate on the first probe forces that order.
-        if wait_for_the_other and not in_critical.wait(timeout=10):
+    def saver(page_obj, wait_for_first_save):
+        # Mark the second save after the first enters its critical section;
+        # otherwise one pending record coalesces both saves into one write.
+        if wait_for_first_save and not in_critical.wait(timeout=10):
             raise AssertionError("the first save never reached its critical section")
         page_obj.save()
-        page_flush.get().flush_path(path2)
+        page_flush.get().flush_path(shared_path)
 
     threads = [threading.Thread(target=saver, args=(p, wait))
                for p, wait in ((page_a, False), (page_b, True))]
@@ -158,17 +143,21 @@ def main() -> int:
     spans = {}
     for name, kind, ts in events:
         spans.setdefault(name, {})[kind] = ts
-    a, b = spans.get("a", {}), spans.get("b", {})
-    if not all(k in a and k in b for k in ("enter", "exit")):
+    page_a_span = spans.get("a", {})
+    page_b_span = spans.get("b", {})
+    if not all(k in page_a_span and k in page_b_span for k in ("enter", "exit")):
         print(f"FAIL: instrumentation incomplete: {events}")
         return 1
-    overlap = a["enter"] < b["exit"] and b["enter"] < a["exit"]
+    overlap = (
+        page_a_span["enter"] < page_b_span["exit"]
+        and page_b_span["enter"] < page_a_span["exit"]
+    )
     if overlap:
         print("FAIL: same-path saves from two Page objects ran concurrently "
-              f"(a={a}, b={b})")
+              f"(a={page_a_span}, b={page_b_span})")
         return 1
 
-    with open(path2) as f:
+    with open(shared_path) as f:
         json.load(f)
 
     print("PASS: save survives concurrent mutation, never mutates the live dict, "

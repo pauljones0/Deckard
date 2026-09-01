@@ -1,18 +1,7 @@
 #!/usr/bin/env python3
-"""
-Drive a running Deckard over its DBus API for a memory soak run.
+"""Cycle configured pages over D-Bus and mark the memory telemetry timeline."""
 
-Cycles every connected controller through the configured pages and writes a
-marker line into mem_telemetry.csv when SC_MEM_TELEMETRY is set.
-
-Usage:
-    .venv/bin/python tests/soak/soak_driver.py [--cycles N] [--interval SECONDS]
-"""
-
-# The markers line the switches up against the timeline the sampler records.
-# With no DBus service reachable, the driver prints the reason and exits 1
-# rather than raising. The DBus API carries page, icon-pack and window methods
-# only, so brightness and screensaver cycling are not driven from here yet.
+# Mark page switches; report an unreachable service cleanly
 import argparse
 import os
 import re
@@ -54,11 +43,7 @@ def connect():
 
 
 def write_marker(data_path: str, text: str) -> None:
-    """Append a marker line, prefixed with '#', to mem_telemetry.csv.
-
-    With telemetry off for this run there is no CSV to mark, so this does
-    nothing. A marker is a correlation aid that nothing else here reads.
-    """
+    """Append a correlation marker when mem_telemetry.csv exists."""
     if not data_path:
         return
     csv_path = os.path.join(data_path, "logs", "mem_telemetry.csv")

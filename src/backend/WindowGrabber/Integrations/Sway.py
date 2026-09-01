@@ -14,7 +14,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 """
 
 import threading
-from src.backend.WindowGrabber.Integration import Integration, WATCHER_STOP_TIMEOUT_S
+from src.backend.WindowGrabber.Integration import Integration, WATCHER_STOP_TIMEOUT_S, QUERY_TIMEOUT_S
 from src.backend.WindowGrabber.Window import Window
 
 import subprocess
@@ -50,9 +50,8 @@ class Sway(Integration):
         if thread is not None and thread.is_alive():
             return
 
-        # A Thread object cannot restart, so each start builds a fresh one.
-        # The new thread also primes its "last seen window" from the window
-        # focused now, not from a reading taken before the stop.
+        # Threads cannot restart, so each start builds a fresh watcher.
+        # It primes the last window from current focus, not a pre-stop reading.
         thread = WatchForActiveWindowChange(self)
         self.active_window_change_thread = thread
         thread.start()
@@ -67,18 +66,14 @@ class Sway(Integration):
 
         thread.stop()
         if thread is threading.current_thread():
-            # Never join the calling thread to itself. A window change can
-            # reach a page write, and a page write re-gates. The loop ends at
-            # its next stop check. The return also keeps the timeout warning
-            # below for a real timeout, not for a skipped join.
+            # A window-triggered page write can re-gate from this thread, so never join it.
+            # Its next stop check ends the loop; reserve the warning for an attempted join timeout.
             return
 
         thread.join(timeout=WATCHER_STOP_TIMEOUT_S)
         if thread.is_alive():
-            # The thread is parked in a swaymsg read past the timeout. It is a
-            # daemon, and its loop rechecks the stop flag once the read
-            # returns, so it unwinds on its own. The reference drops either
-            # way, so a later start builds a clean thread.
+            # This daemon can outlast the join while blocked in swaymsg, then stops after the read.
+            # Drop the reference so a later start builds a fresh thread.
             log.warning("The Sway active window watcher did not stop within the timeout")
 
     @override
@@ -98,7 +93,6 @@ class Sway(Integration):
 
     def _walk_tree(self, node: Any, windows: list[dict[str, Any]]) -> None:
         if "window_properties" in node or "app_id" in node:
-           # Add container nodes that are windows.
            windows.append(node)
 
         if "nodes" in node:
@@ -110,14 +104,14 @@ class Sway(Integration):
     def _get_windows(self) -> list[dict[str, Any]]:
         windows: list[dict[str, Any]] = []
         try:
-            output = subprocess.check_output([*self.command_prefix, "swaymsg", "-t", "get_tree"], text=True, cwd="/").strip()
+            output = subprocess.check_output([*self.command_prefix, "swaymsg", "-t", "get_tree"], text=True, cwd="/", timeout=QUERY_TIMEOUT_S).strip()
             clients = json.loads(output)
 
             for output in clients.get("nodes", []):
                 for workspace in output.get("nodes", []):
                     self._walk_tree(workspace, windows)
 
-        except (subprocess.CalledProcessError, OSError) as e:
+        except (subprocess.CalledProcessError, OSError, subprocess.TimeoutExpired) as e:
             # OSError covers a missing binary. The argv list runs no shell,
             # which would turn that into a 127 CalledProcessError.
             log.error(f"An error occurred while running swaymsg: {e}")
@@ -150,10 +144,8 @@ class WatchForActiveWindowChange(threading.Thread):
     @override
     def run(self) -> None:
         while gl.threads_running and not self._stop_event.is_set():
-            # Wait on the stop event instead of a sleep, so a stop ends the
-            # loop before the poll interval runs out. A wait that already
-            # elapsed can dispatch once after a stop; routing then re-reads
-            # the rules and finds none.
+            # Wait on the stop event so stop can end the loop before the poll interval.
+            # One elapsed wait can still dispatch after stop; routing re-reads and finds no rule.
             if self._stop_event.wait(0.2):
                 break
             new_active_window = self.sway.get_active_window()

@@ -1,8 +1,4 @@
-"""Scenario for the input pipeline, from a device event to action delivery.
-
-Real key, dial and touchscreen events run the whole chain against the real
-DeckController, Page, ControllerKey and ActionCore machinery.
-"""
+"""Run key, dial, and touchscreen events through the full input pipeline."""
 import fixtures  # noqa: F401  (import first: sets up the isolated data dir)
 
 import json
@@ -26,16 +22,14 @@ from src.backend.PluginManager.EventManager import EventManager
 
 FAKE_PLUGIN_BASE = types.SimpleNamespace(PATH="/tmp", backend=None)
 
-# A process-wide record of delivered (input_ident, event, data) tuples, keyed so
-# each leg can filter to its own input. Appended from the action pool thread and
-# guarded by a lock. Cleared between legs.
+# Action-pool threads append delivered events; legs read and clear under lock.
 _DELIVERED: list = []
 _DELIVERED_LOCK = threading.Lock()
 
 
-def _record(ident, event, data):
+def _record(ident, event, event_data):
     with _DELIVERED_LOCK:
-        _DELIVERED.append((ident, event, data))
+        _DELIVERED.append((ident, event, event_data))
 
 
 def _delivered_events(ident=None):
@@ -51,11 +45,7 @@ def _reset_delivered():
 
 
 class RecordingAction(ActionCore):
-    """Registers one EventAssigner per input event of interest.
-
-    Each assigner records its ident, event and data into the shared log.
-    Everything else is stubbed to the ActionCore no-op contract.
-    """
+    """Register one recorder EventAssigner for each tested input event."""
 
     # Every event this action listens for, by input type. Each becomes its own
     # EventAssigner, so _raw_event_callback finds it.
@@ -86,8 +76,8 @@ class RecordingAction(ActionCore):
         for ev in events:
             # A fresh closure per event, so the recorded event is the right one.
             def make_cb(event=ev, ident=ident):
-                def cb(data=None):
-                    _record(ident, event, data)
+                def cb(event_data=None):
+                    _record(ident, event, event_data)
                 return cb
             self.add_event_assigner(EventAssigner(
                 id=f"rec_{ident}_{ev.string_name}",
@@ -118,7 +108,7 @@ class _Holder:
         )
 
 
-class _PluginManager:
+class _StubPluginManager:
     def get_action_holder_from_id(self, action_id):
         return _Holder() if action_id == "dev_test_RecordingAction" else None
 
@@ -130,11 +120,7 @@ class _PluginManager:
 
 
 def _seed_page(name, action_map):
-    """Seed a page from an action map of input type to json ident.
-
-    Each named input gets a RecordingAction on state 0. The input type is one
-    of keys, dials or touchscreens.
-    """
+    """Add a state-0 RecordingAction to each input in an action map."""
     page = {"keys": {}, "dials": {}, "touchscreens": {}}
     for input_type, idents in action_map.items():
         for ident in idents:
@@ -150,9 +136,7 @@ def _seed_page(name, action_map):
 def _load_page_and_wait(controller, path):
     page = gl.page_manager.get_page(path, controller)
     controller.load_page(page, allow_reload=True)
-    # The event assigners of the actions register in RecordingAction.__init__,
-    # which runs during the load. Wait until the page actions are present, so a
-    # fired event has somewhere to land.
+    # Wait until page loading creates the recording action assigners.
     wait_until(lambda: page.action_objects, timeout=3)
     return page
 
@@ -198,10 +182,7 @@ def test_rotation_90_remap() -> int:
         deck = raw_deck(controller)
         better = controller.deck  # the BetterDeck wrapper
 
-        # Press-state seeding. A physical key held at init must seed the correct
-        # logical ControllerKey.press_state under rotation 90. The contract of
-        # reorder_physical_for_rotation is key_states()[get_logical_index(p)]
-        # == raw[p].
+        # Require key_states()[get_logical_index(p)] == raw[p] after rotation.
         raw_states = [False] * deck.key_count()
         raw_states[3] = True  # physical key 3 held
         deck.key_states = lambda: list(raw_states)
@@ -216,30 +197,15 @@ def test_rotation_90_remap() -> int:
                   f"regression: reorder_physical_for_rotation direction)")
             return 1
 
-        # Live input remap through the pipeline. Reset the held state, then
-        # rebuild the inputs so their identifiers match the rotation. In
-        # production the rotation is fixed at __init__ and init_inputs() runs
-        # after, so re-running init_inputs() here gives the same consistent
-        # state. Otherwise the inputs keep rotation-0 identifiers while
-        # key_event_callback routes with the rotation-90 remap.
+        # Rebuild input identifiers after the test changes rotation.
         raw_states[3] = False
         controller.init_inputs()
         all_idents = [k.identifier.json_identifier for k in controller.inputs[Input.Key]]
         _load_page_and_wait(controller, _seed_page(
             "KeyPage90", {"keys": {ident: True for ident in all_idents}}))
 
-        # The expected delivery coords for each physical key at rotation 90.
-        # This re-derives one step only, the composition of the two maps: the
-        # logical index comes from get_logical_index(p), and its coords are
-        # read off the rotated layout, which is the grid the identifiers
-        # above were named from. That step is where the historical defect
-        # was, and it is what this leg guards. It does not re-derive the
-        # rotation map itself, which shares get_logical_index with the code
-        # under test; the direction of that map is pinned against a
-        # hand-built table in tests/scenario_betterdeck_rotation.py.
-        # Reading the coords off the raw layout and swapping x for y instead
-        # names a different key for six of these eight: it decodes a
-        # row-major index with the wrong row length.
+        # Decode logical indexes with the rotated column count only.
+        # scenario_betterdeck_rotation independently pins the rotation direction.
         _logical_rows, logical_cols = better.key_layout()  # rotated: (4, 2)
         for physical in range(deck.key_count()):
             logical = better.get_logical_index(physical)
@@ -261,9 +227,7 @@ def test_rotation_90_remap() -> int:
                       f"coords {set(wrong)} (expected only {expected_ident})")
                 deck.fire_key_event(physical, False)
                 return 1
-            # Release and drain. The release delivers SHORT_UP and UP on the
-            # action pool asynchronously, so wait for it to land before the
-            # next reset, or it would pollute that window.
+            # Wait for asynchronous release delivery before clearing the record.
             deck.fire_key_event(physical, False)
             wait_until(lambda ei=expected_ident: (Input.Key.Events.UP, None) in _delivered_events(ei), timeout=3)
 
@@ -380,12 +344,8 @@ def test_hold_timer() -> int:
 
 
 def test_event_map_junk_keys() -> int:
-    """The event map is keyed by real InputEvents only.
-
-    An assigner declared with no events, and an override key that does not
-    resolve, must both insert no None key. Page JSON carries the literal
-    string None, because assignments persist as str(input_event).
-    """
+    """Exclude None keys from event-less assigners and invalid overrides.
+    Persisted assignments can contain the literal string None."""
     manager = EventManager()
 
     # An assigner with no declared events at all.
@@ -403,7 +363,6 @@ def test_event_map_junk_keys() -> int:
               "lookup can reach, from an event-less assigner or an "
               "unresolvable override key")
         return 1
-    # The fix must not cost the resolvable override its entry.
     if event_map.get(Input.Key.Events.UP) is not manager.get_event_assigner_by_id("real"):
         print("FAIL(6): dropping the junk override key also dropped the "
               "adjacent resolvable override")
@@ -414,7 +373,7 @@ def test_event_map_junk_keys() -> int:
 
 def main() -> int:
     start_watchdog(75, "input_pipeline")
-    gl.plugin_manager = _PluginManager()
+    gl.plugin_manager = _StubPluginManager()
     rc = test_key_events_rotation_0()
     rc |= test_rotation_90_remap()
     rc |= test_dial_events()

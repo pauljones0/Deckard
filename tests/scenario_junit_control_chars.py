@@ -1,11 +1,4 @@
-"""The JUnit writer must survive control characters in captured output.
-
-A failing scenario that prints ANSI colour (or any other C0 control byte)
-put those bytes straight into the XML text nodes; XML 1.0 forbids them, so
-minidom's parse of the serialized tree raised and the whole report was
-lost for every scenario, not just the noisy one. This drives write_junit
-with such output and asserts it produces a valid, parseable report.
-"""
+"""Remove XML-forbidden controls from JUnit output while preserving text."""
 import fixtures  # noqa: F401  (isolated --data tempdir; import first)
 
 import tempfile
@@ -15,7 +8,7 @@ from xml.dom import minidom
 import run_all
 
 
-def test_junit_survives_control_chars_in_output() -> None:
+def test_junit_control_char_output() -> None:
     noisy = "row \x1b[31mRED\x1b[0m\nbell\x07 esc\x1b vt\x0b nul\x00 keep\ttab"
     results = [
         ("scenario_ok.py", "PASS", 0.10, "plain \x1b[32mgreen\x1b[0m out"),
@@ -24,7 +17,6 @@ def test_junit_survives_control_chars_in_output() -> None:
     ]
     with tempfile.TemporaryDirectory() as d:
         path = Path(d) / "report.xml"
-        # Before the fix this raised ExpatError and wrote nothing.
         run_all.write_junit(path, results)
         assert path.exists(), "the report file must be written"
         dom = minidom.parse(str(path))  # must be well-formed XML
@@ -40,7 +32,7 @@ def test_junit_survives_control_chars_in_output() -> None:
 
 
 def main() -> None:
-    test_junit_survives_control_chars_in_output()
+    test_junit_control_char_output()
     print("scenario_junit_control_chars: OK")
 
 

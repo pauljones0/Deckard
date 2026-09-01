@@ -16,6 +16,8 @@ from gi.repository import Gio, GLib
 
 from loguru import logger as log
 
+from src.backend.WindowGrabber.Integration import QUERY_TIMEOUT_MS
+
 class GnomeExtensions:
     def __init__(self) -> None:
         self.proxy: Gio.DBusProxy | None = None
@@ -32,9 +34,8 @@ class GnomeExtensions:
                 "org.gnome.Shell.Extensions",
                 None
             )
-            # Gio builds a proxy for a name that nobody owns, so off GNOME the
-            # failure surfaces later, out of calls that have no error path.
-            # Check the owner to report "not connected" here instead.
+            # Gio builds proxies for unowned names, so verify the owner here.
+            # Later callers have no error path for an absent GNOME Shell.
             if self.proxy.get_name_owner() is None:
                 self.proxy = None
                 raise RuntimeError("nothing owns org.gnome.Shell on the session bus")
@@ -53,7 +54,9 @@ class GnomeExtensions:
         proxy = self.proxy
         if proxy is None:
             return extensions
-        reply = proxy.call_sync("ListExtensions", None, Gio.DBusCallFlags.NONE, -1, None)
+        # Bound this plain read so an unresponsive Shell cannot block forever.
+        # Installation stays unbounded because it waits for the user dialog.
+        reply = proxy.call_sync("ListExtensions", None, Gio.DBusCallFlags.NONE, QUERY_TIMEOUT_MS, None)
         extensions.extend(reply.unpack()[0])
         return extensions
 

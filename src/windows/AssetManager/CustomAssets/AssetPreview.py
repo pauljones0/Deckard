@@ -32,9 +32,7 @@ if TYPE_CHECKING:
 
 class AssetPreview(Preview):
     def __init__(self) -> None:
-        # DynamicFlowBox recycles a fixed pool of placeholders that take no
-        # constructor arguments. set_asset() binds the asset later, from the
-        # factory function.
+        # DynamicFlowBox pools argument-free placeholders that set_asset binds later
         super().__init__(can_be_deleted=True)
         self.asset: dict[str, Any] = None  # ty: ignore[invalid-assignment]  # late-init: set_asset
         self.flow: "CustomAssetChooserFlowBox" = None  # ty: ignore[invalid-assignment]  # late-init: set_asset
@@ -43,11 +41,7 @@ class AssetPreview(Preview):
         self.flow = flow
         self.asset = asset
 
-        # This runs inside the main-loop callback of
-        # DynamicFlowBox._apply_range, so set the text and the image here. A
-        # deferral through idle_add opens a frame where the child is visible,
-        # and clickable, while it shows the name and thumbnail of the earlier
-        # asset.
+        # Bind synchronously in _apply_range so no clickable frame shows stale data
         self.set_text(asset["name"])
         self.set_image(asset["thumbnail"])
 
@@ -67,10 +61,7 @@ class AssetPreview(Preview):
         dial.present()
 
     def on_remove_confirmed(self) -> None:
-        # self.flow owns a fixed pool of recycled placeholders. A removal of
-        # self from its native FlowBox shrinks that pool below
-        # N_ITEMS_PER_PAGE, so the removal goes through the flow instead of
-        # the widget tree.
+        # Remove through the flow to preserve its fixed N_ITEMS_PER_PAGE pool
         self.flow.remove_asset(self.asset)
 
 

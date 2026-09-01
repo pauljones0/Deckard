@@ -1,9 +1,4 @@
-"""Regression test for the static-label blit cache.
-
-LabelManager.add_labels_to_image records the mask blits of draw.text() once
-per composed label and replays them per frame, pixel-exact against a direct
-draw. A label past the width or height cap keeps the direct draw.
-"""
+"""Check static-label blits are pixel-exact and respect width and height limits."""
 import time
 
 import fixtures
@@ -15,11 +10,7 @@ TEXT = "Vol"
 
 
 def _make_controller(serial: str, rolling: bool = False, page_name: str = "Main"):
-    """Rolling labels are off by default here.
-
-    Every label then takes the static path whatever its width, which is the
-    path under test.
-    """
+    """Disable rolling labels by default so all labels use the static path."""
     fixtures._install_integration_globals()
     settings = gl.settings_manager.get_app_settings()
     settings.setdefault("general", {})["rolling-labels"] = rolling
@@ -39,10 +30,8 @@ def _set_label(key, position: str, **kwargs):
 
 
 def _reference(lm, position: str, size: tuple, bg: tuple) -> Image.Image:
-    """The uncached render of one label, a direct draw.text at the geometry
-    add_labels_to_image computes. Re-derived here rather than called through
-    the code under test.
-    """
+    """Render one label directly at the geometry used by add_labels_to_image.
+    This reference does not call the code under test."""
     label = lm.get_composed_label(position)
     w, h = lm._measure_text(position, label)
     if position == "top":
@@ -110,13 +99,9 @@ def check_pixel_parity() -> None:
         fixtures.teardown(controller)
 
 
-def check_alpha_ink_exact_cached() -> None:
-    """Semi-transparent ink is exact and still cached.
-
-    The scroll strip composites such ink with straight-alpha over instead of
-    the coverage blend of PIL. Replaying the blits is the coverage blend, so
-    the static path needs no carve-out and this pins that it kept none.
-    """
+def check_cached_alpha_ink_is_exact() -> None:
+    """Require cached semi-transparent ink to match PIL coverage blending.
+    The static path must not use the scroll strip's straight-alpha carve-out."""
     from src.backend.DeckManagement.InputIdentifier import Input
 
     controller = _make_controller("labelcache-b")
@@ -256,10 +241,7 @@ def check_label_edits_invalidate() -> None:
 
 
 def check_draw_count_contract() -> None:
-    """On an animated background the keys recomposite every tick.
-
-    The label must not be rasterized again.
-    """
+    """Require animated backgrounds to recomposite without rerasterizing labels."""
     import json
     import os
 
@@ -313,21 +295,21 @@ def check_draw_count_contract() -> None:
         label_calls.clear()
         time.sleep(3.0)
         steady_rasters = len(text_calls)
-        steady_labelings = len(label_calls)
+        steady_composites = len(label_calls)
     finally:
         ImageDraw.ImageDraw.text = orig_text
         LabelManager.add_labels_to_image = orig_add
         if controller is not None:
             fixtures.teardown(controller)
 
-    assert steady_labelings >= 30, (
-        f"only {steady_labelings} label composites in 3s of animated background "
+    assert steady_composites >= 30, (
+        f"only {steady_composites} label composites in 3s of animated background "
         f"-- the keys are not re-rendering, so a zero raster count proves nothing")
     assert steady_rasters == 0, (
-        f"{steady_rasters} label rasterizations across {steady_labelings} "
+        f"{steady_rasters} label rasterizations across {steady_composites} "
         f"composites of unchanged static labels -- draw.text is back in the "
         f"per-frame path")
-    print(f"PASS: {steady_labelings} steady-state label composites in 3s cost "
+    print(f"PASS: {steady_composites} steady-state label composites in 3s cost "
           f"{steady_rasters} rasterizations ({warm_rasters} during warm-up)")
 
 
@@ -363,10 +345,8 @@ def check_labelless_key_identity() -> None:
             "a label-less key still pays a full key-sized RGBA copy per frame")
         assert not text_calls, f"{len(text_calls)} draws on a label-less key"
 
-        # The identity return means the buffers of get_current_image() can be
-        # the image it returns, so closing them anyway would hand the media
-        # thread a released buffer. A background color keeps the key off the
-        # bare-tile fast path, so the label stage actually runs.
+        # An identity return can share the buffer that get_current_image() returns.
+        # The background color avoids the bare-tile path and exercises label handling.
         state.background_manager.set_page_color([10, 20, 30, 255], update=False)
         assert not key._tile_passthrough_ok(state), \
             "premise: the key must not take the bare-tile fast path"
@@ -387,12 +367,8 @@ STYLE = dict(color=[255, 255, 255, 255], outline_width=2,
 
 
 def check_composed_memo_race() -> None:
-    """The composed-labels memo is filled on render and dropped on edit.
-
-    Both are unlocked, so the builder can compose pre-edit labels, the edit
-    can land and drop the memo, and only then does the builder store. Without
-    an epoch stamp that store looks fresh and the old text stays forever.
-    """
+    """Reject a composed-label memo stored after a concurrent edit.
+    Its epoch must identify values that were composed before the edit."""
     from src.backend.DeckManagement.InputIdentifier import Input
 
     controller = _make_controller("labelcache-g")
@@ -448,12 +424,8 @@ def check_composed_memo_race() -> None:
 
 
 def check_visible_labels_memo_race() -> None:
-    """The same race on the visible-labels memo, with wider consequences.
-
-    A stale False makes ControllerKey._tile_passthrough_ok classify the key as
-    bare, so the composite short-circuits to the shared background tile and
-    the label never appears again.
-    """
+    """Reject a visible-label memo stored after a concurrent edit.
+    A stale False would keep the labelled key on the bare-tile path."""
     from src.backend.DeckManagement.InputIdentifier import Input
 
     controller = _make_controller("labelcache-h")
@@ -498,13 +470,9 @@ def check_visible_labels_memo_race() -> None:
         fixtures.teardown(controller)
 
 
-def check_many_line_label_not_cached() -> None:
-    """The height axis needs its own bound, not only the width cap.
-
-    The mask total and the record time both scale with line count, and the
-    recording runs on the sole device writer. Measured headless, 500 lines is
-    1000 blits and 0.22 s, and the refusal must cost nothing per frame.
-    """
+def check_multiline_label_not_cached() -> None:
+    """Bound static-label retention by height and operation cost, not only width.
+    Recording runs on the sole device writer and must reject 500-line labels early."""
     from src.backend.DeckManagement.DeckController import LabelManager
     from src.backend.DeckManagement.InputIdentifier import Input
 
@@ -552,9 +520,8 @@ def check_many_line_label_not_cached() -> None:
             f"a {h}px-tall label retained recorded blits; the width cap alone "
             f"does not bound retention on this axis")
 
-        # The pre-check over-estimates, so it always fires first for a label
-        # this size. The hard abort of the recorder is the backstop for an
-        # estimate that under-shoots, so exercise it directly.
+        # The pre-check rejects this label before recording.
+        # Exercise the recorder's hard abort as the backstop for low estimates.
         lm.clear_labels()
         _set_label(key, "center", text=TEXT, **STYLE)
         normal = lm.get_composed_label("center")
@@ -581,13 +548,9 @@ def check_many_line_label_not_cached() -> None:
         fixtures.teardown(controller)
 
 
-def check_many_line_scroll_not_cached() -> None:
-    """The scroll strip has the same height-axis hole, at 4 bytes per pixel.
-
-    A many-line label that overflows the key would ask for a strip hundreds of
-    MB wide and tall while sailing under the width cap. Rolling labels are on
-    here, unlike every other leg, because that is the only way into the strip.
-    """
+def check_multiline_scroll_not_cached() -> None:
+    """Bound scroll strips by total bytes, not only width.
+    Rolling labels enable the strip path for a many-line label below the width cap."""
     from src.backend.DeckManagement.DeckController import LabelManager
     from src.backend.DeckManagement.InputIdentifier import Input
 
@@ -598,9 +561,8 @@ def check_many_line_scroll_not_cached() -> None:
         size = key.get_image_size()
         bg = (0, 0, 0, 255)
 
-        # Control. A single-line label that overflows the key still gets a
-        # strip, so the leg below tests the byte cap rather than a broken
-        # scroll path.
+        # A single-line overflow must still get a strip.
+        # This proves the many-line case tests the byte cap, not a broken scroll path.
         _set_label(key, "center", text="m" * 60, **STYLE)
         assert lm.get_has_scroll_labels(), "premise: this label must scroll"
         _render(lm, size, bg)
@@ -633,15 +595,10 @@ def check_many_line_scroll_not_cached() -> None:
 
 
 def check_partial_interception_refused() -> None:
-    """A partial recording must be refused, not only a total loss.
-
-    The embedded-color route of PIL pastes onto the target image directly.
-    With an outline, the stroke pass records and the fill pass escapes. The op
-    list that remains replays an outline-only label. A blank probe is the gate.
-    """
-    # Patch label_engine, not DeckController. _record_label_blits resolves
-    # _BitmapRecorder from the module the code lives in, so a stand-in on the
-    # re-exporting namespace never reaches the recording.
+    """Refuse partial recordings where PIL bypasses the recorder for one pass.
+    A blank probe must reject an outline-only operation list."""
+    # _record_label_blits resolves _BitmapRecorder from label_engine.
+    # Patching the DeckController re-export would not intercept it.
     from src.backend.DeckManagement.deck_controller import label_engine as dc
     from src.backend.DeckManagement.InputIdentifier import Input
 
@@ -653,13 +610,8 @@ def check_partial_interception_refused() -> None:
         bg = (20, 40, 60, 255)
         real_recorder = dc._BitmapRecorder
         captured = []
-        # The record count below is the whole point of this check, and the
-        # controller's live media thread renders this same key through the
-        # shared _record_label_blits and _BitmapRecorder. A concurrent render
-        # of its own adds a record, and can also leave the shared cache in a
-        # state that makes this thread's next render re-record. In the running
-        # app one thread owns every render, so halt the media thread and let
-        # this thread be that sole renderer while it counts.
+        # Stop the live media thread before counting shared recorder calls.
+        # The running app also has one render owner, so this thread takes that role.
         controller.media_player.stop(timeout=5.0)
         assert not controller.media_player.running, (
             "premise: the media thread must stop, so this thread is the sole "
@@ -672,9 +624,7 @@ def check_partial_interception_refused() -> None:
                 return 0
 
         class SwallowOne(real_recorder):
-            """Partial loss. The first pass records and the rest reach the
-            canvas, which is the shape the embedded-color route produces.
-            """
+            """Record the first pass and let later passes reach the canvas."""
 
             def draw_bitmap(self, coord, mask, ink):
                 if not self.ops:
@@ -730,13 +680,8 @@ def check_partial_interception_refused() -> None:
 
 
 def check_mutation_round_gaps() -> None:
-    """Four gaps the mutation round found uncovered.
-
-    The reset of the recorded blits by the setters, multiline parity, the dial
-    label stage, and the two post-label composite steps that operate on
-    whatever add_labels_to_image handed back. That return value can be the
-    caller buffer.
-    """
+    """Check setter invalidation, multiline parity, dial labels, and buffer ownership.
+    Post-label composition must handle a caller-owned return buffer safely."""
     from src.backend.DeckManagement.InputIdentifier import Input
     from src.backend.DeckManagement.Subclasses.KeyLabel import KeyLabel
 
@@ -800,10 +745,8 @@ def check_mutation_round_gaps() -> None:
             "the dial's touch image is identical with and without a label -- "
             "the early-out is swallowing the label stage on this path")
 
-        # 4. The pressed shrink and the warning-point marker both run after the
-        # label stage, on whatever it returned. With no label that is the
-        # composite's own buffer, so neither may write through to the shared
-        # background tile.
+        # 4. Pressed and warning effects use the label-stage return buffer.
+        # With no label, neither effect may write through to the shared tile.
         state.background_manager.set_page_color([10, 20, 30, 255], update=False)
         lm.clear_labels()
         assert not lm.get_has_visible_labels()
@@ -843,15 +786,15 @@ def check_mutation_round_gaps() -> None:
 def main() -> None:
     fixtures.start_watchdog(75, label="scenario_label_strip_cache")
     check_pixel_parity()
-    check_alpha_ink_exact_cached()
+    check_cached_alpha_ink_is_exact()
     check_pathological_label_not_cached()
     check_label_edits_invalidate()
     check_draw_count_contract()
     check_labelless_key_identity()
     check_composed_memo_race()
     check_visible_labels_memo_race()
-    check_many_line_label_not_cached()
-    check_many_line_scroll_not_cached()
+    check_multiline_label_not_cached()
+    check_multiline_scroll_not_cached()
     check_partial_interception_refused()
     check_mutation_round_gaps()
     print("scenario_label_strip_cache: OK")

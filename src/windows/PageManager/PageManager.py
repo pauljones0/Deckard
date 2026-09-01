@@ -18,6 +18,8 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Adw
 
+from loguru import logger as log
+
 # Import own modules
 from src.windows.PageManager.elements.PageSelector import PageSelector
 from src.windows.PageManager.elements.PageEditor import PageEditor
@@ -67,11 +69,7 @@ class PageManager(Adw.ApplicationWindow):
         self.split.set_sidebar(self.page_selector)
 
     def get_page_selector(self) -> "PageSelector | None":
-        """The page selector, or None while build() has not set it yet.
-
-        The typed access makes a wrong attribute name a check-time error, which
-        a dotted-string guard never caught.
-        """
+        """Return the page selector, or None before build() sets it."""
         try:
             return self.page_selector
         except AttributeError:
@@ -84,9 +82,7 @@ class PageManager(Adw.ApplicationWindow):
         try:
             page_path = page_manager.add_page(page_name)
         except (FileExistsError, ValueError):
-            # ValueError: a name that resolves outside the pages directory,
-            # refused by the containment guard. Fail closed rather than let
-            # it escape this GTK callback.
+            # Reject duplicates and names outside the pages directory.
             return
 
         self.page_selector.add_row_by_path(page_path)
@@ -119,9 +115,15 @@ class PageManager(Adw.ApplicationWindow):
         page_manager = gl.page_manager
         if page_manager is None:
             return
-        self.page_selector.rename_page_row(old_path=old_path, new_path=new_path)
+        # Move first so a rejected destination leaves the row on its original
+        # name instead of showing a page that did not move.
+        try:
+            page_manager.move_page(old_path, new_path)
+        except (ValueError, OSError):
+            log.warning(f"Refused to rename {old_path!r} to {new_path!r}")
+            return
 
-        page_manager.move_page(old_path, new_path)
+        self.page_selector.rename_page_row(old_path=old_path, new_path=new_path)
 
         # Emit signal
         gl.signal_manager.trigger_signal(Signals.PageRename, old_path, new_path)

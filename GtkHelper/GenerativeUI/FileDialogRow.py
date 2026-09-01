@@ -16,8 +16,6 @@ class FileDialogRow(GenerativeUI[str]):
     from the file system. It includes functionality to display a dialog with filters and
     manage the file selection.
 
-    Inherits from GenerativeUI to provide generic UI management and functionality.
-
     Attributes:
         selected_file (Gio.File | None): The file selected in the dialog, or
             None while the dialog has returned none.
@@ -84,9 +82,8 @@ class FileDialogRow(GenerativeUI[str]):
 
     def get_file(self) -> Gio.File:
         """
-        Retrieves the currently selected file from the file dialog. It falls
-        back to the settings value layer, a path string, while the widget is
-        unbuilt, because a read is a value query and must not force a build.
+        Return the selected file, or the stored path while unbuilt.
+        A value read must not force a build.
 
         Returns:
             Gio.File: The selected file in the file dialog.
@@ -95,10 +92,8 @@ class FileDialogRow(GenerativeUI[str]):
             return Gio.File.new_for_path(self.get_value())
         selected_file = self.widget.selected_file
         if selected_file is None:
-            # A built row whose dialog has never returned a file. initial_path
-            # seeds only the dialog's start folder, so it leaves this None.
-            # Read the value layer, the same source the unbuilt row reads,
-            # rather than assert a file that was never chosen.
+            # initial_path sets only the dialog folder, so an untouched row has no selected file.
+            # Read the persisted path instead.
             return Gio.File.new_for_path(self.get_value())
         return cast(Gio.File, selected_file)
 
@@ -113,9 +108,8 @@ class FileDialogRow(GenerativeUI[str]):
         """
         path = file.get_path()
         if path is None:
-            # A non-local GFile, a gvfs URI with no FUSE mount, has no path.
-            # The value layer stores a path string, so there is nothing to
-            # record. Keep the previous value instead of writing None.
+            # A non-local GFile can have no path when its gvfs URI has no FUSE mount.
+            # Keep the previous path because the value layer cannot store None.
             return
         self._handle_value_changed(path)
 

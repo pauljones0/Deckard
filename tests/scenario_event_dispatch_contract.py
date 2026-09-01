@@ -1,8 +1,4 @@
-"""Two remaining gaps in the event-dispatch contract.
-
-Observers in one batch run in registration order, and trigger_event and
-dispatch both return before the observers complete.
-"""
+"""Require FIFO observer batches and asynchronous dispatch entry points."""
 import fixtures  # noqa: F401  (import first: sets up the isolated data dir)
 
 import threading
@@ -13,18 +9,16 @@ from src.backend.PluginManager import event_dispatch
 from src.backend.PluginManager.EventHolder import EventHolder
 
 
-# FIFO ordering within a batch
-
 def check_batch_runs_in_registration_order() -> None:
     order: list[int] = []
 
-    def make(n):
+    def make_observer(n):
         def observer(*args, **kwargs):
             order.append(n)
         observer.__name__ = f"observer_{n}"
         return observer
 
-    observers = [make(n) for n in range(10)]
+    observers = [make_observer(n) for n in range(10)]
     event_dispatch.dispatch(observers, ("evt",), {}, label="test::FIFO")
 
     assert wait_until(lambda: len(order) == 10, timeout=5.0), (
@@ -37,8 +31,6 @@ def check_batch_runs_in_registration_order() -> None:
     print("PASS: a batch dispatches its observers in registration (FIFO) order")
 
 
-# dispatch and trigger_event return before the observers complete
-
 def check_dispatch_returns_before_observer_completes() -> None:
     started = threading.Event()
     release = threading.Event()
@@ -46,17 +38,14 @@ def check_dispatch_returns_before_observer_completes() -> None:
 
     def blocking_observer(*args, **kwargs):
         started.set()
-        # Hold the lane until the assertion below has proven dispatch already
-        # returned. Bounded, so a regression cannot hang the scenario. The
-        # watchdog would catch it, and failing fast is cleaner.
+        # Hold the lane for the asynchronous-return assertion, with a bound to
+        # prevent a regression from hanging the scenario.
         release.wait(timeout=10)
         finished.set()
 
     event_dispatch.dispatch([blocking_observer], (), {}, label="test::AsyncReturn")
 
-    # dispatch() must have returned here although the observer has not
-    # finished, because it is still parked on release. A synchronous dispatch
-    # would not reach this line until finished.is_set().
+    # The parked observer proves dispatch returned before completion.
     assert not finished.is_set(), (
         "dispatch() did not return until the observer finished -- the "
         "queue-and-return contract regressed to synchronous dispatch (the "
@@ -76,10 +65,8 @@ def check_dispatch_returns_before_observer_completes() -> None:
 
 
 def check_trigger_event_returns_before_observer() -> None:
-    # The same contract one layer up, through a real EventHolder.trigger_event,
-    # which is the plugin-facing API. A PluginBase is needed only for
-    # get_plugin_id() inside EventHolder.__init__ when event_id_suffix is used,
-    # and an explicit event_id sidesteps that.
+    # Check the same contract through plugin-facing EventHolder.trigger_event;
+    # an explicit event ID avoids the need for PluginBase.
     holder = EventHolder(plugin_base=None, event_id="test::HolderAsyncReturn")
 
     started = threading.Event()
@@ -115,11 +102,90 @@ def check_trigger_event_returns_before_observer() -> None:
     print("PASS: EventHolder.trigger_event returns before its observer completes")
 
 
+def check_async_callable_instance_is_awaited() -> None:
+    # Await the result of an async __call__ instance even when the instance is
+    # not itself recognized as an async function.
+    ran = threading.Event()
+
+    class AsyncCallable:
+        async def __call__(self, *args, **kwargs):
+            import asyncio
+            await asyncio.sleep(0)
+            ran.set()
+
+    event_dispatch.dispatch([AsyncCallable()], (), {}, label="test::AsyncInstance")
+    assert ran.wait(timeout=5), (
+        "an async callable instance's coroutine was discarded unrun -- the "
+        "dispatcher only awaited async def functions")
+    print("PASS: an async callable instance is awaited, not discarded")
+
+
+def check_queue_cap_drops_oldest() -> None:
+    # While a wedge holds the lane, drop and count oldest batches past the cap.
+    real_cap = event_dispatch._QUEUE_MAX
+    event_dispatch._QUEUE_MAX = 5
+    release = threading.Event()
+    started = threading.Event()
+
+    def wedged(*args, **kwargs):
+        started.set()
+        release.wait(10)
+
+    lane = None
+    try:
+        # Wedge the lane with the first batch, then flood it well past the cap.
+        holder_label = "test::QueueCap"
+        event_dispatch.dispatch([wedged], (), {}, label=holder_label)
+        assert started.wait(5), "the wedged observer never started"
+
+        for _ in range(50):
+            event_dispatch.dispatch([lambda *a, **k: None], (), {}, label=holder_label)
+
+        # Find the lane and assert its queue stayed bounded and it counted drops.
+        with event_dispatch._watch_lock:
+            lanes = [ln for ln in event_dispatch._lanes if ln.dropped > 0]
+        assert lanes, "no lane recorded a drop although the queue was flooded past the cap"
+        lane = lanes[0]
+        assert len(lane._pending) <= event_dispatch._QUEUE_MAX, (
+            f"the queue grew past the cap: {len(lane._pending)} > {event_dispatch._QUEUE_MAX}")
+        assert lane.dropped >= 50 - event_dispatch._QUEUE_MAX, (
+            f"too few drops counted: {lane.dropped}")
+    finally:
+        release.set()
+        event_dispatch._QUEUE_MAX = real_cap
+    print("PASS: a flooded lane drops its oldest batches at the cap and counts them")
+
+
+def check_observer_repr_and_eq_run_outside_lock() -> None:
+    # A plugin observer with a custom __repr__/__eq__ must not have either run
+    # under the dispatch watch lock. The observer records the lock state it saw.
+    saw_locked = {"repr": False}
+
+    class NosyObserver:
+        def __repr__(self):
+            saw_locked["repr"] = event_dispatch._watch_lock.locked()
+            return "NosyObserver"
+
+        def __call__(self, *args, **kwargs):
+            pass
+
+    # A bare instance forces _observer_name to call __repr__; run it directly
+    # to prove that call occurs outside the lock.
+    name = event_dispatch._observer_name(NosyObserver())
+    assert name == "NosyObserver"
+    assert saw_locked["repr"] is False, (
+        "the observer's __repr__ ran while the watch lock was held")
+    print("PASS: a custom __repr__ runs off the watch lock")
+
+
 def main() -> None:
     start_watchdog(40, label="scenario_event_dispatch_contract")
     check_batch_runs_in_registration_order()
     check_dispatch_returns_before_observer_completes()
     check_trigger_event_returns_before_observer()
+    check_async_callable_instance_is_awaited()
+    check_queue_cap_drops_oldest()
+    check_observer_repr_and_eq_run_outside_lock()
     print("PASS: scenario_event_dispatch_contract")
 
 

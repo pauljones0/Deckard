@@ -1,18 +1,11 @@
-"""Reopening the AssetManager window must clear the previous session state.
-
-show_for_path() backs every pack stack out of its drilled-in chooser and
-clears every non-empty search entry. An empty entry stays untouched.
-"""
+"""Verify AssetManager reopen resets pack navigation and non-empty searches."""
 
 import fixtures  # noqa: F401  (must be first: isolates DATA_PATH)
 import globals as gl
 
 
 def _pump(context, predicate, watchdog, budget=10.0):
-    """Iterate the GLib main loop until predicate() is true, or the budget ends.
-
-    The threaded chooser builds marshal their final steps back by GLib.idle_add.
-    """
+    """Pump GLib until threaded chooser builds finish or the budget expires."""
     import time
     deadline = time.monotonic() + budget
     while not predicate():
@@ -35,9 +28,7 @@ def main() -> None:
         return
     Adw.init()
 
-    # Stub the data providers with no packs and no custom assets. The reset
-    # walks the window structure, the stacks and search entries, so the content
-    # builds only need to iterate empty and finish.
+    # Empty providers let builds finish while reset still walks the full UI.
     class EmptyPackManager:
         def get_icon_packs(self): return {}
         def get_wallpaper_packs(self): return {}
@@ -80,8 +71,7 @@ def main() -> None:
         )
     _pump(context, builds_done, fixtures)
 
-    # 1. Model a previous session that drilled into every pack stack and left
-    #    stale search filters and a non-custom top tab.
+    # Set drilled-in stacks, stale searches, and a non-custom top tab.
     chooser.set_visible_child_name("icon-packs")
     chooser.icon_pack_chooser.set_visible_child_name("icon-chooser")
     chooser.wallpaper_pack_chooser.set_visible_child_name("wallpaper-chooser")
@@ -95,8 +85,7 @@ def main() -> None:
     assert chooser.get_visible_child_name() != "custom-assets"
     assert chooser.icon_pack_chooser.get_visible_child_name() == "icon-chooser"
 
-    # 2. Reopen for a custom asset. show_for_path must reset navigation and
-    #    filters, and switch to the custom-assets tab.
+    # Reopen for a custom asset and reset navigation, filters, and top tab.
     am.show_for_path("/some/custom/asset.png")
 
     assert chooser.get_visible_child_name() == "custom-assets", (

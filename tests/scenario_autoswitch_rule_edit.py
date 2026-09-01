@@ -1,16 +1,8 @@
-"""A window auto-change rule matches, and an edit to one applies at once.
+"""Verify edited auto-switch rules apply at once on a background thread.
+One pattern matches alone, while a rule with neither pattern stays inert."""
 
-Three properties hold together here. A rule carrying one of the two patterns
-fires on that one alone, because the pattern it does not carry matches every
-window. A rule carrying neither pattern matches nothing, which is what a rule
-looks like while the user types the first pattern or clears one to retype it.
-And an edit applies to the window in front there and then, on a background
-thread, without a second page load when the watcher carries the same window.
-"""
-
-# A stub integration stands in for the five real ones, whose window queries
-# need a live desktop. What is covered here is the matching and the re-check,
-# not the watcher gate, which scenario_window_watcher_gating covers.
+# Use a stub integration to test matching and rechecks without a live desktop.
+# Watcher gating has a separate scenario.
 import fixtures  # noqa: F401  (must be imported first: isolates DATA_PATH)
 
 import contextlib
@@ -27,9 +19,8 @@ from src.backend.WindowGrabber.Window import Window
 from src.backend.WindowGrabber.WindowGrabber import WindowGrabber
 
 TIMEOUT_S = 5.0
-# How long a leg holds a page load open while it watches what another routing
-# manages meanwhile, and how long that watch runs. The two are far apart, so a
-# routing freed by the hold giving up cannot be read as one that never waited.
+# Keep the held-load bound well above observation time so timeout release
+# cannot look like unblocked routing.
 HELD_LOAD_TIMEOUT_S = 30.0
 OBSERVE_S = 2.0
 
@@ -40,12 +31,7 @@ EDITOR = Window(wm_class="deckard", title="Deckard")
 
 
 class StubIntegration(Integration):
-    """One desktop's window source, answering from a field.
-
-    It starts no watcher thread. Every check here drives the grabber directly.
-    A gate can hold a query inside get_active_window, which is what makes the
-    coalescing check deterministic.
-    """
+    """Provide a field-backed window source with an optional query gate."""
 
     instances: list["StubIntegration"] = []
     active_window: Window | None = FIREFOX
@@ -96,18 +82,15 @@ class StubDeckController:
         self.last_manual_loaded_page_path: str | None = None
         self.loaded_pages: list[str] = []
         self._load_lock = threading.RLock()
-        # A real load takes long enough for a second routing to start inside
-        # it. Legs that race two routings set this.
+        # Create an overlap window for legs that race two routings.
         self.load_delay = 0.0
 
     def serial_number(self) -> str:
         return self._serial
 
     def load_page(self, page, allow_reload: bool = True) -> None:
-        # The real controller holds one lock across the whole switch, and
-        # under allow_reload=False it compares identity there and returns
-        # without loading. A stub that skipped either would count a load the
-        # deck never performs, or let two loads of one page overlap.
+        # Match the controller's locked identity check for allow_reload=False.
+        # This prevents duplicate or overlapping loads in the test stub.
         with self._load_lock:
             if not allow_reload and self.active_page is page:
                 return
@@ -118,9 +101,7 @@ class StubDeckController:
 
 
 def _install_stub_selector() -> None:
-    """Replaces the session sniffing with a fixed answer.
-    select_integration_class is a pure function of the environment, which is
-    what makes this a one-liner rather than an environment dance."""
+    """Replace environment-based integration selection with StubIntegration."""
     window_grabber_module.select_integration_class = (
         lambda environment_components, server: StubIntegration
     )
@@ -130,12 +111,7 @@ _pages_written = 0
 
 
 def _write_page(name: str) -> str:
-    """Writes an empty page and answers its path.
-
-    Every page takes a name of its own across the whole scenario. The page
-    manager keeps the settings of a page it has read, so a second page reusing
-    a name would answer with the rule the first one carried.
-    """
+    """Write an empty page under a unique name to avoid cached settings."""
     global _pages_written
     _pages_written += 1
 
@@ -157,12 +133,7 @@ def _clear_pages() -> None:
 
 
 def _fresh_grabber() -> WindowGrabber:
-    """One grabber of its own for a check, over a fresh integration.
-
-    The grabber it replaces is settled first. A page write ahead of this call
-    reaches that one, whose gate pass then runs on the background pool and can
-    build an integration of its own while this check is already asserting.
-    """
+    """Settle the previous grabber before its queued worker builds in the next check."""
     previous = gl.window_grabber
     if isinstance(previous, WindowGrabber):
         _settle(previous)
@@ -178,11 +149,7 @@ def _fresh_grabber() -> WindowGrabber:
 
 
 def _integration_of(grabber: WindowGrabber) -> StubIntegration:
-    """The integration this grabber built, never the newest one built anywhere.
-
-    Another grabber can build one at any moment, so the class-wide list says
-    nothing about which object this grabber queries.
-    """
+    """Return this grabber's integration rather than the class-wide newest one."""
     integration = grabber.integration
     assert isinstance(integration, StubIntegration), (
         f"the grabber built no integration, got {integration!r}"
@@ -206,14 +173,10 @@ def _settle_recheck(grabber: WindowGrabber) -> None:
 
 @contextlib.contextmanager
 def _registered(controller: StubDeckController, page_paths: list[str]):
-    """Puts one deck in front of the grabber, with its pages in the cache.
-
-    A page-cache hit keeps get_page from building a real Page against this
-    stub deck.
-    """
+    """Register a stub deck and cache its pages to avoid real Page construction."""
     gl.deck_manager.deck_controller.append(controller)
     gl.page_manager.pages[controller] = {
-        path: {"page": StubPage(path), "page_number": number}
+        path: {"page": StubPage(path), "lru_stamp": number}
         for number, path in enumerate(page_paths)
     }
     try:
@@ -236,8 +199,6 @@ def _recorded_foreground_windows():
     finally:
         window_grabber_module.notify_foreground_window_changed = original
 
-
-# A rule that carries one pattern only.
 
 def check_title_only_rule_fires() -> None:
     _clear_pages()
@@ -308,9 +269,7 @@ def check_wm_class_only_rule_fires() -> None:
 
 
 def check_empty_pattern_matches_every_window() -> None:
-    """An entry the user cleared writes an empty pattern. Beside a pattern
-    that is filled in, it reads the same as an absent one, so the two cannot
-    drift apart."""
+    """Treat a cleared pattern as absent when the other pattern is set."""
     _clear_pages()
     manual_path = _write_page("Manual")
     rule_path = _write_page("Browser")
@@ -331,16 +290,8 @@ def check_empty_pattern_matches_every_window() -> None:
         )
 
 
-# A rule that carries no pattern at all.
-
 def check_rule_without_patterns_is_inert() -> None:
-    """An enabled rule with neither pattern must match nothing.
-
-    A rule switched on before either pattern is typed looks like this, and so
-    does one carried over from a version that never wrote the missing key. A
-    rule read as "matches every window" takes the deck over on the next window
-    change, whatever is in front.
-    """
+    """Keep an enabled rule with neither pattern inert."""
     _clear_pages()
     manual_path = _write_page("Manual")
     rule_path = _write_page("Browser")
@@ -365,15 +316,8 @@ def check_rule_without_patterns_is_inert() -> None:
         assert controller.page_auto_loaded is False
 
 
-def check_cleared_pattern_does_not_take_over() -> None:
-    """The editing sequence that reaches the same state.
-
-    The user clears the one pattern the rule carries to retype it. Until the
-    new text lands the rule holds nothing, and the window in front is the page
-    editor itself. A rule read as a catch-all hands the deck to the page being
-    edited, and the deck then stays there: the page it moved to asks to stay,
-    so nothing hands it back.
-    """
+def check_cleared_pattern_stays_inert() -> None:
+    """Keep the deck stable while its only rule pattern is cleared for editing."""
     _clear_pages()
     manual_path = _write_page("Manual")
     rule_path = _write_page("Browser")
@@ -411,9 +355,7 @@ def check_cleared_pattern_does_not_take_over() -> None:
         )
 
 
-# The re-check after an edit.
-
-def check_recheck_applies_the_window_in_front() -> None:
+def check_recheck_applies_foreground_window() -> None:
     _clear_pages()
     manual_path = _write_page("Manual")
     rule_path = _write_page("Browser")
@@ -456,9 +398,7 @@ def check_recheck_applies_the_window_in_front() -> None:
 
 
 def check_recheck_restores_a_disabled_rule() -> None:
-    """Switching a rule off while another rule stays enabled leaves the
-    watcher running, so no gate change carries the restore. The re-check must
-    return the deck the rule had taken over."""
+    """Restore the deck when one rule is disabled but the watcher stays active."""
     _clear_pages()
     manual_path = _write_page("Manual")
     rule_path = _write_page("Browser")
@@ -493,7 +433,7 @@ def check_recheck_restores_a_disabled_rule() -> None:
         )
 
 
-def check_recheck_without_a_window_in_front() -> None:
+def check_recheck_without_foreground_window() -> None:
     """A desktop that names no front window leaves nothing to match. The
     re-check must ask, find nothing, and change no deck."""
     _clear_pages()
@@ -527,13 +467,8 @@ def check_recheck_without_a_window_in_front() -> None:
         assert controller.loaded_pages == []
 
 
-def check_recheck_is_inert_with_no_rule() -> None:
-    """The re-check takes the same gate as the watcher.
-
-    With no rule anywhere, nothing may build the integration, probe the
-    desktop or publish a foreground window: the D-Bus property reports the
-    desktop only while a page asks to follow it.
-    """
+def check_recheck_inert_without_rules() -> None:
+    """Skip integration, desktop, and D-Bus work when no rule is enabled."""
     _clear_pages()
     _write_page("Plain")
     _write_page("Disabled")
@@ -560,11 +495,7 @@ def check_recheck_is_inert_with_no_rule() -> None:
 
 
 def check_recheck_coalesces() -> None:
-    """A burst of re-checks costs one further pass, not one per request.
-
-    Every pass queries the desktop, which runs subprocesses, and the page
-    editor asks for one on every edit that lands.
-    """
+    """Coalesce a recheck burst into the running pass plus one further pass."""
     _clear_pages()
     manual_path = _write_page("Manual")
     rule_path = _write_page("Browser")
@@ -603,13 +534,7 @@ def check_recheck_coalesces() -> None:
 
 
 def check_recheck_and_watcher_load_once() -> None:
-    """A re-check carrying the window the watcher just reported must not load
-    the page a second time.
-
-    Two routings that overlap both read the page the deck shows before either
-    has loaded, so both decide the deck must change. The user sees the page
-    build twice.
-    """
+    """Load once when watcher and recheck concurrently route the same window."""
     _clear_pages()
     manual_path = _write_page("Manual")
     rule_path = _write_page("Browser")
@@ -620,10 +545,7 @@ def check_recheck_and_watcher_load_once() -> None:
 
     grabber = _fresh_grabber()
     controller = StubDeckController("SERIAL", active_page=StubPage(manual_path))
-    # The overlap this leg is about, held open long enough to survive a busy
-    # machine. The second routing reads the rules and asks the desktop which
-    # window is in front before it decides, and it must still find the deck on
-    # its old page when it does, or the two never meet.
+    # Keep the first load open long enough to create an overlap window.
     controller.load_delay = 0.25
 
     start = threading.Barrier(2)
@@ -649,19 +571,9 @@ def check_recheck_and_watcher_load_once() -> None:
         )
 
 
-def check_a_reported_window_never_routes_on_the_caller() -> None:
-    """A window reported over D-Bus arrives on the GTK main thread, and the
-    routing it starts must not run there.
-
-    A page load marshals onto that thread and waits for it, so a routing that
-    ran there would wait for itself. It waits for the marshal to time out,
-    which is half a minute of frozen window, and the load it abandons leaves
-    the page half built. Any process on the session bus can call the method,
-    so this is not a rare shape.
-
-    The load in flight below stands for that marshal: it holds the deck and
-    waits for the main thread to come back, exactly as a real one does.
-    """
+def check_reported_window_routes_off_caller() -> None:
+    """Route reports from any session-bus caller off the GTK caller thread.
+    A route there can self-wait for 30 s and leave the page half built."""
     _clear_pages()
     manual_path = _write_page("Manual")
     rule_path = _write_page("Browser")
@@ -687,12 +599,8 @@ def check_a_reported_window_never_routes_on_the_caller() -> None:
             landed_before = len(self.loaded_pages)
             super().load_page(page, allow_reload=allow_reload)
             if len(self.loaded_pages) > landed_before:
-                # The load that lands, never the call that makes it. Both
-                # routings carry the same window and both can reach this, and
-                # which of them finds the deck already on the page depends on
-                # where the other one had got to. The deck refuses the page it
-                # already shows, so exactly one of the two lands, whatever the
-                # order.
+                # Record only the load that changes the page; either routing may win.
+                # The controller rejects the second load by page identity.
                 order.append("load")
 
     controller = MarshallingController("SERIAL", active_page=StubPage(manual_path))
@@ -747,14 +655,8 @@ def check_a_reported_window_never_routes_on_the_caller() -> None:
     )
 
 
-def check_a_load_in_flight_does_not_block_another_deck() -> None:
-    """A page load on one deck must not hold up the routing of another.
-
-    The decision is what two routings must not interleave, and it touches two
-    fields. A lock held from the decision all the way through the load stops
-    every other routing for as long as the load runs, and a load runs as long
-    as the GTK main thread takes to answer it.
-    """
+def check_deck_loads_do_not_block_routing() -> None:
+    """Keep per-deck decisions atomic without holding the routing lock during load."""
     _clear_pages()
     manual_path = _write_page("Manual")
     rule_path = _write_page("Browser")
@@ -771,9 +673,8 @@ def check_a_load_in_flight_does_not_block_another_deck() -> None:
     class BlockingController(StubDeckController):
         def load_page(self, page, allow_reload: bool = True) -> None:
             load_started.set()
-            # Far longer than the window the other routing is watched over, so
-            # a routing held up by this load cannot come free at the moment
-            # the watch gives up and read as one that was never held.
+            # Keep this bound above observation time so timeout release cannot
+            # look like unblocked routing.
             assert release_load.wait(HELD_LOAD_TIMEOUT_S), (
                 "the held load was never released"
             )
@@ -789,10 +690,10 @@ def check_a_load_in_flight_does_not_block_another_deck() -> None:
 
     with _registered(quick, [manual_path, rule_path]):
         with _registered(slow, [manual_path, rule_path]):
-            first = threading.Thread(target=route, name="StubRoutingHeld")
-            second = threading.Thread(target=route, name="StubRoutingFree")
+            blocked_routing = threading.Thread(target=route, name="StubRoutingHeld")
+            concurrent_routing = threading.Thread(target=route, name="StubRoutingFree")
             try:
-                first.start()
+                blocked_routing.start()
                 assert load_started.wait(TIMEOUT_S), (
                     "the first routing never reached the held load"
                 )
@@ -800,7 +701,7 @@ def check_a_load_in_flight_does_not_block_another_deck() -> None:
                 # The first routing is inside the load now. Clear what it left
                 # on the quick deck, so only the second routing can set it.
                 quick.page_auto_loaded = False
-                second.start()
+                concurrent_routing.start()
 
                 assert fixtures.wait_until(
                     lambda: quick.page_auto_loaded is True, OBSERVE_S
@@ -810,24 +711,19 @@ def check_a_load_in_flight_does_not_block_another_deck() -> None:
                 )
             finally:
                 release_load.set()
-                first.join(TIMEOUT_S)
-                second.join(TIMEOUT_S)
+                blocked_routing.join(TIMEOUT_S)
+                concurrent_routing.join(TIMEOUT_S)
 
-            assert not first.is_alive() and not second.is_alive()
+            assert not blocked_routing.is_alive() and not concurrent_routing.is_alive()
             assert slow.loaded_pages == [rule_path], (
                 f"the held deck must end on the page its rule names, once, "
                 f"got {slow.loaded_pages}"
             )
 
 
-def check_restore_runs_once_under_a_race() -> None:
-    """Two routings that find no matching rule at the same moment must undo
-    the automatic switch once.
-
-    The flag saying the page arrived automatically is the flag the undo
-    clears, and the path back to the user's page is read beside it, so the two
-    routings cannot read and write them in turn.
-    """
+def check_restore_once_under_race() -> None:
+    """Restore once when two routings concurrently find no matching rule.
+    Read the manual path and clear the automatic flag atomically."""
     _clear_pages()
     manual_path = _write_page("Manual")
     rule_path = _write_page("Browser")
@@ -871,12 +767,8 @@ def check_restore_runs_once_under_a_race() -> None:
         )
 
 
-# The D-Bus property the routing publishes.
-
-def check_foreground_window_publishes_only_on_change() -> None:
-    """Re-applying the rules re-publishes the window in front, and the value
-    is the one the clients already hold. A PropertiesChanged for an unchanged
-    value wakes every subscriber for nothing."""
+def check_foreground_publish_on_change() -> None:
+    """Publish PropertiesChanged only when the foreground window changes."""
     published: list[tuple] = []
     original_emit = api._emit_properties_changed
     original_instance = api._api_instance
@@ -912,17 +804,17 @@ def main() -> None:
     check_wm_class_only_rule_fires()
     check_empty_pattern_matches_every_window()
     check_rule_without_patterns_is_inert()
-    check_cleared_pattern_does_not_take_over()
-    check_recheck_applies_the_window_in_front()
+    check_cleared_pattern_stays_inert()
+    check_recheck_applies_foreground_window()
     check_recheck_restores_a_disabled_rule()
-    check_recheck_without_a_window_in_front()
-    check_recheck_is_inert_with_no_rule()
+    check_recheck_without_foreground_window()
+    check_recheck_inert_without_rules()
     check_recheck_coalesces()
     check_recheck_and_watcher_load_once()
-    check_a_reported_window_never_routes_on_the_caller()
-    check_a_load_in_flight_does_not_block_another_deck()
-    check_restore_runs_once_under_a_race()
-    check_foreground_window_publishes_only_on_change()
+    check_reported_window_routes_off_caller()
+    check_deck_loads_do_not_block_routing()
+    check_restore_once_under_race()
+    check_foreground_publish_on_change()
 
     print("PASS: scenario_autoswitch_rule_edit")
 

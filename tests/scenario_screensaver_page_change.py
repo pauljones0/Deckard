@@ -1,9 +1,6 @@
-"""
-A page change requested while the screensaver shows must be deferred.
+"""Defer page changes while the screensaver shows.
 
-load_page records the requested page as pending and leaves active_page alone,
-because the media player gates the screensaver's background video on
-background.video.page is active_page. hide() loads the pending page on dismiss.
+Keep active_page for video gating; hide loads the pending page.
 """
 
 # Distinct per-page backgrounds make a leak detectable by hash.
@@ -16,7 +13,7 @@ import globals as gl
 WATCHDOG_SECONDS = 30
 
 
-def _signature(controller, deck, page, key_count):
+def _paint_signature(controller, deck, page, key_count):
     deck.clear_journal()
     controller.load_page(page, allow_reload=True)
     ok = fixtures.wait_until(
@@ -48,7 +45,7 @@ def main() -> None:
 
     # Learn page B's paint signature in isolation so a leak onto the deck is
     # detectable by hash.
-    sig_b = _signature(controller, deck, page_b, key_count)
+    sig_b = _paint_signature(controller, deck, page_b, key_count)
 
     # Settle on page A, then raise the screensaver.
     controller.load_page(page_a, allow_reload=True)
@@ -63,14 +60,10 @@ def main() -> None:
     for k in range(key_count):
         assert sig_ss[k] != sig_b[k], f"fixture: screensaver and page B produced the same hash for key {k}"
 
-    # The change. Switch to page B while the screensaver is showing.
     deck.clear_journal()
     controller.load_page(page_b, allow_reload=True)
 
-    # It must be recorded as pending and not painted, and active_page must
-    # stay on the screensaver's page. The media player gates the screensaver's
-    # background video on background.video.page is active_page, so a change
-    # here would freeze that video. hide() loads the pending page on dismiss.
+    # Keep active_page for video gating and record page B for hide() to load.
     assert controller.active_page is page_a, (
         "a page change during the screensaver must NOT change active_page (that "
         "freezes the screensaver's background video)"

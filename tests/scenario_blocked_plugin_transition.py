@@ -1,8 +1,5 @@
-"""Integration scenario for the blocked-plugin transition.
-
-A transition must never hold _load_page_lock across a plugin callback. The
-scenario patches ChangePage dispatch to run handlers on the caller's thread.
-"""
+"""Verify that page transitions do not hold _load_page_lock across plugin callbacks.
+ChangePage handlers run synchronously on the caller's thread to expose the lock boundary."""
 import threading
 import time
 
@@ -11,15 +8,12 @@ import globals as gl
 from src.Signals.Signals import ChangePage
 
 WATCHDOG_SECONDS = 30
-HANDLER_SLEEP = 3.0
+HANDLER_SLEEP_SECONDS = 3.0
 
 
 def _install_sync_change_page_dispatch():
-    """Return a trigger_signal replacement that calls ChangePage handlers direct.
-
-    The handlers run synchronously on the caller's thread. Every other signal
-    keeps the real async behavior.
-    """
+    """Return a trigger replacement that calls ChangePage handlers synchronously.
+    Every other signal keeps its asynchronous behavior."""
     signal_manager = gl.signal_manager
     real_trigger_signal = signal_manager.trigger_signal
 
@@ -47,7 +41,7 @@ def main() -> None:
 
     def slow_change_page_handler(ctrl, old_path, new_path):
         handler_started.set()
-        time.sleep(HANDLER_SLEEP)
+        time.sleep(HANDLER_SLEEP_SECONDS)
 
     gl.signal_manager.connect_signal(ChangePage, slow_change_page_handler)
 
@@ -75,10 +69,8 @@ def main() -> None:
             concurrent_load_elapsed["dt"] = time.monotonic() - t0
 
         def probe_lock():
-            # Wait until the handler is mid-sleep, then time a bare lock
-            # acquisition. This thread makes no load_page, hide or show call of
-            # its own, so nothing here re-triggers the handler and confounds the
-            # timing, unlike do_concurrent_load.
+            # Time bare lock acquisition while the handler sleeps; this thread calls no transition,
+            # so it cannot retrigger the handler and distort timing like do_concurrent_load.
             ok = fixtures.wait_until(handler_started.is_set, timeout=10)
             if not ok:
                 lock_probe_elapsed["error"] = "handler never started"
@@ -108,27 +100,23 @@ def main() -> None:
         assert "dt" in hide_elapsed, "hide() thread did not record completion"
         assert "dt" in concurrent_load_elapsed, "concurrent load_page() thread did not record completion"
 
-        # The hide() thread is expected to take about HANDLER_SLEEP. Its phase 3
-        # calls load_page(), whose plugin-facing tail runs the slow ChangePage
-        # handler on its own call stack under the synchronous dispatch this
-        # scenario installs. The lock probe below is the real assertion.
-        assert hide_elapsed["dt"] >= HANDLER_SLEEP * 0.9, (
+        # hide() takes about HANDLER_SLEEP_SECONDS through the synchronous phase-3 handler.
+        # The lock probe is the regression assertion.
+        assert hide_elapsed["dt"] >= HANDLER_SLEEP_SECONDS * 0.9, (
             "fixture sanity: hide()'s phase-3 load_page() did not appear to "
             "run the synchronously-dispatched handler at all"
         )
         assert "error" not in lock_probe_elapsed, lock_probe_elapsed.get("error")
         assert lock_probe_elapsed.get("got"), "the lock probe never acquired _load_page_lock"
 
-        # The core regression assertion. While the hide() thread sits deep inside
-        # its post-lock ChangePage dispatch, an unrelated thread must still
-        # acquire _load_page_lock almost at once. A load_page() call from inside
-        # the lock hold would block this probe for the rest of HANDLER_SLEEP.
+        # During ChangePage dispatch, another thread must acquire _load_page_lock within one second.
+        # Dispatch under the lock would block it for the remaining HANDLER_SLEEP_SECONDS.
         assert lock_probe_elapsed["dt"] < 1.0, (
             f"acquiring _load_page_lock took {lock_probe_elapsed['dt']:.2f}s while "
             f"a ChangePage handler was sleeping -- the transition is holding the "
             f"lock across a plugin callback (G-B1 regression)"
         )
-        assert total < HANDLER_SLEEP + 5.0, f"scenario took {total:.2f}s total -- unexpectedly slow"
+        assert total < HANDLER_SLEEP_SECONDS + 5.0, f"scenario took {total:.2f}s total -- unexpectedly slow"
 
         # The concurrent, independent load_page() call must still have landed.
         # The racing hide() transition must not drop or corrupt it.
@@ -138,9 +126,7 @@ def main() -> None:
 
     finally:
         gl.signal_manager.trigger_signal = real_trigger_signal
-        # Tolerate a missing disconnect_signal, so the scenario runs standalone
-        # on the deck stack. Without the disconnect the sleeping handler stays
-        # registered, which is harmless in a subprocess-per-scenario harness.
+        # Permit a missing disconnect_signal; the scenario subprocess discards the retained handler.
         disconnect = getattr(gl.signal_manager, "disconnect_signal", None)
         if disconnect is not None:
             disconnect(ChangePage, slow_change_page_handler)

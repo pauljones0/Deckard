@@ -1,8 +1,6 @@
-"""
-Opening deck settings at a non-default saturation must not reload the page.
+"""Opening deck settings at a stored saturation must not reload the page.
 
-The Saturation row defers load_default to "map", which runs after value-changed
-is connected, so set_value re-emits the stored factor.
+The mapped row re-emits its stored value after value-changed is connected.
 """
 
 # DeckController.set_display_saturation therefore short-circuits on the same
@@ -57,36 +55,36 @@ def main() -> None:
     page = object()
 
     # The settings-open echo, where the pane re-emits the loaded value.
-    c = _StubSetterController(current=1.3, active_page=page)
-    DeckController.set_display_saturation(c, 1.3)
-    assert c.load_page_calls == [], (
-        f"echoing the current factor must not reload the page, got {c.load_page_calls}"
+    controller = _StubSetterController(current=1.3, active_page=page)
+    DeckController.set_display_saturation(controller, 1.3)
+    assert controller.load_page_calls == [], (
+        f"echoing the current factor must not reload the page, got {controller.load_page_calls}"
     )
     assert settings_manager.save_calls == [], (
         "echoing the current factor must not rewrite deck settings"
     )
-    assert c.display_saturation == 1.3
+    assert controller.display_saturation == 1.3
 
     # Sub-rounding jitter is the same value. The method rounds to 2 decimals
     # before it compares and persists.
-    DeckController.set_display_saturation(c, 1.3000004)
-    assert c.load_page_calls == [] and settings_manager.save_calls == [], (
+    DeckController.set_display_saturation(controller, 1.3000004)
+    assert controller.load_page_calls == [] and settings_manager.save_calls == [], (
         "sub-rounding jitter must hit the same-value short-circuit"
     )
 
     # A real change still applies exactly once.
-    DeckController.set_display_saturation(c, 1.4)
-    assert c.load_page_calls == [(page, True)], (
+    DeckController.set_display_saturation(controller, 1.4)
+    assert controller.load_page_calls == [(page, True)], (
         f"a real change must reload the active page once (allow_reload=True), "
-        f"got {c.load_page_calls}"
+        f"got {controller.load_page_calls}"
     )
     assert len(settings_manager.save_calls) == 1
-    assert c.display_saturation == 1.4
-    assert c._settings["display"]["saturation"] == 1.4
+    assert controller.display_saturation == 1.4
+    assert controller._settings["display"]["saturation"] == 1.4
 
     # Echoing the new value is a no-op again.
-    DeckController.set_display_saturation(c, 1.4)
-    assert len(c.load_page_calls) == 1 and len(settings_manager.save_calls) == 1
+    DeckController.set_display_saturation(controller, 1.4)
+    assert len(controller.load_page_calls) == 1 and len(settings_manager.save_calls) == 1
 
     # A real change with no active page persists without reloading.
     c_no_page = _StubSetterController(current=1.0, active_page=None)

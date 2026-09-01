@@ -1,35 +1,5 @@
-"""A turned deck dispatches every input to the position the user sees.
-
-The deck wrapper maps a physical event onto the logical layout, and the
-controller resolves that logical value against the same layout the input
-registry was built from. This drives a real DeckController over a fake deck
-and checks the whole chain at all four rotations:
-
-  (a) every key of the grid reaches its own registered key, never another
-      one, and the keys together cover the registry exactly once;
-  (b) turning the deck rebuilds the input set for the new layout and leaves
-      no present hash behind, so the corrective repaint is not hash-skipped;
-  (c) a dial event reaches the dial that sits under the slot the composite
-      drew, which runs the other way at 180;
-  (d) a touch reaches the slot the user touched, a touch past the end of the
-      strip reaches nothing at any rotation, and a drag keeps its direction
-      under the user's hand;
-  (e) the page load that ends a turn runs with the page lock released;
-  (f) the turn hands the media thread the retired input set and not the live
-      one, and the live one survives the release;
-  (g) two turns in a row retire two sets and empty both;
-  (h) a key held across a turn has its gesture cancelled on the retired
-      input, and the orphan release reaches the branch that dispatches
-      nothing;
-  (i) a turn drops the window's pending dirty markers, which name positions
-      the turned deck no longer has.
-
-The key legs run over three deck shapes, named from the fake deck's model
-presets and never spelled out here: the Stream Deck + (2 by 4), the Mini (2
-by 3) and the XL (4 by 8). A square grid hides a whole class of index
-mistake, because a transposed layout has the same row length as the one it
-came from. The other legs need dials and a strip, so they run on the Stream
-Deck + shape alone.
+"""Check (a) key dispatch, (b) rebuild/repaint, (c) dial and (d) touch/drag dispatch under rotation.
+Check unlocked load, retired release, two turns, held-key cancellation, and dirty markers.
 """
 import fixtures  # must be first; isolates DATA_PATH before import globals
 
@@ -73,7 +43,7 @@ def check_deck_shape(controller, model_name: str) -> int:
               f"{deck.is_touch()}, its preset states {model.is_touch}")
         return 1
     if model.is_touch:
-        strip = tuple(model.touchscreen_image.size)
+        strip = tuple(model.touchscreen_format.size)
         if tuple(controller.get_touchscreen_image_size()) != strip:
             print(f"FAIL(shape): {model_name} strip is "
                   f"{controller.get_touchscreen_image_size()}, its preset "
@@ -88,11 +58,9 @@ def registered_key_identifiers(controller) -> "set[str]":
 
 
 def check_key_dispatch(controller, model_name: str) -> int:
-    """(a) Each physical key reaches its own registered key at every
-    rotation. The logical index the wrapper produces is decoded against the
-    wrapper's own layout, which is what named the registry. Decoding it
-    against the raw handle's unrotated layout instead names a different key
-    wherever the grid is not square."""
+    """Require each physical key to reach the registered key in the rotated layout.
+    Decoding against the raw unrotated layout fails on non-square grids.
+    """
     model = shape_of(model_name)
     rows, cols = model.key_layout
     total = rows * cols
@@ -145,12 +113,8 @@ def check_key_dispatch(controller, model_name: str) -> int:
 
 
 def check_rotation_rebuild(controller, model_name: str) -> int:
-    """(b) Turning the deck rebuilds the input set and carries no present
-    hash over, so the repaint that follows is written and not hash-skipped.
-
-    The published set is read inside the transition and not after it. The
-    page load the turn ends in paints, which stamps fresh hashes on its own
-    schedule, and reading the state after that races the media thread.
+    """Require rotation to rebuild inputs without carrying present hashes.
+    Inspect publication inside the transition before page-load paints add new hashes.
     """
     model = shape_of(model_name)
     rows, cols = model.key_layout
@@ -291,7 +255,7 @@ def check_touch_dispatch(controller, model_name: str) -> int:
     direction the user drew it in."""
     model = shape_of(model_name)
     n_dials = model.dial_count
-    width, _height = model.touchscreen_image.size
+    width, _height = model.touchscreen_format.size
     raw = fixtures.raw_deck(controller)
     # A touch in the middle of the first slot of the device's own strip.
     slot_width = width // n_dials
@@ -299,9 +263,8 @@ def check_touch_dispatch(controller, model_name: str) -> int:
 
     for rotation in ROTATIONS:
         controller.set_rotation(rotation)
-        # The turn ends in a page load, which rebuilds every input's states on
-        # the media thread. Wait for it, or the recorders below are installed
-        # on state objects the load then replaces.
+        # Wait for the media-thread page load before installing recorders on
+        # state objects that it replaces.
         if not controller._input_load_done.wait(10.0):
             print(f"FAIL(d): rotation {rotation}: the input load did not "
                   f"finish")
@@ -323,10 +286,8 @@ def check_touch_dispatch(controller, model_name: str) -> int:
                   f"{expected_dial}")
             return 1
 
-        # A touch past the right edge of the device's strip reaches no dial
-        # at any rotation. The library clamps nothing, so the device can
-        # report it. Mirroring it unclamped at 180 lands it back on the strip
-        # as -1, which the slot arithmetic reads as the first slot.
+        # An unclamped touch past the right edge must reach no dial; at 180 its
+        # mirrored -1 coordinate must not map to the first slot.
         events.clear()
         raw.fire_touchscreen_event(TouchscreenEventType.SHORT,
                                    {"x": width, "y": 50})
@@ -396,11 +357,8 @@ def live_set_is_complete(controller, model_name: str) -> "str | None":
 
 
 def check_load_outside_lock(controller, model_name: str) -> int:
-    """(e) The page load that ends a turn runs with the page lock released.
-
-    load_page takes that lock itself, and its tail marshals a plugin-facing
-    signal onto the main loop. A load called from inside a hold of the same
-    lock therefore deadlocks against any caller that marshals.
+    """Require rotation to release the page lock before load_page.
+    load_page takes that lock and later marshals a plugin-facing signal.
     """
     controller.set_rotation(0)
     held: "list[bool]" = []
@@ -430,11 +388,8 @@ def check_load_outside_lock(controller, model_name: str) -> int:
 
 
 def check_retire_release(controller, model_name: str) -> int:
-    """(f) The turn hands the media thread the retired set, not the live one.
-
-    The release is held back at the queue, which is the state a media thread
-    busy with a load leaves it in. What the turn submitted is then read
-    against the set that was live at that moment, before anything acts on it.
+    """Require rotation to send the retired input set, not the live set, for release.
+    Hold the message at the queue to inspect both sets before release.
     """
     controller.set_rotation(0)
     player = controller.media_player
@@ -530,13 +485,8 @@ def check_back_to_back_turns(controller, model_name: str) -> int:
 
 
 def check_held_key_across_turn(controller, model_name: str) -> int:
-    """(h) A key held across a turn loses its gesture on the retired input,
-    and the physical release lands on the replacement with no clock to
-    dispatch against.
-
-    Without the cancel, the retired key keeps an armed hold timer that fires
-    HOLD_START into its pinned down-time snapshot after the finger left, and
-    pins that page's action objects for good.
+    """Cancel a held key's retired gesture and ignore its orphaned release.
+    Otherwise its hold timer dispatches into and retains the retired page snapshot.
     """
     controller.set_rotation(0)
     if not controller._input_load_done.wait(10.0):
@@ -596,13 +546,8 @@ def check_held_key_across_turn(controller, model_name: str) -> int:
 
 
 def check_window_markers_cleared(controller, model_name: str) -> int:
-    """(i) A turn drops the window's pending dirty markers.
-
-    Each marker names a position of the grid that was, and the window's key
-    grid indexes its button array by those coordinates. The array transposes
-    at a quarter turn, so a surviving marker sends the window past the end of
-    it. That raise escapes the turn after the old grid was already removed,
-    and the window is left with no key grid at all.
+    """Drop pending dirty markers when rotation changes their grid coordinates.
+    A stale marker can index beyond the transposed window button array.
     """
     controller.set_rotation(0)
     markers = controller.ui_image_changes_while_hidden

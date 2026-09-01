@@ -31,10 +31,8 @@ import globals as gl
 
 
 class AssetManagerBackend(list[Any]):
-    # Where the library index lives. Read at import from the surface that owns
-    # it, so this class and the store cannot name two different files. The
-    # store resolves the path per call and this attribute does not, which
-    # holds because the data path settles before this module imports.
+    # Use the settings-store path so this class and the store cannot name different files.
+    # The data path is stable before this module imports.
     JSON_PATH = settings_store.ASSET_LIBRARY.path()
     def __init__(self) -> None:
         self.load_json()
@@ -44,12 +42,8 @@ class AssetManagerBackend(list[Any]):
         self.remove_invalid_data()
 
     def load_json(self) -> None:
-        # An unreadable library index must not stop app startup. This
-        # constructor runs while main builds the global objects, so a raise
-        # here stops the app. The store moves a corrupt index to a .corrupt
-        # sidecar, logs it, and reads an empty library. The assets stay on
-        # disk. An absent index reads as an empty list, which is the shape a
-        # fresh install must write.
+        # The store attempts to quarantine a corrupt index, then returns an empty library.
+        # A missing index also starts empty.
         self.clear()
         self.extend(settings_store.get().read(settings_store.ASSET_LIBRARY))
 
@@ -65,9 +59,7 @@ class AssetManagerBackend(list[Any]):
         try:
             hash = sha256(asset_path)
         except OSError as e:
-            # An unreadable file, a permission error for example. Fail this one
-            # asset with a warning and keep the import worker thread alive.
-            # Callers handle a None id.
+            # Keep the import worker alive when this asset cannot be read; callers handle None.
             log.opt(exception=True).warning(f"Could not read asset {asset_path}: {e}")
             return None
 
@@ -77,34 +69,23 @@ class AssetManagerBackend(list[Any]):
             log.warning(f"Tried to add already existing asset. Ignoring. File: {asset_path}")
             return cast(str | None, existing["id"])
 
-        # Refuse an undecodable file at import time, before the copy, while
-        # the user can see the dialog and retry. This gate covers imports
-        # only. A failed decode never deletes an asset already in the library,
-        # because the failure can be transient (see remove_invalid_data and
-        # fill_missing_thumbnails). save_thumbnail below reuses the decoded
-        # image, so an add decodes a video or an svg once.
+        # Reject undecodable imports before copying, but keep existing assets after decode failures.
+        # Reuse this image for video and SVG thumbnails.
         decoded = self._decode_for_import(asset_path)
         if decoded is None:
             log.warning(f"Refusing to import undecodable asset {asset_path}")
             return None
 
-        # Copy every asset into the internal folder. internal-path must never
-        # point outside the app's data directory, because remove_asset_by_id()
-        # calls os.remove() on it. copy_asset() handles the same-file and the
-        # name-collision cases.
+        # Always copy into internal data because deletion trusts internal-path.
+        # copy_asset() handles same-file and name-collision cases.
         try:
             internal_path = self.copy_asset(asset_path)
         except Exception as e:
-            # Destination permissions, a full disk, or a file deleted between
-            # the hash and the copy. Fail this one asset and keep the import
-            # worker thread alive.
+            # Fail only this asset if copying fails, and keep the import worker alive.
             log.opt(exception=True).warning(f"Could not import asset {asset_path}: {e}")
             return None
 
-        # None on a refused write, and never an existing path:
-        # fill_missing_thumbnails retries exactly the entries whose thumbnail
-        # is null or points at a missing file, so storing the asset's own path
-        # here would mark the failure as done and never heal.
+        # Video and SVG thumbnail failures stay None so fill_missing_thumbnails retries them.
         thumbnail_path: str | None = internal_path
 
         if is_video(asset_path):
@@ -134,10 +115,8 @@ class AssetManagerBackend(list[Any]):
         return cast(str | None, asset["id"])
 
     def _decode_for_import(self, path: str) -> Image.Image | None:
-        # The decode gate for add(). It returns the decoded image, or None for
-        # a file that does not decode. Read the sc_broken marker, because
-        # generate_thumbnail never raises. It returns the tagged placeholder
-        # on a decode failure, so an except clause would always pass.
+        # generate_thumbnail returns a tagged placeholder instead of raising on decode failure.
+        # Reject that placeholder and return the reusable image otherwise.
         thumbnail = gl.media_manager.generate_thumbnail(path)
         if thumbnail.info.get("sc_broken"):
             return None
@@ -154,18 +133,12 @@ class AssetManagerBackend(list[Any]):
         
         os.makedirs(os.path.join(gl.DATA_PATH, "Assets", "AssetManager", "thumbnails"), exist_ok=True)
 
-        # Guard the thumbnail build. It runs on the import worker thread from
-        # add() and at app startup from fill_missing_thumbnails, and one
-        # corrupt video or svg must kill neither. A failure returns None. The
-        # preview then renders the broken marker, and fill_missing_thumbnails
-        # retries a None entry on every boot, so a transient failure (a file
-        # mid-download, a network mount) heals itself.
-        # add() passes its gate decode in image, so an import decodes once.
+        # Keep thumbnail failures local; None makes startup retry transient video or SVG failures.
+        # add() supplies its decoded image so imports do not decode twice.
         try:
             thumbnail = image if image is not None else gl.media_manager.generate_thumbnail(asset_path)
             if thumbnail.info.get("sc_broken"):
-                # generate_thumbnail logged the decode failure. Do not write
-                # the placeholder, so the file stays retryable.
+                # Do not save the logged placeholder; None keeps the thumbnail retryable.
                 return None
             gl.media_manager.save_image_atomic(thumbnail, thumbnail_path)
         except Exception as e:
@@ -223,7 +196,6 @@ class AssetManagerBackend(list[Any]):
     def create_unique_uuid(self) -> str:
         id = str(uuid.uuid4())
         if self.has_by_id(id):
-            # The new uuid collides with an existing asset id.
             log.warning("Congratulations, you already have an asset with this id. This is very rare.")
             return self.create_unique_uuid()
         return id
@@ -273,17 +245,13 @@ class AssetManagerBackend(list[Any]):
 
         def fill_missing_thumbnails() -> None:
             for asset in self:
-                # A failed run leaves thumbnail null in the json, and
-                # os.path.exists(None) raises TypeError and stops app startup.
-                # Check for null first.
+                # Test for None before os.path.exists() so a failed thumbnail does not stop startup.
                 if asset.get("thumbnail") is not None:
                     if os.path.exists(asset["thumbnail"]):
                         continue
 
-                # Guard each asset, so one poison entry cannot block the rest
-                # of the batch or the startup. On failure the thumbnail stays
-                # None, and never an existing path, so the check above retries
-                # it on the next boot.
+                # Keep one invalid entry from stopping the batch or startup.
+                # None makes the next startup retry it.
                 try:
                     thumbnail_path = self.save_thumbnail(asset["internal-path"], asset["sha256"])
                 except Exception as e:
@@ -300,10 +268,8 @@ class AssetManagerBackend(list[Any]):
         self.save_json()
 
     def remove_invalid_data(self) -> None:
-        # Drop every asset whose internal file is gone. Iterate over a copy:
-        # self.remove() during iteration skips the next element. Check
-        # internal-path for null too, because os.path.exists(None) raises
-        # TypeError and stops app startup.
+        # Iterate over a copy because removing from self skips the next item.
+        # Treat a null internal path as missing before os.path.exists().
         for asset in list(self):
             internal_path = asset.get("internal-path")
             if internal_path is None or not os.path.exists(internal_path):
@@ -311,25 +277,19 @@ class AssetManagerBackend(list[Any]):
         self.save_json()
 
     def _alert_on_main(self, window: "Gtk.Window | None", message: str, detail: str) -> None:
-        # Build the dialog inside the idle callback. This path runs on the
-        # Chooser's import worker thread (add_files starts a Thread per drop),
-        # and only the main thread may build a GTK object. Call show(window):
-        # without a parent, modal=True binds to nothing.
+        # Chooser drops use a worker, so create the GTK dialog in the main-thread idle callback.
+        # Pass the window so the modal dialog has a parent.
         def show() -> None:
-            dial = Gtk.AlertDialog(message=message, detail=detail, modal=True)
-            dial.show(window)
+            dialog = Gtk.AlertDialog(message=message, detail=detail, modal=True)
+            dialog.show(window)
         GLib.idle_add(show)
 
-    # Both arguments are optional. A drop supplies a local path or a remote
-    # url, and the callers pass the Gdk.FileList accessors of Gtk straight
-    # through.
     def add_custom_media_set_by_ui(self, url: str | None, path: str | None) -> str | None:
         window: Gtk.Window | None = gl.app.main_win if gl.app is not None else None
         if gl.store is not None:
             window = gl.store
 
         if path is None and url is not None:
-            # Lowercase the extension and drop the dot.
             extension = os.path.splitext(url)[1].lower().replace(".", "")
             if extension not in (set(gl.video_extensions) | set(gl.image_extensions) | set(gl.svg_extensions)):
 
@@ -338,16 +298,11 @@ class AssetManagerBackend(list[Any]):
                     message="The image is invalid.",
                     detail="You can only use urls directly pointing to images (not directly from Google).",
                 )
-                # Return None, like every other refusal here. The callers test
-                # the result for a usable media path.
                 return None
 
             os.makedirs(os.path.join(gl.DATA_PATH, "cache", "downloads"), exist_ok=True)
-            # download_file raises on a network failure and on an HTTP error
-            # status, instead of writing the error page into the asset cache.
-            # Catch it here. A bad link otherwise kills the import worker
-            # thread and tells the user nothing. The Chooser drop path runs
-            # this on a worker thread; KeyGrid runs it on the GTK main thread.
+            # Catch network or HTTP errors so the UI reports failure instead of ending the worker.
+            # KeyGrid can also call this path on the GTK main thread.
             try:
                 path = download_file(url=url, path=os.path.join(gl.DATA_PATH, "cache", "downloads"))
             except Exception as e:
@@ -357,7 +312,6 @@ class AssetManagerBackend(list[Any]):
                     message="The download failed.",
                     detail="The image or video could not be downloaded. Check the url and your connection.",
                 )
-                # Return None. KeyGrid.handle_file_drop stops on None only.
                 return None
 
         if path is None:
@@ -373,9 +327,7 @@ class AssetManagerBackend(list[Any]):
             return None
         asset_id = gl.asset_manager_backend.add(asset_path=path)
         if asset_id is None:
-            # add() refuses an undecodable file, and returns None for an
-            # unreadable or uncopyable one. Without this dialog the drop shows
-            # the user nothing.
+            # Report unreadable, uncopyable, or undecodable drops; otherwise the UI shows nothing.
             self._alert_on_main(
                 window,
                 message="No valid image or video.",
@@ -385,11 +337,8 @@ class AssetManagerBackend(list[Any]):
 
         asset = self.get_by_id(asset_id)
         if asset is None:
-            # add() returned this id a few lines above, so nothing reaches
-            # here.
             return None
 
-        # Add the asset to the chooser UI while it is open.
         if gl.asset_manager is not None:
             gl.asset_manager.asset_chooser.custom_asset_chooser.add_asset(asset)
 

@@ -1,15 +1,5 @@
-"""One gesture body serves every input type that dispatches a gesture.
-
-cancel_gesture and on_hold_timer_end live on ControllerInput. Those two methods
-are byte-identical between a key and a dial apart from the hold-start event each
-sends, which each names through HOLD_START_EVENT. The rest of the two gesture
-paths does differ, for reasons that are not this dedup's: a dial stops its hold
-timer before it dispatches the release, and a key after. So these legs pin the
-two shared methods only. The shared body must serve a key and a dial alike, and
-each input type must still dispatch its own event class. The touchscreen
-dispatches no gesture and inherits a body that clears state which is already
-clear.
-"""
+"""Share gesture cancellation and hold handling across input types.
+Keys and dials keep distinct events; touchscreens inherit a quiet body."""
 import fixtures
 
 from StreamDeck.Devices.StreamDeck import DialEventType
@@ -41,7 +31,7 @@ class RecordingAction(ActionCore):
         self.tag = tag
         self.received: list = []
 
-    def _raw_event_callback(self, event, data=None):
+    def _raw_event_callback(self, event, event_data=None):
         self.received.append(event)
 
 
@@ -52,12 +42,7 @@ def inject(page, ident, actions: list) -> None:
 
 
 def leg_one_body_serves_every_input() -> None:
-    """The two methods resolve to the base function for every input type.
-
-    A subclass that re-forks either body reintroduces the drift this pins
-    against: two copies that differ only in an event name, which then diverge
-    one fix at a time.
-    """
+    """Resolve cancellation and hold handling to the base functions."""
     for cls in (ControllerKey, ControllerDial, ControllerTouchScreen):
         assert cls.cancel_gesture is ControllerInput.cancel_gesture, (
             f"{cls.__name__} carries its own cancel_gesture again")
@@ -74,13 +59,8 @@ def leg_one_body_serves_every_input() -> None:
     print("PASS: one cancel_gesture and one on_hold_timer_end serve every input type")
 
 
-def leg_hold_start_keeps_its_own_event_class(controller, deck, page) -> None:
-    """A held key dispatches the key event and a held dial the dial event.
-
-    The shared body reads HOLD_START_EVENT off the input. A key that names the
-    dial's event, or the reverse, sends an event no action on that input type
-    subscribes to, and every hold binding on the deck goes silent.
-    """
+def leg_hold_start_event_class(controller, deck, page) -> None:
+    """Dispatch each input type's own HOLD_START_EVENT from the shared body."""
     controller.hold_time = 0.3
 
     key_ident = Input.Key("0x0")
@@ -122,12 +102,8 @@ def leg_hold_start_keeps_its_own_event_class(controller, deck, page) -> None:
 
 
 def leg_cancel_parity(controller, deck, page) -> None:
-    """The base cancel drops the whole gesture on a key and on a dial alike.
-
-    Each input is driven through ControllerInput.cancel_gesture directly, so
-    the leg fails if either subclass stops being served by that body. A hold
-    threshold well past the wait keeps the timer armed until the cancel.
-    """
+    """Cancel complete key and dial gestures through ControllerInput.
+    A long hold threshold keeps both timers armed until cancellation."""
     controller.hold_time = 10.0
 
     key_ident = Input.Key("0x1")
@@ -188,13 +164,8 @@ def leg_cancel_parity(controller, deck, page) -> None:
     print("PASS: the base cancel drops the whole gesture on a key and on a dial")
 
 
-def leg_touchscreen_inherits_a_quiet_body(controller) -> None:
-    """The touchscreen inherits both bodies and dispatches nothing.
-
-    It arms no hold timer, so its snapshot is always None and the hold body
-    returns before it reads an event name it does not have. Neither call may
-    raise.
-    """
+def leg_touchscreen_quiet_body(controller) -> None:
+    """Let a touchscreen call both bodies without an event or exception."""
     touchscreen = controller.get_input(Input.Touchscreen("sd-plus"))
     assert touchscreen is not None, "the fake deck has no touchscreen"
 
@@ -221,9 +192,9 @@ def main() -> None:
         page = controller.active_page
         assert page is not None
 
-        leg_hold_start_keeps_its_own_event_class(controller, deck, page)
+        leg_hold_start_event_class(controller, deck, page)
         leg_cancel_parity(controller, deck, page)
-        leg_touchscreen_inherits_a_quiet_body(controller)
+        leg_touchscreen_quiet_body(controller)
     finally:
         fixtures.teardown(controller)
 

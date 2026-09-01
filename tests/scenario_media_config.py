@@ -1,10 +1,5 @@
-"""
-Pins MediaConfig.from_dict defaults and key mapping.
-
-MediaConfig.from_dict is the single extraction point for the media section of
-a key or dial state. ActionCore.set_media keeps its own kwarg defaults, which
-are plugin API contract. A transcription slip fails here.
-"""
+"""Check MediaConfig.from_dict defaults and persisted key mapping.
+ActionCore.set_media has a separate plugin API default contract."""
 import fixtures  # noqa: F401  (isolates gl.DATA_PATH before anything reads it)
 
 from src.backend.DeckManagement.Media.MediaConfig import MediaConfig  # noqa: E402

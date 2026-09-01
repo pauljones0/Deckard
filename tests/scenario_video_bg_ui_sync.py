@@ -1,10 +1,5 @@
-"""
-update_all_inputs must sync the in-app key previews under a background video.
-
-An early return after the dials skips set_ui_key_image for every key. The
-video loop skips an opaque key's per-frame render as well. The in-app grid
-then diverges from the deck.
-"""
+"""Verify that update_all_inputs synchronizes every in-app key preview while a
+background video is active."""
 
 # No UI is attached here, so the null port refuses each push and
 # set_ui_key_image stores a dirty marker per key instead.

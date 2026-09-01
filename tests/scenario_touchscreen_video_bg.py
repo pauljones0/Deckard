@@ -1,13 +1,7 @@
-"""
-Regression test for the per-touchscreen background video path.
+"""Verify touchscreen background video playback, settings, render caps,
+fallback images, corrupt-file logging, and preview thumbnails."""
 
-A video assigned as the SD+ touchscreen background must play. A real
-DeckController over a fake SD+ drives it.
-"""
-
-# The state holds an InputVideo over a strip-sized shared frame cache, the
-# media tick re-composites the strip while it is set, and the dual-hash dedup
-# gates the device writes.
+# Drive the real strip-sized shared cache and media-tick write path.
 import os
 import time
 
@@ -52,9 +46,7 @@ def main() -> None:
             f"video frame not painted: center pixel {px}, expected R~128 G~64"
         )
 
-        # 2. Playback. The media tick alone must keep pushing new strip
-        # frames, with distinct payload hashes. An identical frame is
-        # dedup-skipped, and a static background writes about once.
+        # Playback must produce distinct tick-driven strip payloads.
         seq_before = deck.current_seq()
         got = fixtures.wait_until(
             lambda: len({op[4] for op in deck.ops_after(seq_before)
@@ -85,10 +77,7 @@ def main() -> None:
         assert state.background_video.loop is False
         page.set_background_loop(identifier=ident, state=0, loop=True, update=True)
 
-        # 3c. The fps setting is a render cap rather than a playback rate.
-        # The video runs 30 frames at a native 15fps, with the blue channel
-        # at frame times eight. Capped at 5, natural-speed playback still
-        # covers most of the cycle in 1.8s, which a playback rate would not.
+        # The 5 fps setting caps rendering without slowing 15 fps playback.
         page.set_background_fps(identifier=ident, state=0, fps=5, update=True)
         assert fixtures.wait_until(
             lambda: state.background_video is not None
@@ -107,10 +96,7 @@ def main() -> None:
             f"playback speed appears tied to the fps cap: blue span {span} over "
             f"1.8s at cap=5 (natural 15fps should traverse most of 0..232)"
         )
-        # The cap must hold even though this loop drives composites directly,
-        # standing in for a deck background video that re-triggers the strip.
-        # The quantized picker hands out at most cap times 1.8 distinct
-        # frames, where an uncapped 15fps sampled at 10Hz would give about 18.
+        # Direct composites must still observe the quantized frame cap.
         distinct = len(set(blues))
         assert distinct <= 14, (
             f"fps cap not applied at the picker: {distinct} distinct frames "
@@ -144,14 +130,14 @@ def main() -> None:
         # 6. The sidebar preview helper, which builds no widget.
         from src.backend.MediaManager import MediaManager
         gl.media_manager = MediaManager()
-        from src.windows.mainWindow.elements.Sidebar.elements.BackgroundEditor import build_preview_pixbuf
-        assert build_preview_pixbuf(video_path) is not None, (
+        from src.windows.mainWindow.elements.Sidebar.elements.BackgroundEditor import build_video_preview_pixbuf
+        assert build_video_preview_pixbuf(video_path) is not None, (
             "video paths must resolve to a thumbnail pixbuf for the preview"
         )
-        assert build_preview_pixbuf(image_path) is None, (
+        assert build_video_preview_pixbuf(image_path) is None, (
             "image paths must return None (set_filename renders them directly)"
         )
-        assert build_preview_pixbuf(None) is None
+        assert build_video_preview_pixbuf(None) is None
 
         print("scenario_touchscreen_video_bg: PASS")
     finally:

@@ -14,10 +14,9 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 """
 import datetime
 import os
-import shutil
 import threading
 import zipfile
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from typing import cast, Any, Iterator, TypedDict, TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -26,6 +25,7 @@ if TYPE_CHECKING:
 from loguru import logger as log
 
 from src.Signals import Signals
+from src.backend.DeckManagement.media_loop import MEDIA_LOOP_FPS
 from src.backend.DeckManagement.deck_controller.controller import DeckController
 
 from src.backend.PageManagement.Page import Page
@@ -34,42 +34,35 @@ from src.backend.PageManagement.page_flush import canonical_path
 from src.backend.PageManagement.page_document import PageDocument
 from src.backend.PageManagement.page_pins import PagePins
 from src.backend.DeckManagement.HelperMethods import natural_sort_by_filenames
-from src.backend.atomic_json import atomic_write_json, require_containment
+from src.backend.atomic_json import atomic_copy_file, atomic_write_json, require_containment
 from src.backend import settings_store
 
 import globals as gl
 
 
+# "Argument not given", for a setter whose None already means "clear the key".
+_UNSET: Any = object()
+
+
 class PageEntry(TypedDict):
     """One cached page slot, with the Page object and its LRU stamp."""
     page: "Page"
-    page_number: int
+    lru_stamp: int
 
 
 class PageManagerBackend:
     def __init__(self, settings_manager: "SettingsManager") -> None:
         self.settings_manager = settings_manager
 
-        # Guards pages, which arbitrary threads read and mutate.
-        # DeckController.close() pops one controller's whole entry while
-        # clear_old_cached_pages() iterates and evicts from another
-        # controller's entry on that deck's media thread. An RLock, so the
-        # methods below can call each other without a deadlock.
+        # Guard page-cache reads and mutations across close and media threads.
+        # Use an RLock because cache methods call each other while holding it.
         self._pages_lock = threading.RLock()
         self.pages: dict["DeckController", dict[str, PageEntry]] = {}
-        # Cache-miss constructions under way, keyed (controller, path) and
-        # guarded by _pages_lock. A second caller for one page waits on the
-        # first construction instead of building a twin Page whose actions
-        # register live event and signal handlers.
+        # Track cache-miss builds by (controller, path) under _pages_lock.
+        # Concurrent callers wait instead of registering duplicate action handlers.
         self._loads_in_flight: dict[tuple["DeckController", str], tuple[threading.Thread, threading.Event]] = {}
-        # One document per page file, keyed by the flush seam's
-        # canonical_path, like every other per-page registry in this process.
-        # A page reached by two spellings is then one document with one save
-        # lock and one pending record. Nothing prunes this map. The header of
-        # page_document states why an entry must stay while a Page can read
-        # through it, and what one page dict per visited path costs. A page
-        # deleted and recreated under one name reuses its document, which the
-        # load that mints the new Page fills from the new file.
+        # Keep one unpruned document per canonical path, with one save lock and pending record.
+        # Deleted and recreated paths reuse the document, which the next Page load refreshes.
         self._documents: dict[str, PageDocument] = {}
         self._documents_guard = threading.Lock()
         # Holders of a cached page that eviction cannot see for itself.
@@ -79,25 +72,19 @@ class PageManagerBackend:
 
         self.page_order: list[str] = []
 
-        # In the Settings UI, n-cached-pages counts the cached pages besides
-        # the active one, so set_pages_to_cache() stores max_pages = value + 1
-        # when the user changes the spinner. Read the setting with the same
-        # +1 here, so a fresh boot gets the cache budget the Settings window
-        # applies for that value. A constant here instead lets one visit to
-        # the Settings window change the live budget.
+        # The setting excludes the active page, while max_pages includes it.
+        # Apply the same +1 used when the Settings UI changes the cache budget.
         n_cached_pages = self.settings_manager.app().n_cached_pages
         self.max_pages = int(n_cached_pages) + 1
-        self.page_number = 0
+        self._next_lru_stamp = 0
 
         self.MAX_BACKUPS = 5
         self.PAGE_PATH = os.path.join(gl.DATA_PATH, "pages")
 
     def load_page(self, path: str, deck_controller: "DeckController") -> Page | None:
-        """Load the page into the page dict and raise the page number.
+        """Load and cache a page for one deck controller.
 
         :param path: The path to the page
-        :param deck_controller: The deck controller the page belongs to
-        :return: The new page object
         """
         if not path or not os.path.isfile(path):
             return None
@@ -105,8 +92,11 @@ class PageManagerBackend:
         page = Page(json_path=path, deck_controller=deck_controller)
         with self._pages_lock:
             self.pages.setdefault(deck_controller, {})
-            self.pages[deck_controller][path] = {"page": page, "page_number": self.page_number}
-            self.page_number += 1
+            self.pages[deck_controller][path] = {
+                "page": page,
+                "lru_stamp": self._next_lru_stamp,
+            }
+            self._next_lru_stamp += 1
 
         return page
 
@@ -117,9 +107,9 @@ class PageManagerBackend:
             with self._pages_lock:
                 entry = self.pages.get(deck_controller, {}).get(path)
                 if entry is not None:
-                    entry["page_number"] = self.page_number
+                    entry["lru_stamp"] = self._next_lru_stamp
                     page: Page | None = entry["page"]
-                    self.page_number += 1
+                    self._next_lru_stamp += 1
                     self.pins.reserve_fetch(page, deck_controller)
                     return page
 
@@ -127,27 +117,22 @@ class PageManagerBackend:
                 if in_flight is None:
                     done = threading.Event()
                     self._loads_in_flight[in_flight_key] = (threading.current_thread(), done)
-                    break  # this caller is the builder
+                    break
 
             builder_thread, done = in_flight
             if builder_thread is threading.current_thread():
-                # A re-entrant miss from inside this thread's construction,
-                # where a plugin loads the same page during action init. A wait
-                # here self-deadlocks, so construct directly. This builds a twin
-                # Page, which only this rare case can reach.
+                # A plugin can re-enter this page load during action initialization.
+                # Build its private twin directly because waiting here self-deadlocks.
                 page = self.load_page(path, deck_controller)
                 self.pins.reserve_fetch(page, deck_controller)
                 self.clear_old_cached_pages()
                 return page
 
             done.wait()
-            # The builder ended, so re-check the cache. After a failed load
-            # the next pass finds no cache entry and no load under way, and
-            # this caller becomes the builder.
+            # Re-check after the builder ends; after failure, this caller becomes the builder.
 
-        # Cache miss. load_page() takes the lock for the insert. The Page()
-        # construction does file I/O outside that hold, so a slow load stalls
-        # no lookup of another controller.
+        # Construct outside _pages_lock; load_page acquires it only for insertion.
+        # Slow file I/O must not stall another controller's lookup.
         try:
             page = self.load_page(path, deck_controller)
         finally:
@@ -164,19 +149,10 @@ class PageManagerBackend:
         return page
 
     def discard_controller(self, deck_controller: "DeckController") -> None:
-        """Drop every cached page entry of a torn-down controller.
-
-        The active_page of a dead controller is unevictable, and it distorts
-        the budget of clear_old_cached_pages() for every live controller.
-        """
-        # The pending edits go to disk first. The deck is going away, unplugged
-        # or with the app, so every page it showed reached a boundary and its
-        # entry goes too. Eviction writes nothing, because it reclaims memory on
-        # a running deck, and the flush seam keeps an evicted page alive.
-        #
-        # It tolerates a failure per page, like every other teardown step. An
-        # unserializable page must not abort the deregistration and leave the
-        # controller in the cache forever.
+        """Drop all cached pages of a torn-down controller.
+        Dead-controller entries distort eviction because their active page cannot be evicted."""
+        # Flush each page at deck close; eviction skips writes because its document survives.
+        # Continue after failures so an unserializable page cannot keep the controller cached.
         flush = page_flush.get()
         with self._pages_lock:
             paths = list(self.pages.get(deck_controller, {}))
@@ -193,19 +169,15 @@ class PageManagerBackend:
             self.pins.release_fetch(deck_controller)
 
     def pages_for_controller(self, deck_controller: "DeckController") -> list["Page"]:
-        """Give a snapshot of every cached Page of one controller.
-
-        DeckController.close() runs clear_action_objects() over the snapshot,
-        which can call plugin hooks, so it holds no _pages_lock during it."""
+        """Return one controller's cached Pages as a snapshot.
+        Deck close can then run plugin teardown without holding _pages_lock."""
         with self._pages_lock:
             cached = self.pages.get(deck_controller, {})
             return [entry["page"] for entry in cached.values() if entry.get("page") is not None]
 
     def all_cached_pages(self) -> list["Page"]:
-        """Give a snapshot of every cached Page of every controller.
-
-        The snapshot is taken under _pages_lock. A caller iterates it without
-        the lock, because page teardown can call plugin hooks."""
+        """Return every cached Page as a snapshot.
+        Callers can then run plugin teardown without holding _pages_lock."""
         with self._pages_lock:
             return [
                 entry["page"]
@@ -244,28 +216,16 @@ class PageManagerBackend:
         return page_names
 
     def clear_old_cached_pages(self) -> None:
-        # Eviction is an in-memory teardown. It writes no disk file and
-        # touches no page json. clear_action_objects() tears down the live
-        # action objects and drops the cache entry. The harm of a gutted live
-        # page is a use after evict. The page stays visible with dead actions,
-        # so a keypress does nothing and the imagery freezes, and the next
-        # get_page() mints a duplicate Page. A page reload or a replug recovers
-        # it, and no data on disk is lost.
-        #
-        # Snapshot the eviction decision under the lock and act on it outside.
-        # clear_action_objects() below can run plugin hooks, and a wedged hook
-        # must not stall a close() or get_page() of another controller on this
-        # lock. close() pops its whole controller entry under this lock from
-        # its own thread, while this can run on any deck's media thread.
+        # Eviction never writes JSON; exclude live or pinned Pages to avoid dead actions.
+        # Select and remove under lock, then run blocking plugin teardown after release.
         with self._pages_lock:
             total = sum(len(controller_pages) for controller_pages in self.pages.values())
             excess = total - self.max_pages
             if excess <= 0:
                 return
 
-            # Oldest first by page_number. The active page of each controller
-            # is safe, and so is every pinned page: fetched, mid-tick, or
-            # mid-gesture.
+            # Evict oldest first, excluding active and pinned pages.
+            # Pins cover fetches, ticks, and gestures.
             evictable = []
             for controller, controller_pages in self.pages.items():
                 if controller.active_page is None:
@@ -276,54 +236,37 @@ class PageManagerBackend:
                         continue
                     if self.pins.is_pinned(page):
                         continue
-                    evictable.append((page_data["page_number"], controller_pages, path, page))
+                    evictable.append((page_data["lru_stamp"], controller_pages, path, page))
 
             evictable.sort(key=lambda entry: entry[0])
             to_evict = evictable[:excess]
 
-        # A concurrent discard_controller() can pop the whole entry of one of
-        # these controllers first. controller_pages stays the same dict object,
-        # now orphaned, so the pop below is a no-op and not a KeyError.
+        # discard_controller can orphan a captured controller_pages dict.
+        # Its later pop remains a safe no-op.
         for _, controller_pages, path, page in to_evict:
-            # Re-validate under the lock, just before the teardown. Since the
-            # snapshot the page can have become live: a load_page activated it
-            # (WindowGrabber cycling makes this cache pressure), a controller
-            # stashed it as its screensaver-pending page, or a fetch or a
-            # bracket pinned it. Pop inside the lock and before the teardown,
-            # so a concurrent get_page() mints a fresh Page instead of this
-            # gutted one.
+            # Revalidate active or pending-screensaver state and fetch, tick, or gesture
+            # pins under lock. Pop before teardown so concurrent fetch gets a fresh Page.
             with self._pages_lock:
                 current_entry = controller_pages.get(path)
                 if current_entry is None or current_entry.get("page") is not page:
-                    continue  # discarded or replaced already
+                    continue
                 if self.pins.is_pinned(page):
                     continue
                 if self._page_is_live(page):
                     continue
                 controller_pages.pop(path, None)
             log.info(f"Evicting cached page {path}")
-            # The teardown stays outside the lock. It can run plugin hooks,
-            # and a wedged hook must not stall a close() or a get_page() that
-            # waits on this lock.
+            # Run plugin teardown outside the lock so a wedged hook cannot block cache users.
             page.clear_action_objects()
 
-    def _page_is_live(self, page_obj: "Page") -> bool:
-        """Answer True when a controller depends on this Page object.
-
-        A controller depends on the page it shows and on the page it stashed as
-        its screensaver-pending page.
-        """
-        # A controller holds that stash for the whole screensaver duration, and
-        # the snapshot guards cannot see it. An eviction there makes
-        # ScreenSaver.hide() load a page whose actions are all dead.
-        #
-        # This lives beside the pins, because it derives from what the
-        # controllers hold, so it is exact and needs no release. The pins cover
-        # every window where no controller field names the page.
+    def _page_is_live(self, page: "Page") -> bool:
+        """Return whether a controller shows or has stashed this Page."""
+        # A screensaver stash stays live until hide and must not be evicted.
+        # Controller fields cover exact ownership; pins cover unnamed transition windows.
         for controller in (gl.deck_manager.deck_controller if gl.deck_manager is not None else []):
-            if controller.active_page is page_obj:
+            if controller.active_page is page:
                 return True
-            if getattr(controller, "_screensaver_pending_page", None) is page_obj:
+            if getattr(controller, "_screensaver_pending_page", None) is page:
                 return True
         return False
 
@@ -339,9 +282,8 @@ class PageManagerBackend:
     # path=None is the documented value that clears this deck's default page.
     # get_all_default_page_serial_numbers skips a falsy entry for that reason.
     def set_default_page(self, deck_serial_number: str, path: str | None) -> None:
-        # A read-modify-write, serialized against every other edit of
-        # pages.json. The store's per-file edit lock is the only lock this
-        # takes, and no caller holds it while it acquires _pages_lock.
+        # Serialize this pages.json read-modify-write with the store's per-file lock.
+        # Callers must not hold _pages_lock while acquiring it.
         with settings_store.get().edit(settings_store.PAGES) as page_settings:
             page_settings.setdefault("default-pages", {})
             page_settings["default-pages"][deck_serial_number] = path
@@ -377,23 +319,33 @@ class PageManagerBackend:
             self.clear_old_cached_pages()
 
     def move_page(self, old_path: str, new_path: str) -> None:
+        # Enforce containment at this mutation seam for both source and destination.
+        # Crafted names must not copy or delete files outside the pages directory.
+        require_containment(self.PAGE_PATH, old_path)
+        require_containment(self.PAGE_PATH, new_path)
+
+        # Refuse an existing destination before discarding its pending edits.
+        # Atomic publication below remains the race-safe guarantee.
+        if os.path.exists(new_path):
+            raise ValueError(f"{new_path!r} already exists")
+
         # Read barrier. The copy below reads the old file, so its pending
         # edits go to disk first, or the renamed page arrives without them.
         page_flush.get().flush_path(old_path)
 
-        # The copy replaces the destination wholesale, so an edit pending for
-        # that path lands after the copy and undoes the rename. This mirrors
-        # the source discard below. It is a no-op unless the new name held a
-        # page already.
+        # Discard destination writes that could land after the copy and undo the rename.
+        # This is a no-op unless the destination previously held a page.
         page_flush.get().discard_path(new_path)
 
-        shutil.copy2(old_path, new_path)
+        # Publish with os.link and refuse an existing name, including one from a winning writer.
+        # Failure leaves no destination, only a complete source and a reapable temp file.
+        try:
+            atomic_copy_file(old_path, new_path, overwrite=False)
+        except FileExistsError as error:
+            raise ValueError(f"{new_path!r} already exists") from error
 
-        # The content follows the file, before the loop below. The loop asks
-        # for the page under its old name, which mints a Page and a document
-        # for a deck that did not cache it. This move gives those mints a
-        # throwaway document at the old name, and keeps the document with the
-        # real content, pending edits included, out of their reach.
+        # Move the document before old-name fetches can mint throwaway documents.
+        # The real document retains its content and pending edits.
         document = self.rename_document(old_path, new_path)
 
         for controller in (gl.deck_manager.deck_controller if gl.deck_manager is not None else []):
@@ -410,10 +362,8 @@ class PageManagerBackend:
             # Nothing here activates the page, so this fetch retires at once.
             self.pins.release_fetch(controller)
 
-        # Update the path in the page-manager settings, serialized against
-        # every other edit of pages.json. This takes the store's edit lock
-        # after the controller loop released _pages_lock, and never while it
-        # holds it. That is the one order for the two locks.
+        # Update pages.json after releasing _pages_lock.
+        # The required lock order acquires the store edit lock second, never concurrently.
         with settings_store.get().edit(settings_store.PAGES) as page_settings:
             default_pages = page_settings.get("default-pages", {})
             for serial_number, path in default_pages.items():
@@ -422,35 +372,23 @@ class PageManagerBackend:
                 default_pages[serial_number] = new_path
             page_settings["default-pages"] = default_pages
 
-        # Retire every write still pending for the file that disappears. A
-        # timer that fires after the removal writes the moved-from page back
-        # into existence. This runs after the json_path re-point above. A mark
-        # reads json_path and inserts its entry under one lock, so once every
-        # Page points at the new path, no mark lands under the old key and
-        # this discard is the last one. An edit marked between the flush above
-        # and the re-point leaves the pending map and stays in memory. It is
-        # still in the page's dict, and the next save carries it to the new
-        # path.
+        # Discard old-path writes only after every Page points at the destination.
+        # Edits marked during the move stay in shared memory for the next destination save.
         page_flush.get().discard_path(old_path)
 
-        os.remove(old_path)
+        # Treat a concurrently removed source as an already completed move.
+        with suppress(FileNotFoundError):
+            os.remove(old_path)
         self.refresh_window_watch_state()
 
     def remove_page(self, page_path: str) -> None:
-        # A page path can arrive from the external API, which builds it from an
-        # untrusted name, so a crafted name could resolve outside the pages
-        # directory and delete an arbitrary user file. Refuse one that escapes
-        # before any teardown or deletion runs.
+        # External API names are untrusted; reject paths outside the pages directory.
+        # Validate before teardown or deletion.
         require_containment(self.PAGE_PATH, page_path)
         # Iterate over all deck controllers to handle any that are using the page to be removed
         for controller in (gl.deck_manager.deck_controller if gl.deck_manager is not None else []):
-            # A page change asked for while the screensaver owns the deck goes
-            # into _screensaver_pending_page, which the screensaver guard of
-            # load_page sets. The active_page checks below cannot see it. When
-            # this delete names that page, drop the request and its cache
-            # entry. hide() otherwise loads a page whose file is gone, and the
-            # first save recreates the deleted file. The controller then stays
-            # on its current page after the dismiss.
+            # Remove a matching screensaver-pending request and cache entry.
+            # Otherwise hide recreates the deleted page and leaves the deck on its current page.
             pending = getattr(controller, "_screensaver_pending_page", None)
             if pending is not None and pending.json_path == page_path:
                 controller._screensaver_pending_page = None
@@ -460,11 +398,8 @@ class PageManagerBackend:
                     if not controller_pages:
                         self.pages.pop(controller, None)
                 if entry is not None:
-                    # Outside the lock, for the reason the teardown below gives.
                     entry["page"].clear_action_objects()
-                # The reservation that the stash carried to hide() has nowhere
-                # to arrive. The request is gone and its entry is popped, so
-                # nothing installs the page and nothing else retires it.
+                # Release the stashed fetch because no later hide can install or retire it.
                 self.pins.release_fetch(controller)
 
             active_page = controller.active_page
@@ -481,7 +416,6 @@ class PageManagerBackend:
                 # Load and switch to the default page if it's not the one being deleted
                 new_page = self.get_page(deck_default, controller)
             else:
-                # Load the first available page when the delete names the default.
                 page_list = self.get_pages()
                 if page_path in page_list:
                     page_list.remove(page_path)
@@ -490,10 +424,8 @@ class PageManagerBackend:
             if new_page:
                 controller.load_page(new_page)
             else:
-                # There is no replacement to install, so no install retires
-                # this deck's outstanding fetch. That fetch can name the page
-                # this call deletes, and it holds the page against eviction
-                # until the deck asks for another one.
+                # No replacement can retire this deck's fetch, which can name the deleted page.
+                # Release it now so it does not stay pinned until another page request.
                 self.pins.release_fetch(controller)
 
             # Remove the page from the created pages cache for this controller
@@ -501,40 +433,23 @@ class PageManagerBackend:
                 controller_pages = self.pages.get(controller, {})
                 entry = controller_pages.pop(page_path, None)
             if entry is not None:
-                # No _page_is_live guard, unlike eviction. This cannot gut a
-                # page another controller shows, because the cache holds one
-                # Page per (controller, path) and this pops only this
-                # controller's. For this controller the page is inactive, since
-                # load_page above moved it to another path and both the default
-                # and the fallback exclude page_path, or there was no page left
-                # to move to. The file goes either way. A controller that shows
-                # its screensaver stops at the path mismatch in the top guard,
-                # so this is never its pending page.
-                #
-                # Outside the lock, because clear_action_objects() can run
-                # plugin hooks, which must not stall a close() or a get_page()
-                # that waits on _pages_lock from another thread.
+                # No live guard: Pages are per controller; this one is replaced or no page remains.
+                # Screensavers fail the path guard; release the lock before blocking plugin hooks.
                 entry["page"].clear_action_objects()
-                # Drop the controller entry when it holds no cached page.
                 if not controller_pages:
                     with self._pages_lock:
                         self.pages.pop(controller, None)
 
-        # Throw away every write still pending for this page instead of a
-        # flush. A timer that fires after the removal below writes the deleted
-        # page back onto disk. This runs as late as it can, after the cache
-        # teardown above dropped every in-tree holder of the Page, so nothing
-        # that can re-mark it still runs.
+        # Discard pending writes after cache teardown, when no in-tree Page can mark it again.
+        # A later timer must not recreate the deleted file.
         page_flush.get().discard_path(page_path)
 
         # Delete the JSON file representing the page
         if os.path.exists(page_path):
             os.remove(page_path)
 
-        # Remove every reference to this page in the default-pages setting.
-        # Serialized against every other edit of pages.json. This takes the
-        # store's edit lock after the controller loop released _pages_lock, and
-        # never while it holds it. That is the one order for the two locks.
+        # Remove default-page references under the store lock after releasing _pages_lock.
+        # This preserves the required order between those locks.
         with settings_store.get().edit(settings_store.PAGES) as settings:
             default_pages = settings.get("default-pages", {})
             settings["default-pages"] = {
@@ -553,28 +468,13 @@ class PageManagerBackend:
         os.makedirs(self.PAGE_PATH, exist_ok=True)
 
         path = os.path.join(self.PAGE_PATH, f"{page_name}.json")
-        # A page name can arrive from an import file, the external API, or a
-        # typed dialog, so a crafted name could resolve outside the pages
-        # directory. Refuse one that escapes before any file is written.
+        # Import, API, and dialog names are untrusted; reject paths outside the pages directory.
         require_containment(self.PAGE_PATH, path)
         if os.path.exists(path):
             raise FileExistsError(f"A page with the name '{page_name}' already exists.")
 
-        # An imported or a duplicated page arrives with its settings in
-        # page_dict, rule included, so this path can add a rule.
-        #
-        # The file is new and the pending key is not. A delete discards that
-        # path's outstanding write, but the Page and the document that held it
-        # can mark it again: a screensaver-pending reference, a widget, or a
-        # plugin thread that finishes a save. The read barrier then turns that
-        # straggler into a resurrection. The refresh below reads the page, the
-        # barrier writes the outstanding edits first, and the deleted page
-        # lands on top of the new file, which the document adopts. So discard
-        # first, as an import does before it replaces a page wholesale, and
-        # refresh after. The document survives a delete too, because the
-        # registry keeps every entry while a Page can read through it, so
-        # without the re-read the first edit of the new page writes the old
-        # page back out under its name.
+        # Imported or duplicated content can add rules; discard stale writes before
+        # reusing the path. Refresh its document so old holders cannot restore content.
         page_flush.get().discard_path(path)
         atomic_write_json(path, page_dict)
         self.refresh_document(path)
@@ -607,10 +507,8 @@ class PageManagerBackend:
     def get_pages_with_path(self, path: str) -> "list[Page]":
         pages_set = set()
 
-        # A read of self.pages must hold _pages_lock. discard_controller()
-        # pops whole controller entries from another thread, so an unlocked
-        # check-then-lookup here races it into a KeyError. Lookups only, and
-        # no plugin hook runs under the lock.
+        # Hold _pages_lock because discard_controller can remove whole entries concurrently.
+        # This block performs lookups only and invokes no plugin hook.
         with self._pages_lock:
             for controller in (gl.deck_manager.deck_controller if gl.deck_manager is not None else []):
                 page = controller.active_page
@@ -650,11 +548,7 @@ class PageManagerBackend:
             controller.load_page(active_page, allow_reload=True)
 
     def get_document(self, path: str) -> PageDocument:
-        """Give the one document that holds the content of path.
-
-        It mints the document on the first ask. Every Page on a path comes
-        through here, which is what makes them share one dict.
-        """
+        """Return the shared document for path, creating it when absent."""
         key = canonical_path(path)
         with self._documents_guard:
             document = self._documents.get(key)
@@ -664,46 +558,24 @@ class PageManagerBackend:
             return document
 
     def existing_document(self, path: str) -> PageDocument | None:
-        """Give the document that holds path, or None. It mints nothing.
-
-        For the asset sweep and the refresh below, which speak to a page only
-        while this process holds it. A mint here would keep a whole page dict
-        alive for every page file the sweep walks past.
-        """
+        """Return an existing document for path without creating one.
+        This avoids retaining every page that a file sweep visits."""
         with self._documents_guard:
             return self._documents.get(canonical_path(path))
 
     def refresh_document(self, path: str) -> None:
-        """Re-read path into the document that holds it, if one exists.
-
-        For a writer that puts bytes in a page file without the page that owns
-        it. Every Page on that path reads the document, so one re-read
-        propagates the change. A path this process never held stays untouched.
-        """
+        """Refresh an existing document after an external file write.
+        All Pages on the path receive the change; unheld paths stay untouched."""
         document = self.existing_document(path)
         if document is None:
             return
         document.refresh_from_disk()
 
     def rename_document(self, old_path: str, new_path: str) -> PageDocument:
-        """Re-file the content of old_path under new_path and return it.
-
-        A page move re-points the json_path of every Page in place, so the
-        document those Pages read through must follow the same file.
-        """
-        # This carries the document object over and does not reload it, because
-        # the document can hold edits that no disk has. A save inside the move's
-        # window leaves the pending map, because a timer after the move would
-        # write the moved-from file back into existence. That save stays in
-        # memory for the next save to carry to the new name.
-        #
-        # Three outcomes are reachable. A document at the old name moves, which
-        # is the usual case. A document that stands at the destination while
-        # another moves onto it loses the key to the mover and stays with the
-        # Pages that hold it, which keep their content and their json_path and
-        # get no further refresh. Only a rename onto a page another deck shows
-        # reaches that. A document that stands at the destination with nothing
-        # moving onto it is the destination, and it re-reads.
+        """Move old_path's shared document to new_path and return it.
+        Existing Pages keep the same document object and any unsaved edits."""
+        # Move source; displace held destination docs unchanged; otherwise reuse or create one.
+        # Moved docs keep edits; reused destination docs refresh after the registry lock.
         old_key = canonical_path(old_path)
         new_key = canonical_path(new_path)
         with self._documents_guard:
@@ -716,21 +588,14 @@ class PageManagerBackend:
             if document is None:
                 document = PageDocument(new_path)
                 self._documents[new_key] = document
-        # Nothing moved onto this document, and the file under it is the moved
-        # page now. A document that stood here otherwise serves the overwritten
-        # content to every Page that reads through it, and puts it back on disk
-        # at the next save. A document just minted here holds no content. This
-        # runs outside the guard, because the re-read goes through the read
-        # barrier and takes a save lock.
+        # Refresh reused destination content so it cannot restore overwritten data on its next save.
+        # Run outside the registry guard because refresh takes the page save lock.
         document.refresh_from_disk()
         return document
 
     def get_page_data(self, path: str | None, use_backup: bool = True) -> dict[str, Any]:
-        """Read the whole content of one page file from disk.
-
-        pages/backups/ substitutes a missing or an unreadable primary. The
-        missing case needs use_backup, and the corrupt case always heals, for
-        the reason the heal below gives."""
+        """Read one page file, using a backup for a missing primary when requested.
+        A corrupt primary uses a valid backup when available; other I/O errors propagate."""
         if path is None:
             return {}
 
@@ -744,31 +609,21 @@ class PageManagerBackend:
         if not os.path.exists(path) and os.path.exists(backup_path) and use_backup:
             path = backup_path
 
-        data, corrupt = self.settings_manager.load_settings_reporting_corruption(path)
+        data, corrupt = self.settings_manager.load_settings_with_corruption_status(path)
 
-        # Heal a corrupt primary from the backup, whatever use_backup says, and
-        # whether or not the loader could move the primary aside. Every
-        # page-settings mutator reads through get_page_data(path, False) and
-        # writes the result straight back through set_page_settings. An empty
-        # dict for a corrupt page there guts the live page and erases its keys,
-        # background and dials. The gutted file is valid JSON once written, so
-        # no later read heals it. The heal belongs to the load result, which is
-        # a corrupt read with a backup available, and not to the quarantine
-        # rename.
+        # Use a valid backup for a corrupt primary when available, regardless of use_backup.
+        # Quarantine success is irrelevant; an empty result could erase the page on save.
         if corrupt and path != backup_path and os.path.exists(backup_path):
-            healed, backup_corrupt = self.settings_manager.load_settings_reporting_corruption(backup_path)
+            healed, backup_corrupt = self.settings_manager.load_settings_with_corruption_status(backup_path)
             if not backup_corrupt:
                 data = healed
+                # Report the backup content served; the next save rewrites the primary.
+                log.warning(f"Corrupt page {path}: serving its content from backup {backup_path}")
         return data
 
     def set_page_data(self, path: str, data: dict[str, Any], reload_brightness: bool = True, reload_screensaver: bool = True, reload_background: bool = True, reload_inputs: bool = True) -> None:
-        """Replace a whole page with data, for the whole-page editor.
-
-        It goes through the document and not over the file. A file write leaves
-        the page holding its old content. An edit of that page still on its
-        timer then writes the pre-replacement content back over this one. A
-        replacement of the content makes the two one thing.
-        """
+        """Replace a page through its shared document.
+        Direct file replacement would let a pending Page write restore old content."""
         self.get_document(path).replace(data)
         if any([reload_brightness, reload_screensaver, reload_background, reload_inputs]):
             self.reload_pages_with_path(path,
@@ -778,12 +633,8 @@ class PageManagerBackend:
                                         inputs=reload_inputs)
 
     @staticmethod
-    def _strip_asset(page_dict: dict[str, Any], abs_target_path: str) -> bool:
-        """Drop every reference to one asset out of one page's content.
-
-        Returns whether the page referenced the asset. The sweep below writes
-        only the pages that did.
-        """
+    def _clear_asset_path(page_dict: dict[str, Any], abs_target_path: str) -> bool:
+        """Remove one asset path from page content and return whether it was present."""
         page_had_asset = False
 
         # Read every section defensively, because a page json can carry no
@@ -794,10 +645,9 @@ class PageManagerBackend:
                 if dict_path is None:
                     continue
 
-                # Compare absolute paths, and drop the reference on a match.
                 if os.path.abspath(dict_path) == abs_target_path:
                     page_had_asset = True
-                    state_data["media"]["path"] = None  # Remove the asset path
+                    state_data["media"]["path"] = None
 
         return page_had_asset
 
@@ -808,61 +658,35 @@ class PageManagerBackend:
         abs_target_path = os.path.abspath(path)
 
         for page_path in self.get_pages():
-            # A page this process holds is edited where it lives. A read of
-            # the file plus a write back goes round the outside of the content
-            # a deck edits, and whichever of the two ends second wins the whole
-            # file. Only a page held already goes this way. A document per page
-            # file the sweep walks keeps every page in memory for the session,
-            # to strip an asset out of a few.
+            # Edit held pages through their documents to serialize against live deck edits.
+            # Do not create documents for unheld pages because the registry retains them.
             document = self.existing_document(page_path)
             if document is not None:
-                # Ask a snapshot and not the live content. This walks every key
-                # of a page a deck can edit at the same moment, and an iteration
-                # over a dict another thread adds a key to raises. Only a page
-                # that answers yes is edited, so the sweep marks no page that a
-                # deck shows. Both passes are idempotent, and the second finds
-                # whatever the first left.
-                page_had_asset = self._strip_asset(
-                    document.get_without_action_objects(), abs_target_path)
+                # Scan a snapshot because concurrent mutation can invalidate iteration.
+                # Edit only after a match; both passes are idempotent, and second finds remainder.
+                page_had_asset = self._clear_asset_path(
+                    document.snapshot_for_save(), abs_target_path)
                 if page_had_asset:
                     with document.edit() as page_dict:
-                        self._strip_asset(page_dict, abs_target_path)
+                        self._clear_asset_path(page_dict, abs_target_path)
             else:
-                # There is no Page and no document, so this process holds none
-                # of this page's content. There is nothing to serialize
-                # against, and the file is the only copy. Take the read barrier anyway,
-                # because this sweep reads past get_page_data.
-                #
-                # It goes through the settings loader, so one corrupt page
-                # loads an empty dict and skips, instead of raising and
-                # aborting the sweep for every page left.
-                #
-                # The loader quarantines a corrupt file as a side effect of any
-                # read, so this read-oriented sweep can move a corrupt page to
-                # <path>.corrupt although it changes no asset of that page.
-                # That destroys nothing. The sidecar keeps the corrupt bytes,
-                # the last good copy stays in pages/backups/ for the next
-                # get_page_data to heal from, and page_had_asset stays False
-                # here, so nothing writes over the corrupt page.
+                # Flush unheld pages before bypassing get_page_data.
+                # Corrupt reads preserve sidecar and backup, leave no match, and skip the write.
                 page_flush.get().flush_path(page_path)
                 page_dict = self.settings_manager.load_settings_from_file(page_path)
-                page_had_asset = self._strip_asset(page_dict, abs_target_path)
+                page_had_asset = self._clear_asset_path(page_dict, abs_target_path)
                 if page_had_asset:
                     atomic_write_json(page_path, page_dict)
 
-                    # A deck can start to show this page while the bytes go
-                    # down. The mint that did it read the file, so tell the
-                    # holder about the write.
+                    # A deck can load this page during the write.
+                    # Refresh any document created during that race.
                     self.refresh_document(page_path)
 
-            # Reload every loaded Page object of this file. This runs outside
-            # the edits above. A reload takes the controller's page-load lock
-            # and reads the page file, and both sit above the lock of an
-            # edit.
+            # Reload active holders after edits release the document lock.
+            # Reload takes the page-load lock and then reads the page file.
             if page_had_asset:
                 pages = self.get_pages_with_path(page_path)
                 for page in pages:
-                    # Reload the page while it is active on its controller.
                     if page.deck_controller.active_page == page:
                         page.deck_controller.load_page(page, allow_reload=True)
 
@@ -870,44 +694,33 @@ class PageManagerBackend:
         if not name:
             return None
 
-        # A name that is a valid full file path goes back unchanged.
         if os.path.isfile(name):
             return name
 
-        # Normalize the name for the comparison.
         target_name = name.lower()
 
         for page_path in self.get_pages():
             base = os.path.basename(page_path).lower()
             base_no_ext = os.path.splitext(base)[0]
 
-            # Check the filename with and without the extension.
             if base == target_name or base_no_ext == target_name:
                 return page_path
 
         return None
 
     def backup_pages(self) -> None:
-        # A timestamp string that is safe in a filename.
         time_stamp = datetime.datetime.now().strftime("%Y%m%dT%H%M%S")
 
-        # The path of the backup zip file.
         backup_zip_path = os.path.join(self.PAGE_PATH, "backups", f"backup_{time_stamp}.zip")
 
-        # Make sure the backup directory exists.
         os.makedirs(os.path.dirname(backup_zip_path), exist_ok=True)
 
-        # Read barrier for every page at once. This zips the files, so a page
-        # with pending edits goes into the archive without them. The only
-        # caller runs at boot, before a page can be dirty, and a zip of every
-        # page is a read like any other. The flush costs nothing when there is
-        # nothing to write.
+        # Flush all pages before the archive reads them, including any pending edits.
+        # This is normally a no-op because the caller runs at boot.
         page_flush.get().flush_all()
 
-        # Create the zip archive and add every page file.
         with zipfile.ZipFile(backup_zip_path, mode="w", compression=zipfile.ZIP_DEFLATED) as backup_zip:
             for page_path in self.get_pages():
-                # Add each file under its basename, with no folder in the zip.
                 backup_zip.write(page_path, arcname=os.path.basename(page_path))
 
     def remove_old_backups(self) -> None:
@@ -918,7 +731,6 @@ class PageManagerBackend:
         if not os.path.exists(backup_dir):
             return
 
-        # List every zip file in the backup directory.
         backup_files = [file for file in os.listdir(backup_dir) if file.endswith(".zip")]
 
         # Sort the backups by the timestamp in the filename, newest first.
@@ -928,12 +740,11 @@ class PageManagerBackend:
 
         sorted_backups = sorted(backup_files, key=extract_timestamp, reverse=True)
 
-        # Delete nothing while the count stays under the keep count.
-        if len(sorted_backups) < self.MAX_BACKUPS:
+        # Keep exactly the newest MAX_BACKUPS files when the count exceeds the limit.
+        if len(sorted_backups) <= self.MAX_BACKUPS:
             return
 
-        # Delete the oldest backups past the number to keep.
-        for old_backup in sorted_backups[self.MAX_BACKUPS-1:]:
+        for old_backup in sorted_backups[self.MAX_BACKUPS:]:
             backup_path = os.path.join(backup_dir, old_backup)
             try:
                 os.remove(backup_path)
@@ -949,17 +760,8 @@ class PageManagerBackend:
 
     @contextmanager
     def edit_page_settings(self, path: str) -> Iterator[dict[str, Any]]:
-        """Change the settings section of one page, in the page itself.
-
-        Every override row comes through this funnel. The mutation happens in
-        the content every deck on this page reads, under the file's lock, and
-        the file catches up through the flush seam.
-        """
-        # A read of the whole file, a change to the settings dict and a write
-        # of the whole file lose a page edit that lands in between, such as a
-        # plugin call to set_settings or a key edit. The read and the write
-        # share one block here, because an override is a partial edit over a
-        # section that must survive.
+        """Edit a page's shared settings section under its document lock."""
+        # Keep the partial read-modify-write in one block so concurrent page edits survive.
         with self.get_document(path).edit() as data:
             settings = data.get("settings")
             if not isinstance(settings, dict):
@@ -968,32 +770,19 @@ class PageManagerBackend:
             yield settings
 
     def set_page_settings(self, path: str | None, settings: dict[str, Any]) -> None:
-        """Set the whole settings section of the page json.
-
-        :param path: Path to the file
-        :param settings: The settings dict for the settings section
-        :return: None
-        """
+        """Replace the complete settings section; a None path skips the write.
+        settings supplies the complete replacement mapping."""
         if path is None:
             return
 
         with self.get_document(path).edit() as data:
             data["settings"] = settings
 
-    def any_auto_change_rule_enabled(self) -> bool:
-        """True when at least one page has its window auto-change switched on.
-
-        Gates the active-window watcher, which is otherwise a permanent
-        background poll for every user who never touches the feature.
-
-        It reads through the per-page accessor the matcher uses, so the gate
-        and the matcher agree on what counts as a rule. It stops at the first
-        hit.
-        """
-        # The pages hold these rules and no index lists them. A page is small,
-        # about 16 KB for a full deck, and boot reads every one of them for the
-        # startup backup. The worst case parses them all, which stays under a
-        # millisecond for a handful of pages and near two for fifty.
+    def has_enabled_auto_change_rule(self) -> bool:
+        """Return whether any page enables an active-window change rule.
+        This gates the watcher and uses the same accessor as rule matching."""
+        # No index lists rules, so scan until the first hit; a full-deck page is about 16 KB.
+        # The scan stays below 1 ms for a few pages and near 2 ms for 50; boot already reads all.
         for page_path in self.get_pages():
             try:
                 if self.get_auto_change_settings(page_path).get("enable", False):
@@ -1004,17 +793,10 @@ class PageManagerBackend:
         return False
 
     def refresh_window_watch_state(self) -> None:
-        """Re-gates the active-window watcher after anything that can add or
-        remove a rule.
-
-        Public, because a rule also arrives by a route that bypasses every
-        setter here. An importer that writes page files wholesale does that,
-        and it must re-gate without a call into the window grabber.
-        """
-        # This never raises into the page operation that called it. A watcher
-        # in the wrong state costs a wasted poll or a dead auto-switch, and a
-        # raise here would abort a page write. It returns at once, and the
-        # grabber applies the decision on its own worker.
+        """Recalculate the active-window watcher gate after rule changes.
+        Importers call this after whole-page writes that bypass local setters."""
+        # Never abort the page operation; failure only leaves a wasted poll or inactive auto-switch.
+        # The grabber applies the decision on its own worker.
         window_grabber = gl.window_grabber
         if window_grabber is None:
             return
@@ -1069,7 +851,7 @@ class PageManagerBackend:
         page_settings = self.get_page_settings(path)
         return cast(dict[str, Any], page_settings.get("screensaver", {}))
 
-    def set_screensaver_settings(self, path: str, overwrite: bool = False, enable: bool = False, time_delay: int = 5, loop: bool = True, fps: int = 30, brightness: float = 30, media_path: str = "") -> None:
+    def set_screensaver_settings(self, path: str, overwrite: bool = False, enable: bool = False, time_delay: int = 5, loop: bool = True, fps: int = MEDIA_LOOP_FPS, brightness: float = 30, media_path: str = "") -> None:
         with self.edit_page_settings(path) as settings:
             settings["screensaver"] = {
                 "overwrite": overwrite,
@@ -1124,7 +906,7 @@ class PageManagerBackend:
         page_settings = self.get_page_settings(path)
         return cast(dict[str, Any], page_settings.get("background", {}))
 
-    def set_background_settings(self, path: str, overwrite: bool = False, show: bool = False, fps: int = 30, loop: bool = False, media_path: str = "", extend_to_touchscreen: bool = False) -> None:
+    def set_background_settings(self, path: str, overwrite: bool = False, show: bool = False, fps: int = MEDIA_LOOP_FPS, loop: bool = False, media_path: str = "", extend_to_touchscreen: bool = False) -> None:
         with self.edit_page_settings(path) as settings:
             settings["background"] = {
                 "overwrite": overwrite,
@@ -1135,12 +917,18 @@ class PageManagerBackend:
                 "extend-to-touchscreen": extend_to_touchscreen
             }
 
-    def overwrite_background_settings(self, path: str, overwrite: bool | None = None, show: bool | None = None, fps: int | None = None, loop: bool | None = None, media_path: str | None = None, extend_to_touchscreen: bool | None = None) -> None:
+    def overwrite_background_settings(self, path: str, overwrite: bool | None = None, show: bool | None = None, fps: int | None = None, loop: bool | None = None, media_path: str | None = None, extend_to_touchscreen: bool | None = None, view: "dict[str, float] | None | object" = _UNSET) -> None:
+        """Write the given keys; a default argument changes nothing. view=None
+        clears the stored viewport, so _UNSET is its leave-alone default."""
         with self.edit_page_settings(path) as settings:
             background_settings = settings.setdefault("background", {})
 
             if overwrite is not None:
                 background_settings["overwrite"] = overwrite
+            if view is not _UNSET:
+                background_settings.pop("view", None)
+                if view is not None:
+                    background_settings["view"] = view
             if show is not None:
                 background_settings["show"] = show
             if fps is not None:

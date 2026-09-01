@@ -1,9 +1,6 @@
-"""
-An idle deck showing a static screensaver must cost nothing per tick.
+"""An idle deck with a static screensaver must cost nothing per tick.
 
-While ScreenSaver.show owns the deck, deck_controller.inputs holds a freshly
-built set with no action, no media and no label. The screensaver's own imagery
-lives in background.
+Its fresh inputs have no action, media, or label; imagery lives in background.
 """
 
 # The tick loop therefore calls update() on no input at all, and hide() still
@@ -21,11 +18,10 @@ OBSERVED_WINDOWS = 2
 
 
 def wait_until_quiet(deck, quiet_for: float = 0.5, timeout: float = 15.0) -> bool:
-    """Waits until no device write has landed for quiet_for seconds.
+    """Wait until no device write lands for quiet_for seconds.
 
-    The window below then observes the tick loop rather than the tail of
-    show()'s own repaint. A fixed sleep would not do, because how fast that
-    bulk batch drains is not a constant on a loaded machine."""
+    This excludes the variable drain time of show() from the observation window.
+    """
     deadline = time.monotonic() + timeout
     seen = len(deck.journal())
     stable_since = time.monotonic()
@@ -48,10 +44,10 @@ def all_keys_painted_after(deck, key_count: int, seq: int) -> bool:
 
 
 def idle_tick_costs_nothing(controller, deck, key_count) -> None:
-    """A still screensaver draws no per-input update() from the tick thread.
+    """Require zero per-input updates from the tick thread.
 
-    Calls are attributed by calling thread, because the media thread also
-    calls update() through on_media_player_tick and the repaint retry."""
+    Attribute calls by thread because the media thread also calls update().
+    """
     lock = threading.Lock()
     updates: dict[str, int] = {}
     marks: dict[str, int] = {}
@@ -71,10 +67,7 @@ def idle_tick_costs_nothing(controller, deck, key_count) -> None:
         for controller_input in input_list:
             count_updates(controller_input)
 
-    # Liveness probe. tick_actions brackets each iteration between a False
-    # call and a True call of this, so two marks make one iteration. The
-    # per-thread attribution keeps the count a statement about the tick
-    # thread rather than about brackets in general.
+    # tick_actions makes two marks per iteration; thread attribution isolates it.
     original_mark = controller.mark_page_ready_to_clear
 
     def counting_mark(*args, **kwargs):
@@ -86,9 +79,7 @@ def idle_tick_costs_nothing(controller, deck, key_count) -> None:
     controller.mark_page_ready_to_clear = counting_mark
 
     def observed_windows() -> int:
-        # Minus one, because the probe can install midway through an
-        # iteration and the first mark may be a lone True call. The discount
-        # keeps this a lower bound on iterations observed in full.
+        # Discount a possible lone first mark to keep a full-iteration lower bound.
         with lock:
             return max(0, marks.get("tick_actions", 0) // 2 - 1)
 
@@ -116,10 +107,8 @@ def idle_tick_costs_nothing(controller, deck, key_count) -> None:
     )
 
     if controller._last_full_repaint_ts != repaint_ts_at_start:
-        # A gap of 5s or more between media-loop iterations reads as a
-        # suspend and resume, and arms a full repaint. On a loaded runner that
-        # is a scheduling artifact, so the device-silence check is reported
-        # and skipped. The update() count above is unaffected.
+        # A 5s scheduling gap arms a resume repaint, so skip only device silence.
+        # The per-thread update count remains valid.
         print("NOTE: a full repaint fired during the window (loaded machine); "
               "skipping the device-silence check")
     else:
@@ -133,14 +122,11 @@ def idle_tick_costs_nothing(controller, deck, key_count) -> None:
 
 def late_clear_recovers_content(controller, deck, key_count, blank_hash,
                                      page_sig, ss_sig) -> None:
-    """The screensaver-entry interleave that strands a blank deck.
+    """Check recovery from a late Clear that blanks the screensaver.
 
-    show() submits its Clear on the control queue and only afterwards enqueues
-    the screensaver's paints.
+    show() submits Clear before it enqueues the screensaver paints.
     """
-    # A tick that already drained control writes the screensaver first and pops
-    # the Clear on its next pass, which blanks a deck whose slots are now empty
-    # and whose screensaver is still.
+    # A tick can paint first, then pop Clear after the now-empty slots.
     media_player = controller.media_player
     arm = threading.Event()
     parked = threading.Event()
@@ -148,9 +134,7 @@ def late_clear_recovers_content(controller, deck, key_count, blank_hash,
     original_check = media_player.check_resume_gap
 
     def parking_check(now=None):
-        # check_resume_gap runs after drain_control_queue and before
-        # perform_media_player_tasks, which is the gap this needs. It parks
-        # once, then behaves normally, including for the call that parked.
+        # Park once between drain_control_queue and perform_media_player_tasks.
         if arm.is_set() and not parked.is_set():
             parked.set()
             release.wait(timeout=20)
@@ -161,9 +145,7 @@ def late_clear_recovers_content(controller, deck, key_count, blank_hash,
     try:
         arm.set()
         assert parked.wait(timeout=15), "the media writer never reached the park point"
-        # This runs to completion while the writer is parked. The ClearMsg
-        # lands on an already-drained control queue, and the paints land on
-        # slots the parked tick is about to drain.
+        # Put Clear on the drained queue and paints in the parked tick's slots.
         controller.screen_saver.show()
         assert controller.screen_saver.showing is True
     finally:
@@ -189,9 +171,7 @@ def late_clear_recovers_content(controller, deck, key_count, blank_hash,
         "recovery assertion below would be vacuous"
     )
 
-    # The deck must come back to the screensaver's content, not merely to
-    # something non-blank. The repaint races show()'s own update_all_inputs,
-    # and that race loses by leaving the previous page's imagery in place.
+    # Require screensaver content because a repaint race can leave page imagery.
     def recovered() -> bool:
         return all(
             (e := deck.last_op_for(f"key:{k}")) is not None and e[4] == ss_sig[k]
@@ -225,9 +205,7 @@ def main() -> None:
         deck = fixtures.raw_deck(controller)
         key_count = controller.deck.key_count()
 
-        # DeckController.__init__ runs a bootstrap clear through the same
-        # _write_blank_frames every later Clear uses. Capture its hash as the
-        # blank reference before anything else touches the deck.
+        # Capture the bootstrap _write_blank_frames hash before later paints.
         blank_hash = next(e[4] for e in deck.journal() if e[3] == "key:0")
 
         screensaver_png = fixtures.make_test_png(
@@ -247,9 +225,7 @@ def main() -> None:
         controller.screen_saver.show()
         assert controller.screen_saver.showing is True
 
-        # Every key, not only key:0. show()'s repaint is a bulk batch that
-        # writes keys one at a time, and a mid-flight batch would bleed into
-        # the observation window.
+        # Wait for every key so a mid-flight bulk batch cannot enter the window.
         assert fixtures.wait_until(
             lambda: all_keys_painted_after(deck, key_count, seq_before_show), timeout=15
         ), "the screensaver never painted every key"
@@ -258,10 +234,7 @@ def main() -> None:
             "below cannot attribute anything"
         )
 
-        # Signatures for the recovery check below, captured from a clean
-        # entry, so the screensaver's content is measured rather than
-        # assumed. They must differ from the page's and from blank, or the
-        # check cannot tell the three outcomes apart.
+        # Capture a clean screensaver signature distinct from page and blank.
         ss_sig = {k: deck.last_op_for(f"key:{k}")[4] for k in range(key_count)}
         for k in range(key_count):
             assert ss_sig[k] not in (blank_hash, page_sig[k]), (
@@ -280,10 +253,7 @@ def main() -> None:
         ), "hiding the screensaver no longer repaints every key"
         print("PASS: hide() still repaints every key")
 
-        # hide() ends in a load_page, and load_screensaver re-reads the media
-        # path from the page, which never persisted one. Set it again, or the
-        # entry below shows a blank background and the blank reference stops
-        # discriminating.
+        # hide() reloads the unset page media path, so restore it before re-entry.
         assert wait_until_quiet(deck), "the restored page never settled"
         controller.screen_saver.set_media_path(screensaver_png)
         late_clear_recovers_content(

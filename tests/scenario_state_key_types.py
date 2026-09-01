@@ -1,13 +1,9 @@
-"""
-Pins the page state-key type contract.
+"""Require string state keys in the page JSON tree.
 
-A page json's states map is keyed by strings, because Page.save writes
-self.dict through atomic_write_json.
+Page.save writes the live tree through atomic_write_json.
 """
 
-# The in-memory action_objects registry is keyed by ints, and the
-# InputIdentifier accessors are the one coercion point, so no non-str state key
-# ever reaches page.dict or the file.
+# action_objects uses ints; InputIdentifier accessors coerce page-tree keys to str.
 import json
 import os
 
@@ -133,9 +129,7 @@ def check_disk_round_trip(page) -> None:
     check("no non-str state key survives to disk",
           not bad_state_keys(on_disk), str(bad_state_keys(on_disk)))
 
-    # An int key written straight into the live dict is the only way to get
-    # one there, because the accessors are the coercion point. This guard
-    # catches a raw write that bypasses them.
+    # Inject an int directly to prove the guard catches accessor bypasses.
     page.dict["keys"]["5x5"] = {"states": {0: {"actions": []}}}
     check("the guard actually detects a non-str state key",
           bool(bad_state_keys(page.dict)))

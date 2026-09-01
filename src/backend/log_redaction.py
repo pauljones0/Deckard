@@ -143,11 +143,8 @@ _USER_TOKEN = "<user>"
 _HOST_TOKEN = "<host>"
 _IP_TOKEN = "<ip>"
 
-# The public hosts that stay readable. The store fetches from the github names,
-# the app opens the link names, and every module header carries the licence url,
-# so each of these is compiled into this app and none of them is user
-# infrastructure. A subdomain of a listed name counts as listed, which covers
-# api.github.com and raw.githubusercontent.com.
+# Keep compiled-in public service and licence hosts readable.
+# Every subdomain of a listed host is also public.
 _PUBLIC_HOSTS = (
     "github.com",
     "githubusercontent.com",
@@ -168,15 +165,8 @@ _LOOPBACK_NAMES = frozenset({
     "ip6-loopback",
 })
 
-# The domain suffixes that only a private network uses. A bare name redacts on
-# these alone. Longest first, so a multi-label suffix reads before the label it
-# ends with.
-#
-# "box" and "home" are deliberately absent, though a router hands both out. As
-# suffixes they rewrite this app's own vocabulary: Gtk.Box in a type name and a
-# repr, and Path.home or a settings.home attribute. A traceback folded into a
-# log would then name a type that does not exist, which is worse than the
-# narrow leak of a fritz.box or a .home name that stays.
+# Redact bare private-domain names, testing longest suffixes first.
+# Exclude box and home because they would corrupt Gtk.Box and Path.home text.
 _INTERNAL_SUFFIXES = (
     "home.arpa",
     "localdomain",
@@ -188,9 +178,7 @@ _INTERNAL_SUFFIXES = (
     "lan",
 )
 
-# A hostname that is also ordinary log vocabulary redacts nothing. A machine
-# named "deckard" would otherwise rewrite this app's own data paths, one named
-# "media" would rewrite a mount path, and neither name identifies anybody.
+# Keep generic hostnames because redaction would corrupt application prose and paths.
 _GENERIC_HOSTNAMES = frozenset({
     "arch", "archlinux", "computer", "debian", "deck", "deckard", "desktop",
     "fedora", "gentoo", "home", "hostname", "laptop", "linux", "local",
@@ -201,22 +189,14 @@ _GENERIC_HOSTNAMES = frozenset({
 # A hostname must look like one before it becomes a pattern.
 _HOSTNAME_SHAPE = re.compile(r"[a-z0-9][a-z0-9.-]*")
 
-# The characters that follow a complete path in log text, which are a slash,
-# whitespace, a quote, and the punctuation that ends a path in prose or in a
-# repr. A "." stays out, so "/home/naz.old" does not half-match as home.
+# Match complete-path delimiters but not dot, which prevents partial home matches.
 _AFTER_PATH = r"[]\s/\"'`:;,()[{}<>|=&]"
 # A username path segment may also carry a "." after it. A suffix form such
 # as "/home/<user>.old" keeps the suffix and hides the name.
 _AFTER_SEGMENT = r"[].\s/\"'`:;,()[{}<>|=&]"
 
-# The key names that name a secret wherever they appear. key, sig and auth
-# stay out, because they are deck and debug vocabulary, and the url-query
-# rule covers them. The header rule owns authorization, so a scheme word such
-# as "Basic" survives rather than reads as part of a value.
-#
-# The token and api-key families take an optional "x-" or "x_" prefix,
-# because an HTTP header commonly carries one, such as X-Api-Key,
-# X-Auth-Token or X-Access-Token.
+# Exclude ambiguous key, sig, auth, and authorization from generic secret keys.
+# Accept x- and x_ prefixes for token and API-key header families.
 _SECRET_KEYS = (
     r"(?:x[_-])?(?:(?:access|refresh|id|auth)[_-]?token|token|api[_-]?key|apikey)|"
     r"client[_-]?secret|secret|"
@@ -225,10 +205,8 @@ _SECRET_KEYS = (
 
 
 def _home_candidates() -> list[str]:
-    """Every spelling of the home directory that a path can carry. That is
-    expanduser, $HOME, and the realpath form of each, such as a /home
-    symlinked to /var/home on an ostree system. Longest first, so a nested
-    variant wins."""
+    """Return expanduser, HOME, and realpath home spellings longest first.
+    This covers systems where /home resolves through another path."""
     homes: list[str] = []
     for candidate in (os.path.expanduser("~"), os.environ.get("HOME")):
         if not candidate:
@@ -251,11 +229,7 @@ def _username() -> str:
 
 
 def _host_token(host: str) -> str | None:
-    """The replacement for one host, or None when the host must stay whole.
-
-    An address literal becomes "<ip>" and a name becomes "<host>". A loopback
-    and an unspecified address stay, and so do the loopback names and the
-    allowlisted public hosts."""
+    """Return <ip> or <host>, or None for loopback, unspecified, and public hosts."""
     name = host.strip("[]").rstrip(".").lower()
     if not name:
         return None
@@ -276,13 +250,8 @@ def _host_token(host: str) -> str | None:
 
 
 def _hostname_candidates() -> list[str]:
-    """Every spelling of this machine's own name, longest first. That is the
-    name the kernel reports and the name the environment carries, each in its
-    full and its short form, so a host called box.example.org redacts under
-    either spelling. A name that reads as ordinary log vocabulary, or one under
-    three characters, drops out, because a rule on it would eat prose, and so
-    does one the allowlist keeps, so a machine called localhost.localdomain
-    reads the same as any other loopback name."""
+    """Return kernel and environment hostnames in full and short forms, longest first.
+    Exclude names under three characters, generic terms, invalid shapes, and allowlisted hosts."""
     raw: list[str] = []
     with contextlib.suppress(OSError):
         raw.append(socket.gethostname())
@@ -306,9 +275,7 @@ def _hostname_candidates() -> list[str]:
 
 
 def _url_host_replacement(match: re.Match[str]) -> str:
-    """Keep the scheme and any already scrubbed userinfo, replace the host. A
-    bracketed IPv6 host keeps its brackets, so the url stays parseable and the
-    port after it stays readable."""
+    """Replace a URL host while preserving scheme, userinfo, port, and IPv6 brackets."""
     host = match.group(2)
     token = _host_token(host)
     if token is None:
@@ -324,19 +291,15 @@ def _at_host_replacement(match: re.Match[str]) -> str:
     return match.group(0) if token is None else "@" + token
 
 
-def _name_replacement(match: re.Match[str]) -> str:
+def _hostname_replacement(match: re.Match[str]) -> str:
     """Replace a whole match that is a host name on its own."""
     token = _host_token(match.group(0))
     return match.group(0) if token is None else token
 
 
 def _ip_replacement(match: re.Match[str]) -> str:
-    """Replace a whole match that the ipaddress module confirms is an address.
-
-    The patterns give a candidate shape and this decides, so a clock time such
-    as 12:34:56 and a mac address such as aa:bb:cc:dd:ee:ff read as IPv6
-    candidates and come back whole. A name must never reach here: a refused
-    candidate is not a host, it is ordinary text."""
+    """Replace only candidates that ipaddress confirms, preserving clocks and MAC addresses.
+    Keep loopback, unspecified, invalid, and non-address text whole."""
     text = match.group(0)
     try:
         address = ipaddress.ip_address(text)
@@ -357,9 +320,8 @@ def _colon_replacement(match: re.Match[str]) -> str:
     )
 
 
-# The fast-path probe of scrub(). _compile_rules() builds it, because it must
-# know the same hostnames the rules do: a recompile that left the probe behind
-# would let a bare hostname skip every rule. It matches nothing until then.
+# _compile_rules builds this probe with the same hostnames as the rules.
+# It matches nothing until then so no bare hostname can bypass redaction.
 _FAST_PROBE: "re.Pattern[str]" = re.compile(r"(?!)")
 
 
@@ -373,23 +335,8 @@ def _compile_rules() -> "list[_Rule]":
     rules.append((re.compile(r"(?<=://)[^/\s:@]{1,128}:[^/\s@]{0,256}@"), "***@"))
     rules.append((re.compile(r"(?<=://)[^/\s:@]{1,128}@"), "***@"))
 
-    # Authorization headers, quoted or bare, with a scheme word or without.
-    #   Authorization: Basic dXNlcjpwYXNz   -> Authorization: Basic ***
-    #   "Authorization": "Bearer eyJ..."    -> "Authorization": "Bearer ***"
-    #   Proxy-Authorization: rawtokenvalue  -> Proxy-Authorization: ***
-    # These run before the generic rules, so the scheme word survives.
-    # "Basic" alone is common prose, and only this header context matches it.
-    #
-    # Two rules, and not one rule with an optional scheme group. The raw-value
-    # form needs the scheme optional, and an optional group backtracks. As one
-    # pattern, a second scrub of "Authorization: Basic ***" fails to match the
-    # value class against "***", backtracks past the scheme group, and takes
-    # the word "Basic" as the value, which gives "Authorization: *** ***".
-    # scrub() then is not idempotent, and a pipeline that scrubs twice, such
-    # as the boot scrub over an already scrubbed file, or a line that passes
-    # the loguru patcher and a later scrub, mangles its headers. Split in two,
-    # the no-scheme rule carries a guard that the with-scheme rule must not
-    # have.
+    # Split scheme and raw Authorization forms to preserve scheme words and idempotence.
+    # One optional scheme group backtracks and changes a second scrub to "*** ***".
     _AUTH_HEADER = r"(?i)\b((?:proxy-)?authorization[\"']?[ \t]*[:=][ \t]*[\"']?"
     _AUTH_SCHEME = r"(?:basic|bearer|digest|token)"
     _AUTH_VALUE = r"[a-z0-9._~+/=-]{4,}"
@@ -399,10 +346,7 @@ def _compile_rules() -> "list[_Rule]":
         re.compile(_AUTH_HEADER + _AUTH_SCHEME + r"[ \t]+)" + _AUTH_VALUE),
         r"\1***",
     ))
-    # Without a scheme word the value must not be a bare scheme word. Bare
-    # means that no further value character follows, so a real credential that
-    # starts with those letters, such as "tokenvalue" or "basicauth123", still
-    # redacts.
+    # Exclude a bare scheme word, but redact credentials that start with one.
     rules.append((
         re.compile(
             _AUTH_HEADER + r")"
@@ -433,40 +377,19 @@ def _compile_rules() -> "list[_Rule]":
         r"\1=***",
     ))
 
-    # secret: value, in a dict repr, a JSON dump or a YAML config dump, such
-    # as {'access_token': 'eyJ...'}, {"api_key": "sk-..."} or token: abc, which
-    # the HomeAssistant settings and headers dump produces.
-    #
-    # An unquoted value can carry an HTTP scheme word, such as
-    # "token: Token abc123" or "api_key: Basic dXNlcjpwYXNz", from a header
-    # dump that pairs a scheme word with a credential. That needs the same
-    # mandatory-scheme/schemeless split the Authorization header rules use.
-    # Two rules, and not one. With no split the schemeless rule stars the
-    # scheme word and leaves the secret behind it. With the scheme word merely
-    # added to its guard the schemeless rule fails outright and leaks the whole
-    # value. A quoted value needs no split, because its quoted branch redacts
-    # the scheme word and the secret together inside the quotes.
+    # Split unquoted scheme and schemeless colon values to avoid leaking either credential shape.
+    # Quoted dict, JSON, and YAML values redact the scheme and secret together.
     _COLON_KEY = r"(?<![\w-])['\"]?(?:" + _SECRET_KEYS + r")['\"]?[ \t]*:[ \t]*"
     _COLON_VALUE = r"[^&\s,'\"()\[\]{}<>]+"
 
-    # With a scheme word the scheme stays and the credential after it goes.
-    # Group 1 spans the key, the colon and the scheme word, so "\1***" keeps
-    # them and drops the credential.
+    # Group 1 preserves the key, colon, and scheme while replacing its credential.
     rules.append((
         re.compile(r"(?i)(" + _COLON_KEY + _AUTH_SCHEME + r"[ \t]+)" + _COLON_VALUE),
         r"\1***",
     ))
 
-    # The schemeless colon form. The value-branch lookahead bails only when a
-    # scheme word is followed by whitespace, which is the mandatory-scheme form
-    # the rule above owns and the already scrubbed "token: Bearer ***" and
-    # "token: Token ***" forms it produces, so a second pass keeps them out of
-    # "token: *** ***". The guard tests the delimiter after the scheme word, not
-    # a bare word boundary. A secret value that merely starts with a scheme word
-    # and a non-space delimiter, such as "token: token-abc123", is one whole
-    # credential, not a scheme word with a credential after it, so it must still
-    # redact whole. A word-boundary guard here stopped redacting those and
-    # leaked them.
+    # Exclude only scheme words followed by whitespace to keep a second scrub idempotent.
+    # Values such as token-abc123 remain one schemeless credential and redact whole.
     rules.append((
         re.compile(
             r"(?i)(?<![\w-])(['\"]?)(" + _SECRET_KEYS + r")\1"
@@ -476,12 +399,8 @@ def _compile_rules() -> "list[_Rule]":
         _colon_replacement,
     ))
 
-    # The home directory becomes "~", with a guard on both sides. The
-    # lookbehind stops a mid-path match, so "/var/home/naz" and
-    # "/mnt/backup/home/naz" fall through to the username-segment rule. The
-    # lookahead needs a real path terminator, so "/home/nazareth" and
-    # "/home/naz.old" never clip to "~...", and the segment rule below hides
-    # their username.
+    # Replace complete home paths with ~; mid-path and longer-name matches fall through.
+    # The username-segment rule still redacts their matching segment.
     for home in _home_candidates():
         rules.append((
             re.compile(
@@ -490,20 +409,8 @@ def _compile_rules() -> "list[_Rule]":
             "~",
         ))
 
-    # A url host, in any scheme. The scheme, the port and the path stay, so a
-    # store fetch and a broker connection both stay diagnosable. This runs
-    # after the userinfo rules, so the optional group absorbs the "***@" they
-    # leave behind, and it also takes a raw "user@" that no userinfo rule
-    # reached. The host class carries no "<", so a second scrub finds no host
-    # in the "<host>" this leaves.
-    # The scheme run is bounded and the rule opens with a start guard rather
-    # than a word boundary. Both are cost, not meaning. An unbounded scheme run
-    # behind a word boundary makes the match quadratic in the line length,
-    # because every position in a long run of scheme characters starts a scan
-    # to the end of that run in search of a "://". A log line carries text an
-    # attacker can influence, and scrub() runs on the thread that logs it, so a
-    # 128 KB line stalled that thread for seconds. No scheme is 32 characters
-    # long, so the bound costs nothing.
+    # Preserve URL scheme, userinfo, port, and path; run after userinfo redaction for idempotence.
+    # Bound schemes at 32 characters to prevent quadratic scans of attacker-controlled log lines.
     rules.append((
         re.compile(
             r"(?i)(?<![\w+.-])([a-z][a-z0-9+.-]{0,31}://(?:[^/\s@]{1,256}@)?)"
@@ -514,11 +421,8 @@ def _compile_rules() -> "list[_Rule]":
         _url_host_replacement,
     ))
 
-    # user@host outside a url. The host must carry a dot or be a bracketed
-    # address, so a single-label host such as "build-host" stays: a bare word
-    # after an "@" is as often prose as a machine. The lookbehind demands a
-    # user part, which keeps a decorator line such as "@log.catch" whole. The
-    # trailing guards refuse a longer label and accept a sentence-final ".".
+    # Outside URLs, redact only dotted or bracketed hosts after a user part.
+    # Keep single labels and decorators; reject longer labels but allow terminal dot.
     rules.append((
         re.compile(
             r"(?i)(?<=[\w.+-])@(\[[0-9a-f:.]{2,45}\]|[a-z0-9-]+(?:\.[a-z0-9-]+)+)"
@@ -527,12 +431,8 @@ def _compile_rules() -> "list[_Rule]":
         _at_host_replacement,
     ))
 
-    # A name in a private-network domain, anywhere in the line. The lookbehind
-    # keeps a path such as "~/.local/share" whole, because a "/" before the dot
-    # leaves no label, and the "(" in the trailing guard keeps a call such as
-    # "threading.local()" whole. This runs before the machine-name rule, so an
-    # own hostname under such a suffix redacts as one host and never as a token
-    # with a suffix left beside it.
+    # Redact private domains before own-host rules so full names become one token.
+    # Guards preserve paths such as ~/.local/share and calls such as threading.local().
     rules.append((
         re.compile(
             r"(?i)(?<![\w./@-])"
@@ -540,7 +440,7 @@ def _compile_rules() -> "list[_Rule]":
             r"(?:" + "|".join(re.escape(suffix) for suffix in _INTERNAL_SUFFIXES) + r")"
             r"(?![\w(-])(?!\.\w)"
         ),
-        _name_replacement,
+        _hostname_replacement,
     ))
 
     # This machine's own name, as a whole word. A following "." is allowed, so
@@ -552,11 +452,8 @@ def _compile_rules() -> "list[_Rule]":
             _HOST_TOKEN,
         ))
 
-    # An address literal anywhere in the line. The pattern gives a candidate
-    # shape and the ipaddress module decides, so a clock time such as 12:34:56
-    # reads as an IPv6 candidate and comes back whole. The IPv4 guards refuse a
-    # fifth octet and accept a sentence-final "."; the mandatory leading hex
-    # group of the IPv6 pattern keeps a slice such as "x[::2]" whole.
+    # Let ipaddress validate candidate literals so clocks and slices remain whole.
+    # IPv4 guards reject fifth octets; IPv6 requires a leading hex group.
     rules.append((
         re.compile(r"(?<![\w.-])(?:\d{1,3}\.){3}\d{1,3}(?![\w-])(?!\.\d)"),
         _ip_replacement,
@@ -566,10 +463,7 @@ def _compile_rules() -> "list[_Rule]":
         _ip_replacement,
     ))
 
-    # The username, as a full path segment, which includes a dot-suffix form,
-    # or as the user part of user@host. The user@ lookahead accepts a "<" as
-    # well as a host character, because the host rules run first and a scrubbed
-    # host reads "<host>". Without it "user@ha.local" would keep its username.
+    # Redact username path segments, dot suffixes, and user parts before raw or scrubbed hosts.
     user = _username()
     if user:
         escaped = re.escape(user)
@@ -582,9 +476,7 @@ def _compile_rules() -> "list[_Rule]":
             _USER_TOKEN,
         ))
 
-    # The fast-path probe. A dot between two alphanumerics is the shape of every
-    # host and address the rules above look for, and a machine name needs no dot
-    # at all, so each one joins the probe by name.
+    # Probe dotted host/address shapes plus each dotless machine-name candidate.
     global _FAST_PROBE
     _FAST_PROBE = re.compile(
         "|".join([r"[a-z0-9]\.[a-z0-9]", *(re.escape(name) for name in hostnames)]),
@@ -602,10 +494,7 @@ def scrub(text: str) -> str:
     redacted. Pure, thread-safe, and free of loguru."""
     if not text:
         return text
-    # A fast path. Every rule needs one of these characters, except three that
-    # carry none of them: a bare bearer form, a bare address or host, and this
-    # machine's own name. The probe scan and the case-folded check for those
-    # run after every cheap character probe misses.
+    # Skip rules unless delimiters, bearer text, or a bare address or host can match.
     if (
         "/" not in text and "@" not in text and "=" not in text
         and ":" not in text and not _FAST_PROBE.search(text)
@@ -618,13 +507,8 @@ def scrub(text: str) -> str:
 
 
 def redact_record(record: "Record") -> None:
-    """The loguru patcher. It scrubs the message. An exception can ride
-    along, from opt(exception=...), from @log.catch or from the central
-    exception hooks. It replaces that exception with a scrubbed traceback,
-    formatted by the stdlib and folded into the message. It clears
-    record["exception"] first, so no sink formats the raw frames even when the
-    traceback formatting fails. It must never raise, because a patcher
-    exception reaches every logging call site."""
+    """Scrub messages and fold a scrubbed stdlib traceback into exception records.
+    Clear raw exceptions before formatting and never raise into logging call sites."""
     try:
         record["message"] = scrub(record["message"])
         exc = record.get("exception")
@@ -641,20 +525,13 @@ def redact_record(record: "Record") -> None:
                 record["message"].rstrip("\n") + "\n" + scrub(text).rstrip("\n")
             )
     except Exception:
-        # Log the record unredacted rather than lose it or crash the caller.
-        # scrub() on a str does not raise, and this guards an unusual record
-        # shape.
+        # Preserve an unusual record rather than lose it or crash the caller.
         pass
 
 
 def install_log_redaction() -> None:
-    """Install redact_record as loguru's core patcher. Idempotent. It calls
-    logger.configure(patcher=...), which replaces an earlier core patcher.
-    Nothing else in this codebase sets one. If something sets one later,
-    compose the two there rather than stack installs here.
-
-    log_hooks.install_exception_hooks() calls this, which is how main()'s boot
-    path gets redaction. A direct call stays safe and idempotent."""
+    """Idempotently configure redact_record as the core loguru patcher.
+    This replaces any patcher, so future patchers must compose rather than stack installs."""
     global _installed
     if _installed:
         return

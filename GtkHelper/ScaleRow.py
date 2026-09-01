@@ -23,11 +23,13 @@ class ScaleRow(Adw.ActionRow):
             step (float, optional): The step increment for the scale (default is 0.1).
             digits (int, optional): The number of decimal places to display for the scale value (default is 2).
             draw_value (bool, optional): Whether to display the current value of the scale on the scale itself (default is False).
-            round_digits (int, optional): Decimal places to round the slider value to; -1 disables rounding (default is 1).
+            round_digits (int, optional): Decimal places for slider rounding; -1 disables
+                rounding (default is 1).
 
         Description:
             This constructor creates a row containing a horizontal scale widget with optional labels for the minimum
-            and maximum values. If add_text_entry is set to True, a text entry field is included that allows the user
+            and maximum values. If add_text_entry is True, the row includes
+            a text entry that allows the user
             to enter a value directly. The value entered will be synchronized with the scale. The constructor also sets up
             necessary signal handlers to ensure that changes to the scale or text entry are appropriately handled.
     """
@@ -52,11 +54,9 @@ class ScaleRow(Adw.ActionRow):
         self._add_text_entry = add_text_entry
         self._draw_side_values = draw_side_values
 
-        # The handler id per binding key, absent while that binding is
-        # disconnected. Tracked ids keep connect and disconnect idempotent: a
-        # disconnect while already off cannot raise, and a reconnect cannot
-        # stack a second handler.
-        self._handlers: dict[str, int] = {}
+        # Store one handler id per connected key to make disconnect idempotent.
+        # A reconnect cannot stack a second handler.
+        self._handler_ids: dict[str, int] = {}
 
         self.left = Gtk.Label(label=str(min), hexpand=False, halign=Gtk.Align.END)
         self.right = Gtk.Label(label=str(max), hexpand=False, halign=Gtk.Align.START)
@@ -107,14 +107,14 @@ class ScaleRow(Adw.ActionRow):
 
     def _connect_signals(self) -> None:
         for key, widget, signal, callback in self._signal_bindings():
-            if self._handlers.get(key) is None:
-                self._handlers[key] = widget.connect(signal, callback)
+            if self._handler_ids.get(key) is None:
+                self._handler_ids[key] = widget.connect(signal, callback)
 
     def _disconnect_signals(self) -> None:
         for key, widget, _signal, _callback in self._signal_bindings():
-            handler = self._handlers.pop(key, None)
-            if handler is not None:
-                widget.disconnect(handler)
+            handler_id = self._handler_ids.pop(key, None)
+            if handler_id is not None:
+                widget.disconnect(handler_id)
 
     def get_value(self) -> float:
         return self._adjustment.get_value()
@@ -228,7 +228,7 @@ class ScaleRow(Adw.ActionRow):
             current_value = self.entry_row.get_text()
             expected_value = str(self._adjustment.get_value())
 
-            if current_value != expected_value:  # Avoid unnecessary updates
+            if current_value != expected_value:
                 self.entry_row.set_text(expected_value)
         finally:
             # An update that raises must still leave the row wired, or every

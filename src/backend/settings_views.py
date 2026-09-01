@@ -1,23 +1,5 @@
-"""The typed views over the settings surfaces.
-
-A SchemaView is a settings dict read through its schema. An absent key reads
-as the schema's default. A write of an unknown key raises. The storage stays
-sparse, so a load path persists no default. DeckSettings, AppSettings
-and PluginSettings build on it and add the named accessors and the envelope
-handling for one surface each.
-
-Why this module exists
-
-These views belong next to the surfaces they read, in settings_store, because
-they describe the same files. They sit in their own module because the store
-and its views together grew past a reviewable size, and they split cleanly.
-The views depend on the store, on the surface specs and the get() singleton,
-and the store does not depend on them at import time. settings_store
-re-imports these four names at the foot of its own body, so every external
-importer still reaches AppSettings, DeckSettings, PluginSettings and
-SchemaView at settings_store. This module is the store's back half, and no
-second entry point, so nothing imports it directly.
-"""
+"""Implement sparse schema views plus deck, app, and plugin settings adapters.
+settings_store re-exports them after defining specs and get(); callers use that entry point."""
 from __future__ import annotations
 
 import copy
@@ -40,51 +22,20 @@ from src.backend.settings_store import (
 )
 
 
-#: The label a deck takes when it reports no name, no model and no serial.
-#: It stays out of the locale table on purpose. It is the product name that
-#: the device itself prints, and no reader of it is a sentence.
+#: Device-product fallback for missing name, model, and serial; it is not a
+#: sentence and intentionally stays outside localization.
 UNNAMED_DECK = "Stream Deck"
 
 
 def _copied(value: Any) -> Any:
-    """A value safe to hand out. This copies a container and returns a
-    scalar as it is.
-
-    Nothing may receive the schema's own container. The holder of
-    font_defaults mutates it in place, and one shared default then corrupts
-    every later read of that key.
-    """
+    """Deep-copy containers and return scalars unchanged.
+    Copy schema containers so one mutation cannot change later default reads."""
     return copy.deepcopy(value) if isinstance(value, (dict, list)) else value
 
 
 class SchemaView:
-    """A settings dict read through its schema.
-
-    This wraps a mapping that somebody already read, and copies nothing, so a
-    writer that still holds the same dict stays valid. An absent key reads as
-    the schema's default. A read fills nothing in, because a filled key
-    becomes a persisted key on the next save (see the module docstring). A
-    write of a key the schema does not describe raises, so a misspelled key
-    never lands on disk unread.
-
-    A view is one read. Build it once at the top of a load path and
-    destructure it, rather than ask the store per key.
-
-    What a read hands back
-
-    A stored value comes back as a copy here, which matches the surfaces whose
-    store reads are copies. The caller mutates what it got and saves it back,
-    and two callers must not reach each other's half-made edits. An aliasing
-    view, with shared=True, hands the stored value back by reference, because
-    it reads one object that every holder writes into (see AppSettings). The
-    sharing must hold at every level. A view that handed out the top dict by
-    reference and a list inside it by copy would take
-    view.custom_stores.append(x), and a save would persist nothing.
-
-    A default comes back as a copy either way. Nothing stored exists to alias,
-    and a hand-out of the schema's own container lets one holder corrupt every
-    later reader of that key.
-    """
+    """Wrap one settings read: absent keys use copied defaults, and unknown writes raise.
+    Stored values copy unless shared=True throughout; defaults copy; reads do not persist them."""
 
     def __init__(self, data: dict[str, Any], schema: Mapping[str, Any], shared: bool = False):
         self.data: dict[str, Any] = data
@@ -92,15 +43,9 @@ class SchemaView:
         #: Hand stored values back by reference rather than as copies.
         self.shared: bool = shared
 
-    # Reads
-
     def get(self, name: str, key: str | None = None) -> Any:
-        """One setting, either what sits in storage or the schema's default.
-
-        key names a setting inside the section name. Omit key for a top-level
-        setting. A name the schema does not describe raises here, rather than
-        read as None for the rest of the run.
-        """
+        """Return a top-level or section setting from storage or its schema default.
+        Unknown names and keys raise instead of becoming None for the rest of the run."""
         if key is None:
             default = self._top_level(name)
             return self._stored_value(self.data[name]) if name in self.data else _copied(default)
@@ -111,23 +56,13 @@ class SchemaView:
         return self._stored_value(stored[key]) if key in stored else _copied(defaults[key])
 
     def section(self, name: str) -> dict[str, Any]:
-        """Section name, with every absent key filled from the schema.
-
-        This is the shape a load path destructures. It returns a copy, on an
-        aliasing view as much as on a copying one. It is a destructuring
-        shape and no handle on the settings. A mutation of it
-        reaches neither the schema nor the stored settings, and a save of it
-        persists the defaults it just filled in. A stored key that the schema
-        does not describe stays, because this fills gaps and prunes no file it
-        did not write.
-        """
+        """Return a copied section with absent schema keys filled and unknown stored keys retained.
+        The result aliases neither source; saving it would persist filled defaults."""
         merged = {k: _copied(v) for k, v in self._section_defaults(name).items()}
         merged.update(copy.deepcopy(dict(self._stored_section(name))))
         return merged
 
-    # Writes
-
-    def set(self, name: str, key: str, value: Any) -> None:
+    def set_section_value(self, name: str, key: str, value: Any) -> None:
         """Store one setting inside section name. This writes nothing else,
         so every key still absent keeps following the schema."""
         if key not in self._section_defaults(name):
@@ -140,18 +75,14 @@ class SchemaView:
             self.data[name] = section
         section[key] = value
 
-    def set_value(self, name: str, value: Any) -> None:
+    def set_top_level_value(self, name: str, value: Any) -> None:
         """Store one top-level setting, which the file holds as a bare
         value."""
         self._top_level(name)
         self.data[name] = value
 
-    # Internals
-
     def _stored_value(self, value: Any) -> Any:
-        """A stored value on its way out. An aliasing view returns it by
-        reference, and a copying view returns a copy (see the class
-        docstring)."""
+        """Return a stored value by reference for shared views and by copy otherwise."""
         return value if self.shared else _copied(value)
 
     def _section_defaults(self, name: str) -> Mapping[str, Any]:
@@ -180,39 +111,16 @@ class SchemaView:
 
 
 class DeckSettings(SchemaView):
-    """One deck's settings, read through DECK_DEFAULTS.
-
-    The settings-manager facade builds it. deck(serial) reads the file and can
-    save back to it. deck_view(settings) wraps settings a caller already holds
-    and cannot save.
-
-    This is a copying view. The deck surface hands out a deep copy per store
-    read, so the dict under this view already belongs to the caller. This
-    view copies what it hands back for the same reason. One caller's edits
-    stay its own until it saves them.
-    """
+    """Copy one deck's DECK_DEFAULTS-backed settings; only serial-backed views can save.
+    Each store read and value handout is private, so edits remain caller-owned until save."""
 
     def __init__(self, data: dict[str, Any], serial: str | None = None):
         super().__init__(data, DECK_DEFAULTS)
         self.serial: str | None = serial
 
     def display_name(self, model_name: str | None = None) -> str:
-        """What to call this deck, as a string that is never empty.
-
-        The chosen name wins. Without one, the model name the device reports
-        wins. Without that, the serial. This runs on a load path that puts the
-        result straight into a switcher label, so it answers a string for
-        every input, including a settings file that somebody edited by hand.
-        A caller that receives None here has no label to show and no way to
-        tell why.
-
-        Surrounding space goes, because a name of spaces is an empty label
-        that reads as a broken app. The cap cuts the chosen name only, for the
-        reason DECK_NAME_MAX_LENGTH gives: the user types that one, so the row
-        holds it to a width the switcher can show. The model name and the
-        serial come from the device and reach the switcher whole, because a
-        cut model name reads as a broken read rather than a long choice.
-        """
+        """Return stripped chosen name, model, serial, or UNNAMED_DECK, in that order.
+        Limit only the chosen name to DECK_NAME_MAX_LENGTH; preserve model and serial."""
         stored = self.get("name")
         chosen = stored.strip()[:DECK_NAME_MAX_LENGTH] if isinstance(stored, str) else ""
         if chosen:
@@ -226,9 +134,7 @@ class DeckSettings(SchemaView):
         return UNNAMED_DECK
 
     def save(self) -> None:
-        """Persist what a caller set through this view. This is the write
-        that save_deck_settings of the settings manager performs. It writes
-        atomically and drops this deck's cached copy."""
+        """Atomically persist this serial-backed view and invalidate its deck cache."""
         if self.serial is None:
             raise ValueError(
                 "this deck-settings view wraps a dict, not a deck: it has no file to save to"
@@ -237,24 +143,8 @@ class DeckSettings(SchemaView):
 
 
 class AppSettings(SchemaView):
-    """The app's own settings, read through APP_DEFAULTS.
-
-    This wraps any app-settings mapping and copies nothing. It takes the
-    shared dict that the settings manager hands out, or the settings dialog's
-    private snapshot. The mapping it wraps decides who sees a write before the
-    save, and the caller makes that decision.
-
-    This view always aliases. A stored list or dict comes back by reference.
-    settings.custom_stores.append(entry) plus a save then persists the entry.
-    The font-defaults dict that the label engine holds is the one inside
-    the settings rather than a snapshot. A copy would accept both calls and
-    keep neither. An absent key still reads as a copy of the table's default,
-    because nothing stored exists to alias. The table must also survive the
-    first holder that mutates what it read.
-
-    The named accessors, one per setting, replace raw keys, because one key
-    carried a different inline default in every module that read it.
-    """
+    """Alias an APP_DEFAULTS-backed mapping so stored-container edits can persist on save.
+    Missing defaults copy; the caller chooses a shared mapping or private snapshot."""
 
     def __init__(self, data: dict[str, Any]):
         super().__init__(data, APP_DEFAULTS, shared=True)
@@ -264,14 +154,13 @@ class AppSettings(SchemaView):
         copy, so the next reader loads what this write left."""
         get().write(APP, self.data)
 
-    # General settings
     @property
     def hold_time(self) -> float:
         return cast(float, self.get("general", "hold-time"))
 
     @hold_time.setter
     def hold_time(self, value: float) -> None:
-        self.set("general", "hold-time", value)
+        self.set_section_value("general", "hold-time", value)
 
     @property
     def rolling_labels(self) -> bool:
@@ -279,7 +168,7 @@ class AppSettings(SchemaView):
 
     @rolling_labels.setter
     def rolling_labels(self, value: bool) -> None:
-        self.set("general", "rolling-labels", value)
+        self.set_section_value("general", "rolling-labels", value)
 
     @property
     def shrink_on_press(self) -> bool:
@@ -287,7 +176,7 @@ class AppSettings(SchemaView):
 
     @shrink_on_press.setter
     def shrink_on_press(self, value: bool) -> None:
-        self.set("general", "shrink-on-press", value)
+        self.set_section_value("general", "shrink-on-press", value)
 
     @property
     def app_launches(self) -> int:
@@ -295,7 +184,7 @@ class AppSettings(SchemaView):
 
     @app_launches.setter
     def app_launches(self, value: int) -> None:
-        self.set("general", "app-launches", value)
+        self.set_section_value("general", "app-launches", value)
 
     @property
     def show_donate_window(self) -> bool:
@@ -303,7 +192,7 @@ class AppSettings(SchemaView):
 
     @show_donate_window.setter
     def show_donate_window(self, value: bool) -> None:
-        self.set("general", "show-donate-window", value)
+        self.set_section_value("general", "show-donate-window", value)
 
     @property
     def default_font(self) -> dict[str, Any]:
@@ -311,7 +200,7 @@ class AppSettings(SchemaView):
 
     @default_font.setter
     def default_font(self, value: dict[str, Any]) -> None:
-        self.set("general", "default-font", value)
+        self.set_section_value("general", "default-font", value)
 
     def font_default(self, key: str) -> Any:
         """A general.default-font subkey. A falsy stored value falls back to
@@ -321,14 +210,13 @@ class AppSettings(SchemaView):
             default = default()
         return self.default_font.get(key) or default
 
-    # UI settings
     @property
     def tray_icon(self) -> bool:
         return cast(bool, self.get("ui", "tray-icon"))
 
     @tray_icon.setter
     def tray_icon(self, value: bool) -> None:
-        self.set("ui", "tray-icon", value)
+        self.set_section_value("ui", "tray-icon", value)
 
     @property
     def allow_white_mode(self) -> bool:
@@ -336,7 +224,7 @@ class AppSettings(SchemaView):
 
     @allow_white_mode.setter
     def allow_white_mode(self, value: bool) -> None:
-        self.set("ui", "allow-white-mode", value)
+        self.set_section_value("ui", "allow-white-mode", value)
 
     @property
     def show_notifications(self) -> bool:
@@ -344,7 +232,7 @@ class AppSettings(SchemaView):
 
     @show_notifications.setter
     def show_notifications(self, value: bool) -> None:
-        self.set("ui", "show-notifications", value)
+        self.set_section_value("ui", "show-notifications", value)
 
     @property
     def auto_open_action_config(self) -> bool:
@@ -352,34 +240,31 @@ class AppSettings(SchemaView):
 
     @auto_open_action_config.setter
     def auto_open_action_config(self, value: bool) -> None:
-        self.set("ui", "auto-open-action-config", value)
+        self.set_section_value("ui", "auto-open-action-config", value)
 
-    # Key-grid settings
     @property
     def emulate_at_double_click(self) -> bool:
         return cast(bool, self.get("key-grid", "emulate-at-double-click"))
 
     @emulate_at_double_click.setter
     def emulate_at_double_click(self, value: bool) -> None:
-        self.set("key-grid", "emulate-at-double-click", value)
+        self.set_section_value("key-grid", "emulate-at-double-click", value)
 
-    # Warnings settings
     @property
     def enable_fps_warnings(self) -> bool:
         return cast(bool, self.get("warnings", "enable-fps-warnings"))
 
     @enable_fps_warnings.setter
     def enable_fps_warnings(self, value: bool) -> None:
-        self.set("warnings", "enable-fps-warnings", value)
+        self.set_section_value("warnings", "enable-fps-warnings", value)
 
-    # System settings
     @property
     def keep_running(self) -> bool | None:
         return cast(bool | None, self.get("system", "keep-running"))
 
     @keep_running.setter
     def keep_running(self, value: bool | None) -> None:
-        self.set("system", "keep-running", value)
+        self.set_section_value("system", "keep-running", value)
 
     @property
     def autostart(self) -> bool:
@@ -387,7 +272,7 @@ class AppSettings(SchemaView):
 
     @autostart.setter
     def autostart(self, value: bool) -> None:
-        self.set("system", "autostart", value)
+        self.set_section_value("system", "autostart", value)
 
     @property
     def lock_on_lock_screen(self) -> bool:
@@ -395,16 +280,15 @@ class AppSettings(SchemaView):
 
     @lock_on_lock_screen.setter
     def lock_on_lock_screen(self, value: bool) -> None:
-        self.set("system", "lock-on-lock-screen", value)
+        self.set_section_value("system", "lock-on-lock-screen", value)
 
-    # Performance settings
     @property
     def n_cached_pages(self) -> int:
         return cast(int, self.get("performance", "n-cached-pages"))
 
     @n_cached_pages.setter
     def n_cached_pages(self, value: int) -> None:
-        self.set("performance", "n-cached-pages", value)
+        self.set_section_value("performance", "n-cached-pages", value)
 
     @property
     def cache_videos(self) -> bool:
@@ -412,7 +296,7 @@ class AppSettings(SchemaView):
 
     @cache_videos.setter
     def cache_videos(self, value: bool) -> None:
-        self.set("performance", "cache-videos", value)
+        self.set_section_value("performance", "cache-videos", value)
 
     @property
     def animation_pause_mode(self) -> str:
@@ -420,7 +304,7 @@ class AppSettings(SchemaView):
 
     @animation_pause_mode.setter
     def animation_pause_mode(self, value: str) -> None:
-        self.set("performance", "animation-pause-mode", value)
+        self.set_section_value("performance", "animation-pause-mode", value)
 
     @property
     def animation_idle_minutes(self) -> int:
@@ -428,37 +312,34 @@ class AppSettings(SchemaView):
 
     @animation_idle_minutes.setter
     def animation_idle_minutes(self, value: int) -> None:
-        self.set("performance", "animation-idle-minutes", value)
+        self.set_section_value("performance", "animation-idle-minutes", value)
 
-    # Store settings
     @property
     def auto_update(self) -> bool:
         return cast(bool, self.get("store", "auto-update"))
 
     @auto_update.setter
     def auto_update(self, value: bool) -> None:
-        self.set("store", "auto-update", value)
+        self.set_section_value("store", "auto-update", value)
 
     @property
-    def install_scripts(self) -> str:
-        # "ask", "always" or "never". A downloaded plugin can carry an
-        # __install__.py that runs arbitrary code at install time; this
-        # decides whether a fresh install asks first. Garbage reads as
-        # "ask", the safe default.
+    def install_script_policy(self) -> str:
+        # Accept only "ask", "always", or "never" for downloaded install code;
+        # invalid data falls back to the safe "ask" policy.
         value = self.get("store", "install-scripts")
         return cast(str, value if value in ("ask", "always", "never") else "ask")
 
-    @install_scripts.setter
-    def install_scripts(self, value: str) -> None:
-        self.set("store", "install-scripts", value)
+    @install_script_policy.setter
+    def install_script_policy(self, value: str) -> None:
+        self.set_section_value("store", "install-scripts", value)
 
     @property
-    def responsibility_notes_agreed(self) -> bool:
+    def responsibility_notes_accepted(self) -> bool:
         return cast(bool, self.get("store", "responsibility-notes-agreed"))
 
-    @responsibility_notes_agreed.setter
-    def responsibility_notes_agreed(self, value: bool) -> None:
-        self.set("store", "responsibility-notes-agreed", value)
+    @responsibility_notes_accepted.setter
+    def responsibility_notes_accepted(self, value: bool) -> None:
+        self.set_section_value("store", "responsibility-notes-agreed", value)
 
     @property
     def enable_custom_stores(self) -> bool:
@@ -466,7 +347,7 @@ class AppSettings(SchemaView):
 
     @enable_custom_stores.setter
     def enable_custom_stores(self, value: bool) -> None:
-        self.set("store", "enable-custom-stores", value)
+        self.set_section_value("store", "enable-custom-stores", value)
 
     @property
     def enable_custom_plugins(self) -> bool:
@@ -474,7 +355,7 @@ class AppSettings(SchemaView):
 
     @enable_custom_plugins.setter
     def enable_custom_plugins(self, value: bool) -> None:
-        self.set("store", "enable-custom-plugins", value)
+        self.set_section_value("store", "enable-custom-plugins", value)
 
     @property
     def custom_stores(self) -> list[Any]:
@@ -482,7 +363,7 @@ class AppSettings(SchemaView):
 
     @custom_stores.setter
     def custom_stores(self, value: list[Any]) -> None:
-        self.set("store", "custom-stores", value)
+        self.set_section_value("store", "custom-stores", value)
 
     @property
     def custom_plugins(self) -> list[Any]:
@@ -490,16 +371,15 @@ class AppSettings(SchemaView):
 
     @custom_plugins.setter
     def custom_plugins(self, value: list[Any]) -> None:
-        self.set("store", "custom-plugins", value)
+        self.set_section_value("store", "custom-plugins", value)
 
-    # Dev settings
     @property
     def n_fake_decks(self) -> int:
         return cast(int, self.get("dev", "n-fake-decks"))
 
     @n_fake_decks.setter
     def n_fake_decks(self, value: int) -> None:
-        self.set("dev", "n-fake-decks", value)
+        self.set_section_value("dev", "n-fake-decks", value)
 
     @property
     def n_remote_decks(self) -> int:
@@ -507,55 +387,21 @@ class AppSettings(SchemaView):
 
     @n_remote_decks.setter
     def n_remote_decks(self, value: int) -> None:
-        self.set("dev", "n-remote-decks", value)
+        self.set_section_value("dev", "n-remote-decks", value)
 
 
 class PluginSettings:
-    """One plugin's settings file, which is the app's envelope around the
-    plugin's keys.
-
-    A plugin owns everything inside "settings". The app owns the file it sits
-    in, which means where it lives, the file-version envelope, and what
-    happens when it does not read. The asset manager keeps a second top-level
-    key, "assets", in that file, so the whole document is reachable here.
-
-    Here an unreadable file reads as empty
-
-    Every other surface lets an OSError out, because the content is unknown
-    and an empty answer invites a write that destroys it. This class catches
-    it. These reads run inside a plugin __init__ and inside the plugin
-    settings dialog. There a raise costs the user the whole plugin, or the
-    dialog, over a file they may never have written to. The plugin starts
-    with no settings and logs that loudly.
-
-    The loader still quarantines a decode failure. The bytes exist and do not
-    parse, and the next save overwrites the only copy of a configuration
-    nobody can retype. A plugin source file, such as manifest.json or
-    about.json, gets neither treatment. The app never writes one, so nothing
-    overwrites a corrupt one, and a rename would change a developer's working
-    tree.
-
-    This class takes no lock. PluginBase serializes get_settings and
-    set_settings on its per-plugin lock and calls in here while it holds that
-    lock, so the order is fixed. The plugin's lock sits outside and the
-    store's leaf cache lock sits inside, and never the reverse.
-    SettingsStore.edit here would take them in that order.
-    """
+    """Retain assets, quarantine decode failures, preserve source files, and read OSError empty.
+    No lock here; only PluginBase get/set hold an outer per-plugin lock around store work."""
 
     def __init__(self, settings_path: str) -> None:
         self.path: str = settings_path
 
     def document(self) -> dict[str, Any] | None:
-        """The file's entire content, or None when nothing is there to read.
-
-        None covers every way this file yields no document. It is absent, this
-        read quarantined it, it does not read, or it holds no JSON object.
-        Every caller answers all four the same way and starts empty. None of
-        the four is an empty document, which is a real file that the app
-        migrates and rewrites.
-        """
+        """Return the object, or None for absent, quarantined, unreadable, or non-object content.
+        An empty object remains a real document that migration can rewrite."""
         try:
-            content, corrupt = get().read_reporting_corruption(PLUGIN, self.path)
+            content, corrupt = get().read_with_corruption_status(PLUGIN, self.path)
         except OSError as e:
             log.opt(exception=e).error(
                 f"Could not read plugin settings file {self.path} -- treating it as "
@@ -565,10 +411,8 @@ class PluginSettings:
         if corrupt:
             return None
         if not content and not os.path.isfile(self.path):
-            # The file is absent, or another reader moved it aside during
-            # this read. Check after the read and not before, so a file
-            # quarantined under this read answers "nothing there" rather than
-            # "an empty document", which a migration would write back.
+            # Check after reading so an absent or concurrently quarantined file
+            # returns None instead of an empty document that migration rewrites.
             return None
         if not isinstance(content, dict):
             log.error(
@@ -589,10 +433,8 @@ class PluginSettings:
             return {}
         if document.get("file-version") == PLUGIN_FILE_VERSION:
             return cast(dict[str, Any], document.get("settings", {}))
-        # This file predates the envelope, so the whole file holds the
-        # settings. Write it back wrapped, and return what it held either way.
-        # A migration that cannot write must not also cost the plugin its
-        # settings for this run.
+        # Pre-envelope files contain settings at the root; return them even if
+        # wrapping fails so migration does not remove settings for this run.
         try:
             self.save_document({"file-version": PLUGIN_FILE_VERSION, "settings": document})
         except OSError as e:
@@ -605,11 +447,8 @@ class PluginSettings:
         """Store settings as the plugin's own keys, atomically."""
         document = self.document()
         if document is None or document.get("file-version") != PLUGIN_FILE_VERSION:
-            # Nothing usable exists, or a file predates the envelope and its
-            # own keys hold the settings this write replaces. This write
-            # becomes the envelope and keeps none of that. On a wrapped file
-            # it keeps what the app stores beside the settings, the asset
-            # overrides.
+            # Start a new envelope for missing or legacy content, replacing old
+            # root settings; valid envelopes retain app-owned siblings such as assets.
             document = {"file-version": PLUGIN_FILE_VERSION}
         document["settings"] = settings
         self.save_document(document)

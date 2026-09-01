@@ -96,25 +96,8 @@ class Layout(Adw.PreferencesRow):
         self.apply_key_layout([deck.key_layout()[0], columns])
 
     def apply_key_layout(self, key_layout: list[int]) -> None:
-        """Resize the fake deck and put the page back onto the new inputs.
-
-        init_inputs() replaces the input registry with empty inputs, so the
-        deck and the editor grid both show nothing until the reload below
-        fills them. Every other caller of init_inputs() pairs it with a page
-        load for that reason. The reload runs after the grid rebuild, so the
-        editor already asks for the new size when the page lands.
-
-        The replaced inputs still hold the media of the page that was showing.
-        A drop alone leaves that image and video data to the collector, so the
-        release goes through the media player's control queue as a
-        ReleaseStashedInputsMsg, the same route ScreenSaver.show() takes.
-        Never close them inline here. init_inputs() only guarantees that
-        deck_controller.inputs points at a fresh dict; a media-thread tick
-        that began just before that swap still renders against the old input
-        objects, so the sole writer has to serialize the close. A control
-        message carries no active-page affinity either, so the reload below
-        cannot drop it.
-        """
+        """Call set_key_layout before init_inputs replaces the fake deck inputs.
+        Release old inputs through the media writer, then rebuild the grid and reload."""
         controller = self.settings_page.deck_controller
         deck = cast("FakeDeck", controller.deck.deck)
 

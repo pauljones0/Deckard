@@ -1,8 +1,4 @@
-"""Regression tests for unguarded active_page derefs and pending-page retention.
-
-active_page goes None on close() or load_page(None), and a racing switch swaps
-it. Each part builds a deterministic seam for a race that is otherwise rare.
-"""
+"""Verify active-page null races and pending-page retention."""
 from types import SimpleNamespace
 
 import fixtures
@@ -10,10 +6,7 @@ import globals as gl
 
 
 class FlippingController:
-    """Stands in for a DeckController whose active_page a racing thread nulls.
-
-    The property serves a real page for the first live_reads reads, then None.
-    """
+    """Return a page for live_reads accesses, then simulate a racing null."""
 
     def __init__(self, page, live_reads: int):
         self._page = page
@@ -29,7 +22,7 @@ class FlippingController:
         return self._page if self._reads <= self._live_reads else None
 
 
-def part_a_get_own_actions() -> None:
+def check_get_own_actions_snapshot() -> None:
     from src.backend.DeckManagement.DeckController import ControllerInputState
 
     sentinel = ["sentinel-action"]
@@ -46,7 +39,6 @@ def part_a_get_own_actions() -> None:
     state.controller_input = SimpleNamespace(deck_controller=ctrl, identifier="key-0x0")
     state.state = 0
 
-    # Without the snapshot, this raises AttributeError on NoneType.
     actions = state.get_own_actions()
     assert actions == sentinel, (
         f"expected the snapshot page's actions, got {actions!r} -- the live "
@@ -55,21 +47,18 @@ def part_a_get_own_actions() -> None:
     print("PASS: get_own_actions survives a post-check active_page flip")
 
 
-def part_b_load_page_tail(controller) -> None:
+def check_load_page_after_active_page_clear(controller) -> None:
     from src.Signals import Signals
 
     seed_path = fixtures.seed_page("GuardTailPage")
     page = gl.page_manager.get_page(seed_path, controller)
 
-    # initialize_actions runs in the tail right before the ChangePage signal.
-    # Have it stand in for the racing close() or load_page(None) that nulls
-    # active_page, which makes the seam deterministic.
+    # Null active_page from initialize_actions immediately before ChangePage.
+    # This models a racing close or load_page(None) deterministically.
     page.initialize_actions = lambda *a, **k: setattr(controller, "active_page", None)
 
-    # Observe at the trigger call site, because a connected callback needs a
-    # GLib main loop iteration and this harness runs none. The deref under test
-    # happens at argument evaluation, so an AttributeError lands in the
-    # @log.catch of load_page and records no ChangePage trigger.
+    # Observe the trigger directly because this harness runs no GLib main loop.
+    # Argument evaluation must not fail before the ChangePage trigger.
     received = []
     original_trigger = gl.signal_manager.trigger_signal
 
@@ -92,7 +81,7 @@ def part_b_load_page_tail(controller) -> None:
     print("PASS: load_page tail signals ChangePage despite a racing active_page null")
 
 
-def part_c_load_default_page(controller) -> None:
+def check_default_page_after_active_page_clear(controller) -> None:
     fixtures.seed_page("StateReqPage")
 
     loaded = []
@@ -106,8 +95,6 @@ def part_c_load_default_page(controller) -> None:
         "state": 0,
     }
 
-    # Without the guard this raises AttributeError. The deref sits before the
-    # branch's own try/except and the method has no other guard.
     controller.load_default_page()
 
     assert len(loaded) >= 2, (
@@ -120,7 +107,7 @@ def part_c_load_default_page(controller) -> None:
     print("PASS: load_default_page state-request branch survives active_page=None")
 
 
-def part_d_close_clears_pending(controller) -> None:
+def check_close_clears_pending_page(controller) -> None:
     sentinel = object()
     controller._screensaver_pending_page = sentinel
     controller.close(remove_media=True)
@@ -134,18 +121,18 @@ def part_d_close_clears_pending(controller) -> None:
 def main() -> None:
     fixtures.start_watchdog(60, label="scenario_active_page_guards")
 
-    part_a_get_own_actions()
+    check_get_own_actions_snapshot()
 
     controller_b = fixtures.make_headless_controller(serial="guards-b")
     try:
-        part_b_load_page_tail(controller_b)
+        check_load_page_after_active_page_clear(controller_b)
     finally:
         fixtures.teardown(controller_b)
 
     controller_cd = fixtures.make_headless_controller(serial="guards-cd")
     try:
-        part_c_load_default_page(controller_cd)
-        part_d_close_clears_pending(controller_cd)
+        check_default_page_after_active_page_clear(controller_cd)
+        check_close_clears_pending_page(controller_cd)
     finally:
         fixtures.teardown(controller_cd)
 

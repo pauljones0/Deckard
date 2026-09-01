@@ -1,8 +1,4 @@
-"""Pins the doorkeeper admission of EncodedImageCache and the memo clear.
-
-A key is cached on its second put, and the doorkeeper ring is bounded. clear()
-resets both, and a background content change clears the deck encode memo.
-"""
+"""Check second-hit cache admission, bounded doorkeeping, and memo clearing."""
 import fixtures  # noqa: F401  (isolated data dir + sys.path, house convention)
 
 from PIL import Image
@@ -43,9 +39,8 @@ def check_doorkeeper_ring_is_bounded() -> None:
     for i in range(cache.DOORKEEPER_SIZE + 10):
         cache.put(("noise", i), data)
 
-    # The first key sighted has fallen out of the bounded ring by now, so its
-    # next sighting counts as a fresh first sighting and stays uncached. Noise
-    # cannot grow the ring or the cache without bound.
+    # An evicted sighting must count as new and remain uncached, which bounds
+    # high-entropy noise.
     cache.put(("noise", 0), data)
     assert cache.get(("noise", 0)) is None, (
         "a key that fell out of the bounded doorkeeper ring must be treated "
@@ -143,12 +138,7 @@ def check_set_video_clears_memo() -> None:
 
 
 def check_byte_cap_lru_eviction() -> None:
-    """Pins the byte-size cap and its LRU eviction order.
-
-    Total bytes stay at or under max_bytes, and the least recently used entry
-    is the one evicted. A get() promotes an older key. A fresh key is never
-    admitted on its first put, even under memory pressure.
-    """
+    """Enforce the byte cap, LRU promotion, and second-hit admission under pressure."""
     # Each admitted value is 100 bytes and the cap holds three of them.
     # Admission needs two puts per key, so warm each key with two puts.
     cache = EncodedImageCache(max_bytes=300)
@@ -182,12 +172,7 @@ def check_byte_cap_lru_eviction() -> None:
 
 
 def check_memo_used_on_encode_path() -> None:
-    """The memo must be consulted on the real encode path.
-
-    Drive a real ControllerKey.update() on a headless controller and prove the
-    second identical paint hits the memo. encode_native_key() must not run
-    again, and the enqueued native image must be the already cached object.
-    """
+    """Require identical ControllerKey paints to reuse the cached native object."""
     import time
     from src.backend.DeckManagement.InputIdentifier import Input
     import src.backend.DeckManagement.deck_controller.native_encode as native_encode_mod
@@ -196,9 +181,7 @@ def check_memo_used_on_encode_path() -> None:
     fixtures.wait_until(lambda: controller.active_page is not None, timeout=3)
     assert controller.is_visual(), "fixture sanity: the encode path only runs on a visual deck"
 
-    # Count real encodes, so a memo hit shows up as encode_native_key not being
-    # called again. The key encode wrapper resolves the name from its own
-    # module, so that is where the counter has to be installed.
+    # Count the encode symbol in the module where the key wrapper resolves it.
     encode_calls = {"n": 0}
     real_encode = native_encode_mod.encode_native_key
 
@@ -213,9 +196,7 @@ def check_memo_used_on_encode_path() -> None:
         # Let any startup paint settle, then take a clean baseline.
         time.sleep(0.1)
         controller.encode_memo.clear()
-        # Warm the memo for this key content. put() admits on the second
-        # sighting, so two identical forced paints populate the real cache
-        # entry, which mirrors looping content warming on its second wrap.
+        # Warm second-hit admission with two identical forced paints.
         key.update(force=True)
         time.sleep(0.05)
         key.update(force=True)
@@ -228,10 +209,8 @@ def check_memo_used_on_encode_path() -> None:
         )
         cached_before = dict(controller.encode_memo._entries)
         calls_before = encode_calls["n"]
-        # A standing guard, not a fixture detail. The patch below bites only if
-        # it replaces the name in the module the paint path resolves it from,
-        # and a counter stuck at zero makes every no-new-encode assertion
-        # compare 0 to 0, which proves nothing.
+        # Require the counter to fire so a zero-to-zero memo assertion cannot
+        # pass vacuously.
         assert calls_before > 0, (
             "the encode counter never fired: encode_native_key is not being "
             "intercepted on the paint path, so the memo assertions below are "
@@ -264,12 +243,7 @@ def check_memo_used_on_encode_path() -> None:
 
 
 def check_put_vs_clear_race() -> None:
-    """A put() racing a clear() must never corrupt the cache.
-
-    Both operations take the same lock, so neither may observe or leave a torn
-    intermediate. Two barrier-synchronized threads hammer put() and clear() on
-    the same keys, then the bookkeeping invariant must hold.
-    """
+    """Race put and clear under one lock, then require consistent bookkeeping."""
     import threading
 
     cache = EncodedImageCache(max_bytes=10 * 1024)
@@ -310,9 +284,8 @@ def check_put_vs_clear_race() -> None:
     assert not tp.is_alive() and not tc.is_alive(), "race threads wedged"
     assert not errors, f"put/clear race raised: {errors!r}"
 
-    # The invariant. total_bytes must equal the sum of the bytes actually held,
-    # stay non-negative and never exceed the cap, whichever operation won the
-    # lock last during the storm.
+    # Require total_bytes to match held entries and remain within bounds after
+    # either operation wins the final lock.
     with cache._lock:
         held = sum(len(v) for v in cache._entries.values())
         assert cache._total_bytes == held, (
@@ -322,10 +295,8 @@ def check_put_vs_clear_race() -> None:
         assert cache._total_bytes >= 0, "total_bytes must never go negative"
         assert cache._total_bytes <= cache._max_bytes, "total_bytes must never exceed the cap"
 
-    # A deterministic post-storm check. A clear() after puts drove the counter
-    # up must reset the byte accounting to exactly zero. This holds whatever the
-    # race timing was, and a clear() that emptied _entries without resetting
-    # _total_bytes would violate it.
+    # After the race, populate once and require clear to reset byte accounting
+    # and entries together.
     cache.put(("settle", 0), val)
     cache.put(("settle", 0), val)  # admit, so _entries + _total_bytes are non-zero
     assert cache._total_bytes > 0, "fixture sanity: cache should hold bytes before the final clear"

@@ -15,9 +15,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 import os
 import csv
-import locale
 import html
 from loguru import logger as log
+
+from locales.locale_resolution import os_default_language, resolve_best_match
 
 class LocaleManager:
     def __init__(self, csv_path: str) -> None:
@@ -55,21 +56,11 @@ class LocaleManager:
         self.FALLBACK_LOCALE = language
 
     def set_to_os_default(self) -> None:
-        os_locale = locale.getlocale()[0]
-        self.set_language(self.FALLBACK_LOCALE if os_locale is None else os_locale)
+        self.set_language(os_default_language(self.FALLBACK_LOCALE))
 
     def get_best_match(self, preferred_language: str) -> str:
-        # Get all available locales
-        # Return preferred language if it exists
-        if preferred_language in self.available_locales:
-            return preferred_language
-
-        # Get primary language code (eg. en for en_US)
-        primary_language_code = preferred_language.split("_")[0]
-        for language in self.available_locales:
-            if language.startswith(primary_language_code):
-                return language
-        return self.FALLBACK_LOCALE
+        return resolve_best_match(
+            preferred_language, self.available_locales, self.FALLBACK_LOCALE)
 
     def get_custom_translation(self, locale_json: dict[str, str] | None) -> str | None:
         if locale_json is None:
@@ -96,14 +87,6 @@ class LocaleManager:
         return result
 
     def get_markup(self, key: str, fallback: str | None = None) -> str:
-        """Return the translation escaped for a Pango markup consumer.
-
-        get() returns plain text, which is what a Gtk.Label, a title property
-        or a tooltip renders verbatim. A caller that feeds the value into a
-        markup-parsed property must escape the three markup-significant
-        characters first, or a translation holding "&" makes the parse fail.
-        Quotes stay literal: Pango needs them escaped only inside a tag
-        attribute, and escaping them puts "&#x27;" on screen wherever the
-        value reaches a plain renderer.
-        """
+        """Escape plain translation text for Pango markup without escaping quotes.
+        Quotes matter only in attributes; escaping them shows entities in plain renderers."""
         return html.escape(self.get(key, fallback), quote=False)

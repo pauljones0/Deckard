@@ -1,10 +1,5 @@
-"""
-on_ready ordering guarantees, against the real dispatch code.
-
-own_actions_tick and own_actions_update gate on on_ready_finished, so no tick
-and no second on_ready runs beside the initial one. A per-plugin RLock
-serializes get_settings against set_settings.
-"""
+"""Gate action dispatch until on_ready finishes and serialize plugin settings.
+No tick or second on_ready may run beside the initial callback."""
 
 # A raising on_ready still opens the gates, so the action does not stay dead
 # for the page's lifetime.
@@ -98,9 +93,7 @@ def check_gates() -> int:
             return 1
         state = controller_input.states[0]
 
-        # Schedule the ready callbacks on the pool. on_ready blocks on the
-        # gate. The controller's background tick loop is live and calls
-        # own_actions_tick too, which strengthens the gated-phase assertions.
+        # Block pool-based on_ready while the live background tick loop exercises the gate.
         page.initialize_actions()
         if not action.entered_ready.wait(timeout=5):
             print("FAIL: on_ready never started")
@@ -153,32 +146,30 @@ def check_gates() -> int:
         fixtures.teardown(controller)
 
     # Raising on_ready still opens the gates.
-    controller2 = make_headless_controller(serial="onready-2")
+    raising_controller = make_headless_controller(serial="onready-2")
     try:
         from loguru import logger as _log
-        page2 = controller2.active_page
+        raising_page = raising_controller.active_page
         ident = Input.Key("0x0")
-        action2 = make_action(RaisingReadyAction, controller2, page2, ident)
-        state2 = controller2.get_input(ident).states[0]
-        # on_ready raises here and _run_ready_callbacks logs the traceback.
-        # Silence loguru until wait_until sees completion, so the expected
-        # noise stays out of the run.
+        raising_action = make_action(RaisingReadyAction, raising_controller, raising_page, ident)
+        raising_state = raising_controller.get_input(ident).states[0]
+        # Silence the expected on_ready traceback until completion is observed.
         _log.disable("")
         try:
-            page2.initialize_actions()
-            ready = wait_until(lambda: action2.on_ready_finished, timeout=5)
+            raising_page.initialize_actions()
+            ready = wait_until(lambda: raising_action.on_ready_finished, timeout=5)
         finally:
             _log.enable("")
         if not ready:
             print("FAIL: raising on_ready left on_ready_finished unset (action dead forever)")
             return 1
-        state2.own_actions_tick()
-        if action2.tick_calls < 1:
+        raising_state.own_actions_tick()
+        if raising_action.tick_calls < 1:
             print("FAIL: tick not delivered after raising on_ready")
             return 1
         print("PASS: raising on_ready still opens the gates")
     finally:
-        fixtures.teardown(controller2)
+        fixtures.teardown(raising_controller)
     return 0
 
 
@@ -212,9 +203,7 @@ def check_settings_serialization() -> int:
     first_call = [True]
 
     def slow_first_write(path, content):
-        # The first write is the v1 to v2 conversion. Hold it open long
-        # enough for the racing set_settings to slip between the stale read
-        # and this write.
+        # Hold the v1-to-v2 write open so set_settings races the stale read.
         if first_call[0]:
             first_call[0] = False
             in_window.set()
@@ -250,9 +239,8 @@ def check_settings_serialization() -> int:
         return 1
     print("PASS: conversion write serialized against concurrent set_settings")
 
-    # set_settings over a corrupt existing file must not raise. The guarded
-    # read logs the caught JSONDecodeError, so silence loguru around the
-    # corruption.
+    # A corrupt existing file must not make set_settings raise.
+    # Silence the expected guarded-read JSONDecodeError.
     from loguru import logger as _log
     with open(settings_path, "w") as f:
         f.write('{"trunc')

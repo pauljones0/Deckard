@@ -38,8 +38,8 @@ import math
 import os
 import threading
 import time
-from concurrent.futures import Future
-from concurrent.futures import TimeoutError as FutureTimeoutError
+from contextlib import nullcontext
+from concurrent.futures import Future, ThreadPoolExecutor
 from functools import partial
 from threading import Thread
 
@@ -52,12 +52,16 @@ from loguru import logger as log
 from src.backend.DeckManagement.BetterDeck import BetterDeck, open_device_handle
 from src.backend.DeckManagement.InputIdentifier import Input, InputIdentifier
 from src.backend.DeckManagement.Subclasses import cache_budget
-from src.backend.DeckManagement.HelperMethods import is_image
+from src.backend.DeckManagement.deck_controller.background_media import resolve_background_entries
+from src.backend.DeckManagement.deck_controller.viewport import DEFAULT_VIEW
 from src.backend.DeckManagement.Subclasses.ScreenSaver import ScreenSaver
 from src.backend.DeckManagement.Subclasses.encoded_image_cache import EncodedImageCache
 from src.backend.DeckManagement.Subclasses.native_tile_cache import NativeTileCache, native_tile_cache_max_bytes
 from src.backend.DeckManagement.deck_controller.background_media import Background, BackgroundVideo
 from src.backend.DeckManagement.deck_controller.inputs import ControllerDial, ControllerKey, ControllerTouchScreen
+from src.backend.DeckManagement.deck_controller.input_latency import InputLatencyRun, dispatch_deck_event, make_input_latency_tracker, write_input_latency_report
+from src.backend.DeckManagement.deck_events import DeckEvent, DialEvent, KeyEvent, TouchscreenEvent
+from src.backend.DeckManagement.deck_controller.page_completion import PageLoadCompletion
 from src.backend.DeckManagement.deck_controller.media_writer import (
     ClearAndCloseMsg,
     ClearMsg,
@@ -75,7 +79,7 @@ from src.Signals import Signals
 
 import globals as gl
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import cast, TYPE_CHECKING, Any, overload
 if TYPE_CHECKING:
     from src.backend.DeckManagement.DeckManager import DeckManager
@@ -89,11 +93,7 @@ if TYPE_CHECKING:
 # format name, flip pair and rotation. Part of every native tile cache key.
 NativeKeyFormatSig = tuple[tuple[int, int], str, tuple[bool, bool], int]
 
-# Every input identifier class paired with the controller class that drives
-# it. init_inputs below and Page.load_action_objects both read the table at
-# call time. The value type names the three concrete classes, not their
-# ControllerInput base, because only they take the (controller, identifier)
-# constructor that both call sites use.
+# Every input identifier class paired with the controller class that drives it.
 CONTROLLER_CLASSES: dict[type[InputIdentifier], type[ControllerKey | ControllerDial | ControllerTouchScreen]] = {
     Input.Key: ControllerKey,
     Input.Dial: ControllerDial,
@@ -112,6 +112,9 @@ class DeckController:
 
     def __init__(self, deck_manager: "DeckManager", deck: "StreamDeck.StreamDeck | FakeDeck | RemoteDeck"):
         self.deck_manager: "DeckManager" = deck_manager
+        self.input_latency_run = InputLatencyRun.from_environment()
+        self.input_latency = make_input_latency_tracker(self.input_latency_run)
+        self.input_latency_model: str | None = None
 
         # Per-instance memo for stable deck properties. An lru_cache on an
         # instance method pins every self on the class and never evicts.
@@ -120,26 +123,20 @@ class DeckController:
         self._touchscreen_image_size: tuple[int, int] | None = None
         self._native_key_format_sig: "NativeKeyFormatSig | None" = None
 
-        # Order the transport mutex FIFO before open() starts the reader
-        # thread. The order of these two lines matters; see
-        # _install_fair_transport_lock in deck_controller/media_writer.py.
+        # Order the transport mutex FIFO before open() starts the reader thread.
         _install_fair_transport_lock(deck)
-        # Resume-from-suspend handle reopen is the library's only mode, and it
-        # is always on. This lifts the release shadow an earlier failed
-        # attempt left on the handle, which a bare open() would not.
+        # Resume-from-suspend handle reopen is the library's only mode, and it is always on.
         open_device_handle(deck)
 
-        # Wrap the open handle before the settings read below, so a raise in
-        # the bring-up gives the device back here. A raise past the bring-up
-        # is released by the failed-init teardown or by the caller's retry.
+        # Wrap the open handle before the settings read below, so a raise in the bring-up gives the
+        # device back here.
         self.deck: BetterDeck = BetterDeck(cast("StreamDeck.StreamDeck", deck))
+        if self.input_latency_run is not None:
+            self.input_latency_model = self.deck.deck_type()
 
         try:
             self.deck.set_rotation(gl.settings_manager.deck_view(self.get_deck_settings()).get("rotation"))
-            # Clear the deck through the direct body, not the queue-routed
-            # clear(). media_player does not exist yet, and this is a liveness
-            # probe, so its exception must abort construction here instead of
-            # getting lost in an async queue.
+            # Clear the deck through the direct body, not the queue-routed clear().
             self._clear_direct()
         except Exception as e:
             log.error(f"Failed to bring up deck, maybe it's already connected to another instance? Skipping... Error: {e}")
@@ -154,37 +151,19 @@ class DeckController:
         self.allow_interaction = True
         self.has_animated_keys = False
 
-        # Every deck tiles its background at this spacing. The SD+ pair was
-        # calibrated on the device with a striped background, one axis at a
-        # time; the probe tests the wrapped handle, since self.deck is the
-        # BetterDeck wrapper here.
+        # Every deck tiles its background at this spacing.
         raw_deck = getattr(self.deck, "deck", None)
         self.is_plus = isinstance(raw_deck, StreamDeckPlus)
         self.key_spacing = (116, 34) if self.is_plus else (36, 36)
 
-        # Per-deck saturation boost, a PIL ImageEnhance.Color factor over the
-        # UI range 1.0 to 1.5. It is read once at boot and refreshed by
-        # set_display_saturation(), so every per-frame call site does one
-        # attribute read instead of a settings lookup, and skips all
-        # enhancement work with one float comparison at the default 1.0.
+        # Per-deck saturation boost, a PIL ImageEnhance.Color factor over the UI range 1.0 to 1.5.
         self.display_saturation: float = self._read_display_saturation()
 
-        # {identifier: True} while the main window is hidden. This is a dirty
-        # marker, not a stashed PIL image. The device composite runs every
-        # tick whatever the window does, so a retained copy holds a big object
-        # alive for nothing. On map, KeyGrid.load_from_changes and
-        # ScreenBar.load_from_changes recomposite the current frame for each
-        # dirty identifier and push it through the same set-image path a live
-        # update uses.
+        # {identifier: True} while the main window is hidden. The device composite runs every tick
+        # whatever the window does, so a retained copy holds a big object alive for nothing.
         self.ui_image_changes_while_hidden: dict[InputIdentifier, bool] = {}
 
-        # close() sets this once and never clears it. It gates the re-entrant
-        # producer paths, ScreenSaver.show, hide, on_key_change and load_page,
-        # which otherwise resurrect a controller during teardown, and it makes
-        # close() idempotent against a second call. The transition runs under
-        # _close_lock, because the unplug thread and the app-quit teardown
-        # race, and an unlocked check-then-set lets both run the sweep at
-        # once, with duplicate plugin hooks and a double device close.
+        # Set once under _close_lock to gate producers and make racing teardowns idempotent.
         self._closing: bool = False
         self._close_lock = threading.Lock()
 
@@ -197,10 +176,8 @@ class DeckController:
         # its queued paints are still current. See _page_is_current.
         self._page_load_generation: int = 0
         self._page_gen_lock = threading.Lock()
-        # Serializes load_page's switch body so racing switches cannot
-        # interleave. An older switch can cancel the newer one's background
-        # future or strand its queued work. An RLock, because a ChangePage
-        # handler nests a load_page.
+        # Serializes load_page's switch body so racing switches cannot interleave. An RLock, because
+        # a ChangePage handler nests a load_page.
         self._load_page_lock = threading.RLock()
         # Page recorded by load_page's screensaver guard, consumed by hide().
         self._screensaver_pending_page: "Page | None" = None
@@ -208,40 +185,29 @@ class DeckController:
         # overwrite a newer page's background.
         self._background_load_lock = threading.Lock()
         self._bg_future: "Future[None] | None" = None
+        # Two dedicated workers let a new page decode while its superseded decode still runs.
+        # This also isolates page backgrounds from unrelated application-pool work.
+        try:
+            _serial = self.serial_number()
+        except Exception:
+            _serial = "unknown"
+        self._bg_decode_pool = ThreadPoolExecutor(
+            max_workers=2, thread_name_prefix=f"bg-decode-{_serial}")
+        self._page_completion: PageLoadCompletion | None = None
         self._input_load_done = control_plane.InputLoadBarrier()
 
-        # Native encoded key image caches. Build them before the inputs and
-        # the background, because the paint path dereferences both directly
-        # and a background change clears them, so neither may lag behind
-        # anything that can paint.
-        #
-        # encode_memo keys on (composite hash, rotation), so a repeated frame
-        # from a looping background video skips the conversion and the JPEG
-        # encode.
+        # Native encoded key image caches.
         self.encode_memo = EncodedImageCache(max_bytes=32 * 1024 * 1024)
-        # native_tile_cache holds the same natives keyed by frame identity for
-        # the passthrough path. A bare key over a video background then skips
-        # the tobytes and the hash, so a warmed loop costs one dict lookup per
-        # key.
+        # native_tile_cache holds the same natives keyed by frame identity for the passthrough path.
         self.native_tile_cache = NativeTileCache(max_bytes=native_tile_cache_max_bytes())
-        # Enrol both in the process-wide image-cache budget. Each cache's own
-        # cap bounds it, and the budget bounds the sum across decks. Without
-        # it, total image-cache RAM scales with the deck count and a cold
-        # deck's full memo never yields a byte to a hot one. The registry is
-        # weak, so close() needs no matching unregister. This wraps register()
-        # a second time, because DeckManager reports anything raised out of
-        # __init__ as a failed deck and skips the whole device.
+        # Enrol both in the process-wide image-cache budget. Without it, total image-cache RAM
+        # scales with the deck count and a cold deck's full memo never yields a byte to a hot one.
         try:
             self._register_image_caches()
         except Exception as e:
             log.warning(f"Could not register the image caches with the budget: {e}")
 
-        # Heterogeneous registry. The key fixes the element type of the value
-        # list, so Input.Key gives ControllerKey, Input.Dial gives
-        # ControllerDial and Input.Touchscreen gives ControllerTouchScreen.
-        # The type system cannot express that for a plain dict, so list[Any]
-        # states it, instead of naming one element type and misdeclaring the
-        # other two. get_inputs() is the annotated base-typed view.
+        # Heterogeneous registry.
         self.inputs: dict[type[InputIdentifier], list[Any]] = {}
         for i in Input.All:
             self.inputs[i] = []
@@ -253,12 +219,8 @@ class DeckController:
         self.deck.set_dial_callback(self.dial_event_callback)
         self.deck.set_touchscreen_callback(self.touchscreen_event_callback)
 
-        # Write-error and resume-repaint state. Only the media thread touches
-        # it, through _on_write_result and _run_pending_repaint, so it needs
-        # no lock. It must exist before the media thread starts, because the
-        # first iteration dereferences _full_repaint_pending. The loop guards
-        # that, but every tick fails until this assignment lands, so keep the
-        # order.
+        # Initialize writer-only recovery state before the media thread starts and reads it.
+        # Only that thread changes this state, so it needs no lock.
         self._had_write_failure: bool = False
         self._full_repaint_pending: bool = False
         self._last_full_repaint_ts: float = 0.0
@@ -268,17 +230,12 @@ class DeckController:
 
         # Everything below can still fail, and holds threads only this half-built object owns.
         try:
-            # Register the sole expected device writer for the
-            # owner-assertion tooling in BetterDeck.py. It does nothing unless
-            # DECKARD_ASSERT_DEVICE_OWNER is set.
+            # Register the sole expected device writer for the owner-assertion tooling in
+            # BetterDeck.py. It does nothing unless DECKARD_ASSERT_DEVICE_OWNER is set.
             self.deck.set_expected_writer(self.media_player)
 
-            # Bounded thread pool for the action callbacks, sized so every
-            # input runs its on_tick concurrently. Lifecycle only: no
-            # deadline, and no replacement. A cancelled ready callback never
-            # runs the finally that opens the tick and update gates, so only
-            # close() cancels here, where the page dies with the deck. The
-            # wedge policy in flight is the per-input stuck-tick warning.
+            # Bounded thread pool for the action callbacks, sized so every input runs its on_tick
+            # concurrently. Lifecycle only: no deadline, and no replacement.
             total_inputs = sum(len(inputs) for inputs in self.inputs.values())
             # close() sets this to None, so every reader either
             # getattr-defaults or None-checks before it submits.
@@ -287,12 +244,8 @@ class DeckController:
                 thread_name_prefix="action_cb",
             )
 
-            # Persistent per-deck loader pool for load_all_inputs, sized so
-            # every input loads concurrently. load_all_inputs runs on the
-            # media-player thread, so a small fixed pool serializes an XL's 32
-            # inputs several deep there and its deadline waits block the sole
-            # writer. A stuck input load costs this pool its executor, which
-            # keeps every later page load out of the queue behind it.
+            # Persistent per-deck loader pool for load_all_inputs, sized so every input loads
+            # concurrently.
             self.load_executor: DeadlinePool | None = DeadlinePool(
                 max_workers=max(8, total_inputs),
                 thread_name_prefix=f"load_{self.serial_number()}",
@@ -306,10 +259,8 @@ class DeckController:
 
             self.keep_actions_ticking = True
             self.TICK_DELAY = 1
-            # Lets close() interrupt the tick_actions sleep at once, instead
-            # of a wait of up to one full TICK_DELAY before the loop reads
-            # keep_actions_ticking. close() needs a prompt, bounded join. See
-            # tick_actions.
+            # Lets close() interrupt the tick_actions sleep at once, instead of a wait of up to one
+            # full TICK_DELAY before the loop reads keep_actions_ticking.
             self._tick_stop_event = threading.Event()
             self.tick_thread = Thread(target=self.tick_actions, name="tick_actions")
             self.tick_thread.start()
@@ -329,19 +280,12 @@ class DeckController:
             # when the deck reconnects during the screensaver.
             if gl.screen_locked and gl.settings_manager.app().lock_on_lock_screen:
                 self.allow_interaction = False
-                # Apply the deck's own screensaver config first. No page
-                # loads on this branch, so without it the deck shows the bare
-                # ScreenSaver state, with no media and the wrong dim level.
+                # Apply the deck's own screensaver config first.
                 self._apply_screensaver_config(deck_settings.section("screensaver"))
                 self.screen_saver.show()
             else:
-                # A transport failure says the device is not usable, and the
-                # connect path owns that case. Its retry arm reopens the deck
-                # and runs the whole init again, so a deck whose serial read
-                # flakes during a boot storm still comes up. Any other
-                # failure, from a render, a plugin or a logic error, is about
-                # the page, so register the deck and let the next
-                # load_default_page retry it.
+                # A transport failure says the device is not usable, and the connect path owns that
+                # case.
                 try:
                     self.load_default_page()
                 except StreamDeck.TransportError:
@@ -353,32 +297,22 @@ class DeckController:
             raise
 
     def _teardown_failed_init(self) -> None:
-        """Release what the guarded tail of __init__ started, so a deck that
-        fails to initialize leaves no writer, ticker or pool behind. This is
-        not close(), which assumes a registered controller with plugin hooks,
-        a UI attachment and page registration; nobody ever received this
-        object. Nothing here writes to the device. The handle is released only
-        after the writer stops. A writer wedged mid-frame holds the device
-        lock, and a wait on it is the hang this avoids. Raises nothing."""
+        """Release partial initialization so it leaves no writer, ticker, or pool behind."""
         self.keep_actions_ticking = False
         if getattr(self, "tick_thread", None) is not None and self.tick_thread.is_alive():
             self._tick_stop_event.set()  # created by the same statement pair as the thread
             self.tick_thread.join(2.0)
         self.media_player.stop(timeout=2.0)
-        for pool in (getattr(self, "action_executor", None), getattr(self, "load_executor", None)):
+        for pool in (getattr(self, "action_executor", None),
+                     getattr(self, "load_executor", None),
+                     getattr(self, "_bg_decode_pool", None)):
             if pool is not None:
                 pool.shutdown(wait=False, cancel_futures=True)
         if not self.media_player.running:  # otherwise the handle stays open
             self._release_handle()
 
     def _release_handle(self) -> None:
-        """Give the device back: stop the reader thread, then close. Raises
-        nothing, because every caller is a teardown path.
-
-        Every close of this controller's handle runs through here. A bare
-        close() leaves the library's reader running, and its resume loop
-        re-opens the handle that close released, which on the quit path hands
-        the next process a busy device."""
+        """Stop the reader and close the device without raising from teardown."""
         deck = getattr(self, "deck", None)
         if deck is None:
             return
@@ -388,10 +322,8 @@ class DeckController:
             log.opt(exception=True).warning("Failed to release the deck handle")
 
     def init_inputs(self) -> None:
-        # Build then swap. The media writer reads self.inputs concurrently,
-        # and a fill in place gives it an empty or partial view, which raises
-        # a KeyError at screensaver entry. Build the whole dict, then publish
-        # it with one GIL-atomic assignment.
+        # Build then swap. The media writer reads self.inputs concurrently, and a fill in place
+        # gives it an empty or partial view, which raises a KeyError at screensaver entry.
         new_inputs: dict[type[InputIdentifier], list[Any]] = {}
         for i in Input.All:
             new_inputs[i] = []
@@ -401,9 +333,8 @@ class DeckController:
                 # The dict key and the identifier constructor share the same input
                 # type, so each input class receives its own identifier kind.
                 controller_input = input_class(self, cast(Any, Input.FromTypeIdentifier(i.input_type, k)))
-                # Stamp with the current generation so a paint from a freshly
-                # built input, such as the screensaver's, is not dropped as
-                # stale.
+                # Stamp with the current generation so a paint from a freshly built input, such as
+                # the screensaver's, is not dropped as stale.
                 controller_input.config_gen = self._page_load_generation
                 new_inputs[i].append(controller_input)
         self.inputs = new_inputs
@@ -414,9 +345,8 @@ class DeckController:
             raise ValueError(f"Unknown input type: {input_type}")
         return self.inputs[input_type]
 
-    # The key-dependent value type of the registry is expressible here, where
-    # a concrete identifier class is in hand, so a caller that asks for a dial
-    # gets a ControllerDial back instead of the base class.
+    # The key-dependent value type of the registry is expressible here, where a concrete identifier
+    # class is in hand.
     @overload
     def get_input(self, identifier: Input.Key) -> "ControllerKey | None": ...
 
@@ -460,24 +390,11 @@ class DeckController:
 
             for i in self.inputs[Input.Dial]:
                 i.update()
-            # UI-only mirror. The in-app KeyGrid is not the video device, so
-            # a push of the current composite is a widget update and never a
-            # device write. The video loop skips the per-frame render for an
-            # opaque key at alpha 255, so the app never repaints it after a
-            # transition and the previews diverge from the deck. This bypasses
-            # the device-oriented dedup of update(), because the device and
-            # the UI can differ and only a re-push reconciles them.
+            # UI-only mirror. The in-app KeyGrid is not the video device, so a push of the current
+            # composite is a widget update and never a device write.
             for i in self.inputs[Input.Key]:
                 try:
-                    # First device paint for an opaque key. The per-frame
-                    # video loop never repaints a key whose composed color is
-                    # fully opaque, because its tile hides the video and
-                    # nothing changes between frames. Without this the device
-                    # keeps the previous page's content there until a
-                    # keypress. An opaque tile hides the video, so this write
-                    # cannot disturb it. update() paints the device and the
-                    # app preview, so an opaque key needs no second push
-                    # below.
+                    # First device paint for an opaque key.
                     state = i.get_active_state()
                     if state is not None and state.background_manager.get_composed_color()[-1] >= 255:
                         i.update()
@@ -494,81 +411,24 @@ class DeckController:
                 i.update()
         log.debug(f"Updating all inputs took {time.time() - start} seconds")
 
-    def _update_all_inputs_awaiting_background(self, bg_future: "Future[None] | None", gen: "int | None" = None) -> None:
-        # This runs on the media thread. Skip at once when superseded, then
-        # wait out the background decode under a bound, so the keys composite
-        # over the new background. The wait blocks the sole writer, and it
-        # runs in slices, so a page switch that supersedes this one mid-decode
-        # abandons it at the next slice instead of sitting out the rest of a
-        # 10s decode for a page the deck already left.
-        if not self._page_is_current(gen):
-            return
-        if bg_future is not None:
-            deadline = time.time() + 10
-            while True:
-                try:
-                    bg_future.result(timeout=0.5)
-                    break
-                except FutureTimeoutError:
-                    if not self._page_is_current(gen):
-                        return
-                    if time.time() >= deadline:
-                        log.warning("Background not ready before update_all_inputs; painting anyway")
-                        break
-                except Exception:
-                    log.warning("Background not ready before update_all_inputs; painting anyway")
-                    break
-        self.update_all_inputs(gen=gen)
-        # The inputs are loaded and painted. Media tasks are FIFO, so
-        # load_all_inputs finished before this task ran, and the sidebar can
-        # render the new page's state objects.
-        if self._page_is_current(gen):
-            ui_port.get().on_page_changed(self)
-
     def animations_gated(self) -> bool:
-        """Whether this deck's media loop skips its animation section this
-        tick because nobody is looking.
-
-        Two terms decide it. gl.presence_monitor is the process-wide presence
-        signal. It reports False forever in the default pause mode, so this
-        returns False for anyone who did not opt in. The second term is
-        screen_saver.showing. While the screensaver owns the deck, its
-        animation is the intended visible content. The physical deck is
-        visible even when the monitor is locked. The gate therefore never
-        applies to it. show() already released the underlying page's media,
-        so a showing screensaver has nothing else to decode.
-
-        The writer reads this once per tick on its critical path. Both terms
-        are plain attribute reads and neither takes a lock."""
+        """Skip animation only when presence is quiescent and no screensaver shows."""
         pm = getattr(gl, "presence_monitor", None)
         return pm is not None and pm.is_quiescent() and not self.screen_saver.showing
 
     def _reset_dedup_hashes(self) -> None:
-        """Reset the present state of every current key and of the
-        touchscreen. Clear and full-repaint scheduling share it. Without it, a
-        repaint of visually identical content matches the stale cached hash
-        and is wrongly skipped."""
+        """Reset present hashes so visually identical content can repaint after device loss."""
         for key in self.inputs.get(Input.Key, []):
             key.present_state.reset()
         for touchscreen in self.inputs.get(Input.Touchscreen, []):
             touchscreen.present_state.reset()
 
     def _schedule_full_repaint(self) -> None:
-        """Arm a pending full repaint. The media loop fires it through
-        _run_pending_repaint() when the 2s rate window allows. A rate limit
-        defers it and never drops it, and every write failure re-arms it. A
-        repaint attempted while the library's read thread still reopens the
-        handle after a suspend fails wholesale. On a fully static page no
-        later write re-triggers it. The pending flag then makes the loop retry
-        every 2s until the writes stick."""
+        """Arm a repaint; rate limits defer it, and failures re-arm it until writes succeed."""
         self._full_repaint_pending = True
 
     def _run_pending_repaint(self) -> bool:
-        """Media-loop hook that fires an armed repaint at least 2s after the
-        last one. It nulls all dedup hashes, then calls update_all_inputs().
-        That is safe on the media thread, because it only enqueues through
-        add_image_task and add_touchscreen_task, which on_media_player_tick
-        already calls from this thread. Returns whether a repaint fired."""
+        """Run an armed repaint at least two seconds after the previous repaint."""
         if not self._full_repaint_pending:
             return False
         now = time.time()
@@ -581,14 +441,8 @@ class DeckController:
         return True
 
     def _on_write_result(self, success: bool) -> None:
-        """Unified write-error handler, called by the image and touchscreen
-        task run() paths and by _exec_set_brightness after every device write
-        attempt. The error policy is attempt and swallow, and only a USB
-        disconnect event removes a deck. Recovery is the remaining job. Every
-        failure arms the pending repaint, because content written into that
-        failure window can be lost on the device. The loop's 2s cadence
-        retries until a repaint lands cleanly. Only the media thread calls
-        this, so it needs no lock."""
+        """Record each device-write result and arm recovery after any failure.
+        Only the media thread calls this method, so it needs no lock."""
         if success:
             if self._had_write_failure:
                 self._had_write_failure = False
@@ -596,33 +450,24 @@ class DeckController:
             self._had_write_failure = True
             self._full_repaint_pending = True
 
-    def event_callback(self, ident: InputIdentifier, *args: Any, **kwargs: Any) -> None:
+    def event_callback(self, ident: InputIdentifier, event: "DeckEvent") -> None:
         if not self.allow_interaction:
             return
         i = self.get_input(ident)
         if not i:
             return
-        i.event_callback(*args, **kwargs)
+        i.event_callback(event)
 
-    def key_event_callback(self, deck: Any, key: int, *args: Any, **kwargs: Any) -> None:
-        # key arrives already mapped into the logical grid. Decode it against
-        # the wrapper, whose key_layout is the logical one and is what
-        # Available_Identifiers named the registry from. deck is the raw
-        # handle the reader thread passes, and it reports the unrotated
-        # layout: decoding against that names a different key for six of the
-        # eight positions of a two by four grid at 90 and at 270.
-        coords = ControllerKey.Index_To_Coords(self.deck, key)
-        ident = Input.Key(f"{coords[0]}x{coords[1]}")
-        self.event_callback(ident, *args, **kwargs)
+    def key_event_callback(self, deck: Any, key: int, state: bool) -> None:
+        # key arrives already mapped into the logical grid.
+        x, y = self.index_to_coords(key)
+        dispatch_deck_event(self, Input.Key(f"{x}x{y}"), KeyEvent(pressed=bool(state)))
 
-    def dial_event_callback(self, deck: Any, dial: Any, *args: Any, **kwargs: Any) -> None:
-        ident = Input.Dial(str(dial))
-        self.event_callback(ident, *args, **kwargs)
+    def dial_event_callback(self, deck: Any, dial: Any, event_type: Any, value: Any) -> None:
+        dispatch_deck_event(self, Input.Dial(str(dial)), DialEvent(kind=event_type, value=int(value)))
 
-    def touchscreen_event_callback(self, deck: Any, *args: Any, **kwargs: Any) -> None:
-        ident = Input.Touchscreen("sd-plus")
-        self.event_callback(ident, *args, **kwargs)
-
+    def touchscreen_event_callback(self, deck: Any, event_type: Any, value: Any) -> None:
+        dispatch_deck_event(self, Input.Touchscreen("sd-plus"), TouchscreenEvent(kind=event_type, value=value))
 
     ### Helper methods
     def generate_alpha_key(self) -> Image.Image:
@@ -632,16 +477,8 @@ class DeckController:
         if self._key_image_size is not None:
             return self._key_image_size
         if not self.get_alive():
-            # Dead or closing deck. Return the fallback without a memo, so a
-            # deck that comes back is re-queried at its real size. Return a
-            # size and not None. No caller None-checks, and they unpack two
-            # ints or pass the result to Image.new, so None raises TypeError
-            # on a media tick that races an unplug.
-            #
-            # (72, 72) matches the size-unavailable branch below. It is wrong
-            # for an XL, whose keys are 96x96, but this path only makes
-            # throwaway tiles for a deck nothing can write to, and the real
-            # size returns as soon as the deck answers again.
+            # Dead or closing deck. Return the fallback without a memo, so a deck that comes back is
+            # re-queried at its real size. Return a size and not None.
             return (72, 72)
         size = self.deck.key_image_format()["size"]
         size = max(size[0], 72), max(size[1], 72)
@@ -649,12 +486,10 @@ class DeckController:
         return size
 
     def native_key_format_sig(self) -> "NativeKeyFormatSig":
-        """Hashable signature of the deck's native key image format. It is
-        part of every native tile cache key, so bytes encoded for one device
-        format can never be served for another. It is memoized because the
-        driver's format is fixed for the life of the device. The user-facing
-        rotation is not part of it; that lives on BetterDeck and keys
-        separately."""
+        """
+        Hashable signature of the deck's native key image format. It is part of every native tile
+        cache key, so bytes encoded for one device format can never be served for another.
+        """
         sig = self._native_key_format_sig
         if sig is None:
             fmt = self.deck.key_image_format()
@@ -663,57 +498,35 @@ class DeckController:
         return sig
 
     def clear_encoded_key_caches(self) -> None:
-        """Drop every cached native key image, both the pixel-hash encode
-        memo and the frame-identity native tiles. Callers reach here wherever
-        the content those entries encoded is orphaned wholesale, at a
-        background content change, a rotation change or teardown. The getattr
-        guard lets a close() after a half-finished __init__ still sweep what
-        exists."""
+        """
+        Drop every cached native key image, both the pixel-hash encode memo and the frame-identity
+        native tiles.
+        """
         for cache_name in ("encode_memo", "native_tile_cache"):
             cache = getattr(self, cache_name, None)
             if cache is not None:
                 cache.clear()
 
     def _register_image_caches(self) -> None:
-        """Enrol this deck's two native-image caches with the process-wide
-        budget. The labels carry the serial, so a multi-deck rig's eviction
-        and thrash logs are attributable. totals() sums per group, so the
-        telemetry columns stay deck-agnostic."""
+        """
+        Enrol this deck's two native-image caches with the process-wide budget. The labels carry the
+        serial, so a multi-deck rig's eviction and thrash logs are attributable.
+        """
         serial = self.serial_number()
         cache_budget.register(self.encode_memo, label=f"encode_memo:{serial}")
         cache_budget.register(self.native_tile_cache, label=f"native_tiles:{serial}")
 
     def refresh_tile_cache_min_age(self, video: "BackgroundVideo | GifBackground | None" = None) -> None:
-        """Retune how long the native tile cache shields its entries from
-        global eviction, to the duration of the background video now playing,
-        clamped to DEFAULT_MIN_AGE_S..MAX_MIN_AGE_S. It returns to the
-        default when no video plays.
-
-        A native tile entry is keyed per frame, so an entry is re-touched
-        once per loop of the content, not once per media tick. Under a
-        binding ceiling a flat 2 s min-age makes a playing video's whole
-        frame set eligible for eviction. That happens exactly one loop before
-        the set is needed again, and it reinstates the per-frame encode this
-        cache removes. A closed video's frames become eligible again at once,
-        which is correct, because they are stale.
-
-        frames/source_fps is the loop period only once the tile cache is
-        built. While it builds, get_next_tiles() advances the frame
-        sequentially, one frame per media tick. No frame is skipped and no
-        seek is forced, so the media tick can run slower than the source
-        fps. The real loop period is then unknown and strictly longer than
-        frames/fps, so that number under-protects exactly the frame set the
-        build is racing to fill. The clamp maximum goes in instead, and the
-        first tick past completion calls back in here with the real value.
-        Err long, not short. Over-protection costs one stale entry surviving
-        a pass, and under-protection costs the re-encode."""
+        """
+        Retune how long the native tile cache shields its entries from global eviction, to the
+        duration of the background video now playing, clamped to DEFAULT_MIN_AGE_S..MAX_MIN_AGE_S.
+        """
         min_age = cache_budget.DEFAULT_MIN_AGE_S
         if video is not None:
             min_age = cache_budget.MAX_MIN_AGE_S
             try:
-                # The GIF provider has no completion probe; it stays at the
-                # clamp maximum, as its AttributeError under this try always
-                # left it.
+                # The GIF provider has no completion probe; it stays at the clamp maximum, as its
+                # AttributeError under this try always left it.
                 if isinstance(video, BackgroundVideo) and video.is_cache_complete():
                     fps = float(video.get_source_fps() or getattr(video, "fps", 0) or 0)
                     frames = int(getattr(video, "n_frames", 0) or 0)
@@ -779,11 +592,8 @@ class DeckController:
             return
         self.load_page(page)
 
-        # Handle a state change request. This peeks now and resolves at the
-        # tail, so a failure in between leaves the request parked. The control
-        # plane owns the rules, shared with every other transport that asks
-        # for a state change. Only an unexpected exception escapes, and that
-        # leaves the request parked for the next load to retry.
+        # Handle a state change request. This peeks now and resolves at the tail, so a failure in
+        # between leaves the request parked.
         state_request = queue.peek_state_request(self.serial_number())
         if state_request is not None:
             result = control_plane.get().change_state_on(
@@ -822,30 +632,21 @@ class DeckController:
             self.background.set_extend_to_touchscreen(
                 config.get("extend-to-touchscreen", False), update=False
             )
-            # A slideshow is a list of two or more still images that rotate on
-            # an interval. It wins over the single media-path, image or video:
-            # the user built the list, so it is the more specific intent, and a
-            # rotation of stills and one playing video cannot both show. One or
-            # zero images falls back to the single media-path, which keeps a
-            # plain single-image or video background loading exactly as before.
-            # Only real, existing image files count; a deleted or video entry
-            # drops out here rather than blank a frame later.
-            slideshow_paths = [
-                p for p in (config.get("media-paths") or [])
-                if isinstance(p, str) and is_image(p)
-            ]
-            if len(slideshow_paths) >= 2:
+            # Two or more existing list images form a slideshow; one becomes the selected still.
+            # With none, use the configured single path, which can be missing, or show nothing.
+            pairs = resolve_background_entries(config)
+            if len(pairs) >= 2:
                 self.background.set_slideshow(
-                    slideshow_paths,
+                    [p for p, _view in pairs],
                     interval=config.get("slideshow-interval", 10),
                     order=config.get("slideshow-order", "in-order"),
                     update=update,
+                    views=[v for _path, v in pairs],
                 )
             else:
-                single = slideshow_paths[0] if slideshow_paths else config.get("media-path")
+                single, single_view = pairs[0] if pairs else (None, DEFAULT_VIEW)
                 self.background.set_from_path(
-                    path=single,
-                    update=update,
+                    path=single, update=update, view=single_view,
                     loop=config.get("loop", False),
                     fps=config.get("fps", 30),
                 )
@@ -883,10 +684,9 @@ class DeckController:
         self._apply_screensaver_config(config)
 
     def _apply_screensaver_config(self, config: dict[str, Any]) -> None:
-        """Push one screensaver config onto the ScreenSaver. The deck arm
-        arrives with DECK_DEFAULTS already filled in. The literals below
-        belong to the page arm and the nothing-configured arm, because a page
-        that overwrites the screensaver describes it itself."""
+        """
+        Push one screensaver config onto the ScreenSaver.
+        """
         self.screen_saver.set_media_path(config.get("media-path"))
         self.screen_saver.set_enable(config.get("enable", False))
         self.screen_saver.set_time(config.get("time-delay", 5))
@@ -895,9 +695,8 @@ class DeckController:
         self.screen_saver.set_brightness(config.get("brightness", 30))
 
     def _page_is_current(self, gen: "int | None") -> bool:
-        # gen is None for a caller outside the page-load path, which always
-        # runs. A paint that load_page issued is stale once a newer load_page
-        # bumped the generation.
+        # gen is None for a caller outside the page-load path, which always runs.
+        # A paint that load_page issued is stale once a newer load_page bumped the generation.
         return gen is None or gen == self._page_load_generation
 
     # Deadline for load_all_inputs. An input load runs plugin callbacks that
@@ -907,9 +706,7 @@ class DeckController:
     @log.catch
     def load_all_inputs(self, page: Page, update: bool = True, gen: "int | None" = None) -> None:
         if not self._page_is_current(gen):
-            # This generation's rebuild will never run; publish it. A
-            # superseder that armed higher keeps its waiter blocked, and a
-            # bump that armed nothing (screensaver, close) frees its waiter.
+            # This generation's rebuild will never run; publish it.
             self._input_load_done.publish(gen)
             return
         start = time.time()
@@ -921,10 +718,8 @@ class DeckController:
             # generation now, so release a waiter on it.
             self._input_load_done.publish(gen)
             return
-        # Each task re-checks the page generation before it touches an input,
-        # which lets the pool abandon a wedged executor and drain late: a
-        # switch during the drain then lands nothing. A task already inside
-        # the load can still finish late, and that window is the load's.
+        # Each task re-checks the page generation before it touches an input, which lets the pool
+        # abandon a wedged executor and drain late: a switch during the drain then lands nothing.
         tasks = [
             (str(controller_input.identifier),
              partial(self._load_input_if_current, controller_input, page, update, gen))
@@ -936,15 +731,14 @@ class DeckController:
         self._input_load_done.publish(gen)
 
     def _load_input_if_current(self, controller_input: "ControllerInput[Any]", page: Page, update: bool = True, gen: "int | None" = None) -> None:
-        # A slower in-flight page load must not paint the previous page's
-        # images onto the current page's keys, so skip when a newer load
-        # superseded this one. This does not stamp config_gen. load_page
-        # stamps every input under _page_gen_lock, and a second stamp on this
-        # pool can interleave with a newer load's stamp and regress an input
-        # to an older generation.
+        # A slower in-flight page load must not paint the previous page's images onto the current
+        # page's keys, so skip when a newer load superseded this one.
         if not self._page_is_current(gen):
             return
-        self.load_input(controller_input, page, update)
+        # The probe re-asks the generation inside the load, which the precheck
+        # above stops covering once a plugin callback blocks and resumes.
+        self.load_input(controller_input, page, update,
+                        still_current=lambda: self._page_is_current(gen))
 
     def take_pending_screensaver_page(self) -> "Page | None":
         """Pop the page that load_page's screensaver guard recorded. None
@@ -958,26 +752,19 @@ class DeckController:
         if controller_input is not None:
             self.load_input(controller_input, page, update)
 
-    def load_input(self, controller_input: "ControllerInput[Any]", page: Page, update: bool = True) -> None:
+    def load_input(self, controller_input: "ControllerInput[Any]", page: Page, update: bool = True, *,
+                   still_current: "Callable[[], bool] | None" = None) -> None:
         config = controller_input.identifier.get_config(page)
-        controller_input.load_from_input_dict(config, update, page=page)
+        controller_input.load_from_input_dict(config, update, page=page,
+                                              still_current=still_current)
 
     def close_image_ressources(self) -> None:
-        """Release every input's media, the key and dial images and videos,
-        plus the background image and video. close() calls this from its
-        resource sweep."""
+        """Release all input and background media resources."""
         for t in self.inputs:
             for i in self.inputs[t]:
                 i.close_resources()
 
-        # Sweep the background under _background_load_lock. A load_background
-        # inside set_from_path holds this lock while it attaches a fresh
-        # BackgroundVideo. Without the lock the sweep can run between that
-        # load's generation gate and its attach, and the fresh cv2 capture
-        # stays on self.background.video and leaks until process exit. The
-        # lock makes the sweep wait for an in-flight attach, and the _closing
-        # re-check in apply_prebuilt suppresses that attach, so the sweep sees
-        # and releases the final background object.
+        # Hold _background_load_lock so a racing load cannot attach media after this sweep.
         with self._background_load_lock:
             if self.background.video is not None:
                 self.background.video.close()
@@ -992,68 +779,40 @@ class DeckController:
     def load_page(self, page: Page | None, load_brightness: bool = True, load_screensaver: bool = True, load_background: bool = True, load_inputs: bool = True, allow_reload: bool = True) -> None:
         if not self.get_alive(): return
         if self._closing:
-            # A straggling caller raced close(), from a screensaver
-            # follow-up, a plugin hook or a DBus request. Do not resurrect the
-            # deck during teardown.
+            # A straggling caller raced close(), from a screensaver follow-up, a plugin hook or a
+            # DBus request.
             return
 
         start = time.time()
 
-        # Serialize the whole switch body. See _load_page_lock. The
-        # plugin-facing tail, the ChangePage signal and DBus, stays outside,
-        # so a slow handler cannot block other callers on this lock.
+        # Serialize the whole switch body. The plugin-facing tail, the ChangePage signal and DBus,
+        # stays outside, so a slow handler cannot block other callers on this lock.
         with self._load_page_lock:
+            if self._closing:
+                return
             if not allow_reload:
                 if self.active_page is page:
                     return
 
-            # A page change requested while the screensaver owns the deck must
-            # not load or paint the new page now. That replaces the
-            # screensaver on the device and leaks the page's icons onto the
-            # deck and into the app previews. Record it as pending and return;
-            # hide() loads it when the screensaver is dismissed.
-            #
-            # Do not touch active_page here. The media player gates the
-            # screensaver's own background-video animation on
-            # background.video.page is active_page, so a change to active_page
-            # during the screensaver freezes the screensaver video until
-            # active_page returns to the screensaver's page. Leaving
-            # active_page alone keeps that gate open and the video playing.
+            # Defer a non-None page while the screensaver owns the deck; do not change active_page.
+            # Its video runs only while background.video.page is active_page; hide consumes pending.
             if self.screen_saver.showing:
                 if page is not None:
                     self._screensaver_pending_page = page
                 # A clear request, page=None, is dropped and not deferred.
-                # The pending slot has no clear value, because None means no
-                # pending, and a clear removes the showing screensaver from
-                # the deck.
                 return
 
-            # A monotonic counter that the mem_telemetry idle and trim gate
-            # reads. Bump it once this call is a real switch, and not the
-            # no-op reload above.
+            # A monotonic counter that the mem_telemetry idle and trim gate reads.
+            # Bump it once this call is a real switch, and not the no-op reload above.
             page_switches.bump()
 
             old_path = self.active_page.flush() if self.active_page is not None else None
 
             # Reset every key's pressed visual before the generation bump.
-            # press_state lives on the reused ControllerKey and survives the
-            # page swap, so a key that is still physically down composes every
-            # new-page render through is_pressed() and shrink_image(). The
-            # release's repaint can lose the enqueue race against a loader
-            # render that read press_state just before the release landed,
-            # which leaves the new page's key stuck pressed. The order carries
-            # the fix. A render reads config_gen at the start of update() and
-            # press_state later, at composite time, so a write of False before
-            # the bump makes every render at the new generation compose
-            # unpressed. The gesture bookkeeping stays untouched, because the
-            # physical release must still dispatch its events.
             for controller_key in self.inputs.get(Input.Key, []):
                 controller_key.press_state = False
 
-            # Set active_page and bump the generation together. A concurrent
-            # switch must never leave active_page on one page while the newest
-            # generation belongs to another, or a stale paint matches both
-            # checks and bleeds through.
+            # Set active_page and bump the generation together.
             with self._page_gen_lock:
                 self.active_page = page
                 self._page_load_generation += 1
@@ -1061,24 +820,15 @@ class DeckController:
                 # Key the input-load barrier to this generation under the bump.
                 self._input_load_done.arm(gen, load_inputs and page is not None)
 
-                # Stamp every input with the new generation now, under the
-                # same lock as the bump. Threads outside the load pool trigger
-                # paints, from the action pool, the tick loop and
-                # update_all_inputs, and they read
-                # controller_input.config_gen directly. Any window between the
-                # bump and the stamp lets such a paint carry the previous
-                # generation and be dropped as stale at the write boundary,
-                # which blanks the newly loaded page's own keys. The separate
-                # page-identity check still catches stale cross-page content.
-                # This must stay the only stamp on the load path. See
-                # _load_input_if_current.
+                # Stamp every input with the new generation now, under the same lock as the bump.
                 for input_type in self.inputs:
                     for controller_input in self.inputs[input_type]:
                         controller_input.config_gen = gen
 
-            # active_page protects the page now, so the fetch pin can
-            # release. The screensaver branch skips this, because its page
-            # reaches no deck yet and the reservation carries it to hide().
+            if self._page_completion is not None:
+                self._page_completion.cancel()
+
+            # active_page protects the page now, so the fetch pin can release.
             if (manager := gl.page_manager) is not None:
                 manager.pins.release_fetch(self)
 
@@ -1092,54 +842,45 @@ class DeckController:
             # skips the stop.
             self.clear_media_player_tasks(gen)
 
-            # Do not trigger the UI sync here. The new page's input states and
-            # actions do not exist yet, so a sidebar rebuild renders the old
-            # page's data and nothing corrects it later. It fires from the
-            # load-completion side instead, after initialize_actions below.
+            # Do not trigger the UI sync here. The new page's input states and actions do not exist
+            # yet, so a sidebar rebuild renders the old page's data and nothing corrects it later.
 
             bg_future = None
             if load_background:
-                # Decode the background off the media thread so it overlaps the
-                # input load. The update task below awaits it before compositing.
-                from src.backend.main_loop import run_in_background
+                # Decode the background off the media thread so it overlaps the input load.
+                from src.backend.main_loop import log_future_exception
                 if self._bg_future is not None:
                     self._bg_future.cancel()
-                bg_future = run_in_background(self.load_background, page, update=False, gen=gen)
+                bg_future = self._bg_decode_pool.submit(
+                    self.load_background, page, update=False, gen=gen)
+                bg_future.add_done_callback(log_future_exception)
                 self._bg_future = bg_future
+            completion = PageLoadCompletion(self, gen, wait_for_inputs=load_inputs)
+            self._page_completion = completion
+            completion.watch_background(bg_future)
             if load_brightness:
                 self.load_brightness(page)
             if load_screensaver:
                 self.load_screensaver(page)
             if load_inputs:
                 self.media_player.add_task(self.load_all_inputs, page, update=False, gen=gen)
+                self.media_player.add_task(completion.inputs_finished)
             else:
-                # No content reloads, but the generation bumped. Advance each
-                # input's config_gen so its unchanged content is not dropped
-                # as stale.
+                # No content reloads, but the generation bumped.
+                # Advance each input's config_gen so its unchanged content is not dropped as stale.
                 for input_type in self.inputs:
                     for controller_input in self.inputs[input_type]:
                         controller_input.config_gen = gen
 
-            self.media_player.add_task(self._update_all_inputs_awaiting_background, bg_future, gen)
-
-        # This must stay outside _load_page_lock. initialize_actions can block
-        # on a run_on_main marshal and deadlock against a main-thread
-        # load_page. Use page, not active_page. A newer switch can already
-        # own active_page, and initializing a superseded page is harmless
-        # because on_ready_called de-dupes.
+        # Keep outside _load_page_lock: initialize_actions can wait on a main-thread page load.
+        # Use page, not active_page; a newer switch can own active_page before this call.
         page.initialize_actions()
 
-        # Second completion signal. action_objects exist now, so the sidebar's
-        # ActionManager can render the new page's actions. The port coalesces
-        # this with the media-thread trigger above, and each callback renders
-        # the live state, so the later completion wins.
+        # Second completion signal. action_objects exist now, so the sidebar's ActionManager can
+        # render the new page's actions.
         ui_port.get().on_page_changed(self)
 
-        # Notify the plugin actions. Use page.json_path, not active_page, for
-        # the reason initialize_actions gives above. A racing switch or a
-        # close() can swap or null active_page after the lock releases, and
-        # the dereference raises AttributeError into @log.catch, which skips
-        # this signal and the DBus notify for a switch that did happen.
+        # Use page.json_path because active_page can change or become None after lock release.
         gl.signal_manager.trigger_signal(Signals.ChangePage, self, old_path, page.json_path)
 
         # Notify DBus API of the page change
@@ -1169,36 +910,30 @@ class DeckController:
         value = min(100, max(0, value))
         if not self.get_alive(): return
         if value == self.brightness:
-            # The value is unchanged, so skip the queued device write. The
-            # device stalls noticeably on a brightness write during an
-            # image-write burst.
+            # The value is unchanged, so skip the queued device write.
+            # The device stalls noticeably on a brightness write during an image-write burst.
             return
-        # Route this through the media thread's control queue, so the device
-        # write runs on the sole writer and not on the calling thread.
-        # self.brightness holds the last commanded value, not a
-        # hardware-confirmed one.
+        # Route this through the media thread's control queue, so the device write runs on the sole
+        # writer and not on the calling thread.
         self.brightness = value
         self.media_player.submit_control(SetBrightnessMsg(value))
 
     def set_rotation(self, value: int) -> None:
-        """Turn the deck. The transition rebuilds the input set, the caches
-        and the window's grid; see deck_controller/rotation.py for the order
-        it runs in and why."""
+        """
+        Turn the deck.
+        """
         apply_rotation(self, value)
 
-    # Longest quiet period between two tick-failure tracebacks, and the state
-    # that enforces it. A failure that repeats on every walk would otherwise
-    # write a traceback a second for the life of the process. The window
-    # matches the media writer's guard, and sits on the class so the harness
-    # can shrink it. _note_tick_error writes the two counters per instance.
+    # Longest quiet period between two tick-failure tracebacks, and the state that enforces it.
     TICK_ERROR_LOG_INTERVAL_S = 5.0
     _last_tick_error_log: float = 0.0
     _suppressed_tick_errors: int = 0
 
     def _note_tick_error(self, what: str) -> None:
-        """Report a caught tick failure, at most one traceback per window.
-        Suppressed repeats ride as a count on the next record, so the limit
-        makes a flood quiet and never invisible."""
+        """
+        Report a caught tick failure, at most one traceback per window. Suppressed repeats ride as a
+        count on the next record, so the limit makes a flood quiet and never invisible.
+        """
         now = time.time()
         if now - self._last_tick_error_log < self.TICK_ERROR_LOG_INTERVAL_S:
             self._suppressed_tick_errors += 1
@@ -1213,48 +948,25 @@ class DeckController:
             f"action tick failed for {what} -- survived, continuing{suffix}")
 
     def tick_actions(self) -> None:
-        # Event-based wait, as MediaPlayerThread._wake_event does. close()
-        # sets _tick_stop_event beside keep_actions_ticking=False, so its
-        # bounded join returns promptly instead of waiting out the rest of a
-        # TICK_DELAY sleep.
+        # Event-based wait, as MediaPlayerThread._wake_event does.
         self._tick_stop_event.wait(self.TICK_DELAY)
         while self.keep_actions_ticking:
             start = time.time()
             ticked_page = self.mark_page_ready_to_clear(False)
             # A showing screensaver gets no per-input work from this loop.
-            # Its imagery lives in background. The media thread advances a
-            # video through update_tiles() and the per-key
-            # on_media_player_tick(). Whichever thread called
-            # apply_prebuilt() composites and encodes a still image, and the
-            # media thread writes it once. init_inputs() builds the input set
-            # that ScreenSaver.show() swaps in, with no action, no media and
-            # no label on any of it, and ActionCore.get_is_present() refuses
-            # plugin writes for the duration, so nothing here has state of its
-            # own to advance.
-            #
-            # A repaint of every input once a second is not free and is not
-            # this loop's job. The media loop's pending-full-repaint retry
-            # recovers a lost device write, including the blank that a
-            # late-executing Clear leaves at screensaver entry, and it is
-            # armed at the sites that lose the write, _on_write_result and
-            # _exec_clear. hide()'s load_page() restores the page on wake.
             try:
                 if not self.screen_saver.showing:
                     for t in self.inputs:
                         for i in self.inputs[t]:
-                            # Guard each input, not the walk: a walk guard
-                            # drops every input after the failing one. The
-                            # guarded input itself can still go silent when
-                            # its dispatch dies after its running flag arms.
+                            # Guard each input, not the walk: a walk guard drops every input after
+                            # the failing one.
                             try:
                                 i.get_active_state().own_actions_tick_threaded()
                             except Exception:
                                 self._note_tick_error(str(i.identifier))
             except Exception:
-                # The walk's own steps, outside any one input: the screensaver
-                # read, and the guard above when the identifier it names
-                # cannot be rendered. A raise here costs one walk, and the
-                # thread keeps ticking.
+                # The walk's own steps, outside any one input: the screensaver read, and the guard
+                # above when the identifier it names cannot be rendered.
                 self._note_tick_error("the input walk")
             finally:
                 # Reset the same page the False call marked. This runs in
@@ -1286,9 +998,10 @@ class DeckController:
         return cast("ControllerKey | None", keys[index])
 
     def mark_page_ready_to_clear(self, ready_to_clear: bool, page: "Page | None" = None) -> "Page | None":
-        """Pin the page that bracketed work must outlive with False, release
-        it with True, and return it. PagePins.bracket holds the pass-back
-        rule."""
+        """
+        Pin the page that bracketed work must outlive with False, release it with True, and return
+        it.
+        """
         page = self.active_page if page is None else page
         return page if (pm := gl.page_manager) is None else pm.pins.bracket(page, ready_to_clear)
     
@@ -1298,16 +1011,9 @@ class DeckController:
         return gl.settings_manager.get_deck_settings(self.deck.get_serial_number())
 
     # Display saturation.
-    # DEFAULT_DISPLAY_SATURATION of 1.0 does nothing. Every application site
-    # below compares against it before any ImageEnhance work and before any
-    # cache filename, so the default leaves the on-disk and behavioral
-    # footprint unchanged.
     DEFAULT_DISPLAY_SATURATION = 1.0
-    # Valid range for the saturation factor, matching the UI scale
-    # DeckGroup.Saturation from 1.0 to 1.5. A persisted value outside this
-    # range is corruption or a hand-edit, so clamp it. The factor is also part
-    # of the fitted-background and tile-cache keys, where a NaN or an inf
-    # never matches and makes the cache re-enhance every composite.
+    # Valid range for the saturation factor, matching the UI scale DeckGroup.Saturation from 1.0 to
+    # 1.5. A persisted value outside this range is corruption or a hand-edit, so clamp it.
     MIN_DISPLAY_SATURATION = 1.0
     MAX_DISPLAY_SATURATION = 1.5
 
@@ -1320,9 +1026,8 @@ class DeckController:
             )
         except (TypeError, ValueError):
             return self.DEFAULT_DISPLAY_SATURATION
-        # float() accepts "nan" and "inf" without a raise. Reject a
-        # non-finite value so it cannot reach an ImageEnhance factor or a
-        # cache key.
+        # float() accepts "nan" and "inf" without a raise.
+        # Reject a non-finite value so it cannot reach an ImageEnhance factor or a cache key.
         if not math.isfinite(value):
             return self.DEFAULT_DISPLAY_SATURATION
         return min(self.MAX_DISPLAY_SATURATION, max(self.MIN_DISPLAY_SATURATION, value))
@@ -1331,18 +1036,13 @@ class DeckController:
         return self.display_saturation
 
     def set_display_saturation(self, value: float) -> None:
-        """Persist the saturation factor to deck settings, refresh the cached
-        value, and reload the active page so static media re-enhances at once.
-        A playing background or key video keeps showing its already-baked
-        cache until the reload builds a fresh cache object under the new
-        factor's cache filename. Video content therefore upgrades on its
-        first playthrough after that."""
+        """
+        Persist the saturation factor to deck settings, refresh the cached value, and reload the
+        active page so static media re-enhances at once.
+        """
         value = round(float(value), 2)
         if abs(value - self.display_saturation) <= 0.001:
-            # Same-value echo. A persist and a page reload change nothing here
-            # except a visible flicker. A caller reaches this whenever it
-            # re-applies the factor it already holds, such as a drag step that
-            # rounds to the same value, a plugin or a settings pane.
+            # Same-value echo.
             return
         deck_settings = self.get_deck_settings()
         deck_settings.setdefault("display", {})["saturation"] = value
@@ -1354,19 +1054,14 @@ class DeckController:
             self.load_page(self.active_page, allow_reload=True)
     
     def get_own_deck_stack_child(self) -> "object | None":
-        """Deprecated in-process shim, kept for out-of-tree plugins.
-
-        The engine caches and resolves no widget. The attached UI owns the
-        binding from a controller to its child. The binding is by object
-        identity at add_page time, never by a match of a re-read serial
-        against a stack child's name. Returns None when no UI is attached.
-        """
+        """Deprecated in-process shim for out-of-tree plugins.
+        Return the attached UI child by controller identity, or None with no UI."""
         return ui_port.get().query_deck_widget(self, "deck_stack_child")
 
     def _write_blank_frames(self) -> None:
-        """Write blank key images, and a blank touchscreen, directly to the
-        device. _clear_direct() and the media thread's Clear and
-        ClearAndClose control messages share this body."""
+        """
+        Write blank key images, and a blank touchscreen, directly to the device.
+        """
         if not self.is_visual():
             return
         alpha_image = self.generate_alpha_key()
@@ -1382,103 +1077,61 @@ class DeckController:
             self.deck.set_touchscreen_image(native_image, x_pos=0, y_pos=0, width=touchscreen_size[0], height=touchscreen_size[1])
 
     def _clear_direct(self) -> None:
-        """Synchronous direct clear, only for the bootstrap liveness probe in
-        __init__. media_player does not exist at that point, and the probe's
-        exception must abort construction synchronously instead of getting
-        lost in an async queue. This is not owner-assertion safe, because the
-        assertion registers after the media thread starts, strictly after this
-        runs. Do not call it anywhere else."""
+        """Clear synchronously only for the pre-writer bootstrap liveness probe."""
         self._write_blank_frames()
 
     def clear(self, expects_repaint: bool = False) -> None:
-        """Generation-agnostic async clear. It submits a seq-stamped ClearMsg
-        to the media thread's control queue instead of a direct write. The seq
-        stamp orders this against in-flight and future frame submissions. A
-        task already queued with a lower submit_seq is wiped. A task
-        submitted after this call survives and paints afterward, even on the
-        same tick. That keeps the caller's clear-then-paint order as
-        blank-then-content on the device.
-
-        Pass expects_repaint=True when this clear is the blank half of a
-        blank-then-paint transition. A Clear that executes after its own
-        paints landed can then be recovered from, instead of leaving the deck
-        blank. See MediaPlayerThread._exec_clear. Leave it False when a blank
-        deck is the intended end state."""
+        """Queue a seq-stamped clear after older paints; newer paints survive.
+        Set expects_repaint only when later content must recover a late clear."""
         seq = self.media_player.next_submit_seq()
         self.media_player.submit_control(ClearMsg(seq=seq, expects_repaint=expects_repaint))
 
     def get_own_key_grid(self) -> "object | None":
-        """Deprecated in-process shim. See get_own_deck_stack_child."""
+        """Deprecated in-process shim for out-of-tree plugins.
+        Return the attached UI key grid, or None when no UI is attached."""
         return ui_port.get().query_deck_widget(self, "key_grid")
     
     def clear_media_player_tasks(self, gen: "int | None" = None) -> None:
-        # Skip the clear when a newer page load superseded this one, so a late
-        # clear cannot strand the newer load's freshly queued tasks. The lock
-        # spans the check and the clear, so a generation bump cannot land
-        # between them.
+        # Skip the clear when a newer page load superseded this one, so a late clear cannot strand
+        # the newer load's freshly queued tasks.
         with self._page_gen_lock:
             if gen is not None and gen != self._page_load_generation:
                 return
             self.media_player.tasks.clear()
-            # Take the writer's slot lock, so this cannot interleave with the
-            # drain's read-then-null or with a producer's assignment.
-            with self.media_player._slot_lock:
-                self.media_player.image_tasks.clear()
-                self.media_player.touchscreen_task = None
+            # The writer's discard helper takes the slot lock, so this cannot
+            # interleave with the drain or a producer assignment.
+            self.media_player.discard_paint_tasks("controller_queue_cleared")
 
     def close(self, remove_media: bool, app_quit: bool = False) -> None:
-        """One deterministic teardown sweep. Every unplug and replug through
-        DeckManager.remove_controller, every fake-deck removal and every
-        app-quit path funnels through here. delete() is a thin alias kept for
-        existing callers.
+        """Idempotent teardown: remove_media gates resources; app_quit skips action teardown.
+        Device/thread/registration cleanup always runs; non-quit main-thread calls warn."""
+        # Serialize state removal with page installation, then run blocking hooks outside the lock.
+        load_page_lock = getattr(self, "_load_page_lock", None)
+        with load_page_lock if load_page_lock is not None else nullcontext():
+            with self._close_lock:
+                if self._closing:
+                    return
+                self._closing = True
 
-        A second call from any thread does nothing, guarded by _closing.
-
-        When app_quit is False this is expected to run off the main thread, so
-        a wedged plugin teardown hook cannot freeze the UI.
-        DeckManager.remove_controller dispatches it on a dedicated daemon
-        thread, not the shared main_loop pool, which the quit path's
-        shutdown_background_pool() would cancel mid-close. app_quit=True is
-        the one case expected to run synchronously on main. It skips the
-        action teardown, because there is no plugin hook to block on, and
-        on_quit's 6s force-quit timer backs up everything else here.
-
-        remove_media gates the resource sweep of the background media, the
-        input media and the caches. The device, thread and registration
-        teardown always runs.
-        """
-        # Locked compare-and-set. Two teardown callers, the USB unplug thread
-        # and the app-quit main thread, both pass an unlocked check-then-set
-        # and run the whole sweep at once, which duplicates the plugin
-        # on_removed hooks and closes the device twice. Only the transition
-        # takes the lock; the sweep stays unlocked, because it can block on
-        # plugin hooks.
-        with self._close_lock:
-            if self._closing:
-                return
-            self._closing = True
-
-        # Invalidate any in-flight page load now. A load_page that already
-        # passed the _closing gate can otherwise attach a fresh
-        # BackgroundVideo, with its cv2 capture, its registry reference and a
-        # builder thread, after the resource sweep, and it leaks until process
-        # exit. The generation bump aborts load_background, load_all_inputs
-        # and the awaiting-update task at their generation checks, and the
-        # cancel covers a decode that has not started.
-        page_gen_lock = getattr(self, "_page_gen_lock", None)
-        if page_gen_lock is not None:
-            with page_gen_lock:
-                self._page_load_generation += 1
-        bg_future = getattr(self, "_bg_future", None)
-        if bg_future is not None:
-            bg_future.cancel()
+            page_gen_lock = getattr(self, "_page_gen_lock", None)
+            if page_gen_lock is not None:
+                with page_gen_lock:
+                    self._page_load_generation += 1
+            page_completion = getattr(self, "_page_completion", None)
+            if page_completion is not None:
+                page_completion.cancel()
+                self._page_completion = None
+            bg_future = getattr(self, "_bg_future", None)
+            if bg_future is not None:
+                bg_future.cancel()
+            bg_decode_pool = getattr(self, "_bg_decode_pool", None)
+            if bg_decode_pool is not None:
+                # Non-blocking: queued decodes die, a running one finishes
+                # into cancelled completion state and the worker exits.
+                bg_decode_pool.shutdown(wait=False, cancel_futures=True)
 
         if not app_quit and threading.current_thread() is threading.main_thread():
-            # A soft guard, not a hard failure. The test harness teardown()
-            # helper calls close() from what that process calls the main
-            # thread, where no GTK main loop runs, and that must keep working.
-            # In the real app DeckManager.remove_controller always dispatches
-            # onto a dedicated thread, so a warning here is a real signal.
+            # A soft guard, not a hard failure.
             log.warning(
                 f"DeckController.close() for "
                 f"{getattr(self, '_serial_number', None) or '<unknown>'} called "
@@ -1487,10 +1140,7 @@ class DeckController:
                 "dispatch this on its own thread."
             )
 
-        # Step 2 defuses the screensaver directly. Never call
-        # set_enable(False) or hide() here. hide() takes _load_page_lock and
-        # runs a full load_page(), which resurrects the deck during close()
-        # whenever the screensaver is showing at unplug.
+        # Step 2 defuses the screensaver directly. Never call set_enable(False) or hide() here.
         screen_saver = getattr(self, "screen_saver", None)
         if screen_saver is not None:
             if screen_saver.timer:
@@ -1498,9 +1148,8 @@ class DeckController:
             screen_saver.enable = False
             screen_saver.showing = False
 
-        # Step 3 stops the library's read thread first, so a stray input
-        # callback cannot fire into the teardown below and the
-        # resume-from-suspend loop cannot reopen the device.
+        # Step 3 stops the library's read thread first, so a stray input callback cannot fire into
+        # the teardown below and the resume-from-suspend loop cannot reopen the device.
         if getattr(self, "deck", None) is not None:
             try:
                 self.deck.stop_read_thread()
@@ -1508,9 +1157,6 @@ class DeckController:
                 log.opt(exception=True).warning("Failed to stop the deck's read thread during close()")
 
         # Step 4 stops and joins the tick thread before any action teardown.
-        # Its body iterates every input's active state unguarded, and a
-        # concurrent clear_action_objects() can kill the loop or recomposite
-        # an input that the sweep is removing.
         self.keep_actions_ticking = False
         tick_stop_event = getattr(self, "_tick_stop_event", None)
         if tick_stop_event is not None:
@@ -1519,11 +1165,7 @@ class DeckController:
         if tick_thread is not None and tick_thread is not threading.current_thread():
             tick_thread.join(2.0)
 
-        # Step 5 runs a bounded terminal clear and close through the sole
-        # writer. When close_all() already drove this controller through
-        # ClearAndCloseMsg on the app-quit path, the loop exited and this does
-        # nothing. submit_control rejects a submission after stop, and stop()
-        # polling an already-dead thread returns at once.
+        # Step 5 runs a bounded terminal clear and close through the sole writer.
         media_player = getattr(self, "media_player", None)
         if media_player is not None:
             try:
@@ -1531,29 +1173,11 @@ class DeckController:
             except Exception:
                 log.opt(exception=True).warning("Failed to submit ClearAndClose during close()")
             media_player.stop(timeout=2.0)
+            media_player.discard_paint_tasks("close_cleanup")
 
-        # Step 6 runs the action teardown, and the app-quit path skips it.
-        # on_quit runs synchronously on main against a 6s force-quit deadline,
-        # and a hook that marshals to main blocks it. Device hygiene matters
-        # at quit, not plugin notification.
-        #
-        # The join is bounded. A wedged plugin teardown hook strands this
-        # thread inside step 6, so steps 7 to 9 never run, the unplug leak
-        # returns, and _closing=True makes a retry a permanent no-op. On
-        # timeout this abandons the daemon hook thread, because finishing the
-        # device and registration teardown matters more than a hook that may
-        # never return.
-        #
-        # An abandoned thread can still run while steps 7 to 9, and a later
-        # GC, proceed. The surface is narrow. The wedge is a plugin hook, and
-        # plugin hooks run in the first step of _teardown_actions,
-        # clear_action_objects, before its screensaver-input and background
-        # cleanup. So an abandoned thread parks in clear_action_objects and,
-        # while it stays wedged, does not reach the close_resources() and
-        # original_inputs.clear() that step 7 also touches. The only state it
-        # can still mutate is the action_objects that step 8's
-        # discard_controller drops. A change that moves resource cleanup ahead
-        # of the hooks in _teardown_actions widens this.
+        write_input_latency_report(self)
+
+        # Skip plugin hooks on app quit; otherwise bound the join and continue after timeout.
         if not app_quit:
             teardown_thread = threading.Thread(
                 target=self._teardown_actions,
@@ -1579,32 +1203,23 @@ class DeckController:
                 log.opt(exception=True).warning("Failed to close image resources during close()")
             self.clear_encoded_key_caches()
             if media_player is not None:
-                media_player.image_tasks.clear()
                 media_player.tasks.clear()
-                media_player.touchscreen_task = None
                 media_player.control_q.clear()
-        # Fallback release. The writer normally released the device from step
-        # 5's ClearAndCloseMsg. This matters only when that writer wedged and
-        # never processed it.
+        # Fallback release. The writer normally released the device from step 5's ClearAndCloseMsg.
+        # This matters only when that writer wedged and never processed it.
         self._release_handle()
 
-        # Step 8 deregisters, and it also writes. It flushes every page still
-        # cached for this deck before it drops the entries that hold them.
-        # Otherwise the dead controller's active_page stays unevictable and
-        # distorts every other deck's budget.
+        # Step 8 deregisters, and it also writes. It flushes every page still cached for this deck
+        # before it drops the entries that hold them.
         page_manager = gl.page_manager
         if page_manager is not None:
             page_manager.discard_controller(self)
         self.active_page = None
-        # A page change deferred while the screensaver showed otherwise pins
-        # its whole page object graph on this dead controller. This runs at
-        # teardown only, and it leaves the pending mechanism itself, and
-        # active_page while a screensaver shows, untouched.
+        # A page change deferred while the screensaver showed otherwise pins its whole page object
+        # graph on this dead controller.
         self._screensaver_pending_page = None
 
-        # Step 9 shuts down the per-deck thread pools. The object graph is
-        # cyclic, from actions to pages to controller, so an explicit collect
-        # reclaims it now instead of at the next generational GC pass.
+        # Step 9 shuts down the per-deck thread pools.
         action_executor = getattr(self, "action_executor", None)
         if action_executor is not None:
             # Do not wait. A misbehaving plugin callback can block a worker
@@ -1618,12 +1233,9 @@ class DeckController:
         gc.collect()
 
     def _teardown_actions(self) -> None:
-        """Tear down every action this controller ever cached a page for, not
-        only active_page. Also tear down the screensaver's stashed input set
-        and background when the deck closes during the screensaver. That is
-        where the real page's 50-150MB of media lives then, not on
-        active_page. No caller runs this under _load_page_lock, and none runs
-        it at app_quit."""
+        """
+        Tear down every action this controller ever cached a page for, not only active_page.
+        """
         page_manager = gl.page_manager
         cached_pages = page_manager.pages_for_controller(self) if page_manager is not None else []
         for page in cached_pages:

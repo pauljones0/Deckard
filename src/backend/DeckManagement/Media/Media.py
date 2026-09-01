@@ -7,15 +7,7 @@ from loguru import logger as log
 
 @dataclass(eq=False)
 class Media:
-    """
-    A stack of image layers plus the placement of the composed result.
-
-    Args:
-        size (float, optional): The size of the media. Defaults to 1.0.
-        halign (float, optional): The horizontal alignment of the media. Defaults to 0.0.
-        valign (float, optional): The vertical alignment of the media. Defaults to 0.0.
-        layers (list[ImageLayer], optional): The list of image layers. Defaults to an empty list.
-    """
+    """A stack of image layers plus the placement of the composed result."""
     size: float = 1.0
     halign: float = 0.0
     valign: float = 0.0
@@ -35,17 +27,8 @@ class Media:
         Returns:
             Media: A new Media object with the added image layer.
         """
-        # from_image_path returns None for a path that is neither an image nor
-        # an SVG. Do not build a [None] layer list. get_final_media reads
-        # self.layers[0].image before its own layer guard runs, so an unusable
-        # path dies inside the composite on an arbitrary worker thread. An
-        # empty layer list makes get_final_media return None, which is the
-        # documented empty-media result.
-        #
-        # The consumers still do not handle None. PluginSettingsWindow feeds
-        # the result into image2pixbuf, and PluginSettings and Asset store it
-        # as _rendered. This moves the failure onto a caller that a guard can
-        # reach.
+        # Use an empty layer list for an invalid path, so get_final_media returns None.
+        # A list containing None would fail before the empty-media guard.
         layer = ImageLayer.from_image_path(path)
         layers = [layer] if layer is not None else []
         return cls(size=size, halign=halign, valign=valign, layers=layers)

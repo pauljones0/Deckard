@@ -2,13 +2,8 @@ from enum import StrEnum
 
 
 class LabelPosition(StrEnum):
-    """The three label slots on a key, and the keys they take in a page json.
-
-    StrEnum members are real strings, so a member reads and compares as its
-    value: a page file that stores "top" still matches LabelPosition.TOP, and
-    a member writes back as its plain string. The values are frozen because a
-    rename would orphan every stored label.
-    """
+    """The three persisted label-slot keys.
+    StrEnum preserves string comparison and serialization; renaming values orphans stored labels."""
     TOP = "top"
     CENTER = "center"
     BOTTOM = "bottom"

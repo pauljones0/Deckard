@@ -1,12 +1,6 @@
-"""
-Coverage for the destructive filesystem half of the store install path.
+"""Verify staged filesystem operations under download_repo."""
 
-download_repo is the single choke point every install_* caller funnels through.
-"""
-
-# A network fault mid-stream removes the partial archive, a corrupt archive
-# leaves no extracted temp folder, an unsafe member is refused before unpack,
-# and the destination changes only through a staged, validated swap.
+# Failed downloads and validation leave no staging residue or destination changes.
 import io
 import json
 import os
@@ -24,9 +18,7 @@ CACHE_DIR = os.path.join(gl.DATA_PATH, "cache")
 
 
 def _force_release_download_path() -> None:
-    """The harness runs with --devel, which routes download_repo into the
-    git-clone branch. Pinning parse_args().devel to False exercises the
-    requests and zip path an end-user install takes."""
+    """Disable --devel to exercise the release download and archive path."""
     real_parse = gl.argparser.parse_args
 
     def parse_no_devel(*args, **kwargs):
@@ -72,9 +64,7 @@ class _FakeResponse:
 
 
 def _install_fake_get(chunks, **kwargs):
-    """Point the shared session's get() (as reached from StoreBackend, and
-    from inside http_client.download_to_file) at an in-memory response.
-    Returns the previous callable so the caller can restore it."""
+    """Route shared-session downloads to an in-memory response and return the old callable."""
     prev = store_mod.http_client.get
 
     def fake_get(url, stream=False, timeout=None):
@@ -119,9 +109,7 @@ def _cache_zips() -> list[str]:
 
 
 def _extract_folder_left(top_folder: str) -> bool:
-    """Whether download_repo left its per-archive extraction temp folder
-    behind in the cache. An unrelated cache subdir is ignored, so only this
-    archive's residue counts."""
+    """Report only the selected archive's extraction residue."""
     return os.path.isdir(os.path.join(CACHE_DIR, top_folder))
 
 
@@ -144,9 +132,7 @@ def test_install_cleans_cache_writes_version() -> None:
     assert os.path.isfile(os.path.join(dest, "VERSION")), "VERSION file not written"
     with open(os.path.join(dest, "VERSION")) as f:
         assert f.read() == SHA
-    # The origin stamp is written in the staging tree beside VERSION, so the
-    # swap publishes the install and its repository together. The update
-    # check identifies the install by this file.
+    # Publish ORIGIN with VERSION in the staged swap so update checks can identify the install.
     origin_path = os.path.join(dest, store_mod.StoreBackend.ORIGIN_FILE)
     assert os.path.isfile(origin_path), "ORIGIN stamp not written"
     with open(origin_path) as f:
@@ -265,10 +251,7 @@ def test_traversal_member_is_refused() -> None:
 
 
 def test_download_fault_leaves_existing_install_intact() -> None:
-    """download_repo touches the destination only at swap time, after a good
-    download, extract and validation. A fault before that leaves a
-    pre-existing install byte-for-byte intact, and the pack install_*
-    wrappers ride on the same safety."""
+    """Keep an existing install unchanged until download, extraction, and validation succeed."""
     sb = _make_backend()
     dest = os.path.join(gl.DATA_PATH, "plugins", "com_test_Existing")
     os.makedirs(dest, exist_ok=True)
@@ -308,10 +291,7 @@ def _seed_install(dest: str, content: str = "previous good install") -> str:
 
 
 def test_swap_failure_restores_existing_install() -> None:
-    """If the final atomic rename of the staged tree fails, _swap_into_place
-    must put the old install back. The old install is only renamed aside,
-    never deleted. _swap_into_place must also clean up its transient
-    siblings."""
+    """Restore the old install and remove transient siblings after swap-in failure."""
     sb = _make_backend()
     dest = os.path.join(gl.DATA_PATH, "plugins", "com_test_SwapFail")
     sentinel = _seed_install(dest)
@@ -348,9 +328,7 @@ def test_swap_failure_restores_existing_install() -> None:
 
 
 def test_manifest_id_mismatch_refused() -> None:
-    """expected_id is the staged-tree choke point. The catalog id also names
-    the install dir. A downloaded tree whose manifest.json id disagrees with
-    that catalog id is refused with 400 before it replaces the pack."""
+    """Refuse a staged manifest ID that differs from the catalog and destination ID."""
     sb = _make_backend()
     dest = os.path.join(gl.DATA_PATH, "plugins", "com_test_IdMismatch")
     sentinel = _seed_install(dest)
@@ -376,12 +354,9 @@ def test_manifest_id_mismatch_refused() -> None:
 
 
 def test_incompatible_manifest_refused() -> None:
-    """A staged manifest that requires a newer app version is refused before
-    the swap, with or without an expected id. The loader would refuse to
-    load that tree, so the swap would replace a working install with a dead
-    one. The gate uses the loader's compare, base versions with pre-release
-    tags stripped, so a requirement above ours only in its pre-release tag
-    still installs."""
+    """Refuse incompatible plugin trees before swap, with or without expected_id.
+
+Use loader base-version semantics, but disable this gate for data-only packs."""
     from packaging import version
 
     app_base = version.parse(gl.app_version).base_version
@@ -451,14 +426,14 @@ def test_incompatible_manifest_refused() -> None:
 
 
 def test_update_replaces_pack_and_stamps() -> None:
-    """A successful update. The staged tree carries VERSION before the swap,
-    because a tree without it reads as not installed and is never retried.
-    The old content is fully replaced. No transient tree remains."""
+    """Stamp VERSION before swap because unstamped trees read as absent and are not retried.
+    Replace old content and remove transient swap trees."""
     sb = _make_backend()
     dest = os.path.join(gl.DATA_PATH, "plugins", "com_test_Replace")
     sentinel = _seed_install(dest, content="old version file")
 
-    real_swap = sb._swap_into_place
+    from src.backend.Store import install_recovery
+    real_swap = install_recovery.swap_into_place
     staged_version: list[str] = []
 
     def spying_swap(staging_tree, directory):
@@ -470,16 +445,16 @@ def test_update_replaces_pack_and_stamps() -> None:
             staged_version.append(f.read())
         return real_swap(staging_tree, directory)
 
-    sb._swap_into_place = spying_swap
-
     zip_bytes = _good_zip_bytes(files={"manifest.json": b'{"id": "com_test_Replace"}',
                                        "new.txt": b"new content"})
     prev = _install_fake_get(_chunk(zip_bytes))
+    install_recovery.swap_into_place = spying_swap
     try:
         result = sb.download_repo(
             repo_url=REPO_URL, directory=dest, commit_sha=SHA,
             expected_id="com_test_Replace")
     finally:
+        install_recovery.swap_into_place = real_swap
         _restore_get(prev)
 
     assert isinstance(result, Ok), f"a well-formed update must succeed, got {result!r}"

@@ -1,15 +1,6 @@
-"""
-Regression test for the store fan-out pool on the quit path.
+"""Verify offline store fan-out pool shutdown."""
 
-No network is involved.
-"""
-
-# The catalog prepare tasks run on StoreBackend._prepare_pool, whose workers
-# are not daemons and park on the work queue between passes. The quit path
-# joins every non-daemon thread with a bound, so a pool that nothing releases
-# costs that bound on every quit after the first catalog pass, and the
-# force-quit backstop after it. shutdown() releases the pool and stops a pass
-# that is in flight before its next fetch.
+# shutdown() releases non-daemon workers and blocks further fetches before the bounded join.
 import threading
 import time
 
@@ -74,7 +65,7 @@ def test_shutdown_ends_idle_workers() -> None:
     )
 
 
-def test_shutdown_stops_a_pass_in_flight() -> None:
+def test_shutdown_stops_inflight_catalog_pass() -> None:
     """A prepare task that is running when the app quits must not start
     another fetch. Its next request raises and reaches no network."""
     calls: list[str] = []
@@ -116,7 +107,7 @@ def test_submit_after_shutdown_is_cancelled() -> None:
     assert future.cancelled(), f"submit after shutdown must hand back a cancelled future, got {future!r}"
 
 
-def test_shutdown_blocks_a_new_catalog_pass() -> None:
+def test_post_shutdown_catalog_pass_is_blocked() -> None:
     """A catalog pass that starts after shutdown must report no catalog and
     reach the network for nothing."""
     calls: list[str] = []
@@ -138,11 +129,9 @@ def test_shutdown_blocks_a_new_catalog_pass() -> None:
         sb_module.http_client.get = real_get
 
 
-def test_quit_path_calls_shutdown_before_the_join() -> None:
-    """The teardown must release the pool before it flushes the store cache
-    index and before it joins the non-daemon threads. A later release lets a
-    pass in flight dirty the index after the flush wrote it, and a release
-    after the join loop stops nothing."""
+def test_quit_shuts_down_pool_before_join() -> None:
+    """Release the pool before flush so an in-flight pass cannot dirty the index afterward.
+    Release it before joins so idle non-daemon workers can exit."""
     import os
     source_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                                "src", "app.py")
@@ -166,10 +155,10 @@ def test_quit_path_calls_shutdown_before_the_join() -> None:
 def main() -> None:
     fixtures.start_watchdog(30, label="scenario_store_quit_pool")
     test_shutdown_ends_idle_workers()
-    test_shutdown_stops_a_pass_in_flight()
+    test_shutdown_stops_inflight_catalog_pass()
     test_submit_after_shutdown_is_cancelled()
-    test_shutdown_blocks_a_new_catalog_pass()
-    test_quit_path_calls_shutdown_before_the_join()
+    test_post_shutdown_catalog_pass_is_blocked()
+    test_quit_shuts_down_pool_before_join()
     print("scenario_store_quit_pool: PASS")
 
 

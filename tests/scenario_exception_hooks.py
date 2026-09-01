@@ -1,8 +1,4 @@
-"""Scenario for the central exception hooks in src/backend/log_hooks.py.
-
-One subprocess covers the three interpreter hooks, the asyncio handler,
-idempotence, re-entrancy, faulthandler redirection and per-site rate limiting.
-"""
+"""Check interpreter and asyncio hooks, faulthandler, and per-site rate limits."""
 import fixtures  # must be first; isolates DATA_PATH before any src import
 
 import gc
@@ -25,7 +21,7 @@ def main() -> None:
     records: list[str] = []
     logger.add(lambda message: records.append(str(message)), level="TRACE")
 
-    def joined() -> str:
+    def log_text() -> str:
         return "".join(records)
 
     # Install with a spy as the pre-existing hook, so the KeyboardInterrupt
@@ -41,9 +37,9 @@ def main() -> None:
     t = threading.Thread(target=boom_thread, name="boom-worker")
     t.start()
     t.join()
-    assert "boom-thread" in joined(), "thread exception message must reach the sink"
-    assert "boom-worker" in joined(), "the thread NAME is what makes these actionable"
-    assert 'raise ValueError("boom-thread")' in joined(), (
+    assert "boom-thread" in log_text(), "thread exception message must reach the sink"
+    assert "boom-worker" in log_text(), "the thread NAME is what makes these actionable"
+    assert 'raise ValueError("boom-thread")' in log_text(), (
         "the full traceback (source line), not just the message, must be logged"
     )
 
@@ -53,8 +49,8 @@ def main() -> None:
         raise TypeError("boom-main")
     except TypeError:
         sys.excepthook(*sys.exc_info())
-    assert "boom-main" in joined() and "[main]" in joined()
-    assert 'raise TypeError("boom-main")' in joined()
+    assert "boom-main" in log_text() and "[main]" in log_text()
+    assert 'raise TypeError("boom-main")' in log_text()
 
     records.clear()
     sys.excepthook(KeyboardInterrupt, KeyboardInterrupt(), None)
@@ -71,7 +67,7 @@ def main() -> None:
     obj = BoomOnDel()
     del obj
     gc.collect()
-    assert "boom-del" in joined() and "[unraisable]" in joined()
+    assert "boom-del" in log_text() and "[unraisable]" in log_text()
 
     # 4a. The asyncio handler, through the real wiring in event_dispatch._get_loop.
     from src.backend.PluginManager import event_dispatch
@@ -79,27 +75,26 @@ def main() -> None:
     records.clear()
     loop = event_dispatch._get_loop()
     loop.call_exception_handler({"message": "ctx", "exception": ValueError("boom-asyncio")})
-    assert "boom-asyncio" in joined() and "[asyncio]" in joined()
+    assert "boom-asyncio" in log_text() and "[asyncio]" in log_text()
 
     records.clear()
     loop.call_exception_handler({"message": "boom-asyncio-msgonly"})
-    assert "boom-asyncio-msgonly" in joined(), "message-only contexts (no exception) must log too"
+    assert "boom-asyncio-msgonly" in log_text(), "message-only contexts (no exception) must log too"
 
-    # 4b. An exception escaping _dispatch_batch itself is swallowed by the pool
-    # and never reaches threading.excepthook, so the Future done-callback must
-    # surface it.
+    # 4b. Surface a batch exception through its Future callback because the pool
+    # does not send it to threading.excepthook.
     records.clear()
     original_get_loop = event_dispatch._get_loop
     event_dispatch._get_loop = lambda: (_ for _ in ()).throw(RuntimeError("boom-batch"))
     try:
         event_dispatch.dispatch([lambda: None], (), {}, label="hooks-scenario")
         deadline = time.monotonic() + 5.0
-        while "boom-batch" not in joined() and time.monotonic() < deadline:
+        while "boom-batch" not in log_text() and time.monotonic() < deadline:
             time.sleep(0.02)
     finally:
         event_dispatch._get_loop = original_get_loop
-    assert "boom-batch" in joined(), "a batch-level failure must not vanish into the dropped Future"
-    assert "dispatch batch failed" in joined()
+    assert "boom-batch" in log_text(), "a batch-level failure must not vanish into the dropped Future"
+    assert "dispatch batch failed" in log_text()
 
     # 5. idempotence
     hook_after_first = sys.excepthook
@@ -205,9 +200,7 @@ def main() -> None:
     assert flagged.returncode == 0, f"flagged child failed: {flagged.stderr}"
     assert "flagged-ok" in flagged.stdout
 
-    # Only the exact value 1 disables them. An operator writes false, off or 0
-    # to keep the safety net on, and a truthiness test would read those as on
-    # and silently drop the whole safety net on that run.
+    # Only the exact value 1 disables hooks; false, off, and 0 keep them active.
     off_code = (
         "import sys\n"
         f"sys.path.insert(0, {REPO_ROOT!r})\n"
@@ -233,41 +226,39 @@ def main() -> None:
     original_window = log_hooks.RATE_LIMIT_WINDOW_S
     log_hooks._rate_state.clear()
     try:
-        # 9a. 100 identical thread exceptions must give one record. Fired under
-        # the real 5 s window, because the whole burst takes well under it, so
-        # this is the production configuration.
+        # 9a. Under the real 5 s window, 100 same-site thread exceptions produce
+        # one record.
         records.clear()
 
         def storm() -> None:
             raise ValueError("boom-storm")  # one fixed site, fired 100x
 
         for _ in range(100):
-            st = threading.Thread(target=storm, name="storm-worker")
-            st.start()
-            st.join()
+            storm_thread = threading.Thread(target=storm, name="storm-worker")
+            storm_thread.start()
+            storm_thread.join()
         assert sum("boom-storm" in r for r in records) == 1, (
             f"a 100x storm from one site must log once, got "
             f"{sum('boom-storm' in r for r in records)} records"
         )
 
-        # The suppressed count rides on the next record of that site. Shrinking
-        # the window, which is read per call, expires the open one without a
-        # sleep.
+        # Expire the per-call window so the site's next record carries its
+        # suppressed count.
         records.clear()
         log_hooks.RATE_LIMIT_WINDOW_S = 0.001
         time.sleep(0.01)
-        st = threading.Thread(target=storm, name="storm-worker")
-        st.start()
-        st.join()
+        storm_thread = threading.Thread(target=storm, name="storm-worker")
+        storm_thread.start()
+        storm_thread.join()
         assert sum("boom-storm" in r for r in records) == 1
-        assert "99 further failures at" in joined(), (
-            f"the next record must carry the suppressed count, got: {joined()[:300]!r}"
+        assert "99 further failures at" in log_text(), (
+            f"the next record must carry the suppressed count, got: {log_text()[:300]!r}"
         )
-        assert "since the last record" in joined(), (
+        assert "since the last record" in log_text(), (
             "the summary must not claim a window it cannot know (the gap "
             "between two records from one site is unbounded)"
         )
-        assert "scenario_exception_hooks.py" in joined() and "[ValueError]" in joined(), (
+        assert "scenario_exception_hooks.py" in log_text() and "[ValueError]" in log_text(), (
             "the summary must name the site it is summarizing"
         )
 
@@ -284,17 +275,16 @@ def main() -> None:
             raise ValueError("boom-site-b")
 
         for target in (site_a, site_b, site_a, site_b, site_a):
-            st = threading.Thread(target=target, name="two-sites")
-            st.start()
-            st.join()
+            site_thread = threading.Thread(target=target, name="two-sites")
+            site_thread.start()
+            site_thread.join()
         assert sum("boom-site-a" in r for r in records) == 1
         assert sum("boom-site-b" in r for r in records) == 1, (
             "a repeating site must not consume another site's budget"
         )
 
-        # 9c. Non-repeating failures are unchanged. Every distinct site logs,
-        # with no summary noise. This includes the sys.excepthook surface, which
-        # proves the guard is inherited from _log_exc rather than wired per hook.
+        # 9c. Log every distinct site without summaries, including sys.excepthook
+        # through the shared _log_exc guard.
         log_hooks._rate_state.clear()
         records.clear()
 
@@ -308,16 +298,16 @@ def main() -> None:
             raise RuntimeError("uniq-3")
 
         for target in (uniq_one, uniq_two, uniq_three):
-            st = threading.Thread(target=target, name=target.__name__)
-            st.start()
-            st.join()
+            unique_site_thread = threading.Thread(target=target, name=target.__name__)
+            unique_site_thread.start()
+            unique_site_thread.join()
         try:
             raise KeyError("uniq-4")
         except KeyError:
             sys.excepthook(*sys.exc_info())
         for tag in ("uniq-1", "uniq-2", "uniq-3", "uniq-4"):
             assert sum(tag in r for r in records) == 1, f"{tag} must log exactly once"
-        assert "suppressed" not in joined(), (
+        assert "suppressed" not in log_text(), (
             "non-repeating failures must not gain suppression noise"
         )
 
@@ -341,11 +331,8 @@ def main() -> None:
             f"rate-limit state must stay bounded, got {len(log_hooks._rate_state)} keys"
         )
 
-        # 9e. Suppression must survive past the cap, which the bound in 9d does
-        # not pin. 100 hot sites storm while 300 one-shot sites push the dict
-        # over the cap. Evicting by window start, refreshed only on an allowed
-        # record, makes the hot sites look oldest and re-admits every one of
-        # them. Eviction by last hit keeps them.
+        # 9e. Keep hot sites suppressed while one-shot sites exceed the cap;
+        # eviction must use last hit rather than window start.
         log_hooks._rate_state.clear()
         records.clear()
         hot = [("HotError", (f"/fake/hot_{i}.py", i)) for i in range(100)]
@@ -380,16 +367,13 @@ def main() -> None:
         assert quiet not in log_hooks._rate_state, (
             "an idle site must be evicted before an active one"
         )
-        assert "5 further failures at /fake/quiet_site.py:7" in joined(), (
-            f"an evicted pending count must be reported, got: {joined()[-400:]!r}"
+        assert "5 further failures at /fake/quiet_site.py:7" in log_text(), (
+            f"an evicted pending count must be reported, got: {log_text()[-400:]!r}"
         )
         log_hooks.RATE_LIMIT_WINDOW_S = original_window
 
-        # 9g. The terminal shape of sys.excepthook is never throttled, because a
-        # fatal exception must not die inside a window some hot callback opened.
-        # The callback shape of the same hook, and the same site, stays
-        # throttled, because PyGObject routes every uncaught GTK callback
-        # exception through sys.excepthook.
+        # 9g. Never throttle terminal sys.excepthook calls, but throttle the same
+        # site when PyGObject routes callback failures through that hook.
         log_hooks._rate_state.clear()
         records.clear()
 
@@ -421,7 +405,7 @@ def main() -> None:
             f"every terminal invocation must be logged, got "
             f"{sum('boom-shared' in r for r in records)} records"
         )
-        assert "3 further failures at" in joined(), (
+        assert "3 further failures at" in log_text(), (
             "the terminal record must carry what the window swallowed -- "
             "there is no next record to carry it"
         )
@@ -429,10 +413,8 @@ def main() -> None:
         log_hooks.RATE_LIMIT_WINDOW_S = original_window
         log_hooks._rate_state.clear()
 
-    # 10. A storm that simply stops must not take the failures of its last
-    # window to the grave, because atexit flushes every pending count. This
-    # needs a child process, since the flush fires at interpreter shutdown and
-    # the default loguru sink puts it on stderr.
+    # 10. Flush the last window's pending count at process exit; use a child to
+    # observe the default stderr sink.
     atexit_code = (
         "import sys, threading\n"
         f"sys.path.insert(0, {REPO_ROOT!r})\n"
@@ -456,12 +438,8 @@ def main() -> None:
     )
     assert "process exiting" in at_exit.stderr
 
-    # 11. The lock of the guard must be re-entrant. GC can fire on an allocation
-    # inside the guarded region, and a raising __del__ collected there re-enters
-    # _log_exc on the same thread. A plain Lock self-deadlocks inside the crash
-    # handler, and a Lock swap passes the entire rest of the suite. Driven on a
-    # worker with a bounded join. Two assertions, because the acquire timeout
-    # softens a Lock swap from a deadlock into a 0.5 s stall.
+    # Keep the guard lock re-entrant when __del__ re-enters _log_exc during GC.
+    # Use the completion Event's bounded wait instead of joining the worker.
     records.clear()
     log_hooks._rate_state.clear()
 
@@ -485,7 +463,7 @@ def main() -> None:
         "RLock -- a raising __del__ collected inside the guarded region "
         "re-enters _log_exc on the same thread"
     )
-    assert "boom-reentrant-del" in joined(), (
+    assert "boom-reentrant-del" in log_text(), (
         "the re-entrant unraisable must still be logged, not just survive"
     )
     assert [k for k in log_hooks._rate_state if k[0] == "RuntimeError"], (

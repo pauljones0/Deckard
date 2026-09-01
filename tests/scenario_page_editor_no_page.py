@@ -1,13 +1,4 @@
-"""PageEditor must build with no page selected.
-
-__init__ sets active_page_path to None and calls build() straight away, so
-every row a group constructs reads the path while it is still None. A reader
-that refuses the absence stops the whole Page Manager window from opening,
-and nothing else in the suite constructs this widget.
-
-The override rows are the other half of the contract: they write. A None path
-reaches canonical_path() in the page manager, so they must refuse.
-"""
+"""Verify PageEditor reads safely and refuses writes when no page is selected."""
 
 import fixtures  # noqa: F401  (must be first: isolates DATA_PATH)
 import globals as gl
@@ -39,11 +30,7 @@ def main() -> None:
     from src.windows.PageManager.elements.PageEditor import PageEditor
 
     class FakePageManagerWindow(Adw.ApplicationWindow):
-        """Stands in for the Page Manager window the editor lives in.
-
-        PageEditor keeps it as a parent for the dialogs its rows open, and
-        builds nothing out of it.
-        """
+        """Provide the dialog parent required by PageEditor."""
 
     parent = FakePageManagerWindow()
     editor = PageEditor(parent)

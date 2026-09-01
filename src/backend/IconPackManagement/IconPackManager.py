@@ -16,9 +16,9 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 from typing import override
 
 from src.backend.IconPackManagement.IconPack import IconPack
-from src.backend.PackManagement.pack_family import PackManager
+from src.backend.PackManagement.pack_family import PackDiscovery
 
-class IconPackManager(PackManager[IconPack]):
+class IconPackManager(PackDiscovery[IconPack]):
     """Discovery for the icon packs under the data path."""
 
     DATA_DIR = "icons"

@@ -1,8 +1,4 @@
-"""Integration scenario that drives close_all_controllers() directly.
-
-With two controllers the two-phase ordering matters. Every open controller
-ends with its blank writes and one close(), and both media threads exit.
-"""
+"""Verify the two-phase close protocol across all controllers."""
 import time
 
 import fixtures
@@ -11,23 +7,14 @@ from src.backend.DeckManagement.DeckManager import close_all_controllers
 
 
 def _settle_and_clear(controller, deck) -> None:
-    """Wait for the boot paint, then clear the journal.
-
-    Only the shutdown sequence is then measured. The short sleep lets a
-    trailing brightness write land before the clear.
-    """
+    """Wait for boot paint, permit a trailing brightness write, then clear."""
     fixtures.wait_until(lambda: deck.last_op_for("key:0") is not None, timeout=3)
     time.sleep(0.1)
     deck.clear_journal()
 
 
 def _assert_clean_close(deck, key_count: int, is_touch: bool) -> None:
-    """Check the guarantee close_all_controllers() makes per open controller.
-
-    A full set of blank writes lands, then exactly one close(), and nothing
-    writes after close(). Asserted on the journal suffix, so a stray trailing
-    boot write cannot make it brittle.
-    """
+    """Require blank writes followed by one terminal close per controller."""
     journal = deck.journal()
     expected_clear_ops = key_count + (1 if is_touch else 0)
 
@@ -52,41 +39,41 @@ def _assert_clean_close(deck, key_count: int, is_touch: bool) -> None:
 
 
 def test_close_all_two_controllers() -> None:
-    c1 = fixtures.make_headless_controller(serial="close-all-1")
-    c2 = fixtures.make_headless_controller(serial="close-all-2")
-    d1, d2 = fixtures.raw_deck(c1), fixtures.raw_deck(c2)
+    first_controller = fixtures.make_headless_controller(serial="close-all-1")
+    second_controller = fixtures.make_headless_controller(serial="close-all-2")
+    first_deck = fixtures.raw_deck(first_controller)
+    second_deck = fixtures.raw_deck(second_controller)
 
-    # Let both boot paints settle, then clear the journals, so only the shutdown
-    # sequence is measured.
-    _settle_and_clear(c1, d1)
-    _settle_and_clear(c2, d2)
+    _settle_and_clear(first_controller, first_deck)
+    _settle_and_clear(second_controller, second_deck)
 
-    kc1, kc2 = c1.deck.key_count(), c2.deck.key_count()
-    t1, t2 = c1.deck.is_touch(), c2.deck.is_touch()
+    first_key_count = first_controller.deck.key_count()
+    second_key_count = second_controller.deck.key_count()
+    first_is_touch = first_controller.deck.is_touch()
+    second_is_touch = second_controller.deck.is_touch()
 
     # Drive the real free function, not gl.deck_manager.close_all.
-    close_all_controllers([c1, c2])
+    close_all_controllers([first_controller, second_controller])
 
     assert fixtures.wait_until(
-        lambda: not c1.media_player.is_alive() and not c2.media_player.is_alive(),
+        lambda: (
+            not first_controller.media_player.is_alive()
+            and not second_controller.media_player.is_alive()
+        ),
         timeout=3.0,
     ), "both media threads must exit within the bounded join"
 
-    _assert_clean_close(d1, kc1, t1)
-    _assert_clean_close(d2, kc2, t2)
+    _assert_clean_close(first_deck, first_key_count, first_is_touch)
+    _assert_clean_close(second_deck, second_key_count, second_is_touch)
     print("PASS: close_all_controllers() clears+closes every controller and joins every writer")
 
     # Stop the non-daemon tick threads, so the process can exit.
-    fixtures.teardown(c1)
-    fixtures.teardown(c2)
+    fixtures.teardown(first_controller)
+    fixtures.teardown(second_controller)
 
 
 def test_controller_without_media_closes() -> None:
-    """A controller that failed mid-construction has no media_player.
-
-    close_all_controllers must close its deck directly instead of submitting a
-    control message to a thread that does not exist.
-    """
+    """Close a partially constructed controller without a media player directly."""
     c = fixtures.make_headless_controller(serial="close-all-3")
     d = fixtures.raw_deck(c)
     _settle_and_clear(c, d)

@@ -9,6 +9,18 @@ bundle as a release asset.
 
 ### Added
 
+- Pan and zoom the wallpaper. An "Adjust View" button under the background
+  media selector opens a dialog showing the wallpaper with a draggable white
+  box: the region the deck displays, always in the deck's own aspect. Drag
+  the box to pan and set the zoom factor to size it; the deck follows live
+  while you drag an image. Zooming out letterboxes the extra space. Every
+  slideshow image keeps its own view, picked in the same dialog, and a page
+  background with a stored view renders through it too. Backgrounds without
+  a stored view render exactly as before.
+- The page background override in the page manager has the same "Adjust
+  View" button, so a page that overrides the deck wallpaper can pan and zoom
+  its own media; every deck showing that page follows.
+
 - Read and steer a running Deckard from the command line. `--json` prints the
   state of the running app as one JSON object: every deck with its serial,
   active page and brightness, and the pages that exist. `--get-brightness
@@ -52,11 +64,6 @@ bundle as a release asset.
   that holds them, including on a key whose actions did not all load. The up
   and down buttons on each row make the same move, so a reorder needs no
   pointer.
-  there, the key runs its actions in the new order straight away, and the page
-  keeps the order. Each action takes its own settings, its comment and its
-  event assignments with it, and the media, background and label permissions
-  stay with the action that holds them. The up and down buttons on each row
-  make the same move, so a reorder needs no pointer.
 - Keys can hold their size while they are pressed. The general settings carry
   a "Shrink keys while pressed" switch, and turning it off leaves a held key
   drawing exactly the picture it draws at rest, which suits a page whose keys
@@ -71,7 +78,8 @@ bundle as a release asset.
   `--change-state` uses. The page is switched to first when it is not the one
   showing, and the press is dropped with a reason rather than made if the deck
   leaves that page before it lands, if the key is already held, if the session
-  locks in the meantime, or if the press cannot reach the deck in time. It needs Deckard to be running already, and says so
+  locks in the meantime, or if the press cannot reach the deck in time. It
+  needs Deckard to be running already, and says so
   instead of starting it: a press happens at a moment, so it cannot be held
   for a deck that is not plugged in yet. The same press is on the session bus
   as `EmulateInput`, beside `ChangePage` and `ChangeState`.
@@ -124,6 +132,17 @@ bundle as a release asset.
 
 ### Changed
 
+- Switching pages no longer competes with store loads, importers, or
+  window-title watching for background workers: each deck decodes its page
+  background on workers of its own, so a busy app cannot delay the moment
+  a new page's background appears.
+- Animated media now renders at its own frame rate instead of on every pass
+  of the 30 Hz render loop. A 24 fps video used to be composited 30 times a
+  second and a 12 fps one 15 times; each now renders exactly at its own
+  rate, and keys shown over a background video repaint only when the video
+  produces a new frame. Idle CPU drops on any page with videos or GIFs below
+  30 fps, and playback timing no longer moves when the system clock is
+  adjusted.
 - On an X11 session, the app now learns of a focused-window change from the X
   server's event stream, not from five xprop processes started every fifth of a
   second. It reads the window only when the focused window or its title
@@ -184,6 +203,18 @@ bundle as a release asset.
 
 ### Fixed
 
+- A page rename that fails partway no longer leaves an empty or half-written
+  page file under the new name. The new name now appears with its whole
+  content in one step, so an interrupted rename, even a hard kill, leaves
+  either the old state or the finished one, never a broken page.
+- The automatic page backup is now written atomically too, so a kill during
+  the backup can no longer truncate the copy a damaged page heals from.
+- When a damaged page's content is served from its automatic backup, the log
+  now names the page and the backup it was served from.
+- Flatpak releases now ship the locked runtime Python dependency set, including
+  headless OpenCV, instead of a stale development environment with the full
+  OpenCV build. Release builds also reject dependency drift and unexpected
+  growth in either architecture's Python payload.
 - A wallpaper extended onto the Stream Deck + touchscreen now lines up with
   the keys. The strip's view was placed and scaled from an assumed key
   spacing, and the device does not follow that arithmetic: the real gaps

@@ -1,10 +1,5 @@
-"""
-Integration scenario for PluginBase backend teardown.
-
-on_disconnect must return fast, null all four backend references and drop the
-gl.plugin_manager registry entries synchronously, then finish the closes and
-the process kill off-thread.
-"""
+"""Verify PluginBase backend teardown returns before slow resource cleanup.
+It clears four references and two registries synchronously, then closes and kills off-thread."""
 
 # A second call is a no-op, and start_server afterwards builds a fresh server
 # instead of skipping against a dead one.
@@ -18,18 +13,15 @@ import fixtures  # noqa: F401  (import first: sets up the isolated data dir)
 
 import globals as gl
 
-# PluginBase dereferences gl.plugin_manager registries during teardown. The
-# harness installs no real PluginManager, because that imports the whole
-# plugin ecosystem, so only the two lists teardown touches exist here.
+# Teardown reads two plugin-manager registries; a stub avoids loading the
+# unrelated plugin ecosystem.
 gl.plugin_manager = types.SimpleNamespace(backends=[], backend_processes=[])
 
 from src.backend.PluginManager.PluginBase import PluginBase  # noqa: E402
 
 
 class _SlowClosable:
-    """Stands in for the rpyc ThreadedServer and Connection. close() blocks,
-    like an rpyc close waiting out an in-flight call, and records who ran
-    it."""
+    """Model a blocking rpyc close and record the thread that runs it."""
 
     def __init__(self, name: str, delay: float = 0.75):
         self.name = name
@@ -44,9 +36,8 @@ class _SlowClosable:
 
 
 def _make_plugin(server, connection, process) -> PluginBase:
-    """A PluginBase with only the backend-teardown state wired up. __init__
-    is bypassed, because it needs a real plugin directory that the teardown
-    contract never uses."""
+    """Build only the PluginBase state that backend teardown reads.
+    Bypass initialization because teardown does not use a plugin directory."""
     plugin = PluginBase.__new__(PluginBase)
     plugin.server = server
     plugin.backend_connection = connection

@@ -1,8 +1,5 @@
-"""Pins the top-level DBus control methods ChangePage, ChangeState and
-EmulateInput.
-
-They run over a real bus against real controllers. The answer matters as much
-as the effect. An empty string means done; anything else is a sentence to read.
+"""Exercise DBus control methods over a real bus and real controllers.
+Success is an empty reply; failure is a user-readable sentence.
 """
 import fixtures  # noqa: F401  (must be first: isolates DATA_PATH before globals)
 
@@ -22,6 +19,7 @@ import src.api as api  # noqa: E402
 # defines helpers, because its own legs run under its __main__ guard.
 import scenario_api_lifecycle_publish as harness  # noqa: E402
 
+from src.backend.DeckManagement.deck_events import KeyEvent
 from src.backend.DeckManagement.InputIdentifier import Input  # noqa: E402
 
 WATCHDOG_SECONDS = 80
@@ -36,17 +34,8 @@ STATE_SETTLE_SECONDS = 20.0
 
 
 def settle_state_change(call, timeout: float = STATE_SETTLE_SECONDS) -> str:
-    """Call a ChangeState until it answers success (empty), bounded by timeout.
-
-    ChangeState loads the addressed page onto the deck and then reads that
-    input's own state list to bound the state number. The input load runs on
-    the media thread and lands after the switch returns, so a cross-page state
-    change reads the state count a beat later. A media thread that a loaded
-    machine has not scheduled yet therefore answers once with the count the
-    page carried before it loaded, which reads here as "only 1 state" and never
-    at rest. Poll the whole call so the load lands, without softening what the
-    final answer must be. The last non-empty answer is returned when the bound
-    is reached, so a real rejection still surfaces its own sentence.
+    """Retry ChangeState while media-thread input loading leaves the old state count.
+    Return the last rejection when the timeout expires.
     """
     deadline = time.monotonic() + timeout
     reply = call()
@@ -57,10 +46,7 @@ def settle_state_change(call, timeout: float = STATE_SETTLE_SECONDS) -> str:
 
 
 def seed_multistate_page(page_name: str, key_ident: str, n_states: int) -> str:
-    """Seed a page whose key_ident carries n_states states.
-
-    The methods are then checked against the input's real state count.
-    """
+    """Seed a page for checks against the input's real state count."""
     pages_dir = os.path.join(gl.DATA_PATH, "pages")
     os.makedirs(pages_dir, exist_ok=True)
     path = os.path.join(pages_dir, f"{page_name}.json")
@@ -73,10 +59,7 @@ def seed_multistate_page(page_name: str, key_ident: str, n_states: int) -> str:
 
 
 def seed_action_page(page_name: str, key_ident: str, action_id: str) -> str:
-    """Seed a page whose key_ident carries one action on its first state.
-
-    ListActions is then checked against the ids it reads back.
-    """
+    """Seed a page for checking the action IDs that ListActions reads."""
     pages_dir = os.path.join(gl.DATA_PATH, "pages")
     os.makedirs(pages_dir, exist_ok=True)
     path = os.path.join(pages_dir, f"{page_name}.json")
@@ -94,7 +77,7 @@ def active_name(controller) -> str | None:
 
 
 class Client:
-    """The two methods, as a client calls them."""
+    """Call the DBus methods through their client-facing interface."""
 
     def __init__(self, observer):
         self._observer = observer
@@ -165,8 +148,6 @@ class Client:
         return reply.unpack()[0]
 
 
-# Legs
-
 def leg_change_page(client, controller) -> None:
     assert client.change_page(SERIAL, "Alpha") == "", (
         "a switch that worked must answer with nothing at all -- the CLI reads "
@@ -181,11 +162,7 @@ def leg_change_page(client, controller) -> None:
 
 
 def leg_already_active_is_success(client, controller) -> None:
-    """Asking for the page already showing is a fulfilled request.
-
-    A script that sets a page on every event asks for it constantly, and the
-    method must not reload.
-    """
+    """Require an already active page to succeed without reloading."""
     assert active_name(controller) == "Beta", "this leg starts from a known page"
 
     original_load_page = controller.load_page
@@ -258,13 +235,8 @@ def leg_state_errors(client, controller) -> None:
 
 
 def leg_emulate_input(client, controller) -> None:
-    """EmulateInput presses the input it names, through the deck's own path.
-
-    No plugin manager is installed here, so the addressed input carries no
-    action whose events could be recorded. The deck's own entry point is
-    watched instead, which is where a hardware press arrives once the reader
-    thread has turned a key index into an identifier: a down and then an up,
-    for the key that was named, neither on the thread that made the call.
+    """Drive a named press through the deck path as key down and then key up.
+    The callbacks must run off the main thread, like hardware input.
     """
     controller.hold_time = 2.0
     seen: list = []
@@ -287,7 +259,8 @@ def leg_emulate_input(client, controller) -> None:
         del controller.event_callback
 
     assert [(ident, args) for (ident, args, _thread) in seen] == [
-        (STATE_KEY, (True,)), (STATE_KEY, (False,)),
+        (STATE_KEY, (KeyEvent(pressed=True),)),
+        (STATE_KEY, (KeyEvent(pressed=False),)),
     ], f"the press reached the deck as {seen}"
     assert all(thread is not threading.main_thread() for (_i, _a, thread) in seen), (
         f"the press ran on the main thread: {[t.name for (_i, _a, t) in seen]} -- "
@@ -399,11 +372,8 @@ def leg_list_actions(client) -> None:
 
 
 def leg_rename_and_duplicate_page(client, controller) -> None:
-    """Rename and duplicate go through the PageManager seam and touch disk.
-
-    The rename of the page a deck shows re-points that deck at the new file,
-    so nothing is left pointing at a name that is gone, and the duplicate is a
-    real second file with the same content.
+    """Require rename to update the active deck and duplicate to copy content.
+    Both operations must use real page files.
     """
     pages_dir = os.path.join(gl.DATA_PATH, "pages")
     old_path = os.path.join(pages_dir, "Renamable.json")
@@ -428,8 +398,6 @@ def leg_rename_and_duplicate_page(client, controller) -> None:
     missing = client.rename_page("no-such-page", "Whatever")
     assert missing and "not found" in missing, missing
 
-    # Duplicate the renamed page and confirm a real second file with the same
-    # content.
     copy_path = os.path.join(pages_dir, "Copy.json")
     assert client.duplicate_page("Renamed", "Copy") == "", "the duplicate failed"
     assert os.path.exists(copy_path), "the duplicated page file is missing"
@@ -445,12 +413,8 @@ def leg_rename_and_duplicate_page(client, controller) -> None:
 
 
 def leg_page_containment(client) -> None:
-    """A page name that resolves outside the pages folder is refused.
-
-    find_matching_page_path returns an absolute name unchanged when it is a
-    file, so a caller-supplied path can name a file outside the pages folder.
-    Rename would move that file and Duplicate would read it, so both confine
-    the source to the pages folder, the guard remove_page already applies.
+    """Require rename and duplicate to reject sources outside the pages folder.
+    Absolute names can otherwise resolve to files outside that folder.
     """
     outside = os.path.join(gl.DATA_PATH, "outside_secret.json")
     with open(outside, "w") as f:
@@ -474,13 +438,8 @@ def leg_page_containment(client) -> None:
 
 
 def leg_cli_transport_new_verbs(controller) -> None:
-    """The CLI's own transport drives every new verb against the real service.
-
-    A read verb, a deck command and a page command each compose their own
-    variant by hand, so a wrong method name or a swapped argument order breaks
-    only here and at a user's terminal. This drives each one end to end and
-    reads the effect back, on a worker because call_sync blocks while this
-    thread pumps.
+    """Drive each CLI variant against the real service and verify its effect.
+    A worker runs blocking call_sync while the main thread pumps replies.
     """
     from src.backend import cli_forward
 
@@ -522,11 +481,7 @@ def leg_cli_transport_new_verbs(controller) -> None:
 
 
 def leg_signatures_match_cli(client) -> None:
-    """The published signatures are the ones the CLI composes calls from.
-
-    The CLI builds the variants by hand. A wire signature has no other guard,
-    so a change here fails at the bus.
-    """
+    """Require published signatures to match the variants built by the CLI."""
     xml = client.introspect()
     for method in ("ChangePage", "ChangeState", "EmulateInput", "QueryState",
                    "ListActions", "SetDeckBrightness", "Sleep", "Wake",
@@ -556,12 +511,7 @@ def leg_signatures_match_cli(client) -> None:
 
 
 def drive_on_worker(work, name: str, timeout: float = 30.0) -> dict:
-    """Run work(answers) on a thread while this one pumps, and return records.
-
-    The CLI transport calls call_sync, which blocks until the reply lands, and
-    the reply comes from this process's main context. A worker matches the real
-    shape, where the CLI is a different process.
-    """
+    """Run blocking client work on a worker while the main thread pumps replies."""
     answers: dict = {}
 
     def run() -> None:
@@ -582,11 +532,8 @@ def drive_on_worker(work, name: str, timeout: float = 30.0) -> dict:
 
 
 def leg_cli_transport_reaches_service(controller) -> None:
-    """The CLI's own transport, against the real service.
-
-    This object composes its own variants, addresses the app's well-known name
-    and carries the CLI timeout. It runs on a worker because call_sync blocks
-    and this thread must pump. Every request names a serial local to this run.
+    """Drive the CLI transport against the app's well-known service name.
+    Each request uses this scenario's serial and runs on a worker.
     """
     from src.backend import cli_forward
 
@@ -596,15 +543,14 @@ def leg_cli_transport_reaches_service(controller) -> None:
     transport = cli_forward.bus_transport()
 
     def drive(answers: dict) -> None:
-        answers["running"] = transport.is_running()
+        answers["running"] = transport.has_running_instance()
         answers["page"] = transport.change_page(SERIAL, "Alpha")
         # Read where the deck ended up before the next call moves it. The page
         # was loaded before the reply was sent, so this is settled.
         answers["after_page"] = active_name(controller)
         answers["bad_page"] = transport.change_page(SERIAL, "no-such-page")
-        # The switch to States loads its inputs on the media thread, so the
-        # state count settles a beat after the page does. See
-        # settle_state_change.
+        # The media thread settles the States input count after the page switch;
+        # settle_state_change waits for that count.
         answers["state"] = settle_state_change(
             lambda: transport.change_state(SERIAL, "States", "0,0", 1))
 
@@ -628,27 +574,22 @@ def leg_cli_transport_reaches_service(controller) -> None:
 
 
 def leg_instance_never_answers(controller) -> None:
-    """What the CLI says when the methods are not on the bus.
-
-    GDBus reports a missing object the same way it reports a missing method. A
-    build without the methods and an instance shutting down therefore look
-    alike. The name stays owned here and the top-level object goes off the bus.
+    """Check the CLI reply when the service object or method is absent.
+    GDBus reports both states alike while the service name stays owned.
     """
     from src.backend import cli_forward
 
-    # The class rather than bus_transport(), which is what every other caller
-    # uses. Phase 2 below drives _call directly, to reach a method name the
-    # public surface cannot ask for, and that needs the concrete object.
+    # Use the concrete class because phase 2 calls a method outside the public
+    # transport surface.
     transport = cli_forward._BusTransport()
     page_before = active_name(controller)
 
-    # Phase 1. The object is gone and the name is not, which is what a client
-    # meets while an instance tears down. The registrations are mutated here on
-    # the main context, as everything else that touches them does.
+    # Phase 1 removes the object but keeps the name, as during teardown.
+    # Mutate registrations on the main context.
     api._bus.unpublish_object(api.DBUS_OBJECT_PATH)
 
     def drive_missing_object(answers: dict) -> None:
-        answers["running"] = transport.is_running()
+        answers["running"] = transport.has_running_instance()
         # Drive the whole forwarding path, so the assertion covers the sentence
         # a person reads rather than a constant this file names.
         answers["failures"] = cli_forward.forward(
@@ -656,13 +597,14 @@ def leg_instance_never_answers(controller) -> None:
                              state_requests=[(SERIAL, "States", "0,0", 1)]),
             transport)
 
-    no_objects = drive_on_worker(drive_missing_object, "cli-transport-no-objects")
+    missing_object_results = drive_on_worker(
+        drive_missing_object, "cli-transport-no-objects"
+    )
 
     api._bus.publish_object(api.DBUS_OBJECT_PATH, api._api_instance)
 
-    # Phase 2. The genuinely older build has the object and not the method. The
-    # third case is a call the service refuses for another reason, which must
-    # not be mistaken for either.
+    # Phase 2 keeps the object but removes the method; a separate refusal must
+    # remain distinguishable from both missing-service cases.
     def drive_missing_method(answers: dict) -> None:
         try:
             transport._call("NoSuchMethod",
@@ -678,10 +620,12 @@ def leg_instance_never_answers(controller) -> None:
 
     older = drive_on_worker(drive_missing_method, "cli-transport-missing-method")
 
-    assert no_objects["running"] is True, (
+    assert missing_object_results["running"] is True, (
         "the name is owned -- an instance with nothing published looks exactly "
         "as running as any other, which is why this state is reachable")
-    assert no_objects["failures"] == [cli_forward.SKEW_MESSAGE], no_objects["failures"]
+    assert missing_object_results["failures"] == [cli_forward.SKEW_MESSAGE], (
+        missing_object_results["failures"]
+    )
     assert "older build" in cli_forward.SKEW_MESSAGE, cli_forward.SKEW_MESSAGE
     assert "shutting down" in cli_forward.SKEW_MESSAGE, (
         f"the state this leg just produced is also what tearing down looks "
@@ -710,9 +654,8 @@ def leg_instance_never_answers(controller) -> None:
 def run_legs(bus_address: str, controller, other) -> None:
     api.start_dbus_service()
     assert api._bus is not None, "the DBus service did not start"
-    # GApplication owns the app name in the running app. This stands in for it,
-    # so the CLI transport leg can address the name it addresses in the field
-    # rather than a unique connection name.
+    # Stand in for GApplication so the CLI addresses the well-known app name,
+    # not a unique connection name.
     api._bus.register_service(appinfo.APP_ID)
     observer = harness.Observer(bus_address, api._bus.connection.get_unique_name())
     client = Client(observer)

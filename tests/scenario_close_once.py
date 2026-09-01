@@ -1,8 +1,4 @@
-"""DeckController.close() must be idempotent under concurrent callers.
-
-The _closing transition is a locked compare-and-set under _close_lock. A
-one-shot read hook lets a second closer run inside the check-and-set window.
-"""
+"""Verify that concurrent DeckController.close() calls are idempotent."""
 import fixtures  # noqa: F401  (import first: sets up the isolated data dir)
 
 import threading
@@ -14,10 +10,7 @@ WATCHDOG_SECONDS = 60
 
 
 def hook_closing(controller):
-    """Swap in a subclass whose _closing is a property over the instance dict.
-
-    The property carries a one-shot read hook on a chosen thread.
-    """
+    """Install a one-shot hook on reads of the instance closing flag."""
     base = type(controller)
 
     class Hooked(base):
@@ -62,10 +55,8 @@ def main() -> None:
         second_done.set()
 
     def on_gate_read():
-        # The first closer just read _closing as False and has not set it yet,
-        # which is the check-and-set window. Let a second closer run here. With
-        # the lock it blocks on _close_lock until the first transition
-        # completes. Without it, the second closer runs the whole sweep now.
+        # Start the second closer inside the first closer's check-and-set window.
+        # The close lock must block it until the first transition completes.
         t = threading.Thread(target=second_closer, name="closer-2", daemon=True)
         t.start()
         time.sleep(0.4)
@@ -78,9 +69,11 @@ def main() -> None:
         controller.close(remove_media=True)
         result["done"] = True
 
-    t1 = threading.Thread(target=first_closer, name="closer-1", daemon=True)
-    t1.start()
-    t1.join(timeout=30)
+    first_closer_thread = threading.Thread(
+        target=first_closer, name="closer-1", daemon=True
+    )
+    first_closer_thread.start()
+    first_closer_thread.join(timeout=30)
     assert result.get("done"), "first close() never completed (deadlock?)"
     assert second_done.wait(timeout=10), "second close() never completed"
 

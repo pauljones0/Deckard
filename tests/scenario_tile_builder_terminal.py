@@ -1,16 +1,12 @@
-"""
-The tile-cache builder thread must terminate when a build cannot complete.
-
-_run_builder funnels every non-completing outcome through one terminal seam,
-is_build_terminal, and returns. A promote failure at end-of-source, a
-VideoWriter that never opens and a truncated source each drive that seam.
-"""
+"""Verify that is_build_terminal ends tile-cache builders after promotion,
+writer-open, or truncated-source failures."""
 
 # A bounded join detects a builder that busy-spins instead of returning.
 import fixtures  # noqa: F401  (import first: sets up the isolated data dir)
 
 import os
 import threading
+import time
 
 import cv2
 import numpy as np
@@ -34,18 +30,16 @@ def make_mp4(path: str, n_frames: int = 10, size=(64, 64)) -> str:
 
 
 def make_entry(cache_path: str):
-    entry = type("Entry", (), {})()
-    entry.path = cache_path
-    entry.stop_event = threading.Event()
+    # A real _TileCacheEntry, so the builder's finally that clears the handle
+    # and stamps a failure cooldown finds the fields it expects.
+    entry = mtc._TileCacheEntry(cache_path)
     entry.ready = False
     entry.refcount = 1
     return entry
 
 
 def run_builder_and_join(entry, source, out_size=(72, 72), saturation=1.0):
-    """Start the real _run_builder on its own thread and bound-join it. A
-    builder that busy-spins on a terminal build never returns, so is_alive
-    after the join catches it directly."""
+    """Start _run_builder and use a bounded join to detect a terminal spin."""
     t = threading.Thread(
         target=mtc._run_builder,
         args=(entry, source, out_size, saturation),
@@ -56,9 +50,7 @@ def run_builder_and_join(entry, source, out_size=(72, 72), saturation=1.0):
     return t
 
 
-# Leg 1. A promote failure. The cache path is a directory, so the os.replace
-# at end-of-source raises OSError and the capture is released without
-# completion, which is the terminal state.
+# A directory at the cache path makes end-of-source promotion fail.
 def leg_promote_failure() -> int:
     source = make_mp4(os.path.join(gl.DATA_PATH, "source_promote.mp4"))
 
@@ -79,9 +71,7 @@ def leg_promote_failure() -> int:
     return 0
 
 
-# Leg 2. A VideoWriter that never opens. _end_of_source then runs with
-# _writer None and promotes nothing, so the cache never completes and the
-# source capture is released. A stub whose isOpened is False forces it.
+# A writer that never opens leaves no cache to promote.
 class _DeadWriter:
     def isOpened(self):
         return False
@@ -103,9 +93,7 @@ def leg_writer_open_fail() -> int:
     real_video_writer = mtc.cv2.VideoWriter
 
     def fake_video_writer(*a, **k):
-        # Only the builder's write-cache VideoWriter goes through this call
-        # site in _open_source; return a never-opened writer so _writer stays
-        # None (the real "could not open tile cache writer" branch).
+        # Keep the builder's cache writer unopened.
         return _DeadWriter()
 
     mtc.cv2.VideoWriter = fake_video_writer
@@ -129,19 +117,9 @@ def leg_writer_open_fail() -> int:
     return 0
 
 
-# Leg 3. A truncated source. The container metadata promises N frames but the
-# file delivers fewer. Byte-truncating an mp4v file is all-or-nothing here
-# (the moov atom sits in the trailing bytes, so any truncation that drops
-# sample data also drops the frame-count metadata, so the file does not open
-# and takes the n_frames path this file already covers rather than the
-# terminal seam). The truncation is modelled at the capture seam. A capture
-# that opens and reports a positive CAP_PROP_FRAME_COUNT but whose read fails
-# at once, as a source truncated to its header does. _end_of_source then
-# releases the capture with nothing written and nothing promoted, which is
-# the terminal state.
+# Model a source whose metadata promises frames but whose first read fails.
 class _TruncatedCapture:
-    """A cv2.VideoCapture stand-in for a source whose metadata over-promises.
-    It opens and reports PROMISED frames, and read() never succeeds."""
+    """Report promised frames from an open capture whose reads always fail."""
 
     PROMISED = 60
 
@@ -183,9 +161,7 @@ def leg_truncated_source() -> int:
     def fake_capture(*a, **k):
         return _TruncatedCapture()
 
-    # The writer would open fine, but with zero readable source frames nothing
-    # is ever written; still, stub it so no real encoder file is touched and
-    # The _frames_written branch of _end_of_source is provably not taken.
+    # Avoid a real encoder file and keep the written-frame count at zero.
     mtc.cv2.VideoCapture = fake_capture
     mtc.cv2.VideoWriter = lambda *a, **k: _DeadWriter()
     try:
@@ -210,6 +186,102 @@ def leg_truncated_source() -> int:
     return 0
 
 
+def leg_failed_builder_is_retryable() -> int:
+    # Construction failure must clear the handle and apply a retry cooldown.
+    source = make_mp4(os.path.join(gl.DATA_PATH, "source_retry.mp4"))
+    out_size = (72, 72)
+    real_ctor = mtc.KeyVideoCache
+    calls = {"n": 0}
+
+    def failing_ctor(*a, **k):
+        # Fail only the builder construction; the reader construction (the
+        # acquire return) must still work, so gate on is_builder.
+        if k.get("is_builder"):
+            calls["n"] += 1
+            raise RuntimeError("injected builder construction failure")
+        return real_ctor(*a, **k)
+
+    # Shrink the retry cooldown so the retry lands inside the scenario.
+    real_cooldown = mtc._BUILD_RETRY_COOLDOWN_S
+    mtc._BUILD_RETRY_COOLDOWN_S = 0.3
+    mtc.KeyVideoCache = failing_ctor
+    # acquire() gates on the cache-videos setting, which reads a settings
+    # manager this scenario does not install. Force it on for the leg.
+    real_enabled = mtc.cache_videos_enabled
+    mtc.cache_videos_enabled = lambda: True
+    readers = []
+    try:
+        readers.append(mtc.acquire(source, out_size))
+        # The builder ran and failed; wait for it to clear its handle.
+        key = mtc._registry_key(source, out_size, 1.0)
+        entry = mtc._registry[key]
+        for _ in range(200):
+            if entry.builder_thread is None and calls["n"] >= 1:
+                break
+            time.sleep(0.01)
+        if entry.builder_thread is not None:
+            print("FAIL(retry): a failed builder left its handle set, so no "
+                  "acquire can restart it")
+            return 1
+        if entry.last_build_failure == 0.0:
+            print("FAIL(retry): a failed build did not stamp the cooldown")
+            return 1
+
+        # Within the cooldown, a second acquire does not restart the builder.
+        before = calls["n"]
+        readers.append(mtc.acquire(source, out_size))
+        if calls["n"] != before:
+            print("FAIL(retry): the cooldown did not hold off the retry")
+            return 1
+
+        # After the cooldown, a fresh acquire retries the build.
+        time.sleep(0.35)
+        readers.append(mtc.acquire(source, out_size))
+        for _ in range(200):
+            if calls["n"] > before:
+                break
+            time.sleep(0.01)
+        if calls["n"] <= before:
+            print("FAIL(retry): the builder never retried after the cooldown")
+            return 1
+    finally:
+        mtc.KeyVideoCache = real_ctor
+        mtc._BUILD_RETRY_COOLDOWN_S = real_cooldown
+        mtc.cache_videos_enabled = real_enabled
+        for reader in readers:
+            mtc.release(reader)
+    print("PASS(retry): a failed builder clears its handle and retries after a cooldown")
+    return 0
+
+
+def leg_lingering_list_prunes() -> int:
+    # A finished builder thread must not sit in the lingering list until quit.
+    mtc._lingering_builders.clear()
+    dead = threading.Thread(target=lambda: None)
+    dead.start()
+    dead.join()
+    mtc._lingering_builders.append(dead)
+
+    # A live builder that outlives its join triggers the prune on append.
+    hold = threading.Event()
+    live = threading.Thread(target=lambda: hold.wait(5))
+    live.start()
+    try:
+        mtc._join_builder(live, timeout=0.05)  # outlives the join -> appended, prunes dead
+        if dead in mtc._lingering_builders:
+            print("FAIL(prune): a finished builder was not pruned on append")
+            return 1
+        if live not in mtc._lingering_builders:
+            print("FAIL(prune): the live builder was not recorded")
+            return 1
+    finally:
+        hold.set()
+        live.join(timeout=5)
+        mtc._lingering_builders.clear()
+    print("PASS(prune): the lingering list prunes finished builders on append")
+    return 0
+
+
 def main() -> int:
     start_watchdog(40, "tile_builder_terminal")
 
@@ -217,6 +289,8 @@ def main() -> int:
     rc |= leg_promote_failure()
     rc |= leg_writer_open_fail()
     rc |= leg_truncated_source()
+    rc |= leg_failed_builder_is_retryable()
+    rc |= leg_lingering_list_prunes()
     if rc == 0:
         print("PASS: scenario_tile_builder_terminal")
     return rc

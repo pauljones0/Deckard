@@ -40,9 +40,8 @@ class Wayland:
 
         gl.signal_manager.connect_signal(AppQuit, self.__on_quit)
 
-        # The wayland package ships a stub for code completion only. That stub
-        # declares each event as a plain function. At run time each event is an
-        # object that adds a handler with +=.
+        # The completion stub declares events as functions, but runtime events
+        # are objects that add handlers with +=.
         wayland.wl_registry.events.global_ += self.__on_wl_registry_global  # ty: ignore[unsupported-operator]
         wayland.hyprland_lock_notification_v1.events.locked += self.__on_lock  # ty: ignore[unsupported-operator]
         wayland.hyprland_lock_notification_v1.events.unlocked += self.__on_unlock  # ty: ignore[unsupported-operator]

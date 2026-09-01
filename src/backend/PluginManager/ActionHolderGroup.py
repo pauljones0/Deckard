@@ -45,10 +45,8 @@ class ActionHolderGroup:
             
     
     def get_action_holders_with_min_action_input_support(self, identifier: InputIdentifier, action_input_support: ActionInputSupport) -> set[ActionHolder]:
-        # Compatibility is per input, so the caller passes the identifier to
-        # weigh against. get_input_compatibility keys action_support by the
-        # identifier's type; a holder's action_id string would never match a
-        # key and would read UNSUPPORTED for every holder.
+        # Compatibility keys by input type, so an action-id string would make
+        # every holder read as UNSUPPORTED.
         action_holders: set[ActionHolder] = set()
         for action_holder in self._action_holders:
             if action_holder.get_input_compatibility(identifier) >= action_input_support:

@@ -58,23 +58,11 @@ class CustomAssetChooser(ChooserPage):
     def build(self) -> None:
         self.build_finished = False
         try:
-            # The whole GTK construction runs on the main loop. A build of
-            # the flow box, which holds one page of AssetPreviews, and of the
-            # button on this worker thread is the off-main GTK crash class.
-            # One pause when the tab opens costs less than a segfault. Only
-            # the build bookkeeping stays on the thread.
+            # Build every GTK object on the main loop; only bookkeeping stays here
             def _build_ui() -> None:
                 self.asset_chooser = CustomAssetChooserFlowBox(self)
-                # Append to main_box, as the wallpaper, SD+ bar and icon
-                # choosers do, and not into the outer ScrolledWindow of
-                # ChooserPage. A ScrolledWindow sizes its child to the natural
-                # height and never stretches it, which collapses a nested
-                # grid, and the flow box brings its own ScrolledWindow and
-                # pagination. As a direct main_box child, its own scroller
-                # fills the available height. The default scrolled_window also
-                # has to go, as it does in the sibling choosers, because an
-                # empty vexpand=True child competes for the page height and
-                # squeezes the grid.
+                # Use the flow's own scroller directly so it fills the page
+                # The default expanding scroller would compete for height
                 self.main_box.remove(self.scrolled_window)
                 self.main_box.append(self.asset_chooser)
 
@@ -86,23 +74,13 @@ class CustomAssetChooser(ChooserPage):
 
             self.load_defaults()
         finally:
-            # Always dismiss the spinner. Without this finally, log.catch
-            # swallows an exception from the code above, set_loading(False)
-            # never runs, and the Custom Assets page loads forever. log.catch
-            # stays, because this finally runs first, and the exception then
-            # reaches it and gets logged.
+            # Always stop loading before log.catch records a build failure
             self.set_loading(False)
 
             self._finish_build()
 
     def _finish_build(self) -> None:
-        """Set build_finished and snapshot the deferred-task queue in one step.
-
-        show_for_path reads the flag and appends under the same lock. A caller
-        that read build_finished as False therefore cannot add its task after
-        this drain took the snapshot. Such a task would stay in the list, and
-        the requested path would never show.
-        """
+        """Set completion and drain deferred tasks under the same lock."""
         with self._build_tasks_lock:
             self.build_finished = True
             tasks = list(self.build_task_finished_tasks)
@@ -126,19 +104,14 @@ class CustomAssetChooser(ChooserPage):
         return True
     
     def add_asset(self, asset: dict[str, Any]) -> None:
-        # asset_chooser.items is the same live list object as the one in
-        # gl.asset_manager_backend, so it already holds the new asset. Only
-        # the recycler needs a re-render. This can run off the main thread,
-        # from the worker of add_custom_media_set_by_ui, so it marshals.
+        # The shared live list already holds the asset; marshal only its re-render
         chooser = self.asset_chooser
         if chooser is None:
             return
         GLib.idle_add(chooser.refresh)
 
     def add_files(self, files: Iterable[Any]) -> None:
-        # The window that owns the cursor can be gone when a drop or a
-        # file-dialog callback lands, because AssetManager.on_close nulls
-        # gl.asset_manager. Skip the busy cursor then, and still add the files.
+        # A late drop or dialog callback still adds files after the window closes
         asset_manager = gl.asset_manager
         if asset_manager is not None:
             asset_manager.set_cursor_from_name("wait")
@@ -165,9 +138,7 @@ class CustomAssetChooser(ChooserPage):
 
         with self._build_tasks_lock:
             if not self.build_finished:
-                # Defer under the same lock that _finish_build drains with.
-                # The task either reaches the snapshot, or it reads the flag
-                # as True here and dispatches at once.
+                # The shared lock puts the task in the drain or after completion
                 self.build_task_finished_tasks.append(show_now)
                 return
         show_now()
@@ -205,7 +176,7 @@ class CustomAssetChooser(ChooserPage):
             self.asset_chooser.refresh()
             # The refresh is the render, so this page is current with the
             # entry and needs no catch-up the next time it shows.
-            self.search_rendered(query)
+            self.record_rendered_query(query)
 
     def on_browse_files_clicked(self, button: Gtk.Button) -> None:
         ChooseFileDialog(self) #TODO: Change to Xdp Portal call

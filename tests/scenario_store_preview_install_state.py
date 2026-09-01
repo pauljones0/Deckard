@@ -1,12 +1,4 @@
-"""
-A store preview button must not read "installed" after a failed download.
-
-The one data-only preview install() checks the StoreResult, notifies on an Err,
-and leaves the button in its previous state so the user can retry. Each asset
-class reaches it through its own descriptor, so every check below drives the
-same method over the descriptor of one class. The preview runs unbound over a
-duck-typed self.
-"""
+"""Keep preview install state unchanged after failed descriptor-driven installs."""
 
 # An Err is truthy, so the protocol is narrowing on the result type rather than
 # a truthiness check.
@@ -41,16 +33,7 @@ def pump_main_context(rounds: int = 50) -> None:
 
 
 def _install_stub(descriptor, install_result):
-    """A stand-in for one backend install method, with its real signature.
-
-    A stub that swallowed every call shape would hide the trap this scenario
-    now covers. install_icon takes icon_data, install_wallpaper takes
-    wallpaper_data, and install_sd_plus_bar_wallpaper takes
-    sd_plus_bar_wallpaper_data. A shared install written with any one of those
-    keywords works for that class and raises TypeError for the rest. Binding
-    the call against the real signature raises here exactly where the real
-    backend would.
-    """
+    """Bind calls against the selected backend install method's real signature."""
     import inspect
 
     from src.backend.Store.StoreBackend import StoreBackend
@@ -114,7 +97,7 @@ def _check_failed_install_preserves_state(descriptor, data, err, label) -> None:
     print(f"PASS: {label} preview keeps its state and notifies on a failed install")
 
 
-def check_icon_preview_404() -> None:
+def check_icon_install_failure_preserves_state() -> None:
     data = IconData(github="https://github.com/a/Icons", icon_id="com_a_Icons",
                     icon_name="Test Icons")
     _check_failed_install_preserves_state(
@@ -130,7 +113,7 @@ def check_wallpaper_preview_offline() -> None:
         Err(ErrReason.NO_CONNECTION, "offline"), "wallpaper")
 
 
-def check_sd_plus_preview_400() -> None:
+def check_sd_plus_invalid_asset_preserves_state() -> None:
     data = SDPlusBarWallpaperData(github="https://github.com/c/SDPlus", id="com_c_SDPlus",
                                   name="Test SDPlus")
     _check_failed_install_preserves_state(
@@ -138,16 +121,8 @@ def check_sd_plus_preview_400() -> None:
         Err(ErrReason.INVALID_ASSET, "400-shaped"), "SD+ bar wallpaper")
 
 
-def check_install_rows_bind_against_the_real_backend() -> None:
-    """Every row's install method must take the record the shared install
-    passes it.
-
-    The stub above answers any call shape, so it cannot see a call the real
-    backend would refuse. A keyword call is the trap: install_icon takes
-    icon_data, install_wallpaper takes wallpaper_data, and a shared install
-    written with either name works for one class and raises TypeError for the
-    other three. This binds the row against the real signature instead.
-    """
+def check_install_descriptors_match_backend_signatures() -> None:
+    """Bind each descriptor record positionally against its real backend method."""
     import inspect
 
     from src.backend.Store.StoreBackend import StoreBackend
@@ -162,8 +137,7 @@ def check_install_rows_bind_against_the_real_backend() -> None:
 
 
 def check_icon_preview_success_flips_installed() -> None:
-    """A successful install still flips the button. An Ok(None) reaches the
-    idle-marshalled set_install_state, which this check pumps."""
+    """Pump the idle-marshalled state change after an Ok install result."""
     from src.windows.Store.AssetPage import StoreAssetPreview
 
     data = IconData(github="https://github.com/a/Icons", icon_id="com_a_Icons",
@@ -181,10 +155,7 @@ def check_icon_preview_success_flips_installed() -> None:
     print("PASS: icon preview flips to installed on a successful install")
 
 
-# The dependency branches of the shared install. A backend without
-# get_manifest sends every resolution down the "manifest unreadable" arm, so
-# the checks above only ever drive the zero-dependency path. These build a
-# backend that answers a manifest, so the real set is resolved.
+# Supply readable manifests to exercise dependency-set branches of the shared install.
 
 PINNED_SHA = "0" * 40
 
@@ -218,7 +189,7 @@ def _dependency_backend(install_results: dict):
     return backend, root, installed
 
 
-def _fake_over(backend, descriptor, data):
+def _make_preview_fake(backend, descriptor, data):
     state = {"install_state": 0, "set_calls": [], "notified": 0}
 
     def set_install_state(s):
@@ -248,8 +219,8 @@ class _SetConsentPatch:
     def __enter__(self):
         import src.windows.Store.install_consent as consent
         self._module = consent
-        self._original = consent.make_set_consent
-        consent.make_set_consent = lambda parent: self._ask
+        self._original = consent.make_dependency_consent
+        consent.make_dependency_consent = lambda parent: self._ask
         return self
 
     def _ask(self, root_name, plan):
@@ -257,7 +228,7 @@ class _SetConsentPatch:
         return self.agree
 
     def __exit__(self, *exc):
-        self._module.make_set_consent = self._original
+        self._module.make_dependency_consent = self._original
         return False
 
 
@@ -279,7 +250,7 @@ def check_declined_set_notifies_nothing() -> None:
 
     backend, root, installed = _dependency_backend(
         {"com.test.Root": Ok(None), "com.test.Dep": Ok(None)})
-    fake, state = _fake_over(backend, asset_types.PLUGIN, root)
+    fake, state = _make_preview_fake(backend, asset_types.PLUGIN, root)
 
     recorder = _NotifyRecorder()
     original_notify = getattr(gl, "notify", None)
@@ -312,7 +283,7 @@ def check_mid_set_failure_names_what_landed() -> None:
     backend, root, installed = _dependency_backend(
         {"com.test.Dep": Ok(None),
          "com.test.Root": Err(ErrReason.NO_CONNECTION, "offline")})
-    fake, state = _fake_over(backend, asset_types.PLUGIN, root)
+    fake, state = _make_preview_fake(backend, asset_types.PLUGIN, root)
 
     recorder = _NotifyRecorder()
     original_notify = getattr(gl, "notify", None)
@@ -341,7 +312,7 @@ def check_mid_set_failure_names_what_landed() -> None:
     print("PASS: a part-installed set names what stays installed")
 
 
-def check_a_failed_pack_under_a_plugin_is_titled_as_a_pack() -> None:
+def check_failed_pack_uses_pack_failure_title() -> None:
     """A plugin can need an icon pack. If that pack is what failed, calling
     it a plugin install failure names the wrong thing."""
     from src.windows.Store.AssetPage import StoreAssetPreview
@@ -370,7 +341,7 @@ def check_a_failed_pack_under_a_plugin_is_titled_as_a_pack() -> None:
         get_all_wallpapers=lambda include_images=True: Ok([]),
         get_all_sd_plus_bar_wallpapers=lambda include_images=True: Ok([]),
     )
-    fake, state = _fake_over(backend, asset_types.PLUGIN, root)
+    fake, state = _make_preview_fake(backend, asset_types.PLUGIN, root)
 
     recorder = _NotifyRecorder()
     original_notify = getattr(gl, "notify", None)
@@ -394,14 +365,14 @@ def check_a_failed_pack_under_a_plugin_is_titled_as_a_pack() -> None:
 
 def main() -> None:
     fixtures.start_watchdog(WATCHDOG_SECONDS, label="scenario_store_preview_install_state")
-    check_icon_preview_404()
+    check_icon_install_failure_preserves_state()
     check_wallpaper_preview_offline()
-    check_sd_plus_preview_400()
-    check_install_rows_bind_against_the_real_backend()
+    check_sd_plus_invalid_asset_preserves_state()
+    check_install_descriptors_match_backend_signatures()
     check_icon_preview_success_flips_installed()
     check_declined_set_notifies_nothing()
     check_mid_set_failure_names_what_landed()
-    check_a_failed_pack_under_a_plugin_is_titled_as_a_pack()
+    check_failed_pack_uses_pack_failure_title()
     print("scenario_store_preview_install_state: PASS")
 
 

@@ -12,9 +12,8 @@ if TYPE_CHECKING:
 
     from src.backend.DeckManagement.Media.Media import Media
 
-    # The page classes of the settings window, IconPage and ColorPage, and
-    # not the plugin list page of the same name in src/windows/Settings. A
-    # runtime import cycles, because PluginSettingsWindow imports this module.
+    # Import the asset page type only for checking; a runtime import cycles
+    # through PluginSettingsWindow.
     from src.windows.Settings.PluginSettingsWindow.PluginSettingsWindow import PluginSettingsPage
 
 class AssetPreview(Gtk.FlowBoxChild):
@@ -70,9 +69,7 @@ class IconPreview(AssetPreview):
         self.build()
 
     def scale_pixbuf(self) -> "GdkPixbuf.Pixbuf | None":
-        # image2pixbuf answers None for an image GdkPixbuf will not take, and
-        # set_pixbuf(None) clears the picture, which is what an unusable asset
-        # should show.
+        # A failed pixbuf conversion returns None and clears the unusable asset.
         if self.pixbuf is None:
             return None
         original_width = self.pixbuf.get_width()

@@ -1,8 +1,4 @@
-"""A refused asset import must never return something shaped like a path.
-
-add_custom_media_set_by_ui answers None for a url with no supported media,
-and handle_file_drop treats None, -1 and the empty string all as refusals.
-"""
+"""Verify refused imports return None and file drops reject non-path sentinels."""
 import fixtures  # noqa: F401  (must be first: isolates DATA_PATH)
 
 import types

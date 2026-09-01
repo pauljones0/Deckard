@@ -1,25 +1,11 @@
-"""The page editor commits a window rule and applies it at once.
-
-The title and wm-class rows commit their text on Enter or on the apply button.
-A user who types a pattern and then clicks elsewhere left it in the widget
-alone, and the page kept the pattern it had. Every edit must also ask the
-window grabber to re-check the window in front, or the rule takes effect at
-the next window change only.
-
-Closing the window is the other end of that. The rows hold handlers that would
-fire while the widgets go away, so the editor commits what the entries hold
-and drops every handler before the window destroys it.
-"""
+"""Verify window-rule commits, immediate rechecks, and close cleanup."""
 
 import fixtures  # noqa: F401  (must be first: isolates DATA_PATH)
 import globals as gl
 
 
 class StubWindowGrabber:
-    """Counts what the editor asks of the window grabber.
-
-    The real one probes the desktop and loads pages on a background thread.
-    """
+    """Count editor requests without probing the desktop."""
 
     def __init__(self):
         self.rechecks = 0
@@ -48,11 +34,11 @@ def _rule(page_path: str) -> dict:
     return gl.page_manager.get_auto_change_settings(page_path)
 
 
-def check_focus_leave_commits_typed_text(group, page_path, grabber) -> None:
+def check_focus_leave_commit(group, page_path, grabber) -> None:
     """Typed text that the focus leaves behind must reach the page."""
     before = grabber.rechecks
     group.title_entry.set_text("Mozilla Firefox")
-    group.title_focus.emit("leave")
+    group.title_focus_controller.emit("leave")
 
     assert _rule(page_path).get("title") == "Mozilla Firefox", (
         f"the title the user typed was left in the widget when the focus "
@@ -64,7 +50,7 @@ def check_focus_leave_commits_typed_text(group, page_path, grabber) -> None:
 
     before = grabber.rechecks
     group.wm_class_entry.set_text("firefox")
-    group.wm_class_focus.emit("leave")
+    group.wm_class_focus_controller.emit("leave")
 
     assert _rule(page_path).get("wm-class") == "firefox", (
         f"the wm-class the user typed never reached the page: {_rule(page_path)}"
@@ -72,19 +58,14 @@ def check_focus_leave_commits_typed_text(group, page_path, grabber) -> None:
     assert grabber.rechecks == before + 1
 
 
-def check_focus_leave_without_an_edit_rechecks_only(group, page_path, grabber) -> None:
-    """A leave that carries no edit writes nothing, and still re-checks.
-
-    A write per leave would re-gate the watcher and re-apply every rule. The
-    re-check stays, because the focus leaving the entry is often the window
-    the rule names coming to the front, and a user who committed with Enter
-    would otherwise see nothing happen at that moment.
-    """
+def check_unchanged_focus_leave(group, page_path, grabber) -> None:
+    """Do not write unchanged text because that re-gates and reapplies every rule.
+    Still recheck because focus leave can bring the named window forward after Enter."""
     rechecks_before = grabber.rechecks
     gate_passes_before = grabber.gate_passes
 
-    group.title_focus.emit("leave")
-    group.wm_class_focus.emit("leave")
+    group.title_focus_controller.emit("leave")
+    group.wm_class_focus_controller.emit("leave")
 
     assert grabber.gate_passes == gate_passes_before, (
         "a focus leave that carries no edit must not write the page"
@@ -116,33 +97,26 @@ def check_toggles_recheck(group, page_path, grabber) -> None:
     )
 
 
-def check_editor_without_a_grabber(group, page_path) -> None:
+def check_editor_without_grabber(group, page_path) -> None:
     """A headless run has no window grabber, and an edit must still reach the
     page rather than raise out of a GTK handler."""
     grabber = gl.window_grabber
     gl.window_grabber = None
     try:
         group.title_entry.set_text("Firefox Nightly")
-        group.title_focus.emit("leave")
+        group.title_focus_controller.emit("leave")
 
         assert _rule(page_path).get("title") == "Firefox Nightly", (
             f"the commit must not depend on a window grabber being there, "
             f"got {_rule(page_path)}"
         )
-        group.title_focus.emit("leave")
+        group.title_focus_controller.emit("leave")
     finally:
         gl.window_grabber = grabber
 
 
-def check_window_close_commits_and_disconnects(window, editor, page_path, grabber) -> None:
-    """Closing the window is the last chance for text nobody applied, and the
-    last moment a row handler may run.
-
-    The handlers outlive the load that connected them, because a window that
-    closes loads no further page, so the close has to drop them itself. One
-    left connected fires while the widgets go away and queues a
-    matching-window refresh that lands on an idle after that.
-    """
+def check_window_close_cleanup(window, editor, page_path, grabber) -> None:
+    """Commit pending text and disconnect row handlers before window teardown."""
     group = editor.auto_change_group
     group.title_entry.set_text("Thunderbird")
     rechecks_before = grabber.rechecks
@@ -162,8 +136,8 @@ def check_window_close_commits_and_disconnects(window, editor, page_path, grabbe
     rechecks_before = grabber.rechecks
     gate_passes_before = grabber.gate_passes
     group.title_entry.set_text("Deckard")
-    group.title_focus.emit("leave")
-    group.wm_class_focus.emit("leave")
+    group.title_focus_controller.emit("leave")
+    group.wm_class_focus_controller.emit("leave")
     group.enable_toggle.set_active(False)
 
     assert grabber.rechecks == rechecks_before, (
@@ -210,11 +184,11 @@ def main() -> None:
         "the seeded page must start with no window rule at all"
     )
 
-    check_focus_leave_commits_typed_text(group, page_path, grabber)
-    check_focus_leave_without_an_edit_rechecks_only(group, page_path, grabber)
+    check_focus_leave_commit(group, page_path, grabber)
+    check_unchanged_focus_leave(group, page_path, grabber)
     check_toggles_recheck(group, page_path, grabber)
-    check_editor_without_a_grabber(group, page_path)
-    check_window_close_commits_and_disconnects(window, editor, page_path, grabber)
+    check_editor_without_grabber(group, page_path)
+    check_window_close_cleanup(window, editor, page_path, grabber)
 
     print("PASS: scenario_page_editor_window_rules")
 

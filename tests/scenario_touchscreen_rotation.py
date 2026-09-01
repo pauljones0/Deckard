@@ -1,25 +1,16 @@
-"""The strip composite reaches the device in the device's orientation.
+"""Verify native strip orientation with a non-symmetric 800 by 100 image and
+loss-tolerant corner brightness checks.
 
-The keys are turned on the producer side, in _to_rotated_rgb, before the
-JPEG encode. The strip is turned in the same place, in _encode_strip_native,
-so what the media thread writes is already what the device expects and no
-consumer below it holds a second copy of the rule.
-
-The legs encode a strip with a bright block in one corner, decode the bytes
-back and ask which of the four corners the block came out in. The block is
-shorter than the strip is tall, so a half turn moves it on both axes: a
-mirror on one axis alone lands it in a corner the checks call wrong. JPEG is
-lossy, so each leg compares corner means with a wide margin instead of exact
-pixels.
-
-The composite is drawn in the frame the user sees, so on a quarter-turned
-deck it is the transpose of the device's buffer and the turn expands it back
-into that buffer. A last leg pins the unturned bytes against a fixture the
-scenario builds itself, so the turn cannot creep into that path.
-
-Deck shape, stated once so a configurable fake deck can adopt it later: an
-800 by 100 strip, which is the Stream Deck + shape the fake deck models.
-"""
+The keys turn on the producer side in _to_rotated_rgb and the strip in
+_encode_strip_native, so the media thread writes what the device expects and
+no consumer below it holds a second copy of the rule. Each leg encodes a strip
+with a bright corner block shorter than the strip is tall, so a half turn moves
+it on both axes and a one-axis mirror lands in a corner the checks refuse; JPEG
+is lossy, so legs compare corner means with a wide margin. On a quarter-turned
+deck the composite is the device buffer's transpose and the turn expands it
+back into that buffer; a last leg pins the unturned bytes against a fixture the
+scenario builds itself. The 800 by 100 strip is the Stream Deck + shape the
+fake deck models."""
 import fixtures  # noqa: F401  (import first: sets up the isolated data dir)
 
 import io
@@ -33,10 +24,7 @@ from src.backend.DeckManagement.deck_controller.native_encode import _encode_str
 
 ROTATIONS = (0, 90, 180, 270)
 STRIP_SIZE = (800, 100)
-# The bright block, and the corner box each leg averages over. The box is the
-# block, so a correct turn puts the whole block inside exactly one box. The
-# block is deliberately not as tall as the strip: a block of full height
-# cannot tell a half turn from a left-to-right mirror.
+# A short block distinguishes a half turn from a horizontal mirror.
 BLOCK_W, BLOCK_H = 100, 40
 
 
@@ -128,18 +116,13 @@ def check_strip_pixels(mode: str) -> int:
         decoded.close()
         strip.close()
 
-        # Where the block ends up on the device, read off a turned deck. The
-        # composite's own top-left corner is the one the user sees at the top
-        # left, and it comes to lie wherever the turn carries it.
-        #
+        # Where the block lands on the device, read off a turned deck: the
+        # composite's top-left corner comes to lie wherever the turn carries it.
         # 0: nowhere, so the top-left.
-        # 180: the opposite corner, moved on both axes, because the deck is
-        #      upside down under the user's hand. A mirror on one axis alone
-        #      puts it in the top-right or the bottom-left, which the dark
-        #      checks below refuse.
-        # 90: the deck was turned a quarter turn clockwise, so the composite
-        #     is turned back counter-clockwise and the top-left corner swings
-        #     down to the bottom-left of the device's own strip.
+        # 180: the opposite corner, moved on both axes; a one-axis mirror lands
+        #      top-right or bottom-left, which the dark checks below refuse.
+        # 90: the clockwise quarter turn is cancelled counter-clockwise, so the
+        #     top-left corner swings down to the device's bottom-left.
         # 270: the same turn the other way, so it swings up to the top-right.
         lit = {0: "top_left", 90: "bottom_left", 180: "bottom_right",
                270: "top_right"}[rotation]
@@ -198,9 +181,7 @@ def check_rotation_zero_bytes() -> int:
 def main() -> int:
     start_watchdog(60, "touchscreen_rotation")
     fixtures.install_stub_globals()
-    # Both composite modes: a page with transparency composites RGBA, a
-    # background video hands over RGB. The RGB leg is the one that must not
-    # close the caller's own image.
+    # Cover transparent RGBA composites and RGB video frames.
     rc = check_strip_pixels("RGBA")
     rc |= check_strip_pixels("RGB")
     rc |= check_rotation_zero_bytes()

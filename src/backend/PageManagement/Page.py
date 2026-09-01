@@ -27,6 +27,7 @@ import globals as gl
 
 from src.backend.PluginManager.ActionCore import ActionCore
 from src.backend.DeckManagement.InputIdentifier import Input, InputEvent, InputIdentifier
+from src.backend.DeckManagement.media_loop import MEDIA_LOOP_FPS
 from typing import cast, Any, Iterator, TYPE_CHECKING
 if TYPE_CHECKING:
     from src.backend.DeckManagement.deck_controller.controller import DeckController
@@ -39,14 +40,12 @@ if TYPE_CHECKING:
 # annotation there reaches the builtin through this alias.
 _Dict = dict
 
-# The frame-rate cap a state's media and background load under when the page
-# carries no fps key: the media loop's own tick ceiling, so no cap at all.
-# MediaConfig.from_dict applies the same default when it reads the page dict.
-DEFAULT_MEDIA_FPS = 30
+# A missing fps key uses the media-loop ceiling, which applies no lower cap.
+# MediaConfig.from_dict uses the same default.
+DEFAULT_MEDIA_FPS = MEDIA_LOOP_FPS
 
-# The action-objects registry: input type -> json identifier -> state ->
-# index -> the action, a placeholder for an unresolved or outdated one, or
-# None for an empty slot.
+# Registry path: input type -> JSON identifier -> state -> index.
+# A leaf is an action, an unresolved or outdated placeholder, or an empty slot.
 ActionObjects = _Dict[str, _Dict[str, _Dict[int, _Dict[int, "ActionCore | NoActionHolderFound | ActionOutdated | None"]]]]
 
 
@@ -57,54 +56,36 @@ class Page:
         self.json_path = json_path
         self.deck_controller = deck_controller
 
-        # The content of the page file, shared with every other Page on this
-        # path. Bound before load() below, which is the first thing to read
-        # through it.
+        # Share one page document for this path and bind it before load() reads it.
         self._document = page_document.document_for(json_path)
 
         # The action objects, kept so a reload can reuse them. Keyed
         # input_type -> json_identifier -> state -> index -> action.
         self.action_objects: ActionObjects = {}
 
-        # Serializes the on_ready_called claim in initialize_actions. That
-        # method runs outside _load_page_lock, because it can block on a
-        # run_on_main marshal. Two concurrent load_page calls for one page
-        # otherwise both read the flag as False and submit a second on_ready.
+        # Serialize the ready claim because initialize_actions runs outside _load_page_lock.
+        # Concurrent page loads must not submit on_ready twice.
         self._ready_claim_lock = threading.Lock()
 
-        self.load(load_from_file=True) #TODO: Limit the load of action objects to the available inputs
+        self.load(load_from_file=True)
 
     @property
     def dict(self) -> _Dict[str, Any]:
-        """This page's content, straight from the document that owns it.
-
-        There is no setter. Every Page on a path holds the one dict the
-        document has, so an assignment here gives this Page a copy nobody else
-        sees. Mutate what this returns. To replace the whole content, refresh
-        the document.
-        """
+        """Return the shared content of this page's document.
+        Mutate this dict, or refresh the document to replace all content."""
         return self._document.data
 
     def rebind_document(self, document: "page_document.PageDocument") -> None:
-        """Read through document from now on.
-
-        For a page rename, the one operation that changes which file a live
-        Page belongs to. The rename re-points json_path in place and calls
-        this. A Page minted under the old name during the rename then shares
-        the content of every other Page of the renamed page.
-        """
+        """Read through document after a page rename.
+        This keeps Pages created during the rename on the shared content."""
         self._document = document
 
     def get_name(self) -> str:
         return os.path.splitext(os.path.basename(self.json_path))[0]
 
     def update_dict(self) -> None:
-        """Update the dict and leave the action objects alone.
-
-        Do not call this after a change to the action objects. The refresh
-        lands in the document, so every deck on this page gets it, and it
-        overwrites an unsaved edit made through any of them. A mutator
-        therefore saves in the call that mutates.
+        """Refresh shared content from disk without changing action objects.
+        Call only before action-object changes; this replaces every Page's unsaved content.
         """
         self._document.refresh_from_disk()
 
@@ -118,61 +99,33 @@ class Page:
         log.debug(f"Loaded page {self.get_name()} in {end - start:.2f} seconds")
 
     def save(self) -> None:
-        # Record the edit and arm the write. The flush seam owns the per-path
-        # lock, the write and its time. A trailing timer makes a burst of
-        # edits cost one write. Every reader sees the in-memory change already, so
-        # only the disk waits. A page switch, a deck close, a quit and a read
-        # of the page file each ask the seam to write now.
+        # Mark the shared content dirty and let the per-path flush seam coalesce writes.
+        # Page switches, deck close, quit, and file reads flush pending data.
         page_flush.get().mark_dirty(self)
 
     @contextmanager
     def edit(self) -> Iterator[_Dict[str, Any]]:
-        """Change this page's content as one edit, and send it to the file.
-
-        The mutation seam for a caller that holds a Page. Nothing inside the
-        block may touch a page file or the GTK main loop.
-        """
-        # Changes that only make sense together, such as a swap of two keys,
-        # go in one block. It holds the file's lock, so a write in flight
-        # cannot snapshot the page halfway, and it marks the page once.
-        #
-        # That lock is the file's only lock and it is a leaf. A read of a page
-        # (the read barrier takes the lock), a reload onto a deck, and a
-        # marshal to the main thread each deadlock from in here. Mutate the
-        # content, and reload after the block.
+        """Group page mutations under one document lock and mark them for writing.
+        The block must not read a page file, reload a deck, or marshal to GTK."""
+        # The lock hides partial groups from writers but does not roll mutations back on error.
+        # It is a leaf lock; read files, reload decks, and marshal to GTK after release.
         with self._document.edit() as data:
             yield data
 
     def flush(self) -> str:
-        """Write this page's file now, and return the path written.
-
-        It is the counterpart to save(). A mutator marks and a boundary
-        flushes. A boundary is the last chance the edits get. The boundaries
-        are a deck that leaves this page, a deck that goes away, the app that
-        quits, and a read of the file. It returns the path, because such a
-        boundary names the file it made current, as the page switch does for
-        plugins and DBus.
-        """
+        """Write pending edits now and return the path written.
+        Flush boundaries are page leave, deck close, app quit, and page-file read."""
         page_flush.get().flush_path(self.json_path)
         return self.json_path
 
     def make_backup(self, json_path: str | None = None) -> None:
-        # The flush passes the path it holds the save lock for. That is this
-        # page's own path except after a page move, which re-points json_path
-        # while a write for the old path is still pending. A backup of any file
-        # but the one about to be overwritten copies the wrong page.
+        # Use the flush path because a rename can change json_path during an old-path write.
+        # The backup must copy the file that the flush will overwrite.
         page_document.back_up_page_file(json_path if json_path is not None else self.json_path)
 
     def move_key_to_end(self, dictionary: _Dict[str, Any], key: str) -> None:
-        # It operates on the passed dict, which is the flush's snapshot. A pop
-        # and reinsert on the live self.dict mutates the page mid-save and
-        # reorders a dict that no write reads.
+        # Reorder the flush snapshot, not live content that can change during a save.
         page_document.move_key_to_end(dictionary, key)
-
-    def set_background(self, file_path: str) -> None:
-        self.dict.setdefault("background", {})
-        self.dict["background"]["path"] = file_path
-        self.save()
 
     def load_action_objects(self) -> None:
         # The import is function-scoped, because deck_controller/controller.py
@@ -188,9 +141,8 @@ class Page:
                 input_ident = Input.FromTypeIdentifier(input_type_name, key)
                 for state in input_ident.get_states(self):
                     try:
-                        # action_objects keys by int state and the page json
-                        # keys by str. A state key that is not a number belongs
-                        # in neither.
+                        # Registry states use integers, while page JSON uses numeric strings.
+                        # Ignore a state key that cannot map between them.
                         state_int = int(state)
                     except ValueError:
                         continue
@@ -218,9 +170,8 @@ class Page:
 
         for old_action in old_actions:
             if old_action not in new_actions:
-                # The framework owns this teardown. It notifies and then
-                # always calls clean_up(), so a plugin that overrides the hook
-                # without super() cannot leak the dropped action.
+                # Framework teardown notifies first and always calls clean_up.
+                # A plugin override that omits super() cannot leak the dropped action.
                 ActionCore.teardown(old_action)
 
         self.action_objects = new_action_objects
@@ -254,7 +205,7 @@ class Page:
             # object; the isinstance below needs a real class either way.
             action_core_class = action_holder.action_core
             if action_core_class is not None and isinstance(old_action, action_core_class):
-                return old_action #FIXME: never used
+                return old_action
             
         ## Create new action object            
         action_object = action_holder.init_and_get_action(
@@ -269,9 +220,7 @@ class Page:
         input_1_dict = self.action_objects.get(input_1.input_type, {}).get(input_1.json_identifier, {})
         input_2_dict = self.action_objects.get(input_2.input_type, {}).get(input_2.json_identifier, {})
 
-        # Only a real action carries input_ident. A placeholder keeps its
-        # identifier from construction, and an empty (None) slot, which an
-        # incompatible holder leaves behind, carries nothing to repoint.
+        # Only real actions carry input_ident; placeholders and empty slots do not.
         for state in input_1_dict:
             for action in input_1_dict[state].values():
                 if isinstance(action, ActionCore):
@@ -308,9 +257,8 @@ class Page:
         if plugin is None:
             return False
 
-        # Collect first, then delete and tear down. A del of the local variable
-        # does nothing to the object, so a plugin uninstall must call
-        # ActionCore.teardown to reach clean_up().
+        # Collect before deletion, then call framework teardown for every removed action.
+        # Deleting a local reference alone does not call clean_up.
         to_remove: list[tuple[str, str, int, int, ActionCore]] = []
         for type in list(self.action_objects.keys()):
             for key in list(self.action_objects[type].keys()):
@@ -340,7 +288,6 @@ class Page:
                     for index in list(self.action_objects[input_type][json_identifier][state].keys()):
                         action_core = self.action_objects[input_type][json_identifier][state][index]
                         if action_core is None:
-                            # An empty slot names no plugin.
                             continue
                         action_id = action_core.action_id
 
@@ -383,9 +330,8 @@ class Page:
                     # the enumerate() walk skips the next entry.
                     to_remove = [
                         i for i, action in enumerate(actions)
-                        # An action here is a plain dict of raw json, so it has
-                        # no id attribute. The or "" catches an explicit
-                        # "id": null, which passes a .get default.
+                        # Actions here are raw JSON dicts, not action objects.
+                        # The fallback also handles an explicit null id.
                         if (action.get("id") or "").split("::")[0] == plugin_id
                     ]
                     for i in reversed(to_remove):
@@ -393,10 +339,10 @@ class Page:
 
         self.save()
 
-    def get_without_action_objects(self) -> _Dict[str, Any]:
+    def snapshot_for_save(self) -> _Dict[str, Any]:
         # The document owns the content and its file shape. The flush writes
         # pages that no deck shows, and those have no Page to ask.
-        return self._document.get_without_action_objects()
+        return self._document.snapshot_for_save()
 
     def get_all_actions(self, action_dict: ActionObjects | None = None) -> list[ActionCore]:
         if action_dict is None:
@@ -470,10 +416,8 @@ class Page:
             try:
                 state_int = int(state_key)
             except (TypeError, ValueError):
-                # A corrupt page json can carry a state key that is not an
-                # integer. Skip it, so the scan reaches the real state instead
-                # of raising out of the ready handshake and stranding the
-                # action at on_ready_finished False for the life of the page.
+                # Skip non-integer state keys so the ready handshake can reach valid states.
+                # Raising here would leave the action unready for the page lifetime.
                 continue
             for i, action_dict in enumerate(ident.get_actions(self, state_key)):
                 if self.get_action(ident, state_int, i) is action_object:
@@ -502,10 +446,8 @@ class Page:
             try:
                 state_int = int(state_key)
             except (TypeError, ValueError):
-                # A corrupt page json can carry a state key that is not an
-                # integer. Skip it, so the scan reaches the real state instead
-                # of raising out of a plugin's settings or event-assignment
-                # write.
+                # Skip non-integer state keys so settings and event-assignment writes
+                # can reach valid states.
                 continue
             actions = ident.get_actions(self, state_key)
             for i, _existing_dict in enumerate(actions):
@@ -550,9 +492,8 @@ class Page:
         if input_type not in self.action_objects or json_identifier not in self.action_objects[input_type]:
             return False
         for action in self.action_objects[input_type][json_identifier][state].values():
-            # CONTROLS_KEY_IMAGE is an optional flag a plugin's action class
-            # declares; no base class carries it. The getattr default covers
-            # a flagless action, a placeholder and an empty slot alike.
+            # CONTROLS_KEY_IMAGE is optional and absent from the base class.
+            # The default covers flagless actions, placeholders, and empty slots.
             if getattr(action, "CONTROLS_KEY_IMAGE", False):
                 return True
         return False
@@ -560,10 +501,8 @@ class Page:
     @log.catch
     def initialize_actions(self) -> None:
         for action in self.get_all_actions():
-            # Atomic claim. A bare check-then-set lets two concurrent
-            # load_page calls for one page both read False and both submit
-            # ready callbacks, which runs a second on_ready and duplicates the
-            # backend processes. Only the claim is under the lock.
+            # Claim readiness atomically so concurrent page loads cannot submit on_ready twice.
+            # Hold the lock only for the claim.
             with self._ready_claim_lock:
                 if action.on_ready_called:
                     continue
@@ -580,16 +519,12 @@ class Page:
             # The deck is in teardown, so drop the call.
             return
         try:
-            # A shut-down pool hands back None and the call is dropped, the
-            # same as the missing pool above. Nothing in the pool's own life
-            # cancels a queued ready callback: only close() does, and there
-            # the page dies with the deck. A cancelled callback never runs
-            # the finally that opens the action's tick and update gates.
+            # A shut-down pool drops the call, as does a missing pool.
+            # Only close cancels queued callbacks, when the page dies with the deck.
             executor.submit(self._run_ready_callbacks, action)
         except RuntimeError as error:
-            # Not a shutdown, which returns None. A live pool refuses when
-            # the process is out of threads, and then this action stays
-            # unready for the life of the page with no other signal.
+            # A live pool can refuse when the process has no available threads.
+            # The action then stays unready for this Page's lifetime.
             log.warning(
                 f"The action pool refused the ready callback for "
                 f"{getattr(action, 'action_id', action)}: {error!r}. That "
@@ -604,10 +539,8 @@ class Page:
                 f"on_ready failed for action {getattr(action, 'action_id', action)}"
             )
         finally:
-            # A raising on_ready must still open the tick and update gates and
-            # run the redraw, or the action stays dead for the life of the
-            # page. on_update sits inside the finally so a BaseException from
-            # on_ready, which the except above does not catch, cannot skip it.
+            # Always open the tick and update gates and redraw after on_ready.
+            # Keep on_update in finally so even an uncaught BaseException cannot skip it.
             action.on_ready_finished = True
             action.on_update()
 
@@ -617,9 +550,8 @@ class Page:
                 for state in self.action_objects[input_type][input_identifier]:
                     state_dict = self.action_objects[input_type][input_identifier][state]
                     for action in list(state_dict.values()):
-                        # Notify before the detach, because plugin cleanup
-                        # code can still need action.page. teardown() always calls
-                        # clean_up(), and it is a no-op for a placeholder.
+                        # Notify before detach because plugin cleanup can still need action.page.
+                        # Teardown always calls clean_up and accepts placeholders.
                         ActionCore.teardown(action)
                         if isinstance(action, ActionCore):
                             # The action is torn down; page describes the
@@ -631,9 +563,8 @@ class Page:
     def get_pages_with_same_json(self, get_self: bool = False) -> "list[Page]":
         pages: list[Page]= []
         for controller in (gl.deck_manager.deck_controller if gl.deck_manager is not None else []):
-            # Snapshot active_page once. Another thread sets it to None while a
-            # controller connects, disconnects or closes, so a re-read per check
-            # races a non-None guard against a None deref of .json_path.
+            # Snapshot active_page because connect, disconnect, or close can clear it concurrently.
+            # Re-reading after a non-None check can dereference None.
             active_page = controller.active_page
             if active_page is None:
                 continue
@@ -647,11 +578,8 @@ class Page:
                              load_brightness: bool = True, load_screensaver: bool = True, load_background: bool = True, load_inputs: bool = True,
                              load_dials: bool = True, load_touchscreens: bool = True) -> None:
 
-        # A caller that edits the dict and comes straight here, such as a
-        # pasted key or a pasted dial, has no other save in the call, so this
-        # save must stay. It marks the page, the read barrier inside the reload
-        # writes the mark out, and the re-read below then returns the edit
-        # instead of erasing it.
+        # Save direct dict edits before reload, including pasted keys and dials.
+        # The reload's read barrier then writes and re-reads the edit instead of erasing it.
         self.save()
         for page in self.get_pages_with_same_json(get_self=reload_self):
             page.load(load_from_file=True)
@@ -689,8 +617,7 @@ class Page:
     
     # Configuration
     def _get_dict_value(self, keys: list[str]) -> Any:
-        # Any, because the walk descends out of the page's mapping into
-        # whatever the leaf holds. The except below catches that case.
+        # The walk can leave the page mapping and reach any leaf type.
         value: Any = self.dict
         for i, key in enumerate(keys):
             fallback: dict[str, Any] | None = {}
@@ -715,20 +642,8 @@ class Page:
         self.save()
 
     def _del_dict_value(self, keys: list[str]) -> None:
-        """Remove the leaf at keys and leave every parent in place.
-
-        This is how a revert clears an override. The leaf is gone, so a
-        default that later changes reaches the page, which storing today's
-        default in the file would block. A page the setter never touched is
-        the one that stays byte-identical; a set and then a revert leaves the
-        empty parent the set created, which every reader treats as absent.
-
-        A path that does not lead to the leaf, or a leaf that is already gone,
-        is already in the wanted state, so the walk stops and no save runs.
-        The isinstance test is what makes that true of a hand-edited page
-        whose parent holds a string: without it the walk reaches the delete
-        and raises on a value it cannot index.
-        """
+        """Remove one override leaf without pruning parents so future defaults can apply.
+        Missing leaves and non-dict branches are no-ops; revert can leave empty parents."""
         # Any, because the walk descends out of the page's mapping into
         # whatever the branch holds, exactly as _get_dict_value does.
         d: Any = self.dict
@@ -782,10 +697,8 @@ class Page:
         inputs: list["ControllerInput[Any]"] = []
 
         for controller in (gl.deck_manager.deck_controller if gl.deck_manager is not None else []):
-            # Only controllers that currently show this page. Without the
-            # filter a label or media setter called on this page writes into a
-            # deck showing another page (cross-page bleed). This is the same
-            # active-page scope update_input applies to the repaint.
+            # Include only controllers that show this page to prevent cross-page writes.
+            # This matches update_input's repaint scope.
             active_page = controller.active_page
             if active_page is None or active_page.json_path != self.json_path:
                 continue
@@ -795,9 +708,7 @@ class Page:
 
         return inputs
 
-    # ControllerInputState, because ControllerInput declares states as the
-    # base, and every use below in the label and layout managers is a
-    # base-class member.
+    # ControllerInput declares base ControllerInputState values, whose members suffice here.
     def get_controller_input_states(self, identifier: InputIdentifier, state: int) -> list["ControllerInputState"]:
         matching_states: list["ControllerInputState"] = []
 
@@ -838,9 +749,8 @@ class Page:
     def set_label_text(self, identifier: InputIdentifier, state: int, label_position: str, text: str | None, update: bool = True) -> None:
         for input_state in self.get_controller_input_states(identifier, state):
             input_state.label_manager.page_labels[label_position].text = text
-            # An in-place mutation skips set_page_label and its invalidation,
-            # so drop the scroll caches here. A shortened label otherwise keeps
-            # scrolling, and a lengthened one never starts.
+            # In-place changes bypass set_page_label, so invalidate scroll caches here.
+            # Otherwise shortened labels keep scrolling and lengthened labels do not start.
             input_state.label_manager.invalidate_scroll_caches()
 
         self._set_dict_value([identifier.input_type, identifier.json_identifier, "states", str(state), "labels", label_position, "text"], text)
@@ -929,9 +839,7 @@ class Page:
         if update:
             self.update_input(identifier, state)
 
-    # outline_width is a scalar stroke width, and None means the font default.
-    # KeyLabel.outline_width is int | None. The callers are the spin button and
-    # the reset button of LabelEditor, which pass int and None.
+    # outline_width is a scalar stroke width; None restores the font default.
     def set_label_outline_width(self, identifier: InputIdentifier, state: int, label_position: str, outline_width: int | None, update: bool = True) -> None:
         for key_state in self.get_controller_input_states(identifier, state):
             key_state.label_manager.page_labels[label_position].outline_width = outline_width
@@ -1055,19 +963,14 @@ class Page:
         value = self._get_dict_value(self._media_fps_keys(identifier, state))
         return DEFAULT_MEDIA_FPS if value is None else int(value)
 
-    def has_media_fps(self, identifier: InputIdentifier, state: int) -> bool:
-        """Does the page carry an explicit cap for this state's media? The
-        sidebar shows its revert control only then, because there is nothing
-        to revert to while the media already runs at its own rate."""
+    def has_media_fps_override(self, identifier: InputIdentifier, state: int) -> bool:
+        """Return whether this state's media has an explicit frame-rate cap.
+        The sidebar shows its revert control only when a cap exists."""
         return self._get_dict_value(self._media_fps_keys(identifier, state)) is not None
 
     def get_media_native_fps(self, identifier: InputIdentifier, state: int) -> float | None:
-        """The rate this state's media runs at with no cap, as the pipeline
-        that decoded it probed it: the container's rate for a video, and the
-        frame count over the delay timeline for a GIF. None while no media is
-        loaded for that state on a controller showing this page, and None
-        while the pipeline reports no usable rate. The sidebar shows it after
-        a revert clears the cap."""
+        """Return the video container rate or GIF frame-count-over-delay rate.
+        Return None when no matching media is loaded or no usable rate exists."""
         for input_state in self.get_controller_input_states(identifier, state):
             video = getattr(input_state, "key_video", None) or getattr(input_state, "video", None)
             native = getattr(video, "native_fps", None)
@@ -1079,19 +982,12 @@ class Page:
         return None
 
     def set_media_fps(self, identifier: InputIdentifier, state: int, fps: int | None, update: bool = True) -> None:
-        """Set or clear the frame-rate cap for this state's media.
-
-        None removes the key, so the media runs at its own rate again and the
-        file reads as one the cap never reached. Playing media takes the
-        change at once, so it waits for no page reload: InputVideo and KeyGIF
-        both accept a cap through set_playback.
-        """
+        """Set this state's media cap, or remove it when fps is None.
+        Apply the change to playing video and GIF media without a page reload."""
         # A cleared cap must reach playing media as the value a fresh page
         # load would give it, or the media keeps the old cap until a reload.
         applied = DEFAULT_MEDIA_FPS if fps is None else fps
-        # get_controller_inputs already drops every controller that shows
-        # another page, so this walk cannot rebase a video on a deck holding a
-        # different page.
+        # get_controller_inputs excludes controllers that show a different page.
         for input_state in self.get_controller_input_states(identifier, state):
             video = getattr(input_state, "key_video", None) or getattr(input_state, "video", None)
             if video is not None and hasattr(video, "set_playback"):
@@ -1137,13 +1033,12 @@ class Page:
         return [identifier.input_type, identifier.json_identifier, "states", str(state), "background", "fps"]
 
     def get_background_fps(self, identifier: InputIdentifier, state: int) -> int:
-        """The frame-rate cap this state's background video renders under. A
-        page that carries no cap reports the loop ceiling, which caps
-        nothing."""
+        """Return this state's background-video frame-rate cap.
+        A missing cap returns the media-loop ceiling, which imposes no lower limit."""
         value = self._get_dict_value(self._background_fps_keys(identifier, state))
         return DEFAULT_MEDIA_FPS if value is None else int(value)
 
-    def has_background_fps(self, identifier: InputIdentifier, state: int) -> bool:
+    def has_background_fps_override(self, identifier: InputIdentifier, state: int) -> bool:
         """Does the page carry an explicit cap for this state's background?"""
         return self._get_dict_value(self._background_fps_keys(identifier, state)) is not None
 

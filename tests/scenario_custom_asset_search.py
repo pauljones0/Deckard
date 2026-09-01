@@ -1,16 +1,4 @@
-"""Custom Assets must filter and sort the grid it shows.
-
-The chooser installs a search filter and a comparator on its recycling flow
-box. DynamicFlowBox holds both in instance attributes that its constructor
-assigns, so a hook method that reuses one of those names is shadowed by the
-attribute and the box installs None over its own hook. The search entry and
-the image/video toggles then change nothing and the grid keeps backend order.
-
-Four legs. Two need no display: the constructor must hand both hooks to the
-base setters, and no flow-box subclass may supply a name the base keeps a hook
-in. Two need one: the installed hooks are the class's own methods, and the
-rendered grid follows the search text and the kind toggles.
-"""
+"""Verify custom-asset filtering, ranking, and flow-box hook installation."""
 import fixtures  # noqa: F401  (import first: isolated --data tempdir)
 
 import ast
@@ -44,11 +32,7 @@ VIDEO_NAMES = ["clip", "movie"]
 
 ALPHABETICAL = ["brightness", "clip", "movie", "volume_down", "volume_up"]
 
-# The ladder scores for the queries below, as documentation. The checks assert
-# orderings, not raw values, so a scoring change surfaces as a ranking change.
-#   volume: volume_up 90 and volume_down 90, both prefixes, and volume_up
-#           first because it is the shorter name; nothing else matches.
-#   clip:   clip 100; nothing else matches.
+# Assert rank order rather than raw scores so scoring changes remain visible.
 
 
 def build_corpus() -> list[dict]:
@@ -93,12 +77,9 @@ class FakeChooser:
 
 
 class StubFlow:
-    """The two hooks over the base's filter and sort, with no GTK.
+    """Run the real filter and sort hooks without GTK.
 
-    Stands in for the widget where no display exists, so the behaviour checks
-    below read the same code either way. It binds the hooks by hand, which the
-    constructor is the real thing's only chance to get right, so the wiring
-    check above covers what this stub cannot.
+    The separate wiring check covers the constructor bindings this stub supplies.
     """
 
     filter_items = DynamicFlowBox.filter_items
@@ -113,11 +94,7 @@ class StubFlow:
 
 
 def pump_until(condition, timeout: float, what: str) -> None:
-    """Iterate the default main context until condition() holds.
-
-    The recycler rebinds its pool from one idle callback, so the grid only
-    changes while this thread services the main context.
-    """
+    """Service the main context until the recycler satisfies a condition."""
     context = GLib.MainContext.default()
     deadline = time.time() + timeout
     while time.time() < deadline:
@@ -149,17 +126,12 @@ def class_def_of(cls: type) -> ast.ClassDef:
 INSTALL_CALLS = {
     "set_filter_func": "filter_func",
     "set_sort_func": "sort_func",
-    "set_factory": "factory_func",
+    "set_item_binder": "item_binder",
 }
 
 
 def check_install_wiring() -> None:
-    """Every hook the flow box has must be handed to its setter by name.
-
-    Reads the constructor's source, so this runs with no display and no
-    widget. It pins the install lines themselves: dropping one leaves the
-    slot None, and the base passes its input straight through on None.
-    """
+    """Require the constructor to pass each local hook to its base setter."""
     node = class_def_of(CustomAssetChooserFlowBox)
     methods = {child.name for child in node.body
                if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef))}
@@ -204,11 +176,7 @@ def check_install_wiring() -> None:
 # 2. The hooks reach the flow box as callables.
 
 def check_hooks_installed(flow: CustomAssetChooserFlowBox) -> None:
-    """The constructor must install both hooks, and its own methods.
-
-    A shadowed hook method leaves None here, and filter_items and sort_items
-    both pass their input straight through on None.
-    """
+    """Require callable local filter, sort, and factory hooks."""
     assert callable(flow.filter_func), (
         "the flow box installed no filter hook (filter_func is "
         f"{flow.filter_func!r}) -- the search entry and the image/video "
@@ -216,7 +184,7 @@ def check_hooks_installed(flow: CustomAssetChooserFlowBox) -> None:
     assert callable(flow.sort_func), (
         "the flow box installed no sort hook (sort_func is "
         f"{flow.sort_func!r}) -- the grid keeps backend order")
-    assert callable(flow.factory_func), "the flow box installed no factory"
+    assert callable(flow.item_binder), "the flow box installed no factory"
 
     assert flow.filter_func == flow._filter_asset, (
         f"the filter hook is {flow.filter_func!r}, not this box's "
@@ -289,11 +257,7 @@ def check_search_and_kind(flow, chooser: FakeChooser, corpus: list[dict],
 # 4. The real widget renders a filtered and sorted grid.
 
 def visible_names(flow: CustomAssetChooserFlowBox) -> list[str]:
-    """The names the grid shows now.
-
-    A visible child with no asset is reported rather than read, so a call
-    before the first bind cannot raise and hide the assertion that follows.
-    """
+    """Return visible names and mark recycler children that are not yet bound."""
     names = []
     for index in range(flow.N_ITEMS_PER_PAGE):
         child = flow.flow_box.get_child_at_index(index)
@@ -308,11 +272,7 @@ def visible_names(flow: CustomAssetChooserFlowBox) -> list[str]:
 
 def check_real_grid(flow: CustomAssetChooserFlowBox, chooser: FakeChooser,
                     corpus: list[dict]) -> None:
-    """Type in the search box and toggle the kinds; the grid must follow.
-
-    This is the symptom a user sees. The legs above read the hooks; this one
-    reads the widgets the recycler bound.
-    """
+    """Require the rendered grid to follow search text and kind toggles."""
     pump_until(lambda: len(visible_names(flow)) == len(corpus), 10,
                "the recycler never rendered the assets")
     got = visible_names(flow)
@@ -341,17 +301,11 @@ def check_real_grid(flow: CustomAssetChooserFlowBox, chooser: FakeChooser,
 
 # 5. Tripwire: no subclass may supply a name the base keeps a hook in.
 
-# (module, class, the slots the base reads a hook back out of). Only the hook
-# slots count. A base assigns other names onto self as well, and a class-level
-# default for one of those can be the right thing: current_start_index is
-# assigned in show_range and never in the constructor, so a default for it is
-# never shadowed.
+# Each entry names a base and only the constructor slots that store hooks.
 BASES = (
     ("src.windows.AssetManager.DynamicFlowBox", "DynamicFlowBox",
-     frozenset({"filter_func", "sort_func", "factory_func"})),
-    # This base has no subclass in the tree today, so the floor below rides
-    # entirely on the src base. The entry stands so a first subclass is
-    # governed from the moment it appears.
+     frozenset({"filter_func", "sort_func", "item_binder"})),
+    # Keep this base covered before its first subclass appears.
     ("GtkHelper.DynamicFlowBox", "DynamicFlowBox",
      frozenset({"filter", "sort", "factory"})),
 )
@@ -366,12 +320,7 @@ MIN_SUBCLASSES_CHECKED = 2
 
 
 def assigned_attr_names(cls: type) -> set[str]:
-    """Every name the class body assigns onto self, read from its source.
-
-    The hook slots must be a subset of these. That is what makes a hook slot
-    dangerous: the constructor writes the name as an instance attribute, which
-    hides any method or class attribute of the same name from that point on.
-    """
+    """Return names assigned on self in the class source."""
     names: set[str] = set()
     for child in ast.walk(class_def_of(cls)):
         if isinstance(child, ast.Assign):
@@ -418,16 +367,7 @@ def repo_class_defs() -> list[tuple[str, ast.ClassDef]]:
 
 
 def subclasses_in_tree(root_name: str) -> list[type]:
-    """Import every class in the tree that descends from root_name by name.
-
-    The search is source level and runs to a fixed point, so a subclass in a
-    module nothing here imports, and a subclass of a subclass, both count. It
-    matches on the written base name, so a subclass that inherits through an
-    import alias, and one built by a type() call, reach the check only through
-    the runtime half beside it. Anything the scan finds but cannot import as a
-    module-level name, such as a class nested in a function, is reported and
-    skipped; the runtime half still sees it once it is built.
-    """
+    """Import source descendants to a fixed point, skipping nested or renamed ones."""
     class_defs = repo_class_defs()
     sites: set[tuple[str, str]] = set()
     names = {root_name}
@@ -469,12 +409,7 @@ def runtime_subclasses(base: type) -> set[type]:
 
 
 def shadowed_names(cls: type, base: type, hooks: frozenset[str]) -> list[str]:
-    """The hook slots this class supplies a method or attribute for.
-
-    It walks the ancestry down to the base and skips the base's own line, so a
-    hook a mixin brings in counts the same as one written on the class. The
-    base overwrites every one of these on every instance it builds.
-    """
+    """Return hook slots supplied between a subclass and its assigning base."""
     from_base = set(base.__mro__)
     found: set[str] = set()
     for klass in cls.__mro__:
@@ -485,12 +420,7 @@ def shadowed_names(cls: type, base: type, hooks: frozenset[str]) -> list[str]:
 
 
 def check_tripwire_self_test() -> None:
-    """Prove the checker before trusting its silence.
-
-    Three planted classes: a shadowed hook is refused, a hook a mixin brings
-    in is refused too, and a class-level default for a name the base assigns
-    outside its constructor is accepted.
-    """
+    """Detect planted direct and mixin hooks but allow a non-hook default."""
     hooks = BASES[0][2]
 
     class _ShadowingFlowBox(DynamicFlowBox):
@@ -507,9 +437,7 @@ def check_tripwire_self_test() -> None:
         pass
 
     class _DefaultingFlowBox(DynamicFlowBox):
-        # Legitimate: the base assigns current_start_index in show_range and
-        # never in its constructor, so a class default here is read, not
-        # overwritten.
+        # show_range reads this default before assigning it; the constructor does not.
         current_start_index = 0
 
     found = shadowed_names(_ShadowingFlowBox, DynamicFlowBox, hooks)
@@ -546,9 +474,7 @@ def check_no_shadowed_hooks() -> None:
         from_source = {cls for cls in subclasses_in_tree(class_name)
                        if issubclass(cls, base)}
         from_source_total += len(from_source)
-        # The two halves cover each other: the source scan reaches a module
-        # nothing here imports, the runtime walk reaches an alias-inherited or
-        # type()-built class the source scan cannot name.
+        # Combine source-only classes with alias-inherited and dynamic runtime classes.
         for cls in sorted(from_source | runtime_subclasses(base),
                           key=lambda c: (c.__module__, c.__name__)):
             checked += 1
@@ -573,12 +499,7 @@ def check_no_shadowed_hooks() -> None:
 
 
 def has_display() -> bool:
-    """A display the widgets can actually be built against.
-
-    Gtk.init_check() answers True with no display at all, and the first widget
-    then dies in the GDK backend, so the default display is the thing to ask
-    about.
-    """
+    """Require a default GDK display before constructing widgets."""
     Gtk.init_check()
     return Gdk.Display.get_default() is not None
 

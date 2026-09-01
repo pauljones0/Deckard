@@ -1,10 +1,5 @@
-"""
-PluginManager.warm_up_plugins calls on_app_ready once per plugin.
-
-The call runs off the caller's GTK main thread and returns at once, even when a
-hook is slow. One raising hook must not stop the others. A second warm-up
-re-fires nothing, and a plugin loaded after activation still gets its hook.
-"""
+"""Verify each plugin receives on_app_ready once and off the GTK main thread.
+Slow or raising hooks do not block others, and plugins loaded after activation still run."""
 
 # PluginBase carries the hook as an inherited no-op.
 import threading
@@ -80,9 +75,8 @@ def main() -> None:
     })
 
     try:
-        # A pre-activation load_plugins must warm nothing. At startup
-        # load_plugins runs inside create_global_objects, long before
-        # on_activate's warm-up establishes app-readiness.
+        # A pre-activation load must warm nothing because app readiness has not
+        # been established.
         manager.load_plugins()
         time.sleep(0.3)
         assert recording.calls == 0, "load_plugins warmed plugins before app-ready"
@@ -115,9 +109,8 @@ def main() -> None:
         assert recording.calls == 1, "second warm_up_plugins re-fired on_app_ready"
         assert slow.calls == 1 and raising.calls == 1
 
-        # A plugin hot-installed after activation gets its hook when
-        # load_plugins re-runs on the store-install path, and an
-        # already-warmed plugin does not re-fire.
+        # A post-activation load warms only the newly installed plugin and
+        # does not re-fire existing plugins.
         late = RecordingPlugin()
         PluginBase.plugins["test_late"] = {"object": late}
         manager.load_plugins()

@@ -1,20 +1,5 @@
-"""A slower paint of an older state must not take the writer's slot.
-
-Several threads paint one input. Each reads the state, composes a picture from
-it, then offers that picture to the writer, whose per-target slot keeps the
-offer that arrives last. Compose order and offer order are independent unless
-something holds them together, so a slow compose of an older state can offer
-after a fast compose of a newer one and overwrite it. The offer stamps its own
-hash as in flight while it does, so no later paint corrects the slot: nothing
-about the input has changed. The key then shows the older picture until
-something else on it moves.
-
-The legs make that interleaving exact. One thread composes the old picture and
-stalls before it offers. The main thread changes the label and paints. The last
-offer to reach the writer must show the new label. A key and the touch strip
-each get a leg, because each owns its own paint lock: the strip is the harder
-target, since every dial and an extended background video converge on the one
-strip slot.
+"""Verify key and touch-strip paint locks preserve compose-to-offer order.
+A stalled old composite cannot replace a newer offer; locks release before callback dispatch.
 """
 import threading
 import time
@@ -73,9 +58,8 @@ def leg_older_paint_never_wins(controller) -> None:
     real_get_current_image = ControllerKey.get_current_image
 
     def stalling_get_current_image(self):
-        # Compose first, so the picture this paint carries is the one the
-        # state held before the label moved. The stall then models a paint
-        # whose compose was fast and whose offer is late.
+        # Compose before the label changes, then stall to make the old
+        # composite reach the offer stage late.
         image = real_get_current_image(self)
         if self is key and not stalled_once.is_set():
             stalled_once.set()
@@ -120,15 +104,8 @@ def leg_older_paint_never_wins(controller) -> None:
 
 
 def leg_older_strip_paint_never_wins(controller) -> None:
-    """The strip twin of leg_older_paint_never_wins.
-
-    Every dial composites into the one strip slot, so a dial's label is part of
-    the strip composite. One thread composes the strip with the old dial label
-    and stalls before it offers; the main thread moves the label and paints the
-    strip. The last touchscreen task the writer receives must carry the new
-    label. Without the strip's own paint lock the stalled paint offers last and
-    the strip holds the pre-edit picture.
-    """
+    """Verify a stalled strip composite cannot replace a newer strip offer.
+    Every dial converges on the shared strip slot, which has its own paint lock."""
     touchscreen = controller.get_input(Input.Touchscreen("sd-plus"))
     dial = controller.inputs[Input.Dial][0]
     assert touchscreen is not None and dial is not None
@@ -149,9 +126,8 @@ def leg_older_strip_paint_never_wins(controller) -> None:
     real_get_current_image = ControllerTouchScreenState.get_current_image
 
     def stalling_get_current_image(self):
-        # Compose first, so the picture this paint carries reads the dial label
-        # from before it moved. The stall then models a paint whose compose was
-        # fast and whose offer is late.
+        # Compose before the dial label changes, then stall to make the old
+        # strip composite reach the offer stage late.
         image = real_get_current_image(self)
         if self is touchscreen.get_active_state() and not stalled_once.is_set():
             stalled_once.set()
@@ -194,20 +170,9 @@ def leg_older_strip_paint_never_wins(controller) -> None:
     print("PASS: the newest strip composite is the last offer the writer receives")
 
 
-def leg_paint_lock_is_released_before_dispatch(controller) -> None:
-    """A paint must not hold the lock past its own body.
-
-    The input callback paints and then dispatches action events. A lock still
-    held there would serialize plugin callbacks behind every repaint of the
-    same input, and a callback that paints that input would depend on
-    re-entrancy to survive at all.
-
-    The probe runs on a second thread. _paint_lock is re-entrant, so a
-    non-blocking acquire on the thread that owns it, or that just ran the paint,
-    returns True even while the lock is held. A separate thread sees the real
-    state, so a paint that leaked its lock, or never released it, blocks the
-    probe and fails the leg.
-    """
+def leg_update_returns_with_paint_lock_released(controller) -> None:
+    """Verify a paint releases its RLock before callback dispatch.
+    The second-thread probe can block up to five seconds on the real RLock."""
     def probe(lock) -> bool:
         got: list = []
 
@@ -245,7 +210,7 @@ def main() -> None:
     try:
         leg_older_paint_never_wins(controller)
         leg_older_strip_paint_never_wins(controller)
-        leg_paint_lock_is_released_before_dispatch(controller)
+        leg_update_returns_with_paint_lock_released(controller)
     finally:
         fixtures.teardown(controller)
 

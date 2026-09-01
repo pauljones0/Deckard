@@ -1,14 +1,5 @@
-"""The device handle is released, never bare-closed.
-
-Every leg drives one production teardown path over a deck that models the
-library's reader thread, and asserts that close() ran with the reader stopped
-and the resume-from-suspend loop disarmed. A close that leaves either flag up
-lets the library re-open the handle it just gave back, which on the quit path
-hands the next process a busy device.
-
-The flags alone do not settle it. The library re-opens from the except arm of
-its read loop, where it reads neither flag, so one leg parks a reader inside
-that arm and asserts the release keeps the handle closed anyway.
+"""Require each teardown path to stop the reader before it releases the handle.
+A reader already in its reopen loop must not restore the released handle.
 """
 import threading
 import time
@@ -25,22 +16,8 @@ from src.backend.DeckManagement.DeckManager import DeckManager, close_all_contro
 
 
 class ReaderDeck(FaultyFakeDeck):
-    """FaultyFakeDeck plus the reader-thread contract of the library.
-
-    A real StreamDeck runs a reader thread that polls run_read_thread and, on
-    a transport error, re-opens the handle while reconnect_after_suspend is
-    set. FakeDeck carries neither flag, so the stop path skips it and no
-    scenario can see the ordering. This deck carries both flags, runs a thread
-    that journals its own exit, and records the flags as close() saw them.
-
-    flake_serial injects one failure into get_serial_number(), on the thread
-    that built the controller, so the raise lands in the constructor and not
-    in a worker that swallows it. "first" fails the settings read between
-    open() and the clear probe, inside the bring-up guard. "after_guard"
-    fails the next read, which sits past that guard and ahead of the tail
-    guard. "after_writer" fails the first read once the media writer runs.
-    flake_exc picks the exception, which decides which arm of the deck-open
-    retry judges the failure.
+    """Model reader flags, close ordering, and scripted constructor failures.
+    Failure windows are first read, after the bring-up guard, and after writer start.
     """
 
     def __init__(self, *args, flake_serial=None, flake_exc=TransportError, **kwargs):
@@ -119,14 +96,8 @@ class ReaderDeck(FaultyFakeDeck):
 
 
 class ResumeLoopDeck(ReaderDeck):
-    """A deck whose reader parks inside the library's reopen loop.
-
-    The library re-opens the device from the except arm of its read loop
-    (StreamDeck.py:209-262), where it reads neither run_read_thread nor
-    reconnect_after_suspend. This models that arm: on a fault the reader
-    clears its own run flag, closes the handle, then calls open() until one
-    returns, whatever the flags say. block_open makes those calls fail, so a
-    leg can hold the reader in the loop while it releases the handle.
+    """Park the reader inside a reopen loop that reads neither stop flag.
+    Blocking open keeps the loop active while another thread releases the handle.
     """
 
     def __init__(self, *args, **kwargs):
@@ -187,24 +158,14 @@ def build_and_expect_failure(serial: str, fail_op=None, **deck_kwargs) -> Reader
 
 
 def app_closes(deck: ReaderDeck) -> list:
-    """Flag records for the closes the app performed.
-
-    A close from the modeled reader is the library closing on its own behalf
-    inside its transport-error arm, and it carries the flags the library
-    leaves. Only a close the app made states the release contract.
-    """
+    """Return close records from the app, excluding the modeled reader."""
     return [flags for flags in deck.flags_at_close
             if not flags[2].startswith("FakeReader-")]
 
 
 def assert_handle_released(deck: ReaderDeck, label: str) -> None:
-    """The release contract: reader stopped, resume loop disarmed, then close.
-
-    A close is idempotent, and a path can legitimately run it twice: the
-    constructor's guard releases, and the deck-open retry releases the same
-    handle again. So this counts no closes. It asserts that at least one
-    happened and that every one the app made found both flags down. Ordering
-    comes from the journal sequence, so a loaded host cannot make it brittle.
+    """Require both reader flags down and reader exit before every app close.
+    Multiple idempotent closes are valid, so the check does not require a count.
     """
     journal = deck.journal()
     closes = [e for e in journal if e[2] == "close"]
@@ -274,11 +235,7 @@ def test_failed_clear_probe_releases_handle() -> None:
 
 
 def test_failed_settings_read_releases_handle() -> None:
-    """The settings read sits between open() and the clear probe.
-
-    A failure there leaves an open handle with a live reader unless the guard
-    covers the whole window.
-    """
+    """Require the guard to cover a settings failure between open and clear probe."""
     deck = build_and_expect_failure("release-settings-read", flake_serial="first")
     assert deck.serial_flakes == 1, (
         f"expected one injected serial failure, got {deck.serial_flakes}")
@@ -297,12 +254,7 @@ def test_failed_tail_releases_handle() -> None:
 
 
 def test_generic_retry_arm_releases_handle() -> None:
-    """A raise past the bring-up guard and ahead of the tail guard leaves the
-    constructor with the handle still open.
-
-    Nothing in the constructor covers that window, so the arm of the deck-open
-    retry that judges a non-transport failure owns the release.
-    """
+    """Require the generic retry arm to release failures between both guards."""
     fixtures.seed_page("Main")
     deck = ReaderDeck(serial_number="release-generic-arm", deck_type="Fake Deck",
                       flake_serial="after_guard", flake_exc=RuntimeError)
@@ -317,11 +269,7 @@ def test_generic_retry_arm_releases_handle() -> None:
 
 
 def test_release_beats_the_resume_loop() -> None:
-    """A reader already inside the reopen loop reads neither flag.
-
-    The release has to leave the handle unable to take an open() at all, or
-    the reader re-opens the device after the release returned.
-    """
+    """Require release to reject open from a reader already in its reopen loop."""
     fixtures.seed_page("Main")
     deck = ResumeLoopDeck(serial_number="release-resume-loop", deck_type="Fake Deck")
     controller = DeckController(gl.deck_manager, deck)
@@ -358,12 +306,8 @@ def test_release_beats_the_resume_loop() -> None:
     print("PASS: a release the reader cannot undo, even from inside the reopen loop")
 
 
-def test_out_of_range_rotation_comes_up_unrotated() -> None:
-    """A persisted rotation now reaches the wrapper's own validation.
-
-    An unusable value must leave the deck unrotated and running, not raising
-    on every key write.
-    """
+def test_invalid_rotation_defaults_to_zero() -> None:
+    """Require an unusable persisted rotation to leave the deck running unrotated."""
     serial = "release-rotation"
     settings = gl.settings_manager.get_deck_settings(serial)
     settings["rotation"] = 45
@@ -399,7 +343,7 @@ def main() -> None:
     test_failed_settings_read_releases_handle()
     test_failed_tail_releases_handle()
     test_generic_retry_arm_releases_handle()
-    test_out_of_range_rotation_comes_up_unrotated()
+    test_invalid_rotation_defaults_to_zero()
     print("ALL PASS: scenario_deck_release_handle")
 
 

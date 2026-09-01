@@ -1,10 +1,5 @@
-"""
-Unit-tier scenario for the startup video-cache sweep.
-
-A cache whose source is referenced only from a plugin's settings JSON
-survives, and so does one a live tile-cache registry entry points at. A stale
-.satNNN variant of a still-referenced video is swept.
-"""
+"""Verify plugin-settings and live-registry retention, stale saturation and
+legacy cleanup, temporary-file aging, parsing, and late-acquire protection."""
 
 # The variant matching a deck's current saturation, and the unsuffixed default
 # cache, are both kept.
@@ -129,11 +124,8 @@ def check_stale_sat_variants_swept() -> None:
     print("PASS: stale saturation variants of referenced videos are swept, current+default kept")
 
 
-def check_out_of_range_saturation_protects_variant() -> None:
-    """A persisted display.saturation outside the valid 1.0 to 1.5 range is
-    clamped before the runtime derives a cache filename. Playback therefore
-    writes the clamped variant, and the sweep must protect that same variant.
-    """
+def check_clamped_saturation_retention() -> None:
+    """The sweep protects the runtime-clamped saturation variant."""
     # A raw read protects a name the runtime never writes, ".sat200" for a
     # stored 2.0, and sweeps away the ".sat150" playback does write.
     video_path = os.path.join(gl.DATA_PATH, "over_saturated_video.mp4")
@@ -167,20 +159,13 @@ def check_out_of_range_saturation_protects_variant() -> None:
 
 
 def check_tmp_age_gate() -> None:
-    """The ".tmp." age gate. A writer temp file younger than TMP_MAX_AGE_S
-    may be a build in progress and must survive. An older one is a crash
-    leftover and must be swept.
-    """
-    # The sweep keys purely on ".tmp." in the name and on the file's mtime, so
-    # the assertions below pin the exact split across the age boundary rather
-    # than non-deletion alone.
+    """The temporary-file age gate keeps young builds and removes old leftovers."""
+    # Check both sides of the name-and-mtime age boundary.
     layout_dir = os.path.join(video_cache_sweeper.VID_CACHE, "keys_64x64")
 
     young = _seed_cache_file("keys_64x64", "deadbeef.tmp.mp4")
     old = _seed_cache_file("keys_64x64", "cafebabe.tmp.mp4")
-    # Age the old file well past the 24h gate, and leave the young one at its
-    # just-written mtime. The gate compares mtime to a fixed threshold rather
-    # than to wall-clock jitter, so a full hour past the boundary is stable.
+    # Place the old file one hour beyond the boundary to avoid time jitter.
     old_mtime = time.time() - (video_cache_sweeper.TMP_MAX_AGE_S + 3600)
     os.utime(old, (old_mtime, old_mtime))
 
@@ -201,24 +186,14 @@ def check_tmp_age_gate() -> None:
 
 
 def check_legacy_dir_sweep_idempotent() -> None:
-    """Legacy-dir sweep idempotence.
-
-    The two legacy top-level dirs the old JPEG-per-frame format wrote are
-    dead whatever else holds. They go even when the source video's hash is
-    still referenced.
-    """
-    # A normal layout dir with the same referenced content survives, and a
-    # second sweep is a clean no-op.
-    # Reference a video so its hash is in the referenced set. The legacy dirs
-    # must go even so, because their frames are dead whatever holds.
+    """Legacy JPEG-frame directories are removed unconditionally and idempotently."""
+    # Keep current-format content while removing referenced legacy directories.
     video_path = os.path.join(gl.DATA_PATH, "legacy_referenced_video.mp4")
     _make_test_video(video_path)
     md5 = video_cache_sweeper._md5_of_file(video_path)
     fixtures.seed_page_with_background("LegacyRefPage", video_path)
 
-    # The legacy JPEG-frame layout is VID_CACHE/single_key/<stem>/<size>/
-    # <frame>.jpg and VID_CACHE/key: 3/<stem>/... Seed a few nested files in
-    # each.
+    # Seed both legacy top-level directory shapes.
     legacy_single = _seed_cache_file(os.path.join("single_key", md5, "72x72"), "0.jpg")
     legacy_keyn = _seed_cache_file(os.path.join("key: 3", md5, "72x72", "3"), "0.jpg")
 
@@ -251,25 +226,14 @@ def check_legacy_dir_sweep_idempotent() -> None:
 
 
 def check_entry_name_parsing() -> None:
-    """The entry.split(".")[0] hash parse and the per-branch name dispatch,
-    asserted as the exact split across every branch in one dir.
-    """
-    # A ".cache" legacy pickle is swept, because the format is unreadable.
-    # A "<hash>.satNNN.mp4" has its hash parsed off split(".")[0], so a
-    # referenced video's current-suffix variant is kept and a stale-suffix one
-    # is swept, which isolates the hash rather than the whole filename as what
-    # is matched. A name with no recognized extension is left untouched by the
-    # sweep's final else branch.
+    """Exercise every cache-entry name branch and hash-prefix parsing."""
+    # Cover legacy, saturation, default, and unrecognized filename branches.
     video_path = os.path.join(gl.DATA_PATH, "name_parse_video.mp4")
     _make_test_video(video_path)
     md5 = video_cache_sweeper._md5_of_file(video_path)
     fixtures.seed_page_with_background("NameParsePage", video_path)
 
-    # A deck at exactly 1.15 gives ".sat115". The stale-suffix cache below
-    # uses ".sat110", which no deck this scenario seeds produces. Earlier legs
-    # leave decks at 1.3 and 1.5 in the shared decks dir and the sweep reads
-    # every one, so this isolates the parse contract from cross-leg state.
-    # Only the hash match and the suffix membership decide kept against swept.
+    # Use .sat110 because no seeded deck produces it, including prior checks.
     decks_dir = os.path.join(gl.DATA_PATH, "settings", "decks")
     os.makedirs(decks_dir, exist_ok=True)
     with open(os.path.join(decks_dir, "NAMEPARSEDECK.json"), "w") as f:
@@ -300,6 +264,33 @@ def check_entry_name_parsing() -> None:
     print("PASS: entry-name parse dispatches each branch and matches the hash, not the filename")
 
 
+def check_late_acquire_protection() -> None:
+    # Force a stale snapshot; the locked pre-unlink check must protect the reader.
+    video_path = os.path.join(gl.DATA_PATH, "late_acquire_video.mp4")
+    _make_test_video(video_path, n_frames=15)
+
+    reader = mp4_tile_cache.acquire(video_path, (48, 48), 1.0)
+    try:
+        entry = reader._registry_entry
+        assert fixtures.wait_until(lambda: entry.ready, timeout=10.0), "builder never promoted"
+        assert os.path.isfile(entry.path)
+
+        real_snapshot = video_cache_sweeper.registry_cache_paths
+        video_cache_sweeper.registry_cache_paths = lambda: set()
+        try:
+            video_cache_sweeper.sweep_stale_video_caches()
+        finally:
+            video_cache_sweeper.registry_cache_paths = real_snapshot
+
+        assert os.path.isfile(entry.path), (
+            "the sweep deleted a cache file whose reader acquired it after the "
+            "protected-paths snapshot -- the live check at the unlink is missing"
+        )
+    finally:
+        mp4_tile_cache.release(reader)
+    print("PASS: a late acquire survives a stale protected-paths snapshot")
+
+
 def main() -> None:
     fixtures.start_watchdog(WATCHDOG_SECONDS, label="scenario_video_cache_sweeper")
     fixtures._install_integration_globals()  # real SettingsManager + PageManagerBackend
@@ -307,8 +298,9 @@ def main() -> None:
 
     check_plugin_settings_reference_protects_cache()
     check_live_registry_entry_protects_cache()
+    check_late_acquire_protection()
     check_stale_sat_variants_swept()
-    check_out_of_range_saturation_protects_variant()
+    check_clamped_saturation_retention()
     check_tmp_age_gate()
     check_legacy_dir_sweep_idempotent()
     check_entry_name_parsing()

@@ -28,4 +28,4 @@ class WallpaperPack(Pack[Wallpaper]):
         return Wallpaper(wallpaper_pack=self, path=path)
 
     def get_wallpapers(self) -> list[Wallpaper]:
-        return self.get_content_from_structure()
+        return self.get_assets()

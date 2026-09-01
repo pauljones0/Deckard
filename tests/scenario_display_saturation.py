@@ -1,7 +1,5 @@
-"""Unit-tier scenario for the per-deck display-saturation feature.
-
-Drives BackgroundImage and BackgroundVideoCache at their real enhancement
-points. Factor 1.0 is a strict no-op, and the cache filename carries .satNNN.
+"""Check display saturation at image and cached-video enhancement points.
+Factor 1.0 is a strict no-op; other factors appear in the cache filename.
 """
 import os
 
@@ -15,8 +13,6 @@ import globals as gl
 from src.backend.DeckManagement.DeckController import BackgroundImage
 from src.backend.DeckManagement.Subclasses.background_video_cache import BackgroundVideoCache
 
-
-# BackgroundImage
 
 class _StubImageDeckController:
     """Exposes exactly what BackgroundImage.__init__ reads."""
@@ -70,8 +66,6 @@ def check_background_image() -> None:
     print(f"PASS: BackgroundImage saturation (default={sat_default:.2f}, boosted={sat_boosted:.2f})")
 
 
-# BackgroundVideoCache naming and sweeper hash-stem compatibility
-
 class _StubDeck:
     def key_layout(self):
         return (1, 2)
@@ -87,11 +81,7 @@ class _StubDeck:
 
 
 class _StubVideoDeckController:
-    """Exposes what BackgroundVideoCache.__init__ and _generate_alpha_frame read.
-
-    Those are get_display_saturation(), .deck, .key_spacing and
-    generate_alpha_key().
-    """
+    """Provide saturation, deck, spacing, and alpha-key inputs to the video cache."""
 
     def __init__(self, saturation: float):
         self._saturation = saturation
@@ -143,17 +133,13 @@ def check_background_video_cache() -> None:
             f"factor 1.3 must carry the two-decimal-encoded suffix, got {boosted_name!r}"
         )
 
-        # sweep_stale_video_caches computes entry_hash = entry.split(".")[0] on
-        # every cache directory entry before it dispatches on file type, to check
-        # it against the md5s still referenced by deck and page settings. Run
-        # that inline expression unmodified and require both real filenames to
-        # resolve back to the source md5.
+        # Require the stale-cache sweeper's filename split to recover the source
+        # MD5 from plain and saturation-specific cache names.
         assert default_name.split(".")[0] == md5
         assert boosted_name.split(".")[0] == md5
 
-        # Sanity. The build path runs end to end and produces a measurably more
-        # saturated frame, so the suffix is not the only thing that changed and
-        # the enhancement really is baked into the cached canvas.
+        # Confirm the build also bakes the enhancement into cached pixels, not
+        # only into the filename.
         default_tile = cache_default.get_tiles(0)[0]
         boosted_tile = cache_boosted.get_tiles(0)[0]
         sat_default = _mean_hsv_saturation(default_tile)

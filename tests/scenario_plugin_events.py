@@ -1,12 +1,6 @@
-"""
-Unit-tier scenario for the plugin event and callback layer.
+"""Verify deck-independent plugin event dispatch and callback APIs.
+The checks cover observer errors, no-argument input handlers, and cross-plugin subscriptions."""
 
-The pieces between an EventHolder firing and a plugin callback running are
-deck-independent, so this drives them with no deck and no controller.
-"""
-
-# It covers observer error logging, InputBases delivery to the no-arg handlers,
-# and the cross-plugin connect and disconnect APIs.
 import fixtures  # noqa: F401  (isolated data dir + sys.path, house convention)
 
 from loguru import logger as log
@@ -21,12 +15,7 @@ from src.backend.PluginManager.PluginBase import PluginBase
 
 
 class _LogCapture:
-    """Adds a capturing loguru sink for the with block.
-
-    Loguru hands a text sink the fully formatted message, and that includes
-    the formatted traceback when the record carries exception info. The
-    joined text is therefore enough to prove a traceback was logged.
-    """
+    """Capture fully formatted Loguru records, including exception tracebacks."""
 
     def __init__(self, level: str = "DEBUG"):
         self._level = level
@@ -55,9 +44,8 @@ def check_raising_sync_observer_logs_traceback():
         assert wait_until(lambda: "could not be called" in capture.text(), timeout=5.0), (
             "dispatch never logged the failing sync observer"
         )
-        # The batch runs on the shared dispatcher thread. The one-liner and
-        # its exception block arrive as one record, so the assertions below
-        # are safe once the marker text appears.
+        # The shared dispatcher emits the message and traceback as one record,
+        # so the marker confirms that the complete record has arrived.
         text = capture.text()
 
     assert "exploding_observer" in text, text
@@ -88,17 +76,17 @@ def check_raising_async_observer_logs_traceback():
 
 def check_raising_observer_isolation():
     # The observer after a raising one still runs.
-    ran = []
+    survivor_calls = []
 
     def exploding(*args, **kwargs):
         raise RuntimeError("first observer dies")
 
     def survivor(*args, **kwargs):
-        ran.append(args)
+        survivor_calls.append(args)
 
     with _LogCapture(level="ERROR"):
         event_dispatch.dispatch([exploding, survivor], ("evt",), {}, label="test::Isolation")
-        assert wait_until(lambda: len(ran) == 1, timeout=5.0), (
+        assert wait_until(lambda: len(survivor_calls) == 1, timeout=5.0), (
             "observer after a raising one never ran -- batch isolation broke"
         )
 
@@ -163,9 +151,8 @@ class _RecordingTouchScreenAction(TouchScreenAction):
 
 def check_key_action_event_delivery():
     action = _RecordingKeyAction(**_ACTION_KWARGS)
-    # Drive the production delivery path. ControllerInput invokes
-    # _raw_event_callback, and no @log.catch guards it here, so a TypeError
-    # fails the scenario loudly.
+    # Drive the production callback directly; no log guard can hide a
+    # signature TypeError on this path.
     action._raw_event_callback(Input.Key.Events.DOWN, {"coords": (1, 2)})
     action._raw_event_callback(Input.Key.Events.UP, None)
     action._raw_event_callback(Input.Key.Events.HOLD_START, {"coords": (1, 2)})
@@ -220,9 +207,8 @@ class _StubPluginManager:
 
 
 def make_plugin(plugin_id: str) -> PluginBase:
-    """A PluginBase carrying only the state the event API reads.
-    PluginBase.__init__ needs a manifest and assets on disk, which the
-    connect and disconnect paths never touch."""
+    """Build only the PluginBase state that event connect and disconnect read.
+    Bypass initialization because these paths do not use manifests or assets."""
     plugin = PluginBase.__new__(PluginBase)
     plugin.event_holders = {}
     plugin.plugin_name = plugin_id
@@ -277,9 +263,8 @@ def check_connect_suffix_path():
 
 
 def check_disconnect_suffix_symmetry():
-    # disconnect_from_event accepts the same event_id_suffix as
-    # connect_to_event, so a plugin that suffix-connected can also
-    # suffix-disconnect instead of leaking the subscription.
+    # Suffix-based connect and disconnect must resolve the same event id,
+    # or the subscription leaks.
     provider, consumer, holder = make_provider_and_consumer()
 
     suffix_callback = lambda *args, **kwargs: None  # noqa: E731

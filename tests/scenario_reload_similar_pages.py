@@ -1,11 +1,7 @@
-"""
-reload_similar_pages must reload each sibling controller's own Page object.
-"""
+"""Reload each sibling controller with its own Page object."""
 
-# Passing self to another controller's load_page bleeds this controller's page
-# onto other decks. get_pages_with_same_json must also snapshot
-# controller.active_page once, because another thread clears it to None while a
-# controller connects or disconnects.
+# Never pass one controller's Page to another controller.
+# Snapshot active_page because connect or disconnect can clear it concurrently.
 import fixtures  # noqa: F401  (must be first: isolates DATA_PATH)
 
 import globals as gl
@@ -39,32 +35,30 @@ def main() -> int:
 
     path = seed_page("SharedPage")
 
-    ctrl_a = RecordingController("reload-a")
-    ctrl_b = RecordingController("reload-b")
+    caller_controller = RecordingController("reload-a")
+    sibling_controller = RecordingController("reload-b")
 
-    page_a = Page(json_path=path, deck_controller=ctrl_a)
-    page_b = Page(json_path=path, deck_controller=ctrl_b)
-    ctrl_a.active_page = page_a
-    ctrl_b.active_page = page_b
+    caller_page = Page(json_path=path, deck_controller=caller_controller)
+    sibling_page = Page(json_path=path, deck_controller=sibling_controller)
+    caller_controller.active_page = caller_page
+    sibling_controller.active_page = sibling_page
 
-    gl.deck_manager.deck_controller = [ctrl_a, ctrl_b]
+    gl.deck_manager.deck_controller = [caller_controller, sibling_controller]
 
-    page_a.reload_similar_pages()  # identifier=None, reload_self=False
+    caller_page.reload_similar_pages()  # identifier=None, reload_self=False
 
-    if ctrl_a.loaded_pages:
-        print(f"FAIL: caller's own controller was reloaded despite reload_self=False: {ctrl_a.loaded_pages}")
+    if caller_controller.loaded_pages:
+        print(f"FAIL: caller's own controller was reloaded despite reload_self=False: {caller_controller.loaded_pages}")
         return 1
-    if ctrl_b.loaded_pages != [page_b]:
-        got = ["page_a (the CALLER'S page)" if p is page_a else
-               ("page_b" if p is page_b else repr(p)) for p in ctrl_b.loaded_pages]
-        print(f"FAIL: sibling controller received {got}, expected its own [page_b]")
+    if sibling_controller.loaded_pages != [sibling_page]:
+        got = ["caller_page (the CALLER'S page)" if p is caller_page else
+               ("sibling_page" if p is sibling_page else repr(p)) for p in sibling_controller.loaded_pages]
+        print(f"FAIL: sibling controller received {got}, expected its own [sibling_page]")
         return 1
 
     # An active_page that flips to None mid-scan must not raise AttributeError.
     class FlippingController:
-        """active_page reads non-None once, which passes the guard, then None
-        on the next read. That is the connect and disconnect race. A per-check
-        re-read then derefs None.json_path, and a single snapshot does not."""
+        """Return a page once and then None to model concurrent deck removal."""
         def __init__(self, serial, page):
             self.deck = FaultyFakeDeck(serial_number=serial)
             self._page = page
@@ -78,7 +72,7 @@ def main() -> int:
             self._reads += 1
             return self._page if self._reads <= 1 else None
 
-    probe_page = Page(json_path=path, deck_controller=ctrl_a)
+    probe_page = Page(json_path=path, deck_controller=caller_controller)
     flipping = FlippingController("reload-flip", probe_page)
     gl.deck_manager.deck_controller = [flipping]
     try:

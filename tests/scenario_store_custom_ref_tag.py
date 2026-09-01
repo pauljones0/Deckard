@@ -1,10 +1,4 @@
-"""
-clone_repo must never install a tree it did not move onto.
-
-git checkout handles a branch and a tag alike. The return codes of the checkout
-and of the reset --hard are both checked. An unreachable ref or sha therefore
-fails the install rather than staging the default tip.
-"""
+"""Verify that clone_repo installs only the requested reachable revision."""
 
 # The remote is a local fixture repository, and the assertions read the
 # installed content.
@@ -23,9 +17,7 @@ FIXTURE_REPO = os.path.join(gl.DATA_PATH, "fixture-repo")
 
 
 def _isolate_git_config() -> None:
-    """clone_repo appends safe.directory entries with git config --global.
-    The global config points at a file in the harness temp dir, so the
-    scenario never touches the real ~/.gitconfig."""
+    """Redirect global Git configuration to the isolated harness directory."""
     os.environ["GIT_CONFIG_GLOBAL"] = os.path.join(gl.DATA_PATH, "gitconfig")
     os.environ["GIT_CONFIG_SYSTEM"] = os.devnull
     os.environ["GIT_AUTHOR_NAME"] = "harness"
@@ -45,9 +37,7 @@ def _write(name: str, content: str) -> None:
 
 
 def make_fixture_repo() -> None:
-    """The fixture history. commit1 carries tag v1 and "tagged content",
-    commit2 on main is the default tip with "main content", and branch
-    feature carries "feature content"."""
+    """Build distinct tagged, main-tip, and feature-branch fixture trees."""
     os.makedirs(FIXTURE_REPO)
     subprocess.run(["git", "init", "-b", "main", FIXTURE_REPO], check=True,
                    capture_output=True, text=True)
@@ -87,9 +77,7 @@ def _staging_leftovers() -> list[str]:
 def test_tag_ref_installs_tagged_tree(sb: StoreBackend) -> None:
     dest = os.path.join(gl.DATA_PATH, "plugins", "com_test_TagPlugin")
 
-    # Through download_repo. The harness default of --devel routes to
-    # clone_repo, like a real custom-plugin install. expected_id proves the
-    # manifest gate reads the tag's staged tree.
+    # --devel routes download_repo to clone_repo; expected_id checks the staged tag tree.
     result = sb.download_repo(repo_url=FIXTURE_REPO, directory=dest,
                               branch_name="v1", expected_id="com_test_TagPlugin")
 
@@ -123,9 +111,7 @@ def test_branch_ref_installs_branch_tip(sb: StoreBackend) -> None:
 
 
 def test_nonexistent_ref_fails_install(sb: StoreBackend) -> None:
-    # A mistyped pinned ref must fail the install. With the checkout return
-    # code ignored, the clone stays on the default tip and the wrong tree
-    # installs under the mistyped ref.
+    # A mistyped ref must fail instead of installing the default tip.
     dest = os.path.join(gl.DATA_PATH, "plugins", "com_test_TypoPlugin")
 
     result = sb.clone_repo(repo_url=FIXTURE_REPO, local_path=dest,
@@ -162,10 +148,7 @@ def test_commit_sha_installs_that_commit(sb: StoreBackend) -> None:
 
 
 def test_unreachable_commit_sha_fails_install(sb: StoreBackend) -> None:
-    # A well-formed but unreachable catalog sha passes is_safe_commit_sha
-    # and reaches git reset --hard. With that return code ignored the reset
-    # fails, staging stays on the default tip, and that tree installs as a
-    # success under the unreachable sha.
+    # A well-formed but unreachable SHA must fail instead of installing the default tip.
     dest = os.path.join(gl.DATA_PATH, "plugins", "com_test_GoneShaPlugin")
     gone_sha = "deadbeef" * 5  # 40 lowercase hex, not an object in the repo
 

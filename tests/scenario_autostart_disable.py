@@ -1,8 +1,4 @@
-"""Disabling autostart must win over the racing async portal callback.
-
-A portal failure callback must not re-install the flatpak entry after a
-disable. A native install never calls the portal and installs the native entry.
-"""
+"""Verify disable wins over stale portal callbacks and native setup skips Xdp."""
 import os
 import tempfile
 
@@ -13,11 +9,7 @@ REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
 
 class FakeXdp:
-    """Stands in for gi.repository.Xdp and records request_background calls.
-
-    The scenario fires their async callbacks by hand. finish() always fails,
-    which is the path that re-installs the entry.
-    """
+    """Record Xdp requests and expose a manually fired failing callback."""
 
     class BackgroundFlags:
         AUTOSTART = "autostart"
@@ -103,7 +95,7 @@ def main() -> None:
     assert not os.path.exists(path), "native disable must remove the entry"
     print("PASS: native path never touches the portal; entry content is native")
 
-    # 4. legacy pre-rename autostart entries are removed on every setup.
+    # Remove legacy pre-rename entries on every setup.
     autostart_dir = os.path.join(home, ".config", "autostart")
     os.makedirs(autostart_dir, exist_ok=True)
     for legacy in autostart.LEGACY_AUTOSTART_NAMES:

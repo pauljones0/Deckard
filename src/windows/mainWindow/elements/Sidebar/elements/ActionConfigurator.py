@@ -101,10 +101,9 @@ class CommentGroup(Adw.PreferencesGroup):
         self.parent = parent
         self.action: ActionCore = None  # ty: ignore[invalid-assignment]  # late-init: load_for_action
         self.index: int = None  # ty: ignore[invalid-assignment]  # late-init: load_for_action
-        # The changed-handler id, or None while it is disconnected. A tracked id
-        # keeps connect and disconnect idempotent: a disconnect while already
-        # off cannot raise, and a reconnect cannot stack a second handler.
-        self._comment_handler: int | None = None
+        # Changed-handler ID, or None while disconnected.
+        # Tracking keeps connect and disconnect idempotent.
+        self._comment_handler_id: int | None = None
         self.build()
 
     def build(self) -> None:
@@ -134,13 +133,13 @@ class CommentGroup(Adw.PreferencesGroup):
         services.require_main_window().sidebar.key_editor.action_editor.load_for_identifier(self.action.input_ident, self.action.state)
 
     def connect_signals(self) -> None:
-        if self._comment_handler is None:
-            self._comment_handler = self.comment_row.connect("changed", self.on_comment_changed)
+        if self._comment_handler_id is None:
+            self._comment_handler_id = self.comment_row.connect("changed", self.on_comment_changed)
 
     def disconnect_signals(self) -> None:
-        if self._comment_handler is not None:
-            self.comment_row.disconnect(self._comment_handler)
-            self._comment_handler = None
+        if self._comment_handler_id is not None:
+            self.comment_row.disconnect(self._comment_handler_id)
+            self._comment_handler_id = None
     
 
     def get_comment(self) -> str | None:
@@ -319,7 +318,6 @@ class RemoveButton(Gtk.Button):
         # Reload configurator
         self.configurator.sidebar.update()
 
-        # Decide whether the key needs a reload
         load = not page.has_key_an_image_controlling_action(action.input_ident, action.state)
         load = True # TODO
         if load:
@@ -407,8 +405,6 @@ class EventAssignerUI(BetterPreferencesGroup):
         self.load_for_action(self.action)
 
     def on_clear_all(self, button: Gtk.Button) -> None:
-        # set_all_events_to_null does the whole job. The map this used to
-        # build fed a set_event_assignments call that is commented out below.
         self.action.set_all_events_to_null()
         # self.action.set_event_assignments(assignments)
         self.load_for_action(self.action)
@@ -446,10 +442,9 @@ class EventAssignerRow(Adw.ComboRow):
         self.event = event
         self.available_events: list[EventAssigner] = []
 
-        # The selection-handler id, or None while it is disconnected. A tracked
-        # id keeps connect and disconnect idempotent: a disconnect while already
-        # off cannot raise, and a reconnect cannot stack a second handler.
-        self._selected_handler: int | None = None
+        # Selection-handler ID, or None while disconnected.
+        # Tracking keeps connect and disconnect idempotent.
+        self._selected_handler_id: int | None = None
 
         # Create the item list factory
         self.factory = Gtk.SignalListItemFactory()
@@ -475,13 +470,13 @@ class EventAssignerRow(Adw.ComboRow):
 
 
     def _connect_signal(self) -> None:
-        if self._selected_handler is None:
-            self._selected_handler = self.connect("notify::selected", self.on_changed)
+        if self._selected_handler_id is None:
+            self._selected_handler_id = self.connect("notify::selected", self.on_changed)
 
     def _disconnect_signal(self) -> None:
-        if self._selected_handler is not None:
-            self.disconnect(self._selected_handler)
-            self._selected_handler = None
+        if self._selected_handler_id is not None:
+            self.disconnect(self._selected_handler_id)
+            self._selected_handler_id = None
 
     def set_available_events(self, events: list[EventAssigner]) -> None:
         self._disconnect_signal()

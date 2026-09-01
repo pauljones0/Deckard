@@ -1,13 +1,8 @@
-"""
-The plugin load path survives broken plugins and records every failure.
+"""Verify broken plugins do not stop healthy plugins from loading.
+Failures are keyed by folder, while version-gated plugins enter the disabled registry."""
 
-One poison plugin must not abort the healthy ones, and each failure lands in
-PluginManager.load_errors keyed by folder.
-"""
-
-# The register() version gate disables a plugin with a reason instead of
-# raising, and include_disabled must not leak disabled plugins into the enabled
-# registry.
+# Registration records version-gate reasons without raising, and disabled
+# lookups must not mutate the enabled registry.
 import json
 import os
 import sys
@@ -75,8 +70,8 @@ def seed_plugins() -> None:
     write_plugin("com_test_no_register", GOOD_MAIN.format(class_name="NoRegisterPlugin"),
                  manifest("com_test_no_register", github=None))
 
-    # A major-version mismatch with no minimum-app-version. A comparison
-    # against None here raises TypeError out of register().
+    # A major-version mismatch without minimum-app-version must disable
+    # cleanly rather than compare a version with None.
     write_plugin("com_test_old_major", GOOD_MAIN.format(class_name="OldMajorPlugin"),
                  manifest("com_test_old_major", **{"app-version": "0.9.0",
                                                    "minimum-app-version": None}))
@@ -99,10 +94,8 @@ def seed_plugins() -> None:
     with open(os.path.join(gl.PLUGIN_DIR, "stray-file.txt"), "w") as f:
         f.write("not a plugin")
 
-    # A dotted directory name, as a timestamped backup makes, is unimportable
-    # as plugins.<name>.main. The loader must skip it without an import
-    # attempt and without inflating the failed count. The seed is a full copy
-    # of a working plugin, like a real backup dir.
+    # Dotted backup directory names are not importable plugin modules and must
+    # be skipped without an import attempt or a failure count.
     write_plugin("com_test_good.bak.20260101-000000",
                  GOOD_MAIN.format(class_name="BackupPlugin"),
                  manifest("com_test_good_backup"))
@@ -113,13 +106,13 @@ def main() -> None:
 
     from src.backend.PluginManager.PluginBase import PluginBase
     from src.backend.PluginManager.PluginManager import PluginManager
-    from src.backend.notify import Notify
+    from src.backend.notify import Notifier
 
     seed_plugins()
 
     # main.create_global_objects installs this before the plugin load, and
     # the load-failure report goes through it.
-    gl.notify = Notify()
+    gl.notify = Notifier()
 
     pm = PluginManager()
     gl.plugin_manager = pm
@@ -197,14 +190,12 @@ def main() -> None:
     )
 
     # The health counts feed the Add-Action empty state.
-    n_failed, n_disabled = pm.get_load_health()
+    n_failed, n_disabled = pm.get_load_issue_counts()
     assert n_failed == 3, f"expected 3 failed plugins, got {n_failed} ({pm.load_errors})"
     assert n_disabled == 2, f"expected 2 disabled plugins, got {n_disabled}"
 
-    # get_load_health must never observe a half-built load_errors while a
-    # store-install reload rebuilds it on a background thread. The main thread
-    # reads get_load_health for the Add-Action empty state, and the lock makes
-    # the rebuild atomic against that read.
+    # The main-thread health read must not observe a partial load_errors rebuild
+    # during a background store-install reload.
     import threading
 
     stop = threading.Event()
@@ -213,10 +204,9 @@ def main() -> None:
     def reader() -> None:
         try:
             while not stop.is_set():
-                n_failed, n_disabled = pm.get_load_health()
-                # load_errors holds only the seeded broken folders, so the
-                # count stays between 0 and the seeded total. A mid-rebuild
-                # dict gives a torn value.
+                n_failed, n_disabled = pm.get_load_issue_counts()
+                # Only seeded broken folders belong here, so a count outside
+                # the seeded range reveals a torn rebuild.
                 assert 0 <= n_failed <= 8, f"torn load_errors read: {n_failed}"
                 assert n_disabled >= 0
         except BaseException as e:  # noqa: BLE001 (surfaced to the main thread)
@@ -231,25 +221,23 @@ def main() -> None:
         stop.set()
         reader_thread.join(timeout=10)
     assert not reader_thread.is_alive(), "load_health reader thread hung"
-    assert not reader_error, f"get_load_health raced the reload rebuild: {reader_error[0]!r}"
+    assert not reader_error, f"get_load_issue_counts raced the reload rebuild: {reader_error[0]!r}"
 
-    health_before = pm.get_load_health()
-    assert health_before == pm.get_load_health(), "get_load_health must be stable at rest"
+    health_before = pm.get_load_issue_counts()
+    assert health_before == pm.get_load_issue_counts(), "get_load_issue_counts must be stable at rest"
 
-    # get_load_health must serialize its read against the load_errors rebuild
-    # through _load_errors_lock. A store-install reload on a background thread
-    # would otherwise rebuild the dict under a main-thread reader. Hold the
-    # lock and prove the reader blocks until it is released.
+    # Hold _load_errors_lock to prove a health read cannot overlap a background
+    # rebuild and must block until release.
     assert hasattr(pm, "_load_errors_lock"), (
         "load_errors reads/writes must be guarded by a lock (cross-thread "
-        "store-install reload vs main-thread get_load_health)"
+        "store-install reload vs main-thread get_load_issue_counts)"
     )
     blocked = threading.Event()
     returned = threading.Event()
 
     def blocked_reader() -> None:
         blocked.set()
-        pm.get_load_health()  # must not complete until the lock is free
+        pm.get_load_issue_counts()  # must not complete until the lock is free
         returned.set()
 
     with pm._load_errors_lock:
@@ -258,10 +246,10 @@ def main() -> None:
         assert blocked.wait(timeout=5), "reader thread never started"
         # The reader must not return while the lock is held.
         assert not returned.wait(timeout=0.5), (
-            "get_load_health() returned while the load_errors lock was held "
+            "get_load_issue_counts() returned while the load_errors lock was held "
             "-- the read is not serialized against the rebuild"
         )
-    assert returned.wait(timeout=5), "get_load_health() never completed after lock release"
+    assert returned.wait(timeout=5), "get_load_issue_counts() never completed after lock release"
     t.join(timeout=5)
 
     # An uninstalled plugin's error is pruned on the next load.
@@ -275,11 +263,8 @@ def main() -> None:
         "errors for still-broken plugins must survive a reload"
     )
 
-    # A hot install that lands version-disabled must notify in that session.
-    # install_plugin's reload runs the register() gate, and a log-only disable
-    # would leave the next launch's startup toast as the first feedback.
-    # gl.app is faked only now, because the deferral assertions above need it
-    # None.
+    # A hot-installed plugin disabled by the version gate must notify in the
+    # install session; gl.app stays None until prior deferral checks finish.
     import types
     from gi.repository import GLib
     from src.backend.Store.StoreBackend import StoreBackend
@@ -316,11 +301,8 @@ def main() -> None:
     finally:
         gl.app = None
 
-    # remove_plugin_from_list must handle a plugin that lives only in
-    # disabled_plugins. get_plugin_by_id defaults to include_disabled=True, so
-    # uninstall_plugin hands it version-gated plugins too. A KeyError there
-    # aborts the deregister before the sys.modules purge, and the updated
-    # plugin keeps serving its old code.
+    # Deregistration must accept plugins found only in disabled_plugins because
+    # include_disabled lookups also feed uninstall and module cleanup.
     disabled_plugin = pm.get_plugin_by_id("com_test_old_major", include_disabled=True)
     assert disabled_plugin is not None
     pm.remove_plugin_from_list(disabled_plugin)  # must not raise

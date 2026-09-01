@@ -1,10 +1,4 @@
-"""Pins the CLI half of the control plane in src/backend/cli_forward.py.
-
-Every page and state request is forwarded or parked, and every emulated input
-is forwarded or refused, because a press cannot wait for a deck. Validation is
-syntax only and all-or-nothing, and a failure never stops the requests behind
-it.
-"""
+"""Verify forwarding, parking, validation, and refusal across the CLI."""
 import fixtures  # noqa: F401  (must be first: isolates DATA_PATH before globals)
 
 import globals as gl  # noqa: E402
@@ -15,9 +9,7 @@ from src.backend import cli_forward  # noqa: E402
 
 WATCHDOG_SECONDS = 60
 
-# One command carrying three page requests and two state requests. Every one
-# names a different deck, so a dropped request cannot hide behind
-# last-write-wins parking.
+# Use distinct decks so last-write-wins parking cannot hide a dropped request.
 ARGV = [
     "--change-page", "deck-a", "Alpha",
     "--change-page", "deck-b", "Beta",
@@ -46,11 +38,7 @@ def clear_parking() -> None:
 
 
 class Recorder:
-    """The running instance, without a bus.
-
-    Records every call the forwarder makes, in order. It answers the way the
-    real methods do, with an empty string on success and a sentence on failure.
-    """
+    """Record ordered calls with the running instance's response contract."""
 
     def __init__(self, running: bool = True, answers: dict | None = None,
                  raises: Exception | None = None,
@@ -61,8 +49,8 @@ class Recorder:
         self._query = query
         self.calls: list[tuple] = []
 
-    def is_running(self) -> bool:
-        self.calls.append(("is_running",))
+    def has_running_instance(self) -> bool:
+        self.calls.append(("has_running_instance",))
         return self._running
 
     def change_page(self, serial: str, page: str) -> str:
@@ -115,16 +103,14 @@ class Recorder:
         return self._answers.get(serial, "")
 
     def forwards(self) -> list[tuple]:
-        return [call for call in self.calls if call[0] != "is_running"]
+        return [call for call in self.calls if call[0] != "has_running_instance"]
 
-
-# 1. Every request is forwarded
 
 def check_all_requests_are_forwarded() -> None:
     clear_parking()
     recorder = Recorder(running=True)
 
-    verdict = cli_forward.forward_cli_requests(parse(ARGV), recorder)
+    verdict = cli_forward.route_cli_requests(parse(ARGV), recorder)
 
     assert recorder.forwards() == EXPECTED_FORWARDS, (
         f"the running instance was sent {recorder.forwards()} instead of "
@@ -148,13 +134,11 @@ def check_all_requests_are_forwarded() -> None:
     print("PASS: every page and state request on the command line is forwarded")
 
 
-# 2 and 3. Parking
-
 def check_nothing_running_parks_everything() -> None:
     clear_parking()
     recorder = Recorder(running=False)
 
-    verdict = cli_forward.forward_cli_requests(parse(ARGV), recorder)
+    verdict = cli_forward.route_cli_requests(parse(ARGV), recorder)
 
     assert not verdict.handled, (
         "with nothing running this invocation becomes the instance, so it must "
@@ -179,7 +163,7 @@ def check_close_running_parks_requests() -> None:
     clear_parking()
     recorder = Recorder(running=True)
 
-    verdict = cli_forward.forward_cli_requests(
+    verdict = cli_forward.route_cli_requests(
         parse(ARGV + ["--close-running"]), recorder)
 
     assert not verdict.handled, (
@@ -194,8 +178,6 @@ def check_close_running_parks_requests() -> None:
     print("PASS: --close-running parks its requests even with an instance running")
 
 
-# 4 and 5. What the instance says comes back
-
 def check_failures_surface_without_stopping() -> None:
     clear_parking()
     refusal = "Page 'Beta' not found. Available pages: Alpha, Gamma"
@@ -203,7 +185,7 @@ def check_failures_surface_without_stopping() -> None:
     recorder = Recorder(running=True,
                         answers={"deck-b": refusal, "deck-d": unknown_deck})
 
-    verdict = cli_forward.forward_cli_requests(parse(ARGV), recorder)
+    verdict = cli_forward.route_cli_requests(parse(ARGV), recorder)
 
     assert verdict.failures == [refusal, unknown_deck], (
         f"the instance's own sentences are what the person who typed the "
@@ -219,7 +201,7 @@ def check_older_instance_reports_once() -> None:
     clear_parking()
     recorder = Recorder(running=True, raises=cli_forward.OlderInstance())
 
-    verdict = cli_forward.forward_cli_requests(parse(ARGV), recorder)
+    verdict = cli_forward.route_cli_requests(parse(ARGV), recorder)
 
     assert verdict.failures == [cli_forward.SKEW_MESSAGE], verdict.failures
     assert "restart" in cli_forward.SKEW_MESSAGE, (
@@ -252,18 +234,14 @@ def check_older_instance_reports_once() -> None:
 
 
 def check_broken_conversation_reported() -> None:
-    """A wedged instance, a dropped connection or a refused call reads back.
-
-    The bus text must reach the terminal. Left as the GLib error it starts as,
-    it escapes the CLI, prints a traceback and still exits zero.
-    """
+    """Return transport failures as terminal text without booting another instance."""
     clear_parking()
     broke = cli_forward.TransportError(
         "GDBus.Error:org.freedesktop.DBus.Error.NoReply: Message did not "
         "receive a reply (timeout by message bus)")
     recorder = Recorder(running=True, raises=broke)
 
-    verdict = cli_forward.forward_cli_requests(parse(ARGV), recorder)
+    verdict = cli_forward.route_cli_requests(parse(ARGV), recorder)
 
     assert verdict.failures == [str(broke)], (
         f"a broken conversation has to come back as something printable: "
@@ -281,8 +259,6 @@ def check_broken_conversation_reported() -> None:
     print("PASS: a failed conversation with the instance is reported, not raised")
 
 
-# 6 and 7. Syntax only
-
 def check_validation_is_syntax_only() -> None:
     bad = [
         ["--change-state", "deck-a", "Alpha", "nope", "1"],       # no comma
@@ -298,7 +274,7 @@ def check_validation_is_syntax_only() -> None:
     for argv in bad:
         clear_parking()
         recorder = Recorder(running=True)
-        verdict = cli_forward.forward_cli_requests(parse(argv), recorder)
+        verdict = cli_forward.route_cli_requests(parse(argv), recorder)
         assert verdict.failures, f"{argv} was accepted"
         assert verdict.failures[0].startswith("Error: "), verdict.failures
         assert cli_forward.USAGE in verdict.failures, (
@@ -314,7 +290,7 @@ def check_validation_is_syntax_only() -> None:
     # because a partly applied command is the worst of the three outcomes.
     clear_parking()
     recorder = Recorder(running=True)
-    verdict = cli_forward.forward_cli_requests(
+    verdict = cli_forward.route_cli_requests(
         parse(["--change-page", "deck-a", "Alpha",
                "--change-state", "deck-b", "Beta", "0,0", "1",
                "--change-state", "deck-c", "Gamma", "nope", "1"]), recorder)
@@ -327,17 +303,13 @@ def check_validation_is_syntax_only() -> None:
 
 
 def check_large_decks_not_pre_rejected() -> None:
-    """Large coordinates and state numbers travel to the instance untouched.
-
-    A cap of x,y <= 10 and state <= 20 matches no device. It rejects valid
-    requests for large decks before anything that knows a deck sees them.
-    """
+    """Pass large coordinates and states to the running-instance recorder."""
     argv = ["--change-state", "deck-a", "Alpha", "9,9", "19",
             "--change-state", "deck-b", "Beta", "14,7", "31"]
 
     clear_parking()
     recorder = Recorder(running=True)
-    verdict = cli_forward.forward_cli_requests(parse(argv), recorder)
+    verdict = cli_forward.route_cli_requests(parse(argv), recorder)
     assert verdict.failures == [], verdict.failures
     assert recorder.forwards() == [
         ("state", "deck-a", "Alpha", "9,9", 19),
@@ -347,7 +319,7 @@ def check_large_decks_not_pre_rejected() -> None:
     # The same on the parking path, so no boot-time request is judged by
     # numbers the CLI made up.
     clear_parking()
-    verdict = cli_forward.forward_cli_requests(parse(argv), Recorder(running=False))
+    verdict = cli_forward.route_cli_requests(parse(argv), Recorder(running=False))
     assert verdict.failures == [], verdict.failures
     assert gl.api_state_requests["deck-a"]["state"] == 19, gl.api_state_requests
     assert gl.api_state_requests["deck-b"]["coords"] == "14,7", gl.api_state_requests
@@ -369,15 +341,11 @@ EXPECTED_EMULATE_FORWARDS = [
 
 
 def check_emulate_requests_are_forwarded() -> None:
-    """Every press goes to the instance, after the changes on the same line.
-
-    A command that sets a state and then presses that input has to press the
-    state it just set, which is what the order of the sends decides.
-    """
+    """Send each press after earlier changes on the same command line."""
     clear_parking()
     recorder = Recorder(running=True)
 
-    verdict = cli_forward.forward_cli_requests(parse(ARGV + EMULATE_ARGV), recorder)
+    verdict = cli_forward.route_cli_requests(parse(ARGV + EMULATE_ARGV), recorder)
 
     assert verdict.handled and verdict.failures == [], verdict
     assert recorder.forwards() == EXPECTED_FORWARDS + EXPECTED_EMULATE_FORWARDS, (
@@ -391,17 +359,12 @@ def check_emulate_requests_are_forwarded() -> None:
 
 
 def check_emulate_refusal_comes_back() -> None:
-    """What the instance says about a press is what the terminal shows.
-
-    A press the instance refuses, because the deck moved on or the key is held
-    or the serial is not there, has to reach the person who typed the command.
-    Dropped here it exits zero with nothing printed, which reads as pressed.
-    """
+    """Return the instance's press refusal as a command failure."""
     clear_parking()
     refusal = "Position (0,0) on device deck-f is already held down"
     recorder = Recorder(running=True, answers={"deck-f": refusal})
 
-    verdict = cli_forward.forward_cli_requests(parse(EMULATE_ARGV), recorder)
+    verdict = cli_forward.route_cli_requests(parse(EMULATE_ARGV), recorder)
 
     assert verdict.failures == [refusal], (
         f"the instance's own sentence about the press never came back: "
@@ -415,18 +378,11 @@ def check_emulate_refusal_comes_back() -> None:
 
 
 def check_emulate_cannot_be_parked() -> None:
-    """With nothing running, a press ends the command instead of parking.
-
-    Parking exists so an invocation that finds nothing running can boot and
-    apply its requests to the decks it opens. A press has no such meaning: it
-    would fire at whatever moment the deck turned up. So the whole command is
-    refused, and nothing on it is applied, because a command applies all of
-    itself or none of it.
-    """
+    """Refuse the whole command when a press has no running instance."""
     clear_parking()
     recorder = Recorder(running=False)
 
-    verdict = cli_forward.forward_cli_requests(parse(EMULATE_ARGV), recorder)
+    verdict = cli_forward.route_cli_requests(parse(EMULATE_ARGV), recorder)
 
     assert not verdict.handled, verdict
     assert verdict.failures == [cli_forward.NOT_RUNNING_MESSAGE], verdict.failures
@@ -443,7 +399,7 @@ def check_emulate_cannot_be_parked() -> None:
     # The same command with a parkable request beside the press. The press is
     # what the boot cannot carry out, so the page change parks nothing either.
     clear_parking()
-    verdict = cli_forward.forward_cli_requests(
+    verdict = cli_forward.route_cli_requests(
         parse(["--change-page", "deck-a", "Alpha", *EMULATE_ARGV]), Recorder(running=False))
     assert verdict.failures == [cli_forward.NOT_RUNNING_MESSAGE], verdict.failures
     assert not gl.api_page_requests and not gl.api_state_requests, (
@@ -454,15 +410,11 @@ def check_emulate_cannot_be_parked() -> None:
 
 
 def check_emulate_refuses_close_running() -> None:
-    """--close-running is the same case, and says so in its own words.
-
-    That launch stops the instance and becomes it, so its requests belong to
-    the decks it opens next. A press cannot wait for those either.
-    """
+    """Refuse presses that cannot survive --close-running."""
     clear_parking()
     recorder = Recorder(running=True)
 
-    verdict = cli_forward.forward_cli_requests(
+    verdict = cli_forward.route_cli_requests(
         parse([*EMULATE_ARGV, "--close-running"]), recorder)
 
     assert not verdict.handled, verdict
@@ -474,11 +426,9 @@ def check_emulate_refuses_close_running() -> None:
         f"{recorder.forwards()}")
     assert not gl.api_page_requests and not gl.api_state_requests
 
-    # The same answer with nothing running at all. That launch opens the decks
-    # either way, so the situation does not depend on the probe, and the fast
-    # path, which has no probe at that point, gives this same sentence.
+    # The same refusal applies without an instance because this launch opens the decks.
     clear_parking()
-    verdict = cli_forward.forward_cli_requests(
+    verdict = cli_forward.route_cli_requests(
         parse([*EMULATE_ARGV, "--close-running"]), Recorder(running=False))
     assert verdict.failures == [cli_forward.CLOSE_RUNNING_MESSAGE], verdict.failures
     assert not gl.api_page_requests and not gl.api_state_requests
@@ -499,7 +449,7 @@ def check_emulate_validation_is_syntax_only() -> None:
     for argv in bad:
         clear_parking()
         recorder = Recorder(running=True)
-        verdict = cli_forward.forward_cli_requests(parse(argv), recorder)
+        verdict = cli_forward.route_cli_requests(parse(argv), recorder)
         assert verdict.failures, f"{argv} was accepted"
         assert verdict.failures[0].startswith("Error: "), verdict.failures
         assert cli_forward.USAGE in verdict.failures, (
@@ -515,7 +465,7 @@ def check_emulate_validation_is_syntax_only() -> None:
     # to the instance, which has the device to judge them against.
     clear_parking()
     recorder = Recorder(running=True)
-    verdict = cli_forward.forward_cli_requests(
+    verdict = cli_forward.route_cli_requests(
         parse(["--emulate-input", "deck-a", "Alpha", "14,7", "press"]), recorder)
     assert verdict.failures == [], verdict.failures
     assert recorder.forwards() == [("emulate", "deck-a", "Alpha", "14,7", "press")], (
@@ -524,14 +474,8 @@ def check_emulate_validation_is_syntax_only() -> None:
     print("PASS: a malformed press rejects the whole command before anything happens")
 
 
-def check_event_words_match_the_control_plane() -> None:
-    """The CLI's copy of the vocabulary is the control plane's list.
-
-    This module stays importable before globals and the control plane is not,
-    so the words are written out twice. A word added on one side and not the
-    other is either a command the CLI refuses and the instance would have run,
-    or one it sends for the instance to refuse.
-    """
+def check_event_vocabulary_matches_control_plane() -> None:
+    """Keep the pre-globals CLI event vocabulary equal to the control plane's."""
     from src.backend import control_plane
 
     assert cli_forward.EMULATE_EVENTS == control_plane.EMULATED_EVENTS, (
@@ -545,15 +489,11 @@ def check_event_words_match_the_control_plane() -> None:
 
 
 def check_coordinate_failures_read_alike() -> None:
-    """Both verbs that carry coordinates refuse them with one sentence.
-
-    Only the flag named in the failure may differ. A copy of the check per verb
-    drifts, and one mistake then reads two ways.
-    """
+    """Use one coordinate-failure sentence for state changes and presses."""
     for coords in ("nope", "1,2,3", "", "x,y", "-1,0"):
-        state = cli_forward.forward_cli_requests(
+        state = cli_forward.route_cli_requests(
             parse(["--change-state", "deck-a", "Alpha", coords, "1"]), Recorder())
-        press = cli_forward.forward_cli_requests(
+        press = cli_forward.route_cli_requests(
             parse(["--emulate-input", "deck-a", "Alpha", coords, "press"]), Recorder())
         assert state.failures and press.failures, coords
         assert press.failures[0] == state.failures[0].replace(
@@ -563,18 +503,10 @@ def check_coordinate_failures_read_alike() -> None:
     print("PASS: both verbs refuse the same coordinates with the same sentence")
 
 
-def check_call_timeout_outlasts_the_instances_own_waits() -> None:
-    """A control call waits longer than the instance can take to answer it.
+def check_control_timeout_covers_instance_waits() -> None:
+    """Keep the control timeout above the instance's combined input and press waits.
 
-    The instance waits for a page's inputs to rebuild, and then for the press
-    to reach the deck, before it replies. A call timeout below their sum gives
-    up on work the instance goes on to do: a state change survives that,
-    because asking twice sets the same state, but a press does not, and a
-    command that reports a timeout and presses anyway invites the retry that
-    presses twice.
-
-    The two constants live in modules that cannot import each other, because
-    this one stays importable before globals. This is where they meet.
+    A shorter timeout can report failure before a non-idempotent press completes.
     """
     from src.backend import control_plane
 
@@ -640,20 +572,15 @@ class _StubGio:
             return ""
 
 
-def check_control_calls_take_the_longer_timeout() -> None:
-    """The transport spends the control timeout on a control call.
-
-    The number above is only worth having if the call site uses it. The probe
-    keeps the short one, because it decides whether to boot and nothing a
-    person typed waits on its answer.
-    """
+def check_control_and_probe_timeouts() -> None:
+    """Use the long timeout for controls and the short timeout for the probe."""
     transport = object.__new__(cli_forward._BusTransport)
     connection = _RecordingConnection()
     transport._gio = _StubGio
     transport._glib = _StubGLib
     transport._connection = connection
 
-    assert transport.is_running() is True
+    assert transport.has_running_instance() is True
     assert transport.change_page("deck-a", "Alpha") == ""
     assert transport.change_state("deck-a", "Alpha", "0,0", 1) == ""
     assert transport.emulate_input("deck-a", "Alpha", "0,0", "press") == ""
@@ -668,12 +595,8 @@ def check_control_calls_take_the_longer_timeout() -> None:
     print("PASS: a control call spends the control timeout and a probe does not")
 
 
-def check_unparkable_is_the_one_rule() -> None:
-    """One function answers "can a boot apply this?" for both halves of the CLI.
-
-    The fast path and the boot path both ask it, which is what keeps park()
-    free of a kind it has no queue for.
-    """
+def check_unparkable_request_classification() -> None:
+    """Use one refusal rule for requests that cannot be parked in either CLI path."""
     situations = (cli_forward.NOT_RUNNING_MESSAGE,
                   cli_forward.CLOSE_RUNNING_MESSAGE,
                   cli_forward.LISTING_MESSAGE)
@@ -681,12 +604,12 @@ def check_unparkable_is_the_one_rule() -> None:
     parkable = cli_forward.Plan(page_requests=[("deck-a", "Alpha")],
                                 state_requests=[("deck-b", "Beta", "0,0", 1)])
     for message in situations:
-        assert cli_forward.unparkable(parkable, message) == [], (
+        assert cli_forward.unparkable_failures(parkable, message) == [], (
             "a page or state change is exactly what parking is for")
 
     pressing = cli_forward.Plan(emulate_requests=[("deck-f", "Zeta", "0,0", "press")])
     for message in situations:
-        assert cli_forward.unparkable(pressing, message) == [message], (
+        assert cli_forward.unparkable_failures(pressing, message) == [message], (
             "the caller knows which situation it is in, and the answer is its "
             "own sentence")
     assert len(set(situations)) == len(situations), (
@@ -708,13 +631,11 @@ def check_unparkable_is_the_one_rule() -> None:
     print("PASS: one rule decides what a boot cannot apply, and presses are it")
 
 
-# 8. Nothing asked for
-
-def check_no_requests_touches_nothing() -> None:
+def check_empty_command_skips_transport_and_parking() -> None:
     clear_parking()
     recorder = Recorder(running=True)
 
-    verdict = cli_forward.forward_cli_requests(parse(["--devel"]), recorder)
+    verdict = cli_forward.route_cli_requests(parse(["--devel"]), recorder)
 
     assert not verdict.handled and verdict.failures == [], verdict
     assert recorder.calls == [], (
@@ -725,18 +646,8 @@ def check_no_requests_touches_nothing() -> None:
     print("PASS: an invocation with no requests probes nothing and parks nothing")
 
 
-# 9. No session bus to open
-
 def check_unreachable_bus_is_reported() -> None:
-    """A bus that cannot be opened ends the command, and says so.
-
-    The transport's constructor raises when there is no session bus. That
-    error used to leave this module, reach main()'s @log.catch, print a
-    traceback and exit zero, which reads as applied while the request was
-    dropped. This process also cannot tell whether an instance runs, so it must
-    not park and boot either: that opens a deck on a guess, next to an instance
-    that may hold it.
-    """
+    """Report an unreachable bus without parking or booting on a guess."""
     clear_parking()
     original = cli_forward.bus_transport
 
@@ -746,7 +657,7 @@ def check_unreachable_bus_is_reported() -> None:
 
     cli_forward.bus_transport = refuse
     try:
-        verdict = cli_forward.forward_cli_requests(parse(ARGV))
+        verdict = cli_forward.route_cli_requests(parse(ARGV))
     finally:
         cli_forward.bus_transport = original
 
@@ -769,23 +680,23 @@ DUMP = ('{"decks": [{"serial": "deck-a", "active_page": "Main", '
         '"brightness": 60}], "pages": ["Main", "Home"]}')
 
 
-def check_json_prints_the_dump() -> None:
+def check_json_state_output() -> None:
     clear_parking()
     recorder = Recorder(query=DUMP)
 
-    verdict = cli_forward.forward_cli_requests(parse(["--json"]), recorder)
+    verdict = cli_forward.route_cli_requests(parse(["--json"]), recorder)
 
     assert verdict.handled and verdict.failures == [], verdict
     assert verdict.output == [DUMP], (
         f"--json must print the instance's dump to stdout, not {verdict.output}")
-    assert recorder.calls == [("is_running",), ("query_state",)], recorder.calls
+    assert recorder.calls == [("has_running_instance",), ("query_state",)], recorder.calls
     print("PASS: --json prints the running instance's state as one object")
 
 
-def check_get_brightness_reads_the_dump() -> None:
+def check_brightness_from_state_dump() -> None:
     clear_parking()
     recorder = Recorder(query=DUMP)
-    verdict = cli_forward.forward_cli_requests(
+    verdict = cli_forward.route_cli_requests(
         parse(["--get-brightness", "deck-a"]), recorder)
     assert verdict.failures == [], verdict.failures
     assert verdict.output == ["60"], (
@@ -794,7 +705,7 @@ def check_get_brightness_reads_the_dump() -> None:
     # An unknown serial is a failure that names the decks that do exist, and
     # prints nothing to stdout.
     recorder = Recorder(query=DUMP)
-    verdict = cli_forward.forward_cli_requests(
+    verdict = cli_forward.route_cli_requests(
         parse(["--get-brightness", "deck-z"]), recorder)
     assert verdict.output == [], verdict.output
     assert verdict.failures and "deck-a" in verdict.failures[0], verdict.failures
@@ -811,7 +722,7 @@ def check_command_verbs_forward() -> None:
         (["--duplicate-page", "Main", "Home"], ("duplicate-page", "Main", "Home")),
     ):
         recorder = Recorder(running=True)
-        verdict = cli_forward.forward_cli_requests(parse(argv), recorder)
+        verdict = cli_forward.route_cli_requests(parse(argv), recorder)
         assert verdict.handled and verdict.failures == [], (argv, verdict)
         assert verdict.output == [], (argv, verdict.output)
         assert expected in recorder.calls, (argv, recorder.calls)
@@ -823,7 +734,7 @@ def check_command_refusal_comes_back() -> None:
     clear_parking()
     refusal = "StreamDeck with serial 'deck-a' not found. Available devices: deck-b"
     recorder = Recorder(running=True, answers={"deck-a": refusal})
-    verdict = cli_forward.forward_cli_requests(
+    verdict = cli_forward.route_cli_requests(
         parse(["--set-brightness", "deck-a", "60"]), recorder)
     assert verdict.failures == [refusal], verdict.failures
     assert verdict.output == [], verdict.output
@@ -834,25 +745,25 @@ def check_list_actions_forwards() -> None:
     clear_parking()
     payload = '{"page": "Main", "actions": {"keys": {"0x0": {"0": ["x"]}}}}'
     recorder = Recorder(query=payload)
-    verdict = cli_forward.forward_cli_requests(parse(["--list-actions", "Main"]), recorder)
+    verdict = cli_forward.route_cli_requests(parse(["--list-actions", "Main"]), recorder)
     assert verdict.output == [payload], verdict.output
     assert ("list_actions", "Main", "") in recorder.calls, recorder.calls
 
     recorder = Recorder(query=payload)
-    cli_forward.forward_cli_requests(parse(["--list-actions", "Main", "0,0"]), recorder)
+    cli_forward.route_cli_requests(parse(["--list-actions", "Main", "0,0"]), recorder)
     assert ("list_actions", "Main", "0,0") in recorder.calls, recorder.calls
 
     # The instance names a page that does not exist as an error object, which
     # becomes a sentence on stderr and not output on stdout.
     recorder = Recorder(
         query='{"error": "Page \'Nope\' not found. Available pages: Main"}')
-    verdict = cli_forward.forward_cli_requests(parse(["--list-actions", "Nope"]), recorder)
+    verdict = cli_forward.route_cli_requests(parse(["--list-actions", "Nope"]), recorder)
     assert verdict.output == [] and verdict.failures and "Nope" in verdict.failures[0], (
         verdict.failures)
     print("PASS: --list-actions forwards the page and optional coordinates")
 
 
-def check_read_and_page_verbs_refuse_without_instance() -> None:
+def check_instance_verbs_require_running_instance() -> None:
     """Every new verb needs a running instance, and none of them park."""
     for argv in (["--json"], ["--get-brightness", "deck-a"],
                  ["--list-actions", "Main"], ["--list-actions", "Main", "0,0"],
@@ -861,7 +772,7 @@ def check_read_and_page_verbs_refuse_without_instance() -> None:
                  ["--duplicate-page", "Main", "Home"]):
         clear_parking()
         recorder = Recorder(running=False)
-        verdict = cli_forward.forward_cli_requests(parse(argv), recorder)
+        verdict = cli_forward.route_cli_requests(parse(argv), recorder)
         assert verdict.failures == [cli_forward._NOT_RUNNING_INSTANCE_MESSAGE], (
             argv, verdict.failures)
         assert verdict.output == [], (argv, verdict.output)
@@ -886,7 +797,7 @@ def check_instance_verb_syntax_is_checked() -> None:
     for argv in bad:
         clear_parking()
         recorder = Recorder(running=True)
-        verdict = cli_forward.forward_cli_requests(parse(argv), recorder)
+        verdict = cli_forward.route_cli_requests(parse(argv), recorder)
         assert verdict.failures, f"{argv} was accepted"
         assert verdict.failures[0].startswith("Error: "), (argv, verdict.failures)
         assert cli_forward.USAGE in verdict.failures, (argv, verdict.failures)
@@ -895,10 +806,10 @@ def check_instance_verb_syntax_is_checked() -> None:
     print("PASS: a malformed read or command verb is refused before the bus")
 
 
-def check_instance_verb_older_instance_reports_once() -> None:
+def check_old_instance_query_reports_once() -> None:
     clear_parking()
     recorder = Recorder(running=True, raises=cli_forward.OlderInstance())
-    verdict = cli_forward.forward_cli_requests(parse(["--json"]), recorder)
+    verdict = cli_forward.route_cli_requests(parse(["--json"]), recorder)
     assert verdict.failures == [cli_forward.SKEW_MESSAGE], verdict.failures
     assert verdict.output == [], verdict.output
     print("PASS: a query against an instance without the methods reports the skew")
@@ -920,21 +831,21 @@ def main() -> None:
         check_emulate_cannot_be_parked()
         check_emulate_refuses_close_running()
         check_emulate_validation_is_syntax_only()
-        check_event_words_match_the_control_plane()
+        check_event_vocabulary_matches_control_plane()
         check_coordinate_failures_read_alike()
-        check_call_timeout_outlasts_the_instances_own_waits()
-        check_control_calls_take_the_longer_timeout()
-        check_unparkable_is_the_one_rule()
-        check_no_requests_touches_nothing()
+        check_control_timeout_covers_instance_waits()
+        check_control_and_probe_timeouts()
+        check_unparkable_request_classification()
+        check_empty_command_skips_transport_and_parking()
         check_unreachable_bus_is_reported()
-        check_json_prints_the_dump()
-        check_get_brightness_reads_the_dump()
+        check_json_state_output()
+        check_brightness_from_state_dump()
         check_command_verbs_forward()
         check_command_refusal_comes_back()
         check_list_actions_forwards()
-        check_read_and_page_verbs_refuse_without_instance()
+        check_instance_verbs_require_running_instance()
         check_instance_verb_syntax_is_checked()
-        check_instance_verb_older_instance_reports_once()
+        check_old_instance_query_reports_once()
     finally:
         clear_parking()
 

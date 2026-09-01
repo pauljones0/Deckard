@@ -14,8 +14,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 The GIF pipeline holds the one PIL compositor in the app, the budget ladder
 that bounds what a GIF retains, and the two providers on them. GifBackground
-draws a deck or strip canvas; KeyGIF draws one key. This module imports
-nothing from its sibling modules in the deck_controller package.
+draws a deck or strip canvas; KeyGIF draws one key.
 """
 import bisect
 import contextlib
@@ -23,89 +22,70 @@ import itertools
 import math
 import os
 import threading
-import time
 from dataclasses import dataclass
 
 from PIL import Image, ImageEnhance, ImageOps, ImageSequence
 from loguru import logger as log
 
 from src.backend.DeckManagement.Subclasses import cache_budget
+from src.backend.DeckManagement.deck_controller.viewport import (
+    DEFAULT_VIEW, is_default_view, render_viewport,
+)
 from src.backend.DeckManagement.Subclasses import mp4_tile_cache
+from src.backend.DeckManagement import media_loop
+from src.backend.DeckManagement.media_loop import MEDIA_LOOP_FPS, FrameScheduled
 from src.backend.DeckManagement.Subclasses.SingleKeyAsset import SingleKeyAsset
 from src.backend.DeckManagement.Subclasses.mp4_tile_cache import get_video_md5
 from src.backend.DeckManagement.strip_geometry import StripBand, flat_band, oriented_band
 
 from collections.abc import Generator
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast, override
 if TYPE_CHECKING:
     from src.backend.DeckManagement.deck_controller.controller import DeckController
-    from src.backend.DeckManagement.deck_controller.inputs import ControllerKey
+    from src.backend.DeckManagement.deck_controller.inputs import ControllerInput
     from src.backend.PageManagement.Page import Page
 
 
-#: extend_touchscreen means __init__ computed the strip geometry. A raise
-#: keeps the Background.update_tiles contract: previous tiles kept, one
-#: rate-limited log. A key-only tile set leaves the strip frozen and silent.
+#: Missing geometry on an extended background raises so update_tiles keeps old tiles and logs.
+#: Returning key-only tiles would silently freeze the strip.
 _STRIP_GEOMETRY_MISSING = (
     "extend_touchscreen is set but the strip geometry was never computed"
 )
 
 
+def gif_render_rate(fps: "int | None", fastest_frame_rate: float,
+                    total_delay: float) -> float:
+    """Return a GIF read rate capped by the media loop rate.
+    Honor page and frame caps unless two reads per loop need a higher rate."""
+    cap = max(1.0, float(fps or MEDIA_LOOP_FPS))
+    rate = min(MEDIA_LOOP_FPS, cap, fastest_frame_rate)
+    if total_delay > 0:
+        rate = max(rate, min(MEDIA_LOOP_FPS, 2.0 / total_delay))
+    return rate
+
+
 class GifBudgetExceeded(Exception):
-    """decode_gif_frames raises this before it decodes a frame, when the
-    estimated footprint exceeds the caller's budget. The caller falls back to
-    a bounded path instead of an OOM risk on a many-frame GIF."""
+    """Signal before decode that estimated retained frames exceed the caller's budget."""
 
 
-# RAM ceiling for a fully-decoded GIF background. GifBackground estimates
-# n_frames x W x H x 4 against it at open, and falls back to the opaque cv2
-# path when over. 128MB covers ~200 canvas frames on an SD+ at ~600KB each,
-# or ~90 on an XL at ~1.4MB each.
+# Cap decoded GIF backgrounds by frame count times RGBA canvas size.
+# Over-budget backgrounds use the bounded opaque cv2 route.
 GIF_BG_BUDGET_MB = 128
 
-# Per-GIF ceiling for one key's retained RGBA frame list. Only an
-# alpha-carrying GIF builds one, because an opaque GIF plays off the mp4 tile
-# cache at O(1) RAM. 32MB is ~220 frames at 2x an SD+ tile, or ~110 at 2x an XL
-# tile.
+# With video caching, retain under-budget alpha and cache opaque or over-budget GIFs.
 GIF_KEY_BUDGET_MB = 32
 
-# Cache-file variant for the over-budget artifact of
-# KeyGIF._cold_streaming_walk. Its frames lost their alpha, so a GIF that is
-# under budget must not read it back and lose its transparency. A separate
-# variant stops the two renderings from sharing a file.
+# Separate alpha-dropped over-budget artifacts from lossless GIF cache files.
+# Under-budget loads must not read degraded pixels as opaque classification.
 BOUNDED_TILE_VARIANT = ".bounded"
 
-# The media loop's own tick ceiling. A cap at or above it slows nothing down,
-# because no tick runs faster, so KeyGIF leaves its timeline untouched there
-# and a GIF that carries no cap plays exactly as it did before caps existed.
-# The number is repeated here rather than read from the loop, because this
-# module imports nothing from its sibling modules in the package.
-#
-# Five declarations hold this number independently, and they must move
-# together. MediaPlayerThread.FPS in media_writer.py is the authority, the
-# rate the loop actually ticks at. The other four follow it: this constant,
-# Page.DEFAULT_MEDIA_FPS (what a page with no fps key reads as),
-# MediaConfig.fps with its from_dict default (what a page load builds with),
-# and VideoFpsRow.MAX_FPS (the top of the sidebar range). Raising the loop
-# alone leaves the other four capping media the loop could now draw faster.
-# Scattered `or 30` fallbacks in KeyVideo.py and background_media.py spell
-# the same number for a falsy fps and follow the same rule.
-MEDIA_LOOP_FPS = 30
-
-# Raw DECKARD_GIF_KEY_BUDGET_MB values that already have a warning logged. A
-# bad or very small setting then costs one log line per distinct value for
-# the life of the process, not one per GIF key per page load.
+# Warn once per distinct invalid or very small GIF budget value per process.
 _warned_gif_budget_values: "set[str]" = set()
 
 
 def gif_key_budget_bytes() -> int:
-    """Byte ceiling for one key GIF's retained frame list, from
-    DECKARD_GIF_KEY_BUDGET_MB. Zero or less disables the frame list, and
-    every GIF then plays off the mp4 tile cache and trades alpha for a bound.
-    A malformed value degrades to the default with a warning, because a typo
-    must not cost a key its media at page load. nan, inf and 1e400 count as
-    malformed. A value below 1 MiB also warns, because it is smaller than one
-    fitted frame at any tile size, so every alpha GIF drops transparency."""
+    """Read the per-key retained-frame ceiling from DECKARD_GIF_KEY_BUDGET_MB.
+    With video caching, nonpositive selects MP4; malformed and small values warn."""
     raw = os.environ.get("DECKARD_GIF_KEY_BUDGET_MB")
     if raw is None:
         return GIF_KEY_BUDGET_MB * 1024 * 1024
@@ -113,8 +93,7 @@ def gif_key_budget_bytes() -> int:
         mb = float(raw)
         usable = math.isfinite(mb)
     except ValueError:
-        # Bind mb so the name exists on every path. The usable test below
-        # returns before any read of it here.
+        # Bind mb on the exception path before the common validity branch.
         mb = 0.0
         usable = False
     if not usable:
@@ -138,12 +117,8 @@ def gif_key_budget_bytes() -> int:
 
 
 def contained_size(source_size: "tuple[int, int]", max_size: "tuple[int, int]") -> "tuple[int, int]":
-    """The dimensions that ImageOps.contain lands on: aspect-preserving and
-    shrink-only, so a source inside max_size keeps its size and does not
-    multiply retained memory. The result matches ImageOps.contain to within
-    one pixel per axis, which rounds each axis on its own recomputed scale;
-    94 of 1.1M surveyed pairs differ. The frame-list decode and the video
-    route both call this, so a GIF's geometry cannot depend on its route."""
+    """Return aspect-preserving, shrink-only contained dimensions.
+    Frame-list and video routes share this calculation and can differ from ImageOps by one pixel."""
     src_w, src_h = source_size
     max_w, max_h = max_size
     if src_w <= max_w and src_h <= max_h:
@@ -153,41 +128,29 @@ def contained_size(source_size: "tuple[int, int]", max_size: "tuple[int, int]") 
 
 
 def tile_video_size(source_size: "tuple[int, int]", max_size: "tuple[int, int]") -> "tuple[int, int]":
-    """The tile-cache geometry for a source contained into max_size. It is
-    contained_size() rounded down to even dimensions, and never below 2.
-    Even, because mp4v rounds an odd dimension down and leaves every payload
-    a pixel off the requested geometry. The floor of 2 exists because a 1-px
-    axis has no even value below it. A cached tile is then up to 1 px smaller
-    per axis than the retained frame list, and a 3x100 source drops to 2x100.
-    Every KeyGIF route calls this, so geometry cannot depend on the route."""
+    """Return shared tile-cache geometry rounded down to even axes of at least two pixels.
+    mp4v truncates odd axes, so cached tiles can be one pixel smaller than retained frames."""
     out_w, out_h = contained_size(source_size, max_size)
     return max(2, out_w - out_w % 2), max(2, out_h - out_h % 2)
 
 
 def normalize_gif_delay(raw: "int | None") -> int:
-    """One frame's GIF duration metadata as the delay to play, in ms.
-    Missing or under 20ms becomes 100ms, as Firefox and Chrome do; any other
-    value stands. The full decode and the header-only probe share this
-    definition, so the two cannot disagree about a timeline."""
+    """Normalize one GIF delay in milliseconds.
+    Missing or below 20 ms becomes 100 ms; decode and probe share this rule."""
     if raw is None or raw < 20:
         return 100
     return raw
 
 
 def cumulative_gif_delays(delays_ms: "list[int]") -> "list[float]":
-    """A delay list in ms as a cumulative timeline in seconds. Element i is
-    the wall-clock time at which frame i's display window ends. A pick for
-    elapsed time t is then one bisect instead of a per-tick loop."""
+    """Convert millisecond delays to cumulative frame-end seconds for bisect lookup."""
     return list(itertools.accumulate(d / 1000.0 for d in delays_ms))
 
 
 @dataclass(frozen=True, slots=True)
 class GifTimeline:
-    """A GIF's playback timeline and geometry, with no decoded frame: the
-    frame count, the per-frame delays, the cumulative wall-clock edges and
-    the source size. A KeyGIF uses it when the pixels come from a tile cache
-    that PIL wrote earlier. Timing authority stays here, never in the video
-    container."""
+    """GIF frame count, delays, cumulative edges, and source size without retained pixels.
+    PIL timing remains authoritative when pixels come from a tile MP4."""
     n_frames: int
     frame_delays: "list[int]"
     cum_delays: "list[float]"
@@ -205,13 +168,8 @@ def gif_header_geometry(path: str) -> "tuple[int, tuple[int, int]]":
 
 
 def probe_gif_timeline(path: str) -> GifTimeline:
-    """The playback timeline of the GIF at path, with nothing retained. PIL
-    exposes a frame duration only after a seek, and a seek composes the
-    previous frame. This walk therefore runs the decoder, and it converts,
-    fits, saturates and keeps nothing. It costs ~49 ms and O(1) RAM on a
-    200-frame 500x500 GIF, against ~320 ms and the full frame list for
-    decode_gif_frames. It raises what PIL raises on a corrupt file, and the
-    caller treats that as a failed decode."""
+    """Collect PIL delays with O(1) decoded pixel memory and O(n) timeline metadata.
+    Do not convert, fit, or saturate pixels; propagate corrupt-file errors."""
     gif = Image.open(path)
     try:
         size = gif.size
@@ -232,11 +190,8 @@ def probe_gif_timeline(path: str) -> GifTimeline:
 
 
 def frame_has_alpha(frame: Image.Image) -> bool:
-    """Does this rendered frame carry transparency? Test the pixels, not the
-    header. Of 396 real animated GIFs, 75% declare a transparent index on
-    frame 0 and 11% render a pixel with alpha under 255. Disposal 1 declares
-    the index to mean "leave this pixel alone". One extrema pass per
-    frame; the caller stops asking once the answer is yes."""
+    """Return whether rendered RGBA pixels contain alpha below 255.
+    Test pixels because disposal can leave declared transparent indices opaque."""
     if frame.mode != "RGBA":
         return False
     # The mode test above proves four bands, so getextrema returns four
@@ -247,22 +202,20 @@ def frame_has_alpha(frame: Image.Image) -> bool:
 
 def gif_frame_walk(path: str, max_size: "tuple[int, int] | None" = None,
                    fit_size: "tuple[int, int] | None" = None,
-                   saturation: float = 1.0) -> "Generator[tuple[Image.Image, int], None, None]":
-    """Generator over one GIF's frames: PIL composites each frame, converts
-    it to RGBA, sizes it, bakes the saturation, and yields (frame, delay_ms).
-    This is the one GIF compositor in the app. The retained frame list, the
-    GIF backgrounds and the KeyGIF tile mp4 therefore cannot disagree about
-    frame N. Pass max_size or fit_size, or neither. max_size contains
-    shrink-only, because upscaling multiplies retained memory. fit_size fits
-    every frame to exactly that size, so a background fills the canvas and
-    the per-key crop coordinates hold. The walk closes the source handle when
-    it ends, and when the consumer abandons it."""
+                   saturation: float = 1.0,
+                   view: tuple[float, float, float] = DEFAULT_VIEW) -> "Generator[tuple[Image.Image, int], None, None]":
+    """Yield PIL-composited RGBA frames with normalized delays, view, and saturation.
+    max_size shrinks only; fit_size fills exactly; always close the source when abandoned."""
     gif = Image.open(path)
     try:
         for frame in ImageSequence.Iterator(gif):
             decoded = frame.convert("RGBA")
             if fit_size is not None:
-                if decoded.size != fit_size:
+                if not is_default_view(view):
+                    # Apply nondefault views even to size-matched frames and keep letterboxes
+                    # transparent, preserving alpha through viewport and plain-fit paths.
+                    decoded = render_viewport(decoded, fit_size, view)
+                elif decoded.size != fit_size:
                     decoded = ImageOps.fit(decoded, fit_size, Image.Resampling.LANCZOS)
             elif max_size is not None and (decoded.width > max_size[0] or decoded.height > max_size[1]):
                 decoded = ImageOps.contain(decoded, max_size)
@@ -276,16 +229,10 @@ def gif_frame_walk(path: str, max_size: "tuple[int, int] | None" = None,
 def decode_gif_frames(path: str, max_size: "tuple[int, int] | None" = None,
                       fit_size: "tuple[int, int] | None" = None,
                       saturation: float = 1.0,
-                      budget_bytes: int | None = None) -> "tuple[list[Image.Image], list[int], list[float]]":
-    """Every frame of the GIF at path, decoded to RGBA and retained, plus
-    its delay timeline. This is GifBackground's entry point; KeyGIF drives
-    gif_frame_walk itself so it can decide frame by frame what to keep.
-    budget_bytes gates before the decode. It estimates the retained
-    footprint from the header as n_frames x out_w x out_h x 4, and raises
-    GifBudgetExceeded when it exceeds the budget. Returns (frames_rgba,
-    frame_delays_ms, cum_delays), where cum_delays[i] is the second at which
-    frame i's display window ends.
-    """
+                      budget_bytes: int | None = None,
+                      view: tuple[float, float, float] = DEFAULT_VIEW) -> "tuple[list[Image.Image], list[int], list[float]]":
+    """Decode and retain all RGBA frames with normalized and cumulative delays.
+    Estimate count times output RGBA size first and raise GifBudgetExceeded over budget."""
     if budget_bytes is not None:
         n_frames, (out_w, out_h) = gif_header_geometry(path)
         if fit_size is not None:
@@ -305,7 +252,7 @@ def decode_gif_frames(path: str, max_size: "tuple[int, int] | None" = None,
     frames: "list[Image.Image]" = []
     delays_ms: "list[int]" = []
     with contextlib.closing(gif_frame_walk(path, max_size=max_size, fit_size=fit_size,
-                                           saturation=saturation)) as walk:
+                                           saturation=saturation, view=view)) as walk:
         for frame, delay in walk:
             frames.append(frame)
             delays_ms.append(delay)
@@ -313,31 +260,14 @@ def decode_gif_frames(path: str, max_size: "tuple[int, int] | None" = None,
     return frames, delays_ms, cumulative_gif_delays(delays_ms)
 
 
-class GifBackground:
-    """RGBA GIF provider for deck and strip backgrounds.
-
-    It meets the BackgroundVideo contract. get_next_tiles() returns
-    (entries, identity), with the strip slice as one extra entry when
-    extended. It also carries the video_path, extend_touchscreen, saturation,
-    page, fps and loop attributes. The prebuild keep-check, the media tick and
-    the screensaver setters read them. PIL decodes it, so alpha and the per-frame
-    delay timeline survive; the cv2 demuxer drops both.
-
-    Construction decodes every frame once, fits it to exactly the deck canvas
-    so the per-key crop coordinates hold, and owns it until the background
-    swap closes this object. Two decks that show the same GIF decode it
-    twice, because there is no shared cache here. Construction raises
-    GifBudgetExceeded before the decode when the estimate exceeds
-    GIF_BG_BUDGET_MB, and the caller falls back to the opaque cv2 path.
-
-    canvas_size overrides the deck-canvas geometry for the strip-background
-    route. get_next_frame() then serves whole strip-fitted frames, which the
-    touchscreen composite alpha-composites at their exact size.
-    """
+class GifBackground(FrameScheduled):
+    """PIL RGBA background provider with per-frame delays and BackgroundVideo-compatible fields.
+    Retain canvas-fitted frames under budget; extended decks append a strip slice."""
 
     def __init__(self, deck_controller: "DeckController", gif_path: str, loop: bool = True,
-                 fps: int = 30, extend_touchscreen: bool = False,
-                 canvas_size: "tuple[int, int] | None" = None) -> None:
+                 fps: int = MEDIA_LOOP_FPS, extend_touchscreen: bool = False,
+                 canvas_size: "tuple[int, int] | None" = None,
+                 view: tuple[float, float, float] = DEFAULT_VIEW) -> None:
         self.deck_controller = deck_controller
         self.video_path = gif_path
         self.loop = loop
@@ -345,19 +275,17 @@ class GifBackground:
 
         self.page: Page | None = deck_controller.active_page
         self.saturation = deck_controller.get_display_saturation()
+        # Store the viewport baked into frames so the prebuild check decodes a changed view.
+        self.view = view
 
         deck = deck_controller.deck
         self.extend_touchscreen = extend_touchscreen and deck.is_touch()
 
-        # Both stay None unless extend_touchscreen is on, because the strip
-        # geometry exists only for the extended canvas. Every read pairs with that
-        # flag, and the None-guards at those reads make the pairing checkable.
+        # Strip size and box exist only for extended canvas geometry; readers guard both.
         self.strip_size: "tuple[int, int] | None" = None
         self._strip_box: "tuple[int, int, int, int] | None" = None
         if canvas_size is None:
-            # The same canvas and crop geometry as BackgroundVideoCache.
-            # Compute it once into plain boxes, because the frame list does
-            # not change after the decode.
+            # Compute BackgroundVideoCache canvas boxes once for the immutable frame list.
             key_rows, key_cols = deck.key_layout()
             self.key_count = deck.key_count()
             key_w, key_h = deck.key_image_format()['size']
@@ -396,34 +324,32 @@ class GifBackground:
 
         self.frames, self.frame_delays, self._cum_delays = decode_gif_frames(
             gif_path, fit_size=canvas_size, saturation=self.saturation,
-            budget_bytes=GIF_BG_BUDGET_MB * 1024 * 1024,
+            budget_bytes=GIF_BG_BUDGET_MB * 1024 * 1024, view=view,
         )
         self._total_delay: float = self._cum_delays[-1] if self._cum_delays else 0.0
 
-        # Frame identity for the passthrough-key native-encode memo: (md5,
-        # frame index), the exact BackgroundVideo contract. Steady-state loop
-        # playback then costs one dict lookup and one USB write per key.
+        # Publish BackgroundVideo-compatible MD5 and frame identity for native encode reuse.
         self.video_md5 = get_video_md5(gif_path)
 
         self.active_frame: int = -1
-        # Wall-clock timeline state. See _pick_frame.
+        # Clock timeline state. See _pick_frame.
         self._play_start: float | None = None
         self._last_frame_tick: float | None = None
-        # (frame index, entries) of the last cropped frame. Most ticks land
-        # on the frame already cut, because a 10fps GIF under a 30Hz tick
-        # re-uses each crop set about 3 times. The caller always gets copies.
+        # Memoize one cropped frame across faster ticks, but return copies to callers.
         self._tiles_memo: "tuple[int | None, list[Image.Image] | None]" = (None, None)
+        # Derive the fastest visible frame rate once from the shortest delay.
+        shortest_ms = min(self.frame_delays) if self.frame_delays else 0
+        self._fastest_frame_rate: float = (
+            1000.0 / shortest_ms if shortest_ms > 0 else MEDIA_LOOP_FPS)
+
+    @override
+    def _render_rate(self) -> float:
+        return gif_render_rate(self.fps, self._fastest_frame_rate, self._total_delay)
 
     def _pick_frame(self, now: float | None = None) -> int:
-        """Wall-clock frame index for now, from a bisect over the cumulative
-        delay timeline plus the away-gap clamp. KeyGIF.get_next_frame runs
-        the same arithmetic; see its comments for each branch."""
-        # Snapshot the timeline once, because close() swaps frames,
-        # _cum_delays and _total_delay from the GTK or screensaver thread
-        # while the media tick runs here. Locals hold the guard and the arithmetic on one
-        # generation, so a racer cannot land a zero modulo or an index past
-        # the list end. Every index returned stays in range for the caller's
-        # own frames snapshot.
+        """Pick a clock frame by cumulative-delay bisect with inactive-gap clamping."""
+        # Snapshot timeline and frames for one generation against concurrent close().
+        # This prevents zero modulo and indices beyond the caller's frame snapshot.
         cum = self._cum_delays
         total = self._total_delay
         n = len(self.frames)
@@ -432,7 +358,7 @@ class GifBackground:
             return 0
 
         if now is None:
-            now = time.time()
+            now = media_loop.now()
 
         if self._play_start is None:
             self._play_start = now
@@ -441,7 +367,20 @@ class GifBackground:
         self._last_frame_tick = now
 
         elapsed = now - self._play_start
-        t = elapsed % total if self.loop else min(elapsed, total)
+        # Use fps as a sampling target; two reads per loop can exceed the page cap.
+        # Omit loop-rate-or-higher values to preserve exact uncapped picks.
+        cap = max(1.0, float(self.fps or MEDIA_LOOP_FPS))
+        # Read every pass at least twice, or a cap whose period is the whole
+        # animation freezes it on one frame instead of running slowly.
+        cap = max(cap, 2.0 / total)
+        if self.loop:
+            t = elapsed % total
+            if cap < MEDIA_LOOP_FPS:
+                t = int(t * cap) / cap
+        else:
+            if cap < MEDIA_LOOP_FPS:
+                elapsed = int(elapsed * cap) / cap
+            t = min(elapsed, total)
 
         frame = bisect.bisect_right(cum, t)
         if frame >= n:
@@ -450,12 +389,8 @@ class GifBackground:
         return frame
 
     def get_next_tiles(self) -> "tuple[list[Image.Image], tuple[str, int] | None]":
-        """(entries, identity) for the frame this tick lands on, per the
-        BackgroundVideo.get_next_tiles contract: key tiles, plus the strip
-        slice as one extra entry when extended. identity is (md5, frame
-        index). Each crop comes straight from the retained RGBA canvas frame,
-        so alpha reaches the compositor, and the caller gets copies to paste
-        onto in place."""
+        """Return copied RGBA key tiles, optional strip slice, and MD5/frame identity.
+        Crops preserve alpha and follow the BackgroundVideo entry order."""
         frames = self.frames  # snapshot; close() empties this from other threads
         strip_size = self.strip_size
         strip_box = self._strip_box
@@ -475,9 +410,7 @@ class GifBackground:
             if self.extend_touchscreen:
                 if strip_size is None or strip_box is None:
                     raise RuntimeError(_STRIP_GEOMETRY_MISSING)
-                # Bottom slice of the extended canvas at strip resolution.
-                # It uses the crop and HAMMING resize of
-                # BackgroundVideoCache.crop_strip_from_deck_sized_image.
+                # Crop and HAMMING-resize the shared extended-canvas strip region.
                 memo_entries.append(
                     frame.crop(strip_box).resize(strip_size, Image.Resampling.HAMMING)
                 )
@@ -485,26 +418,20 @@ class GifBackground:
         return [entry.copy() for entry in memo_entries], (self.video_md5, index)
 
     def get_next_frame(self, now: float | None = None) -> Image.Image | None:
-        """The whole canvas-size RGBA frame for now, on the strip-background
-        route. It returns the retained frame itself, and the caller's
-        convert("RGBA") copies it before anything pastes onto it. Returns
-        None after close() empties the frame list."""
+        """Return the retained canvas RGBA frame for strip backgrounds, or None after close.
+        The caller copies it with convert before mutation."""
         frames = self.frames
         if not frames:
             return None
         return frames[self._pick_frame(now)]
 
     def set_playback(self, fps: int, loop: bool) -> None:
-        """fps sets only the owner's render cap. The playback position
-        follows the wall clock over the GIF's own delay timeline, as
-        InputVideo does at natural speed, so no timebase rebase runs."""
+        """Set render cap and loop without rebasing the GIF delay-timeline clock."""
         self.fps = fps
         self.loop = loop
 
     def close(self) -> None:
-        """Drop the retained frame list, which is the whole footprint. An
-        in-flight tick stays safe, because get_next_tiles and get_next_frame
-        snapshot self.frames and a racer finishes on its own reference."""
+        """Drop retained frames; in-flight ticks remain safe on their local snapshots."""
         self.frames = []
         self.frame_delays = []
         self._cum_delays = []
@@ -512,92 +439,47 @@ class GifBackground:
         self._tiles_memo = (None, None)
 
 
-class KeyGIF(SingleKeyAsset):
-    """Animated-GIF provider for one key, playing its own per-frame delay
-    timeline.
+class KeyGIF(SingleKeyAsset, FrameScheduled):
+    """Play one key's GIF on PIL's per-frame timeline.
+    With caching, retain under-budget alpha; stream opaque or over-budget frames."""
 
-    It holds its frames one of two ways. An opaque GIF uses the shared mp4
-    tile registry: one refcounted cache file per (source, size, saturation),
-    and one decoded frame in hand. RAM is then O(1) per key instead of
-    O(frame count). A 200-frame GIF costs ~29MB retained, and a page of them
-    ~0.9GiB.
-    An alpha-carrying GIF uses the retained RGBA frame list, the only form
-    that keeps transparency, because an mp4 has no alpha channel.
-
-    Two rules make the split safe. PIL is the only compositor. The tile mp4
-    is therefore written from PIL-composited frames, and FFmpeg never demuxes
-    a GIF here. FFmpeg disagrees with PIL on disposal and partial-extent
-    frames (7 of 15 frames on a stock test file, ~48% of pixels off). The
-    route follows the rendered alpha, not the header declaration. 75% of real
-    GIFs declare a transparent index and 11% ever render one, so the
-    declaration left ~64% of GIFs on the expensive path.
-
-    The classification costs one PIL walk the first time a GIF appears at a
-    given size, plus an alpha extrema pass and, for an opaque GIF, one
-    encode. After that the artifact on disk is the classification, and a warm
-    construction walks the delays only, attaches a reader, and decodes no
-    pixel.
-
-    With performance.cache-videos off there is no disk cache to route to, so
-    every GIF stays on the frame list and no GIF reaches the registry.
-
-    Either way the timeline is PIL's, from wall-clock picking over the
-    cumulative per-frame delays, so an irregular GIF plays at its own rhythm
-    instead of
-    a constant fps. On the video route the picked index goes to the reader
-    instead of a list subscript, with identical arithmetic."""
-
-    # Class-level default. The tests build instances attribute by attribute
-    # through __new__ to exercise the picking arithmetic, and those instances
-    # never take the video route.
+    # Keep a class default for tests that construct arithmetic-only instances through __new__.
     video_cache: "mp4_tile_cache.KeyVideoCache | None" = None
 
-    def __init__(self, controller_key: "ControllerKey", gif_path: str, fps: int = 30, loop: bool = True):
+    def __init__(self, controller_key: "ControllerInput[Any]", gif_path: str, fps: int = MEDIA_LOOP_FPS, loop: bool = True):
+        # Accept shared inputs because dials host KeyGIF and only deck_controller is required.
         super().__init__(controller_key)
         self.gif_path = gif_path
         self.fps = fps
         self.loop = loop
 
         self.active_frame: int = -1
-        # Wall-clock timeline state, as in BackgroundVideo and InputVideo. It
-        # keys against a cumulative-delay timeline instead of a fixed fps,
-        # because GIF frame durations are per-frame and often irregular.
+        # Track wall-clock playback against cumulative per-frame delays, not fixed fps.
         self._play_start: float | None = None
         self._last_frame_tick: float | None = None
 
-        # Serialize close() against an in-flight frame fetch on the video
-        # route, as InputVideo._close_lock does. A get_frame() that starts
-        # after release() resurrects a capture through
-        # _maybe_adopt_shared_cache and leaks it.
+        # Serialize close against reads so a post-release read cannot reopen and leak a capture.
         self._close_lock = threading.Lock()
 
         self.frames: "list[Image.Image]" = []
         self._frames_bytes = 0
 
-        # Cap the frame size at 2x the key tile, not the source resolution. A
-        # 500px 200-frame GIF costs ~200MB at source and ~46MB fitted. The UI
-        # caps the composited size at 200%, so 2x tile is the largest size a
-        # frame ever shows at. Both routes stay shrink-only and
-        # aspect-preserving. See tile_video_size.
+        # Cap shrink-only frames at the UI's maximum visible size of twice the key tile.
+        # Both routes use tile_video_size for identical aspect-preserving geometry.
         tile_w, tile_h = self.deck_controller.get_key_image_size()
         fit_size = (max(1, tile_w * 2), max(1, tile_h * 2))
 
-        # Bake the saturation in once, at decode time. The frames are this
-        # asset's per-frame memo, so a per-tick enhance re-pays ImageEnhance
-        # forever. A saturation change reloads the page and rebuilds this
-        # object under the new factor, and the registry keys its cache files
-        # on the factor. The default factor skips this step.
+        # Bake saturation during decode; reload rebuilds and cache keys include the factor.
         saturation = self.deck_controller.get_display_saturation()
 
         self.frame_delays: "list[int]" = []
         self._cum_delays: "list[float]" = []
         self._total_delay: float = 0.0
+        # Apply no native rate limit until _adopt_timeline learns frame delays.
+        self._fastest_frame_rate: float = float("inf")
 
-        # With no disk cache there is nothing to route to. Every GIF keeps
-        # its frame list and the registry never sees a GIF. A reader with no
-        # artifact decodes the source, which brings FFmpeg's divergent
-        # compositing and a capture that repeats its last frame forever. Read
-        # this once, so one object cannot change routes mid-life.
+        # Without disk cache, retain all PIL-composited frames regardless of alpha.
+        # Read the setting once so one object cannot change route during its life.
         if not mp4_tile_cache.cache_videos_enabled():
             frames, _ = self._decode_all(fit_size, saturation)
             self._hold_frame_list(frames)
@@ -611,61 +493,55 @@ class KeyGIF(SingleKeyAsset):
                 )
             return
 
-        # The header parse raises on a corrupt file, as the decode after it
-        # does. The construct site fails soft to InputVideo.
+        # Let corrupt-header errors reach the construction site, which falls back to InputVideo.
         n_frames, source_size = gif_header_geometry(self.gif_path)
         out_size = tile_video_size(source_size, fit_size)
 
-        # Pick the artifact before any pixel decode: the lossless one an
-        # opaque GIF builds, or the alpha-dropping one the over-budget ladder
-        # streams. Separate variants stop a GIF that streamed under a tiny
-        # budget from reading back as opaque forever. The estimate uses the
-        # retained footprint at the frame list geometry, not the mp4's.
+        # Select lossless or bounded artifacts before decode from retained RGBA geometry.
+        # Variants stop an alpha-dropped stream from classifying the source as opaque.
         retained_size = contained_size(source_size, fit_size)
         estimate = n_frames * retained_size[0] * retained_size[1] * 4
         budget = gif_key_budget_bytes()
         over_budget = estimate > budget
         variant = BOUNDED_TILE_VARIANT if over_budget else ""
 
-        # The artifact exists, so an earlier walk saw this GIF at this size
-        # and, on the lossless variant, found it opaque. Walk the delays and
-        # attach; no frame decodes, converts, fits or stays.
+        # On an artifact hit, probe only delays and attach without retaining decoded pixels.
         reader = mp4_tile_cache.attach_promoted(self.gif_path, out_size, saturation,
                                                 variant=variant)
         if reader is not None:
             try:
                 self._adopt_timeline(probe_gif_timeline(self.gif_path).frame_delays)
             except Exception:
-                # Do not leave the registry holding a reference for an
-                # object whose constructor raises.
+                # Release the registry reference before propagating constructor failure.
                 mp4_tile_cache.release(reader)
                 raise
             self.video_cache = reader
             return
 
-        # On a cold start one PIL walk decides everything. See the class
-        # docstring.
+        # On a cold start, one PIL walk chooses the retained or streaming route.
         if over_budget:
             self._cold_streaming_walk(fit_size, saturation, out_size,
                                       estimate, budget, n_frames, retained_size)
         else:
             self._cold_retained_walk(fit_size, saturation, out_size)
 
+    @override
+    def _render_rate(self) -> float:
+        return gif_render_rate(self.fps, self._fastest_frame_rate, self._total_delay)
+
     def _adopt_timeline(self, delays_ms: "list[int]") -> None:
-        """Install the per-frame delays as this object's playback timeline.
-        One place, so no route can install a timeline the others could not."""
+        """Install one normalized playback timeline for every storage route."""
         self.frame_delays = list(delays_ms)
         self._cum_delays = cumulative_gif_delays(self.frame_delays)
         self._total_delay = self._cum_delays[-1] if self._cum_delays else 0.0
+        shortest_ms = min(self.frame_delays) if self.frame_delays else 0
+        if shortest_ms > 0:
+            self._fastest_frame_rate = 1000.0 / shortest_ms
 
     def _composited_walk(self, fit_size: "tuple[int, int]", saturation: float,
                          delays_out: "list[int]", alpha_out: "list[bool]") -> "Generator[Image.Image, None, None]":
-        """The single PIL pass. It composites with PIL, never FFmpeg, fits
-        shrink-only to 2x tile, and bakes the saturation. It also records each
-        frame's delay and its exact rendered-alpha verdict. It yields the
-        frames; the caller decides whether to keep them for the RAM route, or
-        hand them to the writer and stay at O(1). The alpha check stops once
-        the answer is yes, usually on frame 0."""
+        """Yield fitted PIL frames with baked saturation while recording delays and alpha.
+        Stop alpha checks after the first positive result; callers retain or stream each frame."""
         with contextlib.closing(gif_frame_walk(
                 self.gif_path, max_size=fit_size, saturation=saturation)) as walk:
             for frame, delay in walk:
@@ -676,8 +552,7 @@ class KeyGIF(SingleKeyAsset):
 
     def _decode_all(self, fit_size: "tuple[int, int]",
                     saturation: float) -> "tuple[list[Image.Image], bool]":
-        """The whole GIF, decoded and retained, with the timeline installed.
-        Returns (frames, has_rendered_alpha)."""
+        """Decode and retain the GIF, install its timeline, and return frames and alpha status."""
         delays: "list[int]" = []
         alpha = [False]
         frames = list(self._composited_walk(fit_size, saturation, delays, alpha))
@@ -685,11 +560,8 @@ class KeyGIF(SingleKeyAsset):
         return frames, alpha[0]
 
     def _hold_frame_list(self, frames: "list[Image.Image]") -> None:
-        """Keep the decoded frames as this key's per-frame memo, the only
-        form that carries alpha. It registers with the image-cache census for
-        accounting only, and only on this route. The video route's RAM belongs
-        to the reader and counts under video_readers. The entry is not
-        evictable, because an eviction re-decodes the GIF on every tick."""
+        """Retain decoded frames and register their bytes for accounting only.
+        Keep them nonevictable because tick-time eviction would force repeated GIF decoding."""
         self.frames = frames
         self._frames_bytes = sum(
             frame.width * frame.height * len(frame.getbands()) for frame in frames
@@ -699,12 +571,8 @@ class KeyGIF(SingleKeyAsset):
 
     def _cold_retained_walk(self, fit_size: "tuple[int, int]", saturation: float,
                             out_size: "tuple[int, int]") -> None:
-        """When under budget, walk once and hold the frames, then let what
-        they are decide where they live. An alpha GIF keeps them in RAM. An opaque
-        GIF writes them into the shared tile cache and drops them, so the key
-        runs at O(1) RAM on pixels that PIL composited. The peak is one fitted
-        frame list, held for one encode: ~40ms per 200 frames at 2x tile.
-        That cost is why this work stays on the constructing thread."""
+        """Decode an under-budget GIF once, retaining alpha frames or caching opaque frames.
+        Keep construction synchronous because opaque encoding temporarily holds the fitted list."""
         frames, has_alpha = self._decode_all(fit_size, saturation)
         if has_alpha:
             self._hold_frame_list(frames)
@@ -713,9 +581,7 @@ class KeyGIF(SingleKeyAsset):
         reader = mp4_tile_cache.acquire_from_frames(
             self.gif_path, out_size, saturation, frames)
         if reader is None:
-            # The cache is unwritable, from a missing codec or a full or
-            # read-only disk. Keep the frames so the key plays correctly, and
-            # log the memory cost.
+            # If cache storage or its codec is unavailable, retain frames so playback still works.
             log.warning(
                 f"Could not build the tile cache for {self.gif_path}; keeping "
                 f"{len(frames)} frames in RAM for this key instead"
@@ -727,11 +593,8 @@ class KeyGIF(SingleKeyAsset):
     def _cold_streaming_walk(self, fit_size: "tuple[int, int]", saturation: float,
                              out_size: "tuple[int, int]", estimate: int, budget: int,
                              n_frames: int, retained_size: "tuple[int, int]") -> None:
-        """When over budget, walk once and hold nothing, straight into the
-        tile-cache writer. This is the one path that trades visuals for
-        bounds. A GIF whose retained frames exceed DECKARD_GIF_KEY_BUDGET_MB,
-        32MB by default, plays without alpha instead of taking a page's whole
-        memory. The alpha loss logs once, at construction, never per tick."""
+        """Stream an over-budget GIF into the tile cache without retaining frames.
+        This bounds memory; when rendered pixels have alpha, MP4 drops it and logs once."""
         log.warning(
             f"{self.gif_path}: ~{estimate / (1024 * 1024):.1f}MB of frames "
             f"({n_frames} at {retained_size[0]}x{retained_size[1]} RGBA) exceeds the "
@@ -758,19 +621,13 @@ class KeyGIF(SingleKeyAsset):
             )
         self.video_cache = reader
         if not delays:
-            # The artifact already exists, because another key built it
-            # while this walk started. The writer never consumed the generator, so it
-            # collected no delay. Walk them again, cheaply.
+            # If another key published first, the generator did not run; probe delays separately.
             delays = probe_gif_timeline(self.gif_path).frame_delays
         self._adopt_timeline(delays)
 
     def _source_index(self, cache: "mp4_tile_cache.KeyVideoCache", index: int) -> int:
-        """Map a timeline frame index to the reader's frame index. The cache
-        is written frame-for-frame from the PIL walk, so this is usually the
-        identity. The reader's count moves at runtime, because a promoted
-        cache reports what the container holds and a short read clamps it. A
-        difference scales the index into the reader's range instead of a read
-        past the end. The PIL delay timeline keeps timing authority."""
+        """Map a PIL timeline index into the reader's current frame range.
+        Scale count mismatches to avoid over-read while PIL keeps timing authority."""
         n_video = cache.n_frames
         n_timeline = len(self._cum_delays)
         if n_video <= 0 or n_timeline <= 0 or n_video == n_timeline:
@@ -778,101 +635,71 @@ class KeyGIF(SingleKeyAsset):
         return min(n_video - 1, index * n_video // n_timeline)
 
     def _video_frame(self, index: int) -> Image.Image | None:
-        """One frame off the shared tile cache. Check then hold, as
-        InputVideo.get_next_frame does. The unlocked peek keeps the post-close
-        path fast, and the lock makes close() wait for an in-flight decode
-        instead of releasing the reader under it."""
+        """Read one shared-cache frame while close waits for any in-flight decode.
+        Use an unlocked first check to keep post-close calls fast."""
         if self.video_cache is None:
             return None
         with self._close_lock:
-            # A declared re-read: the outer check narrowed the attribute, and
-            # narrowing cannot see a close() nulling it before the lock.
+            # Re-read under the lock because close can clear the narrowed attribute.
             cache: mp4_tile_cache.KeyVideoCache | None = self.video_cache
             if cache is None:
                 return None
             return cache.get_frame(self._source_index(cache, index))
 
     def _frame_at(self, index: int) -> Image.Image | None:
-        """The payload for a picked timeline index, from whichever route
-        holds it. None after that route releases it."""
+        """Return a picked retained or cached frame, or None after release."""
         frames = self.frames
         if frames:
             return frames[index]
         return self._video_frame(index)
 
     def budget_bytes(self) -> int:
-        """Pixel bytes of the retained frame list, for the image-cache
-        census. It is computed once at decode time, because the list does not
-        change for this object's life. Zero on the video route, which registers nothing
-        here, because its RAM belongs to the reader and counts under
-        video_readers."""
+        """Return immutable retained-frame bytes for the image-cache census.
+        Return zero on the video route because reader memory is counted separately."""
         return self._frames_bytes
 
     def _frame_count(self) -> int:
-        """Frames this object can serve: the retained list on the alpha
-        route, and the timeline length on the video route. On that route the
-        frames live in the cache file instead of in this object."""
+        """Return retained-list count for alpha or timeline count for cached video."""
         if self.frames:
             return len(self.frames)
         return len(self._cum_delays) if self.video_cache is not None else 0
 
     def get_next_frame(self, now: float | None = None) -> Image.Image | None:
-        # One snapshot of the timeline for the whole tick. close() rebinds
-        # these to empty containers from the teardown thread, so a re-read
-        # can divide by a _total_delay that was non-zero at the guard and zero
-        # at the modulo, or index a timeline emptied after it read the length.
+        # Snapshot the timeline so concurrent close cannot cause zero modulo or stale indexing.
         cum_delays = self._cum_delays
         total_delay = self._total_delay
         n = self._frame_count()
         if n == 0:
             return None
         if n == 1 or total_delay <= 0:
-            # A single-frame GIF, or one with no usable timing, has nothing
-            # to pick.
+            # A single frame or unusable timing has no alternate frame to pick.
             self.active_frame = 0
             return self._frame_at(0)
 
         if now is None:
-            now = time.time()
+            now = media_loop.now()
 
         if self._play_start is None:
             self._play_start = now
         elif self._last_frame_tick is not None and now - self._last_frame_tick > 1.0:
-            # Ticks stop while the page or key is away: screensaver, page
-            # switch or suspend. Shift the timebase across the gap so playback
-            # continues near its old position, with no fast-forward.
+            # Shift the timebase across inactive gaps so playback resumes without fast-forward.
             frame_period = cum_delays[0] if cum_delays else total_delay / n
             self._play_start += (now - self._last_frame_tick) - frame_period
         self._last_frame_tick = now
 
         elapsed = now - self._play_start
-        # fps is a render cap here, never a playback rate. The GIF's own delay
-        # timeline still decides where in the animation the wall clock lands;
-        # the cap only coarsens how finely that position is read, so the
-        # picked frame advances at most fps times per second. Inside one cap
-        # window every tick picks the same frame, so the owner's hash dedup
-        # drops the redundant device write. A cap at or above the loop ceiling
-        # is left out of the arithmetic entirely, so an uncapped GIF keeps the
-        # exact picks it made before caps existed. Read fps once: set_playback
-        # rewrites it from the GTK thread while this tick runs.
+        # Use fps as a sampling target; two reads per loop can exceed the page cap.
+        # Omit loop-rate-or-higher values to preserve exact uncapped picks.
         cap = max(1.0, float(self.fps or MEDIA_LOOP_FPS))
-        # Read every pass at least twice. A cap whose period is as long as the
-        # whole animation puts every sample on one position, and the GIF stops
-        # dead on a single frame instead of running slowly.
+        # Sample each loop at least twice so a long cap period cannot freeze one position.
         cap = max(cap, 2.0 / total_delay)
         if self.loop:
-            # Coarsen the position INSIDE the pass, never the raw elapsed
-            # time. A grid laid on elapsed and then folded through the modulo
-            # visits only the positions that one cap period generates in the
-            # loop: those positions step backwards mid-animation, and collapse
-            # to a single one whenever the animation length divides the cap
-            # period.
+            # Quantize after modulo; quantizing elapsed first can reverse or collapse the loop.
             t = elapsed % total_delay
             if cap < MEDIA_LOOP_FPS:
                 t = int(t * cap) / cap
         else:
-            # No modulo on this arm, so a grid on elapsed is already
-            # monotonic, and clamping after it keeps the last frame reachable.
+            # Non-loop elapsed is monotonic; clamp after quantization to reach the last frame.
             if cap < MEDIA_LOOP_FPS:
                 elapsed = int(elapsed * cap) / cap
             t = min(elapsed, total_delay)
@@ -891,12 +718,8 @@ class KeyGIF(SingleKeyAsset):
         return self.frame_delays[self.active_frame] / 1000.0
 
     def native_fps(self) -> float | None:
-        """The rate this GIF runs at with no cap, in frames per second: its
-        frame count over the length of its own delay timeline. An irregular
-        GIF has no single rate, so this is the average across one whole loop.
-        None while no timeline is installed, and after close() empties it.
-        The sidebar shows this number when the page carries no cap, so the
-        row reports what the media does instead of a placeholder."""
+        """Return average uncapped frame rate across one GIF loop.
+        Return None without a timeline, including after close."""
         total = self._total_delay
         n = len(self._cum_delays)
         if n <= 0 or total <= 0:
@@ -904,39 +727,18 @@ class KeyGIF(SingleKeyAsset):
         return n / total
 
     def set_playback(self, fps: int, loop: bool) -> None:
-        """A new render cap and loop flag for a GIF that is already playing.
-
-        No timebase rebase runs. The position follows the wall clock over the
-        GIF's own delay timeline whatever fps says, so a new cap changes only
-        how often the picked frame advances. InputVideo needs the rebase
-        because without natural_speed its fps is the playback rate itself.
-        """
+        """Set render cap and loop without rebasing the GIF timeline.
+        The cap changes sampling frequency, not playback position or speed."""
         self.fps = fps
         self.loop = loop
 
     def get_raw_image(self) -> "Image.Image | None":
-        # None after close(), which empties the frame list so a late tick reads
-        # zero frames. The siblings in Subclasses/ declare the same union for
-        # the same reason, and that is the hierarchy contract.
+        # Return None after close, consistent with the shared media hierarchy contract.
         return self.get_next_frame()
     
     def close(self) -> None:
-        """Drop the retained frame list, which is the whole footprint, and
-        leave the object tickable.
-
-        It swaps in empty containers instead of None, because a media tick can
-        land after close() and read len(self.frames) and
-        len(self.frame_delays). With empty lists the n == 0 arm returns None,
-        so a late tick and a second close both do nothing.
-
-        It also leaves the image-cache census at once, so the registered byte
-        count stops reporting frames that are gone.
-
-        On the video route it detaches this reader from the shared tile-cache
-        registry. The shared cache file and its builder stay for any other key
-        that wants them. The timeline empties first, so a racing tick sees
-        zero frames and returns before it asks a released reader for pixels.
-        The lock then waits out any fetch in flight."""
+        """Clear timeline and retained frames before releasing this key's shared-cache reader.
+        Empty state makes late ticks and repeated close safe; the lock waits for active reads."""
         self.frames = []
         self.frame_delays = []
         self._cum_delays = []

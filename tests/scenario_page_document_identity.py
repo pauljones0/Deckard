@@ -1,10 +1,4 @@
-"""
-One page file holds one dict, shared by every deck that shows it.
-
-The page manager hands out one document per page file. Two Pages on one path
-therefore share a dict, and an edit crosses with no write. A refresh refills
-that dict in place and never blanks a section.
-"""
+"""Verify one shared document per page file and in-place refreshes."""
 
 # Two spellings of one path are one document, one save lock and one pending
 # write.
@@ -40,11 +34,7 @@ class StubController:
 
 
 class FrozenScheduler:
-    """A timer source that arms and never fires.
-
-    A scenario that asserts nothing was written must not let the deferral
-    clock run; a trailing timer would write the page mid-check.
-    """
+    """Arm timers without firing them during no-write checks."""
 
     def __init__(self):
         self.armed = 0
@@ -58,11 +48,7 @@ class FrozenScheduler:
 
 
 def install_flush_recorder() -> None:
-    """A fresh flush seam whose writes are counted.
-
-    Every caller reaches the seam through page_flush.get(), so replacing the
-    singleton covers the whole process.
-    """
+    """Install a process-wide flush seam that records writes."""
     page_flush._flush = page_flush.PageFlush(scheduler=FrozenScheduler(),
                                              clock=lambda: 0.0)
     real_write = page_flush.atomic_write_json
@@ -81,12 +67,7 @@ def read_file(path: str) -> dict:
 
 
 def read_file_through_barrier(path: str) -> dict:
-    """The file as any reader of a page sees it, pending edits written first.
-
-    A page save, a settings write and a whole-page replace all mark the page
-    and write it on the flush seam's timer. A raw read of the bytes therefore
-    shows the page as it stood before the edit.
-    """
+    """Read a page after flushing its pending edits."""
     page_flush.get().flush_path(path)
     return read_file(path)
 
@@ -139,11 +120,11 @@ def check_identity() -> int:
         print("FAIL: the page file changed while nothing asked for a write")
         return 1
 
-    # And back the other way, through the page's setters instead of the raw
-    # dict.
-    page_b.set_background("/some/wallpaper.png")
-    if page_a.dict.get("background", {}).get("path") != "/some/wallpaper.png":
-        print("FAIL: a setter on one Page is invisible to its sibling")
+    # Edit through the settings funnel under the file lock so sibling pages see the change
+    # before only the explicit flush writes it.
+    gl.page_manager.overwrite_background_settings(path, media_path="/some/wallpaper.png")
+    if page_a.dict.get("settings", {}).get("background", {}).get("media-path") != "/some/wallpaper.png":
+        print("FAIL: a settings edit through the funnel is invisible to the sibling Page")
         return 1
     if WRITES:
         print(f"FAIL: a save wrote inline instead of arming the flush: {WRITES}")
@@ -203,14 +184,9 @@ def check_refresh_preserves_aliasing() -> int:
 
 
 class ProbedContent(dict):
-    """New page content that looks at the document while it is applied.
-
-    dict.update() copies from a plain dict in C, with nothing to hook from
-    Python.
-    """
-    # An __iter__ override moves update() onto the mapping protocol, where it
-    # asks for keys() first and inserts afterwards, so a probe in keys() runs
-    # at the one moment the two possible orders differ.
+    """Probe the document while mapping-protocol content is applied."""
+    # The __iter__ override selects the mapping protocol, where keys() runs
+    # before insertion and can probe the observable mutation order.
 
     def __init__(self, content: dict, probe):
         super().__init__(content)
@@ -226,23 +202,18 @@ class ProbedContent(dict):
         return list(super().keys())
 
 
-def check_refresh_never_blanks_section() -> int:
-    """The reader's view across a refresh is stale, never missing.
-
-    This drives the document rather than a file, because the order of its two
-    mutations is what matters. The new content goes in first, and the dropped
-    sections go second.
-    """
+def check_nonblank_refresh() -> int:
+    """Verify refresh adds new content before removing dropped sections."""
     path = seed_page("Concurrent")
     document = gl.page_manager.get_document(path)
     with_settings = {"keys": {"0x0": {"states": {"0": {}}}}, "settings": {"a": 1}}
     without_settings = {"keys": {"1x1": {"states": {"0": {}}}}}
-    document.adopt(with_settings)
+    document.apply_loaded_content(with_settings)
 
     # The order, deterministically.
     seen = []
-    document.adopt(ProbedContent(without_settings,
-                                 lambda: seen.append(dict(document.data))))
+    document.apply_loaded_content(ProbedContent(without_settings,
+                                                lambda: seen.append(dict(document.data))))
     if not seen:
         print("FAIL: the probe never ran -- the ordering check is vacuous")
         return 1
@@ -271,15 +242,13 @@ def check_refresh_never_blanks_section() -> int:
 
     thread = threading.Thread(target=reader, daemon=True)
     thread.start()
-    # The window between the two steps is a few bytecodes wide, so at the
-    # default 5 ms switch interval the reader almost never lands inside it. A
-    # very small interval puts the reader there, and it still sees every
-    # section.
+    # Use a short switch interval to expose the few-bytecode mutation window
+    # while requiring every read to retain a keys section.
     previous_interval = sys.getswitchinterval()
     sys.setswitchinterval(1e-6)
     try:
         for i in range(20000):
-            document.adopt(with_settings if i % 2 else without_settings)
+            document.apply_loaded_content(with_settings if i % 2 else without_settings)
     finally:
         sys.setswitchinterval(previous_interval)
         stop.set()
@@ -312,7 +281,7 @@ def check_heal_through_document() -> int:
     return 0
 
 
-def check_two_spellings_one_page() -> int:
+def check_path_aliases_share_document() -> int:
     """A symlinked second name for the pages directory, which is the shape a
     data directory under a symlink gives every page in it."""
     path = seed_page("TwoSpellings")
@@ -357,13 +326,8 @@ def check_two_spellings_one_page() -> int:
     return 0
 
 
-def check_rename_preserves_live_page() -> int:
-    """A move with a deck that has no cache entry for the page.
-
-    The move asks every controller for the page under its old name, so that
-    deck mints a Page, and a mint reads the file. An edit held only in memory
-    must survive that read.
-    """
+def check_live_page_rename() -> int:
+    """Keep in-memory edits when a move mints a Page for another deck."""
     old_path = seed_page("RenameMe")
     ctrl_a = StubController("rename-a")
     ctrl_b = StubController("rename-b")
@@ -406,12 +370,7 @@ def check_rename_preserves_live_page() -> int:
 
 
 def check_rename_over_live_page() -> int:
-    """A rename onto a page name a deck already shows.
-
-    The renamed page was never opened, so no document moves onto the
-    destination. The document standing there must be corrected, or the deck
-    keeps the overwritten page and writes it back at its next save.
-    """
+    """Refuse a rename onto an existing live page without changing either page."""
     source_path = seed_page("StandingSource")
     write_file(source_path, {"keys": {}, "which-page": "the-source"})
     target_path = seed_page("StandingTarget")
@@ -426,23 +385,31 @@ def check_rename_over_live_page() -> int:
         print(f"FAIL: the destination page did not load: {target_page.dict}")
         return 1
 
-    gl.page_manager.move_page(source_path, target_path)
-
-    if read_file(target_path).get("which-page") != "the-source":
-        print("FAIL: the move did not put the source page at the target name "
-              "-- check vacuous")
-        return 1
-    if target_page.dict.get("which-page") != "the-source":
-        print("FAIL: the deck showing the renamed-over page kept the content "
-              f"the move replaced: {target_page.dict}")
+    try:
+        gl.page_manager.move_page(source_path, target_path)
+    except ValueError:
+        pass
+    else:
+        print("FAIL: a rename onto an existing page was not refused")
         return 1
 
-    print("PASS: a rename onto an open page corrects the document standing "
-          "at that name")
+    if read_file(target_path).get("which-page") != "the-target":
+        print("FAIL: a refused rename overwrote the standing page's file")
+        return 1
+    if target_page.dict.get("which-page") != "the-target":
+        print("FAIL: a refused rename changed the live page's content: "
+              f"{target_page.dict}")
+        return 1
+    if not os.path.exists(source_path):
+        print("FAIL: a refused rename still deleted the source page")
+        return 1
+
+    print("PASS: a rename onto an existing page is refused and both pages "
+          "keep their content")
     return 0
 
 
-def check_settings_write_keeps_pending_edit() -> int:
+def check_pending_edit_during_settings_write() -> int:
     """Two seams cross here. A page edit is still on its timer while the
     whole settings section is written."""
     path = seed_page("SettingsCross")
@@ -478,7 +445,7 @@ def check_settings_write_keeps_pending_edit() -> int:
     return 0
 
 
-def check_dict_cannot_be_replaced() -> int:
+def check_page_dict_read_only() -> int:
     path = seed_page("NoSetter")
     page = Page(json_path=path, deck_controller=StubController("nosetter-1"))
     try:
@@ -497,13 +464,13 @@ def main() -> int:
 
     for check in (check_identity,
                   check_refresh_preserves_aliasing,
-                  check_refresh_never_blanks_section,
+                  check_nonblank_refresh,
                   check_heal_through_document,
-                  check_two_spellings_one_page,
-                  check_rename_preserves_live_page,
+                  check_path_aliases_share_document,
+                  check_live_page_rename,
                   check_rename_over_live_page,
-                  check_settings_write_keeps_pending_edit,
-                  check_dict_cannot_be_replaced):
+                  check_pending_edit_during_settings_write,
+                  check_page_dict_read_only):
         WRITES.clear()
         if check() != 0:
             return 1

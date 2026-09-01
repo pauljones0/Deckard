@@ -134,11 +134,8 @@ class Sidebar(LazyMapTasks, Adw.NavigationPage):
         self.configurator_stack.set_visible_child(self.key_editor)
         self.key_editor.state_switcher.select_state(state)
         if not self.get_mapped():
-            # Replay through update(), which reads the state the input is on
-            # now. The state this call carries is the one it had when the
-            # window was still hidden, and the deck moves on: it loads a page
-            # that opens an input on another state, and an action switches
-            # state while nobody watches.
+            # Replay through update() so mapping reads the input's current state.
+            # The state captured while hidden can become stale after page or action changes.
             self.on_map_tasks.clear()
             self.on_map_tasks.append(self.update)
             return
@@ -203,23 +200,16 @@ class Sidebar(LazyMapTasks, Adw.NavigationPage):
             return
 
         self.main_stack.set_transition_duration(0)
-        # key_editor is a child of configurator_stack and not of main_stack,
-        # so a call with key_editor here logs a GTK warning, does nothing, and
-        # leaves the error page up. configurator_stack still shows the editor
-        # that the user last selected inside it.
+        # Show configurator_stack because key_editor is not a direct child of main_stack.
+        # The nested stack retains the editor that the user last selected.
         self.main_stack.set_visible_child(self.configurator_stack)
         self.main_stack.set_transition_duration(200)
 
     def update(self) -> None:
         identifier = self.active_identifier
         state = self.active_state
-        # The refresh follows the current state of the input. The remembered
-        # active_state can belong to an input of an earlier page, because a
-        # page change keeps the sidebar selection, and it can name a state the
-        # input on this page does not have. The editors show the state they
-        # are handed, so a replay of that one shows rows of a state nobody is
-        # on. A user-driven state selection still passes its state through
-        # load_for_*.
+        # Refresh from the input's current state because active_state can belong to an earlier page.
+        # User-driven state selection still passes its chosen state through load_for_*.
         controller = self.main_window.get_active_controller()
         if controller is not None and identifier is not None:
             c_input = controller.get_input(identifier)
@@ -321,12 +311,8 @@ class KeyEditor(Gtk.Box):
         if c_input is None:
             return
 
-        # Show the state, and never select it. This runs to mirror the input,
-        # from a build, a deferred map task and every refresh, and each of
-        # those carries whatever state the caller last held. A selection from
-        # here therefore moves the input to a state the user did not pick, and
-        # the page keeps what it is moved to. A user-driven switch selects the
-        # state in the state switcher's own handler, before this runs.
+        # Show the state without selecting it because builds and refreshes only mirror the input.
+        # User-driven switches select the state in the switcher's handler before this load.
         self.state_switcher.load_for_identifier(identifier, state)
 
         self.remove_state_button.set_visible(self.state_switcher.get_n_states() > 1)

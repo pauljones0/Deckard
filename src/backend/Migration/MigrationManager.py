@@ -26,11 +26,20 @@ class MigrationManager:
 
     def run_migrators(self) -> None:
         for migrator in self.get_ordered_migrators():
-            if migrator.get_need_migration():
-                log.info(f"Running migrator to app version {migrator.app_version}")
+            if not migrator.get_need_migration():
+                continue
+            log.info(f"Running migrator to app version {migrator.app_version}")
+            try:
                 migrator.create_backup()
                 migrator.migrate()
-                log.success(f"Successfully ran migrator to app version {migrator.app_version}")
+            except Exception:
+                # Stop the chain without aborting startup; later migrators require this one
+                # to finish. The failed migrator stays pending for the next launch.
+                log.opt(exception=True).error(
+                    f"Migrator to app version {migrator.app_version} failed; "
+                    f"leaving it pending and skipping later migrators this run")
+                return
+            log.success(f"Successfully ran migrator to app version {migrator.app_version}")
 
     def get_ordered_migrators(self) -> list[Migrator]:
         return sorted(self.migrators, key=lambda migrator: migrator.parsed_app_version)

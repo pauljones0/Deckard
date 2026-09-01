@@ -1,8 +1,5 @@
-"""Pins the uniqueness gate over a real dbus-daemon and real Gio.Applications.
-
-publish() runs before register(), contention decides one primary, a remote
-forwards its activate and its parked requests, and no bus still boots.
-"""
+"""Exercise the uniqueness gate with real D-Bus and Gio applications.
+Cover publish order, contention, forwarding, handoff, and busless startup."""
 import fixtures  # noqa: F401  (must be first: isolates DATA_PATH before globals)
 
 import os  # noqa: E402
@@ -32,9 +29,7 @@ WATCHDOG_SECONDS = 60
 CHILD = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                      "instance_gate_child.py")
 
-# One name per leg. A leg that reused another name would inherit its owner, and
-# a leg on the app's own id could be answered by the developer's running
-# Deckard if the daemon isolation ever broke.
+# Use a unique non-production name per leg to avoid inherited bus owners.
 ID_ORDERING = "io.github.nazbert.DeckardGateOrdering"
 ID_RACE = "io.github.nazbert.DeckardGateRace"
 ID_FORWARD = "io.github.nazbert.DeckardGateForward"
@@ -69,9 +64,7 @@ def spawn(mode: str, app_id: str, **env_extra) -> subprocess.Popen:
     env = dict(os.environ)
     env["DECKARD_GATE_MODE"] = mode
     env["DECKARD_GATE_APP_ID"] = app_id
-    # Inside this scenario's own temp data dir, so a child that ends in
-    # os._exit, as the quit modes and the app do, leaves nothing behind that
-    # the harness does not already delete.
+    # Keep os._exit child data inside the scenario's temporary directory.
     env["DECKARD_GATE_DATA"] = gl.DATA_PATH
     env.update({k: str(v) for k, v in env_extra.items()})
     return subprocess.Popen(
@@ -97,13 +90,8 @@ def wait_for_line(proc: subprocess.Popen, expected: str,
 
 
 def _said_lines(proc: subprocess.Popen, timeout: float = 60.0) -> list[tuple[str, str]]:
-    """Wait for the child to exit and give every line it said as
-    (first word, rest), in order.
-
-    The result is kept on the process, because communicate() drains the pipe
-    once and a leg that wants both the values and their order would otherwise
-    get an empty second read.
-    """
+    """Return each child line as an ordered (first word, rest) pair.
+    Cache the result because communicate() drains the pipe once."""
     said = getattr(proc, "_said_lines", None)
     if said is None:
         out, _ = proc.communicate(timeout=timeout)
@@ -115,19 +103,12 @@ def _said_lines(proc: subprocess.Popen, timeout: float = 60.0) -> list[tuple[str
 
 
 def transcript(proc: subprocess.Popen, timeout: float = 60.0) -> list[str]:
-    """The first word of each line the child said, in the order it said them.
-
-    A leg that checks an ordering reads this, where records() flattens the run
-    to one value per key and loses when each arrived.
-    """
+    """Return line keys in order, unlike records(), which loses ordering."""
     return [key for key, _ in _said_lines(proc, timeout)]
 
 
 def records(proc: subprocess.Popen, timeout: float = 60.0) -> dict[str, str]:
-    """Wait for the child to exit and return everything it said.
-
-    The result is keyed by the first word of each line.
-    """
+    """Return child output keyed by the first word of each line."""
     return dict(_said_lines(proc, timeout))
 
 
@@ -140,11 +121,7 @@ def kill(proc: subprocess.Popen) -> None:
 # Bus helpers, kept apart from the gate's own
 
 def has_owner(connection: Gio.DBusConnection, name: str) -> bool:
-    """Ask the daemon directly, over the observing connection.
-
-    Hand-rolled rather than instance_gate.name_has_owner, so the assertions
-    about the module do not run through the module.
-    """
+    """Ask the daemon directly without using the gate helper under test."""
     return connection.call_sync(
         "org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus",
         "NameHasOwner", GLib.Variant("(s)", (name,)), GLib.VariantType("(b)"),
@@ -169,9 +146,7 @@ def leg_ordering(observer: Observer) -> None:
     seen: list[bool] = []
 
     def publish():
-        # The central assertion of the whole design. At the moment the objects
-        # go up, nothing owns the name yet, so no client can be told this
-        # instance exists and then find nothing behind it.
+        # Publish objects before ownership makes the instance discoverable.
         seen.append(has_owner(observer.connection, ID_ORDERING))
         api.start_dbus_service()
 
@@ -201,12 +176,8 @@ def leg_ordering(observer: Observer) -> None:
 
 
 def contend(app_id: str) -> list[str]:
-    """Run one round of simultaneous launches and return their verdicts.
-
-    The barrier sits inside the child, immediately before establish() and not
-    around a pre-warmed connection, because the same child serves the busless
-    leg. Connecting lands in the window and spreads the contenders slightly.
-    """
+    """Return verdicts from simultaneous launches.
+    Synchronize immediately before establish(), including connection time."""
     start_at = time.time() + 1.0
     children = [
         spawn("establish", app_id, DECKARD_GATE_START_AT=start_at,
@@ -295,12 +266,8 @@ def leg_close_running(observer: Observer) -> None:
 
 
 def leg_close_running_mid_boot(observer: Observer) -> None:
-    """A close-running against an instance that is still starting up.
-
-    It owns the name and dispatches nothing, exactly as a booting instance
-    does. The quit must be held back until it can be heard. A quit acted on
-    after this launch had already given up would leave nothing running.
-    """
+    """Delay close-running until a booting instance can dispatch the request.
+    A queued quit after handoff timeout could leave no instance running."""
     dispatch_delay = 2.0
     child = spawn("primary-quit", ID_MIDBOOT,
                   DECKARD_GATE_DISPATCH_DELAY=dispatch_delay)
@@ -319,13 +286,8 @@ def leg_close_running_mid_boot(observer: Observer) -> None:
         assert said.get("QUIT-RECEIVED") == "", (
             f"the instance was never asked once it could answer: {said}")
         assert child.returncode == 0, child.returncode
-        # Ordering inside the child, not elapsed time across two processes.
-        # The child says DISPATCHING when its boot delay is over, and
-        # WIRE-ACTIVATE from the GDBus reader when a quit arrives, so the two
-        # events are stamped by one process against one clock. Elapsed time
-        # cannot say this: the parent starts counting after it reads READY,
-        # which the child prints before its boot sleep begins, so a correct
-        # run measures a hair under the delay and fails on the rounding.
+        # Compare child events because parent and child elapsed clocks start apart.
+        # DISPATCHING must precede the GDBus reader's WIRE-ACTIVATE event.
         order = transcript(child)
         assert "DISPATCHING" in order, (
             f"the instance never reached its main loop: {order}")
@@ -344,12 +306,8 @@ def leg_close_running_mid_boot(observer: Observer) -> None:
 
 
 def leg_close_running_never_answers(observer: Observer) -> None:
-    """An instance that never starts dispatching is left alone, not killed.
-
-    Never-asked is asserted at the wire, not at the action handler, which runs
-    on a main context this child never reaches. The connection filter runs on
-    the GDBus worker thread and reports what arrived, dispatched or not.
-    """
+    """Leave an instance that never dispatches running and unasked.
+    Verify at the GDBus worker because its main-context handler never runs."""
     child = spawn("primary-quit", ID_SILENT, DECKARD_GATE_DISPATCH_DELAY=300)
     grace = instance_gate.CLOSE_GRACE_SECONDS
     try:
@@ -401,9 +359,7 @@ def leg_close_running_refused(observer: Observer) -> None:
         wait_for_line(child, "READY")
         app = Gio.Application(application_id=ID_DEAF)
 
-        # Shortened for the run, having pinned the shipped value above. What is
-        # under test is that the wait is bounded and ends in a failure, not how
-        # many seconds it is.
+        # Shorten the grace while preserving the bounded-failure condition.
         instance_gate.CLOSE_GRACE_SECONDS = 1.5
         started = time.monotonic()
         try:
@@ -411,8 +367,7 @@ def leg_close_running_refused(observer: Observer) -> None:
                                     close_running=True)
         except instance_gate.CloseRunningFailed as e:
             took = time.monotonic() - started
-            # This one was asked. It dispatches and has no such action. The
-            # message has to say so, or the two failures read alike.
+            # Distinguish a refused quit from an instance that was never asked.
             assert "asked to quit" in str(e), e
             assert "had not exited" in str(e), e
         else:
@@ -427,9 +382,7 @@ def leg_close_running_refused(observer: Observer) -> None:
         instance_gate.CLOSE_GRACE_SECONDS = grace
         kill(child)
     said = records(child)
-    # This instance was asked, and the wire says so. That is also what makes the
-    # silence in the leg above mean anything, because the same witness watching
-    # the same thing reports an arrival here.
+    # Use the same wire witness to distinguish arrival from the silent case.
     assert said.get("WIRE-ACTIVATE") == "quit", (
         f"the quit never reached this instance, so it did not refuse anything "
         f"-- and the witness the unasked leg trusts reports nothing: {said}"
@@ -458,15 +411,12 @@ def leg_fail_open() -> None:
 
 def leg_old_name_guard(observer: Observer) -> None:
     """A pre-rename instance is asked to quit before this launch opens a deck."""
-    # It answers the quit and then takes a moment to exit, so the release is
-    # something the guard has to wait for. An instance that vanished inside the
-    # handler would let a guard with no poll at all pass this leg.
+    # Delay exit after quit so the guard must wait for name release.
     teardown = 0.6
     child = spawn("old-name", ID_OLDGUARD, DECKARD_GATE_QUIT_DELAY=teardown)
     try:
         wait_for_line(child, "READY")
-        # Also proof that this scenario talks to its own daemon. The old name is
-        # owned here, on the bus the gate is about to probe.
+        # Confirm that the old name belongs to this scenario's private bus.
         assert has_owner(observer.connection, appinfo.OLD_APP_ID), (
             "the stand-in never took the pre-rename name")
 
@@ -495,18 +445,14 @@ def leg_old_name_guard(observer: Observer) -> None:
 
 
 def leg_parked_requests_follow_handoff(observer: Observer) -> None:
-    """A launch that parked its requests and then lost the race hands them on.
-
-    An invocation parks before it can know whether it will be the instance,
-    because parked requests exist for the boot that would follow. It can park,
-    register, and only there be told it is a remote, holding the requests.
-    """
+    """Forward parked requests after the launch loses the ownership race.
+    Registration can report remote only after requests are already parked."""
     child = spawn("primary-deaf", ID_PARKED)
     try:
         wait_for_line(child, "READY")
         assert has_owner(observer.connection, ID_PARKED)
 
-        parked = cli_forward.forward_cli_requests(
+        parked = cli_forward.route_cli_requests(
             argparser.parse_args(PARKED_ARGV), Recorder(running=False))
         assert not parked.handled and not parked.failures, parked
         assert gl.api_page_requests and gl.api_state_requests, (
@@ -543,12 +489,7 @@ def leg_parked_requests_follow_handoff(observer: Observer) -> None:
 
 
 class RefusingApp:
-    """An application whose registration fails, for the two arms below.
-
-    A stub, because the failure it stands for is GIO's to produce and takes 25
-    seconds of real time to reach. What is under test is the decision taken on
-    that error, which is this module's.
-    """
+    """Fail registration immediately instead of waiting for GIO's timeout."""
 
     def __init__(self, app_id: str):
         self._app_id = app_id
@@ -579,8 +520,7 @@ def leg_registration_failure_arms(observer: Observer) -> None:
         wait_for_line(child, "READY")
         assert has_owner(observer.connection, ID_BLOCKED)
 
-        # The name is owned, so whatever went wrong, this launch is the second
-        # one. Booting would put it on the decks the first one holds.
+        # An owned name makes registration failure a blocked second launch.
         blocked = RefusingApp(ID_BLOCKED)
         try:
             instance_gate.establish(blocked, publish=lambda: None,
@@ -599,8 +539,7 @@ def leg_registration_failure_arms(observer: Observer) -> None:
     finally:
         kill(child)
 
-    # Nobody owns the name, so nothing is running. A failure here is about this
-    # process alone, and booting degraded beats not booting.
+    # Without an owner, registration failure permits degraded non-unique startup.
     lonely = RefusingApp("io.github.nazbert.DeckardGateNobody")
     decision = instance_gate.establish(lonely, publish=lambda: None,
                                        close_running=False)

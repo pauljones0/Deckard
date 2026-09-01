@@ -1,8 +1,6 @@
-"""
-Integration scenario for screensaver entry and exit with a static image.
+"""Check screensaver entry and exit with a static image.
 
-ScreenSaver.show must clear the deck before it repaints with the screensaver
-media, and hide must repaint every key with the page's content.
+show clears before repainting; hide restores every key.
 """
 
 # The blank reference hash comes from the deterministic bootstrap clear, so no
@@ -20,9 +18,7 @@ def main() -> None:
     deck = fixtures.raw_deck(controller)
     key_count = controller.deck.key_count()
 
-    # DeckController.__init__ runs a bootstrap clear before load_default_page,
-    # which paints a deterministic blank image. Capture its hash as the blank
-    # reference before anything else changes it.
+    # Capture the deterministic bootstrap clear before later paints replace it.
     blank_hash = next(e[4] for e in deck.journal() if e[3] == "key:0")
 
     # Let the default page's real content land before measuring the
@@ -42,9 +38,7 @@ def main() -> None:
     controller.screen_saver.show()
 
     def repainted_with_screensaver_content():
-        # Every key must carry post-show screensaver content before the
-        # assertions below run. A bulk batch writes keys one at a time, so a
-        # check of key:0 alone would race a mid-flight batch.
+        # Wait for every key because the bulk batch writes them one at a time.
         for k in range(key_count):
             e = deck.last_op_for(f"key:{k}")
             if e is None or e[1] <= seq_before_show or e[4] in (blank_hash, pre_show_hash):

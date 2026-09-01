@@ -1,13 +1,6 @@
-"""Sidebar and deck-settings rows must stay wired after a mid-update raise.
+"""Keep sidebar and deck-settings rows wired after mid-update failures.
 
-Four more rows disconnect a handler, update the widget, then reconnect: the
-event-assigner combo row, the state switcher stack, the deck background row and
-the screensaver row. A raise between the disconnect and the reconnect left the
-row permanently dead, so every later selection, state switch or settings change
-was dropped silently.
-
-This harness builds no real GTK widget: it drives the real loaders and setters
-on duck-typed stand-ins, the same pattern scenario_action_reconnect uses.
+Drive real loaders and setters on duck-typed widgets without GTK construction.
 """
 
 import fixtures  # noqa: F401  (must be first: isolates DATA_PATH before globals)
@@ -102,8 +95,6 @@ class FakeLabel:
         self.text = text
 
 
-# --- 1. EventAssignerRow ----------------------------------------------------
-
 class FakeModelItem:
     def __init__(self, id) -> None:
         self.id = id
@@ -136,7 +127,7 @@ class FakeEventAssignerRow(FakeWidget):
 
     def __init__(self, items) -> None:
         super().__init__()
-        self._selected_handler = None
+        self._selected_handler_id = None
         self._model = FakeModel(items)
         self.selected = None
         self.changes = 0
@@ -230,8 +221,6 @@ def test_event_row_wires_exactly_once_across_selects() -> None:
     assert row.changes == 1, f"one selection reported {row.changes} times"
 
 
-# --- 2. StateSwitcher -------------------------------------------------------
-
 class FakeStack(FakeWidget):
     def __init__(self) -> None:
         super().__init__()
@@ -270,7 +259,7 @@ class FakeStateSwitcher:
 
     def __init__(self) -> None:
         self.stack = FakeStack()
-        self._switch_handler = None
+        self._switch_handler_id = None
         self.switch_callbacks: list = []
         self.switches: list[int] = []
         self.switch_callbacks.append(lambda: self.switches.append(1))
@@ -337,8 +326,6 @@ def test_state_switcher_wires_exactly_once() -> None:
         f"one switch reported {len(switcher.switches)} times"
     )
 
-
-# --- 3 and 4. Deck-settings rows -------------------------------------------
 
 class FakeSection:
     def __init__(self, values, raise_on_get) -> None:
@@ -419,7 +406,7 @@ class FakeBackgroundRow:
         self.deck_serial_number = "FAKE"
         self.settings_page = FakeSettingsPage()
         self.on_map_tasks: list = []
-        self._handlers: dict[str, int] = {}
+        self._handler_ids: dict[str, int] = {}
         self.enable_switch = FakeSetValueWidget()
         self.media_selector_button = FakeWidget()
         self.add_image_button = FakeWidget()
@@ -481,7 +468,7 @@ class FakeScreensaverRow:
     def __init__(self) -> None:
         self.deck_serial_number = "FAKE"
         self.settings_page = FakeSettingsPage()
-        self._handlers: dict[str, int] = {}
+        self._handler_ids: dict[str, int] = {}
         self.enable_switch = FakeSetValueWidget()
         self.time_spinner = FakeSetValueWidget()
         self.media_selector_button = FakeWidget()
@@ -572,8 +559,6 @@ def test_screensaver_row_reconnects_after_midload_raise() -> None:
     _run_settings_row_case(FakeScreensaverRow(), settings, "screensaver row")
 
 
-# --- 5, 6 and 7. The single-widget deck-settings rows -----------------------
-
 class FakeToggleGroup(FakeWidget):
     def __init__(self) -> None:
         super().__init__()
@@ -597,7 +582,7 @@ class FakeRotationRow:
 
     def __init__(self) -> None:
         self.deck_serial_number = "FAKE"
-        self._rotation_handler = None
+        self._rotation_handler_id = None
         self.toggle_group = FakeToggleGroup()
         self.changes = 0
         self.connect_signal()
@@ -615,7 +600,7 @@ class FakeScaleRow:
 
     def __init__(self) -> None:
         self.deck_serial_number = "FAKE"
-        self._scale_handler = None
+        self._scale_handler_id = None
         self.scale = FakeSetValueWidget()
         self.on_map_tasks: list = []
         self.mapped = True

@@ -1,15 +1,9 @@
-"""One contender process for scenario_instance_gate.
-
-Name registration is one-shot per process, so a contention leg needs several
-processes. The environment picks the mode. Every mode prints to stdout.
-"""
+"""Run one environment-selected contender for the instance-gate scenario."""
 import os
 import sys
 
-# Point at the parent's data directory before import globals, which resolves
-# and creates the directory from argv at import time. A fallback here writes
-# the user's own Deckard data, and a mode that ends in os._exit runs no
-# cleanup hook.
+# Set the parent data directory before globals resolves and creates DATA_PATH
+# Refuse fallback because os._exit modes cannot clean real user data
 _DATA_PATH = os.environ.get("DECKARD_GATE_DATA")
 if not _DATA_PATH:
     raise SystemExit(
@@ -47,11 +41,7 @@ def say(line: str) -> None:
 
 
 def wait_for_barrier() -> None:
-    """Hold until the shared wall-clock start, if the parent set one.
-
-    The barrier reads the wall clock because monotonic clocks do not compare
-    across processes. Several children must reach register() in one millisecond.
-    """
+    """Hold until the shared wall-clock start so children register together."""
     start_at = os.environ.get("DECKARD_GATE_START_AT")
     if not start_at:
         return
@@ -81,10 +71,7 @@ def mode_establish() -> None:
     wait_for_barrier()
     decision = run_gate(app)
     if decision is instance_gate.Decision.PRIMARY:
-        # Hold the name while the other contenders decide. A primary that exits
-        # at once lets the next one win, and the leg passes while it proves
-        # nothing. Dispatch instead of sleep, because joining an application as
-        # its remote needs an answer from the owner.
+        # Hold and dispatch the primary name while remote contenders register
         hold = float(os.environ.get("DECKARD_GATE_HOLD", "0"))
         if hold > 0:
             loop = GLib.MainLoop()
@@ -100,19 +87,13 @@ def mode_activate() -> None:
         say("ACTIVATED")
 
 
-# Hold the connection and its callback for the process lifetime. GDBus drops a
-# filter when the Python wrapper it was added through is collected, and the
-# connection under it is a singleton that stays alive. A dropped wrapper leaves
-# a process on the bus that reports nothing, and reports it silently.
+# Keep the connection and callback alive because GDBus drops collected filters
 _WIRE_WATCH: list = []
 
 
 def watch_wire() -> None:
-    """Report every action Activate that arrives, from GDBus's worker thread.
-
-    The action handler runs on the main context, so a child that never reaches
-    its loop cannot say what arrived. A connection filter runs on the reader.
-    """
+    """Report each Activate message from the GDBus reader thread.
+    The filter observes messages even before the main context starts."""
     connection = Gio.bus_get_sync(Gio.BusType.SESSION, None)
 
     def on_message(_connection, message, incoming, *_user_data):
@@ -137,9 +118,7 @@ def _become_primary_loop(app_id: str, answer_quit: bool,
             say(f"VERDICT {decision.value}")
             raise SystemExit(f"expected to be the primary, got {decision.value}")
     else:
-        # Register without the gate, which stands in for a build that predates
-        # the gate. The gate under the pre-rename name would probe the very
-        # name it is claiming.
+        # Register directly; the old-name gate would probe its claimed name
         app.register(None)
         if app.get_is_remote():
             raise SystemExit(f"{app_id} was already owned")
@@ -150,14 +129,10 @@ def _become_primary_loop(app_id: str, answer_quit: bool,
         def on_quit(*_args):
             say("QUIT-RECEIVED")
             if delay > 0:
-                # Answer the call, then take a moment to go, like an instance
-                # with a teardown. The waiting launch polls for the release
-                # instead of taking the reply as one.
+                # Delay exit so the waiting launch must poll for name release
                 GLib.timeout_add(int(delay * 1000), lambda: os._exit(0))
                 return
-            # The app has the same shape. The process ends inside the handler,
-            # so the caller gets no reply and the name goes with the connection.
-            # The waiting launch sees the release, not an answer.
+            # Exit in the handler; the caller sees release without a reply
             os._exit(0)
 
         action = Gio.SimpleAction.new("quit", None)
@@ -165,16 +140,9 @@ def _become_primary_loop(app_id: str, answer_quit: bool,
         app.add_action(action)
 
     say("READY")
-    # A real instance owns the name without dispatching for the whole of its
-    # boot. It registered, so it answers nothing on the main context, including
-    # the quit action above.
+    # Model boot after registration but before main-context dispatch
     time.sleep(float(os.environ.get("DECKARD_GATE_DISPATCH_DELAY", "0")))
-    # The boot is over and the loop starts on the next line. Printed from here
-    # rather than from an idle callback, so it cannot be reordered behind the
-    # first message this loop dispatches: everything the loop handles is
-    # strictly after this line. A parent leg reads it against WIRE-ACTIVATE to
-    # order the arrival of a quit against the end of the boot, without
-    # comparing two processes' clocks.
+    # Print before dispatch to order boot completion against wire events
     say("DISPATCHING")
     GLib.MainLoop().run()
 

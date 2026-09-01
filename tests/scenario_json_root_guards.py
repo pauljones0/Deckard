@@ -1,16 +1,5 @@
-"""
-Regression scenario for JSON files whose root is not an object.
-
-The migration-flag file, the store cache index, and the manifest and
-attribution documents a repository serves are all read as dicts. A hand-edited
-or hostile file can decode to a list, a string or a number. Each reader must
-report the file as empty instead of handing the wrong root on to a caller that
-calls .get() on it. A populated list is the sharp case: it is truthy, so an
-emptiness test in the caller passes it straight through.
-
-The migration file also holds user data, so a non-object root is quarantined
-rather than clobbered by the next write.
-"""
+"""Reject non-object roots from migration, cache, and store JSON readers.
+Quarantine invalid migration data instead of overwriting it."""
 
 import json
 import os
@@ -57,7 +46,7 @@ def test_migration_flags_non_object_root() -> None:
             os.remove(os.path.join(os.path.dirname(Migrator.SETTINGS_DIR), name))
 
 
-def test_store_cache_index_non_object_root() -> None:
+def test_store_cache_index_requires_object() -> None:
     cache = StoreCache()
     for root in NON_OBJECT_ROOTS:
         _write(cache.files_json, root)
@@ -117,7 +106,7 @@ def main() -> None:
     fixtures.start_watchdog(30, label="scenario_json_root_guards")
     assert gl.DATA_PATH, "fixtures must have bound an isolated data dir"
     test_migration_flags_non_object_root()
-    test_store_cache_index_non_object_root()
+    test_store_cache_index_requires_object()
     test_store_manifest_non_object_root()
     test_store_attribution_non_object_root()
     test_object_root_still_reads()

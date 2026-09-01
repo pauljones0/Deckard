@@ -18,21 +18,14 @@ if TYPE_CHECKING:
     from types import TracebackType
 
 
-# Every live StoreCache, held weakly, so the exit hook below drains deferred
-# index writes and keeps no instance alive. Production builds one instance and
-# the test harness builds several per process.
+# Hold live caches weakly so the exit hook drains deferred writes without extending lifetimes.
 _live_caches: "weakref.WeakSet[StoreCache]" = weakref.WeakSet()
 
 
 @atexit.register
 def _flush_live_caches() -> None:
-    """Last drain of every live cache's deferred index.
-
-    This covers a plain interpreter exit, which a CLI run, the test harness
-    and an uncaught exception all take. The GTK app quits through os._exit(0)
-    (src/app.py on_quit), which skips atexit, so on_quit calls
-    StoreCache.flush_index() itself before it gets there.
-    """
+    """Flush deferred index writes for every live cache at interpreter exit.
+    The GTK quit path must flush explicitly because os._exit skips atexit."""
     for cache in list(_live_caches):
         try:
             cache.flush_index()
@@ -41,20 +34,8 @@ def _flush_live_caches() -> None:
 
 
 class _AtomicCacheWriter:
-    """Write handle that StoreCache.open_cache_file returns for a write mode.
-
-    The content goes to a sibling temp file in the cache directory. A
-    successful close() replaces the real cache path with it through
-    os.replace, and calls on_committed only afterwards, which stamps the
-    index's "fetched" clock. An exception inside the caller's with block, or
-    an explicit abort(), discards the temp file and leaves the previous
-    content and its stamp. A stamp before the write would let a crash
-    mid-write leave a truncated file that the index calls fresh. The stale
-    fallback would then serve it for up to DAYS_TO_KEEP.
-
-    This holds the per-file lock that StoreCache hands in, from construction
-    until close or abort, so two writers on one cache key serialize.
-    """
+    """Atomically replace one cache file and stamp its index only after commit.
+    Hold the per-file lock until close or abort so writers for one key serialize."""
 
     def __init__(self, final_path: str, mode: str, lock: threading.Lock,
                  on_committed: Callable[[], None]) -> None:
@@ -76,8 +57,7 @@ class _AtomicCacheWriter:
             raise
 
     def write(self, data: "str | bytes") -> int:
-        # The file behind this opened in 'w' or 'wb'; the mode's half of the
-        # union is the one a caller can hand over without a runtime error.
+        # The selected write mode narrows the file's str or bytes half at runtime.
         return self._file.write(data)
 
     def __enter__(self) -> "_AtomicCacheWriter":
@@ -112,7 +92,7 @@ class _AtomicCacheWriter:
             os.fsync(self._file.fileno())
             self._file.close()
             os.replace(self._tmp_path, self._final_path)
-            # Stamp only now that the whole content sits on disk.
+            # Stamp only after the complete content reaches its final path.
             self._on_committed()
         except Exception:
             with contextlib.suppress(OSError):
@@ -122,58 +102,19 @@ class _AtomicCacheWriter:
             self._lock.release()
 
     def __del__(self) -> None:
-        # A caller dropped this handle without close() or abort(). Never
-        # commit such a write.
+        # Discard a handle that was dropped without close or abort.
         if not getattr(self, "_finished", True):
             with contextlib.suppress(Exception):
                 self.abort()
 
 
 class StoreCache:
-    """The files.json index and the on-disk blobs for downloaded store files.
-
-    Each entry carries two clocks. "date" records the last use. Every open
-    renews it, and remove_old_cache_files evicts an unused entry by it.
-    "fetched" records the content age. A write stamps it only after the
-    commit, and it bounds the stale fallback in
-    StoreBackend.get_remote_file. A staleness bound on "date" would be
-    circular, because serving the stale copy renews that clock.
-
-    The index persists in two halves, split by the cost of a lost write. The
-    two halves are not interchangeable.
-
-    A content commit writes synchronously. _stamp_committed runs after a
-    blob's os.replace lands, and remove_old_cache_files evicts, and both
-    write files.json at once. A lost "path" or "fetched" stamp orphans the
-    blob forever, because remove_old_cache_files walks index entries only. No
-    pass ages out a file with no entry, and nothing finds it again. Crash
-    safety demands this write, so it must not defer.
-
-    A read-clock renewal defers. The read path, and the first sighting of a
-    cache string, renew "date" in memory and mark the index dirty. One daemon
-    timer flushes the whole index FLUSH_DEBOUNCE_S later. The first dirty
-    mark arms that timer, and a later mark leaves the pending timer alone. A
-    synchronous renewal would rewrite the whole files.json, with a json.dump
-    of every entry and an fsync, once per catalog file opened. This costs one
-    write per burst. A hard kill inside the window loses that much renewal.
-    An entry then looks FLUSH_DEBOUNCE_S older against a DAYS_TO_KEEP (3 day)
-    eviction bound, and the next read renews it again.
-
-    An entry mutation and the index write both run under write_lock. The
-    hazard is not the top-level files.copy(), because dict.copy() is one
-    atomic operation. files.copy() is shallow, so json.dump then iterates the
-    same per-entry dicts that the read and commit paths mutate. A thread that
-    adds "fetched" to an entry mid-dump raises "dictionary changed size
-    during iteration", and can truncate the index to what atomic_write_json
-    buffered. remove_old_cache_files is the one exception, and it pops
-    entries without the lock. It runs from __init__ only, before another
-    thread can reach the instance and before a flush timer can exist.
-    """
+    """Index downloaded blobs with separate last-use and content-age clocks.
+    Commit and eviction writes are synchronous; read-clock writes are locked and debounced."""
 
     DAYS_TO_KEEP = 3
 
-    # Trailing debounce for the deferred read-clock writes. An instance can
-    # override it, and the harness shortens it rather than sleep for seconds.
+    # Allow tests to shorten the trailing debounce for read-clock writes.
     FLUSH_DEBOUNCE_S = 2.0
 
     def __init__(self) -> None:
@@ -184,23 +125,12 @@ class StoreCache:
 
         self.write_lock = threading.Lock()
 
-        # One lock per cache key. A writer holds it from open to close (see
-        # _AtomicCacheWriter), so two store tabs that fetch the same catalog
-        # file of a custom store cannot interleave their writes. A reader
-        # needs no lock, because os.replace shows it the old file or the new
-        # complete file.
-        #
-        # Nothing evicts this map. Its key is the cache string
-        # (user::repo::branch::type::path), so the number of distinct store
-        # files written this session bounds its size. The catalog holds a few
-        # hundred entries, and each lock costs tens of bytes. An eviction
-        # risks dropping a lock while a writer still holds it, and the catalog
-        # bounds the growth rather than user input.
+        # Serialize writers per cache key; readers see either complete file after os.replace.
+        # Keep locks for the session because eviction could remove a lock still held by a writer.
         self._file_locks: dict[str, threading.Lock] = {}
         self._file_locks_guard = threading.Lock()
 
-        # Deferred read-clock index state. write_lock guards both fields.
-        # Set them up before the first set_files() call below.
+        # Initialize write_lock-protected debounce state before set_files can run.
         self._index_dirty = False
         self._flush_timer: threading.Timer | None = None
         _live_caches.add(self)
@@ -217,8 +147,7 @@ class StoreCache:
         try:
             with open(self.files_json, "r") as f:
                 root = json.load(f)
-            # The index is an object keyed by cache path. A file that decodes
-            # to any other root is unusable as an index, so treat it as empty.
+            # Treat a non-object JSON root as an unusable index.
             if not isinstance(root, dict):
                 log.error(f"Cache index {self.files_json} does not hold a JSON object; reading it as empty")
                 return {}
@@ -228,31 +157,14 @@ class StoreCache:
             return {}
 
     def set_files(self, files: dict[str, Any]) -> None:
-        """Persist the index at once. This is the synchronous half of the
-        split that the class docstring describes, for a content commit and
-        for an eviction.
-
-        A foreign dict, which is anything other than self.files, does not
-        persist. It lands on disk, but the deferred renewals stay dirty, so
-        the next flush overwrites the file with the live index. Every
-        production caller passes self.files, and the foreign-dict form serves
-        a test that pokes the writer directly."""
+        """Persist an index immediately.
+        Only writing the live index clears deferred renewal state."""
         with self.write_lock:
             self._write_index_locked(files)
 
     def _write_index_locked(self, files: dict[str, Any] | None = None) -> None:
-        """Dump the index to disk. The caller must hold write_lock.
-
-        A write of the live index also covers what the pending timer would
-        flush. The dirty flag clears, and the armed timer then does
-        nothing. This does not cancel that timer, because a Timer cancel from
-        an arbitrary thread gains nothing over one idle wake-up within
-        FLUSH_DEBOUNCE_S. The flag clears only after the write returns. A
-        write that raises (ENOSPC, a read-only filesystem) must leave the
-        index dirty. The next flush from the timer, the quit path or the exit
-        hook then retries the renewals rather than drop them. A caller that
-        passes another dict, which only the harness does, persists no live
-        index, so the flag stands."""
+        """Write an index while the caller holds write_lock.
+        Clear dirty state only after the live index writes successfully."""
         if files is None:
             files = self.files
         atomic_write_json(self.files_json, files.copy())
@@ -260,9 +172,7 @@ class StoreCache:
             self._index_dirty = False
 
     def _mark_index_dirty_locked(self) -> None:
-        """Note a deferred read-clock change and arm the trailing flush. The
-        caller must hold write_lock. The flush takes it too, so json.dump
-        never iterates an entry dict during a mutation."""
+        """Mark a locked read-clock change and arm one trailing flush."""
         self._index_dirty = True
         if self._flush_timer is not None:
             return  # A flush is already pending and covers this mark.
@@ -272,52 +182,33 @@ class StoreCache:
         try:
             timer.start()
         except Exception as e:
-            # Thread exhaustion (RuntimeError, can't start new thread) must
-            # not park a dead Timer in the slot. Every later mark would read
-            # that as a pending flush and the debounce would die for the rest
-            # of the process. A _flush_timer left None lets the next dirty
-            # mark arm again. The dirty flag still stands, so even a run of
-            # failed arms loses nothing, because the quit path and the atexit
-            # hook still drain it.
+            # Leave the timer slot empty so a later mark can retry after thread exhaustion.
             log.warning(f"Could not arm the store cache index flush: {e}")
             return
-        # Assign only once the thread runs. The live timer is safe, because
-        # the body of flush_index needs write_lock, which this caller holds
-        # past this assignment.
+        # Publish only a started timer while write_lock prevents an early flush race.
         self._flush_timer = timer
 
     def flush_index(self) -> None:
-        """Write out any deferred read-clock renewals now.
-
-        The debounce timer, the app's quit path and the module's atexit hook
-        all call this. It does nothing while the index is clean, so an extra
-        call costs nothing."""
+        """Write deferred read-clock renewals when the index is dirty."""
         with self.write_lock:
             timer, self._flush_timer = self._flush_timer, None
             if self._index_dirty:
                 self._write_index_locked()
         if timer is not None:
-            # This does nothing for the timer that just fired, and cancels
-            # the pending wake-up when an explicit flush wrote first.
+            # Cancel a pending wake-up after an explicit flush.
             timer.cancel()
 
     def remove_old_cache_files(self) -> None:
+        # Called only from __init__, before other threads can require write_lock.
         now = time.time()
         for string in self.files.copy():
             entry = self.files[string]
             path = entry.get("path")
             if not path or not os.path.exists(path):
-                # The file is gone, or the entry never recorded one. Drop the
-                # index entry too. A skip here makes the entry permanent,
-                # because no file remains to age out and no later pass
-                # removes it.
+                # Remove index entries with no existing blob.
                 self.files.pop(string)
                 continue
-            # "date" is the last-use clock. An entry written before that
-            # field existed falls back to the content clocks, first "fetched"
-            # and then the file's mtime, the order get_fetched_date uses. An
-            # old entry with no date otherwise reaches "now - None" and
-            # kills StoreCache.__init__ at startup.
+            # For legacy entries, fall back from last-use to fetched time and file mtime.
             date = entry.get("date")
             if date is None:
                 date = entry.get("fetched")
@@ -331,8 +222,7 @@ class StoreCache:
                 try:
                     os.remove(path)
                 except OSError as e:
-                    # Keep the entry, so the next pass retries. A dropped
-                    # entry orphans the file on disk with no index record.
+                    # Keep the index entry so a later pass can retry deletion.
                     log.warning(f"Could not remove old cache file {path}: {e}")
                     continue
                 self.files.pop(string)
@@ -352,9 +242,7 @@ class StoreCache:
     def get_user_name(self, repo_url:str) -> str:
         ref = parse_repo_url(repo_url)
         if ref is None:
-            # A caller reaches the cache only after its entry passes
-            # parse_repo_url, so this means a broken caller and not bad user
-            # input. Name the url, which "x not in list" never did.
+            # Cache callers must supply a URL already accepted by parse_repo_url.
             raise ValueError(f"Not a store repository url: {repo_url!r}")
         return ref.user
 
@@ -363,8 +251,7 @@ class StoreCache:
         return None if ref is None else ref.repo
 
     def generate_cache_string(self, url: str, path: str, branch: "str | None" = "main", data_type: str = "text") -> str:
-        # A None branch embeds literally, so it keys its own (never-written)
-        # entry, the same way it builds a URL no fetch can serve.
+        # Keep None as a distinct key for the corresponding invalid fetch URL.
         user = self.get_user_name(url)
         repo = self.get_repo_name(url)
         return f"{user}::{repo}::{branch}::{data_type}::{path}"
@@ -375,18 +262,12 @@ class StoreCache:
         cache_string = self.generate_cache_string(url, path, branch, data_type)
         if cache_string in self.files:
             recorded = self.files[cache_string].get("path")
-            # A record that lost its path orphans its blob (see the class
-            # docstring), and is_cached already treats that as uncached. Fall
-            # through and re-record the canonical location instead of handing
-            # the caller a None it would pass to os.path.dirname.
+            # Rebuild a missing recorded path instead of returning None to filesystem calls.
             if recorded is not None:
                 return cast(str, recorded)
 
         path = os.path.join(self.files_dir, cache_string)
-        # The first sighting of this cache string. Record where the blob
-        # goes, plus the last-use clock. No content exists yet, and the
-        # write that creates it stamps the index synchronously through
-        # _stamp_committed. This record defers; see the class docstring.
+        # Record a new blob path and defer its last-use clock; commit stamps content age.
         with self.write_lock:
             self.files[cache_string] = {
                 "path": path,
@@ -410,17 +291,14 @@ class StoreCache:
             return self._file_locks.setdefault(cache_string, threading.Lock())
 
     def _stamp_committed(self, cache_string: str, cache_path: str) -> None:
-        """Index update for a committed write. The atomic writer calls this
-        after os.replace lands the content, and never before."""
+        """Update the index after atomic replacement lands complete content."""
         with self.write_lock:
             entry = self.files.get(cache_string, {})
             entry["path"] = cache_path
             entry["date"] = time.time()     # last use (eviction clock)
             entry["fetched"] = time.time()  # content age (staleness clock)
             self.files[cache_string] = entry
-            # Write synchronously, under the same lock hold as the mutation.
-            # A lost record orphans the blob that just landed (see the class
-            # docstring). Never route this write through the debounce.
+            # Persist a committed blob record synchronously under the mutation lock.
             self._write_index_locked()
 
     @overload
@@ -453,9 +331,7 @@ class StoreCache:
 
         if any(flag in mode for flag in ("w", "a", "x", "+")):
             if mode not in ("w", "wb"):
-                # An append or update mode does not fit a fresh temp file
-                # plus an atomic replace, and no caller uses one. Fail loud
-                # rather than write in place again.
+                # Reject modes that cannot use fresh-file atomic replacement.
                 raise ValueError(f"unsupported cache write mode {mode!r}: only 'w'/'wb' are supported")
             lock = self._get_file_lock(cache_string)
             lock.acquire()
@@ -468,9 +344,7 @@ class StoreCache:
                 lock.release()
                 raise
 
-        # A read renews the last-use clock only, and leaves "fetched", the
-        # content age, alone. The renewal defers behind the debounce, so a
-        # cache hit does not rewrite the whole files.json.
+        # Defer last-use renewal and preserve content age on reads.
         with self.write_lock:
             entry = self.files.get(cache_string, {})
             entry["path"] = cache_path
@@ -480,13 +354,9 @@ class StoreCache:
 
         return cast("IO[str] | IO[bytes]", open(cache_path, mode))
 
-    def get_fetched_date(self, url: str, path: str, branch: "str | None" = "main", data_type: str = "text") -> float | None:
-        """When a write last landed the cached content, or None when that is
-        unknown. An entry older than the "fetched" field falls back to the
-        cache file's mtime. A read never touches that mtime, and os.replace
-        carries it over from the temp file. It must not fall back to the index
-        clock "date", which every read renews and which would keep an old
-        entry fresh for the stale fallback."""
+    def get_fetched_timestamp(self, url: str, path: str, branch: "str | None" = "main", data_type: str = "text") -> float | None:
+        """Return content age from its fetched clock or legacy file mtime.
+        Never use the read-renewed last-use clock to decide staleness."""
         entry = self.files.get(self.generate_cache_string(url, path, branch, data_type), {})
         fetched = entry.get("fetched")
         if fetched is not None:

@@ -53,7 +53,7 @@ if TYPE_CHECKING:
 def _encode_key_native(key: "ControllerKey", image: Image.Image, img_hash: int) -> bytes:
     """The device-ready JPEG for a composited key image, from the encode
     memo when the same composite was encoded before."""
-    _t0 = 0.0  # definite binding; the only read sits under the same media_prof guard as the write
+    _t0 = 0.0  # Initialize for the guarded profiling read.
     if media_prof:
         _t0 = time.perf_counter()
     memo_key = (img_hash, key.deck_controller.deck.get_rotation())
@@ -72,10 +72,9 @@ def _encode_key_native(key: "ControllerKey", image: Image.Image, img_hash: int) 
 
 
 def _encode_tile_native(key: "ControllerKey", tile: Image.Image, video_md5: str, frame_index: int) -> bytes:
-    """The device-ready JPEG for one background-video tile, from the native
-    tile cache when this frame was encoded for this key before. The cache
-    key carries every input those bytes depend on."""
-    _t0 = 0.0  # definite binding; the only read sits under the same media_prof guard as the write
+    """Return a background tile JPEG from frame-identity cache or encoding.
+    The key includes every input that affects the native bytes."""
+    _t0 = 0.0  # Initialize for the guarded profiling read.
     if media_prof:
         _t0 = time.perf_counter()
     cache_key = (video_md5, frame_index, key.present_state.key_index,
@@ -97,20 +96,14 @@ def _encode_tile_native(key: "ControllerKey", tile: Image.Image, video_md5: str,
 
 
 def _encode_strip_native(touchscreen: "ControllerTouchScreen", image: Image.Image) -> bytes:
-    """The device-ready JPEG for the composited strip. The touchscreen
-    takes JPEG only, so an RGBA composite goes onto black first.
-
-    image is the strip in the frame the user sees, which is the tall one on a
-    quarter-turned deck. encode_native_touchscreen turns it into the device's
-    buffer. image belongs to the caller, which reuses it for the window's own
-    strip preview, so the flattened copy is built and released here and image
-    itself is never touched.
-
-    A deck turned while this composite was in flight leaves it the wrong size
-    for the new frame. The write boundary would drop such a paint as stale, so
-    it is dropped here instead, before an encode that could only fit it to the
-    wrong axis. Empty bytes are what the strip ticket already reads as nothing
-    to write, and the repaint at the new size follows the turn."""
+    """Encode the strip as an oriented JPEG, flattening RGBA onto black.
+    Preserve the caller's image for preview and close every intermediate.
+    image is the strip in the user's frame, the tall one on a quarter-turned deck;
+    encode_native_touchscreen turns it into the device's buffer. A deck turned while the
+    composite was in flight leaves it the wrong size for the new frame, so it is dropped
+    here, before an encode that could only fit it to the wrong axis, as the empty bytes
+    the strip ticket already reads as nothing to write; the repaint at the new size
+    follows the turn."""
     logical_size = touchscreen.deck_controller.deck.logical_touchscreen_size()
     if logical_size is not None and image.size != logical_size:
         log.debug(f"dropping a {image.size} strip composite; the deck now "

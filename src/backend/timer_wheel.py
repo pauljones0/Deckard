@@ -12,27 +12,8 @@ This programm comes with ABSOLUTELY NO WARRANTY!
 You should have received a copy of the GNU General Public License
 along with this program. If not, see <https://www.gnu.org/licenses/>.
 """
-# One daemon scheduler thread for the ported delays: the screensaver reset per
-# keypress, the overlay hide, and the key-hold delay. A min-heap and a
-# Condition keep exactly one thread asleep, whatever the number of outstanding
-# delays.
-#
-# The handles match threading.Timer, so a cancel-and-recreate call site needs
-# only an import change:
-#   - schedule(delay_s, callback) arms at once and returns a handle.
-#   - handle.cancel() is idempotent and safe after the callback fired. It
-#     cannot un-fire the callback, the same as Timer.cancel().
-#
-# The scheduler thread pops due handles and hands them off. It never runs a
-# callback inline, because a callback is expensive. ScreenSaver.show() hashes
-# the source file and can open a video capture before it takes a lock, and an
-# inline run delays every other pending timer in the process. Each fire gets
-# its own short-lived daemon thread, not main_loop's shared @background pool.
-# That pool holds 8 workers for I/O-bound plugin and asset work, and these
-# fires would contend with it. A fire here is rare (one reset per keypress,
-# one overlay hide, one hold timer), so a fresh daemon thread per fire is
-# cheap. It also keeps this module on stdlib and loguru, with no GLib, which
-# the headless test harness needs.
+# A Condition heap gives Timer-compatible handles for screensaver, overlay, and key-hold delays.
+# Separate daemon threads run due work so slow callbacks block neither scheduler nor shared pool.
 import heapq
 import itertools
 import threading
@@ -40,6 +21,11 @@ import time
 from collections.abc import Callable
 
 from loguru import logger as log
+
+
+def _noop() -> None:
+    """The callback a cancelled handle carries, so cancel() can drop the real
+    closure without leaving _callback None for a probe to trip on."""
 
 
 class TimerHandle:
@@ -68,14 +54,19 @@ class TimerHandle:
 
 
 class TimerWheel:
-    """One daemon scheduler thread behind any number of independent delays.
-    Any thread can share it, because schedule() and cancel() hold the wheel's
-    own lock for a short time only."""
+    """Schedule any number of delays behind one daemon thread.
+    Any thread can schedule or cancel through the wheel's short-held lock."""
+
+    # Compact only heaps of at least 64 entries with at least half cancelled.
+    # Otherwise a long-lived early timer retains later handles and closures.
+    _COMPACT_MIN_HEAP = 64
 
     def __init__(self, name: str = "TimerWheel"):
         self._cond = threading.Condition()
         self._heap: list[tuple[float, int, TimerHandle]] = []
         self._seq_counter = itertools.count()
+        # Cancelled handles still in the heap since the last compaction.
+        self._cancelled_pending = 0
         self._thread = threading.Thread(target=self._run, name=name, daemon=True)
         self._thread.start()
 
@@ -92,19 +83,34 @@ class TimerWheel:
 
     def _cancel(self, handle: TimerHandle) -> None:
         with self._cond:
-            if handle._fired:
+            if handle._fired or handle._cancelled:
                 return
             handle._cancelled = True
-            # _run drops the handle once it reaches the front of the heap. A
-            # scan-and-remove per cancel() costs more, and a late removal
-            # changes nothing.
+            # Replace the closure with _noop while the cancelled handle remains in the heap.
+            # Compaction or front removal later reclaims its small record.
+            handle._callback = _noop
+            # Avoid a scan on each cancel; _run drops front entries.
+            # Compact once the cancelled share reaches half of a large heap.
+            self._cancelled_pending += 1
+            if (len(self._heap) >= self._COMPACT_MIN_HEAP
+                    and self._cancelled_pending * 2 >= len(self._heap)):
+                self._compact()
             self._cond.notify_all()
+
+    def _compact(self) -> None:
+        """Rebuild the heap without its cancelled handles. Caller holds the
+        condition lock."""
+        self._heap = [item for item in self._heap if not item[2]._cancelled]
+        heapq.heapify(self._heap)
+        self._cancelled_pending = 0
 
     def _run(self) -> None:
         with self._cond:
             while True:
                 while self._heap and self._heap[0][2]._cancelled:
                     heapq.heappop(self._heap)
+                    if self._cancelled_pending > 0:
+                        self._cancelled_pending -= 1
 
                 if not self._heap:
                     self._cond.wait()

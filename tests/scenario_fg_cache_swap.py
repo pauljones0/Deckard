@@ -1,8 +1,4 @@
-"""LayoutManager._fg_cache must not serve a stale resized foreground.
-
-InputImage._ensure_fits_composed() swaps its image in place, so the asset
-object stays identical while its pixels change. The layout key must notice.
-"""
+"""Check foreground-cache invalidation after an in-place source-image swap."""
 import fixtures  # noqa: F401  (import first: sets up the isolated data dir)
 
 import types
@@ -20,21 +16,14 @@ GREEN = (30, 200, 30, 255)
 
 
 class _FakeAsset:
-    """Stands in for the InputImage cache_token.
-
-    Its backing image can be swapped in place, exactly as
-    _ensure_fits_composed() does. It is only ever compared by identity.
-    """
+    """Provide a stable identity whose backing image can change."""
 
     def __init__(self, image: Image.Image):
         self.image = image
 
 
 def _make_layout_manager() -> LayoutManager:
-    # add_image_to_background only reaches get_composed_layout(). Give the
-    # action_layout every field, so inject_defaults never touches the
-    # controller_input identifier. controller_input is otherwise unused here,
-    # because the resized foreground depends on the asset and the layout alone.
+    # Supply a complete layout so composition does not use the input identifier.
     controller_input = types.SimpleNamespace(identifier=None)
     lm = LayoutManager(controller_input)
     lm.action_layout = ImageLayout(valign=0, halign=0, fill_mode="stretch", size=1.0)
@@ -52,27 +41,23 @@ def main() -> int:
     lm = _make_layout_manager()
     background = Image.new("RGBA", (72, 72), (0, 0, 0, 0))
 
-    # Both source images are the same size, so the composed pixel size, and with
-    # it the unhardened layout key, is identical across the swap. The only
-    # difference the cache can key on is the image itself.
+    # Equal source sizes isolate image identity as the only changed cache input.
     red_src = Image.new("RGBA", (144, 144), RED)
     green_src = Image.new("RGBA", (144, 144), GREEN)
 
     asset = _FakeAsset(red_src)
 
-    # 1. The first composite is red and populates _fg_cache for this pair.
-    out1 = lm.add_image_to_background(asset.image, background, cache_token=asset)
-    if _dominant(out1) != RED:
-        print(f"FAIL(setup): first composite is not RED: {_dominant(out1)}")
+    # Populate the cache with the red source.
+    red_composite = lm.add_image_to_background(asset.image, background, cache_token=asset)
+    if _dominant(red_composite) != RED:
+        print(f"FAIL(setup): first composite is not RED: {_dominant(red_composite)}")
         return 1
 
-    # 2. Swap the backing image of the asset in place, keeping the same asset
-    #    object, the same layout and a new source of the same size. That is what
-    #    an _ensure_fits_composed() re-decode does, without the size growth.
+    # Swap pixels while keeping asset identity, layout, and source size unchanged.
     asset.image = green_src
-    out2 = lm.add_image_to_background(asset.image, background, cache_token=asset)
+    green_composite = lm.add_image_to_background(asset.image, background, cache_token=asset)
 
-    got = _dominant(out2)
+    got = _dominant(green_composite)
     if got != GREEN:
         print(f"FAIL: composite after an in-place image swap served the stale "
               f"cached foreground: got {got}, expected GREEN {GREEN} -- "

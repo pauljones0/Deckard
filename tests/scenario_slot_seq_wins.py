@@ -1,9 +1,6 @@
-"""
-Single-slot assignment must be highest-seq-wins.
+"""Require highest-sequence-wins assignment for single frame slots.
 
-add_touchscreen_task and add_image_task stamp the seq inside _slot_lock,
-atomically with the assignment. Seq order is therefore assignment order. The
-slot always ends holding the maximum allocated seq.
+Allocate sequence numbers atomically with assignment under _slot_lock.
 """
 
 # A seq-ordered sleep after allocation makes an inversion deterministic rather
@@ -17,19 +14,15 @@ from fixtures import start_watchdog
 
 N_THREADS = 6
 ROUNDS = 12
-# Base unit for the seq-ordered sleep. The earliest producer of a round sleeps
-# (N_THREADS-1)*STEP and the latest sleeps 0, which forces the assign order
-# without dragging the suite.
+# Earliest producers sleep up to (N_THREADS - 1) * STEP to force assignment order.
 STEP = 0.001
 WATCHDOG_SECONDS = 60
 
 
 def _run_rounds(media_player, submit_fn, read_slot_seq, label: str) -> int:
-    """Run ROUNDS rounds of N_THREADS concurrent single submissions.
+    """Run ROUNDS of N_THREADS concurrent single submissions.
 
-    Each round installs a recorder that captures the allocated seqs and sleeps
-    after allocation, longest for the earliest seq. The first round whose slot
-    does not end on that round's max seq fails.
+    Sleep longest after the earliest allocation and require the maximum final seq.
     """
     # submit_fn(thread_index) enqueues one frame through the add_* under test.
     # read_slot_seq() returns the current slot's submit_seq, or None.
@@ -47,9 +40,7 @@ def _run_rounds(media_player, submit_fn, read_slot_seq, label: str) -> int:
                 if not round_base:
                     round_base.append(seq)
             position = seq - round_base[0]  # 0 for the earliest producer
-            # The earliest seq sleeps longest. With the sleep outside
-            # _slot_lock it assigns last and overwrites the slot with the
-            # oldest frame. Under the lock it cannot change assign order.
+            # An unlocked earliest seq sleeps longest and overwrites newer frames.
             time.sleep((N_THREADS - 1 - position) * STEP)
             return seq
 

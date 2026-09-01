@@ -1,42 +1,5 @@
-"""Build an icon pack out of a zip archive or a folder of pictures.
-
-The store installs a pack by downloading a repository. This module makes one
-out of what the user already has, and it writes the same layout, so the pack
-chooser reads an imported pack and a store one through one code path. See
-pack_family for that layout: a folder under the data path holding a
-manifest.json, the thumbnail the manifest names, and the asset folder the
-manifest names.
-
-Four rules shape the work.
-
-The pack is registered last. Everything is built inside a staging directory
-whose name carries a dot prefix, which is what the pack scanner skips, and a
-rename puts it in place once every file is written. A crash, a power cut or a
-kill therefore leaves a hidden half-built tree that no reader trusts, and
-never a pack folder with some of its icons in it. Each import gets its own
-staging directory with a random name, so two imports at once never share one,
-and a later import sweeps a tree that a dead import left.
-
-Untrusted input is validated before a byte is written. An archive member whose
-name resolves outside the folder it unpacks into fails the whole archive, and a
-folder import skips a symlink, refuses a special file, and refuses a file whose
-inode carries a second name that could sit outside the folder, so neither
-source copies a file the user did not choose. The destination of each file is
-built here, from the file name and at most one folder name, and never from the
-source string, and the built path is checked against the pack folder before the
-write.
-
-An import has a size budget. An archive that declares more than the budget is
-refused before a byte is written, and every copy counts what it writes and
-stops at the budget, so a folder of huge files or an archive with a forged
-size header fills no disk.
-
-What the browser can show is what gets copied. The pack reader lists the asset
-folder and the folders one level inside it and stops there, so a file deeper
-than that would be invisible; a deeper file lands in the folder that holds it.
-A file whose format the app does not render is skipped, because a pack full of
-unreadable entries is worse than a smaller pack.
-"""
+"""Build icon packs from ZIP archives or picture folders in hidden, unique staging trees.
+Publish with one rename after bounded copies of renderable files to checked, one-level paths."""
 from __future__ import annotations
 
 import os
@@ -59,40 +22,30 @@ from src.backend.IconPackManagement.IconPack import IconPack
 from src.backend.IconPackManagement.IconPackManager import IconPackManager
 from src.backend.atomic_json import atomic_write_json
 
-#: The suffix of a staging directory. The leading dot is what makes the pack
-#: scanner skip it, and the rest tells a person who finds one where it came
-#: from.
+#: The suffix identifies import staging trees; the leading dot hides them from pack discovery.
 STAGING_SUFFIX = ".deckard-import"
 
 #: What a pack goes into when the name the user typed leaves nothing usable.
 FALLBACK_FOLDER_NAME = "Imported Pack"
 
-#: The longest folder name an import makes. Every filesystem this app runs on
-#: takes far more, and a name past this is a paste rather than a name.
+#: Maximum generated folder-name length; longer user input is truncated.
 MAX_FOLDER_NAME_LENGTH = 64
 
-#: How many folder names an import tries before it gives up. A collision takes
-#: a numbered suffix, and a user with this many packs of one name has a
-#: different problem.
+#: Candidate limit including the unsuffixed name and all numbered suffix tries.
 MAX_NAME_ATTEMPTS = 100
 
-#: The largest an import unpacks, measured as the total size the source says
-#: its files take. A source that claims more is refused before a byte is
-#: written, and the copy counts what it writes, so a source that grows or lies
-#: cannot fill a disk. A folder of huge real pictures and an archive with a
-#: forged size header are the cases this covers.
+#: Maximum total bytes copied or extracted. Archive declarations are checked before writes,
+#: and streamed copies enforce the same bound.
 MAX_UNPACKED_BYTES = 512 * 1024 * 1024
 
-_COPY_CHUNK = 256 * 1024
+_COPY_CHUNK_BYTES = 256 * 1024
 
 #: The staging directories this session holds open. A sweep spares these, so a
 #: live import's tree survives a second import that starts while it runs.
 _staging_lock = threading.Lock()
-_live_staging: set[str] = set()
+_live_staging_paths: set[str] = set()
 
-#: True while an import runs. The dialog reads it to keep a second import from
-#: starting on top of one already in flight. It is set and cleared on the GTK
-#: main thread only.
+#: GTK-main-thread state that prevents a second dialog import while one is active.
 _import_in_flight = False
 
 
@@ -102,24 +55,16 @@ class PackImportError(Exception):
 
 @dataclass(frozen=True)
 class _PlannedFile:
-    """One file the import will write, and where it comes from.
-
-    dest_rel is relative to the pack's asset folder and is built here. source
-    is a path on disk for a folder import and a member name for an archive.
-    """
+    """A planned source and its destination relative to the asset folder.
+    source is a disk path for folders or an archive member name."""
 
     dest_rel: str
     source: str
 
 
 def importable_extensions() -> frozenset[str]:
-    """The formats an import copies, lowercase and without the dot.
-
-    Every one is a format the app already renders. The image and svg lists
-    hold four of them, and the gif sits in the video list because the app
-    plays it. The rest of the video list stays out: an icon pack holds
-    pictures, and an mp4 in one is a wallpaper in the wrong family.
-    """
+    """Return lowercase image, SVG, and GIF extensions that the icon importer accepts.
+    Other video formats belong to wallpaper packs."""
     extensions = {str(ext).lower() for ext in gl.image_extensions}
     extensions |= {str(ext).lower() for ext in gl.svg_extensions}
     extensions.add("gif")
@@ -135,19 +80,8 @@ def _is_importable(path: str) -> bool:
 
 
 def folder_name_for(name: str) -> str:
-    """A folder name for the pack the user called name.
-
-    The user's text is a title and not a path. This is the one rule that turns
-    it into a folder name, and what it returns always holds:
-
-    - one path component, because every character that is not a letter, a
-      digit, a space, a dot, a dash or an underscore becomes a dash
-    - a first character that is a letter or a digit, because a name that
-      starts with a dot is one the pack scanner skips as hidden, and one that
-      starts with a dash reads as an option to a command line
-    - at most MAX_FOLDER_NAME_LENGTH characters
-    - never empty, because a pack still needs somewhere to live
-    """
+    """Keep letters, digits, spaces, dots, dashes, and underscores in one non-hidden path component.
+    Trim non-alphanumeric edges, cap the length, and use FALLBACK_FOLDER_NAME when empty."""
     kept = re.sub(r"[^A-Za-z0-9 ._-]", "-", name.strip())
     kept = re.sub(r"-{2,}", "-", kept)
     kept = kept.strip(" .-_")[:MAX_FOLDER_NAME_LENGTH].strip(" .-_")
@@ -155,13 +89,8 @@ def folder_name_for(name: str) -> str:
 
 
 def _free_folder_name(root: str, base: str) -> str:
-    """base, or base with a number after it, whichever is free under root.
-
-    A name a pack already holds takes a suffix rather than a refusal. The
-    folder name is bookkeeping that no part of the UI shows, the pack keeps
-    the title the user typed either way, and a refusal at this point throws
-    away everything the user filled in.
-    """
+    """Return base or its first free numbered variant under root.
+    Folder names are internal, so collisions do not change the user-visible title."""
     for attempt in range(1, MAX_NAME_ATTEMPTS + 1):
         candidate = base if attempt == 1 else f"{base} ({attempt})"
         if not os.path.lexists(os.path.join(root, candidate)):
@@ -170,11 +99,8 @@ def _free_folder_name(root: str, base: str) -> str:
 
 
 def _unique_dest(dest_dir: str, filename: str, taken: set[str]) -> str:
-    """A destination relative path inside dest_dir that nothing else took.
-
-    Two source files of one name in different deep folders both land in one
-    destination folder, and the second must not overwrite the first.
-    """
+    """Return and reserve a destination relative to dest_dir.
+    Add a number when flattened source paths would collide."""
     stem, extension = os.path.splitext(filename)
     candidate = os.path.join(dest_dir, filename) if dest_dir else filename
     attempt = 2
@@ -187,18 +113,11 @@ def _unique_dest(dest_dir: str, filename: str, taken: set[str]) -> str:
 
 
 def _planned_destination(relative: str, taken: set[str]) -> str:
-    """Where a source file at relative lands inside the pack's asset folder.
-
-    It keeps the first folder of the path and drops the rest, because the pack
-    reader looks one level down and no further. The file name and that one
-    folder name are the only parts of the input that reach the destination,
-    and both are cleaned, so nothing the input says can move the write.
-    """
+    """Keep the first source folder and file name because discovery reads one subfolder level.
+    Clean both components and reserve a unique destination."""
     parts = [part for part in relative.replace("\\", "/").split("/") if part not in ("", ".")]
     if not parts:
-        # A relative path of only separators or dots names no file. The
-        # extension test upstream already drops such a name, and this keeps
-        # the parts[-1] below from an index error if that ever changes.
+        # Reject separator-only or dot-only paths before indexing the final component.
         raise PackImportError("A file in this import has no name, so nothing was imported.")
     filename = _clean_component(parts[-1])
     folder = _clean_component(parts[0]) if len(parts) > 1 else ""
@@ -211,33 +130,22 @@ def _clean_component(name: str) -> str:
     return cleaned or "file"
 
 
-# Folder source
-
-
 def _folder_plan(folder: str) -> list[_PlannedFile]:
-    """What to copy out of a folder, after each file passed its checks.
-
-    _walk_files yields no symlink and descends into no linked directory, so
-    every path here is a real file that sits under the chosen folder. The size
-    budget is counted at the copy, so it is not summed here.
-    """
+    """Plan importable, non-symlink files under folder without following linked directories.
+    Copying later validates ordinary files and enforces the byte budget."""
     taken: set[str] = set()
-    planned: list[_PlannedFile] = []
+    planned_files: list[_PlannedFile] = []
     for path in sorted(_walk_files(folder)):
         if not _is_importable(path):
             continue
         relative = os.path.relpath(path, folder)
-        planned.append(_PlannedFile(_planned_destination(relative, taken), path))
-    return planned
+        planned_files.append(_PlannedFile(_planned_destination(relative, taken), path))
+    return planned_files
 
 
 def _walk_files(folder: str) -> Iterator[str]:
-    # followlinks stays off, so os.walk descends into no linked directory, and
-    # a file under a linked directory is never yielded. A linked file is still
-    # in filenames, so each one is dropped here: a link is not a picture the
-    # user put here, and following it would copy a file from wherever it
-    # points, which may sit outside the chosen folder. What is left is a real
-    # file under the folder, so nothing this yields can escape it.
+    # os.walk skips linked directories, but linked files still appear in filenames.
+    # Skip those files so every yielded path remains under the chosen folder.
     for dirpath, _dirnames, filenames in os.walk(folder, followlinks=False):
         for filename in filenames:
             full = os.path.join(dirpath, filename)
@@ -246,44 +154,32 @@ def _walk_files(folder: str) -> Iterator[str]:
             yield full
 
 
-def _copy_planned_files(planned: list[_PlannedFile], assets_dir: str) -> None:
-    """Copy each planned file into the pack's asset folder.
-
-    It refuses a source that is not an ordinary file, so a named pipe or a
-    device cannot be read without end, and one whose inode carries more than
-    one name, because a second name can sit outside the chosen folder and
-    would put that file's bytes in the pack. It counts the bytes it writes
-    against the budget, so a source that grew since the plan fills no disk.
-    """
+def _copy_planned_files(planned_files: list[_PlannedFile], assets_dir: str) -> None:
+    """Copy only ordinary, single-link files; reject pipes, devices, symlinks, and hardlinks.
+    Links can reach external data; count streamed bytes against MAX_UNPACKED_BYTES."""
     written = 0
-    for item in planned:
+    for planned_file in planned_files:
         try:
-            info = os.lstat(item.source)
+            source_stat = os.lstat(planned_file.source)
         except OSError as error:
             raise PackImportError(
                 "A file in this folder could not be read, so nothing was imported."
             ) from error
-        if not stat.S_ISREG(info.st_mode):
-            # A symlink, a pipe or a device: not a picture the user put here.
+        if not stat.S_ISREG(source_stat.st_mode):
             raise PackImportError(
                 "A file in this folder is not an ordinary picture, so nothing "
                 "was imported."
             )
-        if info.st_nlink > 1:
-            # A hardlink shares its bytes with another name, which can live
-            # outside the chosen folder. Refuse it, so the copy reads only
-            # files that live under the folder and nowhere else. A picture with
-            # a second name is rare, and keeping the folder the one source of
-            # what enters the pack is worth refusing it.
+        if source_stat.st_nlink > 1:
             raise PackImportError(
                 "A file in this folder is shared with another outside it, so "
                 "nothing was imported."
             )
-        target = _checked_target(assets_dir, item.dest_rel)
+        target = _checked_target(assets_dir, planned_file.dest_rel)
         os.makedirs(os.path.dirname(target), exist_ok=True)
-        with open(item.source, "rb") as source_file, open(target, "wb") as out:
+        with open(planned_file.source, "rb") as source_file, open(target, "wb") as out:
             while True:
-                chunk = source_file.read(_COPY_CHUNK)
+                chunk = source_file.read(_COPY_CHUNK_BYTES)
                 if not chunk:
                     break
                 written += len(chunk)
@@ -295,17 +191,9 @@ def _copy_planned_files(planned: list[_PlannedFile], assets_dir: str) -> None:
                 out.write(chunk)
 
 
-# Archive source
-
-
 def _archive_plan(archive: zipfile.ZipFile) -> list[_PlannedFile]:
-    """What to unpack, after the whole archive passed its member check.
-
-    The member names are validated first, and one member that resolves outside
-    the folder it unpacks into refuses the whole archive: the members before it
-    are no more trustworthy than the one that gave itself away. The declared
-    total is checked before any write.
-    """
+    """Validate every member before writing and reject the whole archive if any path escapes.
+    Enforce the declared total-size budget before extraction."""
     for name in archive.namelist():
         reason = archive_safety.unsafe_member_reason(name)
         if reason is not None:
@@ -315,36 +203,28 @@ def _archive_plan(archive: zipfile.ZipFile) -> list[_PlannedFile]:
                 "nothing from it was imported."
             )
 
-    infos = [info for info in archive.infolist() if not info.is_dir()]
-    declared = sum(info.file_size for info in infos)
+    members = [member for member in archive.infolist() if not member.is_dir()]
+    declared = sum(member.file_size for member in members)
     if declared > MAX_UNPACKED_BYTES:
         raise PackImportError("This archive is too large to import as an icon pack.")
-    names = [info.filename for info in infos]
+    names = [member.filename for member in members]
 
     prefix = _common_top_folder(names)
     taken: set[str] = set()
-    planned: list[_PlannedFile] = []
+    planned_files: list[_PlannedFile] = []
     for name in sorted(names):
         if not _is_importable(name):
             continue
         relative = name[len(prefix):] if prefix and name.startswith(prefix) else name
         if not relative:
             continue
-        planned.append(_PlannedFile(_planned_destination(relative, taken), name))
-    return planned
+        planned_files.append(_PlannedFile(_planned_destination(relative, taken), name))
+    return planned_files
 
 
 def _common_top_folder(names: list[str]) -> str:
-    """The one folder every member sits in, with its separator, or "".
-
-    An archive made from a directory holds that directory as its only top
-    entry. Keeping it would put every icon one level deeper than the author
-    laid them out, which moves them all into one subfolder of the pack.
-
-    A member that is the top entry itself is a file rather than a folder, and
-    it keeps its name, because the caller strips this prefix only from a name
-    that starts with it, separator and all.
-    """
+    """Return the sole shared top-level folder plus its separator, or an empty string.
+    A member equal to that top name is a file and is not stripped."""
     tops = {name.replace("\\", "/").split("/")[0] for name in names}
     if len(tops) != 1:
         return ""
@@ -353,39 +233,30 @@ def _common_top_folder(names: list[str]) -> str:
 
 
 def _declared_size(archive: zipfile.ZipFile, member: str) -> int:
-    """What the archive says this member takes unpacked.
-
-    CPython's ZipExtFile stops reading a member at this size, so the guard in
-    _extract_planned_files that compares against it cannot fire on a real
-    archive. The guard stays as defence for a future reader that trusts a size
-    header, and the test reaches it by understating this number. Remove neither
-    believing the other covers a forged header.
-    """
+    """Return the member's declared unpacked size.
+    ZipExtFile enforces it; extraction also guards readers that trust forged headers."""
     return archive.getinfo(member).file_size
 
 
-def _extract_planned_files(archive: zipfile.ZipFile, planned: list[_PlannedFile],
+def _extract_planned_files(archive: zipfile.ZipFile, planned_files: list[_PlannedFile],
                            assets_dir: str) -> None:
-    for item in planned:
+    for planned_file in planned_files:
         try:
-            limit = _declared_size(archive, item.source)
+            limit = _declared_size(archive, planned_file.source)
         except KeyError as error:
-            # The plan and this extraction read the same open archive's member
-            # table, so a member the plan named cannot vanish here in normal
-            # flow. This stays as defence against a malformed handle that
-            # answers namelist and getinfo differently, and refuses through the
-            # import contract rather than a bare lookup error.
+            # A missing planned member from the same open archive indicates a malformed handle.
+            # Convert the lookup error to the import contract.
             raise PackImportError(
                 "This archive is damaged, so nothing from it was imported."
             ) from error
-        target = _checked_target(assets_dir, item.dest_rel)
+        target = _checked_target(assets_dir, planned_file.dest_rel)
         os.makedirs(os.path.dirname(target), exist_ok=True)
         # The member is opened by name and written to a path this module built,
         # so the archive chooses what comes out and never where it goes.
         written = 0
-        with archive.open(item.source, "r") as member, open(target, "wb") as out:
+        with archive.open(planned_file.source, "r") as member, open(target, "wb") as out:
             while True:
-                chunk = member.read(_COPY_CHUNK)
+                chunk = member.read(_COPY_CHUNK_BYTES)
                 if not chunk:
                     break
                 written += len(chunk)
@@ -398,30 +269,17 @@ def _extract_planned_files(archive: zipfile.ZipFile, planned: list[_PlannedFile]
 
 
 def _checked_target(base_dir: str, dest_rel: str) -> str:
-    """The absolute path of dest_rel under base_dir, after one last check.
-
-    Every write an import makes passes through here. The destination was built
-    from cleaned components, so this holds nothing the earlier checks let
-    through. It is the guard that stays right whatever later changes the way a
-    destination is chosen.
-    """
+    """Resolve dest_rel under base_dir and reject paths outside it.
+    Keep this final write guard independent of earlier destination cleaning."""
     target = os.path.join(base_dir, dest_rel)
     if not archive_safety.resolved_within(base_dir, target):
         raise PackImportError("A file in this import would land outside the pack.")
     return target
 
 
-# Thumbnail
-
-
 def _is_decodable(path: str) -> bool:
-    """Whether the app can turn path into a picture.
-
-    A file the manifest names as the thumbnail but that does not decode leaves
-    the pack showing a blank tile, so a chosen banner is read here before it is
-    trusted. An svg is markup rather than a raster, so it is checked for the
-    tag every svg carries rather than decoded.
-    """
+    """Return whether path passes thumbnail validation.
+    Verify raster images with PIL and require SVG or XML markup in an SVG header."""
     if _extension(path) == "svg":
         try:
             with open(path, "rb") as handle:
@@ -439,77 +297,55 @@ def _is_decodable(path: str) -> bool:
         return False
 
 
-def _write_thumbnail(staging: str, assets_dir: str, planned: list[_PlannedFile],
+def _write_thumbnail(staging: str, assets_dir: str, planned_files: list[_PlannedFile],
                      banner_path: str | None) -> str:
-    """Put the pack's thumbnail in place and return the name the manifest holds.
-
-    A pack whose thumbnail is missing reads as invalid and drops out of the
-    chooser, so an import always writes one. The user's banner is used when it
-    is a picture the app can show, and the first icon otherwise. A raster icon
-    is preferred over an svg, because the preview decoder handles one without a
-    library the host may not have.
-
-    The write goes through _checked_target like every other, so the thumbnail
-    is no exception to the rule that a write lands inside the pack.
-    """
+    """Write a valid banner or the first raster icon as the thumbnail.
+    Use the first planned icon only when all are SVG; check the destination before copying."""
     if banner_path and os.path.isfile(banner_path) and _is_importable(banner_path) \
             and _is_decodable(banner_path):
         name = f"thumbnail{os.path.splitext(banner_path)[1].lower()}"
         shutil.copyfile(banner_path, _checked_target(staging, name))
         return name
 
-    chosen = next((item for item in planned if _extension(item.dest_rel) != "svg"), planned[0])
+    chosen = next(
+        (
+            planned_file
+            for planned_file in planned_files
+            if _extension(planned_file.dest_rel) != "svg"
+        ),
+        planned_files[0],
+    )
     source = os.path.join(assets_dir, chosen.dest_rel)
     name = f"thumbnail{os.path.splitext(chosen.dest_rel)[1].lower()}"
     shutil.copyfile(source, _checked_target(staging, name))
     return name
 
 
-# Staging
-
-
 def _new_staging(root: str) -> str:
-    """A fresh, empty staging directory under root, tracked as live.
-
-    The name is random, so two imports never share one and the second cannot
-    delete the first's tree. The dot prefix keeps the pack scanner out of it.
-
-    The create and the track happen under the one lock the sweep takes, so a
-    sweep cannot run between them and read the new directory as an untracked
-    leftover.
-    """
+    """Create a hidden, unique staging directory and track it while holding _staging_lock.
+    The shared lock prevents stale-tree sweeps from seeing a new live directory as untracked."""
     with _staging_lock:
         staging = tempfile.mkdtemp(prefix=".", suffix=STAGING_SUFFIX, dir=root)
-        _live_staging.add(staging)
+        _live_staging_paths.add(staging)
     return staging
 
 
 def _forget_staging(staging: str) -> None:
     with _staging_lock:
-        _live_staging.discard(staging)
+        _live_staging_paths.discard(staging)
 
 
 def _discard_staging(staging: str) -> None:
-    """Drop a staging tree after a failure, and stop tracking it."""
+    """Attempt to remove a failed staging tree, then stop tracking it."""
     _remove_tree(staging)
     _forget_staging(staging)
 
 
 def _sweep_stale_staging(root: str) -> None:
-    """Remove staging trees a dead import left under root.
-
-    A tree this session still holds open is spared, so a second import that
-    starts while the first runs cannot delete the first's work. A leftover from
-    a crashed run matches the staging name and no live tree, so it goes.
-
-    The whole sweep, from the snapshot of the live set through the listing to
-    the removals, runs under the one lock _new_staging takes. A new staging
-    directory is therefore either fully created and tracked before the sweep
-    reads the disk, or created after the sweep finished, and never seen by the
-    sweep as an untracked leftover in between.
-    """
+    """Attempt to remove stale hidden staging trees but spare paths tracked by this session.
+    Hold _staging_lock across listing and removal so new live trees cannot appear untracked."""
     with _staging_lock:
-        live = set(_live_staging)
+        live_staging_paths = set(_live_staging_paths)
         try:
             entries = os.listdir(root)
         except OSError:
@@ -518,20 +354,15 @@ def _sweep_stale_staging(root: str) -> None:
             if not (entry.startswith(".") and entry.endswith(STAGING_SUFFIX)):
                 continue
             path = os.path.join(root, entry)
-            if path in live:
+            if path in live_staging_paths:
                 continue
             if os.path.isdir(path) and not os.path.islink(path):
                 _remove_tree(path)
 
 
 def _remove_tree(path: str) -> None:
-    """Remove a staging tree, or whatever else took its name. Best effort.
-
-    A tree this cannot remove, such as one left read-only by a crash, stays on
-    disk and costs space until it can go. It blocks nothing: an import builds
-    into a directory of its own with a fresh random name, so a stuck leftover
-    never sits where a new import needs to write.
-    """
+    """Remove a staging tree, file, or symlink on a best-effort basis.
+    A stuck leftover blocks no import because each staging directory has a unique name."""
     if os.path.isdir(path) and not os.path.islink(path):
         shutil.rmtree(path, ignore_errors=True)
     elif os.path.lexists(path):
@@ -539,9 +370,6 @@ def _remove_tree(path: str) -> None:
             os.remove(path)
         except OSError as error:
             log.warning(f"Could not remove {path}: {error}")
-
-
-# The import
 
 
 def import_is_running() -> bool:
@@ -557,14 +385,8 @@ def set_import_running(running: bool) -> None:
 
 def import_icon_pack(source: str, name: str, description: str = "",
                      banner_path: str | None = None) -> str:
-    """Make an icon pack out of source and return the folder it went into.
-
-    source is a .zip archive or a folder. name is what the pack is called in
-    the chooser. Raises PackImportError with a sentence for the user when the
-    import cannot go on, and leaves nothing behind when it does.
-
-    This reads and writes files, so it runs off the main thread.
-    """
+    """Import a ZIP or picture folder off the main thread and return its folder.
+    Raise user-facing PackImportError; cleanup can leave hidden staging, never a visible pack."""
     title = (name or "").strip()
     if not title:
         raise PackImportError("An icon pack needs a name.")
@@ -580,9 +402,8 @@ def import_icon_pack(source: str, name: str, description: str = "",
     except PackImportError:
         raise
     except (zipfile.BadZipFile, zlib.error) as error:
-        # is_zipfile passes a truncated download whose central directory is
-        # intact; the read then fails here. The staging tree is already gone,
-        # because _build_pack cleans it before this catch sees the error.
+        # A ZIP with an intact central directory can pass is_zipfile and fail during reading.
+        # _build_pack has already attempted to remove its hidden staging tree.
         raise PackImportError(
             "This archive is damaged, so nothing from it was imported."
         ) from error
@@ -596,8 +417,15 @@ def import_icon_pack(source: str, name: str, description: str = "",
 def _import_from_folder(source: str, title: str, description: str,
                         banner_path: str | None) -> str:
     plan = _folder_plan(source)
-    return _build_pack(title, description, banner_path, plan, lambda planned, assets_dir:
-                       _copy_planned_files(planned, assets_dir))
+    return _build_pack(
+        title,
+        description,
+        banner_path,
+        plan,
+        lambda planned_files, assets_dir: _copy_planned_files(
+            planned_files, assets_dir
+        ),
+    )
 
 
 def _import_from_archive(source: str, title: str, description: str,
@@ -606,18 +434,22 @@ def _import_from_archive(source: str, title: str, description: str,
     # cannot vanish under a handle held open, and the file is read once.
     with zipfile.ZipFile(source, "r") as archive:
         plan = _archive_plan(archive)
-        return _build_pack(title, description, banner_path, plan, lambda planned, assets_dir:
-                           _extract_planned_files(archive, planned, assets_dir))
+        return _build_pack(
+            title,
+            description,
+            banner_path,
+            plan,
+            lambda planned_files, assets_dir: _extract_planned_files(
+                archive, planned_files, assets_dir
+            ),
+        )
 
 
 def _build_pack(title: str, description: str, banner_path: str | None,
                 plan: list[_PlannedFile],
                 populate: Callable[[list[_PlannedFile], str], None]) -> str:
-    """Stage a pack out of a plan and rename it into place.
-
-    populate writes the plan's files into the pack's asset folder. Everything
-    else here is common to a folder import and an archive one.
-    """
+    """Populate a staging asset folder, write shared pack metadata, and rename it into place.
+    populate handles the source-specific copy or extraction."""
     if not plan:
         raise PackImportError(
             "No pictures the app can show were found, so there is no pack to make."
@@ -650,7 +482,7 @@ def _build_pack(title: str, description: str, banner_path: str | None,
             raise PackImportError("The pack could not be put in place.") from error
     except BaseException:
         # Every exit that is not the rename leaves the staging tree behind, so
-        # drop it. Nothing reads it, because of the dot, but it costs disk.
+        # try to drop it. The leading dot keeps a leftover out of pack discovery.
         _discard_staging(staging)
         raise
     _forget_staging(staging)

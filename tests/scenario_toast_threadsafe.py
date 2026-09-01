@@ -1,10 +1,5 @@
-"""
-Regression test for the main-window toast methods.
-
-MainWindow.show_error_toast exists and is defined exactly once, because a
-second definition would shadow the first. The methods run unbound over a duck-
-typed self.
-"""
+"""Verify one definition per main-window toast method and main-context
+marshalling when the unbound methods run over a duck-typed window."""
 
 # Both toast methods, called from a worker thread as update_assets does, touch
 # the overlay only through the GLib main context.
@@ -31,7 +26,7 @@ class FakeToastOverlay:
         self.calling_threads.append(threading.current_thread())
 
 
-class FakeWindowSelf:
+class FakeWindow:
     def __init__(self):
         self.toast_overlay = FakeToastOverlay()
 
@@ -66,7 +61,7 @@ def main() -> None:
             f"order"
         )
 
-    fake_win = FakeWindowSelf()
+    fake_win = FakeWindow()
     # Bind the real toast internals onto the duck-typed window, so the
     # unbound public methods reach them through self.
     fake_win._add_toast = types.MethodType(MainWindow._add_toast, fake_win)

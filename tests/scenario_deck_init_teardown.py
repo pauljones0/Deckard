@@ -1,7 +1,5 @@
-"""A DeckController whose __init__ fails must leave none of its threads behind.
-
-Every leg runs through the real DeckManager._init_deck_controller_with_retry,
-so the production arms decide the outcome and the thread census must return.
+"""Require failed DeckController initialization to leave no controller threads.
+Each case runs through the production retry helper.
 """
 import collections
 import re
@@ -23,11 +21,8 @@ CONTROLLER_THREAD_PREFIXES = ("MediaPlayerThread", "tick_actions", "action_cb", 
 
 
 class FlakySerialDeck(FaultyFakeDeck):
-    """A deck whose serial read flakes, scriptable per construction window.
-
-    open() runs once per construction attempt, before any serial read, so it
-    doubles as the per-attempt reset and snapshots the threads that predate the
-    attempt. The four constructor knobs pick the window and the retry arm.
+    """Inject serial-read failures in selected construction windows.
+    Each open resets the attempt counters and snapshots older threads.
     """
 
     def __init__(self, *args, exc=TransportError, pre_writer_flakes_from=None,
@@ -53,11 +48,7 @@ class FlakySerialDeck(FaultyFakeDeck):
         return super().open(*args, **kwargs)
 
     def _live_controller_threads(self) -> set[str]:
-        """Controller threads started by this attempt.
-
-        Anything older is an orphan from an earlier attempt or leg, and would
-        make the window assertions below read the wrong construction.
-        """
+        """Return controller threads started during the current attempt."""
         return {t.name for t in threading.enumerate()
                 if t.name.startswith(CONTROLLER_THREAD_PREFIXES)
                 and t.ident not in self._pre_attempt_idents}
@@ -89,20 +80,12 @@ class FlakySerialDeck(FaultyFakeDeck):
         return len(self.flake_contexts)
 
     def stop_flaking(self) -> None:
-        """Stop injecting failures.
-
-        A controller that did register can then tear down the ordinary way.
-        """
+        """Stop injecting failures so a registered controller can close normally."""
         self._attempts_to_fail = 0
 
 
 class WedgedTransportDeck(FlakySerialDeck):
-    """A deck whose writes block forever instead of raising.
-
-    A write that never returns holds the device lock of the wrapper. Anything
-    the teardown writes, or waits on that lock for, then never comes back.
-    This separates a bounded teardown from a hung one.
-    """
+    """Block writes while they hold the wrapper lock to expose unbounded teardown."""
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -130,11 +113,7 @@ class Census(typing.NamedTuple):
 
 
 def census() -> Census:
-    """Live threads, with the pool-worker suffixes folded away.
-
-    action_cb_3 and action_cb_7 are one kind, and their count varies with pool
-    warm-up.
-    """
+    """Count live threads after folding variable pool-worker suffixes."""
     counts: collections.Counter = collections.Counter()
     pooled = set()
     for thread in threading.enumerate():
@@ -146,16 +125,8 @@ def census() -> Census:
 
 
 def census_state(before: Census) -> tuple[dict, dict]:
-    """One census read two ways: the whole delta, and the part that is not settled.
-
-    A positive entry is a thread that SURVIVED, which is what the legs hunt.
-
-    A negative entry means threads left. That is settled only for a pooled name,
-    where a numbered worker from an earlier leg reached its idle timeout inside
-    this leg's window: it never returns to zero, so waiting for it burns the
-    whole timeout and then fails the leg for a leak it does not have. A negative
-    on an unpooled name is a lost shared singleton, such as the timer wheel or
-    the cache budget, and must still fail.
+    """Return the full thread delta and its unsettled subset.
+    Ignore only negative deltas from variable pooled workers.
     """
     now = census()
     counts = now.counts.copy()
@@ -188,10 +159,7 @@ def assert_census_returns(before: Census, label: str) -> None:
 
 
 def init_with_retry(deck, attempts: int = 3):
-    """The production retry helper, called unbound over the StubDeckManager.
-
-    Both of its arms decide the outcome for real.
-    """
+    """Call the production retry helper over the stub deck manager."""
     return DeckManager._init_deck_controller_with_retry(
         gl.deck_manager, deck, attempts=attempts, retry_delay=0.05)
 
@@ -217,9 +185,8 @@ def test_deep_flake_releases_every_thread() -> None:
 
 def test_shallow_flake_before_ticker() -> None:
     before = census()
-    # Flaking from the third pre-writer read kills the one that memoizes the
-    # serial, so the load pool name re-reads it after the writer started and
-    # before the ticker and the pools exist.
+    # Fail the load-pool-name serial read after the writer starts but before the
+    # ticker and pools exist.
     deck = FlakySerialDeck(serial_number="init-teardown-shallow", deck_type="Fake Deck",
                            pre_writer_flakes_from=3)
     controller = init_with_retry(deck)
@@ -259,9 +226,8 @@ def test_retry_round_registers_controller() -> None:
 
 def test_generic_exception_tears_down() -> None:
     before = census()
-    # A RuntimeError from the deck-settings read sits outside load_default_page,
-    # so it is neither the boot-page failure the constructor swallows nor a
-    # transport error. The helper logs it and gives up.
+    # A deck-settings RuntimeError is outside load_default_page and is not a
+    # transport error, so the helper logs it and gives up.
     deck = FlakySerialDeck(serial_number="init-teardown-generic", deck_type="Fake Deck",
                            exc=RuntimeError, post_writer_grace=0)
     controller = init_with_retry(deck)
@@ -275,10 +241,8 @@ def test_generic_exception_tears_down() -> None:
 
 def test_boot_page_failure_registers_deck() -> None:
     before = census()
-    # A RuntimeError raised inside load_default_page takes the other arm of the
-    # constructor. The page it wanted is still on disk and the next load retries
-    # it, so the deck registers. The guard must not carry the registration off
-    # with the failure.
+    # A load_default_page RuntimeError leaves the page on disk for retry, so the
+    # deck must still register.
     deck = FlakySerialDeck(serial_number="init-teardown-register", deck_type="Fake Deck",
                            exc=RuntimeError, post_writer_grace=1)
     controller = init_with_retry(deck)
@@ -315,14 +279,12 @@ def test_wedged_transport_spares_constructor() -> None:
 
 
 def main() -> None:
-    # A teardown step that blocks, such as a write to a failed transport or a
-    # join on a wedged ticker, must fail loud here rather than park until the
-    # per-scenario timeout of run_all.py.
+    # Fail before the scenario timeout if teardown writes to a failed transport
+    # or joins a wedged thread.
     fixtures.start_watchdog(75, label="scenario_deck_init_teardown")
 
-    # One successful controller first. It warms every lazily started global
-    # thread, the cache budget, the timer wheel and the shared background pool,
-    # so the census deltas of the legs contain deck threads and nothing else.
+    # Warm shared lazy threads first so later census deltas contain only deck
+    # threads.
     warm = fixtures.make_headless_controller(serial="init-teardown-warm")
     fixtures.wait_until(lambda: warm.active_page is not None, timeout=5)
     fixtures.teardown(warm)

@@ -19,27 +19,13 @@ from typing import TYPE_CHECKING, Literal
 if TYPE_CHECKING:
     from types import TracebackType
 
-# FIFO ticket lock. It serves as the Stream Deck per-device transport mutex.
-# CPython's threading.Lock is unfair. A thread that releases and immediately
-# re-acquires beats a waiter parked for milliseconds, so an unpaced write
-# burst out-races the library's HID read poll on this shared per-device
-# mutex. Input events then arrive coalesced and dials lag. Ticket order
-# bounds the reader's wait at the chunk in flight plus the chunks queued
-# ahead of it. The writer queues one chunk at a time, so that bound is
-# single-digit milliseconds.
-#
-# This lock is not reentrant, because the transport takes it for one chunk
-# operation at a time. A re-entering holder queues behind itself and
-# deadlocks, as it does on the threading.Lock this stands in for.
+# FIFO transport mutex that bounds a reader behind queued device I/O chunks.
+# It is non-reentrant; a holder that reacquires queues behind itself and deadlocks.
 
 
 class FairLock:
-    """A mutex that grants ownership in acquisition order.
-
-    Replaces threading.Lock in its blocking, non-blocking and context-manager
-    forms. acquire() takes a ticket and waits for it. release() serves the
-    next ticket.
-    """
+    """Ticket mutex that grants ownership in acquisition order.
+    Supports blocking, non-blocking, timed, and context-manager use."""
 
     __slots__ = ("_cond", "_next_ticket", "_serving", "_abandoned")
 
@@ -100,10 +86,8 @@ class FairLock:
         while self._serving in self._abandoned:
             self._abandoned.discard(self._serving)
             self._serving += 1
-        # Use notify_all and not notify. The waiters are the transport reader
-        # and the writing thread, two or three at a time. The wasted wakeups
-        # cost less than a USB chunk, and each waiter re-checks its own
-        # ticket, so no wakeup is lost.
+        # Wake all because notify can select a waiter whose ticket is not next.
+        # Each waiter rechecks its ticket, so no wakeup is lost.
         self._cond.notify_all()
 
     def __enter__(self) -> bool:

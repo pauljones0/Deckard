@@ -1,10 +1,4 @@
-"""
-Regression scenario for Migrator.create_backup.
-
-create_backup names each archive after the migrator's own version, so a
-chained upgrade keeps one archive per migrator. It archives settings/plugins/
-as well as pages/, so a failed plugin-settings migration stays recoverable.
-"""
+"""Require one backup per migrator version, including plugin settings."""
 import json
 import os
 import shutil

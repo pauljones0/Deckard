@@ -1,10 +1,4 @@
-"""
-The auto-update compatibility gate must cover the asset catalogs too.
-
-prepare_icon, prepare_wallpaper and prepare_sd_plus_bar_wallpaper mark an entry
-is_compatible False through the same fallback prepare_plugin uses. No network
-is involved.
-"""
+"""Verify the offline auto-update compatibility gate for all asset catalogs."""
 
 # Each matching *_to_update skips and reports such an entry, so only a
 # compatible outdated pack is offered and counted.

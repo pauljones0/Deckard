@@ -35,11 +35,8 @@ class StreamDeckUIImporter:
         return f"{x}x{y}"
     
     def save_json(self, json_path: str, data: dict[str, Any], _retries: int = 3) -> None:
-        # Writes a whole page file, past the page-settings setters. That is
-        # safe only because a StreamDeck-UI profile carries no window
-        # auto-change rule. An importer that emits one must also call
-        # page_manager.refresh_window_watch_state() after its import loop, or
-        # the watcher misses the imported rules.
+        # This write bypasses setting hooks; StreamDeck-UI has no auto-change rules.
+        # Any importer that emits them must refresh window watch state after its loop.
         atomic_write_json(json_path, data)
 
         loaded = None
@@ -57,11 +54,9 @@ class StreamDeckUIImporter:
                 log.error(f"Failed to save {json_path} after all retries, giving up")
             
     def allocate_page_paths(self, deck: str, page_names: Iterable[str]) -> dict[str, str]:
-        """Map each export page name to a target path that collides with none.
+        """Allocate collision-free paths before resolving ChangePage links.
 
-        The whole deck resolves first, so a ChangePage cross-reference points
-        at the final filename. An existing user page named ui_<deck>_<n>.json
-        also survives, because this appends a numeric suffix instead.
+        Numeric suffixes preserve existing pages and imported cross-references.
         """
         pages_dir = os.path.join(gl.DATA_PATH, "pages")
         os.makedirs(pages_dir, exist_ok=True)
@@ -96,22 +91,14 @@ class StreamDeckUIImporter:
 
 
         for deck in self.export.get("state", {}):
-            # The deck serial is a key of the export file and becomes a
-            # filename component for both the deck settings file and every
-            # page file. A serial that carries a path separator or a parent
-            # reference would place those writes outside the settings tree, so
-            # skip a deck whose serial is not a single, plain path component.
+            # Export keys are untrusted deck serials; accept only one plain path
+            # component to keep deck and page writes inside the settings tree.
             if os.sep in deck or (os.altsep and os.altsep in deck) or deck in (os.curdir, os.pardir):
                 log.error(f"Skipped a deck whose serial points outside the settings directory: {deck!r}")
                 continue
 
-            # Deck preferences merge into the deck settings that exist. A
-            # whole-file replacement erases every unrelated section, such as
-            # the rotation and the key layout. The write goes through the
-            # settings store and not to the file, because a cache serves the
-            # settings of a deck and a raw write leaves that cache stale, so
-            # the import stays invisible to every earlier reader, including
-            # the deck itself.
+            # Merge through the settings store to preserve rotation and key layout
+            # and keep its deck-settings cache current.
             with settings_store.get().edit(settings_store.DECK, deck) as preferences:
                 preferences.setdefault("brightness", {})["value"] = self.export["state"][deck].get("brightness", 75)
                 screensaver = preferences.setdefault("screensaver", {})
@@ -119,9 +106,8 @@ class StreamDeckUIImporter:
                 screensaver["time-delay"] = self.export["state"][deck].get("display_timeout", 5*60)//60
                 screensaver["brightness"] = self.export["state"][deck].get("brightness_dimmed", 0)
 
-            # Final page filenames for this deck, collision-suffixed, so
-            # same-named user pages survive and intra-import ChangePage
-            # references stay consistent.
+            # Allocate final paths first to preserve existing pages and imported
+            # ChangePage references when collisions need suffixes.
             page_paths = self.allocate_page_paths(deck, self.export["state"][deck].get("buttons", {}).keys())
 
             for page_name in self.export["state"][deck].get("buttons", {}):
@@ -135,9 +121,7 @@ class StreamDeckUIImporter:
 
                     button_data = self.export["state"][deck]["buttons"][page_name][button]
 
-                    # Support both formats. One holds an explicit "states"
-                    # dict, and the flat one holds the properties on the
-                    # button.
+                    # Support an explicit "states" dictionary and flat button properties.
                     if "states" in button_data and button_data["states"]:
                         states = button_data["states"]
                     else:
@@ -158,9 +142,7 @@ class StreamDeckUIImporter:
                         page["keys"][coords]["states"][page_state]["labels"]["bottom"] = {
                             "text": state_data.get("text", None),
                             "color": hex_to_rgba255(font_color_hex),
-                            # Use the hyphenated keys, which Page and
-                            # LabelManager read. The loader reads no
-                            # underscore spelling.
+                            # Page and LabelManager read only the hyphenated keys.
                             "font-size": None,
                             "font-family": font_family_from_path(state_data.get("font"))
                         }
@@ -176,17 +158,13 @@ class StreamDeckUIImporter:
                         if export_icon not in [None, ""]:
                             if os.path.exists(export_icon):
                                 asset_id = gl.asset_manager_backend.add(asset_path=export_icon)
-                                # add() answers None for a file it refused,
-                                # and get_by_id answers None for that, so the
-                                # else below already covers both.
+                                # Both a refused add and a missing asset resolve to None.
                                 asset = (gl.asset_manager_backend.get_by_id(asset_id)
                                          if asset_id is not None else None)
                                 if asset is not None:
                                     page["keys"][coords]["states"][page_state]["media"]["path"] = asset["internal-path"]
                                 else:
-                                    # add() refuses a corrupt or unreadable
-                                    # icon. Skip the icon and keep the rest
-                                    # of the import.
+                                    # Skip corrupt or unreadable icons without dropping the page.
                                     log.warning(f"Could not import icon {export_icon}, skipping")
                             else:
                                 log.warning(f"Icon {export_icon} not found, skipping")
@@ -198,18 +176,15 @@ class StreamDeckUIImporter:
                         export_switch_page = state_data.get("switch_page")
                         if str(export_switch_page) != str(int(page_name)+1) and export_switch_page not in [0, "0", None, ""]:
                             if export_switch_page not in [None, ""]:
-                                # switch_page is 1-based over the export's
-                                # 0-based page names; resolve through the
-                                # allocation map so the reference tracks any
-                                # collision suffix the target received.
+                                # Convert the 1-based target through the path map so
+                                # collision suffixes remain consistent.
                                 page_path = None
                                 try:
                                     page_path = page_paths.get(str(int(export_switch_page) - 1))
                                 except (TypeError, ValueError):
                                     page_path = None
                                 if page_path is None:
-                                    # This export holds no target page, so
-                                    # keep the historical naming.
+                                    # Use the fallback for missing or malformed targets.
                                     page_path = os.path.join(gl.DATA_PATH, "pages", f"ui_{deck}_{export_switch_page}.json")
                                 action: dict[str, Any] = {
                                     "id": "com_core447_DeckPlugin::ChangePage",
@@ -222,9 +197,8 @@ class StreamDeckUIImporter:
 
                         # Hotkey
                         if state_data.get("keys") not in [None, ""]:
-                            # "" while unparsed, so a failed parse stays out
-                            # of the check below and an empty parse result
-                            # keeps whatever meaning it had.
+                            # Keep the sentinel empty after a parse failure so no action
+                            # is added; preserve a successful empty parse result.
                             parsed: list[int] | str = ""
                             try:
                                 parsed = parse_keys_as_keycodes(state_data["keys"])[0]
@@ -285,10 +259,8 @@ class StreamDeckUIImporter:
 
 
                 page_path = page_paths[page_name]
-                # An import replaces a whole page, so a write that still
-                # waits for that path lands after this one and undoes it. The
-                # drop happens here and not inside save_json, so the barrier
-                # sits where the page is replaced and save_json only writes.
+                # Drop pending writes at the replacement boundary, or a stale
+                # write can land after the import and undo it.
                 page_flush.get().discard_path(page_path)
                 self.save_json(page_path, page)
                 # gl.signal_manager.trigger_signal(Signals.PageAdd, page_path) # We don't trigger the action to save ressources

@@ -17,8 +17,6 @@ class ExpanderRow(GenerativeUI[bool]):
     A class that represents a UI expander row widget with additional functionality
     to manage its expansion state and to add child widgets.
 
-    Inherits from GenerativeUI to provide generic UI management and functionality.
-
     Attributes:
         expanded (bool): Whether the expander is currently expanded or collapsed.
     """
@@ -51,7 +49,7 @@ class ExpanderRow(GenerativeUI[bool]):
             auto_add (bool, optional): Whether to automatically add this entry to the UI. Defaults to True.
         """
         # GenerativeUI children added via add_row; destroyed in clear_rows().
-        self._child_generative_ui: list[Any] = []
+        self._child_ui_owners: list[Any] = []
 
         self._switch_enabled = show_enable_switch
 
@@ -82,7 +80,7 @@ class ExpanderRow(GenerativeUI[bool]):
         """
         Disconnects the signal handler for the 'notify::enable-expansion' signal.
 
-        The widget then handles no further expansion state change.
+        Use it when the widget must stop handling expansion changes
         or when the signals should be stopped.
         """
         self._track_disconnect("enable-expansion", self.widget)
@@ -102,9 +100,8 @@ class ExpanderRow(GenerativeUI[bool]):
 
     def get_enable_expansion(self) -> bool:
         """
-        Retrieves the current expansion state of the expander. It falls back
-        to the settings value layer while the widget is unbuilt, because a
-        read is a value query and must not force a build.
+        Return the expansion state, or the stored value while unbuilt.
+        A value read must not force a build.
 
         Returns:
             bool: The current state of the expander's enabled expansion.
@@ -124,8 +121,8 @@ class ExpanderRow(GenerativeUI[bool]):
         """
         # Track the GenerativeUI owner (if any) so clear_rows() can tear it down.
         owner = getattr(widget, "_generative_ui_owner", None)
-        if owner is not None and owner not in self._child_generative_ui:
-            self._child_generative_ui.append(owner)
+        if owner is not None and owner not in self._child_ui_owners:
+            self._child_ui_owners.append(owner)
         if widget.get_parent() is not None:
             self.widget.remove_child(widget)
             widget.unparent()
@@ -137,9 +134,9 @@ class ExpanderRow(GenerativeUI[bool]):
         # _widget guard keeps a repeat destroy() a no-op.
         if self._widget is not None:
             self.widget.clear()
-        children, self._child_generative_ui = self._child_generative_ui, []
-        for child in children:
-            child.destroy()
+        child_owners, self._child_ui_owners = self._child_ui_owners, []
+        for child_owner in child_owners:
+            child_owner.destroy()
 
     @override
     def destroy(self) -> None:

@@ -1,13 +1,9 @@
-"""
-Unit-tier scenario for grouped plugin, signal and GtkHelper fixes.
-
-SignalManager.trigger_signal forwards kwargs and runs a truthy handler once. No
-deck, no widgets.
+"""Verify low-level plugin and signal behavior without decks or widgets.
+Signal dispatch forwards kwargs once; helpers accept partials, slotted owners, and null ids.
 """
 
-# EventHolder dedupes a functools.partial listener, CallbackRegistry accepts a
-# __slots__ owner, launch_backend validates its path, get_own_key resolves
-# through get_input, and a null action id survives removal.
+# Event listeners deduplicate partials, registries accept slotted owners, backend
+# paths validate early, key lookup uses get_input, and null action ids survive removal.
 import functools
 import threading
 import weakref
@@ -22,9 +18,8 @@ from src.Signals.weak_callbacks import CallbackRegistry
 
 
 def pump_main_context(max_iterations: int = 25) -> int:
-    """Dispatch pending sources on the default main context. The bound stops
-    a forever-rescheduling idle from hanging the scenario. Returns the number
-    of iterations that dispatched something."""
+    """Run at most max_iterations main-context iterations that dispatch work.
+    Return their count; the bound prevents a repeating idle from hanging the scenario."""
     ctx = GLib.MainContext.default()
     dispatched = 0
     for _ in range(max_iterations):
@@ -63,7 +58,7 @@ def check_trigger_signal_kwargs_single_shot():
     )
 
 
-def check_eventholder_partial_dedupe_no_crash():
+def check_event_holder_partial_deduplication():
     from src.backend.PluginManager.EventHolder import EventHolder
 
     hits = []
@@ -92,7 +87,7 @@ class _SlottedOwner:
         self.calls += 1
 
 
-def check_slots_owner_falls_back_strong():
+def check_slotted_owner_uses_strong_reference():
     owner = _SlottedOwner()
 
     # The owner really is non-weak-referenceable.
@@ -186,9 +181,8 @@ def check_get_own_key_via_get_input():
 def check_remove_actions_survives_null_id():
     from src.backend.PageManagement.Page import Page
 
-    # An action with an explicit null id, one with no id at all, and a normal
-    # one belonging to the plugin being removed. A None id that reaches
-    # .split("::") raises AttributeError and aborts the whole removal.
+    # Explicit null and missing ids must survive removal beside normal actions;
+    # passing None to .split("::") would abort the operation.
     page_dict = {
         "keys": {
             "0x0": {
@@ -226,15 +220,15 @@ def check_remove_actions_survives_null_id():
 
 
 def main() -> None:
-    fixtures.start_watchdog(60, label="scenario_plugin_signal_lows")
+    fixtures.start_watchdog(60, label="scenario_plugin_signal_low_level")
     assert threading.current_thread() is threading.main_thread()
     check_trigger_signal_kwargs_single_shot()
-    check_eventholder_partial_dedupe_no_crash()
-    check_slots_owner_falls_back_strong()
+    check_event_holder_partial_deduplication()
+    check_slotted_owner_uses_strong_reference()
     check_launch_backend_path_validation()
     check_get_own_key_via_get_input()
     check_remove_actions_survives_null_id()
-    print("PASS: scenario_plugin_signal_lows")
+    print("PASS: scenario_plugin_signal_low_level")
 
 
 if __name__ == "__main__":

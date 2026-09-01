@@ -1,8 +1,4 @@
-"""Static tripwire for constructor calls that cannot bind their own __init__.
-
-An AST scan checks every call to a class defined once in the tree. It also
-pins FlatpakPermissionRequestWindow, which app.show_permissions() builds.
-"""
+"""Detect constructor calls that cannot bind their class initializer."""
 import ast
 import os
 
@@ -52,7 +48,7 @@ def get_init(class_node: ast.ClassDef):
     return init
 
 
-def signature(init: ast.FunctionDef):
+def parameter_requirements(init: ast.FunctionDef):
     """Positional and required param names, or None when undecidable."""
     args = init.args
     if args.vararg is not None:
@@ -68,7 +64,7 @@ def signature(init: ast.FunctionDef):
     return [a.arg for a in positional], required
 
 
-def collect(trees: dict) -> tuple[dict, set]:
+def collect_class_definitions(trees: dict) -> tuple[dict, set]:
     classes: dict[str, tuple[str, ast.ClassDef]] = {}
     duplicates: set[str] = set()
     for path, tree in trees.items():
@@ -98,10 +94,10 @@ def find_offenders(trees: dict, classes: dict, duplicates: set):
             init = get_init(class_node)
             if init is None:
                 continue
-            sig = signature(init)
-            if sig is None:
+            requirements = parameter_requirements(init)
+            if requirements is None:
                 continue
-            positional, required = sig
+            positional, required = requirements
 
             # A splatted call has an unknowable bound set.
             if any(isinstance(a, ast.Starred) for a in node.args):
@@ -140,7 +136,7 @@ def check_repo_scan() -> None:
         f"clean result would prove nothing"
     )
 
-    classes, duplicates = collect(trees)
+    classes, duplicates = collect_class_definitions(trees)
     offenders, checked = find_offenders(trees, classes, duplicates)
 
     assert checked >= MIN_CHECKED_CALLS, (
@@ -169,9 +165,11 @@ def check_generic_permission_request() -> None:
 
     init = get_init(class_node)
     assert init is not None, f"{PERMISSION_WINDOW} has no __init__"
-    sig = signature(init)
-    assert sig is not None, f"{PERMISSION_WINDOW}.__init__ takes *args -- rewrite this check"
-    _, required = sig
+    requirements = parameter_requirements(init)
+    assert requirements is not None, (
+        f"{PERMISSION_WINDOW}.__init__ takes *args -- rewrite this check"
+    )
+    _, required = requirements
 
     unmet = [p for p in required if p not in GENERIC_REQUEST_ARGS]
     assert not unmet, (

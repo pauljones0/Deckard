@@ -87,6 +87,8 @@ test:compile:
     - python scripts/check_gl_slots.py
     - python scripts/check_settings_json.py
     - python scripts/check_type_gate.py
+    - pip install --quiet "$(grep -oE '^PyYAML==[0-9.]+' flatpak/requirements-manifest-tools.txt)"
+    - python scripts/check_ci_release_gates.py --self-test
     # This job's image is the deployment floor, and 3.13 evaluates a parameter
     # and return annotation at def time where the 3.14 dev venv defers it, so
     # this is the only place an unevaluatable annotation shows up.
@@ -174,11 +176,10 @@ changelog-check:
         exit 1
       fi
 
-# On-demand scenario suite. The harness runs a few hundred scenarios, each one
-# a subprocess that boots the real GTK4 stack, so this job never starts by
-# itself: it is manual on merge request and default-branch pipelines alike, and
-# allow_failure keeps a pipeline green while it sits unplayed. The runner host
-# also serves GitLab, so resource_group holds the project to one run at a time.
+# Scenario-suite provisioning shared by the blocking smoke job and the
+# on-demand full suite. Each scenario runs in its own subprocess and boots the
+# real GTK4 stack. The runner host also serves GitLab, so resource_group holds
+# the project to one run at a time.
 #
 # The image mirrors provisioning that is known to work on a developer host,
 # rather than a build invented for CI. Trixie's python3 is 3.13, the deployment
@@ -207,18 +208,18 @@ changelog-check:
 # real /home/<user> shape. Setup stays root (apt, venv, pip); the tree is
 # handed over just before the run.
 #
-# SCENARIO_K narrows the run to scenario filenames that contain one substring
-# (the harness takes a single -k). SCENARIO_JOBS sets the parallel width, and
-# SCENARIO_TIMEOUT the per-scenario limit, which is wider than the harness
+# SCENARIO_LIST selects an ordered, tracked subset. SCENARIO_K remains for
+# ad-hoc narrowing of the full suite. SCENARIO_JOBS sets the parallel width,
+# and SCENARIO_TIMEOUT the per-scenario limit, which is wider than the harness
 # default because the host is shared.
-test:scenarios:
+.scenario-suite:
   stage: test
   image: debian:trixie-slim
   interruptible: true
-  needs: []
   resource_group: scenario-suite   # the runner host also serves GitLab itself
   variables:
     SCENARIO_K: ""          # optional: run only scenarios matching one substring
+    SCENARIO_LIST: ""       # optional: run a tracked list of exact scenario names
     SCENARIO_JOBS: "4"
     SCENARIO_TIMEOUT: "300"
     DEBIAN_FRONTEND: noninteractive
@@ -229,14 +230,7 @@ test:scenarios:
         - requirements.txt
     paths:
       - .pip-cache
-  rules:
-    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
-      when: manual
-      allow_failure: true
-    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
-      when: manual
-      allow_failure: true
-  script:
+  before_script:
     - apt-get update -qq
     - |
       apt-get install -y -qq --no-install-recommends \
@@ -248,9 +242,16 @@ test:scenarios:
     - .venv/bin/pip install --quiet -r requirements.txt
     - |
       .venv/bin/python -c "import gi; gi.require_version('Gtk','4.0'); gi.require_version('Adw','1'); from gi.repository import Gtk, Adw; print('gi', gi.__version__, 'Gtk', Gtk.get_major_version())"
+  script:
     - |
       set -e
-      if [ -n "$SCENARIO_K" ]; then set -- -k "$SCENARIO_K"; else set --; fi
+      if [ -n "$SCENARIO_LIST" ]; then
+        set -- --scenario-list "$SCENARIO_LIST"
+      elif [ -n "$SCENARIO_K" ]; then
+        set -- -k "$SCENARIO_K"
+      else
+        set --
+      fi
       useradd -m scenario
       chown -R scenario:scenario "$CI_PROJECT_DIR"
       runuser -u scenario -- env HOME=/home/scenario USER=scenario LOGNAME=scenario \
@@ -265,7 +266,69 @@ test:scenarios:
     paths:
       - scenarios-junit.xml
 
+# Blocking representative coverage for merge requests and release-producing
+# pipelines. The manifest owns the exact selection so membership changes are
+# ordinary, reviewable diffs.
+test:scenario-smoke:
+  extends: .scenario-suite
+  needs: []
+  variables:
+    SCENARIO_LIST: tests/scenario-smoke.txt
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+    - if: '$CI_COMMIT_TAG'
+
+# On-demand full suite. It remains manual and advisory on merge requests and
+# the default branch, so hardware-dependent and longer scenarios can be run
+# without delaying the normal pipeline.
+test:scenarios:
+  extends: .scenario-suite
+  needs: []
+  rules:
+    # The nightly schedule runs the complete suite strictly: the runner
+    # image is the Python 3.13 deployment floor with the real GTK runtime,
+    # so a red nightly pipeline is the floor-coverage signal.
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      when: manual
+      allow_failure: true
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      when: manual
+      allow_failure: true
+
 # ── build ────────────────────────────────────────────────────────────────────
+# Resolve the committed Python 3.13 locks again, regenerate the Flatpak source
+# manifest, and verify every selected archive before the privileged build starts.
+test:flatpak-python:
+  stage: test
+  image: python:3.13-slim
+  interruptible: true
+  cache:
+    key:
+      files:
+        - pypi-requirements.yaml
+    paths:
+      - .flatpak-python-archives
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^v[0-9]/'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      changes:
+        - io.github.nazbert.Deckard.yml
+        - requirements.txt
+        - pypi-requirements.yaml
+        - flatpak/**/*
+        - .gitlab-ci.yml
+  script:
+    - apt-get update -qq
+    - >-
+      apt-get install -y -qq --no-install-recommends gcc libc6-dev pkg-config
+      libcairo2-dev libgirepository1.0-dev
+    - pip install --quiet -r flatpak/requirements-manifest-tools.txt
+    - python flatpak/ci/generate_python_manifest.py --check
+    - python flatpak/ci/check_python_payload.py --cache-dir .flatpak-python-archives
+
 # Stages a workspace so flatpak-builder never ingests CI cruft:
 #   build-ws/src              clean `git archive` export of $CI_COMMIT_SHA
 #   build-ws/shared-modules   flathub shared-modules (the manifest references
@@ -283,7 +346,10 @@ build:flatpak:
   image: quay.io/gnome_infrastructure/gnome-runtime-images:gnome-50
   tags: [flatpak]   # the dedicated privileged runner (see header)
   interruptible: true
-  needs: []
+  needs:
+    - job: test:flatpak-python
+      artifacts: false
+      optional: true
   cache:
     key:
       files:
@@ -302,6 +368,7 @@ build:flatpak:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
       changes:
         - io.github.nazbert.Deckard.yml
+        - requirements.txt
         - pypi-requirements.yaml
         - flatpak/**/*
         - .gitlab-ci.yml
@@ -312,7 +379,6 @@ build:flatpak:
     # The image's user differs from the checkout's owner — git refuses to
     # operate on "dubiously owned" repos without this.
     - git config --global --add safe.directory "$CI_PROJECT_DIR"
-    - python3 -c "import yaml" 2>/dev/null || pip3 install --user --quiet PyYAML
     - mkdir -p build-ws/src dist
     - git archive "$CI_COMMIT_SHA" | tar -x -C build-ws/src
     - cp io.github.nazbert.Deckard.yml pypi-requirements.yaml build-ws/
@@ -334,6 +400,31 @@ build:flatpak:
     expire_in: 2 weeks
 
 # ── release (strict vX.Y.Z tags) ─────────────────────────────────────────────
+# This barrier makes the static checks, scenario smoke suite, and release build
+# a single prerequisite for every job that can create a tag or release. It
+# deliberately downloads no artifacts: the publishing jobs retain their direct
+# build dependency so the Flatpak bundle remains available where it is uploaded.
+release:gate:
+  stage: release
+  image: alpine:3.22
+  interruptible: true
+  needs:
+    - job: test:compile
+      artifacts: false
+    - job: lint:ruff
+      artifacts: false
+    - job: lint:types
+      artifacts: false
+    - job: test:scenario-smoke
+      artifacts: false
+    - job: build:flatpak
+      artifacts: false
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^v[0-9]+\.[0-9]+\.[0-9]+$/'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+  script:
+    - echo "Static gates, scenario smoke suite, and release build passed."
+
 # Upload the bundle to the generic package registry (durable, unlike the
 # 2-week CI artifacts), then create the GitLab Release with notes from this
 # version's CHANGELOG.md section and the bundle linked as a package asset.
@@ -347,7 +438,7 @@ release:gitlab:
   needs:
     - job: build:flatpak
       artifacts: true
-    - job: test:compile
+    - job: release:gate
       artifacts: false
   rules:
     - if: '$CI_COMMIT_TAG =~ /^v[0-9]+\.[0-9]+\.[0-9]+$/'
@@ -397,6 +488,8 @@ release:github:
   needs:
     - job: build:flatpak
       artifacts: true
+    - job: release:gate
+      artifacts: false
     - job: release:gitlab      # GitHub is strictly downstream of the canonical release
       artifacts: false
   rules:
@@ -474,7 +567,7 @@ release:github:
 auto-release:
   extends: .release
   stage: release
-  needs: ["test:compile", "build:flatpak"]   # never tag a release whose bundle doesn't build
+  needs: ["release:gate"]
   resource_group: release
   interruptible: false
   variables:
@@ -492,7 +585,7 @@ auto-release:
 tag-release:
   extends: .release
   stage: release
-  needs: []
+  needs: ["release:gate"]
   interruptible: false
   rules:
     - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'

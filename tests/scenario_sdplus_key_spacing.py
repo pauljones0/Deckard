@@ -1,11 +1,6 @@
-"""The SD+ background tile spacing probe matches the wrapped handle.
+"""Check spacing against the raw device inside BetterDeck.
 
-The controller wraps its deck in BetterDeck before the spacing line runs, so
-the probe must test the wrapped raw device, not the wrapper. A raw deck that
-is a StreamDeckPlus gets the device-calibrated (116, 34); every other deck
-keeps (36, 36). The first leg reassigns the fake deck's class to a
-StreamDeckPlus subclass before construction, which is what the wrapper hands
-back to the probe; no device I/O differs between the legs.
+StreamDeckPlus uses (116, 34); other decks use (36, 36), with identical fake I/O.
 """
 import fixtures  # must be first; isolates DATA_PATH before import globals
 import globals as gl
@@ -16,10 +11,9 @@ from faulty_fake_deck import FaultyFakeDeck
 
 
 class FakePlus(FaultyFakeDeck, StreamDeckPlus):
-    """A FaultyFakeDeck whose type also reads as a StreamDeckPlus.
+    """A FaultyFakeDeck that also has StreamDeckPlus type identity.
 
-    Never instantiated: instances get here by __class__ reassignment, so no
-    StreamDeckPlus constructor or transport runs.
+    __class__ reassignment avoids the StreamDeckPlus constructor and transport.
     """
 
 

@@ -1,8 +1,5 @@
-"""Regression test for atomic JSON writes.
-
-Every settings and page writer routes through atomic_write_json, so a crash
-mid-write leaves the destination complete and only a temp file behind.
-"""
+"""Verify settings and page writers preserve complete JSON across failed writes.
+A crash can leave only a temp file, never a partial destination."""
 import glob
 import json
 import os
@@ -15,10 +12,7 @@ import globals as gl
 
 
 class Unserializable:
-    """json.dump raises TypeError on this, mid-stream.
-
-    The serializable prefix of the payload is already written by then.
-    """
+    """Raise TypeError after json.dump has written a serializable prefix."""
 
 
 def tmp_litter(dir_path: str) -> list[str]:
@@ -30,7 +24,7 @@ def read_json(path: str):
         return json.load(f)
 
 
-def check_settings_manager() -> None:
+def check_settings_manager_atomic_write() -> None:
     path = os.path.join(gl.DATA_PATH, "settings", "atomic_test.json")
     good = {"keep": True, "nested": {"a": 1}}
 
@@ -51,7 +45,7 @@ def check_settings_manager() -> None:
     print("PASS: SettingsManager.save_settings_to_file survives a mid-write fault")
 
 
-def check_plugin_base() -> None:
+def check_plugin_settings_atomic_write() -> None:
     from src.backend.PluginManager.PluginBase import PluginBase
 
     plugin = object.__new__(PluginBase)  # set_settings only touches settings_path
@@ -103,36 +97,27 @@ def check_page_save(controller) -> None:
     page = controller.active_page
     before = read_json(page.json_path)
 
-    # A top-level key that get_without_action_objects does not traverse, but
+    # A top-level key that snapshot_for_save does not traverse, but
     # json.dump chokes on mid-serialization.
     page.dict["poison"] = Unserializable()
-    try:
-        # save() only marks the page, so the serialization and the TypeError
-        # belong to the flush. Every synchronous flush site does this: page
-        # switch, deck close, quit, or any read of the file. The assertion
-        # pins the file, not the timing.
-        page.save()
-        page_flush.get().flush_path(page.json_path)
-    except TypeError:
-        pass
-    else:
-        raise AssertionError("expected TypeError from unserializable payload")
-    finally:
-        page.dict.pop("poison", None)
+    # save marks the page; flush logs serialization failure and retires the edit.
+    # Page switch, deck close, quit, and file reads require a non-raising flush.
+    page.save()
+    page_flush.get().flush_path(page.json_path)
+    page.dict.pop("poison", None)
 
     assert read_json(page.json_path) == before, (
         "page json was corrupted by an interrupted Page.save()"
     )
     assert not tmp_litter(os.path.dirname(page.json_path))
+    assert page_flush.get().pending_source(page.json_path) is None, (
+        "an unserializable edit was retained instead of retired"
+    )
     print("PASS: Page.save() survives a mid-write fault")
 
 
 def check_font_defaults_merge() -> None:
-    """save_font_defaults must merge into the general section.
-
-    A replace wipes hold-time, rolling-labels and app-launches whenever a font
-    default changes.
-    """
+    """Merge font defaults without replacing sibling general settings."""
     app_settings = gl.settings_manager.get_app_settings()
     app_settings.setdefault("general", {})
     app_settings["general"]["hold-time"] = 0.7
@@ -151,11 +136,8 @@ def check_font_defaults_merge() -> None:
 
 
 def check_umask_and_mode_preservation() -> None:
-    """New files must honor the process umask; existing modes must survive.
-
-    Plugin settings hold API tokens, so a hardcoded 0644 leaks them under
-    umask 077.
-    """
+    """Honor umask for new files and preserve existing modes.
+    Plugin settings can contain API tokens and must not become world-readable."""
     from src.backend.atomic_json import atomic_write_json
 
     base = os.path.join(gl.DATA_PATH, "settings", "modes")
@@ -182,11 +164,7 @@ def check_umask_and_mode_preservation() -> None:
 
 
 def check_symlinked_target() -> None:
-    """A write through a symlinked config must update the real file.
-
-    The link must stay a link, because os.replace over the link path leaves a
-    regular file and detaches a stow or chezmoi managed settings tree.
-    """
+    """Update a symlink target without replacing the managed link."""
     from src.backend.atomic_json import atomic_write_json
 
     real_dir = os.path.join(gl.DATA_PATH, "dotfiles-store")
@@ -214,11 +192,7 @@ def check_symlinked_target() -> None:
 
 
 def check_stale_tmp_reaped() -> None:
-    """A later write to the same target must reap orphaned temp files.
-
-    A SIGKILL between write and rename leaves one. A racing writer's fresh
-    temp must stay.
-    """
+    """Reap stale same-target temps but preserve fresh and other-target temps."""
     from src.backend.atomic_json import atomic_write_json
 
     d = os.path.join(gl.DATA_PATH, "settings", "reap")
@@ -252,11 +226,7 @@ def check_stale_tmp_reaped() -> None:
 
 
 def check_kill_before_replace() -> None:
-    """Model a power loss after the temp file is written, before the rename.
-
-    The destination must keep its previous complete content. os._exit skips
-    atexit, so the child temp data dir survives for the parent to inspect.
-    """
+    """Kill after temp write and keep the previous destination complete."""
     child_code = (
         "import fixtures, os\n"
         "from src.backend.atomic_json import atomic_write_json\n"
@@ -292,12 +262,7 @@ def check_kill_before_replace() -> None:
 
 
 def check_migrator_page_write() -> None:
-    """The migrator page rewrite must go through atomic_write_json.
-
-    The rewrite nests each key under states.0. A death mid-dump leaves a
-    truncated page the loader must quarantine, on the first launch after an
-    upgrade. The child owns its data dir and dies at fsync, so nothing commits.
-    """
+    """Require migrator page rewrites to survive death at atomic fsync."""
     child_code = (
         "import fixtures, os, json\n"
         "import globals as gl\n"
@@ -350,8 +315,8 @@ def main() -> None:
     fixtures.start_watchdog(60, label="scenario_atomic_settings")
     controller = fixtures.make_headless_controller(serial="atomic-1")
     try:
-        check_settings_manager()
-        check_plugin_base()
+        check_settings_manager_atomic_write()
+        check_plugin_settings_atomic_write()
         check_add_page()
         check_page_save(controller)
         check_font_defaults_merge()

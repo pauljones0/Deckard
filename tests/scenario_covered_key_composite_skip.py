@@ -1,28 +1,14 @@
-"""A key whose foreground hides its whole tile must stop compositing per frame.
-
-The composite of such a key is the same picture whatever the background does,
-so the paint path keeps it and reuses it. The pixels must not move: every
-check that asserts a skip also asserts that a fresh composite over the very
-background the skip ignored returns the same bytes.
-
-The other half is the refusals. A foreground with any transparency, a
-foreground smaller than the tile, a press, a new label and a key that plays
-its own video each have to composite exactly as before, because each of them
-either lets the background through or changes what the key shows per frame.
-
-Nothing here sleeps. The background is advanced by hand, and the GIF timeline
-is rebased onto a chosen frame, so a composite count is a function of the
-calls this file makes and of nothing else.
-"""
+"""Verify pixel-identical composite reuse when a foreground covers its tile."""
 import fixtures  # noqa: F401  (import first: isolated data dir + sys.path)
 
 import os
 import threading
-import time
 
 from PIL import Image, ImageDraw
 
 import globals as gl
+
+from src.backend.DeckManagement import media_loop
 from fixtures import start_watchdog, teardown
 
 from src.backend.DeckManagement.ImageHelpers import hides_background
@@ -42,8 +28,6 @@ TILE_COLORS = [
     (10, 200, 200, 255),
 ]
 
-
-# --- fixtures -------------------------------------------------------------
 
 def _settle(controller) -> None:
     """Wait out the page load, which rebuilds every state's managers on
@@ -70,14 +54,7 @@ def _settle(controller) -> None:
 
 
 def _disarm_repaint_retry(controller) -> None:
-    """Clear the armed full repaint.
-
-    A failed device write arms one, and the media loop fires it two seconds
-    later on its own clock: it resets every dedup hash and paints the whole
-    deck again. That is correct behaviour and it is noise for every count in
-    this file, so every check starts from a disarmed flag and ends with
-    _assert_no_repaint, which reports one that armed while it ran.
-    """
+    """Disarm delayed full repaints so they cannot change composite counts."""
     controller._full_repaint_pending = False
 
 
@@ -150,12 +127,7 @@ class _CompositeCounter:
 
 
 class _RecordEnqueued:
-    """Every native the paint path hands the writer, in call order.
-
-    It restores the writer hook on the way out. A recorder that never
-    restored would leave the next one wrapping it, so a later check would see
-    an earlier check's paints as well as its own.
-    """
+    """Record native images handed to the writer and restore its hook."""
 
     def __init__(self, controller):
         self.controller = controller
@@ -177,9 +149,7 @@ class _RecordEnqueued:
         return len(self.natives)
 
 
-# --- checks ---------------------------------------------------------------
-
-def check_cover_test() -> None:
+def check_hides_background_geometry_and_alpha() -> None:
     """The opacity and geometry test that decides every skip."""
     covers = hides_background
     tile = (72, 72)
@@ -264,11 +234,7 @@ def check_opaque_cover_skips_composite(controller) -> None:
             f"took {len(enqueued)} paints"
         )
 
-        # force must still reach the device, hashes or no hashes, and the
-        # bytes it sends must be the kept picture's own. The memo is emptied
-        # first, because a warm memo answers from the hash alone and would
-        # hide whatever the reuse path actually hands the encoder. A real
-        # eviction does the same thing at an unpredictable moment.
+        # Clear the memo so a forced write proves which image reaches the encoder.
         controller.encode_memo.clear()
         key.update(force=True)
         assert len(enqueued) == 2, (
@@ -281,10 +247,7 @@ def check_opaque_cover_skips_composite(controller) -> None:
             "a cold memo those are the bytes the device receives"
         )
 
-        # The paint path closes a composite whose offer it hash-skipped, so
-        # the cache has to hold a buffer of its own. The close is driven here
-        # rather than waited for, so the order is this file's and not the
-        # writer thread's.
+        # Close a skipped image directly to prove the cache owns a separate buffer.
         state.cover_cache.invalidate()
         fresh = key.get_current_image()
         assert composites.count == 2, "fixture sanity: the invalidated key must recomposite"
@@ -365,9 +328,7 @@ def check_small_media_still_composites(controller) -> None:
 
 
 def check_zero_size_layout(controller) -> None:
-    """A layout size of zero draws no foreground at all. The composite is then
-    the bare background, which moves every frame, and the entry left over from
-    when the same asset did cover must not claim it."""
+    """Retire the cover entry when layout size zero exposes the background."""
     _disarm_repaint_retry(controller)
     key = _key(controller, 6)
     state = key.get_active_state()
@@ -396,13 +357,9 @@ def check_zero_size_layout(controller) -> None:
 
 
 def check_scroll_label_composites(controller) -> None:
-    """A rolling label redraws at its own cadence over the very foreground
-    that hides the background, so such a key must never settle.
+    """Keep rolling labels off the cover cache.
 
-    This runs last. A scroll label anywhere on the deck puts the media loop
-    back on per-tick key work, and that loop then composites alongside this
-    file. Counts here are therefore lower bounds, and the kept composite,
-    which only this file's paints can create, carries the contract.
+    This runs last because scrolling enables concurrent per-tick key work.
     """
     _disarm_repaint_retry(controller)
     key = _key(controller, 7)
@@ -510,9 +467,7 @@ def check_press_composites(controller) -> None:
 
 
 def check_warning_point_composites(controller) -> None:
-    """The warning point marks a key whose action is missing or out of date.
-    It is drawn over the foreground, so a covered key showing one must not
-    settle, or the dot outlives the repair that removed it."""
+    """Keep warning-point keys uncached so the dot clears after repair."""
     _disarm_repaint_retry(controller)
     key = _key(controller, 9)
     state = key.get_active_state()
@@ -555,16 +510,7 @@ def check_warning_point_composites(controller) -> None:
 
 
 def check_release_during_composite(controller) -> None:
-    """A release that lands after the composite drew the pressed look.
-
-    The press is read twice, once to decide on the shrink and once to decide
-    on the store. A release between the two would make the second read say
-    "not pressed" over a picture that is, and nothing later retires it,
-    because press_state is already back to False and no stamp field moved.
-    The store is judged on the read taken before the composite for exactly
-    this. The release is driven from inside the composite, so the
-    interleaving is this file's decision and nothing sleeps.
-    """
+    """Do not cache a pressed composite when release lands before its store."""
     _disarm_repaint_retry(controller)
     key = _key(controller, 10)
     state = key.get_active_state()
@@ -611,14 +557,7 @@ def check_release_during_composite(controller) -> None:
 
 
 def check_label_edit_during_composite(controller) -> None:
-    """A label edit that lands after the composite drew the old label.
-
-    The concurrent actor completes a whole paint of its own from inside the
-    window, which is what a plugin worker or the GTK main thread does when it
-    sets a label and calls update(). Judged at the end, the first composite
-    would publish its old picture under the new label's stamp, and every later
-    read would match it forever.
-    """
+    """Do not store an old-label composite under a concurrently updated stamp."""
     _disarm_repaint_retry(controller)
     key = _key(controller, 11)
     state = key.get_active_state()
@@ -677,13 +616,7 @@ def check_label_edit_during_composite(controller) -> None:
 
 
 def check_press_flip_flop_inside_composite(controller) -> None:
-    """A press that lands and leaves inside one composite window.
-
-    Neither read can see it. The read before says not pressed, the read after
-    says not pressed again, and the picture in between carries the shrink. The
-    branch that drew the shrink is the only place that knows, which is why it
-    refuses the store itself.
-    """
+    """Do not cache a press that starts and ends inside one composite."""
     _disarm_repaint_retry(controller)
     key = _key(controller, 14)
     state = key.get_active_state()
@@ -744,9 +677,7 @@ def check_press_flip_flop_inside_composite(controller) -> None:
 
 
 def check_warning_flip_flop_inside_composite(controller) -> None:
-    """The same window, for the other gate that draws into the picture. An
-    action goes missing and is found again inside one composite: neither read
-    sees it, and only the branch that drew the dot knows."""
+    """Do not cache a warning that starts and ends inside one composite."""
     _disarm_repaint_retry(controller)
     key = _key(controller, 19)
     state = key.get_active_state()
@@ -765,7 +696,7 @@ def check_warning_flip_flop_inside_composite(controller) -> None:
     original_warning = key.add_warning_point
     landed: list[bool] = []
 
-    def add_then_lose_the_action(image):
+    def add_labels_and_mark_action_unavailable(image):
         labelled = original_add(image)
         if not landed:
             landed.append(True)
@@ -778,7 +709,7 @@ def check_warning_flip_flop_inside_composite(controller) -> None:
         return dotted
 
     state.cover_cache.invalidate()
-    label_manager.add_labels_to_image = add_then_lose_the_action
+    label_manager.add_labels_to_image = add_labels_and_mark_action_unavailable
     key.add_warning_point = warn_then_recover
     try:
         key.update()
@@ -799,10 +730,8 @@ def check_warning_flip_flop_inside_composite(controller) -> None:
     print("PASS: a warning point inside one composite window stores no dotted picture")
 
 
-def check_press_lands_and_stays(controller) -> None:
-    """A press that lands inside the composite and stays down. The branch that
-    drew the shrink refuses the store, and the read after the composite refuses
-    it again."""
+def check_mid_composite_press_is_not_cached(controller) -> None:
+    """Do not cache a press that starts inside a composite and stays active."""
     _disarm_repaint_retry(controller)
     key = _key(controller, 15)
     state = key.get_active_state()
@@ -847,10 +776,8 @@ def check_press_lands_and_stays(controller) -> None:
     print("PASS: a press that lands mid-composite and stays leaves nothing wrong")
 
 
-def check_bare_to_covered_first_store(controller) -> None:
-    """A key with no media, then media that covers. The first composite that
-    can be kept must be judged by a real read, not skipped: the bare-key
-    bail-out must not read a verdict left by some other asset."""
+def check_first_covering_composite_is_cached(controller) -> None:
+    """Cache the first covering composite after a bare key receives media."""
     _disarm_repaint_retry(controller)
     key = _key(controller, 16)
     state = key.get_active_state()
@@ -870,7 +797,7 @@ def check_bare_to_covered_first_store(controller) -> None:
     print("PASS: the first cacheable composite after bare to covered is kept")
 
 
-def check_uncovering_then_covering_settles(controller) -> None:
+def check_cover_cache_resumes_after_layout_restore(controller) -> None:
     """A size edit turns a covering foreground bare, then back. The verdict on
     file is one composite stale by design; prove it is exactly one."""
     _disarm_repaint_retry(controller)
@@ -900,11 +827,7 @@ def check_uncovering_then_covering_settles(controller) -> None:
 
 
 def check_media_removed_releases_entry(controller) -> None:
-    """A key that settles and then loses its media must not pin the picture.
-
-    Two paths release it, because a bare key over a background video is served
-    from the frame identity and never reaches the paint path that would.
-    """
+    """Release a kept composite when its key loses media on either path."""
     _disarm_repaint_retry(controller)
     key = _key(controller, 18)
     state = key.get_active_state()
@@ -935,7 +858,7 @@ def check_media_removed_releases_entry(controller) -> None:
     print("PASS: losing the media releases the kept composite")
 
 
-def check_release_calls_drop_the_entry(controller) -> None:
+def check_release_calls_drop_cached_composite(controller) -> None:
     """The memory claim rests on two calls. A state's teardown and its reset
     for a fresh page load each have to release the picture it kept."""
     _disarm_repaint_retry(controller)
@@ -948,9 +871,7 @@ def check_release_calls_drop_the_entry(controller) -> None:
         assert state.cover_cache._entry is not None, \
             f"fixture sanity: the key did not settle before {release}()"
 
-        # Suppress the repaint clear() drives through its background-colour
-        # reset. The paint path would drop the entry too, and this has to pin
-        # the release call itself.
+        # Suppress repaint so this check isolates the explicit release call.
         key.update = lambda force=False: None
         try:
             getattr(state, release)()
@@ -1013,9 +934,7 @@ def _make_gif(path: str, size=(64, 64), n_frames: int = 4) -> str:
 
 
 def check_capped_gif_background(controller) -> None:
-    """The rate cap decides how often a GIF background advances; the cover
-    verdict decides whether a key redraws when it does. The two are
-    independent, and a covered key must redraw on neither."""
+    """Keep covered keys stable across rate-capped GIF background frames."""
     _disarm_repaint_retry(controller)
     gif_path = _make_gif(os.path.join(gl.DATA_PATH, "media", "cover_bg.gif"))
     # A rate under the media loop's own is what a capped page carries.
@@ -1031,14 +950,14 @@ def check_capped_gif_background(controller) -> None:
 
     def _advance(frame_index: int) -> None:
         background._last_frame_tick = None
-        background._play_start = time.time() - (background._cum_delays[frame_index - 1]
-                                                if frame_index else 0.0) - 0.001
+        background._play_start = media_loop.now() - (background._cum_delays[frame_index - 1]
+                                                     if frame_index else 0.0) - 0.001
         controller.background.update_tiles()
 
     try:
         with _CompositeCounter(key) as composites:
             _advance(0)
-            key.on_media_player_tick()
+            key.on_media_player_tick(media_loop.now(), bg_frame_new=True)
             assert composites.count == 1, "fixture sanity: the first tick must composite"
             assert state.cover_cache._entry is not None, (
                 "fixture sanity: the key over the GIF background did not settle into the skip"
@@ -1050,7 +969,7 @@ def check_capped_gif_background(controller) -> None:
             for step in range(12):
                 _advance(step % frames)
                 seen.add(background.active_frame)
-                key.on_media_player_tick()
+                key.on_media_player_tick(media_loop.now(), bg_frame_new=True)
             assert len(seen) > 1, (
                 "fixture sanity: the GIF background never advanced, so the check proved nothing"
             )
@@ -1064,7 +983,7 @@ def check_capped_gif_background(controller) -> None:
             before = composites.count
             for step in range(4):
                 _advance(step % frames)
-                key.on_media_player_tick()
+                key.on_media_player_tick(media_loop.now(), bg_frame_new=True)
             assert composites.count == before + 4, (
                 f"a foreground that stopped covering must put every tick back on the "
                 f"composite; {composites.count - before} of 4 ran"
@@ -1081,7 +1000,7 @@ def check_capped_gif_background(controller) -> None:
 
 def main() -> None:
     start_watchdog(60, label="scenario_covered_key_composite_skip")
-    check_cover_test()
+    check_hides_background_geometry_and_alpha()
 
     # Rolling labels on, so the scroll check has something to scroll. Every
     # other label here fits its key, and a label that fits never scrolls.
@@ -1106,12 +1025,12 @@ def main() -> None:
         check_release_during_composite(controller)
         check_press_flip_flop_inside_composite(controller)
         check_warning_flip_flop_inside_composite(controller)
-        check_press_lands_and_stays(controller)
+        check_mid_composite_press_is_not_cached(controller)
         check_label_edit_during_composite(controller)
-        check_bare_to_covered_first_store(controller)
-        check_uncovering_then_covering_settles(controller)
+        check_first_covering_composite_is_cached(controller)
+        check_cover_cache_resumes_after_layout_restore(controller)
         check_media_removed_releases_entry(controller)
-        check_release_calls_drop_the_entry(controller)
+        check_release_calls_drop_cached_composite(controller)
         check_capped_gif_background(controller)
         # Last: it leaves a scroll label on the deck, which puts the media
         # loop back on per-tick key work for every check after it.

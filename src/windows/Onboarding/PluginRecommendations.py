@@ -45,10 +45,8 @@ class PluginRecommendations(Gtk.Box):
         self.group.set_sort_func(self.sort_func)
         self.clamp.set_child(self.group)
 
-        # Error state for a failed store fetch. Without it the failure kills
-        # the loader thread and leaves the spinner running, so the user pages
-        # past, installs nothing, and reaches the main window with an empty
-        # Add-Action list.
+        # Show a retry state when the store fetch fails instead of leaving the
+        # loading spinner active.
         self.error_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, hexpand=True, vexpand=True,
                                  valign=Gtk.Align.CENTER)
         self.main_stack.add_named(self.error_box, "error")
@@ -88,14 +86,8 @@ class PluginRecommendations(Gtk.Box):
     def load(self) -> None:
         self.set_loading(True)
 
-        # Only the data fetch belongs on this thread. A build of the
-        # PluginRows, which are an Adw.ActionRow and a CheckButton, and a
-        # group.add() call here are the off-main GTK construction class that
-        # kills the process, and they race the carousel at each first launch.
-        #
-        # The fetch returns an Err when every store is unreachable, which
-        # happens offline and under a GitHub rate limit. Both an Err and a
-        # raising fetch reach the same error state.
+        # Fetch data on this worker, but build all GTK rows on the main loop.
+        # Offline or rate-limit Err results and raised failures share the retry state.
         try:
             backend = gl.store_backend
             if backend is None:

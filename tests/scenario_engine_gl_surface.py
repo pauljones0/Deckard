@@ -1,7 +1,5 @@
-"""The render engine reads a named, closed set of gl slots.
-
-A runtime recorder and a static AST sweep both measure the surface. Five UI
-slots are named as required-absent, so extending the allow list cannot pass.
+"""Measure the render engine's closed globals surface at runtime and statically.
+Required-absent UI slots prevent allow-list expansion from hiding a violation.
 """
 import fixtures  # noqa: F401  (import first: sets up the isolated data dir)
 
@@ -15,10 +13,8 @@ import globals as gl  # noqa: E402
 
 from src.backend.DeckManagement.InputIdentifier import Input  # noqa: E402
 
-# Imported for the same reason scenario_headless_engine_no_gtk imports it. The
-# harness substitutes a stub DeckManager, so without this the real module, a
-# genuine part of the engine closure and a reader of four slots, would never be
-# parsed by the static sweep.
+# Import the real DeckManager so the static sweep includes its four globals
+# reads despite the runtime stub.
 import src.backend.DeckManagement.DeckManager  # noqa: E402,F401
 
 WATCHDOG_SECONDS = 60
@@ -32,12 +28,8 @@ _ENGINE_FILES = ("globals.py", "cli_args.py")
 
 SERIAL = "gl-surface-1"
 
-# Every slot the engine may read, tagged with the subsystem that reads it, so
-# an edit here is informed rather than a name appended to turn the scenario
-# green. Stamped from a measured run of the two layers below over this tree,
-# and it must be re-stamped the same way. A list smaller than reality leaves a
-# permanently red scenario, and a larger one guards nothing. The failure
-# messages print what was measured, so re-stamping is a read of the diff.
+# Tag each measured engine slot with its reader; the allow list must match both
+# runtime and static measurements exactly enough to remain useful.
 ALLOWED_ENGINE_GL_SURFACE = frozenset({
     "DATA_PATH",                   # paths
     "STATIC_SETTINGS_FILE_PATH",   # settings
@@ -62,20 +54,14 @@ ALLOWED_ENGINE_GL_SURFACE = frozenset({
     "window_grabber",              # autoswitch
 })
 
-# One file, two slots, static layer only. The deck controller imports the
-# startup queue for the CLI-request legs, and leg A of that module is the
-# pre-activation deferral of the App, which names gl.app and
-# gl.app_loading_finished_tasks. Those names sit in the import closure of the
-# engine and on no path the engine walks, so the exemption is scoped to this
-# file and these names. check_static_absent() fails if it goes stale.
-LEG_A_HOST_EXEMPTION = {
+# Exempt only startup_queue's app deferral slots, which share a module with the
+# engine's CLI paths but are not read by the engine workload.
+STARTUP_QUEUE_UI_SLOT_EXEMPTIONS = {
     "src/backend/startup_queue.py": frozenset({"app", "app_loading_finished_tasks"}),
 }
 
-# The seam, named. A subset check against a list anyone may extend does not on
-# its own defend the claim that the engine reads no UI. These five do. Adding
-# one of them to ALLOWED_ENGINE_GL_SURFACE is not enough to make this scenario
-# green; that takes deleting it from here, which is a much louder edit.
+# Name UI slots that must remain absent independently of the extensible allow
+# list.
 REQUIRED_ABSENT = frozenset({
     "lm",                          # locale
     "app",                         # application
@@ -84,12 +70,8 @@ REQUIRED_ABSENT = frozenset({
     "app_loading_finished_tasks",  # boot deferral
 })
 
-# Slots the workload cannot fail to read. Without them, a recorder that never
-# installs or a drive that never runs leaves every subset and disjointness
-# claim above trivially true. The api_* pair is the weak witness, because the
-# drive parks its own requests through the queue and reads those two whether
-# or not the controller claims anything. The drive's own assertions defend
-# legs B and C; these entries only witness that the recorder was watching.
+# Require unavoidable workload reads so a missing recorder or drive cannot
+# satisfy the surface checks with an empty set.
 REQUIRED_OBSERVED = frozenset({
     "page_manager",
     "settings_manager",
@@ -97,8 +79,6 @@ REQUIRED_OBSERVED = frozenset({
     "api_state_requests",
 })
 
-
-# The runtime recorder
 
 _READS: set = set()
 
@@ -148,8 +128,6 @@ def engine_runtime_reads() -> set:
     }
 
 
-# The workload
-
 def _any_action_ready(page) -> bool:
     for by_ident in page.action_objects.values():
         for by_state in by_ident.values():
@@ -161,12 +139,7 @@ def _any_action_ready(page) -> bool:
 
 
 def drive_engine_workload() -> None:
-    """Drive the same engine exercise scenario_headless_engine_no_gtk drives.
-
-    A background page, an action page, key and dial input, a page switch, media
-    ticks and teardown, plus a parked page request and a parked state request.
-    Without the parked pair the api_* slots would sit in the list unwitnessed.
-    """
+    """Drive pages, inputs, media, teardown, and both parked CLI request types."""
     from src.backend import startup_queue
 
     queue = startup_queue.get()
@@ -242,16 +215,8 @@ def drive_engine_workload() -> None:
         fixtures.teardown(controller)
 
 
-# Guards
-
 def check_recorder_records_and_restores() -> None:
-    """The instrument itself, before anything is measured with it.
-
-    It records, so a read inside the context shows up with this file as its
-    caller. It also undoes the class swap on the way out even when the body
-    raises. A failing drive therefore cannot route every later read through a
-    double.
-    """
+    """Require the recorder to capture reads and restore the module class on exit."""
     baseline = type(gl)
     probe = ("DATA_PATH", __file__)
 
@@ -288,12 +253,7 @@ def check_recorder_records_and_restores() -> None:
 
 
 def check_recorder_saw_engine(runtime_reads: set) -> None:
-    """Anti-vacuity. Every assertion below is trivially true of an empty set.
-
-    A recorder that failed to install would pass the whole scenario. The drive
-    loads pages through gl.page_manager and claims CLI requests through the
-    startup queue slots, so an empty recording means nothing was measured.
-    """
+    """Require mandatory runtime reads so later subset checks are not vacuous."""
     assert runtime_reads, (
         "the recorder captured no engine reads at all -- it did not install, "
         "or nothing engine-side ran, and every assertion in this scenario "
@@ -307,11 +267,11 @@ def check_recorder_saw_engine(runtime_reads: set) -> None:
         f"workload did not run, not that the engine stopped reading them. "
         f"Recorded: {sorted(slots)}"
     )
-    controller_page_manager = [
+    controller_page_manager_paths = [
         path for slot, path in runtime_reads
         if slot == "page_manager" and path.endswith("/controller.py")
     ]
-    assert controller_page_manager, (
+    assert controller_page_manager_paths, (
         "no gl.page_manager read was attributed to the deck controller -- the "
         "known-allowed read this guard is calibrated against never happened"
     )
@@ -336,12 +296,7 @@ def check_runtime_surface(runtime_reads: set) -> None:
 
 
 def check_required_absent(runtime_reads: set) -> None:
-    """Five slots named individually, because the list is extensible.
-
-    The claim that the engine reads no UI is what is worth defending, and a
-    subset check does not defend it alone. No file is exempt here, so a drive
-    that reached leg A would be the engine waiting on the App.
-    """
+    """Require every named UI slot to remain absent from runtime engine reads."""
     present = sorted({
         (slot, path) for slot, path in runtime_reads if slot in REQUIRED_ABSENT
     })
@@ -354,15 +309,8 @@ def check_required_absent(runtime_reads: set) -> None:
     print(f"PASS: none of {sorted(REQUIRED_ABSENT)} is read by engine code")
 
 
-# The static sweep
-
 def _globals_aliases(tree: ast.Module, relative: str) -> set:
-    """The local names bound to the globals module in one file.
-
-    import globals as gl is the universal style here. A from-import would put a
-    slot into the file namespace under a bare name this sweep cannot follow, so
-    it fails loudly rather than skipping.
-    """
+    """Find globals-module aliases and reject direct imports the sweep cannot follow."""
     aliases = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
@@ -379,12 +327,7 @@ def _globals_aliases(tree: ast.Module, relative: str) -> set:
 
 
 def static_engine_references() -> dict:
-    """Map every loaded engine module to the gl slots its source mentions.
-
-    Attribute stores are collected alongside loads. A gl.X assignment from the
-    engine is as much a dependency on X as a read. The ones that exist today
-    are in the list on their own merit.
-    """
+    """Map loaded engine modules to every globals attribute they load or store."""
     references: dict = {}
     for module in list(sys.modules.values()):
         path = getattr(module, "__file__", None)
@@ -411,18 +354,14 @@ def static_engine_references() -> dict:
 
 
 def check_static_surface(references: dict) -> None:
-    """Layer two. What the source of the engine mentions, taken or not.
-
-    This catches a gl.lm read added inside an except branch the drive never
-    enters, which the runtime recorder structurally cannot see.
-    """
+    """Reject static globals references that an exercised runtime branch can miss."""
     assert references, (
         "no engine module referenced `globals` at all -- the sweep found "
         "nothing to check and would pass vacuously"
     )
     unlisted = []
     for relative, slots in sorted(references.items()):
-        exempt = LEG_A_HOST_EXEMPTION.get(relative, frozenset())
+        exempt = STARTUP_QUEUE_UI_SLOT_EXEMPTIONS.get(relative, frozenset())
         for slot in sorted(slots):
             if slot not in ALLOWED_ENGINE_GL_SURFACE and slot not in exempt:
                 unlisted.append(f"{relative}: gl.{slot}")
@@ -435,15 +374,9 @@ def check_static_surface(references: dict) -> None:
 
 
 def check_static_absent(references: dict) -> None:
-    """The same five slots, statically.
-
-    The exemption is per file and per slot. Leg A of the startup queue is the
-    only place in the import closure of the engine that may name gl.app. It
-    gets that exemption because the protocol of the App shares a module with
-    the CLI legs.
-    """
+    """Require UI slots statically absent except for exact file-and-slot exemptions."""
     for relative, slots in sorted(references.items()):
-        exempt = LEG_A_HOST_EXEMPTION.get(relative, frozenset())
+        exempt = STARTUP_QUEUE_UI_SLOT_EXEMPTIONS.get(relative, frozenset())
         offending = sorted((slots & REQUIRED_ABSENT) - exempt)
         assert not offending, (
             f"{relative} mentions UI-side slots {offending}. Engine code does "
@@ -451,13 +384,13 @@ def check_static_absent(references: dict) -> None:
             f"store -- if this file grew a legitimate need for one, it is not "
             f"engine code any more."
         )
-    hosts = sorted(LEG_A_HOST_EXEMPTION)
+    hosts = sorted(STARTUP_QUEUE_UI_SLOT_EXEMPTIONS)
     for host in hosts:
         assert host in references, (
             f"{host} is exempted from the absent-slot check but is not a loaded "
             f"engine module any more -- a stale exemption is a hole"
         )
-        stale = sorted(LEG_A_HOST_EXEMPTION[host] - references[host])
+        stale = sorted(STARTUP_QUEUE_UI_SLOT_EXEMPTIONS[host] - references[host])
         assert not stale, (
             f"{host} no longer mentions {stale}; drop it from the exemption "
             f"rather than leaving the slot permitted there"
@@ -466,11 +399,7 @@ def check_static_absent(references: dict) -> None:
 
 
 def report_measurement(runtime_reads: set, references: dict) -> None:
-    """Print the measured surface on every run.
-
-    ALLOWED_ENGINE_GL_SURFACE is stamped from this, so it stays visible rather
-    than hiding behind a flag that would let the scenario pass unchecked.
-    """
+    """Print runtime and static surfaces on every run for allow-list comparison."""
     print("--- measured engine gl surface ---")
     print(f"  runtime: {sorted({slot for slot, _ in runtime_reads})}")
     static = sorted(set().union(*references.values())) if references else []

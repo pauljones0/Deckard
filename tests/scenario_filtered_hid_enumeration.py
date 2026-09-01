@@ -1,15 +1,6 @@
-"""The liveness probe enumerates only the deck's own kind of device.
+"""Check that liveness probes filter by the deck's vendor and product.
 
-Asking hidapi whether a device is still on the bus means a hid_enumerate, and
-the libusb backend opens every device that passes the vendor and product
-filter to read its string descriptors. With no filter that is every USB HID
-device on the machine, several times a minute, under the process-wide hidapi
-mutex every deck read and write also waits on.
-
-The bus here models both halves of that call: the filter, and the open each
-passing device pays. Every leg reads the open counters of the devices that are
-not the deck, so a probe that widens its filter again is a failed assert and
-not a slow test.
+The modeled bus counts descriptor opens so an unfiltered enumeration fails directly.
 """
 import threading
 
@@ -24,8 +15,7 @@ from src.backend.DeckManagement.fair_lock import FairLock
 ELGATO = 0x0FD9
 STREAMDECK_PLUS = 0x0084
 STREAMDECK_XL = 0x006C
-# Mirabox, the one supported make that is not Elgato. A probe that hard-wired
-# the Elgato vendor would enumerate the wrong half of the bus for this deck.
+# Supported non-Elgato identity used to detect a hard-coded vendor filter
 MIRABOX = 0x5548
 STREAMDOCK_293S = 0x6670
 
@@ -50,13 +40,7 @@ class BusDevice:
 
 
 class RecordingHidapi:
-    """The library's hidapi loader, with hid_enumerate modeled.
-
-    Two facts are modeled, because together they are the whole cost. A vendor
-    or product of zero matches everything, which is what an unfiltered call
-    passes. Every device that passes the filter is opened to read its strings,
-    and each one counts that open.
-    """
+    """Model hid_enumerate filters and count descriptor opens for each match."""
 
     def __init__(self, bus: "list[BusDevice]"):
         self.bus = bus
@@ -81,18 +65,10 @@ class RecordingHidapi:
 
 
 class HidTransport:
-    """The transport object the library hangs on a deck it enumerated.
-
-    It carries the loader, the enumeration entry the device was found by and
-    the per-device mutex the fair transport lock replaces. connected() is the
-    library's own answer, the unfiltered walk, which the fallback leg and the
-    control leg both drive.
-    """
+    """Model a hidapi transport and its unfiltered library fallback."""
 
     def __init__(self, hidapi: RecordingHidapi, device: BusDevice):
-        # The two attributes the probe reads. A leg takes each of them away to
-        # model library drift, so connected() below keeps private copies: the
-        # library's own answer has to survive the drift the fallback is for.
+        # Keep private fallback state while tests remove public probe attributes.
         self.hidapi = hidapi
         self.device_info = device.entry()
         self._library = hidapi
@@ -105,11 +81,7 @@ class HidTransport:
 
 
 class HidFakeDeck(FaultyFakeDeck):
-    """A fake deck that carries a hidapi transport, as a real deck does.
-
-    FakeDeck answers connected() from its own flag and models no transport, so
-    no scenario over it can see which enumeration the probe runs.
-    """
+    """Attach a modeled hidapi transport to fake hardware."""
 
     def __init__(self, *args, transport: HidTransport, **kwargs):
         super().__init__(*args, **kwargs)
@@ -126,8 +98,7 @@ class HidFakeDeck(FaultyFakeDeck):
 
 
 def make_bus() -> "tuple[RecordingHidapi, BusDevice, dict[str, BusDevice]]":
-    """A bus with the deck under test, a second Elgato deck and four devices
-    of other makes: a keyboard, a mouse, a headset and a game controller."""
+    """Build a mixed bus containing the target, another deck, and four HID devices."""
     deck = BusDevice("/dev/hid/deck", ELGATO, STREAMDECK_PLUS, "plus-1")
     others = {
         "second_deck": BusDevice("/dev/hid/xl", ELGATO, STREAMDECK_XL, "xl-1"),
@@ -140,7 +111,7 @@ def make_bus() -> "tuple[RecordingHidapi, BusDevice, dict[str, BusDevice]]":
     return RecordingHidapi(bus), deck, others
 
 
-def test_a_present_deck_answers_yes_and_opens_nothing_else() -> None:
+def test_present_deck_filtered_probe() -> None:
     hidapi, deck_device, others = make_bus()
     deck = HidFakeDeck(serial_number="hid-present",
                        transport=HidTransport(hidapi, deck_device))
@@ -160,14 +131,13 @@ def test_a_present_deck_answers_yes_and_opens_nothing_else() -> None:
     print("PASS: a present deck answers yes and no other device is opened")
 
 
-def test_an_absent_deck_answers_no() -> None:
+def test_absent_deck_probe() -> None:
     hidapi, deck_device, others = make_bus()
     deck = HidFakeDeck(serial_number="hid-absent",
                        transport=HidTransport(hidapi, deck_device))
     better = BetterDeck(deck)
 
-    # Unplug the deck and leave every other device where it is, which is what
-    # the disconnect sweep and the reader watchdog have to tell apart.
+    # Remove only the target deck from the modeled bus.
     hidapi.bus.remove(deck_device)
 
     assert not better.connected(), "an unplugged deck was reported present"
@@ -184,9 +154,8 @@ def test_an_absent_deck_answers_no() -> None:
     print("PASS: an absent deck answers no")
 
 
-def test_the_unfiltered_walk_opens_the_whole_bus() -> None:
-    """The control. It runs the library's own answer over the same bus, so
-    the counters above are read against a real number and not against zero."""
+def test_unfiltered_probe_cost() -> None:
+    """Confirm that the library fallback opens the full modeled bus."""
     hidapi, deck_device, _ = make_bus()
     transport = HidTransport(hidapi, deck_device)
 
@@ -200,7 +169,7 @@ def test_the_unfiltered_walk_opens_the_whole_bus() -> None:
     print(f"PASS: the unfiltered walk opens all {len(opened)} devices on the bus")
 
 
-def test_the_filter_follows_the_deck_and_not_one_vendor() -> None:
+def test_deck_specific_vendor_filter() -> None:
     hidapi, elgato_device, _ = make_bus()
     mirabox = BusDevice("/dev/hid/dock", MIRABOX, STREAMDOCK_293S, "dock-1")
     hidapi.bus.append(mirabox)
@@ -217,7 +186,7 @@ def test_the_filter_follows_the_deck_and_not_one_vendor() -> None:
     print("PASS: the filter follows the deck's own vendor and product")
 
 
-def test_a_deck_with_no_hid_transport_keeps_the_library_answer() -> None:
+def test_no_hid_transport_fallback() -> None:
     """A fake deck and a remote deck carry no hidapi transport. Neither may
     lose its answer to a probe that assumes one."""
     plain = FaultyFakeDeck(serial_number="hid-fallback")
@@ -249,7 +218,7 @@ def test_a_deck_with_no_hid_transport_keeps_the_library_answer() -> None:
     print("PASS: a deck with no hid transport keeps the library's answer")
 
 
-def test_the_reader_watchdog_probe_is_filtered() -> None:
+def test_reader_watchdog_filtered_probe() -> None:
     """The watchdog asks this question of every deck whose reader has exited,
     and it is the caller that pays for it every sweep."""
     hidapi, deck_device, _ = make_bus()
@@ -266,13 +235,8 @@ def test_the_reader_watchdog_probe_is_filtered() -> None:
     print("PASS: the reader watchdog probe is filtered")
 
 
-def test_the_probe_does_not_wait_on_the_device_write_lock() -> None:
-    """The probe reads no handle, so it must not queue behind an image write.
-
-    The transport lock is FIFO and every deck write takes it. A probe that
-    took it too would put a status question in that queue, and answer only
-    after the write in front of it drained.
-    """
+def test_probe_avoids_write_lock() -> None:
+    """Check that a handle-free probe does not wait behind the device write lock."""
     hidapi, deck_device, _ = make_bus()
     deck = HidFakeDeck(serial_number="hid-lock",
                        transport=HidTransport(hidapi, deck_device))
@@ -309,20 +273,18 @@ def test_the_probe_does_not_wait_on_the_device_write_lock() -> None:
 
 
 def main() -> None:
-    # A probe that parked on a lock is what this scenario is about, so it must
-    # fail loud rather than sit until run_all.py's per-scenario timeout.
+    # Fail locally if a probe parks instead of waiting for the suite timeout.
     start_watchdog(60, label="scenario_filtered_hid_enumeration")
-    # The unit tier. Every leg builds a fake deck, which reads its key layout
-    # from the settings manager, and nothing here needs a controller.
+    # Install only the globals required by fake-deck construction.
     fixtures.install_stub_globals()
 
-    test_a_present_deck_answers_yes_and_opens_nothing_else()
-    test_an_absent_deck_answers_no()
-    test_the_unfiltered_walk_opens_the_whole_bus()
-    test_the_filter_follows_the_deck_and_not_one_vendor()
-    test_a_deck_with_no_hid_transport_keeps_the_library_answer()
-    test_the_reader_watchdog_probe_is_filtered()
-    test_the_probe_does_not_wait_on_the_device_write_lock()
+    test_present_deck_filtered_probe()
+    test_absent_deck_probe()
+    test_unfiltered_probe_cost()
+    test_deck_specific_vendor_filter()
+    test_no_hid_transport_fallback()
+    test_reader_watchdog_filtered_probe()
+    test_probe_avoids_write_lock()
     print("ALL PASS: scenario_filtered_hid_enumeration")
 
 

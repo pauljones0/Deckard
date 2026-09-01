@@ -1,38 +1,6 @@
-"""Off-main thumbnail decode for the asset-manager grids.
+"""Decode LIFO thumbnail requests off-main with weak targets and batched delivery.
 
-A page flip in an asset chooser rebinds a pool of preview cards, and each card
-used to decode its thumbnail inline on the GTK main loop. Fifty decodes at
-about 17 ms each, and far more for an oversized file, froze the window for most
-of a second on every flip. This module moves the decode onto a worker pool and
-applies the result on the main loop, so a flip returns at once and the
-thumbnails fill in behind it.
-
-ThumbnailLoader keeps four promises:
-
-- LIFO. The newest request decodes first. A flip to a new page jumps its cards
-  ahead of any straggler from the page the user just left. A worker takes the
-  newest entry off the stack at the moment it is free, so the order the pool
-  runs its tasks in does not decide the order the cards decode in.
-- Weak targets. The card is held weakly. A card that is gone by the time its
-  decode lands takes no pixbuf and raises nothing, which is what keeps a decode
-  that finishes after the window closed from painting into a dead widget.
-- One cache. Decoded bytes go into a shared ByteLRUCache, so a card the user
-  scrolls back to is served without a second decode. It is the same ByteLRUCache
-  type the two device caches use, a separate instance of it, enrolled in the
-  same process-wide memory budget.
-- Batched delivery. Finished decodes are applied to their cards in one main-loop
-  pass, not one idle per card, so a wave of workers landing at once costs the
-  main loop one callback and not fifty.
-
-A new view calls begin_generation() first. That drops every request that has
-not started and bumps an epoch, so a decode from the page just left neither
-starts nor paints. The epoch, not a per-card check, is what a page flip cancels
-stale work with.
-
-The class takes its decode, its apply, its marshal, its cache and its pool as
-arguments, so a headless test drives the whole thing with no GTK widget and no
-real image. build_loader() wires the real collaborators, and the module holds
-one shared cache and one shared pool for every grid to share.
+Per-grid epochs cancel stale work; all grids share the byte cache and worker pool.
 """
 from __future__ import annotations
 
@@ -63,13 +31,7 @@ MarshalFn = Callable[[Callable[[], None]], None]
 
 
 class ThumbnailLoader:
-    """Decodes preview thumbnails off the main loop and applies them on it.
-
-    One instance serves one grid: the epoch and the pending stack are its own,
-    so a flip in one grid cancels only that grid's stale work. The cache and the
-    pool are shared, passed in, so cache reuse and pool discipline are
-    process-wide.
-    """
+    """Decode for one grid off-main with a local epoch and shared cache and pool."""
 
     def __init__(self, *, decode: DecodeFn, apply: ApplyFn, marshal: MarshalFn,
                  cache: "ByteLRUCache", pool: "DeadlinePool") -> None:
@@ -80,41 +42,24 @@ class ThumbnailLoader:
         self._pool = pool
 
         self._lock = threading.Lock()
-        # id(target) -> (key, weakref(target), epoch). An OrderedDict so the
-        # newest request sits at the end and a worker pops it first, which is
-        # the LIFO order. Keyed by the target's id so a card rebound before its
-        # first decode ran replaces its own pending entry rather than stacking a
-        # second one.
+        # LIFO by target id so rebinding replaces that card's pending request
         self._pending: "OrderedDict[int, tuple[Key, weakref.ref[Any], int]]" = OrderedDict()
         # Finished decodes waiting for the next main-loop flush.
         self._ready: list[tuple[weakref.ref[Any], bytes | None, int]] = []
-        # True from the moment a flush is handed to the marshal until that flush
-        # drains. While it is set, a further completion only appends, so a wave
-        # of workers costs one marshalled callback and not one each.
+        # True while one marshalled flush owns all additional completions
         self._flush_scheduled = False
         self._epoch = 0
 
     def begin_generation(self) -> None:
-        """Start a new view.
-
-        Drops every request that has not started and bumps the epoch. A decode
-        already running finishes, but its delivery carries the old epoch and the
-        flush drops it, so it never paints over the new grid.
-        """
+        """Clear pending requests and stale running deliveries with a new epoch."""
         with self._lock:
             self._pending.clear()
             self._epoch += 1
 
     def request(self, key: "Key | None", target: Any) -> None:
-        """Ask for the thumbnail at key, to be applied to target.
+        """Clear a None key, flush cache hits, or queue misses in LIFO order.
 
-        key is None for a card with no image; the target is cleared at once.
-        A cache hit queues the bytes for the next flush. A miss goes on the LIFO
-        stack and a worker is asked to take the newest entry.
-
-        The caller must be on the main loop: the key-is-None branch applies to
-        the card without marshalling. Every caller is the grid's rebind pass,
-        which the main loop runs.
+        The caller must run on-main because the None branch applies immediately.
         """
         if key is None:
             # No path. Clear the card now, on the caller's thread, which is the
@@ -144,11 +89,7 @@ class ThumbnailLoader:
         self._pool.submit(self._decode_next)
 
     def _decode_next(self) -> None:
-        """Take the newest pending request and decode it. Runs on a worker.
-
-        It pops the newest entry, so the order the pool happens to run its
-        tasks in does not decide which card decodes next: the stack does.
-        """
+        """Decode the newest pending request on a worker, independent of pool order."""
         with self._lock:
             if not self._pending:
                 # A begin_generation cleared the stack, or another worker took
@@ -182,9 +123,7 @@ class ThumbnailLoader:
             if self._flush_scheduled:
                 return
             self._flush_scheduled = True
-        # The first completion to flip the flag drives the batch. Every other
-        # completion until the flush runs just appends above, so the batch grows
-        # and the marshal fires once.
+        # The first completion schedules one flush; later completions join its batch
         self._marshal(self._flush)
 
     def _flush(self) -> None:
@@ -210,9 +149,7 @@ class ThumbnailLoader:
                 log.opt(exception=True).warning(f"applying a thumbnail failed: {e}")
 
 
-# Real wiring. The serialized form is a small header and the raw pixels, so the
-# apply side wraps the pixels back into a pixbuf with no second decode and no
-# second scale.
+# Serialized headers and raw pixels avoid a second decode or scale during apply
 
 # The preview cards decode at this fixed size. See Preview.decode_pixbuf.
 THUMBNAIL_WIDTH = 250
@@ -260,13 +197,8 @@ def _deserialize(data: bytes) -> Any:
         bits, width, height, rowstride)
 
 
-def _real_decode(key: Key) -> bytes | None:
-    """Decode key at the preview size and serialize it. Runs on a worker.
-
-    A GdkPixbuf decode is file I/O and not GTK work, so it is safe off the main
-    thread. A missing, corrupt or unreadable file returns None, and the card
-    then shows the broken-image icon.
-    """
+def _decode_thumbnail_bytes(key: Key) -> bytes | None:
+    """Decode and serialize off-main; return None for unreadable files."""
     from gi.repository import GdkPixbuf, GLib
 
     try:
@@ -279,7 +211,7 @@ def _real_decode(key: Key) -> bytes | None:
     return _serialize(pixbuf)
 
 
-def _real_apply(target: Any, data: bytes | None) -> None:
+def _apply_thumbnail_bytes(target: Any, data: bytes | None) -> None:
     """Show the decoded thumbnail on target, or the broken-image icon on a
     failed decode. Runs on the main loop."""
     if data is None:
@@ -303,9 +235,7 @@ def shared_cache() -> "ByteLRUCache":
 
 
 def shared_pool() -> "DeadlinePool":
-    """The one thumbnail decode pool. Lifecycle only: it puts no deadline on a
-    decode and replaces no executor, so a slow decode holds its worker until it
-    returns and nothing else is disturbed."""
+    """Shared lifecycle pool where a slow decode holds only its worker."""
     global _shared_pool
     with _shared_lock:
         if _shared_pool is None:
@@ -325,8 +255,8 @@ def build_loader() -> ThumbnailLoader:
         run_on_main(fn)
 
     return ThumbnailLoader(
-        decode=_real_decode,
-        apply=_real_apply,
+        decode=_decode_thumbnail_bytes,
+        apply=_apply_thumbnail_bytes,
         marshal=marshal,
         cache=shared_cache(),
         pool=shared_pool(),

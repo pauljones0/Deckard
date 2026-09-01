@@ -1,9 +1,4 @@
-"""
-Regression test for the ways the store tab froze or built garbage URLs.
-
-get_official_store_branch answers STORE_PIN with no fetch, offline or not.
-StorePage re-arms itself after a failed load. No network is involved.
-"""
+"""Verify pinned store refs, URL validation, and failed-load recovery offline."""
 
 # A url that names no GitHub repository is skipped everywhere, through one
 # shared parse.
@@ -44,7 +39,7 @@ def _fetch_fail(url):
     raise StoreFetchError(url, "offline")
 
 
-def test_branch_is_the_pin_when_offline() -> None:
+def test_offline_store_uses_pinned_ref() -> None:
     """The official ref is the pin constant, decided with no fetch, so an
     offline start still yields well-formed store URLs."""
     fixtures.install_stub_globals()
@@ -83,7 +78,7 @@ def test_custom_store_entries_are_sanitized() -> None:
         assert isinstance(b, str) and b, f"get_stores yielded non-str branch {b!r} for {url}"
 
 
-class _Item:
+class _PluginDataStub:
     """Stands in for PluginData. process_store_data filters by data_class."""
     def __init__(self, url: str):
         self.url = url
@@ -133,10 +128,10 @@ def test_catalog_survives_unparseable_custom_urls() -> None:
 
     def fake_prepare(entry, include_images=True, verified=False):
         prepared.append(entry["url"])
-        return _Item(entry["url"])
+        return _PluginDataStub(entry["url"])
 
     results = sb.process_store_data(
-        StoreBackend.PLUGIN_FILE, fake_prepare, sb.get_custom_plugins, _Item
+        StoreBackend.PLUGIN_FILE, fake_prepare, sb.get_custom_plugins, _PluginDataStub
     )
     assert results is not None, (
         "one unusable custom url must not fail the whole catalog load"
@@ -164,10 +159,7 @@ def test_prepare_plugin_skips_bad_url() -> None:
 
 
 def test_settings_row_refuses_bad_url() -> None:
-    """Drives the real CustomContentEntry.refresh_url_validity on a
-    duck-typed stand-in, because this headless harness builds no GTK widget.
-    The row and the store share one parse, so a url the row accepts is never
-    one the catalog has to skip."""
+    """Use the shared URL parser on a headless CustomContentEntry stand-in."""
     from src.windows.Settings.Settings import CustomContentEntry
 
     gl.lm = SimpleNamespace(get=lambda key, fallback=None: key)
@@ -191,7 +183,7 @@ def test_settings_row_refuses_bad_url() -> None:
             self.tooltip = text
 
     class FakeRow:
-        refresh_url_validity = CustomContentEntry.refresh_url_validity
+        validate_and_mark_url = CustomContentEntry.validate_and_mark_url
 
         def __init__(self, text: str):
             self.url = FakeEntryRow(text)
@@ -199,7 +191,7 @@ def test_settings_row_refuses_bad_url() -> None:
     for url in UNUSABLE_URLS:
         assert parse_repo_url(url) is None, f"test data {url!r} is actually parseable"
         row = FakeRow(url)
-        assert row.refresh_url_validity() is None, (
+        assert row.validate_and_mark_url() is None, (
             f"the settings row must refuse {url!r} instead of storing it"
         )
         assert "error" in row.url.css_classes, f"{url!r} must be flagged in the row"
@@ -211,7 +203,7 @@ def test_settings_row_refuses_bad_url() -> None:
         ("", ""),  # clearing a row must always take effect
     ):
         row = FakeRow(text)
-        assert row.refresh_url_validity() == stored, (
+        assert row.validate_and_mark_url() == stored, (
             f"{text!r} must be stored as {stored!r}"
         )
         assert "error" not in row.url.css_classes
@@ -219,9 +211,7 @@ def test_settings_row_refuses_bad_url() -> None:
 
 
 def test_store_page_rearms_after_failed_load() -> None:
-    """Drives the real StorePage.ensure_loaded, _load_guarded and
-    show_connection_error on a duck-typed stand-in, because this headless
-    harness builds no GTK widget."""
+    """Drive StorePage failed-load recovery on a headless stand-in."""
     from src.windows.Store.StorePage import StorePage
     from gi.repository import GLib
 
@@ -276,7 +266,7 @@ def test_store_page_rearms_after_failed_load() -> None:
 
 def main() -> None:
     fixtures.start_watchdog(30, label="scenario_store_branch_contract")
-    test_branch_is_the_pin_when_offline()
+    test_offline_store_uses_pinned_ref()
     test_custom_store_entries_are_sanitized()
     test_catalog_survives_unparseable_custom_urls()
     test_prepare_plugin_skips_bad_url()

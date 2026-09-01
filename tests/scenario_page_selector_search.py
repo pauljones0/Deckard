@@ -1,18 +1,4 @@
-"""The header page selector must let a user find a page by typing.
-
-The header held a plain combo box over a list store, so a deck with many
-pages could only be changed by scrolling the whole list. The selector is a
-search entry over a filtered list now.
-
-Two legs need no display: every locale key the module asks for must exist in
-the CSV, or the widget renders the raw key; and the match ladder must narrow
-and rank the rows the list shows. The rest need one: the rendered list
-following the search text, the keyboard reaching and opening a row, the
-empty state saying something, a pick loading the page through the wiring
-that was already there, the Signals refresh keeping the list current, the
-selection never outliving the page it names, and the list opening on the
-page the deck holds.
-"""
+"""Verify page-selector search, ranking, keyboard access, and synchronization."""
 import fixtures  # noqa: F401  (import first: isolated --data tempdir)
 
 import csv
@@ -41,10 +27,8 @@ LOCALES_CSV = os.path.join(REPO_ROOT, "locales", "locales.csv")
 MODULE_PATH = os.path.join(REPO_ROOT, "src", "windows", "mainWindow",
                            "elements", "PageSelector.py")
 
-# The page names the corpus holds. Three of them are the names a reviewer
-# measured the whole-string ratio failing on: a user typing "vol", "hom" or
-# "work" scored 42.9, 22.2 and exactly 50.0 against them, all at or under the
-# bar, so the pages being typed towards vanished from the list.
+# Corpus with prefix queries whose whole-string scores are at or below the
+# fuzzy threshold: vol 42.9, hom 22.2, and work 50.0.
 PAGE_NAMES = ["Home Assistant Dashboard", "brightness", "gaming",
               "volume_down", "volume_mute", "volume_up", "work profile"]
 
@@ -52,15 +36,12 @@ PAGE_NAMES = ["Home Assistant Dashboard", "brightness", "gaming",
 ALPHABETICAL = ["brightness", "gaming", "Home Assistant Dashboard",
                 "volume_down", "volume_mute", "volume_up", "work profile"]
 
-# What each query must leave in the list, closest first. Measured against
-# this corpus, so a scoring change surfaces as a ranking change and not as a
-# float mismatch. The three prefix queries are the reviewer's cases.
+# Expected visible names in rank order, expressed as behavior rather than
+# floating-point score values.
 QUERIES = [
     # An empty query keeps every page, in name order.
     ("", ALPHABETICAL),
-    # A prefix of a name. Whole-string ratio scored 42.9, 42.9 and 50.0 here
-    # and emptied the list; the prefix tier keeps all three, and the ratio
-    # still ranks volume_up first inside that tier.
+    # Prefix matches stay in one tier, with the ratio ranking volume_up first.
     ("vol", ["volume_up", "volume_down", "volume_mute"]),
     ("hom", ["Home Assistant Dashboard"]),
     ("work", ["work profile"]),
@@ -78,11 +59,8 @@ QUERIES = [
 ]
 QUERY_RESULTS = dict(QUERIES)
 
-# A second, small corpus for the tier ordering alone. A name that holds what
-# was typed must beat one that only looks like it, whatever the two score.
-# Measured against "log": logbook starts with it and scores 60.0, catalog
-# viewer panel holds it further in and scores 26.1, and lob holds none of it
-# yet scores 66.7. Ranked by score alone, lob would come first.
+# Tier-order corpus: containing names must beat a higher-scoring resemblance.
+# For "log", scores are logbook 60.0, catalog 26.1, and lob 66.7.
 TIER_CORPUS = ["logbook", "catalog viewer panel", "lob"]
 TIER_QUERY = "log"
 TIER_EXPECTED = ["logbook", "catalog viewer panel", "lob"]
@@ -118,12 +96,7 @@ class FakeDeckStack:
 
 
 class FakePageManager:
-    """The backend reduced to what the selector calls on it.
-
-    get_pages() answers natural order by file name, which is what the real
-    PageManagerBackend does, because the selector's alphabetical ordering
-    rides on that order.
-    """
+    """Provide selector backend calls with natural filename ordering."""
 
     def __init__(self, page_dir: str, names):
         self.page_dir = page_dir
@@ -148,11 +121,7 @@ class FakeRow:
 
 
 class StubSelector:
-    """The filter and the sort over plain objects, with no GTK.
-
-    Stands in where no display exists, so the ranking checks read the same
-    code either way.
-    """
+    """Run the production filter and sort over plain objects without GTK."""
 
     def __init__(self, page_manager: FakePageManager):
         from src.windows.mainWindow.elements.PageSelector import PageSelector
@@ -181,12 +150,8 @@ def name_of(row) -> str:
 
 
 def pump_until(condition, timeout: float, what: str) -> None:
-    """Iterate the default main context until condition() holds.
-
-    The search entry emits search-changed off a timer, the Signals fan-out
-    lands on an idle source and the popover scrolls from another, so none of
-    them reach the widget while this thread holds it.
-    """
+    """Pump the default main context for the search timer, Signals idle, and
+    popover scroll source until the condition holds."""
     context = GLib.MainContext.default()
     deadline = time.time() + timeout
     while time.time() < deadline:
@@ -209,12 +174,7 @@ def pump(seconds: float = 0.2) -> None:
 
 
 def has_display() -> bool:
-    """A display the widgets can actually be built against.
-
-    Gtk.init_check() answers True with no display at all, and the first widget
-    then dies in the GDK backend, so the default display is the thing to ask
-    about.
-    """
+    """Require a default GDK display because Gtk.init_check can pass without one."""
     Gtk.init_check()
     return Gdk.Display.get_default() is not None
 
@@ -231,12 +191,7 @@ def row_named(selector, name: str):
 
 
 def focus_is_inside(widget) -> bool:
-    """Whether the keyboard focus sits on widget or on something it holds.
-
-    A Gtk.SearchEntry never holds the focus itself: it delegates to an inner
-    Gtk.Text, so has_focus() on the entry answers False even when the user is
-    typing into it.
-    """
+    """Check focus on a widget or descendant, including SearchEntry's inner text."""
     root = widget.get_root()
     if root is None:
         return False
@@ -282,11 +237,7 @@ def set_query(selector, search: str) -> None:
 # 1. Every locale key the module asks for must exist in the CSV.
 
 def check_locale_keys() -> None:
-    """A key absent from the CSV renders as the raw key in the header.
-
-    LocaleManager.get() falls back to the key itself, so a missing row shows
-    the user 'header-page-selector-search-hint' where a placeholder belongs.
-    """
+    """Require every selector locale key and value to prevent raw-key fallback."""
     with open(LOCALES_CSV, newline="", encoding="utf-8") as handle:
         reader = csv.reader(handle, delimiter=";", quotechar='"',
                             skipinitialspace=True)
@@ -328,12 +279,8 @@ def check_match_ladder(selector, label: str) -> None:
           f"ranks the closest first, over {len(QUERIES)} queries")
 
 
-def check_holding_beats_resembling(page_manager_factory) -> None:
-    """A name that holds the query outranks one that only resembles it.
-
-    Otherwise the page a user is typing the name of sits below a page that
-    happens to score well, and the top match, which Enter opens, is wrong.
-    """
+def check_containment_ranks_above_fuzzy_match(page_manager_factory) -> None:
+    """Rank names containing the query above names that only resemble it."""
     stub = StubSelector(page_manager_factory(TIER_CORPUS))
     stub.query(TIER_QUERY)
     got = stub.visible_names()
@@ -359,12 +306,8 @@ class RealSelector:
 
 # 3. The keyboard must reach a row and open it.
 
-def check_search_entry_takes_focus(selector) -> None:
-    """Opening the list must put the cursor in the search box.
-
-    Without it the user opens the list and types into nothing, which is the
-    whole feature failing quietly.
-    """
+def check_search_entry_focus(selector) -> None:
+    """Put keyboard focus in the search entry whenever the list opens."""
     open_list(selector)
     pump_until(lambda: focus_is_inside(selector.search_entry), 10,
                "the search entry never took the keyboard focus when the list "
@@ -372,12 +315,8 @@ def check_search_entry_takes_focus(selector) -> None:
     print("PASS: opening the list puts the keyboard focus in the search entry")
 
 
-def check_tab_reaches_a_row(selector) -> None:
-    """Focus leaving the entry must land on a row, not on the scroller.
-
-    A focusable Gtk.ScrolledWindow takes that focus and holds it, so the
-    rows below are unreachable from the keyboard.
-    """
+def check_tab_row_focus(selector) -> None:
+    """Move focus from the entry to a row without the scroller intercepting it."""
     assert not selector.scrolled_window.get_focusable(), (
         "the scrolled window is focusable, so it swallows the focus that "
         "leaves the search entry and no row can be reached")
@@ -395,13 +334,8 @@ def check_tab_reaches_a_row(selector) -> None:
     print("PASS: focus leaving the search entry lands on the first row")
 
 
-def check_focus_returns_to_the_entry(selector) -> None:
-    """Reopening the list must put the cursor back in the search box.
-
-    The focus sits on a row after the leg above. A popover hands the focus
-    back to whatever held it when it closed, so without an explicit grab on
-    open the user reopens the list, types, and nothing happens.
-    """
+def check_reopen_focus(selector) -> None:
+    """Return focus from a selected row to the search entry when reopening."""
     first = selector.visible_rows()[0]
     first.grab_focus()
     pump_until(lambda: focus_is_inside(first), 10,
@@ -415,12 +349,8 @@ def check_focus_returns_to_the_entry(selector) -> None:
     print("PASS: reopening the list puts the focus back in the search entry")
 
 
-def check_arrows_move_the_selection(selector) -> None:
-    """Up and Down must walk the list while the entry keeps the focus.
-
-    The entry's inner text widget consumes both keys, so directional focus
-    never leaves it; the key controller moves the selection instead.
-    """
+def check_arrow_selection(selector) -> None:
+    """Move list selection with arrows while the search entry retains focus."""
     set_query(selector, "")
     rows = selector.visible_rows()
     assert len(rows) >= 3, f"this check needs at least three rows, got {len(rows)}"
@@ -479,7 +409,7 @@ def check_arrows_move_the_selection(selector) -> None:
           "ordinary keys to the entry")
 
 
-def check_enter_opens_the_top_match(selector, controller, page_manager) -> None:
+def check_enter_match_activation(selector, controller, page_manager) -> None:
     """Enter after typing must open the best match with no further keys."""
     open_list(selector)
     set_query(selector, "vol")
@@ -626,13 +556,9 @@ def check_signal_refresh(selector, controller, page_manager) -> None:
           "header follows the deck's own page change")
 
 
-def check_selection_never_outlives_its_page(selector, controller,
-                                            page_manager) -> None:
-    """Deleting the page the deck holds must blank the header.
-
-    The header would otherwise keep naming a file that is gone, and the
-    page-settings button would hand that dead path to the page manager.
-    """
+def check_deleted_page_selection_cleanup(selector, controller,
+                                         page_manager) -> None:
+    """Clear the header and settings target when the selected page disappears."""
     from src.Signals import Signals
 
     target = page_manager.path_of("gaming")
@@ -655,9 +581,8 @@ def check_selection_never_outlives_its_page(selector, controller,
     assert selector.list_box.get_selected_row() is None, (
         "the list still marks a row for the deleted page")
 
-    # The same, with the rows left standing. A deck that switches to a page
-    # the list does not carry must clear the mark, and here nothing rebuilds
-    # the list to clear it as a side effect.
+    # Keep rows standing while switching to an unlisted page, so only explicit
+    # selection cleanup can clear the mark.
     page_manager.names.append("gaming")
     gl.signal_manager.trigger_signal(Signals.PageAdd)
     pump_until(lambda: visible_names(selector) == ALPHABETICAL, 10,
@@ -724,7 +649,7 @@ def check_selection_never_outlives_its_page(selector, controller,
           "settings button refuses a page the backend no longer lists")
 
 
-def check_no_deck_disables_the_button(selector, deck_stack) -> None:
+def check_no_deck_button_state(selector, deck_stack) -> None:
     """With no deck on screen there is no page to switch, so the button goes."""
     deck_stack.visible = False
     selector.update_selected()
@@ -740,13 +665,8 @@ def check_no_deck_disables_the_button(selector, deck_stack) -> None:
 
 # 7. The list must open on the page the deck holds.
 
-def check_opens_on_the_selected_page(selector, controller, page_manager) -> None:
-    """A long list opens scrolled to the page the deck holds.
-
-    The combo box this replaced opened on its active row. A list that always
-    opens at the top puts the current page off screen once there are more
-    pages than fit.
-    """
+def check_selected_page_scroll(selector, controller, page_manager) -> None:
+    """Open a long list with the deck's selected page inside the viewport."""
     from src.Signals import Signals
 
     page_manager.names[:] = [f"page_{index:02d}" for index in range(40)]
@@ -784,12 +704,8 @@ def check_opens_on_the_selected_page(selector, controller, page_manager) -> None
     print("PASS: a long list opens scrolled to the page the deck holds")
 
 
-def check_reopen_clears_the_query(selector) -> None:
-    """A query left over from the last open would hide pages silently.
-
-    The user closes the list on a narrowed view, opens it again and sees a
-    few pages with no sign that a filter is on.
-    """
+def check_reopen_query_reset(selector) -> None:
+    """Clear a prior query when reopening so the full page list is visible."""
     open_list(selector)
     set_query(selector, "gam")
     close_list(selector)
@@ -805,11 +721,7 @@ def check_reopen_clears_the_query(selector) -> None:
 
 
 def check_no_backend_yet(main_window):
-    """The header is built before the page backend exists on a cold start.
-
-    Returned so the caller keeps it alive: the Signals registry holds its
-    observers weakly.
-    """
+    """Build without a backend and return the selector to retain weak observers."""
     from src.windows.mainWindow.elements.PageSelector import PageSelector
 
     selector = PageSelector(main_window, None)
@@ -839,7 +751,7 @@ def main() -> int:
     gl.page_manager = page_manager
 
     check_match_ladder(StubSelector(page_manager), "the ladder over stubs")
-    check_holding_beats_resembling(
+    check_containment_ranks_above_fuzzy_match(
         lambda names: FakePageManager(page_dir, names))
 
     if not has_display():
@@ -872,19 +784,19 @@ def main() -> int:
     assert placeholder != "header-page-selector-search-hint", (
         "the search entry shows the raw locale key as its placeholder")
 
-    check_search_entry_takes_focus(selector)
+    check_search_entry_focus(selector)
     check_match_ladder(RealSelector(selector), "the rendered list")
-    check_tab_reaches_a_row(selector)
-    check_focus_returns_to_the_entry(selector)
-    check_reopen_clears_the_query(selector)
-    check_arrows_move_the_selection(selector)
+    check_tab_row_focus(selector)
+    check_reopen_focus(selector)
+    check_reopen_query_reset(selector)
+    check_arrow_selection(selector)
     check_empty_state(selector, page_manager)
-    check_enter_opens_the_top_match(selector, controller, page_manager)
+    check_enter_match_activation(selector, controller, page_manager)
     check_selection_loads_page(selector, controller, page_manager)
     check_signal_refresh(selector, controller, page_manager)
-    check_selection_never_outlives_its_page(selector, controller, page_manager)
-    check_no_deck_disables_the_button(selector, deck_stack)
-    check_opens_on_the_selected_page(selector, controller, page_manager)
+    check_deleted_page_selection_cleanup(selector, controller, page_manager)
+    check_no_deck_button_state(selector, deck_stack)
+    check_selected_page_scroll(selector, controller, page_manager)
     cold_start_selector = check_no_backend_yet(main_window)
     assert cold_start_selector is not None
 

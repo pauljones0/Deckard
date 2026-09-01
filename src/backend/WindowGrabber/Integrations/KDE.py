@@ -14,7 +14,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 """
 
 import threading
-from src.backend.WindowGrabber.Integration import Integration, WATCHER_STOP_TIMEOUT_S
+from src.backend.WindowGrabber.Integration import Integration, WATCHER_STOP_TIMEOUT_S, communicate_bounded
 from src.backend.WindowGrabber.Window import Window
 
 from subprocess import Popen, CalledProcessError, PIPE
@@ -59,7 +59,10 @@ class KDE(Integration):
             kdotool = self._run_command(["kdotool", "--version"])
             if kdotool is None:
                 return False
-            out = kdotool.communicate()[0].decode("utf-8")
+            out_bytes = communicate_bounded(kdotool, "kdotool --version")
+            if out_bytes is None:
+                return False
+            out = out_bytes.decode("utf-8")
             return out not in ("", None)
         except Exception as e:
             log.error(f"An error occurred while running kdotool: {e}")
@@ -75,9 +78,8 @@ class KDE(Integration):
         if thread is not None and thread.is_alive():
             return
 
-        # A Thread object cannot restart, so each start builds a fresh one.
-        # The new thread also primes its "last seen window" from the window
-        # focused now, not from a reading taken before the stop.
+        # Threads cannot restart, so each start builds a fresh watcher.
+        # It primes the last window from current focus, not a pre-stop reading.
         thread = WatchForActiveWindowChange(self)
         self.active_window_change_thread = thread
         thread.start()
@@ -92,18 +94,14 @@ class KDE(Integration):
 
         thread.stop()
         if thread is threading.current_thread():
-            # Never join the calling thread to itself. A window change can
-            # reach a page write, and a page write re-gates. The loop ends at
-            # its next stop check. The return also keeps the timeout warning
-            # below for a real timeout, not for a skipped join.
+            # A window-triggered page write can re-gate from this thread, so never join it.
+            # Its next stop check ends the loop; reserve the warning for an attempted join timeout.
             return
 
         thread.join(timeout=WATCHER_STOP_TIMEOUT_S)
         if thread.is_alive():
-            # The thread is parked in a kdotool read past the timeout. It is a
-            # daemon, and its loop rechecks the stop flag once the read
-            # returns, so it unwinds on its own. The reference drops either
-            # way, so a later start builds a clean thread.
+            # This daemon can outlast the join while blocked in kdotool, then stops after the read.
+            # Drop the reference so a later start builds a fresh thread.
             log.warning("The KDE active window watcher did not stop within the timeout")
 
     @log.catch
@@ -115,7 +113,9 @@ class KDE(Integration):
             root = self._run_command(["kdotool", "search", "."])
             if root is None:
                 return []
-            stdout, _ = root.communicate()
+            stdout = communicate_bounded(root, "kdotool search")
+            if stdout is None:
+                return windows
 
             window_ids = stdout.decode().strip().split("\n")
             if len(window_ids) < 2:
@@ -137,7 +137,9 @@ class KDE(Integration):
             kdotool = self._run_command(["kdotool", "getactivewindow"])
             if kdotool is None:
                 return None
-            stdout, _ = kdotool.communicate()
+            stdout = communicate_bounded(kdotool, "kdotool getactivewindow")
+            if stdout is None:
+                return None
             window_id = stdout.decode().strip()
             if len(window_id) == 0:
                 return None
@@ -168,7 +170,10 @@ class KDE(Integration):
             kdotool = self._run_command(["kdotool", "getwindowname", window_id])
             if kdotool is None:
                 return None
-            title = kdotool.communicate()[0].decode().strip()
+            out_bytes = communicate_bounded(kdotool, "kdotool getwindowname")
+            if out_bytes is None:
+                return None
+            title = out_bytes.decode().strip()
             if title is None or len(title) < 2:
                 return None
             return cast("str | None", title)
@@ -182,7 +187,10 @@ class KDE(Integration):
             kdotool = self._run_command(["kdotool", "getwindowclassname", window_id])
             if kdotool is None:
                 return None
-            window_class = kdotool.communicate()[0].decode().strip()
+            out_bytes = communicate_bounded(kdotool, "kdotool getwindowclassname")
+            if out_bytes is None:
+                return None
+            window_class = out_bytes.decode().strip()
             if window_class is None or len(window_class) < 4:
                 return None
             return cast("str | None", window_class)
@@ -213,10 +221,8 @@ class WatchForActiveWindowChange(threading.Thread):
     @override
     def run(self) -> None:
         while gl.threads_running and not self._stop_event.is_set():
-            # Wait on the stop event instead of a sleep, so a stop ends the
-            # loop before the poll interval runs out. A wait that already
-            # elapsed can dispatch once after a stop; routing then re-reads
-            # the rules and finds none.
+            # Wait on the stop event so stop can end the loop before the poll interval.
+            # One elapsed wait can still dispatch after stop; routing re-reads and finds no rule.
             if self._stop_event.wait(0.2):
                 break
             window_id = self.kde.get_active_window_id()

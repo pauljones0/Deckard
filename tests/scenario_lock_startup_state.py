@@ -1,15 +1,5 @@
-"""A session already locked at app launch is detected at startup.
-
-The event path learns the lock only from the next ActiveChanged/Lock signal.
-A session already locked when the app starts sends no such signal, so without
-a startup read the lock branch never engages and the decks stay lit behind the
-lock screen. Each detector reads its own source once at startup (logind
-LockedHint, or the screen saver's GetActive) and drives the same lock() the
-signal path drives. LockScreenManager.setup() calls that read after it builds
-the detector.
-
-A fake bus stands in, so no real system or session bus is touched.
-"""
+"""Read the initial lock state from logind or the screen saver at startup.
+The fake bus prevents access to real system and session buses."""
 import os
 
 import fixtures  # must be first; isolates DATA_PATH
@@ -34,12 +24,8 @@ class RecordingManager:
 
 
 class FakeBus:
-    """Duck-types the one Gio.DBusConnection method the reads use.
-
-    call_sync answers the logind session resolver, the logind LockedHint
-    property Get, and the screen saver GetActive. The signatures match
-    positionally. signal_subscribe records, so a detector wires up inertly.
-    """
+    """Serve the session resolver, LockedHint, and GetActive bus calls.
+    Signal subscriptions are recorded but stay inert."""
 
     def __init__(self, session_path="/org/freedesktop/login1/session/_31",
                  locked_hint=False, screen_saver_active=False):
@@ -98,7 +84,7 @@ def logind_reads_locked_hint():
     print("PASS: logind LockedHint=False leaves the lock to the event path")
 
 
-def logind_read_is_inert_without_a_session():
+def check_logind_read_without_session_is_inert():
     from src.backend.LockScreenManager.Detectors.Logind import LogindLockScreenDetector
 
     # A failed resolution leaves session_path None. The read must not raise
@@ -156,7 +142,7 @@ def screen_saver_reads_get_active():
     print("PASS: screen saver GetActive=False leaves the lock to the event path")
 
 
-def base_read_is_inert_without_a_source():
+def check_sourceless_base_read_is_inert():
     from src.backend.LockScreenManager.LockScreenDetector import LockScreenDetector
 
     # A detector with no session-bus screen saver (Hyprland shape) recorded no
@@ -169,7 +155,7 @@ def base_read_is_inert_without_a_source():
     print("PASS: a detector with no screen saver source reads nothing")
 
 
-def manager_setup_calls_the_read():
+def check_setup_reads_initial_lock_state():
     """setup() must invoke read_initial_lock_state on the chosen detector."""
     import src.backend.LockScreenManager.LockScreenManager as lsm_mod
     from src.backend.LockScreenManager.LockScreenManager import LockScreenManager
@@ -199,20 +185,9 @@ def manager_setup_calls_the_read():
     print("PASS: LockScreenManager.setup() reads the initial lock state")
 
 
-def real_startup_lock_then_unlock_engages_the_branch():
-    """A real startup lock must disengage on the first real unlock.
-
-    This drives the whole path through the real LockScreenManager.lock():
-    the locked-session read runs while gl.deck_manager is still None (the
-    startup order), and a later real Unlock signal drives lock(False). The
-    tracked lock state must stay in step with gl.screen_locked across the
-    deck-manager-None read, or the first unlock reads as a no-op and the decks
-    that enumerated in the meantime stay behind the screen saver.
-
-    Earlier checks in this scenario record lock() calls on a stub, so they
-    cannot see that the real lock() swallows the first unlock. This one uses
-    the real manager and asserts the deck branch runs.
-    """
+def check_startup_unlock_releases_decks():
+    """Require the first unlock to release decks enumerated after a startup lock.
+    State must remain synchronized when the initial read precedes the deck manager."""
     import globals as gl
     from src.backend.LockScreenManager.LockScreenManager import LockScreenManager
     from src.backend.LockScreenManager.Detectors.Logind import LogindLockScreenDetector
@@ -288,16 +263,9 @@ def real_startup_lock_then_unlock_engages_the_branch():
     print("PASS: a real startup lock disengages on the first real unlock")
 
 
-def initial_deck_work_runs_on_the_main_loop():
-    """The startup read must not touch decks on the setup thread.
-
-    LockScreenManager.setup() runs the initial read on a daemon thread, and
-    the designed order has gl.deck_manager still None at that point. A slow
-    bus moves the read later, so the deck manager can already exist when the
-    read lands. The deck loop touches the screen saver and the interaction
-    flag, which are main-thread surfaces, so the initial lock must queue that
-    work on the main loop rather than run it on the reading thread.
-    """
+def check_initial_deck_work_runs_on_main():
+    """Marshal initial deck lock work to the main loop when the bus read is late.
+    Screen-saver and interaction changes must not run on the setup thread."""
     import threading
 
     import globals as gl
@@ -383,12 +351,12 @@ def main() -> None:
     fixtures.start_watchdog(30, label="scenario_lock_startup_state")
 
     logind_reads_locked_hint()
-    logind_read_is_inert_without_a_session()
+    check_logind_read_without_session_is_inert()
     screen_saver_reads_get_active()
-    base_read_is_inert_without_a_source()
-    manager_setup_calls_the_read()
-    real_startup_lock_then_unlock_engages_the_branch()
-    initial_deck_work_runs_on_the_main_loop()
+    check_sourceless_base_read_is_inert()
+    check_setup_reads_initial_lock_state()
+    check_startup_unlock_releases_decks()
+    check_initial_deck_work_runs_on_main()
 
     print("PASS: scenario_lock_startup_state")
 

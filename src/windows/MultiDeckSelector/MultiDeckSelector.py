@@ -66,13 +66,11 @@ class MultiDeckSelector(Gtk.ApplicationWindow):
     def load_decks(self) -> None:
         for controller in services.require_deck_manager().deck_controller:
             deck_stack = services.require_main_window().leftArea.deck_stack
-            attributes = deck_stack.get_page_attributes(controller)
-            # A deck whose serial number could not be read has no attributes.
-            # DeckStack.add_page skips it the same way, so it has no stack
-            # child to select either.
-            if attributes is None:
+            deck_identity = deck_stack.get_page_attributes(controller)
+            # A deck with no readable serial has no stack child or selector row.
+            if deck_identity is None:
                 continue
-            serial_number, name = attributes
+            serial_number, name = deck_identity
 
             row = DeckRow(self, name, serial_number, False)
             self.rows.append(row)

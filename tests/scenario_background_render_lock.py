@@ -1,21 +1,10 @@
-"""
-Shared background render-state must be lock-guarded across threads.
+"""Guard Background.tiles, _video_strip, _touchscreen_slice, and _identified_tiles across threads.
+Media writes; GTK/load/screensaver swap. Render/video locks stop tears and mid-read release."""
 
-The media tick writes Background.tiles, _video_strip, _touchscreen_slice and
-the _identified_tiles pair while a GTK, load or screensaver thread swaps the
-background from another. Those four fields carry a lock so a reader never sees a
-torn set. The touchscreen tick reads the background video and its fps-cap
-timestamp under the state's own lock, so _release_background_video cannot null
-the video mid-read.
-"""
-
-# The check pins the guards and then runs the real swap-vs-read paths under
-# contention, asserting no thread raises and the published state stays
-# internally consistent.
+# Run real swap and read paths under contention; no thread may raise or publish inconsistent state.
 import os
 import threading
 import time
-import types
 
 import fixtures  # noqa: F401  (import first: sets up the isolated data dir)
 import globals as gl
@@ -24,7 +13,9 @@ from loguru import logger as log
 
 from PIL import Image
 
+from src.backend.DeckManagement import media_loop
 from src.backend.DeckManagement.InputIdentifier import Input
+from src.backend.DeckManagement.media_loop import MEDIA_LOOP_FPS
 
 WATCHDOG_SECONDS = 60
 STRESS_SECONDS = 1.5
@@ -43,30 +34,30 @@ def check_touchscreen_tick_lock(controller) -> None:
     touch = controller.get_input(Input.Touchscreen("sd-plus"))
     state = touch.get_active_state()
 
-    # The tick decision is a method that takes the fps-cap read and write under
-    # the background-video lock. Before the fix this logic sat inline in
-    # on_media_player_tick with an unlocked timestamp read and write.
+    # Read video and advance its frame deadline under the background-video lock.
     check("touchscreen state exposes tick_background_video",
           hasattr(state, "tick_background_video"))
     if not hasattr(state, "tick_background_video"):
         return
 
+    class _RatedVideo(media_loop.FrameScheduled):
+        def _render_rate(self) -> float:
+            return float(MEDIA_LOOP_FPS)
+
     saved = state.background_video
-    saved_ts = state._last_background_video_render
     try:
-        state.background_video = types.SimpleNamespace(fps=30)
-        state._last_background_video_render = 0.0
-        first = state.tick_background_video(30)
-        second = state.tick_background_video(30)
-        check("first tick renders, immediate second is fps-gated", first and not second,
+        video = _RatedVideo()
+        state.background_video = video
+        first = state.tick_background_video(media_loop.now())
+        second = state.tick_background_video(media_loop.now())
+        check("first tick renders, immediate second is rate-gated", first and not second,
               f"first={first} second={second}")
-        check("the fps-cap timestamp advanced under the lock",
-              state._last_background_video_render > 0.0)
+        check("the frame deadline advanced under the lock",
+              video._frame_deadline is not None)
         state.background_video = None
-        check("no background video means no render", state.tick_background_video(30) is False)
+        check("no background video means no render", state.tick_background_video(media_loop.now()) is False)
     finally:
         state.background_video = saved
-        state._last_background_video_render = saved_ts
 
 
 def check_background_lock_stress(controller) -> None:
@@ -82,9 +73,8 @@ def check_background_lock_stress(controller) -> None:
 
     background.set_extend_to_touchscreen(True, update=False)
 
-    # update_tiles swallows a torn read of self.video into a rate-limited log
-    # ("Failed to update background tiles"), so watch that log too: a consistent
-    # snapshot under the lock means it never fires during the swap contention.
+    # update_tiles turns a torn video read into a rate-limited error.
+    # Contention must produce neither that log nor a raised error.
     tile_errors: list[str] = []
     sink = log.add(lambda m: tile_errors.append(str(m)), level="ERROR",
                    filter=lambda r: "update background tiles" in r["message"].lower())

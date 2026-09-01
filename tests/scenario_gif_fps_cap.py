@@ -1,20 +1,6 @@
-"""A GIF key must honour the page's frame-rate cap inside the GIF pipeline.
+"""Check GIF frame caps without changing delay-timeline playback position.
 
-fps caps how often the picked frame advances. It never becomes the playback
-rate: the GIF's own delay timeline still says where the wall clock lands, and
-the cap only coarsens how finely that position is read, which drops frames. A
-cap at the media loop's ceiling must leave the picks exactly as they were
-before caps existed, which is what every page that carries no fps key loads
-under.
-
-The ordering of that arithmetic is pinned here, because getting it wrong is
-silent and severe. A grid laid on raw elapsed time and then folded through the
-loop modulo samples only the positions one cap period generates in the loop:
-those walk backwards through the animation, and collapse onto a single frame
-whenever the animation length divides the cap period, which stops the GIF
-dead.
-
-The clock is driven through get_next_frame(now=...), so nothing here sleeps.
+Samples must advance in order, remain phase-stable across loops, and never freeze.
 """
 import os
 
@@ -42,12 +28,7 @@ class _StubControllerKey:
 
 
 def _make_gif(path: str, durations_ms: list[int], size=(64, 64)) -> str:
-    """An animated GIF with one explicit duration per frame.
-
-    The frames are visually distinct, so PIL never merges them at save time.
-    They keep a transparent margin, so the rendered-alpha verdict holds the
-    GIF on the retained frame list and no tile-cache encode runs here.
-    """
+    """Build distinct alpha frames with explicit durations to retain the frame-list route."""
     frames = []
     for i in range(len(durations_ms)):
         frame = Image.new("RGBA", size, (0, 0, 0, 0))
@@ -71,9 +52,7 @@ def _decode(name: str, durations_ms: list[int], fps: int = 30,
 
 
 def _walk(gif: KeyGIF, t0: float, step: float, count: int) -> list[int]:
-    """The picked index at every step, for count steps from t0. The steps stay
-    well under the one-second away-gap threshold, so the gap clamp never
-    fires and the walk reads the plain timeline."""
+    """Collect frame indices with steps below the away-gap threshold."""
     picks = []
     for i in range(count):
         gif.get_next_frame(now=t0 + i * step)
@@ -86,14 +65,7 @@ def _advances(picks: list[int]) -> int:
 
 
 def _illegal_backward_steps(picks: list[int]) -> list[tuple[int, int]]:
-    """Every step that goes backwards through the animation for a reason
-    other than the loop wrapping.
-
-    Correct playback sweeps the picked frames upward and then wraps once per
-    pass, from the highest frame it shows to the lowest. Any other decrease
-    means the sampled position itself moved backwards, which is what a grid
-    folded through the loop modulo does.
-    """
+    """Return backward steps other than the highest-to-lowest loop wrap."""
     lowest, highest = min(picks), max(picks)
     return [(before, after) for before, after in zip(picks, picks[1:])
             if after < before and not (before == highest and after == lowest)]
@@ -103,11 +75,7 @@ T0 = 1_000_000.0  # arbitrary wall-clock base, far from 0 to catch base-0 bugs
 
 
 def check_cap_limits_advances() -> int:
-    """A cap below the loop ceiling must throttle the frame advance.
-
-    Ten 100 ms frames run at 10 fps natively. Under a cap of 5 no more than
-    five of them may reach the key each second.
-    """
+    """Check that a cap of five exposes at most five native frames per second."""
     capped = _decode("fps_cap_capped.gif", [100] * 10, fps=5)
     native = _decode("fps_cap_native.gif", [100] * 10, fps=30)
     try:
@@ -139,12 +107,7 @@ def check_cap_limits_advances() -> int:
 
 
 def check_ceiling_cap_changes_nothing() -> int:
-    """A cap at the loop ceiling must leave the timeline untouched.
-
-    Ten 20 ms frames run at 50 fps, a rate whose frame edges do not land on
-    the ceiling's own 1/30 s grid. Quantizing at the ceiling would therefore
-    drop frames from a GIF that carries no cap at all.
-    """
+    """Check that the loop-ceiling cap does not quantize a faster GIF timeline."""
     gif = _decode("fps_cap_fast.gif", [20] * 10, fps=30)
     try:
         picks = _walk(gif, T0, 0.002, 100)  # one whole 0.2 s loop
@@ -159,15 +122,8 @@ def check_ceiling_cap_changes_nothing() -> int:
         gif.close()
 
 
-def check_cap_never_freezes_the_animation() -> int:
-    """The lowest cap on a common GIF must still animate.
-
-    Ten 100 ms frames is a one-second loop, the shape a stock GIF most often
-    has, and 1 is the bottom of the sidebar's range. A cap period as long as
-    the loop puts every sample on the same position: with the grid laid on
-    raw elapsed time that position is the start of the loop, and the GIF
-    stands on frame 0 for as long as it is shown.
-    """
+def check_low_cap_progress() -> int:
+    """Check that the one-per-second cap still advances a one-second GIF loop."""
     gif = _decode("fps_cap_freeze.gif", [100] * 10, fps=1)
     try:
         picks = _walk(gif, T0, 0.05, 1200)  # a full minute of playback
@@ -191,14 +147,8 @@ def check_cap_never_freezes_the_animation() -> int:
         gif.close()
 
 
-def check_position_does_not_depend_on_the_pass() -> int:
-    """The same position in the animation must pick the same frame, whichever
-    pass of the loop it falls in.
-
-    This is the ordering rule itself. A grid on raw elapsed time folded
-    through the modulo rotates the sampled positions from pass to pass, so
-    one moment in the animation shows a different frame each time round.
-    """
+def check_loop_phase_stability() -> int:
+    """Check that one animation phase selects the same frame on every loop pass."""
     cases = [
         ("fps_cap_phase_a.gif", [100] * 5, 3, 0.35),
         ("fps_cap_phase_b.gif", [100] * 7, 3, 0.45),
@@ -207,9 +157,7 @@ def check_position_does_not_depend_on_the_pass() -> int:
         gif = _decode(name, delays, fps=cap)
         try:
             total = sum(delays) / 1000.0
-            # Fix the start of playback first. The first pick is what sets it,
-            # so sampling straight at the position under test would put that
-            # position at zero and prove nothing.
+            # Seed playback before sampling a nonzero phase on later passes.
             gif.get_next_frame(now=T0)
             # One sample per pass, at the same position each time. The step
             # stays under the one-second away-gap threshold.
@@ -259,14 +207,8 @@ def check_no_backward_steps() -> int:
     return 0
 
 
-def check_non_loop_reaches_the_last_frame() -> int:
-    """A capped GIF that does not loop must still settle on its last frame.
-
-    That frame is what the key shows from then on, so the cap must not leave
-    playback resting in the middle of the animation. The last frame here is
-    far shorter than one cap period, so reading the position after the end
-    clamp instead of before it lands short of it.
-    """
+def check_non_loop_final_frame() -> int:
+    """Check that capped non-loop playback settles on its short final frame."""
     delays = [300, 300, 300, 40]
     gif = _decode("fps_cap_noloop.gif", delays, fps=3, loop=False)
     try:
@@ -288,12 +230,9 @@ def check_non_loop_reaches_the_last_frame() -> int:
 
 
 def check_degenerate_cap() -> int:
-    """A zero or negative cap must not divide by zero.
+    """Treat zero as uncapped and negative caps as one per second.
 
-    Zero reads as no cap, which is what a page carrying no fps key loads
-    under. A negative one clamps to the one-per-second floor, which InputVideo
-    does with the same value, and then the two-reads-per-pass floor lifts it
-    to whatever keeps the animation moving.
+    The two-reads-per-loop floor must keep the animation moving.
     """
     gif = _decode("fps_cap_zero.gif", [100] * 10, fps=30)
     try:
@@ -394,7 +333,7 @@ def check_native_rate() -> int:
         uneven.close()
 
 
-def check_constructor_takes_the_cap() -> int:
+def check_constructor_cap() -> int:
     """The page's fps must reach the object the page load builds."""
     gif = _decode("fps_cap_ctor.gif", [100] * 4, fps=7)
     try:
@@ -409,22 +348,19 @@ def check_constructor_takes_the_cap() -> int:
 
 
 def main() -> int:
-    # KeyGIF reads performance.cache-videos at construction, so the stub tier
-    # has to exist for the setting to be readable. Every GIF here carries
-    # alpha and stays on the retained frame list either way, and the picked
-    # index this scenario asserts on is the same on both routes.
+    # Provide the cache setting read at construction; alpha retains the frame list.
     fixtures.install_stub_globals({"performance": {"cache-videos": True}})
     fixtures.start_watchdog(60, label="scenario_gif_fps_cap")
     rc = check_cap_limits_advances()
     rc |= check_ceiling_cap_changes_nothing()
-    rc |= check_cap_never_freezes_the_animation()
-    rc |= check_position_does_not_depend_on_the_pass()
+    rc |= check_low_cap_progress()
+    rc |= check_loop_phase_stability()
     rc |= check_no_backward_steps()
-    rc |= check_non_loop_reaches_the_last_frame()
+    rc |= check_non_loop_final_frame()
     rc |= check_degenerate_cap()
     rc |= check_live_cap_change()
     rc |= check_native_rate()
-    rc |= check_constructor_takes_the_cap()
+    rc |= check_constructor_cap()
     return rc
 
 

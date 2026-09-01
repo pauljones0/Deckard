@@ -1,12 +1,6 @@
-"""
-Regression test for manifest-controlled asset ids and shell-free installs.
+"""Verify remote asset-ID validation and shell-free install commands."""
 
-plugin_id, icon_id and wallpaper_id come from a remote manifest.json.
-"""
-
-# StoreBackend.is_safe_asset_id whitelists an id at every join site, rejecting
-# rather than normalizing, and the install scripts run as argv lists with no
-# shell. download_repo is stubbed, so no network is involved.
+# Reject unsafe IDs at every path join and execute install steps as argv without a shell.
 import os
 import sys
 
@@ -126,7 +120,7 @@ def test_install_script_runs_without_shell() -> None:
         def generate_action_index(self): pass
         def get_plugins(self): return {}
         def get_plugin_by_id(self, plugin_id, include_disabled=True): return None
-        def load_error_of(self, folder): return None
+        def get_load_error(self, folder): return None
 
     class StubSignalManager:
         def trigger_signal(self, *a, **k): pass
@@ -157,9 +151,7 @@ def test_install_script_runs_without_shell() -> None:
     assert len(captured) == 1, f"expected exactly the __install__.py invocation, got {captured}"
     argv = captured[0]
     assert isinstance(argv, list), f"install script must run as an argv list, got {argv!r}"
-    # A confinement prefix (bwrap) may precede the interpreter; the script
-    # itself must be the interpreter plus the literal hook path, unquoted
-    # and unwrapped, so no shell ever parses a path component.
+    # bwrap may precede the interpreter, but the literal hook path must remain an argv token.
     idx = argv.index(sys.executable)
     assert argv[idx + 1] == os.path.join(local_path, "__install__.py")
 
@@ -211,10 +203,7 @@ def test_ref_and_sha_validator_cases() -> None:
 
 
 def test_clone_repo_rejects_injection() -> None:
-    """The devel clone path passes remote-catalog values to git. A branch of
-    'main; touch <marker>' must be refused with 400 before any git call. The
-    injected side effect must never happen. git must only ever run as an argv
-    list."""
+    """Reject injected refs before Git and invoke accepted refs only through argv."""
     sb = _make_backend()
 
     marker = os.path.join(gl.DATA_PATH, "mr16_injection_marker")
@@ -227,9 +216,7 @@ def test_clone_repo_rejects_injection() -> None:
         calls.append(args)
         # A shell string would show up here as a str, which this forbids.
         assert isinstance(args, list), f"git must be invoked as argv list, got {args!r}"
-        # Stand in for git clone, which creates the staging dir. clone_repo
-        # clones into cache/ and swaps at the end, so the later VERSION write
-        # and swap both work.
+        # Create the staging directory that a successful git clone supplies.
         if len(args) >= 2 and args[1] == "clone":
             os.makedirs(args[-1], exist_ok=True)
         return 0
@@ -256,11 +243,7 @@ def test_clone_repo_rejects_injection() -> None:
     )
     assert not os.path.exists(marker), "injected command must never create its marker"
 
-    # 3. A clean branch reaches git only as an argv list. git is fully
-    #    stubbed above, so this needs no real binary and asserts the argv
-    #    shape. checkout is the token that matters, because it handles a tag
-    #    ref. shutil.which is patched, so the "git not installed" branch
-    #    cannot fire on a machine without git.
+    # A clean ref reaches checkout as argv; patch shutil.which to isolate host Git availability.
     calls.clear()
     import src.backend.Store.StoreBackend as backend_module
     real_which = backend_module.shutil.which
@@ -275,9 +258,7 @@ def test_clone_repo_rejects_injection() -> None:
     checkout_calls = [c for c in calls if len(c) >= 4 and c[3] == "checkout"]
     assert checkout_calls, f"expected an argv 'git checkout' call, got {calls}"
     argv = checkout_calls[0]
-    # The clone is prepared in a staging dir under cache/ and swapped into
-    # local_path afterwards, so the -C target is the staging tree. The
-    # property under test is the argv list with no shell.
+    # The checkout -C target is the cache staging tree, not the final install path.
     assert argv[:2] == ["git", "-C"] and argv[3] == "checkout", f"unexpected argv {argv!r}"
     assert argv[2].startswith(os.path.join(gl.DATA_PATH, "cache") + os.sep), (
         f"clone must be prepared in the cache staging area, got {argv[2]!r}"

@@ -47,7 +47,7 @@ from src.backend.Store.install_request import (
     INSTALL_ACTION,
     UPDATE_ACTION,
     ConfirmedActionGate,
-    is_store_id,
+    is_safe_store_id,
 )
 from src.backend.Store.store_result import Ok
 from src.windows.ui_adapter import GtkUIAdapter
@@ -67,23 +67,14 @@ if TYPE_CHECKING:
 import globals as gl
 
 
-# How long a queued Ctrl+C can wait for a dispatch before the next one force
-# quits from signal-handler context. See App._on_sigint. This is a third of the
-# 6 s force_quit watchdog. The gate is elapsed time with the teardown not
-# started, never the press count. A busy app answers late, and key repeat
-# sends three presses in 66 ms.
+# Escalate a queued Ctrl+C after two seconds only if teardown has not started.
+# Elapsed time, not press count, avoids busy-loop and key-repeat false escalation.
 SIGINT_ESCALATE_AFTER_S = 2.0
 
 
 def unix_signal_add(priority: int, signum: int, callback: Callable[[], bool]) -> bool:
-    """Install a GLib main-loop source for signum. True if one went in.
-
-    GLib 2.80 moved the Unix API from the GLib-2.0 introspection namespace to
-    GLibUnix-2.0. The runtime GLib therefore carries exactly one of the two
-    spellings: GLib.unix_signal_add on older distributions,
-    GLibUnix.signal_add on current ones. This tries both, and returns False
-    when neither is introspectable.
-    """
+    """Install a main-loop signal source through old GLib or current GLibUnix APIs.
+    Return False when neither API is available or installation fails."""
     add = getattr(GLib, "unix_signal_add", None)
     if add is None:
         try:
@@ -95,10 +86,7 @@ def unix_signal_add(priority: int, signum: int, callback: Callable[[], bool]) ->
     try:
         add(priority, signum, callback)
     except Exception as e:
-        # A resolved symbol can still fail. A signum that g_unix_signal_add
-        # refuses, a GLib without UNIX signal support, and an argument mismatch
-        # between the two spellings all raise here. An escaping exception
-        # leaves App.__init__ and stops the startup.
+        # Contain refused signals, missing Unix support, and API argument mismatches.
         log.warning(f"Could not install a GLib unix-signal source for {signum}: {e}")
         return False
     return True
@@ -116,14 +104,10 @@ class App(Adw.Application):
         # until then. It lives here for the same reason as the latch above.
         self._sigint_first_at: float | None = None
 
-        # The live engine-to-UI adapter, so on_quit can detach it. It stays
-        # None until on_activate builds the window, so a TERM before that
-        # raises nothing here.
+        # Keep the UI adapter for quit-time detach; None permits TERM before activation.
         self._ui_adapter: GtkUIAdapter | None = None
 
-        # on_activate fills both. Other windows read them through gl.app, which
-        # publishes before the loop starts. Declare them here, so an early
-        # reader finds None instead of an AttributeError.
+        # Declare activation-owned slots so early gl.app readers get None, not AttributeError.
         self.deck_manager: "DeckManager | None" = None  # late-init: on_activate
         self.style_manager: "Adw.StyleManager | None" = None  # late-init: on_activate
 
@@ -145,25 +129,12 @@ class App(Adw.Application):
     def on_activate(self, app: "App") -> None:
         log.trace("running: on_activate")
         if getattr(self, "_activate_completed", False):
-            # GApplication forwards a second launch here as a remote
-            # activation.
-            # A rebuild orphans every gl.app.main_win reader and the cached UI
-            # bindings of the controllers, and a boot argv with -b never
-            # presents the replacement. on_reopen gives a forwarded activation
-            # and the reopen action one code path.
-            #
-            # The guard reads a completion flag, not main_win. The first
-            # statement of MainWindow.__init__ publishes self.main_win before
-            # the build can fail, so a main_win guard latches on a failed build
-            # and presents a half-built window. This flag stays False on such a
-            # failure, and the next activation rebuilds.
+            # Forward later activations to reopen without rebuilding cached UI bindings.
+            # Only completion latches; a failed constructor can publish a half-built main_win.
             self.on_reopen()
             return
 
-        # The code below needs the global objects. This application is
-        # constructed before they exist, because its registration decides
-        # whether the launch boots. The deck manager and the settings manager
-        # both exist by the time the main loop activates it.
+        # Registration constructs App before globals; activation runs after managers exist.
         self.deck_manager = gl.deck_manager
 
         app_settings = gl.settings_manager.app()
@@ -181,11 +152,8 @@ class App(Adw.Application):
         else:
             self.style_manager.set_color_scheme(Adw.ColorScheme.FORCE_DARK) # Not everything looks good in light mode at the moment #TODO
 
-        # Install the engine-to-UI adapter before the window construction.
-        # Every boot-time add_page runs inside the MainWindow constructor, so a
-        # later install misses each bind and leaves every preview dirty-marked.
-        # attach_window() runs after, for the map and unmap handlers, and it
-        # re-scans the stack to bind the children the constructor added.
+        # Install before MainWindow so boot-time pages bind instead of staying dirty.
+        # Attach afterward to add map handlers and rescan constructor-created children.
         adapter = GtkUIAdapter()
         self._ui_adapter = adapter
         ui_port.install(adapter)
@@ -204,9 +172,7 @@ class App(Adw.Application):
             self.main_win.present()
 
         self.show_onboarding()
-        # Call directly, because MainWindow.do_after_build_tasks() drains
-        # on_finished inside the constructor above, so an entry added to that
-        # list here never runs.
+        # Call directly because the constructor already drained its completion tasks.
         self.show_donate()
         # self.show_permissions()
 
@@ -228,10 +194,8 @@ class App(Adw.Application):
         gl.app = self
         startup_queue.get().drain_app_ready()
 
-        # Warm the plugin backends on their own daemon thread, so a backend
-        # subprocess launch cannot block this GTK main loop. Background mode
-        # needs it most, because no config UI opens there to start a backend
-        # before the first hardware press.
+        # Warm plugin backends off-main so subprocess startup cannot block GTK.
+        # Background mode has no configuration UI to start them before input.
         if gl.plugin_manager is not None:
             gl.plugin_manager.warm_up_plugins()
 
@@ -248,9 +212,7 @@ class App(Adw.Application):
         self.show_donate(ignore_background_launch=True)
 
     def let_user_select_asset(self, default_path: str | None, callback_func: Callable[..., Any] | None = None, *callback_args: Any, **callback_kwargs: Any) -> None:
-        # Reuse the window instead of orphaning it with a new one. on_close()
-        # nulls gl.asset_manager and self.asset_manager, so this constructs the
-        # window on first use, and again after a close.
+        # Reuse the chooser until its close handler clears both stored references.
         asset_manager = self.asset_manager
         if asset_manager is None:
             asset_manager = AssetManager(application=self, main_window=self.main_win)
@@ -305,28 +267,22 @@ class App(Adw.Application):
         self.permissions.present()
 
     def on_quit(self, *args: Any) -> None:
-        # Run at most once. Many routes reach here: the TERM and HUP source,
-        # which stays armed for every further signal, the main-loop idle that
-        # Ctrl+C queues, the Gio quit action, the tray, and the window close
-        # handler. A second arrival during a teardown re-destroys the window,
-        # triggers AppQuit again, re-runs close_all(), and arms a second
-        # force_quit watchdog. The caller continues after this early return.
+        # Run once across TERM, HUP, Ctrl+C, Gio, tray, and window-close routes.
+        # Re-entry would repeat window, signal, deck, and watchdog teardown.
         if self._quit_started:
             return
         self._quit_started = True
 
         log.info("Quitting...")
 
-        # Detach the UI first. The media and tick threads keep running, and a
-        # push into a window under destruction crashes. The null port makes
-        # those threads dirty-mark instead.
+        # Arm the six-second force-quit watchdog before every teardown step.
+        # UI, D-Bus, window, or plugin-hook stalls must not park shutdown.
+        timer_wheel.schedule(6, self.force_quit, name="force_quit_timer")
+
+        # Detach UI first so live media and tick threads dirty-mark instead of painting destruction.
         ui_port.install(None)
-        # Drop the references of the adapter too: the bound DeckStackChildren,
-        # the window, and the per-controller throttle and coalescer state. The
-        # uninstall only stops new calls, and it still points at the widget graph
-        # while the tick threads wind down. Use getattr, not self._ui_adapter,
-        # so a quit that lands before __init__ finished still reaches
-        # terminate_all_backends().
+        # Detach the adapter's widget, throttle, and coalescer references while threads wind down.
+        # getattr permits quit before App construction completed.
         adapter = getattr(self, "_ui_adapter", None)
         if adapter is not None:
             adapter.detach_window()
@@ -334,110 +290,60 @@ class App(Adw.Application):
 
         stop_dbus_service()
 
-        # Guard the window teardown. A TERM that arrives before on_activate
-        # built the window raises AttributeError here and stops the teardown
-        # before terminate_all_backends() below, which orphans the backends.
-        # main() installs the signal handlers only after it publishes every
-        # global that this method reads, so this stays the only guard needed.
+        # Guard TERM before window activation so teardown still terminates backends.
         self._destroy_main_window()
 
-        # Force the quit when the normal quit cannot finish. Arm the watchdog
-        # before the AppQuit fan-out below. That fan-out runs third-party quit
-        # hooks inline, and nothing bounds a hook. A hook that blocks, such as
-        # a plugin that waits on a dead socket, parks the quit while no
-        # watchdog runs. With the watchdog the block costs 6 s and a
-        # force_quit. Everything between here and the deck teardown runs on the
-        # watchdog clock.
-        timer_wheel.schedule(6, self.force_quit, name="force_quit_timer")
-
-        # Call synchronously, because this process ends in os._exit a few
-        # statements below, so an AppQuit handler on the main loop never runs.
-        # trigger_signal_sync isolates the handlers, so a plugin that raises in
-        # its quit hook only logs and the fan-out continues. An abort here
-        # skips close_all(), which leaves a deck open and fails the next
-        # startup with TransportError(-1), and skips terminate_all_backends(),
-        # which orphans the plugin backends. The _quit_started latch above
-        # sends every later quit route to the early return, so an abort here
-        # cannot retry.
+        # Dispatch AppQuit synchronously before os._exit, isolating each plugin failure.
+        # An aborted fan-out would skip deck close and backend termination with no retry.
         gl.signal_manager.trigger_signal_sync(Signals.AppQuit)
 
         gl.threads_running = False
 
-        # Stop a pending boot re-enumeration before close_all() below. The
-        # stop event wakes a rescan that waits in backoff, and the bounded join
-        # covers an enumeration in flight, so the rescan cannot register a new
-        # controller while the quit path closes the existing ones.
+        # Stop and bounded-join boot rescans before closing controllers.
+        # No in-flight enumeration may register a controller during shutdown.
         if gl.deck_manager is not None:
             gl.deck_manager.stop_boot_rescan()
 
-        # Write every page edit that still waits on its debounce timer. Those
-        # timers run on daemon threads, and this process ends in os._exit, so a
-        # quit within a second of the last edit loses it. This call is an
-        # atomic_write_json, a pair of fsyncs with no timeout, so a wedged
-        # filesystem costs the 6 s watchdog above instead of the whole quit.
+        # Flush daemon-debounced page edits before os._exit can lose them.
+        # Unbounded atomic fsyncs remain covered by the six-second watchdog.
         try:
             page_flush.get().flush_all()
         except Exception as e:
             log.warning(f"Could not write pending page edits during shutdown: {e}")
 
-        # Release the store fan-out pool. Its workers are not daemons and park
-        # on the work queue between passes, so the join loop further below
-        # waits its full bound on each one and then rides the force-quit timer.
-        # It runs before the cache flush below, because a pass that keeps
-        # fetching through the deck teardown dirties the index again after the
-        # flush wrote it, and os._exit then drops those entries, which leaves
-        # cache files that no last-use clock ages out.
+        # Stop non-daemon store workers before joins and before cache-index flush.
+        # A later fetch would dirty the flushed index and os._exit would lose it.
         try:
             if gl.store_backend is not None:
                 gl.store_backend.shutdown()
         except Exception as e:
             log.warning(f"Could not stop the store backend during shutdown: {e}")
 
-        # Drain the deferred index writes of the store cache. This process
-        # ends in os._exit(0), which skips the StoreCache atexit hook, and the
-        # flush timer is a daemon, so without this call every quit loses the
-        # last-use clock renewals of the last browse. The guard covers a partly
-        # built process, and a failure here must not stop the teardown. This
-        # sits after the watchdog above, because the flush is an
-        # atomic_write_json and a wedged filesystem blocks it without limit.
+        # Flush deferred cache-index clocks because os._exit skips atexit and daemon timers.
+        # Contain failures; the watchdog bounds an atomic write on a wedged filesystem.
         try:
             if gl.store_backend is not None:
                 gl.store_backend.store_cache.flush_index()
         except Exception as e:
             log.warning(f"Could not flush the store cache index during shutdown: {e}")
 
-        # Detach the async log sinks before the slow teardown below. Each sink
-        # owns a multiprocessing writer queue, and only a handler removal
-        # releases its POSIX semaphores. A detach at the end of on_quit lets
-        # the force_quit os._exit(1) skip the removal, and the multiprocessing
-        # resource_tracker then reports leaked semaphores. The synchronous
-        # logs.log and stderr sinks stay up for the remaining messages. A
-        # plugin thread that logs after this point loses the record, which
-        # affects third-party plugins only. The per-logger guard keeps one
-        # failed detach from stopping the teardown.
+        # Detach queued plugin sinks before force_quit can skip POSIX semaphore cleanup.
+        # Keep synchronous app sinks; isolate each detach failure during teardown.
         for logger_obj in gl.loggers.values():
             try:
                 logger_obj.remove_sink()
             except Exception as e:
                 log.warning(f"Failed to detach log sink during shutdown: {e}")
 
-        # Run before the close loop below. close_all() submits the terminal
-        # ClearAndClose control message and bounds a join on each media thread.
-        # Without it, media_player.stop() races a writer that never cleared and
-        # closed the device. It also runs before the slow joins. A deck that
-        # is still open when force_quit fires fails the next startup with
-        # TransportError(-1).
+        # Start ClearAndClose and bounded media-writer joins before controller close and slow joins.
+        # A device left open at force_quit can fail the next startup.
         deck_manager = gl.deck_manager
         if deck_manager is not None:
             deck_manager.close_all()
 
         for ctrl in (deck_manager.deck_controller if deck_manager is not None else []):
-            # app_quit=True skips the action teardown, which can run plugin
-            # hooks through run_on_main. on_quit already runs on the main
-            # thread against the 6 s force_quit timer, and a plugin gains
-            # nothing from a notification before os._exit(). close_all() above
-            # already drove each writer through ClearAndCloseMsg, so the device
-            # close here does nothing.
+            # Skip plugin action hooks during main-thread quit under the watchdog.
+            # close_all already sent ClearAndClose, so device close is idempotent.
             ctrl.close(remove_media=True, app_quit=True)
 
         if deck_manager is not None:
@@ -451,17 +357,11 @@ class App(Adw.Application):
         )
         shutdown_thumbnail_pool()
 
-        # Stop the plugin-event batches, so a late trigger_event() cannot start
-        # a new lane thread during the teardown. This joins nothing; lane
-        # runners are daemon threads, so a wedged observer cannot delay the quit.
+        # Stop new event lanes without joining daemon runners or wedged observers.
         from src.backend.PluginManager import event_dispatch
         event_dispatch.shutdown()
 
-        # Detached tile-cache builders are daemon threads inside cv2. A decode
-        # that is still running when the interpreter tears the C++ runtime down
-        # aborts the process after a clean shutdown. Releases during the run
-        # join their own builder; this covers the ones whose consumers are
-        # still attached here.
+        # Join attached cv2 tile builders before C++ runtime teardown can abort.
         from src.backend.DeckManagement.Subclasses import mp4_tile_cache
         mp4_tile_cache.shutdown_builders()
 
@@ -485,24 +385,14 @@ class App(Adw.Application):
         os._exit(0)
 
     def _destroy_main_window(self) -> None:
-        """Tear down the main window, when a window exists that can go.
-
-        close() is no substitute, because MainWindow.on_close shows the
-        keep-running dialog when the setting is unset, and otherwise re-enters
-        on_quit through GLib.idle_add.
-        """
+        """Destroy an existing main window without re-entering the close dialog path."""
         main_win = getattr(self, "main_win", None)
         if main_win is None:
             # A TERM arrived before on_activate built the window.
             return
         if not main_win.get_realized():
-            # GTK 4.22 segfaults when it disposes a window that never realized.
-            # destroy(), remove_window() and set_application(None) all abort
-            # there, and only close() and a skip are safe. Background mode
-            # builds main_win and skips present(), so a destroy here kills the
-            # process before terminate_all_backends() runs, which orphans every
-            # plugin backend. An unrealized window holds no surface, so the
-            # skip loses nothing.
+            # GTK 4.22 aborts when destroy, remove, or detach disposes an unrealized window.
+            # Background windows have no surface, so skip and continue backend teardown.
             log.debug("Main window was never realized (background mode); "
                       "skipping destroy to avoid the GTK unrealized-dispose "
                       "abort")
@@ -510,19 +400,14 @@ class App(Adw.Application):
         try:
             main_win.destroy()
         except Exception as e:
-            # The first statement of MainWindow.__init__ publishes main_win
-            # before the build can fail, so this can be a half-built window.
-            # This except cannot catch the unrealized-dispose abort, which is
-            # native and not a Python exception.
+            # MainWindow can publish before construction fails, leaving a half-built object.
+            # Native unrealized-dispose aborts cannot reach this handler.
             log.warning(f"Failed to destroy the main window during shutdown: {e}")
 
     def force_quit(self) -> None:
         log.info("Forcing quit...")
-        # Last chance to reap the plugin backends. They start with
-        # start_new_session=True, so nothing kills them after this os._exit.
-        # The call does not block, it is one killpg per backend, it is safe
-        # from the timer-wheel dispatch thread, and it can run beside a
-        # concurrent on_quit.
+        # Kill each separate-session backend without blocking before os._exit.
+        # This is safe from the timer thread and beside concurrent normal teardown.
         try:
             if gl.plugin_manager is not None:
                 gl.plugin_manager.terminate_all_backends()
@@ -531,78 +416,47 @@ class App(Adw.Application):
         os._exit(1)
 
     def _on_unix_signal(self, *args: Any) -> bool:
-        """SIGTERM and SIGHUP entry point. Runs on_quit and keeps the source.
-
-        A true return on an idle source means run again, which spins the main
-        loop. The Gio quit action and the GLib.idle_add(on_quit) routes
-        therefore do not use this method.
-        """
-        # An exception from on_quit propagates. GLib then drops the source, and
-        # a later TERM kills the process, which keeps a broken teardown from
-        # making the app immune to TERM.
+        """Run on_quit for SIGTERM or SIGHUP and keep the Unix signal source.
+        Do not use this return contract for idle or Gio quit routes."""
+        # Let teardown exceptions drop the source so a later TERM uses the default action.
         self.on_quit()
-        # GLib destroys a unix-signal source whose callback returns a false
-        # value, and it restores SIG_DFL for that signum, so the next TERM
-        # kills the process. on_quit returns through its _quit_started latch
-        # once a teardown runs, so a plain return disarms the handler.
+        # Continue keeps GLib from restoring SIG_DFL after the quit latch returns.
         return GLib.SOURCE_CONTINUE
 
     def _on_sigint(self, signum: int, frame: "FrameType | None") -> None:
-        """SIGINT entry point. Queues the teardown, and escalates on a wedge.
-
-        The _quit_started gate keeps a press during a running teardown a no-op.
-        """
+        """Queue SIGINT teardown and escalate only before the quit latch starts."""
         now = time.monotonic()
         if self._sigint_first_at is None:
             self._sigint_first_at = now
         elif (not self._quit_started
                 and now - self._sigint_first_at >= SIGINT_ESCALATE_AFTER_S):
-            # The main loop dispatches the queued on_quit, so a press on a
-            # wedged loop never arrives. TERM and HUP are loop sources too, so
-            # only SIGKILL ends such a process, and SIGKILL orphans the plugin
-            # backends and skips the force_quit watchdog that on_quit arms.
+            # Escalate if the main loop never dispatches queued teardown.
+            # Once latched, its watchdog bounds stalls without cutting ordered deck close short.
             log.warning(
                 f"Interrupt requested {now - self._sigint_first_at:.1f}s ago and "
                 f"the teardown never started (the main loop is not dispatching); "
                 f"forcing quit"
             )
-            # Back stop. This handler and force_quit both log, a log sink
-            # takes a lock, and a wedge inside one swallows the escalation. A
-            # further Ctrl+C then kills the process.
+            # Restore SIG_DFL so another Ctrl+C escapes a logging-lock wedge.
             signal.signal(signal.SIGINT, signal.SIG_DFL)
             # force_quit is the one call that is safe from handler context,
             # because it only terminates the backends and calls os._exit(1).
             self.force_quit()
             return
-        # A Python handler runs between bytecodes on the main thread, so it can
-        # interrupt a render, a GTK callback, or a section that holds a lock.
-        # The main loop runs on_quit instead, which is where the TERM and HUP
-        # sources run it, so every signal route uses one teardown context.
-        # PRIORITY_DEFAULT matches those sources, because the default idle
-        # priority sits below the GTK frame-clock redraws.
+        # Queue teardown instead of interrupting render, GTK, or locked sections.
+        # PRIORITY_DEFAULT matches TERM and HUP sources above redraw idles.
         GLib.idle_add(self.on_quit, priority=GLib.PRIORITY_DEFAULT)
 
     def register_signal_handlers(self) -> None:
-        # SIGINT stays a Python-level handler. The PyGObject wakeup-fd bridge
-        # fires it promptly under the GLib loop, and a custom handler keeps
-        # register_sigint_fallback in Gio.Application.run inert. That fallback
-        # reads signal.getsignal(SIGINT), cannot see a GLib unix-signal source,
-        # and installs its own handler that routes Ctrl+C to app.quit() and
-        # skips the on_quit teardown. The handler body only queues onto the main
-        # loop. See _on_sigint.
+        # Keep SIGINT at Python level so Gio cannot replace it with app.quit().
+        # The PyGObject wakeup bridge runs it promptly, and it only queues main-loop work.
         signal.signal(signal.SIGINT, self._on_sigint)
-        # SIGTERM and SIGHUP use GLib-native sources on the main loop, so a
-        # logout TERM runs the full teardown, and terminate_all_backends() in
-        # particular. The backends run in their own session, so no killpg
-        # reaches them. Register here, not at loop start, because GLib installs
-        # its sigaction at once, so a signal before the loop stays pending. The
-        # route uses _on_unix_signal for the return value it needs.
+        # Use main-loop TERM and HUP sources so separate-session backends get full teardown.
+        # Register now so pre-loop signals stay pending for _on_unix_signal.
         for signum in (signal.SIGTERM, signal.SIGHUP):
             if unix_signal_add(GLib.PRIORITY_DEFAULT, signum, self._on_unix_signal):
                 continue
-            # This GLib has no introspectable unix-signal source. A Python
-            # handler still runs the full teardown, and it fires between
-            # bytecodes instead of as a loop source.
+            # Fall back to a Python handler when GLib exposes no Unix source.
             log.warning(
                 f"No GLib unix-signal source available for {signum}; falling "
                 f"back to a Python-level handler"
@@ -610,35 +464,27 @@ class App(Adw.Application):
             signal.signal(signum, self._on_unix_signal)
 
     def add_signals(self) -> None:
-        # GApplication exports the whole action group on the session bus, so
-        # any peer can activate either of these. Both gates answer every
-        # activation with a confirmation before any work starts; the app's
-        # own install paths call the store backend directly and reach neither
-        # action. See src/backend/Store/install_request.py.
+        # Any session-bus peer can activate these exported actions.
+        # Confirm before work; internal store paths bypass both gates.
         self.update_assets_gate = ConfirmedActionGate(
             UPDATE_ACTION, self._update_all_assets, self._confirm_update_request)
         self.update_all_assets_action = self.update_assets_gate.add_to(self)
 
         self.install_gate = ConfirmedActionGate(
             INSTALL_ACTION, self._install_plugin, self._confirm_install_request,
-            target_type="s", validate=is_store_id)
+            target_type="s", validate=is_safe_store_id)
         self.install_plugin_action = self.install_gate.add_to(self)
 
     def _dialog_parent(self) -> "Gtk.Window | None":
-        """A window to hang a gate's confirmation on, or None.
-
-        The app can run with no window at all, which the tray-only autostart
-        does, and a prompt then stands on its own rather than never appear.
-        """
+        """Return a confirmation parent, or None so tray-only prompts stand alone."""
         window = self.get_active_window()
         if window is not None:
             return window
         return cast("Gtk.Window | None", getattr(self, "main_win", None))
 
     def _confirm_update_request(self, _subject: str) -> bool:
-        """Whether an update of every asset that arrived on the exported
-        action may start. It runs on the gate's own thread, so the dialog
-        marshals itself."""
+        """Confirm an exported all-assets update from the gate thread.
+        The dialog marshals itself to GTK."""
         from src.windows.Store.install_consent import make_update_confirm
         return make_update_confirm(self._dialog_parent())()
 
@@ -685,16 +531,14 @@ class App(Adw.Application):
             self.set_working(False)
             return
 
-        # This runs on the gate's request thread, so both prompts marshal to
-        # the main loop, the same as a store-window install. The set prompt
-        # names every item before the first download; the script prompt gates
-        # each plugin's own install step.
-        from src.windows.Store.install_consent import make_consent, make_set_consent
+        # Both gate-thread prompts marshal to GTK.
+        # Confirm the full set before download and each plugin script before execution.
+        from src.windows.Store.install_consent import make_install_script_consent, make_dependency_consent
         window = self._dialog_parent()
         report = dependencies.install_with_dependencies(
             store_backend, dependencies.plugin_item(plugin),
-            confirm_set=make_set_consent(window),
-            ask_install_script=make_consent(window))
+            confirm_set=make_dependency_consent(window),
+            ask_install_script=make_install_script_consent(window))
         if report.declined:
             self.set_working(False)
             return
@@ -702,9 +546,7 @@ class App(Adw.Application):
             self.send_notification("dialog-information-symbolic", "Failed to install plugin",
                                    dependencies.failure_message(report, plugin_id))
         elif gl.plugin_manager is not None and gl.plugin_manager.get_plugin_by_id(plugin_id) is None:
-            # The files installed but the plugin did not come up. The reload
-            # already told the user why; a success line on top of that error
-            # would contradict it.
+            # Reload already reported why the installed plugin did not start.
             pass
         else:
             self.send_notification("dialog-information-symbolic", "Plugin installed",
@@ -729,12 +571,7 @@ class App(Adw.Application):
                           body: str,
                           button: tuple[str, str, GLib.Variant | None] | None = None,
                           category: str = "im.error") -> None:
-        """Safe from any thread, because the body runs on the GTK main thread.
-
-        Most callers are background threads, such as store installs and plugin
-        loads, so the settings read and the Gio.Notification construction must
-        marshal too.
-        """
+        """Queue notification settings and construction on GTK from any caller thread."""
         parent_send = super().send_notification
 
         def _send() -> bool:
@@ -769,7 +606,7 @@ class App(Adw.Application):
             button=("Install", "app.install-plugin", GLib.Variant.new_string(plugin_id))
         )
     def open_store(self, callback_agreed: bool | None = None) -> None:
-        agreed = gl.settings_manager.app().responsibility_notes_agreed
+        agreed = gl.settings_manager.app().responsibility_notes_accepted
 
         if not agreed:
             if callback_agreed is None:

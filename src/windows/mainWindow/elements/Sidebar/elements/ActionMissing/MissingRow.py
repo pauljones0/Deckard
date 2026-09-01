@@ -97,27 +97,24 @@ class MissingRow(Adw.PreferencesRow):
         if plugin is None:
             self.show_install_error()
             return
-        # Install the plugin and whatever its manifest names beside it. The
-        # read of the report keeps a failed install from reaching the
-        # installed UI reset. Both prompts gate the install the same way a
-        # store-window install is gated; this runs on a worker thread, so
-        # each one marshals to the main loop.
-        from src.windows.Store.install_consent import make_consent, make_set_consent
+        # Install the plugin and its manifest dependencies, then inspect the report before UI reset.
+        # Both consent prompts marshal from this worker to the main loop.
+        from src.windows.Store.install_consent import (
+            make_dependency_consent,
+            make_install_script_consent,
+        )
         window = gl.app.main_win if gl.app is not None else None
         report = dependencies.install_with_dependencies(
             backend, dependencies.plugin_item(plugin),
-            confirm_set=make_set_consent(window),
-            ask_install_script=make_consent(window))
+            confirm_set=make_dependency_consent(window),
+            ask_install_script=make_install_script_consent(window))
         if not report.ok:
             self.show_install_error()
-            # The row label only says that this plugin did not install. That
-            # is the whole story only when this plugin is what failed and
-            # nothing else was touched. Otherwise something else failed, or
-            # something landed and stays installed, and nothing else on
-            # screen would say so.
-            failed_is_the_plugin = (report.failed is not None
-                                    and report.failed.data is plugin)
-            if report.installed or not failed_is_the_plugin:
+            # The row label is sufficient only when this plugin failed and nothing was installed.
+            # Notify for dependency failure or partial installation.
+            requested_plugin_failed = (report.failed is not None
+                                       and report.failed.asset is plugin)
+            if report.installed or not requested_plugin_failed:
                 name = plugin.plugin_name or plugin.plugin_id or "the plugin"
                 noun = dependencies.failure_noun(report, "plugin")
                 gl.notify.error(dependencies.failure_message(report, name),
@@ -163,14 +160,12 @@ class MissingRow(Adw.PreferencesRow):
             # No page on this deck, so there is no action entry to remove.
             return
 
-        # Remove only the action entry that the caller names. A delete of the
-        # whole action_objects[type][key] subtree also drops the action of
-        # every other state and index on this input.
+        # Remove only the named action entry.
+        # Deleting its input subtree would also drop every other state and index.
         state_actions = page.action_objects.get(identifier.input_type, {}).get(identifier.json_identifier, {}).get(self.state, {})
         action = state_actions.pop(self.index, None)
-        # The framework owns the teardown. It notifies, then calls clean_up()
-        # on the removed object. It does nothing for None, and for an object
-        # that is not an ActionCore.
+        # Framework teardown notifies and then calls clean_up on ActionCore objects.
+        # It ignores None and other object types.
         ActionCore.teardown(action)
 
         # Remove from page json

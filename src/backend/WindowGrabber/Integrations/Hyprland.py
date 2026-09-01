@@ -17,7 +17,7 @@ import contextlib
 import os
 import socket
 import threading
-from src.backend.WindowGrabber.Integration import Integration, WATCHER_STOP_TIMEOUT_S
+from src.backend.WindowGrabber.Integration import Integration, WATCHER_STOP_TIMEOUT_S, QUERY_TIMEOUT_S
 from src.backend.WindowGrabber.Window import Window
 
 import subprocess
@@ -93,31 +93,28 @@ class Hyprland(Integration):
 
         thread.stop()
         if thread is threading.current_thread():
-            # Never join the calling thread to itself. A window change can
-            # reach a page write, and a page write re-gates. The loop ends at
-            # its next stop check. The return also keeps the timeout warning
-            # below for a real timeout, not for a skipped join.
+            # A window-triggered page write can re-gate from this thread, so never join it.
+            # Its next stop check ends the loop; reserve the warning for an attempted join timeout.
             return
 
         thread.join(timeout=WATCHER_STOP_TIMEOUT_S)
         if thread.is_alive():
-            # The thread is a daemon and stop() shuts its socket down, so a
-            # listener parked in recv unwinds on its own. The reference drops
-            # either way, so a later start builds a clean thread.
+            # This daemon unwinds after stop shuts down a listener blocked in recv.
+            # Drop the reference so a later start builds a fresh thread.
             log.warning("The Hyprland active window watcher did not stop within the timeout")
 
     @override
     def get_all_windows(self) -> list[Window]:
         windows: list[Window] = []
         try:
-            output = subprocess.check_output([*self.command_prefix, "hyprctl", "clients", "-j"], text=True, cwd="/").strip()
+            output = subprocess.check_output([*self.command_prefix, "hyprctl", "clients", "-j"], text=True, cwd="/", timeout=QUERY_TIMEOUT_S).strip()
             clients = json.loads(output)
 
             for client in clients:
                 if "class" in client and "title" in client:
                     windows.append(Window(client["class"], client["title"]))
 
-        except (subprocess.CalledProcessError, OSError) as e:
+        except (subprocess.CalledProcessError, OSError, subprocess.TimeoutExpired) as e:
             # OSError covers a missing binary. The argv list runs no shell,
             # which would turn that into a 127 CalledProcessError.
             log.error(f"An error occurred while running hyprctl: {e}")
@@ -129,12 +126,12 @@ class Hyprland(Integration):
     @override
     def get_active_window(self) -> Window | None:
         try:
-            output = subprocess.check_output([*self.command_prefix, "hyprctl", "activewindow", "-j"], text=True, cwd="/").strip()
+            output = subprocess.check_output([*self.command_prefix, "hyprctl", "activewindow", "-j"], text=True, cwd="/", timeout=QUERY_TIMEOUT_S).strip()
             client = json.loads(output)
 
             if "class" in client and "title" in client:
                 return Window(client["class"], client["title"])
-        except (subprocess.CalledProcessError, OSError) as e:
+        except (subprocess.CalledProcessError, OSError, subprocess.TimeoutExpired) as e:
             # OSError covers a missing binary. The argv list runs no shell,
             # which would turn that into a 127 CalledProcessError.
             log.error(f"An error occurred while running hyprctl: {e}")
@@ -145,15 +142,10 @@ class Hyprland(Integration):
 
 
 class WatchForActiveWindowChange(threading.Thread):
-    """Watch for active window changes on Hyprland's IPC event socket.
+    """Watch Hyprland socket2 events without polling helper processes.
 
-    This thread connects to socket2 and listens for activewindow>> events. A
-    poll of hyprctl activewindow every 200 ms starts a process each time, plus
-    flatpak-spawn and xdg-dbus-proxy under Flatpak. The socket costs I/O wait
-    only, and no CPU while the active window stays.
+    Fall back to a 200 ms poll when the socket path is unavailable.
 
-    It falls back to the poll when the socket is unavailable, which happens
-    outside Hyprland and with an unresolvable socket path.
     """
 
     def __init__(self, hyprland: Hyprland):
@@ -165,13 +157,8 @@ class WatchForActiveWindowChange(threading.Thread):
         self._sock: socket.socket | None = None
 
     def stop(self) -> None:
-        """Asks the loop to end. Returns at once, and the caller joins.
-
-        The event alone leaves a listener parked in recv for up to the socket
-        timeout, so this shuts the connection down too. The pending recv then
-        returns and the loop reaches its next stop check. A shutdown, and not
-        a close, keeps the listener's own close() well-defined.
-        """
+        """Ask the loop to end immediately, then let the caller join.
+        Shut down without closing so recv returns and the listener retains close ownership."""
         self._stop_event.set()
         sock = self._sock
         if sock is None:
@@ -233,8 +220,8 @@ class WatchForActiveWindowChange(threading.Thread):
             finally:
                 self._sock = None
 
-            # Wait before the next connection. Wait on the stop event, so a
-            # stop mid-backoff does not hold for the full delay.
+            # Wait on the stop event before reconnecting.
+            # A stop during backoff then returns before the full delay.
             if self._stop_event.wait(2):
                 break
 
@@ -242,10 +229,8 @@ class WatchForActiveWindowChange(threading.Thread):
         """The fallback, which polls hyprctl every 200 ms."""
         last_active_window = self.hyprland.get_active_window()
         while gl.threads_running and not self._stop_event.is_set():
-            # Wait on the stop event instead of a sleep, so a stop ends the
-            # loop before the poll interval runs out. A wait that already
-            # elapsed can dispatch once after a stop; routing then re-reads
-            # the rules and finds none.
+            # Wait on the stop event so stop can end the loop before the poll interval.
+            # One elapsed wait can still dispatch after stop; routing re-reads and finds no rule.
             if self._stop_event.wait(0.2):
                 break
             new_active_window = self.hyprland.get_active_window()
@@ -256,4 +241,3 @@ class WatchForActiveWindowChange(threading.Thread):
 
             last_active_window = new_active_window
             self.hyprland.window_grabber.on_active_window_changed(new_active_window)
-
