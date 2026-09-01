@@ -16,7 +16,7 @@ def corrupt(path: str) -> None:
         f.write('{"keys": {"0x0"')  # truncated mid-token
 
 
-def check_page_backup_heal() -> int:
+def check_page_heals_from_backup() -> int:
     path = seed_page("CorruptWithBackup")
     marker = {"keys": {}, "background": {"marker": "from-backup"}}
 
@@ -48,7 +48,7 @@ def check_page_backup_heal() -> int:
     return 0
 
 
-def check_page_no_backup_quarantine() -> int:
+def check_page_without_backup_is_quarantined() -> int:
     path = seed_page("CorruptNoBackup")
     corrupt(path)
 
@@ -64,7 +64,7 @@ def check_page_no_backup_quarantine() -> int:
     return 0
 
 
-def check_migrations_torn() -> int:
+def check_torn_migrations_recovery() -> int:
     from src.backend.Migration.Migrator import Migrator
 
     os.makedirs(os.path.dirname(Migrator.SETTINGS_DIR), exist_ok=True)
@@ -93,7 +93,7 @@ def check_migrations_torn() -> int:
     return 0
 
 
-def check_sweep_survives_poison() -> int:
+def check_asset_sweep_survives_corrupt_page() -> int:
     asset = os.path.join(gl.DATA_PATH, "asset.png")
     with open(asset, "wb") as f:
         f.write(b"png")
@@ -133,7 +133,7 @@ def _seed_page_with_backup(name: str, content: dict) -> str:
     return path
 
 
-def check_set_page_settings_no_gut() -> int:
+def check_set_page_settings_preserves_page() -> int:
     # Healing must preserve page content before the settings writer saves it back.
     content = {"keys": {"0x0": {"states": {"0": {}}}}, "background": {"path": "wall.png"}}
     path = _seed_page_with_backup("SettingsWriterHeal", content)
@@ -195,7 +195,7 @@ def check_heal_when_quarantine_fails() -> int:
     return 0
 
 
-def check_quarantine_no_clobber() -> int:
+def check_quarantine_preserves_prior_copy() -> int:
     # A second corruption must not destroy the first .corrupt copy.
     from src.backend.SettingsManager import SettingsManager
 
@@ -272,14 +272,14 @@ def main() -> int:
     fixtures._install_integration_globals()
     rc = 0
     for check in (
-        check_page_backup_heal,
-        check_page_no_backup_quarantine,
-        check_migrations_torn,
-        check_sweep_survives_poison,
-        check_set_page_settings_no_gut,
+        check_page_heals_from_backup,
+        check_page_without_backup_is_quarantined,
+        check_torn_migrations_recovery,
+        check_asset_sweep_survives_corrupt_page,
+        check_set_page_settings_preserves_page,
         check_get_page_settings_heals,
         check_heal_when_quarantine_fails,
-        check_quarantine_no_clobber,
+        check_quarantine_preserves_prior_copy,
         check_wrong_root_type_heals,
     ):
         try:

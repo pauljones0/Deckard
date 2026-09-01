@@ -192,7 +192,7 @@ def check_unbuildable_page_leaves_deck_alone(plane, controller) -> None:
     print("PASS: a page that cannot be built is a failure, and the deck keeps its page")
 
 
-def check_default_page_build_failure_leaves_deck(controller) -> None:
+def check_default_page_build_failure_preserves_active_page(controller) -> None:
     """Keep the active page when the boot default cannot be built."""
     load_named_page(controller, "Alpha")
     active_before = controller.active_page
@@ -287,7 +287,7 @@ def check_load_only_if_different(plane, controller) -> None:
     print("PASS: a page load happens only when the requested page is different")
 
 
-def check_device_truth_bounds(plane, controller_b) -> None:
+def check_device_coordinate_and_page_state_bounds(plane, controller_b) -> None:
     """The 10x10 deck. Every number here comes from the device or the page."""
     result = plane.change_page_on(controller_b, "Wide")
     assert result.ok, result
@@ -554,7 +554,7 @@ def check_state_barrier_clears_before_background(plane, controller_b) -> None:
     print("PASS: a state change that switches pages does not wait on the background decode")
 
 
-def check_stale_rebuild_does_not_release_barrier(plane, controller_b) -> None:
+def check_stale_rebuild_keeps_barrier_closed(plane, controller_b) -> None:
     """Keep the state barrier closed when an older page rebuild completes first."""
     load_named_page(controller_b, "Beta")
     settle(controller_b)
@@ -622,17 +622,17 @@ def main() -> None:
         check_unknown_serial(plane)
         check_unknown_page(plane, controller_a)
         check_unbuildable_page_leaves_deck_alone(plane, controller_a)
-        check_default_page_build_failure_leaves_deck(controller_a)
+        check_default_page_build_failure_preserves_active_page(controller_a)
         check_same_page_noop_over_dbus(controller_a)
         check_load_only_if_different(plane, controller_a)
-        check_device_truth_bounds(plane, controller_b)
+        check_device_coordinate_and_page_state_bounds(plane, controller_b)
         check_other_decks_are_untouched(plane, controller_a, controller_b)
         check_validation_failures_are_results(plane, controller_a)
         check_unexpected_exception_propagates(plane, controller_a)
         check_dbus_delegate_matches_service(plane, controller_a)
         check_state_delegate_matches_service(plane, controller_b)
         check_state_barrier_clears_before_background(plane, controller_b)
-        check_stale_rebuild_does_not_release_barrier(plane, controller_b)
+        check_stale_rebuild_keeps_barrier_closed(plane, controller_b)
     finally:
         fixtures.teardown(controller_b)
         fixtures.teardown(controller_a)

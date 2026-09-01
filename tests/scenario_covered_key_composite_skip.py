@@ -149,7 +149,7 @@ class _RecordEnqueued:
         return len(self.natives)
 
 
-def check_cover_test() -> None:
+def check_hides_background_geometry_and_alpha() -> None:
     """The opacity and geometry test that decides every skip."""
     covers = hides_background
     tile = (72, 72)
@@ -696,7 +696,7 @@ def check_warning_flip_flop_inside_composite(controller) -> None:
     original_warning = key.add_warning_point
     landed: list[bool] = []
 
-    def add_then_lose_the_action(image):
+    def add_labels_and_mark_action_unavailable(image):
         labelled = original_add(image)
         if not landed:
             landed.append(True)
@@ -709,7 +709,7 @@ def check_warning_flip_flop_inside_composite(controller) -> None:
         return dotted
 
     state.cover_cache.invalidate()
-    label_manager.add_labels_to_image = add_then_lose_the_action
+    label_manager.add_labels_to_image = add_labels_and_mark_action_unavailable
     key.add_warning_point = warn_then_recover
     try:
         key.update()
@@ -730,7 +730,7 @@ def check_warning_flip_flop_inside_composite(controller) -> None:
     print("PASS: a warning point inside one composite window stores no dotted picture")
 
 
-def check_press_lands_and_stays(controller) -> None:
+def check_mid_composite_press_is_not_cached(controller) -> None:
     """Do not cache a press that starts inside a composite and stays active."""
     _disarm_repaint_retry(controller)
     key = _key(controller, 15)
@@ -776,7 +776,7 @@ def check_press_lands_and_stays(controller) -> None:
     print("PASS: a press that lands mid-composite and stays leaves nothing wrong")
 
 
-def check_bare_to_covered_first_store(controller) -> None:
+def check_first_covering_composite_is_cached(controller) -> None:
     """Cache the first covering composite after a bare key receives media."""
     _disarm_repaint_retry(controller)
     key = _key(controller, 16)
@@ -797,7 +797,7 @@ def check_bare_to_covered_first_store(controller) -> None:
     print("PASS: the first cacheable composite after bare to covered is kept")
 
 
-def check_uncovering_then_covering_settles(controller) -> None:
+def check_cover_cache_resumes_after_layout_restore(controller) -> None:
     """A size edit turns a covering foreground bare, then back. The verdict on
     file is one composite stale by design; prove it is exactly one."""
     _disarm_repaint_retry(controller)
@@ -858,7 +858,7 @@ def check_media_removed_releases_entry(controller) -> None:
     print("PASS: losing the media releases the kept composite")
 
 
-def check_release_calls_drop_the_entry(controller) -> None:
+def check_release_calls_drop_cached_composite(controller) -> None:
     """The memory claim rests on two calls. A state's teardown and its reset
     for a fresh page load each have to release the picture it kept."""
     _disarm_repaint_retry(controller)
@@ -1000,7 +1000,7 @@ def check_capped_gif_background(controller) -> None:
 
 def main() -> None:
     start_watchdog(60, label="scenario_covered_key_composite_skip")
-    check_cover_test()
+    check_hides_background_geometry_and_alpha()
 
     # Rolling labels on, so the scroll check has something to scroll. Every
     # other label here fits its key, and a label that fits never scrolls.
@@ -1025,12 +1025,12 @@ def main() -> None:
         check_release_during_composite(controller)
         check_press_flip_flop_inside_composite(controller)
         check_warning_flip_flop_inside_composite(controller)
-        check_press_lands_and_stays(controller)
+        check_mid_composite_press_is_not_cached(controller)
         check_label_edit_during_composite(controller)
-        check_bare_to_covered_first_store(controller)
-        check_uncovering_then_covering_settles(controller)
+        check_first_covering_composite_is_cached(controller)
+        check_cover_cache_resumes_after_layout_restore(controller)
         check_media_removed_releases_entry(controller)
-        check_release_calls_drop_the_entry(controller)
+        check_release_calls_drop_cached_composite(controller)
         check_capped_gif_background(controller)
         # Last: it leaves a scroll label on the deck, which puts the media
         # loop back on per-tick key work for every check after it.

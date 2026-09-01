@@ -37,7 +37,7 @@ ORIGINAL_BUS = os.environ.get("DBUS_SESSION_BUS_ADDRESS", "")
 
 
 # Build invalid UTF-8 argv text through Python's surrogateescape path.
-NOT_UTF8 = "Alpha" + b"\xff".decode("utf-8", "surrogateescape")
+SURROGATE_ARG = "Alpha" + b"\xff".decode("utf-8", "surrogateescape")
 
 
 def parse(argv: list[str]):
@@ -138,10 +138,10 @@ def leg_decision_table() -> None:
                   str(cli_forward.MAX_STATE_NUMBER + 1)],
                  ["--change-state", "deck-a", "Alpha", "0,0", "99999999999999"],
                   # Reject surrogateescaped argv before transport encoding.
-                 ["--change-page", "deck-a", NOT_UTF8],
-                 ["--change-page", NOT_UTF8, "Alpha"],
-                 ["--change-state", "deck-a", NOT_UTF8, "0,0", "1"],
-                 ["--change-state", NOT_UTF8, "Alpha", "0,0", "1"],
+                 ["--change-page", "deck-a", SURROGATE_ARG],
+                 ["--change-page", SURROGATE_ARG, "Alpha"],
+                 ["--change-state", "deck-a", SURROGATE_ARG, "0,0", "1"],
+                 ["--change-state", SURROGATE_ARG, "Alpha", "0,0", "1"],
                   # Reject malformed input before --close-running stops the instance.
                  ["--change-state", "deck-a", "Alpha", "0,0", "not-a-number",
                   "--close-running"]):
@@ -246,7 +246,7 @@ def leg_emulated_input_requires_running_instance() -> None:
     # so here rather than at the transport.
     for argv in (["--emulate-input", "deck-a", "Alpha", "0,0", "smash"],
                  ["--emulate-input", "deck-a", "Alpha", "nope", "press"],
-                 ["--emulate-input", "deck-a", NOT_UTF8, "0,0", "press"]):
+                 ["--emulate-input", "deck-a", SURROGATE_ARG, "0,0", "press"]):
         recorder = Recorder(running=True)
         outcome = cli_fast_path.handle_preboot_cli(parse(argv), recorder)
         assert outcome.exit_code == 1, (
@@ -701,7 +701,7 @@ def leg_entry_point() -> None:
              ["--change-state", SERIAL, "Alpha", "0,0",
               str(cli_forward.MAX_STATE_NUMBER + 1)]),
             ("a page name argv carried as non-UTF-8 bytes",
-             ["--change-page", SERIAL, NOT_UTF8]),
+             ["--change-page", SERIAL, SURROGATE_ARG]),
         ):
             reset_record(record)
             proc, _ = run_main(["--data", scratch_data, *bad_argv], sentinel)

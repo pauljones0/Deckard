@@ -13,7 +13,7 @@ from src.backend.DeckManagement.Subclasses import cache_budget
 
 KIB = 1024
 CEILING_BYTES = 256 * KIB
-ENTRY = 4 * KIB
+BYTES_PER_ENTRY = 4 * KIB
 # Both caches use monotonic last-use stamps and the default 2 s min-age. A real
 # DeckController offers no clock seam, so the ageing here is real.
 AGE_SLEEP = 2.3
@@ -28,19 +28,19 @@ def _set_ceiling(value) -> None:
 
 def _fill(cache, prefix: str, total_bytes: int) -> None:
     """Add synthetic entries twice so the encode-memo doorkeeper admits them."""
-    for i in range(total_bytes // ENTRY):
+    for i in range(total_bytes // BYTES_PER_ENTRY):
         key = (prefix, i)
-        cache.put(key, bytes(ENTRY))
-        cache.put(key, bytes(ENTRY))
+        cache.put(key, bytes(BYTES_PER_ENTRY))
+        cache.put(key, bytes(BYTES_PER_ENTRY))
 
 
 def _deck_bytes(controller) -> int:
     return controller.encode_memo.total_bytes + controller.native_tile_cache.total_bytes
 
 
-def _present(cache, prefix: str, total_bytes: int) -> int:
+def _retained_count(cache, prefix: str, total_bytes: int) -> int:
     """Count retained synthetic keys without including concurrent real paints."""
-    return sum(1 for i in range(total_bytes // ENTRY) if cache.get((prefix, i)) is not None)
+    return sum(1 for i in range(total_bytes // BYTES_PER_ENTRY) if cache.get((prefix, i)) is not None)
 
 
 def _key_signature(controller, deck) -> dict:
@@ -99,14 +99,14 @@ def check_registration_and_cross_deck_eviction(busy, idle) -> None:
     cache_budget._drain_once()
 
     # The idle deck paid, and the fresh entries of the busy deck did not.
-    assert _present(busy.encode_memo, "busy-memo", busy_memo) == busy_memo // ENTRY, (
+    assert _retained_count(busy.encode_memo, "busy-memo", busy_memo) == busy_memo // BYTES_PER_ENTRY, (
         "the busy deck's encode memo lost entries that were inside min_age_s while "
         "an older deck still had something to give"
     )
-    assert _present(busy.native_tile_cache, "busy-tiles", busy_tiles) == busy_tiles // ENTRY, (
+    assert _retained_count(busy.native_tile_cache, "busy-tiles", busy_tiles) == busy_tiles // BYTES_PER_ENTRY, (
         "the busy deck's tile cache lost entries that were inside min_age_s"
     )
-    assert _present(idle.encode_memo, "idle-memo", idle_memo) < idle_memo // ENTRY, (
+    assert _retained_count(idle.encode_memo, "idle-memo", idle_memo) < idle_memo // BYTES_PER_ENTRY, (
         "the idle deck's entries must be the ones the global ceiling takes -- this "
         "cross-deck preference is exactly what per-silo caps cannot express"
     )
@@ -239,7 +239,7 @@ def check_gif_frames_census(controller) -> None:
     print("PASS: decoded GIF frame lists are visible in the census")
 
 
-def check_close_zeroes_share(controller) -> None:
+def check_close_releases_cache_share(controller) -> None:
     """Require controller close to return both cache shares to the budget."""
     before = cache_budget.evictable_bytes()
     share = _deck_bytes(controller)
@@ -274,7 +274,7 @@ def main() -> None:
         check_registration_and_cross_deck_eviction(busy, idle)
         check_tile_min_age_tracks_video(busy)
         check_gif_frames_census(busy)
-        check_close_zeroes_share(idle)
+        check_close_releases_cache_share(idle)
     finally:
         _set_ceiling(None)
         # Always stop non-daemon controller threads; teardown is bounded and idempotent.

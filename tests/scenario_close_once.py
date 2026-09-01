@@ -69,9 +69,11 @@ def main() -> None:
         controller.close(remove_media=True)
         result["done"] = True
 
-    t1 = threading.Thread(target=first_closer, name="closer-1", daemon=True)
-    t1.start()
-    t1.join(timeout=30)
+    first_closer_thread = threading.Thread(
+        target=first_closer, name="closer-1", daemon=True
+    )
+    first_closer_thread.start()
+    first_closer_thread.join(timeout=30)
     assert result.get("done"), "first close() never completed (deadlock?)"
     assert second_done.wait(timeout=10), "second close() never completed"
 
