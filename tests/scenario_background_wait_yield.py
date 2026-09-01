@@ -48,8 +48,8 @@ def check_pending_background_leaves_writer_idle() -> None:
         controller.set_brightness(42)
         assert wait_until(
             lambda: (
-                (brightness := raw_deck(controller).last_op_for("brightness")) is not None
-                and brightness[1] > before
+                (brightness_op := raw_deck(controller).last_op_for("brightness")) is not None
+                and brightness_op[1] > before
             ),
             timeout=1.0,
             interval=0.005,

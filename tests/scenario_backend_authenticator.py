@@ -27,14 +27,16 @@ class EchoService(rpyc.Service):
 def _connect(port: int, tries: int = 100, delay: float = 0.05) -> "rpyc.Connection":
     """Retry the connection while the daemon accept loop starts.
     The tries * delay bound stays below the watchdog and covers load-sensitive socket refusals."""
-    last: Exception | None = None
+    last_error: Exception | None = None
     for _ in range(tries):
         try:
             return rpyc.connect("localhost", port, config={"allow_public_attrs": True})
         except (ConnectionError, OSError, EOFError) as e:
-            last = e
+            last_error = e
             time.sleep(delay)
-    raise AssertionError(f"server never accepted a connection within {tries * delay:.1f}s: {last!r}")
+    raise AssertionError(
+        f"server never accepted a connection within {tries * delay:.1f}s: {last_error!r}"
+    )
 
 
 def main() -> None:
@@ -53,7 +55,7 @@ def main() -> None:
 
     # Substitute a foreign UID because the suite has one real UID.
     # Refusal must close before rpyc and appear on the client.
-    real = guard.uid_of_peer
+    original_uid_of_peer = guard.uid_of_peer
     guard.uid_of_peer = lambda s: os.getuid() + 1
     try:
         refused = False
@@ -65,7 +67,7 @@ def main() -> None:
             refused = True
         assert refused, "a foreign-uid peer was served"
     finally:
-        guard.uid_of_peer = real
+        guard.uid_of_peer = original_uid_of_peer
     print("PASS: a foreign-uid peer is refused before the protocol starts")
 
     # The refusal leaves the server serving: the next legitimate connect works.

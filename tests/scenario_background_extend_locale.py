@@ -12,15 +12,15 @@ from locales.LocaleManager import LocaleManager
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CSV_PATH = os.path.join(REPO_ROOT, "locales", "locales.csv")
 
-KEY = "deck.background-group.extend-background-to-touchscreen"
+EXTEND_BACKGROUND_KEY = "deck.background-group.extend-background-to-touchscreen"
 
 
 def test_key_resolves_to_a_sentence() -> None:
     lm = LocaleManager(CSV_PATH)
     for language in lm.available_locales:
         lm.set_language(language)
-        value = lm.get(KEY)
-        assert value != KEY, (
+        value = lm.get(EXTEND_BACKGROUND_KEY)
+        assert value != EXTEND_BACKGROUND_KEY, (
             f"{language}: the label renders the raw key, so the CSV row is missing"
         )
         assert value.strip(), f"{language}: the label must not be empty"
@@ -29,7 +29,7 @@ def test_key_resolves_to_a_sentence() -> None:
 
 def test_every_shipped_locale_is_filled() -> None:
     lm = LocaleManager(CSV_PATH)
-    row = lm.locale_data.get(KEY)
+    row = lm.locale_data.get(EXTEND_BACKGROUND_KEY)
     assert row is not None, "the CSV must carry a row for the label"
     assert len(lm.available_locales) >= 5, (
         f"expected at least the five shipped locales, found {lm.available_locales}"
@@ -38,14 +38,14 @@ def test_every_shipped_locale_is_filled() -> None:
         assert row.get(language), f"{language} has no translation for the label"
 
 
-def test_background_group_asks_for_that_key() -> None:
+def test_background_group_uses_locale_keys() -> None:
     source_path = os.path.join(
         REPO_ROOT, "src", "windows", "mainWindow", "elements", "DeckSettings",
         "BackgroundGroup.py",
     )
     with open(source_path) as source_file:
         source = source_file.read()
-    assert f'gl.lm.get("{KEY}")' in source, (
+    assert f'gl.lm.get("{EXTEND_BACKGROUND_KEY}")' in source, (
         "the background group must look the label up by its locale key"
     )
     assert "Extend Background To Touchscreen" not in source, (
@@ -72,7 +72,7 @@ PLAIN_CONSUMED_KEYS = {
 MARKUP_CHARS = ("&", "<", ">")
 
 
-def test_plain_lookup_keeps_the_apostrophe_literal() -> None:
+def test_plain_lookup_preserves_apostrophe() -> None:
     lm = LocaleManager(CSV_PATH)
     lm.set_language("fr_FR")
     value = lm.get(APOSTROPHE_KEY)
@@ -102,16 +102,16 @@ def test_markup_lookup_escapes_only_what_pango_needs() -> None:
     )
 
 
-def test_every_markup_character_has_a_markup_call_site() -> None:
+def test_markup_keys_use_matching_lookup() -> None:
     lm = LocaleManager(CSV_PATH)
-    carriers = {
+    markup_keys = {
         key
         for key, row in lm.locale_data.items()
         for value in row.values()
         if value and any(char in value for char in MARKUP_CHARS)
     }
-    assert carriers == MARKUP_CONSUMED_KEYS | PLAIN_CONSUMED_KEYS, (
-        f"a translation gained or lost a markup character: {carriers!r}. Look "
+    assert markup_keys == MARKUP_CONSUMED_KEYS | PLAIN_CONSUMED_KEYS, (
+        f"a translation gained or lost a markup character: {markup_keys!r}. Look "
         f"at the call site, pick get or get_markup by the renderer, then list "
         f"the key in the matching set here."
     )
@@ -136,7 +136,7 @@ def test_every_markup_character_has_a_markup_call_site() -> None:
         )
 
 
-def test_a_markup_consumer_renders_the_escaped_text() -> None:
+def test_markup_consumer_renders_escaped_text() -> None:
     import gi
 
     gi.require_version("Gtk", "4.0")
@@ -167,11 +167,11 @@ def main() -> None:
     fixtures.start_watchdog(30, label="scenario_background_extend_locale")
     test_key_resolves_to_a_sentence()
     test_every_shipped_locale_is_filled()
-    test_background_group_asks_for_that_key()
-    test_plain_lookup_keeps_the_apostrophe_literal()
+    test_background_group_uses_locale_keys()
+    test_plain_lookup_preserves_apostrophe()
     test_markup_lookup_escapes_only_what_pango_needs()
-    test_every_markup_character_has_a_markup_call_site()
-    test_a_markup_consumer_renders_the_escaped_text()
+    test_markup_keys_use_matching_lookup()
+    test_markup_consumer_renders_escaped_text()
     print("scenario_background_extend_locale: PASS")
 
 

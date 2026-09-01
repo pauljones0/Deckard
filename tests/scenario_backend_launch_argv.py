@@ -22,7 +22,7 @@ from src.backend.PluginManager.PluginManager import (  # noqa: E402
 
 
 # A path that a shell would mangle in three different ways at once.
-NASTY_DIR = "backend dir with spaces & 'quotes'"
+SHELL_METACHAR_DIR = "backend dir with spaces & 'quotes'"
 
 STUB_BACKEND = '''\
 """Minimal mirror of streamcontroller_plugin_tools.BackendBase: parse --port,
@@ -71,7 +71,7 @@ if __name__ == "__main__":
 
 
 def _write_stub_backend() -> str:
-    directory = os.path.join(gl.DATA_PATH, NASTY_DIR)
+    directory = os.path.join(gl.DATA_PATH, SHELL_METACHAR_DIR)
     os.makedirs(directory, exist_ok=True)
     path = os.path.join(directory, "backend stub.py")
     with open(path, "w") as f:
@@ -217,7 +217,7 @@ def check_end_to_end_spaced_path(backend_path: str) -> None:
         assert fixtures.wait_until(
             lambda: action.backend_connection is not None, timeout=30.0
         ), (
-            f"the backend under {NASTY_DIR!r} never registered (process "
+            f"the backend under {SHELL_METACHAR_DIR!r} never registered (process "
             f"returncode={action.backend_process.poll()!r}) -- a shell-built "
             f"command line splits the spaced path into separate words"
         )

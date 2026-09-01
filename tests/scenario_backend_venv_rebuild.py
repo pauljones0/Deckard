@@ -22,7 +22,7 @@ from src.backend.PluginManager.PluginManager import (  # noqa: E402
 
 RUNNING_TAG = f"{sys.version_info.major}.{sys.version_info.minor}"
 OLD_TAG = f"{sys.version_info.major}.{sys.version_info.minor - 1}"
-MARKER = "built-by-the-previous-python"
+PRESERVED_VENV_MARKER = "built-by-the-previous-python"
 
 
 def _make_venv(venv_path: str, tag: str, marker: bool = False, stale: bool = False) -> None:
@@ -39,7 +39,7 @@ def _make_venv(venv_path: str, tag: str, marker: bool = False, stale: bool = Fal
         os.unlink(link)
     os.symlink(os.path.join(venv_path, "bin", "gone-python") if stale else sys.executable, link)
     if marker:
-        with open(os.path.join(venv_path, MARKER), "w") as f:
+        with open(os.path.join(venv_path, PRESERVED_VENV_MARKER), "w") as f:
             f.write("this tree must survive a refused rebuild\n")
 
 
@@ -62,7 +62,7 @@ def _set_policy(value: str) -> None:
     gl.settings_manager.get_app_settings().setdefault("store", {})["install-scripts"] = value
 
 
-class _Steps:
+class _InstallStepStub:
     """Stands in for the gate's subprocess seam. It records the argv of every
     step and optionally builds the venv, as a real install script would."""
 
@@ -77,7 +77,7 @@ class _Steps:
         return 0, False, ""
 
 
-def _with_stub_gate(steps: _Steps, call) -> None:
+def _with_stub_gate(steps: _InstallStepStub, call) -> None:
     """Run a call with the gate's subprocess seam and bwrap probe stubbed.
     Disable bwrap for host-independent argv; scenario_install_script_gate covers confinement."""
     real_execute = install_script._execute
@@ -189,7 +189,7 @@ def check_stale_detection() -> None:
     print("PASS: only an interpreter that does not start makes a venv stale")
 
 
-def check_rebuild_runs_the_gate_with_argv_lists() -> None:
+def check_rebuild_uses_gate_argv() -> None:
     """Run plugin install steps as argv lists and restore the loopback guard.
     A rebuilt venv must not launch an unguarded backend."""
     plugin_dir = _plugin("com_test_rebuild", requirements=True)
@@ -197,7 +197,7 @@ def check_rebuild_runs_the_gate_with_argv_lists() -> None:
     _make_venv(venv_path, OLD_TAG, stale=True)
     _set_policy("always")
 
-    steps = _Steps(build=(venv_path, RUNNING_TAG))
+    steps = _InstallStepStub(build=(venv_path, RUNNING_TAG))
     _with_stub_gate(steps, lambda: ensure_backend_venv(venv_path, plugin_dir, "com_test_rebuild"))
 
     hook = os.path.join(plugin_dir, "__install__.py")
@@ -234,11 +234,11 @@ def check_rebuild_runs_once_per_process() -> None:
     _make_venv(venv_path, OLD_TAG, marker=True, stale=True)
     _set_policy("always")
 
-    steps = _Steps()  # the steps build nothing, so the rebuild fails
+    steps = _InstallStepStub()  # the steps build nothing, so the rebuild fails
     _with_stub_gate(steps, lambda: ensure_backend_venv(venv_path, plugin_dir, "com_test_once"))
     assert len(steps.commands) == 1, f"expected one install step, got {steps.commands}"
 
-    assert os.path.isfile(os.path.join(venv_path, MARKER)), (
+    assert os.path.isfile(os.path.join(venv_path, PRESERVED_VENV_MARKER)), (
         "a failed rebuild destroyed the previous venv instead of putting it back"
     )
     assert not os.path.exists(f"{venv_path}.stale"), "the moved-aside tree was left behind"
@@ -262,13 +262,13 @@ def check_ask_policy_runs_nothing_unattended() -> None:
         "this leg needs a plugin with no recorded decision"
     )
 
-    steps = _Steps(build=(venv_path, RUNNING_TAG))
+    steps = _InstallStepStub(build=(venv_path, RUNNING_TAG))
     _with_stub_gate(steps, lambda: ensure_backend_venv(venv_path, plugin_dir, "com_test_ask"))
 
     assert steps.commands == [], (
         f"the launch ran a plugin's install script with nobody asked: {steps.commands}"
     )
-    assert os.path.isfile(os.path.join(venv_path, MARKER)), (
+    assert os.path.isfile(os.path.join(venv_path, PRESERVED_VENV_MARKER)), (
         "the refused rebuild moved the venv aside anyway"
     )
     assert not os.path.exists(f"{venv_path}.stale"), "the refused rebuild left a stale tree"
@@ -281,7 +281,7 @@ def check_ask_policy_runs_nothing_unattended() -> None:
     print("PASS: the default policy runs no install script at a launch")
 
 
-def check_a_raising_rebuild_puts_the_venv_back() -> None:
+def check_rebuild_error_restores_venv() -> None:
     """Restore the plugin venv when an install step raises.
     An absent venv is not stale, so leaving it moved aside would prevent later repair and launch."""
     plugin_dir = _plugin("com_test_raise")
@@ -289,7 +289,7 @@ def check_a_raising_rebuild_puts_the_venv_back() -> None:
     _make_venv(venv_path, OLD_TAG, marker=True, stale=True)
     _set_policy("always")
 
-    class _Raising(_Steps):
+    class _Raising(_InstallStepStub):
         def __call__(self, cmd, timeout_s, env=None):
             self.commands.append(list(cmd))
             raise OSError("no file descriptors left for the install step")
@@ -304,14 +304,14 @@ def check_a_raising_rebuild_puts_the_venv_back() -> None:
     assert raised, "the raise was swallowed, so the caller cannot see the failure"
 
     assert os.path.isdir(venv_path), "a raising rebuild left the plugin with no venv at all"
-    assert os.path.isfile(os.path.join(venv_path, MARKER)), (
+    assert os.path.isfile(os.path.join(venv_path, PRESERVED_VENV_MARKER)), (
         "a raising rebuild did not put the previous venv back"
     )
     assert not os.path.exists(f"{venv_path}.stale"), "the moved-aside tree was left behind"
 
     # An attempt that raised is no answer about this venv, so the next attempt
     # is allowed to try again.
-    retry = _Steps(build=(venv_path, RUNNING_TAG))
+    retry = _InstallStepStub(build=(venv_path, RUNNING_TAG))
     _with_stub_gate(retry, lambda: ensure_backend_venv(venv_path, plugin_dir, "com_test_raise"))
     assert retry.commands, (
         "a rebuild that raised was booked as done, so nothing retries it"
@@ -319,7 +319,7 @@ def check_a_raising_rebuild_puts_the_venv_back() -> None:
     print("PASS: a raising rebuild puts the venv back and stays retryable")
 
 
-def check_rebuild_takes_the_short_timeout() -> None:
+def check_rebuild_uses_short_timeout() -> None:
     """Give launch-time rebuilds less time than store installs.
     Rebuilds run on the serial warm-up thread, so one plugin must not block later hooks."""
     plugin_dir = _plugin("com_test_timeout")
@@ -329,7 +329,7 @@ def check_rebuild_takes_the_short_timeout() -> None:
 
     seen: list = []
 
-    class _Timed(_Steps):
+    class _Timed(_InstallStepStub):
         def __call__(self, cmd, timeout_s, env=None):
             seen.append(timeout_s)
             return super().__call__(cmd, timeout_s, env)
@@ -349,7 +349,7 @@ def check_rebuild_takes_the_short_timeout() -> None:
     print("PASS: the launch-time rebuild runs on its own shorter budget")
 
 
-def check_a_second_launcher_waits_for_the_rebuild() -> None:
+def check_concurrent_launcher_waits_for_rebuild() -> None:
     """Make concurrent launchers of one venv wait for its rebuild.
     Seeing the tree moved aside looks non-stale and would launch an absent path."""
     plugin_dir = _plugin("com_test_concurrent")
@@ -362,7 +362,7 @@ def check_a_second_launcher_waits_for_the_rebuild() -> None:
     second_done = threading.Event()
     observed: list = []
 
-    class _Blocking(_Steps):
+    class _Blocking(_InstallStepStub):
         def __call__(self, cmd, timeout_s, env=None):
             inside.set()
             may_finish.wait(30)
@@ -403,21 +403,21 @@ def check_a_second_launcher_waits_for_the_rebuild() -> None:
     print("PASS: a second launcher of the same venv waits for the rebuild")
 
 
-def check_declined_install_steps_leave_the_venv() -> None:
+def check_declined_steps_preserve_venv() -> None:
     """The install-script policy decides the rebuild, as it decides an install."""
     plugin_dir = _plugin("com_test_declined")
     venv_path = os.path.join(plugin_dir, "backend", ".venv")
     _make_venv(venv_path, OLD_TAG, marker=True, stale=True)
     _set_policy("never")
 
-    steps = _Steps(build=(venv_path, RUNNING_TAG))
+    steps = _InstallStepStub(build=(venv_path, RUNNING_TAG))
     _with_stub_gate(steps,
                     lambda: ensure_backend_venv(venv_path, plugin_dir, "com_test_declined"))
 
     assert steps.commands == [], (
         f"the rebuild ran install steps the policy refuses: {steps.commands}"
     )
-    assert os.path.isfile(os.path.join(venv_path, MARKER)), (
+    assert os.path.isfile(os.path.join(venv_path, PRESERVED_VENV_MARKER)), (
         "a refused rebuild moved the venv aside anyway"
     )
     assert not os.path.exists(f"{venv_path}.stale"), "a refused rebuild left a stale tree"
@@ -425,7 +425,7 @@ def check_declined_install_steps_leave_the_venv() -> None:
     print("PASS: the install-script policy decides whether a venv is rebuilt")
 
 
-def check_unknown_plugin_dir_is_booked_too() -> None:
+def check_missing_plugin_dir_records_attempt() -> None:
     """Report a venv with an unknown plugin directory only once.
     Without install steps there is nothing to retry, and each launch would only repeat the log."""
     venv_path = os.path.join(gl.DATA_PATH, "orphan", ".venv")
@@ -433,7 +433,7 @@ def check_unknown_plugin_dir_is_booked_too() -> None:
     _set_policy("always")
     missing_dir = os.path.join(gl.DATA_PATH, "orphan", "no-such-plugin")
 
-    steps = _Steps(build=(venv_path, RUNNING_TAG))
+    steps = _InstallStepStub(build=(venv_path, RUNNING_TAG))
     for _ in range(2):
         _with_stub_gate(steps,
                         lambda: ensure_backend_venv(venv_path, missing_dir, "com_test_orphan"))
@@ -441,7 +441,7 @@ def check_unknown_plugin_dir_is_booked_too() -> None:
     assert steps.commands == [], (
         f"install steps ran without a plugin directory: {steps.commands}"
     )
-    assert os.path.isfile(os.path.join(venv_path, MARKER)), "the venv was touched"
+    assert os.path.isfile(os.path.join(venv_path, PRESERVED_VENV_MARKER)), "the venv was touched"
     key = os.path.realpath(venv_path)
     assert key in plugin_manager_module._rebuilt_venvs, (
         "a venv with no plugin directory was never booked, so every launch of "
@@ -457,14 +457,14 @@ def check_usable_venv_is_untouched() -> None:
     _make_venv(venv_path, RUNNING_TAG, marker=True)
     _set_policy("always")
 
-    steps = _Steps()
+    steps = _InstallStepStub()
     _with_stub_gate(steps, lambda: ensure_backend_venv(venv_path, plugin_dir, "com_test_usable"))
     assert steps.commands == [], f"a usable venv was rebuilt: {steps.commands}"
-    assert os.path.isfile(os.path.join(venv_path, MARKER))
+    assert os.path.isfile(os.path.join(venv_path, PRESERVED_VENV_MARKER))
     print("PASS: a usable venv runs no install steps")
 
 
-def check_launch_checks_the_venv_before_the_argv() -> None:
+def check_venv_check_precedes_argv_build() -> None:
     """Check the venv before launch_backend builds its command.
     Command construction rejects a missing interpreter before a later check could repair it."""
     from src.backend.PluginManager.PluginBase import PluginBase
@@ -523,16 +523,16 @@ def main() -> None:
 
     check_version_tag_reading()
     check_stale_detection()
-    check_rebuild_runs_the_gate_with_argv_lists()
+    check_rebuild_uses_gate_argv()
     check_ask_policy_runs_nothing_unattended()
-    check_a_raising_rebuild_puts_the_venv_back()
-    check_rebuild_takes_the_short_timeout()
-    check_a_second_launcher_waits_for_the_rebuild()
+    check_rebuild_error_restores_venv()
+    check_rebuild_uses_short_timeout()
+    check_concurrent_launcher_waits_for_rebuild()
     check_rebuild_runs_once_per_process()
-    check_declined_install_steps_leave_the_venv()
-    check_unknown_plugin_dir_is_booked_too()
+    check_declined_steps_preserve_venv()
+    check_missing_plugin_dir_records_attempt()
     check_usable_venv_is_untouched()
-    check_launch_checks_the_venv_before_the_argv()
+    check_venv_check_precedes_argv_build()
 
     print("PASS: scenario_backend_venv_rebuild")
 
