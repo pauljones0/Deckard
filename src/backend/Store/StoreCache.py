@@ -354,7 +354,7 @@ class StoreCache:
 
         return cast("IO[str] | IO[bytes]", open(cache_path, mode))
 
-    def get_fetched_date(self, url: str, path: str, branch: "str | None" = "main", data_type: str = "text") -> float | None:
+    def get_fetched_timestamp(self, url: str, path: str, branch: "str | None" = "main", data_type: str = "text") -> float | None:
         """Return content age from its fetched clock or legacy file mtime.
         Never use the read-renewed last-use clock to decide staleness."""
         entry = self.files.get(self.generate_cache_string(url, path, branch, data_type), {})

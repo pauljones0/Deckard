@@ -18,7 +18,7 @@ REFUSALS_BEFORE_QUIET = 2
 QUIET_PERIOD_S = 60.0
 
 
-def is_store_id(value: str) -> bool:
+def is_safe_store_id(value: str) -> bool:
     """Check an action target with the installer id gate before showing it."""
     # Defer the backend import to avoid loading the store layer during app construction.
     from src.backend.Store.StoreBackend import StoreBackend

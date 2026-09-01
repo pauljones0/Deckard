@@ -122,7 +122,7 @@ def check_ceiling_cap_changes_nothing() -> int:
         gif.close()
 
 
-def check_cap_never_freezes_the_animation() -> int:
+def check_low_cap_progress() -> int:
     """Check that the one-per-second cap still advances a one-second GIF loop."""
     gif = _decode("fps_cap_freeze.gif", [100] * 10, fps=1)
     try:
@@ -147,7 +147,7 @@ def check_cap_never_freezes_the_animation() -> int:
         gif.close()
 
 
-def check_position_does_not_depend_on_the_pass() -> int:
+def check_loop_phase_stability() -> int:
     """Check that one animation phase selects the same frame on every loop pass."""
     cases = [
         ("fps_cap_phase_a.gif", [100] * 5, 3, 0.35),
@@ -207,7 +207,7 @@ def check_no_backward_steps() -> int:
     return 0
 
 
-def check_non_loop_reaches_the_last_frame() -> int:
+def check_non_loop_final_frame() -> int:
     """Check that capped non-loop playback settles on its short final frame."""
     delays = [300, 300, 300, 40]
     gif = _decode("fps_cap_noloop.gif", delays, fps=3, loop=False)
@@ -333,7 +333,7 @@ def check_native_rate() -> int:
         uneven.close()
 
 
-def check_constructor_takes_the_cap() -> int:
+def check_constructor_cap() -> int:
     """The page's fps must reach the object the page load builds."""
     gif = _decode("fps_cap_ctor.gif", [100] * 4, fps=7)
     try:
@@ -353,14 +353,14 @@ def main() -> int:
     fixtures.start_watchdog(60, label="scenario_gif_fps_cap")
     rc = check_cap_limits_advances()
     rc |= check_ceiling_cap_changes_nothing()
-    rc |= check_cap_never_freezes_the_animation()
-    rc |= check_position_does_not_depend_on_the_pass()
+    rc |= check_low_cap_progress()
+    rc |= check_loop_phase_stability()
     rc |= check_no_backward_steps()
-    rc |= check_non_loop_reaches_the_last_frame()
+    rc |= check_non_loop_final_frame()
     rc |= check_degenerate_cap()
     rc |= check_live_cap_change()
     rc |= check_native_rate()
-    rc |= check_constructor_takes_the_cap()
+    rc |= check_constructor_cap()
     return rc
 
 

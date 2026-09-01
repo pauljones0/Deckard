@@ -124,7 +124,7 @@ def check_stale_sat_variants_swept() -> None:
     print("PASS: stale saturation variants of referenced videos are swept, current+default kept")
 
 
-def check_out_of_range_saturation_protects_variant() -> None:
+def check_clamped_saturation_retention() -> None:
     """The sweep protects the runtime-clamped saturation variant."""
     # A raw read protects a name the runtime never writes, ".sat200" for a
     # stored 2.0, and sweeps away the ".sat150" playback does write.
@@ -264,7 +264,7 @@ def check_entry_name_parsing() -> None:
     print("PASS: entry-name parse dispatches each branch and matches the hash, not the filename")
 
 
-def check_late_acquire_survives_a_stale_snapshot() -> None:
+def check_late_acquire_protection() -> None:
     # Force a stale snapshot; the locked pre-unlink check must protect the reader.
     video_path = os.path.join(gl.DATA_PATH, "late_acquire_video.mp4")
     _make_test_video(video_path, n_frames=15)
@@ -298,9 +298,9 @@ def main() -> None:
 
     check_plugin_settings_reference_protects_cache()
     check_live_registry_entry_protects_cache()
-    check_late_acquire_survives_a_stale_snapshot()
+    check_late_acquire_protection()
     check_stale_sat_variants_swept()
-    check_out_of_range_saturation_protects_variant()
+    check_clamped_saturation_retention()
     check_tmp_age_gate()
     check_legacy_dir_sweep_idempotent()
     check_entry_name_parsing()

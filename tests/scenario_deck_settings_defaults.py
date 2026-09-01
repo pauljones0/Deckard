@@ -148,15 +148,15 @@ def check_writes_are_sparse_and_tripwired() -> None:
     data: dict = {}
     view = DeckSettings(data)
 
-    view.set("screensaver", "enable", True)
+    view.set_section_value("screensaver", "enable", True)
     assert data == {"screensaver": {"enable": True}}, (
         f"a write persisted more than the key it was given: {data}"
     )
-    view.set_value("rotation", 90)
+    view.set_top_level_value("rotation", 90)
     assert data == {"screensaver": {"enable": True}, "rotation": 90}
 
     for name, key in (("screensaver", "brightnes"), ("screensvaer", "enable")):
-        for call in (lambda: view.get(name, key), lambda: view.set(name, key, 1)):
+        for call in (lambda: view.get(name, key), lambda: view.set_section_value(name, key, 1)):
             try:
                 call()
             except KeyError:
@@ -177,8 +177,8 @@ def check_writes_are_sparse_and_tripwired() -> None:
 
     # A section is a section and a bare value is a bare value. Confusing them
     # would write a shape no reader expects.
-    for call in (lambda: view.get("screensaver"), lambda: view.set_value("screensaver", 1),
-                 lambda: view.get("rotation", "value"), lambda: view.set("rotation", "value", 1)):
+    for call in (lambda: view.get("screensaver"), lambda: view.set_top_level_value("screensaver", 1),
+                 lambda: view.get("rotation", "value"), lambda: view.set_section_value("rotation", "value", 1)):
         try:
             call()
         except KeyError:
@@ -194,7 +194,7 @@ def check_scalar_in_section_slot() -> None:
     view = DeckSettings(data)
     assert view.get("screensaver", "brightness") == 30
     assert view.section("screensaver")["loop"] is True
-    view.set("screensaver", "enable", True)
+    view.set_section_value("screensaver", "enable", True)
     assert data == {"screensaver": {"enable": True}}
     print("PASS: a scalar where a section belongs reads as the table")
 

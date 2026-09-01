@@ -56,7 +56,7 @@ def seed_gif_action_page(page_name: str, key_ident: str, dial_ident: str) -> str
 PAGE_MEDIA_BG_COLOR = [10, 200, 30, 255]  # applied after the media block in the loader
 
 
-def seed_gif_page_media_page(page_name: str, key_ident: str, media_path: str) -> str:
+def seed_gif_media_page(page_name: str, key_ident: str, media_path: str) -> str:
     """Seed page media followed by a background color that proves load completion."""
     pages_dir = os.path.join(gl.DATA_PATH, "pages")
     os.makedirs(pages_dir, exist_ok=True)
@@ -163,11 +163,11 @@ def main() -> None:
         )
 
         # Corrupt page media must not stop the remaining state load.
-        page_media_page = gl.page_manager.get_page(
-            seed_gif_page_media_page("GifPageMediaCorrupt", key.identifier.json_identifier, corrupt_path),
+        media_page = gl.page_manager.get_page(
+            seed_gif_media_page("GifPageMediaCorrupt", key.identifier.json_identifier, corrupt_path),
             controller,
         )
-        controller.load_page(page_media_page, allow_reload=True)
+        controller.load_page(media_page, allow_reload=True)
         # The trailing page color signals completion of the asynchronous state load.
         assert wait_until(
             lambda: key.get_active_state().background_manager.page_color == PAGE_MEDIA_BG_COLOR,

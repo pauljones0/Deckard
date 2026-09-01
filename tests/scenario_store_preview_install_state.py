@@ -97,7 +97,7 @@ def _check_failed_install_preserves_state(descriptor, data, err, label) -> None:
     print(f"PASS: {label} preview keeps its state and notifies on a failed install")
 
 
-def check_icon_preview_404() -> None:
+def check_icon_install_failure_preserves_state() -> None:
     data = IconData(github="https://github.com/a/Icons", icon_id="com_a_Icons",
                     icon_name="Test Icons")
     _check_failed_install_preserves_state(
@@ -113,7 +113,7 @@ def check_wallpaper_preview_offline() -> None:
         Err(ErrReason.NO_CONNECTION, "offline"), "wallpaper")
 
 
-def check_sd_plus_preview_400() -> None:
+def check_sd_plus_invalid_asset_preserves_state() -> None:
     data = SDPlusBarWallpaperData(github="https://github.com/c/SDPlus", id="com_c_SDPlus",
                                   name="Test SDPlus")
     _check_failed_install_preserves_state(
@@ -121,7 +121,7 @@ def check_sd_plus_preview_400() -> None:
         Err(ErrReason.INVALID_ASSET, "400-shaped"), "SD+ bar wallpaper")
 
 
-def check_install_rows_bind_against_the_real_backend() -> None:
+def check_install_descriptors_match_backend_signatures() -> None:
     """Bind each descriptor record positionally against its real backend method."""
     import inspect
 
@@ -189,7 +189,7 @@ def _dependency_backend(install_results: dict):
     return backend, root, installed
 
 
-def _fake_over(backend, descriptor, data):
+def _make_preview_fake(backend, descriptor, data):
     state = {"install_state": 0, "set_calls": [], "notified": 0}
 
     def set_install_state(s):
@@ -250,7 +250,7 @@ def check_declined_set_notifies_nothing() -> None:
 
     backend, root, installed = _dependency_backend(
         {"com.test.Root": Ok(None), "com.test.Dep": Ok(None)})
-    fake, state = _fake_over(backend, asset_types.PLUGIN, root)
+    fake, state = _make_preview_fake(backend, asset_types.PLUGIN, root)
 
     recorder = _NotifyRecorder()
     original_notify = getattr(gl, "notify", None)
@@ -283,7 +283,7 @@ def check_mid_set_failure_names_what_landed() -> None:
     backend, root, installed = _dependency_backend(
         {"com.test.Dep": Ok(None),
          "com.test.Root": Err(ErrReason.NO_CONNECTION, "offline")})
-    fake, state = _fake_over(backend, asset_types.PLUGIN, root)
+    fake, state = _make_preview_fake(backend, asset_types.PLUGIN, root)
 
     recorder = _NotifyRecorder()
     original_notify = getattr(gl, "notify", None)
@@ -312,7 +312,7 @@ def check_mid_set_failure_names_what_landed() -> None:
     print("PASS: a part-installed set names what stays installed")
 
 
-def check_a_failed_pack_under_a_plugin_is_titled_as_a_pack() -> None:
+def check_failed_pack_uses_pack_failure_title() -> None:
     """A plugin can need an icon pack. If that pack is what failed, calling
     it a plugin install failure names the wrong thing."""
     from src.windows.Store.AssetPage import StoreAssetPreview
@@ -341,7 +341,7 @@ def check_a_failed_pack_under_a_plugin_is_titled_as_a_pack() -> None:
         get_all_wallpapers=lambda include_images=True: Ok([]),
         get_all_sd_plus_bar_wallpapers=lambda include_images=True: Ok([]),
     )
-    fake, state = _fake_over(backend, asset_types.PLUGIN, root)
+    fake, state = _make_preview_fake(backend, asset_types.PLUGIN, root)
 
     recorder = _NotifyRecorder()
     original_notify = getattr(gl, "notify", None)
@@ -365,14 +365,14 @@ def check_a_failed_pack_under_a_plugin_is_titled_as_a_pack() -> None:
 
 def main() -> None:
     fixtures.start_watchdog(WATCHDOG_SECONDS, label="scenario_store_preview_install_state")
-    check_icon_preview_404()
+    check_icon_install_failure_preserves_state()
     check_wallpaper_preview_offline()
-    check_sd_plus_preview_400()
-    check_install_rows_bind_against_the_real_backend()
+    check_sd_plus_invalid_asset_preserves_state()
+    check_install_descriptors_match_backend_signatures()
     check_icon_preview_success_flips_installed()
     check_declined_set_notifies_nothing()
     check_mid_set_failure_names_what_landed()
-    check_a_failed_pack_under_a_plugin_is_titled_as_a_pack()
+    check_failed_pack_uses_pack_failure_title()
     print("scenario_store_preview_install_state: PASS")
 
 

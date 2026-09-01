@@ -182,7 +182,7 @@ class StoreAssetPreview(StorePreview):
             log.error(f"Failed to install {noun} {asset_id}: {report.error!r}")
             # Use dependency detail when another item failed or any item installed
             failed_is_this_card = (report.failed is not None
-                                   and report.failed.data is self.asset_data)
+                                   and report.failed.asset is self.asset_data)
             if report.installed or not failed_is_this_card:
                 name = self.asset_data.asset_name or asset_id or noun
                 failed_noun = dependencies.failure_noun(report, noun)

@@ -17,21 +17,21 @@ def main() -> int:
         page_path = page.json_path
         media = make_test_png(os.path.join(gl.DATA_PATH, "media", "page_bg.png"),
                               color=(200, 40, 40))
-        pm = gl.page_manager
+        page_manager = gl.page_manager
 
         # Store the view beside other override keys
-        pm.overwrite_background_settings(page_path, overwrite=True, show=True,
+        page_manager.overwrite_background_settings(page_path, overwrite=True, show=True,
                                          media_path=media,
                                          view={"x": 0.2, "y": 0.5, "scale": 2.0})
-        stored = pm.get_background_settings(page_path)
+        stored = page_manager.get_background_settings(page_path)
         if stored.get("view") != {"x": 0.2, "y": 0.5, "scale": 2.0}:
             failures.append(f"the view was not stored: {stored}")
         if stored.get("media-path") != media or not stored.get("overwrite"):
             failures.append(f"sibling keys were disturbed by the view write: {stored}")
 
         # Keep the view when another key changes
-        pm.overwrite_background_settings(page_path, fps=15)
-        stored = pm.get_background_settings(page_path)
+        page_manager.overwrite_background_settings(page_path, fps=15)
+        stored = page_manager.get_background_settings(page_path)
         if stored.get("view") != {"x": 0.2, "y": 0.5, "scale": 2.0}:
             failures.append(f"a write of another key changed the view: {stored}")
         if stored.get("fps") != 15:
@@ -45,8 +45,8 @@ def main() -> int:
                             f"{None if image is None else image.view}")
 
         # Clear the key to restore the default view
-        pm.overwrite_background_settings(page_path, view=None)
-        stored = pm.get_background_settings(page_path)
+        page_manager.overwrite_background_settings(page_path, view=None)
+        stored = page_manager.get_background_settings(page_path)
         if "view" in stored:
             failures.append(f"view=None did not clear the key: {stored}")
         controller.load_background(page, update=False)

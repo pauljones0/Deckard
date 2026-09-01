@@ -13,15 +13,15 @@ from src.backend import main_loop
 def _saturate_shared_pool(release: threading.Event) -> list:
     """Fill every worker of the application pool with a blocked task."""
     holds = []
-    entered = threading.Barrier(9)
+    worker_barrier = threading.Barrier(9)
 
     def hold() -> None:
-        entered.wait(timeout=10)
+        worker_barrier.wait(timeout=10)
         release.wait(timeout=30)
 
     for _ in range(8):
         holds.append(main_loop.run_in_background(hold))
-    entered.wait(timeout=10)
+    worker_barrier.wait(timeout=10)
     return holds
 
 
@@ -72,19 +72,19 @@ def check_superseding_load_cancels_queued_decode() -> None:
 
         # Occupy both workers so superseding load_page cancels a queued decode
         # before it starts.
-        entered = threading.Barrier(3)
+        worker_barrier = threading.Barrier(3)
         release = threading.Event()
         for _ in range(2):
             controller._bg_decode_pool.submit(
-                lambda: (entered.wait(timeout=10), release.wait(10)))
-        entered.wait(timeout=10)
+                lambda: (worker_barrier.wait(timeout=10), release.wait(10)))
+        worker_barrier.wait(timeout=10)
 
-        page_a = gl.page_manager.get_page(fixtures.seed_page("SupersededA"), controller)
-        page_b = gl.page_manager.get_page(fixtures.seed_page("WinnerB"), controller)
-        assert page_a is not None and page_b is not None, "fixture pages did not build"
-        controller.load_page(page_a)
+        superseded_page = gl.page_manager.get_page(fixtures.seed_page("SupersededA"), controller)
+        winning_page = gl.page_manager.get_page(fixtures.seed_page("WinnerB"), controller)
+        assert superseded_page is not None and winning_page is not None, "fixture pages did not build"
+        controller.load_page(superseded_page)
         superseded = controller._bg_future
-        controller.load_page(page_b)
+        controller.load_page(winning_page)
         release.set()
         assert fixtures.wait_until(lambda: "WinnerB" in decoded_pages, timeout=3.0), (
             "the winning page's decode never ran")

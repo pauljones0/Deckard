@@ -88,15 +88,15 @@ def main() -> int:
         for name in imported:
             full = os.path.join(pages_dir, name)
             with open(full) as f:
-                data = json.load(f)
+                page_data = json.load(f)
             texts = [
                 label.get("text")
-                for key in data.get("keys", {}).values()
+                for key in page_data.get("keys", {}).values()
                 for state in key.get("states", {}).values()
                 for label in state.get("labels", {}).values()
             ]
             if "hello" in texts:
-                page0_dict = data
+                page0_dict = page_data
             elif "second" in texts:
                 page1_path = full
         if page0_dict is None or page1_path is None:

@@ -103,7 +103,7 @@ def check_one_thread_for_many_schedules() -> None:
     print("PASS: one TimerWheel == one scheduler thread, even under 50 concurrent schedule() calls")
 
 
-def check_slow_callback_delays_no_other_timer() -> None:
+def check_callback_isolation() -> None:
     wheel = timer_wheel.TimerWheel(name="SlowCallbackWheel")
     timeline = []
     timeline_lock = threading.Lock()
@@ -162,7 +162,7 @@ def check_module_level_default_wheel_smoke() -> None:
     print("PASS: module-level timer_wheel.schedule() smoke check")
 
 
-def check_cancel_compacts_the_heap_behind_a_long_timer() -> None:
+def check_cancelled_timer_compaction() -> None:
     """Cancelling timers behind a long-lived front timer compacts their heap
     entries and releases their closures."""
     import weakref
@@ -216,8 +216,8 @@ def main() -> None:
     check_cancel_before_fire_prevents()
     check_cancel_after_fire_is_noop()
     check_one_thread_for_many_schedules()
-    check_slow_callback_delays_no_other_timer()
-    check_cancel_compacts_the_heap_behind_a_long_timer()
+    check_callback_isolation()
+    check_cancelled_timer_compaction()
     check_module_level_default_wheel_smoke()
 
     print("PASS: scenario_timer_wheel")

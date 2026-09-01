@@ -26,7 +26,7 @@ class FakeToastOverlay:
         self.calling_threads.append(threading.current_thread())
 
 
-class FakeWindowSelf:
+class FakeWindow:
     def __init__(self):
         self.toast_overlay = FakeToastOverlay()
 
@@ -61,7 +61,7 @@ def main() -> None:
             f"order"
         )
 
-    fake_win = FakeWindowSelf()
+    fake_win = FakeWindow()
     # Bind the real toast internals onto the duck-typed window, so the
     # unbound public methods reach them through self.
     fake_win._add_toast = types.MethodType(MainWindow._add_toast, fake_win)

@@ -8,8 +8,8 @@ import fixtures
 
 
 def main() -> None:
-    fixtures.start_watchdog(60, label="scenario_shutdown")
-    controller = fixtures.make_headless_controller(serial="shutdown-1")
+    fixtures.start_watchdog(60, label="scenario_clear_write_order")
+    controller = fixtures.make_headless_controller(serial="clear-write-order-1")
     deck = fixtures.raw_deck(controller)
     key_count = controller.deck.key_count()
     is_touch = controller.deck.is_touch()
@@ -43,7 +43,7 @@ def main() -> None:
         )
 
     fixtures.teardown(controller)
-    print("PASS: scenario_shutdown")
+    print("PASS: scenario_clear_write_order")
 
 
 if __name__ == "__main__":

@@ -34,7 +34,7 @@ class NoTimers:
         pass
 
 
-def fresh_flush() -> None:
+def install_fresh_flush() -> None:
     """A flush seam that writes only when told, installed process-wide."""
     page_flush._flush = page_flush.PageFlush(scheduler=NoTimers())
 
@@ -293,7 +293,7 @@ def check_video_side_unchanged() -> int:
     return 0
 
 
-def check_clear_is_safe_on_odd_pages(page) -> int:
+def check_revert_handles_missing_or_malformed_media(page) -> int:
     """A revert on a page that never carried the key must change nothing."""
     # Set and clear once, so the branch below exists whatever ran before.
     page.set_media_fps(IDENT, 0, 15, update=False)
@@ -367,7 +367,7 @@ def check_background_rate_reverts_too(page) -> int:
 
 def main() -> int:
     start_watchdog(60, "media_fps_revert")
-    fresh_flush()
+    install_fresh_flush()
     controller = make_headless_controller(serial="fps-revert",
                                           page_name="FpsRevert")
     try:
@@ -377,7 +377,7 @@ def main() -> int:
         rc |= check_revert_reaches_playing_media(controller)
         rc |= check_native_rate_read_back(controller)
         rc |= check_video_side_unchanged()
-        rc |= check_clear_is_safe_on_odd_pages(page)
+        rc |= check_revert_handles_missing_or_malformed_media(page)
         rc |= check_background_rate_reverts_too(page)
     finally:
         teardown(controller)

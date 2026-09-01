@@ -125,7 +125,7 @@ def show_page(controller, path: str, n_states: int):
     return page, c_input
 
 
-def check_a_state_change_reaches_the_page_and_its_file(controller) -> int:
+def check_state_change_persistence(controller) -> int:
     """A state change lands in the page, and reaches the file at a flush."""
     fresh_flush()
     path = seed_states_page("StateWrite", 3)
@@ -162,7 +162,7 @@ def check_a_state_change_reaches_the_page_and_its_file(controller) -> int:
     return 0
 
 
-def check_a_cold_load_opens_the_kept_state(controller) -> int:
+def check_cold_load_restores_state(controller) -> int:
     """A deck that arrives on a page opens the state the page names, whether
     it comes from another page or from a fresh start."""
     fresh_flush()
@@ -206,7 +206,7 @@ def check_a_cold_load_opens_the_kept_state(controller) -> int:
     return 0
 
 
-def check_a_warm_reload_keeps_each_deck_on_its_own_state(controller) -> int:
+def check_warm_reload_preserves_deck_states(controller) -> int:
     """Keep each deck's state when reloading a shared page.
     The page stores one value although multiple decks can show different states."""
     fresh_flush()
@@ -257,7 +257,7 @@ def check_a_warm_reload_keeps_each_deck_on_its_own_state(controller) -> int:
     return 0
 
 
-def check_a_page_that_names_no_state_opens_the_first(controller) -> int:
+def check_missing_saved_state_fallback(controller) -> int:
     """A page carrying no number opens its inputs on the first state, whatever
     the deck showed before."""
     fresh_flush()
@@ -288,7 +288,7 @@ def check_a_page_that_names_no_state_opens_the_first(controller) -> int:
     return 0
 
 
-def check_a_number_the_input_cannot_show_opens_the_first(controller) -> int:
+def check_invalid_or_unavailable_state_fallback(controller) -> int:
     """A number outside the states the input has, and a value that is no state
     number, both open the first state. Only the second is dropped."""
     fresh_flush()
@@ -330,7 +330,7 @@ def check_a_number_the_input_cannot_show_opens_the_first(controller) -> int:
     return 0
 
 
-def check_a_write_reaches_only_the_page_the_input_loaded(controller) -> int:
+def check_state_write_page_ownership(controller) -> int:
     """A state change during a page switch stays off the arriving page."""
     fresh_flush()
     from_path = seed_states_page("StateRaceFrom", 3)
@@ -382,7 +382,7 @@ def check_a_write_reaches_only_the_page_the_input_loaded(controller) -> int:
     return 0
 
 
-def check_a_rename_keeps_the_page_the_input_holds(controller) -> int:
+def check_rename_preserves_page_ownership(controller) -> int:
     """Retain an input's page owner when its file is renamed.
     Later state changes and warm reloads must use the new path."""
     fresh_flush()
@@ -422,7 +422,7 @@ def check_a_rename_keeps_the_page_the_input_holds(controller) -> int:
     return 0
 
 
-def check_the_sidebar_shows_the_state_without_selecting_it(controller) -> int:
+def check_sidebar_state_mirroring(controller) -> int:
     """Show the sidebar state without selecting it on the input.
     Build, deferred map, and refresh calls must only mirror current state."""
     fresh_flush()
@@ -482,7 +482,7 @@ def check_the_sidebar_shows_the_state_without_selecting_it(controller) -> int:
     return 0
 
 
-def check_a_reload_with_no_move_leaves_the_sidebar_alone(controller, port) -> int:
+def check_noop_reload_skips_sidebar_refresh(controller, port) -> int:
     """Refresh the sidebar only when a load changes state.
     A redundant refresh moves the main stack away from an action edit."""
     fresh_flush()
@@ -502,9 +502,9 @@ def check_a_reload_with_no_move_leaves_the_sidebar_alone(controller, port) -> in
 
     # Remove the shown state so reload must move and notify the sidebar.
     del port.state_selected[:]
-    with page.edit() as data:
-        data["keys"]["0x0"]["states"].pop("2")
-        data["keys"]["0x0"]["states"].pop("1")
+    with page.edit() as page_data:
+        page_data["keys"]["0x0"]["states"].pop("2")
+        page_data["keys"]["0x0"]["states"].pop("1")
     page.reload_similar_pages(identifier=IDENT, reload_self=True)
     if c_input.state != 0:
         print(f"FAIL: the input stayed on state {c_input.state}, which the "
@@ -526,17 +526,17 @@ def main() -> int:
     failures = 0
     try:
         for check in (
-            check_a_state_change_reaches_the_page_and_its_file,
-            check_a_cold_load_opens_the_kept_state,
-            check_a_warm_reload_keeps_each_deck_on_its_own_state,
-            check_a_page_that_names_no_state_opens_the_first,
-            check_a_number_the_input_cannot_show_opens_the_first,
-            check_a_write_reaches_only_the_page_the_input_loaded,
-            check_a_rename_keeps_the_page_the_input_holds,
-            check_the_sidebar_shows_the_state_without_selecting_it,
+            check_state_change_persistence,
+            check_cold_load_restores_state,
+            check_warm_reload_preserves_deck_states,
+            check_missing_saved_state_fallback,
+            check_invalid_or_unavailable_state_fallback,
+            check_state_write_page_ownership,
+            check_rename_preserves_page_ownership,
+            check_sidebar_state_mirroring,
         ):
             failures += check(controller)
-        failures += check_a_reload_with_no_move_leaves_the_sidebar_alone(controller, port)
+        failures += check_noop_reload_skips_sidebar_refresh(controller, port)
     finally:
         teardown(controller)
 

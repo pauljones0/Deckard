@@ -609,12 +609,12 @@ class PageManagerBackend:
         if not os.path.exists(path) and os.path.exists(backup_path) and use_backup:
             path = backup_path
 
-        data, corrupt = self.settings_manager.load_settings_reporting_corruption(path)
+        data, corrupt = self.settings_manager.load_settings_with_corruption_status(path)
 
         # Use a valid backup for a corrupt primary when available, regardless of use_backup.
         # Quarantine success is irrelevant; an empty result could erase the page on save.
         if corrupt and path != backup_path and os.path.exists(backup_path):
-            healed, backup_corrupt = self.settings_manager.load_settings_reporting_corruption(backup_path)
+            healed, backup_corrupt = self.settings_manager.load_settings_with_corruption_status(backup_path)
             if not backup_corrupt:
                 data = healed
                 # Report the backup content served; the next save rewrites the primary.
@@ -665,7 +665,7 @@ class PageManagerBackend:
                 # Scan a snapshot because concurrent mutation can invalidate iteration.
                 # Edit only after a match; both passes are idempotent, and second finds remainder.
                 page_had_asset = self._clear_asset_path(
-                    document.get_without_action_objects(), abs_target_path)
+                    document.snapshot_for_save(), abs_target_path)
                 if page_had_asset:
                     with document.edit() as page_dict:
                         self._clear_asset_path(page_dict, abs_target_path)
@@ -778,7 +778,7 @@ class PageManagerBackend:
         with self.get_document(path).edit() as data:
             data["settings"] = settings
 
-    def any_auto_change_rule_enabled(self) -> bool:
+    def has_enabled_auto_change_rule(self) -> bool:
         """Return whether any page enables an active-window change rule.
         This gates the watcher and uses the same accessor as rule matching."""
         # No index lists rules, so scan until the first hit; a full-deck page is about 16 KB.

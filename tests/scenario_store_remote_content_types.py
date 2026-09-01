@@ -133,13 +133,13 @@ def test_get_web_image_still_contains_ordinary_errors() -> None:
 
 
 def main() -> None:
-    fixtures.start_watchdog(30, label="scenario_store_remote_datatype")
+    fixtures.start_watchdog(30, label="scenario_store_remote_content_types")
     test_binary_fetch_cached_under_content_key()
     test_text_and_binary_keys_do_not_collide()
     test_stale_fallback_respects_data_type()
     test_get_web_image_propagates_base_exceptions()
     test_get_web_image_still_contains_ordinary_errors()
-    print("scenario_store_remote_datatype: PASS")
+    print("scenario_store_remote_content_types: PASS")
 
 
 if __name__ == "__main__":

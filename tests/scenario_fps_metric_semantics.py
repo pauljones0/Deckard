@@ -92,7 +92,7 @@ def check_metric_naming() -> None:
     print("PASS: the per-tick metric carries work-rate naming only")
 
 
-def check_fast_work_slow_cadence_stays_quiet() -> None:
+def check_fast_work_warning_state() -> None:
     writer = make_writer()
     port = RecordingPort()
     ui_port.install(port)
@@ -108,7 +108,7 @@ def check_fast_work_slow_cadence_stays_quiet() -> None:
     print("PASS: fast work at a slow cadence stays quiet")
 
 
-def check_late_loop_warns_once_and_recovers_once() -> None:
+def check_late_warning_transitions() -> None:
     writer = make_writer()
     port = RecordingPort()
     ui_port.install(port)
@@ -171,8 +171,8 @@ def check_window_stays_bounded() -> None:
 fixtures.start_watchdog(90, "fps metric semantics")
 check_recorded_value_is_work_rate()
 check_metric_naming()
-check_fast_work_slow_cadence_stays_quiet()
-check_late_loop_warns_once_and_recovers_once()
+check_fast_work_warning_state()
+check_late_warning_transitions()
 check_settings_toggle_contract()
 check_window_stays_bounded()
 print("SCENARIO PASS")

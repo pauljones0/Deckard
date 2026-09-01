@@ -23,14 +23,14 @@ class AssetManager:
         self.colors = Manager(Color, "colors")
         self.icons = Manager(Icon, "icons")
 
-    def _settings_file(self) -> PluginSettings:
+    def _settings_store(self) -> PluginSettings:
         """Create settings access from the plugin's current path on each call."""
         return PluginSettings(self.plugin_base.settings_path)
 
     def load_assets(self) -> "dict[str, Any] | None":
         # This can be the only read for an unregistered plugin, so corrupt files
         # must be quarantined here without stopping plugin loading.
-        content = self._settings_file().document()
+        content = self._settings_store().document()
         if content is None:
             return {}
 
@@ -46,7 +46,7 @@ class AssetManager:
 
         # Preserve non-asset settings before the wholesale write; an unreadable
         # file becomes empty without raising through the colour-picker path.
-        settings = self._settings_file()
+        settings = self._settings_store()
         content = settings.document() or {}
         content["assets"] = assets
         settings.save_document(content)

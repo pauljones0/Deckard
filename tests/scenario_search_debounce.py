@@ -117,7 +117,7 @@ def test_base_holds_the_defaults() -> None:
     print("PASS: the base declares its search state on the class")
 
 
-def test_the_entry_owns_the_wait() -> None:
+def test_search_entry_owns_debounce_delay() -> None:
     """Require Gtk.SearchEntry to own the only debounce timer.
 
     A second timer adds latency, including after GTK reports a cleared entry.
@@ -207,7 +207,7 @@ def test_invalidate_stops_passes_and_frees_the_cache() -> None:
           "catches up only when the query moved")
 
 
-def test_a_pass_that_only_starts_work_re_arms_the_catch_up() -> None:
+def test_unrendered_search_runs_again_on_show() -> None:
     """Do not mark a deferred search current before its render lands.
 
     A dropped or failed gather must run again when the page is shown.
@@ -241,7 +241,7 @@ def test_a_pass_that_only_starts_work_re_arms_the_catch_up() -> None:
     print("PASS: only a pass that rendered settles the catch-up")
 
 
-def test_the_page_settles_its_entry_before_the_catch_up() -> None:
+def test_on_shown_precedes_search_catch_up() -> None:
     """Run on_shown before the map handler tests for catch-up.
 
     This prevents a gather for a query that on_shown clears.
@@ -277,7 +277,7 @@ def test_the_page_settles_its_entry_before_the_catch_up() -> None:
     print("PASS: a page settles its entry before the catch-up test")
 
 
-def test_search_is_current_answers_both_halves() -> None:
+def test_search_is_current_requires_generation_and_visibility() -> None:
     """Reject worker results after a generation change or page hide.
 
     Generation alone is insufficient because a hidden page keeps its new value.
@@ -299,7 +299,7 @@ def test_search_is_current_answers_both_halves() -> None:
     print("PASS: the staleness test answers the generation and the page alike")
 
 
-def test_hiding_the_window_invalidates_for_real() -> None:
+def test_window_unmap_invalidates_pending_search() -> None:
     """Require invalidation on unmap while queued work still holds the page.
 
     A destroy hook waits for dispose and cannot stop that pending work.
@@ -423,7 +423,7 @@ def subclass_defs() -> list[tuple[str, ast.ClassDef]]:
     return found
 
 
-def test_no_page_overrides_the_handler() -> None:
+def test_pages_do_not_override_search_handlers() -> None:
     """Require pages to override apply_search, not the guarded handler.
 
     Handler overrides bypass staleness and invalidation.
@@ -450,15 +450,15 @@ def main() -> int:
     fixtures.start_watchdog(60, label="scenario_search_debounce")
 
     test_base_holds_the_defaults()
-    test_the_entry_owns_the_wait()
+    test_search_entry_owns_debounce_delay()
     test_generation_guard_drops_an_overtaken_pass()
     test_invalidate_stops_passes_and_frees_the_cache()
-    test_a_pass_that_only_starts_work_re_arms_the_catch_up()
-    test_the_page_settles_its_entry_before_the_catch_up()
-    test_search_is_current_answers_both_halves()
-    test_hiding_the_window_invalidates_for_real()
+    test_unrendered_search_runs_again_on_show()
+    test_on_shown_precedes_search_catch_up()
+    test_search_is_current_requires_generation_and_visibility()
+    test_window_unmap_invalidates_pending_search()
     test_hooks_are_wired()
-    test_no_page_overrides_the_handler()
+    test_pages_do_not_override_search_handlers()
 
     print("ALL PASS: scenario_search_debounce")
     return 0

@@ -43,7 +43,7 @@ def check_deck_shape(controller, model_name: str) -> int:
               f"{deck.is_touch()}, its preset states {model.is_touch}")
         return 1
     if model.is_touch:
-        strip = tuple(model.touchscreen_image.size)
+        strip = tuple(model.touchscreen_format.size)
         if tuple(controller.get_touchscreen_image_size()) != strip:
             print(f"FAIL(shape): {model_name} strip is "
                   f"{controller.get_touchscreen_image_size()}, its preset "
@@ -255,7 +255,7 @@ def check_touch_dispatch(controller, model_name: str) -> int:
     direction the user drew it in."""
     model = shape_of(model_name)
     n_dials = model.dial_count
-    width, _height = model.touchscreen_image.size
+    width, _height = model.touchscreen_format.size
     raw = fixtures.raw_deck(controller)
     # A touch in the middle of the first slot of the device's own strip.
     slot_width = width // n_dials

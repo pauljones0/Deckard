@@ -117,7 +117,7 @@ class FakeLoader:
         self.finished.clear()
 
 
-def case_wedge_names_only_the_started_task() -> None:
+def case_wedge_reports_only_started_task() -> None:
     """Replace for one started overdue task without cancelling queued tasks.
     Only the running task is wedged; queued tasks load after it clears."""
     controller = make_headless_controller(serial="load-wedge-1")
@@ -276,7 +276,7 @@ def refusing_loader_pool(boot_pool, width: int, refuse_on: str, error: RuntimeEr
     )
 
 
-def case_a_refused_submit_is_reported_but_a_closing_pool_is_not() -> None:
+def case_exhaustion_refusal_is_reported() -> None:
     """Report thread-exhaustion refusals but keep shutdown refusals silent.
     A refused input never enters the deadline sweep."""
     controller = make_headless_controller(serial="load-wedge-refuse")
@@ -327,7 +327,7 @@ def case_a_refused_submit_is_reported_but_a_closing_pool_is_not() -> None:
         teardown(controller)
 
 
-def case_page_switch_during_the_drain_loads_nothing() -> None:
+def case_stale_generation_loads_nothing() -> None:
     """Require late queued tasks to recheck the page generation before loading.
     A page switch while a wedge holds the old pool must make the drain inert."""
     controller = make_headless_controller(serial="load-wedge-gen")
@@ -384,7 +384,7 @@ def case_page_switch_during_the_drain_loads_nothing() -> None:
         teardown(controller)
 
 
-def case_the_action_pool_takes_the_lifecycle_only() -> None:
+def case_action_pool_survives_loader_deadlines() -> None:
     """Keep the action pool unchanged when one callback wedges.
     Cancelling queued ready callbacks would prevent their tick and update gates from opening."""
     controller = make_headless_controller(serial="action-pool-1")
@@ -428,11 +428,11 @@ def case_the_action_pool_takes_the_lifecycle_only() -> None:
 
 def main() -> None:
     start_watchdog(60, label="scenario_load_wedge")
-    case_wedge_names_only_the_started_task()
+    case_wedge_reports_only_started_task()
     case_healthy_batch_keeps_its_pool()
-    case_a_refused_submit_is_reported_but_a_closing_pool_is_not()
-    case_page_switch_during_the_drain_loads_nothing()
-    case_the_action_pool_takes_the_lifecycle_only()
+    case_exhaustion_refusal_is_reported()
+    case_stale_generation_loads_nothing()
+    case_action_pool_survives_loader_deadlines()
     print("PASS: scenario_load_wedge")
 
 

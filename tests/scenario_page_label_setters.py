@@ -31,9 +31,9 @@ class RecordingPort(ui_port.UIPort):
         self.journal.append(("port", controller, identifier, state, aspect))
 
 
-def check_font_family_every_controller(page, identifier, state) -> None:
+def check_font_family_on_same_page_controllers(page, identifier, state) -> None:
     """Apply font_name on each same-page controller and retain it across a state switch."""
-    second = fixtures.make_headless_controller(serial="label-setters-2")
+    other_controller = fixtures.make_headless_controller(serial="label-setters-2")
     try:
         # The second controller shares the active page, so the page-scoped
         # lookup must include its input state.
@@ -64,7 +64,7 @@ def check_font_family_every_controller(page, identifier, state) -> None:
 
         # A family set while state 1 is inactive must be what state 1 renders
         # once it becomes active.
-        c_input = second.get_input(identifier)
+        c_input = other_controller.get_input(identifier)
         c_input.add_new_state(switch=False)
         assert 1 in c_input.states, "could not create a second input state"
         assert c_input.state == 0, "add_new_state(switch=False) switched anyway"
@@ -79,7 +79,7 @@ def check_font_family_every_controller(page, identifier, state) -> None:
 
         print("PASS: font-family reaches every controller and survives a state switch")
     finally:
-        fixtures.teardown(second)
+        fixtures.teardown(other_controller)
 
 
 def main() -> None:
@@ -159,7 +159,7 @@ def main() -> None:
 
         print(f"PASS: {len(SETTERS)} label setters reach the port then repaint")
 
-        check_font_family_every_controller(page, identifier, state)
+        check_font_family_on_same_page_controllers(page, identifier, state)
     finally:
         ui_port.install(None)
         fixtures.teardown(controller)

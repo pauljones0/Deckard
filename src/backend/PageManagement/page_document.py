@@ -74,7 +74,7 @@ def back_up_page_file(src_path: str) -> None:
     atomic_copy_file(src_path, dst_path)
 
 
-def _apply(data: dict[str, Any], content: dict[str, Any]) -> None:
+def _replace_mapping_contents(data: dict[str, Any], content: dict[str, Any]) -> None:
     """Apply content without replacing data; the caller holds the file lock.
     Bind new trees before removals so unlocked readers see whole values without transient gaps."""
     # Every Page aliases data. GIL-atomic update and deletion can leave a removed
@@ -123,7 +123,7 @@ class PageDocument:
         # Replace memory and file together; a file-only replacement can lose to a
         # pending page edit that writes the old content back.
         with self.edit() as data:
-            _apply(data, content)
+            _replace_mapping_contents(data, content)
 
     def ensure_loaded(self) -> None:
         """Load an unfilled document exactly once before non-Page access.
@@ -135,7 +135,7 @@ class PageDocument:
 
     def refresh_from_disk(self) -> None:
         """Refresh through the page manager's read barrier and corrupt-file recovery.
-        The unlocked read-to-adopt gap can lose an edit that starts after the disk read."""
+        The unlocked read-to-apply gap can lose an edit that starts after the disk read."""
         # External writers include full-page imports, pre-manager migrations, and
         # recreation of a deleted page under a document's retained name.
         with self._load_guard:
@@ -146,18 +146,18 @@ class PageDocument:
         if page_manager is None:
             # Only before create_global_objects(), with nothing to load from.
             return
-        self.adopt(page_manager.get_page_data(self.json_path))
+        self.apply_loaded_content(page_manager.get_page_data(self.json_path))
         self._loaded = True
 
-    def adopt(self, content: dict[str, Any]) -> None:
+    def apply_loaded_content(self, content: dict[str, Any]) -> None:
         """Adopt content without replacing the shared dictionary.
         The lock prevents a flush between update and removal from restoring dropped sections."""
         with page_flush.save_lock(self.json_path):
-            _apply(self._data, content)
+            _replace_mapping_contents(self._data, content)
 
     # What the flush seam needs from the holder of a page's content.
 
-    def get_without_action_objects(self) -> dict[str, Any]:
+    def snapshot_for_save(self) -> dict[str, Any]:
         """This page's content as it goes into its file."""
         return content_without_action_objects(self._data)
 

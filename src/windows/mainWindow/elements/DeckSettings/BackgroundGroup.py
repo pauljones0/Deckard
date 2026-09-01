@@ -244,7 +244,7 @@ class BackgroundMediaRow(LazyMapTasks, Adw.PreferencesRow):
 
     def on_toggle_enable(self, toggle_switch: Gtk.Switch, state: bool) -> None:
         config = gl.settings_manager.deck(self.deck_serial_number)
-        config.set("background", "enable", state)
+        config.set_section_value("background", "enable", state)
         # Save
         config.save()
         # Update
@@ -257,7 +257,7 @@ class BackgroundMediaRow(LazyMapTasks, Adw.PreferencesRow):
 
     def on_toggle_loop(self, toggle_switch: Gtk.Switch, state: bool) -> None:
         settings = gl.settings_manager.deck(self.deck_serial_number)
-        settings.set("background", "loop", state)
+        settings.set_section_value("background", "loop", state)
 
         settings.save()
 
@@ -268,7 +268,7 @@ class BackgroundMediaRow(LazyMapTasks, Adw.PreferencesRow):
 
     def on_toggle_extend_touchscreen(self, toggle_switch: Gtk.Switch, state: bool) -> None:
         settings = gl.settings_manager.deck(self.deck_serial_number)
-        settings.set("background", "extend-to-touchscreen", state)
+        settings.set_section_value("background", "extend-to-touchscreen", state)
 
         # Save
         settings.save()
@@ -281,7 +281,7 @@ class BackgroundMediaRow(LazyMapTasks, Adw.PreferencesRow):
 
     def on_change_fps(self, spinner: Gtk.SpinButton) -> None:
         settings = gl.settings_manager.deck(self.deck_serial_number)
-        settings.set("background", "fps", spinner.get_value_as_int())
+        settings.set_section_value("background", "fps", spinner.get_value_as_int())
 
         # Save
         settings.save()
@@ -300,9 +300,9 @@ class BackgroundMediaRow(LazyMapTasks, Adw.PreferencesRow):
     def update_image(self, file_path: "str | None") -> None:
         self.set_thumbnail(file_path)
         settings = gl.settings_manager.deck(self.deck_serial_number)
-        settings.set("background", "media-path", file_path)
+        settings.set_section_value("background", "media-path", file_path)
         # Reset the view when media changes because the crop belongs to the selected image.
-        settings.set("background", "view", None)
+        settings.set_section_value("background", "view", None)
         settings.save()
 
         controller = self.settings_page.deck_controller
@@ -363,9 +363,9 @@ class BackgroundMediaRow(LazyMapTasks, Adw.PreferencesRow):
                 as_dict = view_as_setting(use)
                 rewritten.append(entry_path if as_dict is None
                                  else {"path": entry_path, "view": as_dict})
-            settings.set("background", "media-paths", rewritten)
+            settings.set_section_value("background", "media-paths", rewritten)
         else:
-            settings.set("background", "view", view_as_setting(view))
+            settings.set_section_value("background", "view", view_as_setting(view))
         settings.save()
 
         if not self._deck_background_is_visible():
@@ -399,9 +399,9 @@ class BackgroundMediaRow(LazyMapTasks, Adw.PreferencesRow):
                 current_view = view_as_setting(normalize_view(settings.get("background", "view")))
                 paths.append(current if current_view is None
                              else {"path": current, "view": current_view})
-                settings.set("background", "view", None)
+                settings.set_section_value("background", "view", None)
         paths.append(file_path)
-        settings.set("background", "media-paths", paths)
+        settings.set_section_value("background", "media-paths", paths)
         settings.save()
 
         image_count = len(media_entries(paths))
@@ -410,20 +410,20 @@ class BackgroundMediaRow(LazyMapTasks, Adw.PreferencesRow):
 
     def on_clear_slideshow(self, button: Gtk.Button) -> None:
         settings = gl.settings_manager.deck(self.deck_serial_number)
-        settings.set("background", "media-paths", [])
+        settings.set_section_value("background", "media-paths", [])
         settings.save()
         self.slideshow_count_label.set_label(_slideshow_summary_text(0))
         self._reload_background()
 
     def on_change_interval(self, spinner: Gtk.SpinButton) -> None:
         settings = gl.settings_manager.deck(self.deck_serial_number)
-        settings.set("background", "slideshow-interval", spinner.get_value_as_int())
+        settings.set_section_value("background", "slideshow-interval", spinner.get_value_as_int())
         settings.save()
         self._reload_background()
 
     def on_toggle_shuffle(self, toggle_switch: Gtk.Switch, state: bool) -> None:
         settings = gl.settings_manager.deck(self.deck_serial_number)
-        settings.set("background", "slideshow-order", "shuffle" if state else "in-order")
+        settings.set_section_value("background", "slideshow-order", "shuffle" if state else "in-order")
         settings.save()
         self._reload_background()
 

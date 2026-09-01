@@ -32,7 +32,7 @@ def prime_stale_dir(name: str) -> str:
     return tmp
 
 
-def check_stale_cache_hides_the_module() -> None:
+def check_stale_finder_cache() -> None:
     prime_stale_dir("reload_dep_a")
     try:
         importlib.import_module("reload_dep_a")
@@ -46,7 +46,7 @@ def check_stale_cache_hides_the_module() -> None:
     print("PASS: a stale finder cache hides a fresh module until the caches drop")
 
 
-class RecordingManager:
+class RecordingPluginManager:
     def __init__(self, dep_name: str, error: "str | None" = None) -> None:
         self.dep_name = dep_name
         self.error = error
@@ -64,7 +64,7 @@ class RecordingManager:
     def generate_action_index(self) -> None:
         self.calls.append("index")
 
-    def load_error_of(self, folder: str) -> "str | None":
+    def get_load_error(self, folder: str) -> "str | None":
         self.calls.append(f"error:{folder}")
         return self.error
 
@@ -77,9 +77,9 @@ class RecordingNotify:
         self.errors.append(body)
 
 
-def check_reload_sees_the_fresh_dependency() -> None:
+def check_fresh_dependency_reload() -> None:
     prime_stale_dir("reload_dep_b")
-    manager = RecordingManager("reload_dep_b")
+    manager = RecordingPluginManager("reload_dep_b")
     old_manager = gl.plugin_manager
     gl.plugin_manager = manager
     try:
@@ -92,8 +92,8 @@ def check_reload_sees_the_fresh_dependency() -> None:
     print("PASS: the install reload imports a dependency installed mid-process")
 
 
-def check_load_failure_reaches_the_user() -> None:
-    manager = RecordingManager("reload_dep_b", error="import failed: no module")
+def check_load_failure_notification() -> None:
+    manager = RecordingPluginManager("reload_dep_b", error="import failed: no module")
     notify = RecordingNotify()
     old_manager, old_notify = gl.plugin_manager, gl.notify
     gl.plugin_manager = manager
@@ -111,9 +111,9 @@ def check_load_failure_reaches_the_user() -> None:
 def main() -> None:
     fixtures.start_watchdog(60, label="scenario_install_reload")
     # Run the platform-dependent stale-cache precondition after behavior checks.
-    check_reload_sees_the_fresh_dependency()
-    check_load_failure_reaches_the_user()
-    check_stale_cache_hides_the_module()
+    check_fresh_dependency_reload()
+    check_load_failure_notification()
+    check_stale_finder_cache()
     print("PASS: scenario_install_reload")
 
 

@@ -92,18 +92,18 @@ def main() -> int:
         return 1
 
     # C. Same-path saves serialize across Page objects.
-    path2 = seed_page("SaveShared")
-    page_a = Page(json_path=path2, deck_controller=StubController("save-shared-a"))
-    page_b = Page(json_path=path2, deck_controller=StubController("save-shared-b"))
+    shared_path = seed_page("SaveShared")
+    page_a = Page(json_path=shared_path, deck_controller=StubController("save-shared-a"))
+    page_b = Page(json_path=shared_path, deck_controller=StubController("save-shared-b"))
 
     events = []
     ev_lock = threading.Lock()
     in_critical = threading.Event()
 
-    def instrument(page_obj, name):
+    def instrument_snapshot(page_obj, name):
         # Hook the snapshot that every flush takes under the save lock; backup
         # creation is only once per file and cannot observe both sections.
-        orig = page_obj.get_without_action_objects
+        orig = page_obj.snapshot_for_save
 
         def probe():
             with ev_lock:
@@ -115,18 +115,18 @@ def main() -> int:
                 events.append((name, "exit", time.monotonic()))
             return snapshot
 
-        page_obj.get_without_action_objects = probe
+        page_obj.snapshot_for_save = probe
 
-    instrument(page_a, "a")
-    instrument(page_b, "b")
+    instrument_snapshot(page_a, "a")
+    instrument_snapshot(page_b, "b")
 
-    def saver(page_obj, wait_for_the_other):
+    def saver(page_obj, wait_for_first_save):
         # Mark the second save after the first enters its critical section;
         # otherwise one pending record coalesces both saves into one write.
-        if wait_for_the_other and not in_critical.wait(timeout=10):
+        if wait_for_first_save and not in_critical.wait(timeout=10):
             raise AssertionError("the first save never reached its critical section")
         page_obj.save()
-        page_flush.get().flush_path(path2)
+        page_flush.get().flush_path(shared_path)
 
     threads = [threading.Thread(target=saver, args=(p, wait))
                for p, wait in ((page_a, False), (page_b, True))]
@@ -143,17 +143,21 @@ def main() -> int:
     spans = {}
     for name, kind, ts in events:
         spans.setdefault(name, {})[kind] = ts
-    a, b = spans.get("a", {}), spans.get("b", {})
-    if not all(k in a and k in b for k in ("enter", "exit")):
+    page_a_span = spans.get("a", {})
+    page_b_span = spans.get("b", {})
+    if not all(k in page_a_span and k in page_b_span for k in ("enter", "exit")):
         print(f"FAIL: instrumentation incomplete: {events}")
         return 1
-    overlap = a["enter"] < b["exit"] and b["enter"] < a["exit"]
+    overlap = (
+        page_a_span["enter"] < page_b_span["exit"]
+        and page_b_span["enter"] < page_a_span["exit"]
+    )
     if overlap:
         print("FAIL: same-path saves from two Page objects ran concurrently "
-              f"(a={a}, b={b})")
+              f"(a={page_a_span}, b={page_b_span})")
         return 1
 
-    with open(path2) as f:
+    with open(shared_path) as f:
         json.load(f)
 
     print("PASS: save survives concurrent mutation, never mutates the live dict, "

@@ -50,12 +50,12 @@ class FakeAction:
         return True
 
 
-ident = Input.Key("0x0")
+input_ident = Input.Key("0x0")
 
 
 def multi_action(action_objects: dict, state: int) -> bool:
     page = FakePage(action_objects)
-    action = FakeAction(page, ident, state)
+    action = FakeAction(page, input_ident, state)
     return action.get_is_multi_action()
 
 
@@ -104,19 +104,19 @@ unsupported = FakeHolder("plug::unsupported", {Input.Key: ActionInputSupport.UNS
 group = ActionHolderGroup("group", [supported, untested, unsupported])
 
 at_least_supported = group.get_action_holders_with_min_action_input_support(
-    ident, ActionInputSupport.SUPPORTED)
+    input_ident, ActionInputSupport.SUPPORTED)
 check("min SUPPORTED keeps only the supported holder",
       at_least_supported == {supported},
       str({h.action_id for h in at_least_supported}))
 
 at_least_untested = group.get_action_holders_with_min_action_input_support(
-    ident, ActionInputSupport.UNTESTED)
+    input_ident, ActionInputSupport.UNTESTED)
 check("min UNTESTED keeps supported and untested holders",
       at_least_untested == {supported, untested},
       str({h.action_id for h in at_least_untested}))
 
 at_least_unsupported = group.get_action_holders_with_min_action_input_support(
-    ident, ActionInputSupport.UNSUPPORTED)
+    input_ident, ActionInputSupport.UNSUPPORTED)
 check("min UNSUPPORTED keeps every holder",
       at_least_unsupported == {supported, untested, unsupported},
       str({h.action_id for h in at_least_unsupported}))
@@ -127,7 +127,7 @@ no_entry = FakeHolder("plug::no_entry", {})
 group_no_entry = ActionHolderGroup("group2", [supported, no_entry])
 check("a holder with no support entry drops at the SUPPORTED floor",
       group_no_entry.get_action_holders_with_min_action_input_support(
-          ident, ActionInputSupport.SUPPORTED) == {supported},
+          input_ident, ActionInputSupport.SUPPORTED) == {supported},
       "no_entry leaked into the supported set")
 
 

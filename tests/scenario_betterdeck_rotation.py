@@ -12,7 +12,7 @@ ROTATIONS = (0, 90, 180, 270)
 PLUS = FAKE_DECK_MODELS["plus"]
 ORIGINAL = FAKE_DECK_MODELS["original"]
 N_DIALS = PLUS.dial_count
-STRIP_SIZE = PLUS.touchscreen_image.size
+STRIP_SIZE = PLUS.touchscreen_format.size
 
 # Device oracle, row-major 2x4: 90 maps (r,c)->(c,rows-1-r); p0->l1 and p4->l0.
 # 270 turns opposite; 180 reverses, catching formulas that agree in the wrong direction.

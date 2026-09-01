@@ -107,10 +107,10 @@ def check_callback_fires_after_trigger() -> None:
     def callback():
         reentrant.append(1)
         if len(reentrant) == 1:
-            debouncer_2.trigger()
+            reentrant_debouncer.trigger()
 
-    debouncer_2 = TrailingDebouncer(300, callback, scheduler=scheduler)
-    debouncer_2.trigger()
+    reentrant_debouncer = TrailingDebouncer(300, callback, scheduler=scheduler)
+    reentrant_debouncer.trigger()
     scheduler.advance()
     assert len(reentrant) == 1, "first fire did not happen"
     assert len(scheduler.armed) == 1, "a trigger from inside the callback did not arm a new timer"
@@ -121,9 +121,9 @@ def check_callback_fires_after_trigger() -> None:
     for burst in range(1, 8):
         scheduler = FakeScheduler()
         fires = []
-        debouncer_3 = TrailingDebouncer(300, lambda: fires.append(1), scheduler=scheduler)
+        sweep_debouncer = TrailingDebouncer(300, lambda: fires.append(1), scheduler=scheduler)
         for _ in range(burst):
-            debouncer_3.trigger()
+            sweep_debouncer.trigger()
         scheduler.advance()
         assert len(fires) == 1, f"a burst of {burst} triggers ended with {len(fires)} fires, expected exactly 1"
 

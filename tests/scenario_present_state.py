@@ -5,7 +5,7 @@ import fixtures  # noqa: F401  (must be first: isolates DATA_PATH before globals
 from src.backend.DeckManagement.deck_controller.paint_protocol import KeyPresentState  # noqa: E402
 
 KEY_INDEX = 3
-H, A, B = 1111, 2222, 3333  # a paint's hash, and two hashes that differ from it
+TARGET_HASH, OTHER_PRESENTED_HASH, OTHER_ENQUEUED_HASH = 1111, 2222, 3333  # a paint's hash, and two hashes that differ from it
 
 
 class RecordingWriter:
@@ -32,7 +32,7 @@ def offer(state, writer, img_hash, force=False):
     return enqueued, len(encode_calls)
 
 
-def new_state():
+def make_present_fixture():
     return KeyPresentState(KEY_INDEX), RecordingWriter()
 
 
@@ -41,32 +41,32 @@ def main() -> None:
 
     # A first paint of anything reaches the writer, and carries the slot, the
     # hash and the present state the write boundary stamps back.
-    state, writer = new_state()
-    enqueued, encodes = offer(state, writer, H)
-    assert enqueued and encodes == 1, "a first paint must be encoded and enqueued"
-    assert writer.enqueued == [(KEY_INDEX, b"native-bytes", H, state)], (
+    state, writer = make_present_fixture()
+    enqueued, encode_count = offer(state, writer, TARGET_HASH)
+    assert enqueued and encode_count == 1, "a first paint must be encoded and enqueued"
+    assert writer.enqueued == [(KEY_INDEX, b"native-bytes", TARGET_HASH, state)], (
         f"the enqueue must name the key slot, the hash and the present state, "
         f"got {writer.enqueued}"
     )
-    assert state.last_enqueued_hash == H, "an enqueued paint must be recorded in flight"
+    assert state.last_enqueued_hash == TARGET_HASH, "an enqueued paint must be recorded in flight"
 
-    # In-flight revert. The device holds H, and a newer paint of B is on its
-    # way. A repaint of H must reach the device, or the device keeps B.
-    state, writer = new_state()
-    state.note_presented(H)
-    state.last_enqueued_hash = B
-    enqueued, _ = offer(state, writer, H)
+    # In-flight revert. The device holds the target, and another paint is on its
+    # way. A repaint of the target must reach the device, or the other paint remains.
+    state, writer = make_present_fixture()
+    state.note_presented(TARGET_HASH)
+    state.last_enqueued_hash = OTHER_ENQUEUED_HASH
+    enqueued, _ = offer(state, writer, TARGET_HASH)
     assert enqueued, (
         "a repaint must survive when only the presented hash matches -- the "
         "paint in flight would otherwise leave its own content on the device"
     )
 
-    # H was enqueued but dropped as stale while the device kept A, so a new
-    # offer of H must still reach the device.
-    state, writer = new_state()
-    state.last_enqueued_hash = H
-    state.last_presented_hash = A
-    enqueued, _ = offer(state, writer, H)
+    # The target was enqueued but dropped as stale while the device kept another image,
+    # so a new offer of the target must still reach the device.
+    state, writer = make_present_fixture()
+    state.last_enqueued_hash = TARGET_HASH
+    state.last_presented_hash = OTHER_PRESENTED_HASH
+    enqueued, _ = offer(state, writer, TARGET_HASH)
     assert enqueued, (
         "a repaint must survive when only the enqueued hash matches -- the "
         "paint it matches was dropped and never reached the device"
@@ -74,30 +74,30 @@ def main() -> None:
 
     # Both halves agree, so the device already holds this image and nothing
     # newer is on its way.
-    state, writer = new_state()
-    state.note_presented(H)
-    state.last_enqueued_hash = H
-    enqueued, encodes = offer(state, writer, H)
+    state, writer = make_present_fixture()
+    state.note_presented(TARGET_HASH)
+    state.last_enqueued_hash = TARGET_HASH
+    enqueued, encode_count = offer(state, writer, TARGET_HASH)
     assert not enqueued and not writer.enqueued, (
         "an image the device already holds must not be enqueued again"
     )
-    assert encodes == 0, (
+    assert encode_count == 0, (
         "a skipped paint must not be encoded -- the encode is the expensive "
         "half, and skipping it is the point of the hash pair"
     )
 
     # Force bypasses both hash checks.
-    enqueued, encodes = offer(state, writer, H, force=True)
-    assert enqueued and encodes == 1, "force must paint through an agreeing pair"
+    enqueued, encode_count = offer(state, writer, TARGET_HASH, force=True)
+    assert enqueued and encode_count == 1, "force must paint through an agreeing pair"
 
     # reset() is the third writer of the pair. After it, the same image paints
     # again, which is what a Clear and a full repaint rely on.
-    state, writer = new_state()
-    state.note_presented(H)
-    state.last_enqueued_hash = H
+    state, writer = make_present_fixture()
+    state.note_presented(TARGET_HASH)
+    state.last_enqueued_hash = TARGET_HASH
     state.reset()
     assert state.last_presented_hash is None and state.last_enqueued_hash is None
-    enqueued, _ = offer(state, writer, H)
+    enqueued, _ = offer(state, writer, TARGET_HASH)
     assert enqueued, "after a reset, identical content must reach the device again"
 
     print("PASS: scenario_present_state")

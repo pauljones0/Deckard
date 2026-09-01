@@ -154,7 +154,7 @@ def test_branch_wins_over_any_pin() -> None:
         )
 
 
-def test_claim_reads_the_hash_revision() -> None:
+def test_claim_uses_hash_revision() -> None:
     """Install identification reads the manifest at the hash, so a pending
     directory claims against the same revision the catalog pins."""
     _stub_globals()
@@ -190,7 +190,7 @@ def test_claim_reads_the_hash_revision() -> None:
     assert seen_refs == [] and pending, "a pin-less entry must not fetch or claim"
 
 
-def test_official_ref_is_the_vetted_pin() -> None:
+def test_official_catalog_uses_vetted_pin() -> None:
     """Use a full immutable STORE_PIN for the official catalog without a remote lookup."""
     from src.backend.Store.catalog_entry import COMMIT_SHA_RE
 
@@ -239,10 +239,10 @@ def main() -> None:
     test_resolver_precedence_and_validation()
     test_prepare_families_on_hash_entry()
     test_branch_wins_over_any_pin()
-    test_claim_reads_the_hash_revision()
-    test_official_ref_is_the_vetted_pin()
+    test_claim_uses_hash_revision()
+    test_official_catalog_uses_vetted_pin()
     test_catalog_refetch_follows_ref_mutability()
-    print("scenario_store_two_shape: OK")
+    print("scenario_store_catalog_pin_shapes: OK")
 
 
 if __name__ == "__main__":

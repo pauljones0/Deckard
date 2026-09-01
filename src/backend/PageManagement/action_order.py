@@ -69,7 +69,7 @@ def row_slots(registry: "dict[int, Any] | None", count: int) -> list[int]:
 
 
 def reorder_action_objects(action_objects: dict[int, _ItemT], order_map: dict[int, int]) -> dict[int, _ItemT]:
-    """Re-key loaded objects in slot order, which defines Page and ActionCore row indices.
+    """Re-key loaded action objects in slot order, which defines Page and ActionCore row indices.
     move_action first proves that order_map names every registry key."""
     moved = [(order_map[slot], obj) for slot, obj in action_objects.items()]
     moved.sort(key=lambda entry: entry[0])

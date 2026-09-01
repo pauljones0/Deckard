@@ -26,7 +26,7 @@ def gradient_image(width: int, height: int) -> Image.Image:
     return img
 
 
-def close(a: float, b: float, tolerance: float = 1e-6) -> bool:
+def approximately_equal(a: float, b: float, tolerance: float = 1e-6) -> bool:
     return abs(a - b) <= tolerance
 
 
@@ -79,17 +79,17 @@ def main() -> int:
                             f"{source_size} -> {canvas_size}")
 
     # Pan and zoom rectangle geometry
-    rect1 = viewport_rect((1000, 500), (200, 100), (0.5, 0.5, 1.0))
-    if not (close(rect1[0], 0) and close(rect1[1], 0)
-            and close(rect1[2], 1000) and close(rect1[3], 500)):
-        failures.append(f"matching aspect at scale 1 must cover the source, got {rect1}")
+    default_scale_rect = viewport_rect((1000, 500), (200, 100), (0.5, 0.5, 1.0))
+    if not (approximately_equal(default_scale_rect[0], 0) and approximately_equal(default_scale_rect[1], 0)
+            and approximately_equal(default_scale_rect[2], 1000) and approximately_equal(default_scale_rect[3], 500)):
+        failures.append(f"matching aspect at scale 1 must cover the source, got {default_scale_rect}")
 
-    rect2 = viewport_rect((1000, 500), (200, 100), (0.5, 0.5, 2.0))
-    if not (close(rect2[2] - rect2[0], 500) and close(rect2[3] - rect2[1], 250)):
-        failures.append(f"scale 2 must halve the rect dimensions, got {rect2}")
+    zoomed_rect = viewport_rect((1000, 500), (200, 100), (0.5, 0.5, 2.0))
+    if not (approximately_equal(zoomed_rect[2] - zoomed_rect[0], 500) and approximately_equal(zoomed_rect[3] - zoomed_rect[1], 250)):
+        failures.append(f"scale 2 must halve the rect dimensions, got {zoomed_rect}")
 
     rect_left = viewport_rect((1000, 500), (200, 100), (0.0, 0.5, 2.0))
-    if not close(rect_left[0], 0):
+    if not approximately_equal(rect_left[0], 0):
         failures.append(f"panning to x=0 at zoom-in must clamp to the left edge, got {rect_left}")
 
     # Zoom-in clamping and centered zoom-out overhang
@@ -119,9 +119,9 @@ def main() -> int:
             failures.append("zoom-out center must show the source")
 
     # Corner-panned zoom-out keeps part of the source visible
-    out2 = render_viewport(gradient_image(100, 100), (200, 100), (0.0, 0.0, 0.25))
+    corner_output = render_viewport(gradient_image(100, 100), (200, 100), (0.0, 0.0, 0.25))
     opaque = sum(1 for yy in range(100) for xx in range(200)
-                 if out2.getpixel((xx, yy))[3] == 255)
+                 if corner_output.getpixel((xx, yy))[3] == 255)
     if not 0 < opaque < 200 * 100:
         failures.append(f"a corner-panned zoom-out must show part of the source "
                         f"and letterbox the rest, got {opaque} opaque of {200 * 100}")

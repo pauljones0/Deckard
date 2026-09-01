@@ -39,7 +39,7 @@ def _fetch_fail(url):
     raise StoreFetchError(url, "offline")
 
 
-def test_branch_is_the_pin_when_offline() -> None:
+def test_offline_store_uses_pinned_ref() -> None:
     """The official ref is the pin constant, decided with no fetch, so an
     offline start still yields well-formed store URLs."""
     fixtures.install_stub_globals()
@@ -78,7 +78,7 @@ def test_custom_store_entries_are_sanitized() -> None:
         assert isinstance(b, str) and b, f"get_stores yielded non-str branch {b!r} for {url}"
 
 
-class _Item:
+class _PluginDataStub:
     """Stands in for PluginData. process_store_data filters by data_class."""
     def __init__(self, url: str):
         self.url = url
@@ -128,10 +128,10 @@ def test_catalog_survives_unparseable_custom_urls() -> None:
 
     def fake_prepare(entry, include_images=True, verified=False):
         prepared.append(entry["url"])
-        return _Item(entry["url"])
+        return _PluginDataStub(entry["url"])
 
     results = sb.process_store_data(
-        StoreBackend.PLUGIN_FILE, fake_prepare, sb.get_custom_plugins, _Item
+        StoreBackend.PLUGIN_FILE, fake_prepare, sb.get_custom_plugins, _PluginDataStub
     )
     assert results is not None, (
         "one unusable custom url must not fail the whole catalog load"
@@ -266,7 +266,7 @@ def test_store_page_rearms_after_failed_load() -> None:
 
 def main() -> None:
     fixtures.start_watchdog(30, label="scenario_store_branch_contract")
-    test_branch_is_the_pin_when_offline()
+    test_offline_store_uses_pinned_ref()
     test_custom_store_entries_are_sanitized()
     test_catalog_survives_unparseable_custom_urls()
     test_prepare_plugin_skips_bad_url()

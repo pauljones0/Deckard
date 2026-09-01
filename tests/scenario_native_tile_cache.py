@@ -375,8 +375,8 @@ def check_second_loop_encode_free() -> None:
 
 def check_swap_drops_stale_natives() -> None:
     assets = os.path.join(fixtures.DATA_DIR, "assets")
-    first_path = _make_test_mp4(os.path.join(assets, "native_tile_swap_a.mp4"), base_green=20)
-    second_path = _make_test_mp4(os.path.join(assets, "native_tile_swap_b.mp4"), base_green=220)
+    original_path = _make_test_mp4(os.path.join(assets, "native_tile_swap_a.mp4"), base_green=20)
+    replacement_path = _make_test_mp4(os.path.join(assets, "native_tile_swap_b.mp4"), base_green=220)
 
     controller = fixtures.make_headless_controller(serial="native-tile-2")
     try:
@@ -386,7 +386,7 @@ def check_swap_drops_stale_natives() -> None:
         probe = keys[0]
         deck = fixtures.raw_deck(controller)
 
-        video = _start_video(controller, first_path)
+        video = _start_video(controller, original_path)
         cached_keys = _record_cached_keys(controller)
         enqueued = _record_enqueued_natives(controller)
 
@@ -399,9 +399,9 @@ def check_swap_drops_stale_natives() -> None:
         stale_key = next(k for k in cached_keys if k[2] == probe.index)
 
         # Swap the background mid-playback.
-        second = BackgroundVideo(controller, second_path, loop=True, fps=30)
-        second.page = None
-        controller.background.set_video(second, update=False)
+        replacement_video = BackgroundVideo(controller, replacement_path, loop=True, fps=30)
+        replacement_video.page = None
+        controller.background.set_video(replacement_video, update=False)
 
         assert len(controller.native_tile_cache) == 0, (
             "a background content change must empty the native tile cache -- every entry "
@@ -409,11 +409,11 @@ def check_swap_drops_stale_natives() -> None:
         )
         assert controller.native_tile_cache.get(stale_key) is None, "the old video's entries must not survive the swap"
 
-        for _ in range(second.n_frames * 3 + 10):
-            if second.is_cache_complete():
+        for _ in range(replacement_video.n_frames * 3 + 10):
+            if replacement_video.is_cache_complete():
                 break
             controller.background.update_tiles()
-        _show_frame(second, controller, 0)
+        _show_frame(replacement_video, controller, 0)
         for key in keys:
             key.update()
 

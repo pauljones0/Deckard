@@ -21,7 +21,7 @@ from src.app import App
 from gi.repository import GLib  # noqa: E402
 
 
-class Obj:
+class _StubNamespace:
     """Attribute bag."""
     def __init__(self, **kwargs):
         self.__dict__.update(kwargs)
@@ -359,7 +359,7 @@ def check_degraded_fallback_reaches_quit(recorder: QuitRecorder) -> None:
 def check_quit_is_idempotent() -> None:
     import src.app as app_mod
 
-    stub = Obj(_quit_started=True)
+    stub = _StubNamespace(_quit_started=True)
     dbus = Recorder()
     saved_dbus = app_mod.stop_dbus_service
     app_mod.stop_dbus_service = dbus
@@ -388,14 +388,14 @@ def check_quit_tolerates_missing_main_win() -> None:
 
     # Exercise pre-activation quit with the real missing-window branch.
     # Stub the timer wheel so no live 6s watchdog remains.
-    stub = Obj(_quit_started=False, force_quit=Recorder())
+    stub = _StubNamespace(_quit_started=False, force_quit=Recorder())
     stub._destroy_main_window = lambda: App._destroy_main_window(stub)
     saved_dbus = app_mod.stop_dbus_service
     saved_timer_wheel = app_mod.timer_wheel
     saved_sm = getattr(gl, "signal_manager", None)
     app_mod.stop_dbus_service = Recorder()
-    app_mod.timer_wheel = Obj(schedule=Recorder())
-    gl.signal_manager = Obj(trigger_signal_sync=_trigger_signal)
+    app_mod.timer_wheel = _StubNamespace(schedule=Recorder())
+    gl.signal_manager = _StubNamespace(trigger_signal_sync=_trigger_signal)
     reached = False
     try:
         with no_real_exit():
@@ -445,7 +445,7 @@ class _RaisingLoggers:
         raise _ProbeDone()
 
 
-def drive_on_quit(signal_manager, store_cache=None, watchdog=None) -> Obj:
+def drive_on_quit(signal_manager, store_cache=None, watchdog=None) -> _StubNamespace:
     """Run App.on_quit on a stub through the log-sink boundary.
 
     Return probes for the watchdog and stop_boot_rescan order.
@@ -454,7 +454,7 @@ def drive_on_quit(signal_manager, store_cache=None, watchdog=None) -> Obj:
     from src.backend import ui_port
 
     watchdog = Recorder() if watchdog is None else watchdog
-    stub = Obj(_quit_started=False, force_quit=lambda: None)
+    stub = _StubNamespace(_quit_started=False, force_quit=lambda: None)
     stub._destroy_main_window = lambda: App._destroy_main_window(stub)
 
     saved = {
@@ -469,10 +469,10 @@ def drive_on_quit(signal_manager, store_cache=None, watchdog=None) -> Obj:
     }
     stop_boot_rescan = Recorder()
     app_mod.stop_dbus_service = Recorder()
-    app_mod.timer_wheel = Obj(schedule=watchdog)
+    app_mod.timer_wheel = _StubNamespace(schedule=watchdog)
     gl.signal_manager = signal_manager
-    gl.deck_manager = Obj(stop_boot_rescan=stop_boot_rescan)
-    gl.store_backend = None if store_cache is None else Obj(store_cache=store_cache)
+    gl.deck_manager = _StubNamespace(stop_boot_rescan=stop_boot_rescan)
+    gl.store_backend = None if store_cache is None else _StubNamespace(store_cache=store_cache)
     gl.loggers = _RaisingLoggers()
     reached = False
     try:
@@ -496,10 +496,10 @@ def drive_on_quit(signal_manager, store_cache=None, watchdog=None) -> Obj:
         "that follow cannot be trusted; something on the teardown path raised "
         "before the cut"
     )
-    return Obj(stub=stub, watchdog=watchdog, stop_boot_rescan=stop_boot_rescan)
+    return _StubNamespace(stub=stub, watchdog=watchdog, stop_boot_rescan=stop_boot_rescan)
 
 
-def check_appquit_handlers_isolated() -> None:
+def check_app_quit_handlers_isolated() -> None:
     """Isolate failures among synchronous AppQuit observers.
 
     Async fan-out may complete before exit, but completion is not guaranteed.
@@ -586,7 +586,7 @@ def check_quit_drains_store_cache_index() -> None:
     # filesystem.
     watchdog = Recorder()
     probe = _StoreCacheProbe(watchdog)
-    result = drive_on_quit(Obj(trigger_signal_sync=Recorder()),
+    result = drive_on_quit(_StubNamespace(trigger_signal_sync=Recorder()),
                            store_cache=probe, watchdog=watchdog)
     stub = result.stub
 
@@ -614,12 +614,12 @@ def check_quit_drains_store_cache_index() -> None:
 def check_force_quit_terminates_backends() -> None:
     saved_pm = getattr(gl, "plugin_manager", None)
     terminate = Recorder()
-    gl.plugin_manager = Obj(terminate_all_backends=terminate)
+    gl.plugin_manager = _StubNamespace(terminate_all_backends=terminate)
     code = None
     try:
         with no_real_exit():
             try:
-                App.force_quit(Obj())
+                App.force_quit(_StubNamespace())
             except _ForcedExit as e:
                 code = e.code
 
@@ -635,11 +635,11 @@ def check_force_quit_terminates_backends() -> None:
         def _wedged():
             raise RuntimeError("backend registry is wedged")
 
-        gl.plugin_manager = Obj(terminate_all_backends=_wedged)
+        gl.plugin_manager = _StubNamespace(terminate_all_backends=_wedged)
         code = None
         with no_real_exit():
             try:
-                App.force_quit(Obj())
+                App.force_quit(_StubNamespace())
             except _ForcedExit as e:
                 code = e.code
         assert code == 1, (
@@ -668,7 +668,7 @@ def main() -> None:
         check_signal_reaches_on_quit(recorder, signum, f"{name} (second delivery)")
     check_quit_is_idempotent()
     check_quit_tolerates_missing_main_win()
-    check_appquit_handlers_isolated()
+    check_app_quit_handlers_isolated()
     check_quit_drains_store_cache_index()
     check_force_quit_terminates_backends()
     check_unix_signal_add_degrades()

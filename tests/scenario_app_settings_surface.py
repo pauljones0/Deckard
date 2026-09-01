@@ -247,7 +247,7 @@ def check_default_reads_and_unknown_writes() -> None:
 
     for section, key in (("general", "hold-tmie"), ("nope", "hold-time")):
         try:
-            app.set(section, key, 1)
+            app.set_section_value(section, key, 1)
         except KeyError:
             pass
         else:

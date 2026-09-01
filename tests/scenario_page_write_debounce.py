@@ -206,7 +206,7 @@ def edit(page, value) -> None:
     page.save()
 
 
-def check_burst_is_one_write(controller) -> None:
+def check_burst_coalescing(controller) -> None:
     vt = fresh_flush()
     path = seed_page("Burst")
     page = gl.page_manager.get_page(path, controller)
@@ -241,7 +241,7 @@ def check_burst_is_one_write(controller) -> None:
     print("PASS: a burst of edits is one write, one debounce after the last of them")
 
 
-def check_read_barrier_sees_pending_edits(controller) -> None:
+def check_pending_edit_read_barrier(controller) -> None:
     vt = fresh_flush()
     path = seed_page("Barrier")
     page = gl.page_manager.get_page(path, controller)
@@ -304,7 +304,7 @@ def check_max_dirty_age_cap(controller) -> None:
           "age, and the cap opens a fresh window")
 
 
-def check_mid_write_mark_survives(controller) -> None:
+def check_mid_write_remark(controller) -> None:
     """Keep a pending edit whose mark arrives after an in-flight snapshot."""
     # No timer comes back for that edit, and both outcomes leave the map empty
     # and the file written, so nothing else can tell them apart.
@@ -361,7 +361,7 @@ def check_mid_write_mark_survives(controller) -> None:
           "timer, and lands")
 
 
-def check_flush_writes_locked_path(controller) -> None:
+def check_locked_path_flush(controller) -> None:
     """Write the locked pending key even if the Page json_path changes."""
     # With this invariant a flush and its lock can never be about different
     # files.
@@ -451,7 +451,7 @@ def check_deck_close_flushes() -> None:
     print("PASS: closing a deck writes every page it still holds")
 
 
-def check_flush_all_covers_quit(controller) -> None:
+def check_quit_flush_coverage(controller) -> None:
     vt = fresh_flush()
     paths = []
     for name in ("QuitA", "QuitB"):
@@ -504,7 +504,7 @@ def check_quit_flush_placement() -> None:
     print("PASS: the quit flush runs on the force-quit watchdog's clock")
 
 
-def check_move_flushes_then_discards(controller) -> None:
+def check_move_flush_order(controller) -> None:
     vt = fresh_flush()
     old_path = seed_page("MoveMe")
     page = gl.page_manager.get_page(old_path, controller)
@@ -580,7 +580,7 @@ def check_delete_discards(controller) -> None:
           "resurrects it")
 
 
-def check_backup_is_once_per_session(controller) -> None:
+def check_single_session_backup(controller) -> None:
     """Back up each page once per session before its first write."""
     vt = fresh_flush()
     path = seed_page("SessionBackup")
@@ -672,7 +672,7 @@ def check_discard_reopens_backup(controller) -> None:
           "next write copies what the new owner left on disk")
 
 
-def check_discard_waits_for_flush(controller) -> None:
+def check_flush_discard_serialization(controller) -> None:
     """Make discard wait for an in-flight write and its backup bookkeeping."""
     # The flush's own write then lands on top of the file the importer wrote.
     scheduler = ManualScheduler()
@@ -747,7 +747,7 @@ def check_discard_waits_for_flush(controller) -> None:
           "neither its write nor its bookkeeping outlives the handover")
 
 
-def check_quarantined_primary_is_written_back(controller) -> None:
+def check_quarantine_writeback(controller) -> None:
     """Recreate a missing primary for a live page without replacing its backup."""
     # Model quarantine by moving the primary aside; backup refusal must not
     # prevent the guarded write from recreating it.
@@ -788,7 +788,7 @@ def check_quarantined_primary_is_written_back(controller) -> None:
           "than silently unwritable, and its backup is left alone")
 
 
-def check_corrupt_primary_is_never_backed_up(controller) -> None:
+def check_corrupt_primary_backup_refusal(controller) -> None:
     """Keep corrupt primary data out of the backup for the full session."""
     # A later write would find the primary parseable again, because this seam
     # wrote it a moment ago.
@@ -874,7 +874,7 @@ def assert_barrier_precedes(module_path: str, func_name: str, barrier: str,
         f"{where} calls `{barrier}` only AFTER `{guarded}`: {why}")
 
 
-def check_every_reader_takes_barrier() -> None:
+def check_reader_barriers() -> None:
     """Require barriers at all six page-file sites outside get_page_data."""
     # Run two sites through a counting seam and check four GTK sites in source,
     # including barrier order before the guarded read or write.
@@ -914,7 +914,7 @@ def check_every_reader_takes_barrier() -> None:
           "barrier, and takes it first")
 
 
-def check_eviction_keeps_pending_edits(controller) -> None:
+def check_pending_edit_eviction(controller) -> None:
     """Keep a strong flush reference to pending edits after page eviction."""
     vt = fresh_flush()
     path = seed_page("Evicted")
@@ -955,24 +955,24 @@ def main() -> None:
     install_backup_recorder()
     controller = make_headless_controller(serial="debounce-1", page_name="Main")
     try:
-        check_burst_is_one_write(controller)
-        check_read_barrier_sees_pending_edits(controller)
+        check_burst_coalescing(controller)
+        check_pending_edit_read_barrier(controller)
         check_max_dirty_age_cap(controller)
-        check_mid_write_mark_survives(controller)
-        check_flush_writes_locked_path(controller)
+        check_mid_write_remark(controller)
+        check_locked_path_flush(controller)
         check_page_switch_flushes(controller)
         check_deck_close_flushes()
-        check_flush_all_covers_quit(controller)
+        check_quit_flush_coverage(controller)
         check_quit_flush_placement()
-        check_move_flushes_then_discards(controller)
+        check_move_flush_order(controller)
         check_delete_discards(controller)
-        check_backup_is_once_per_session(controller)
+        check_single_session_backup(controller)
         check_discard_reopens_backup(controller)
-        check_discard_waits_for_flush(controller)
-        check_quarantined_primary_is_written_back(controller)
-        check_corrupt_primary_is_never_backed_up(controller)
-        check_eviction_keeps_pending_edits(controller)
-        check_every_reader_takes_barrier()
+        check_flush_discard_serialization(controller)
+        check_quarantine_writeback(controller)
+        check_corrupt_primary_backup_refusal(controller)
+        check_pending_edit_eviction(controller)
+        check_reader_barriers()
     finally:
         teardown(controller)
 

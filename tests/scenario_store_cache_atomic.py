@@ -26,7 +26,7 @@ def test_crash_mid_write_preserves_content() -> None:
 
     with cache.open_cache_file(url=REPO, path="Plugins.json", mode="w") as f:
         f.write("GOOD CONTENT")
-    fetched_good = cache.get_fetched_date(url=REPO, path="Plugins.json")
+    fetched_good = cache.get_fetched_timestamp(url=REPO, path="Plugins.json")
     assert fetched_good is not None, "committed write must stamp fetched"
 
     time.sleep(0.05)
@@ -43,7 +43,7 @@ def test_crash_mid_write_preserves_content() -> None:
     assert content == "GOOD CONTENT", (
         f"crashed write must not clobber the previous content, got {content!r}"
     )
-    assert cache.get_fetched_date(url=REPO, path="Plugins.json") == fetched_good, (
+    assert cache.get_fetched_timestamp(url=REPO, path="Plugins.json") == fetched_good, (
         "crashed write must not renew the fetched stamp"
     )
     assert _tmp_leftovers(cache) == [], "aborted write must not leak temp files"
@@ -54,14 +54,14 @@ def test_fetched_stamped_only_after_close() -> None:
 
     writer = cache.open_cache_file(url=REPO, path="Icons.json", mode="w")
     writer.write("half-way")
-    assert cache.get_fetched_date(url=REPO, path="Icons.json") is None, (
+    assert cache.get_fetched_timestamp(url=REPO, path="Icons.json") is None, (
         "fetched must NOT be stamped while the write is still in flight"
     )
     assert not cache.is_cached(url=REPO, path="Icons.json"), (
         "an in-flight first write must not present as cached"
     )
     writer.close()
-    assert cache.get_fetched_date(url=REPO, path="Icons.json") is not None
+    assert cache.get_fetched_timestamp(url=REPO, path="Icons.json") is not None
     assert cache.is_cached(url=REPO, path="Icons.json")
     assert _tmp_leftovers(cache) == []
 
@@ -148,7 +148,7 @@ def test_legacy_entry_uses_mtime() -> None:
     with cache.open_cache_file(url=REPO, path="Legacy.json", mode="r") as f:
         f.read()  # renews "date"
 
-    fetched = cache.get_fetched_date(url=REPO, path="Legacy.json")
+    fetched = cache.get_fetched_timestamp(url=REPO, path="Legacy.json")
     assert fetched is not None and abs(fetched - old_mtime) < 2.0, (
         f"legacy entry must report content age from mtime (~{old_mtime}), got {fetched!r} "
         "-- falling back to the renewed 'date' would make it eternally fresh"

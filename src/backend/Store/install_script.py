@@ -134,7 +134,7 @@ def _policy() -> str:
     if manager is None:
         return "ask"
     try:
-        return cast(str, manager.app().install_scripts)
+        return cast(str, manager.app().install_script_policy)
     except Exception as e:
         log.warning(f"Could not read the install-scripts policy ({e}); defaulting to ask")
         return "ask"

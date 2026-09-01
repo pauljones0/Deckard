@@ -106,7 +106,7 @@ class _FakeStack:
 
 def name_deck(serial: str, name: str) -> None:
     settings = gl.settings_manager.deck(serial)
-    settings.set_value("name", name)
+    settings.set_top_level_value("name", name)
     settings.save()
 
 

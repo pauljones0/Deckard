@@ -170,7 +170,7 @@ def leg_older_strip_paint_never_wins(controller) -> None:
     print("PASS: the newest strip composite is the last offer the writer receives")
 
 
-def leg_paint_lock_is_released_before_dispatch(controller) -> None:
+def leg_update_returns_with_paint_lock_released(controller) -> None:
     """Verify a paint releases its RLock before callback dispatch.
     The second-thread probe can block up to five seconds on the real RLock."""
     def probe(lock) -> bool:
@@ -210,7 +210,7 @@ def main() -> None:
     try:
         leg_older_paint_never_wins(controller)
         leg_older_strip_paint_never_wins(controller)
-        leg_paint_lock_is_released_before_dispatch(controller)
+        leg_update_returns_with_paint_lock_released(controller)
     finally:
         fixtures.teardown(controller)
 

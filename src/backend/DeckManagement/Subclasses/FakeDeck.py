@@ -45,12 +45,12 @@ class FakeDeckModel:
 
     name: str
     key_layout: tuple[int, int]
-    key_image: SurfaceFormat = SurfaceFormat()
+    key_format: SurfaceFormat = SurfaceFormat()
     dial_count: int = 0
     is_touch: bool = False
-    touchscreen_image: SurfaceFormat = SurfaceFormat()
+    touchscreen_format: SurfaceFormat = SurfaceFormat()
     touch_key_count: int = 0
-    screen_image: SurfaceFormat = SurfaceFormat()
+    screen_format: SurfaceFormat = SurfaceFormat()
     is_visual: bool = True
     deck_type: "str | None" = None
     vendor_id: int = 0
@@ -62,15 +62,15 @@ class FakeDeckModel:
                 f"Fake deck model {self.name!r} carries the Elgato vendor id. The USB reset "
                 f"accepts that identity and, with no serial match, resets the one device of "
                 f"this product id on the bus, which is real hardware. Leave vendor_id at 0.")
-        if self.is_touch and min(self.touchscreen_image.size) <= 0:
+        if self.is_touch and min(self.touchscreen_format.size) <= 0:
             raise ValueError(
                 f"Fake deck model {self.name!r} takes touch events on a touchscreen of size "
-                f"{self.touchscreen_image.size}. Give it a touchscreen image size, or set "
+                f"{self.touchscreen_format.size}. Give it a touchscreen image size, or set "
                 f"is_touch to False.")
-        if self.is_visual and min(self.key_image.size) <= 0:
+        if self.is_visual and min(self.key_format.size) <= 0:
             raise ValueError(
                 f"Fake deck model {self.name!r} is a visual deck whose keys are "
-                f"{self.key_image.size}. The image helpers divide by the key size, so this "
+                f"{self.key_format.size}. The image helpers divide by the key size, so this "
                 f"fails as a deck that will not initialize. Give it a key image size, or set "
                 f"is_visual to False.")
 
@@ -80,11 +80,11 @@ class FakeDeckModel:
 DEFAULT_FAKE_DECK_MODEL = FakeDeckModel(
     name="default",
     key_layout=(2, 4),
-    key_image=SurfaceFormat(size=(72, 72), format="JPEG", flip=(True, True)),
+    key_format=SurfaceFormat(size=(72, 72), format="JPEG", flip=(True, True)),
     dial_count=4,
     is_touch=True,
-    touchscreen_image=SurfaceFormat(size=(800, 100), format="JPEG"),
-    screen_image=SurfaceFormat(format="JPEG"),
+    touchscreen_format=SurfaceFormat(size=(800, 100), format="JPEG"),
+    screen_format=SurfaceFormat(format="JPEG"),
 )
 
 # Real model fields match the driver; Original and MK.2 share a type name but
@@ -94,21 +94,21 @@ FAKE_DECK_PRESETS: "tuple[FakeDeckModel, ...]" = (
     FakeDeckModel(
         name="original",
         key_layout=(3, 5),
-        key_image=SurfaceFormat(size=(72, 72), format="BMP", flip=(True, True)),
+        key_format=SurfaceFormat(size=(72, 72), format="BMP", flip=(True, True)),
         deck_type="Stream Deck Original",
         product_id=0x0060,
     ),
     FakeDeckModel(
         name="mk2",
         key_layout=(3, 5),
-        key_image=SurfaceFormat(size=(72, 72), format="JPEG", flip=(True, True)),
+        key_format=SurfaceFormat(size=(72, 72), format="JPEG", flip=(True, True)),
         deck_type="Stream Deck Original",
         product_id=0x0080,
     ),
     FakeDeckModel(
         name="mini",
         key_layout=(2, 3),
-        key_image=SurfaceFormat(size=(80, 80), format="BMP", flip=(False, True),
+        key_format=SurfaceFormat(size=(80, 80), format="BMP", flip=(False, True),
                                 rotation=90),
         deck_type="Stream Deck Mini",
         product_id=0x0063,
@@ -116,26 +116,26 @@ FAKE_DECK_PRESETS: "tuple[FakeDeckModel, ...]" = (
     FakeDeckModel(
         name="xl",
         key_layout=(4, 8),
-        key_image=SurfaceFormat(size=(96, 96), format="JPEG", flip=(True, True)),
+        key_format=SurfaceFormat(size=(96, 96), format="JPEG", flip=(True, True)),
         deck_type="Stream Deck XL",
         product_id=0x006C,
     ),
     FakeDeckModel(
         name="plus",
         key_layout=(2, 4),
-        key_image=SurfaceFormat(size=(120, 120), format="JPEG"),
+        key_format=SurfaceFormat(size=(120, 120), format="JPEG"),
         dial_count=4,
         is_touch=True,
-        touchscreen_image=SurfaceFormat(size=(800, 100), format="JPEG"),
+        touchscreen_format=SurfaceFormat(size=(800, 100), format="JPEG"),
         deck_type="Stream Deck +",
         product_id=0x0084,
     ),
     FakeDeckModel(
         name="neo",
         key_layout=(2, 4),
-        key_image=SurfaceFormat(size=(96, 96), format="JPEG", flip=(True, True)),
+        key_format=SurfaceFormat(size=(96, 96), format="JPEG", flip=(True, True)),
         touch_key_count=2,
-        screen_image=SurfaceFormat(size=(248, 58), format="JPEG", flip=(True, True)),
+        screen_format=SurfaceFormat(size=(248, 58), format="JPEG", flip=(True, True)),
         deck_type="Stream Deck Neo",
         product_id=0x009A,
     ),
@@ -180,13 +180,13 @@ class FakeDeck:
 
         self.is_fake = True
 
-        asked_layout = key_layout if key_layout is not None else list(self.model.key_layout)
+        requested_layout = key_layout if key_layout is not None else list(self.model.key_layout)
         if model is None:
             # Without a named model, persisted grid settings override key_layout.
-            self._key_layout = gl.settings_manager.get_deck_settings(self.serial_number).get("key-layout", asked_layout)
+            self._key_layout = gl.settings_manager.get_deck_settings(self.serial_number).get("key-layout", requested_layout)
         else:
             # A named model ignores persisted geometry; key_layout can override its grid.
-            self._key_layout = asked_layout
+            self._key_layout = requested_layout
 
         # Keep one ID per instance so deck discovery can detect an already loaded deck.
         self._id = str(uuid.uuid4())
@@ -218,7 +218,7 @@ class FakeDeck:
         # Neo reports its two touch buttons through the key states as well.
         return [False] * (self.key_count() + self.model.touch_key_count)
     def key_image_format(self) -> "dict[str, Any]":
-        return self.model.key_image.as_dict()
+        return self.model.key_format.as_dict()
     def id(self) -> str:
         return self._id
     def connected(self) -> bool:
@@ -254,7 +254,7 @@ class FakeDeck:
         return self.model.dial_count
 
     def touchscreen_image_format(self) -> dict[str, Any]:
-        return self.model.touchscreen_image.as_dict()
+        return self.model.touchscreen_format.as_dict()
 
     def set_touchscreen_image(self, *args: Any, **kwargs: Any) -> None:
         return
@@ -263,7 +263,7 @@ class FakeDeck:
         return
 
     def screen_image_format(self) -> dict[str, Any]:
-        return self.model.screen_image.as_dict()
+        return self.model.screen_format.as_dict()
 
     def set_screen_image(self, *args: Any, **kwargs: Any) -> None:
         return

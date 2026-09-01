@@ -36,7 +36,7 @@ class FakeProgressBar:
         self.threads.append(threading.current_thread())
 
 
-class FakeImporterSelf:
+class ImporterProbe:
     """Stand in for Importer while using its real show_error method."""
 
     def __init__(self) -> None:
@@ -88,7 +88,7 @@ def main() -> int:
 
     StreamDeckUIImporter.perform_import = _boom
 
-    fake = FakeImporterSelf()
+    fake = ImporterProbe()
     # Bind the real error-and-close path onto the duck-typed self.
     fake.show_error = types.MethodType(Importer.show_error, fake)
 

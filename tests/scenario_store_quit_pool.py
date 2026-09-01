@@ -65,7 +65,7 @@ def test_shutdown_ends_idle_workers() -> None:
     )
 
 
-def test_shutdown_stops_a_pass_in_flight() -> None:
+def test_shutdown_stops_inflight_catalog_pass() -> None:
     """A prepare task that is running when the app quits must not start
     another fetch. Its next request raises and reaches no network."""
     calls: list[str] = []
@@ -107,7 +107,7 @@ def test_submit_after_shutdown_is_cancelled() -> None:
     assert future.cancelled(), f"submit after shutdown must hand back a cancelled future, got {future!r}"
 
 
-def test_shutdown_blocks_a_new_catalog_pass() -> None:
+def test_post_shutdown_catalog_pass_is_blocked() -> None:
     """A catalog pass that starts after shutdown must report no catalog and
     reach the network for nothing."""
     calls: list[str] = []
@@ -129,7 +129,7 @@ def test_shutdown_blocks_a_new_catalog_pass() -> None:
         sb_module.http_client.get = real_get
 
 
-def test_quit_path_calls_shutdown_before_the_join() -> None:
+def test_quit_shuts_down_pool_before_join() -> None:
     """Release the pool before flush so an in-flight pass cannot dirty the index afterward.
     Release it before joins so idle non-daemon workers can exit."""
     import os
@@ -155,10 +155,10 @@ def test_quit_path_calls_shutdown_before_the_join() -> None:
 def main() -> None:
     fixtures.start_watchdog(30, label="scenario_store_quit_pool")
     test_shutdown_ends_idle_workers()
-    test_shutdown_stops_a_pass_in_flight()
+    test_shutdown_stops_inflight_catalog_pass()
     test_submit_after_shutdown_is_cancelled()
-    test_shutdown_blocks_a_new_catalog_pass()
-    test_quit_path_calls_shutdown_before_the_join()
+    test_post_shutdown_catalog_pass_is_blocked()
+    test_quit_shuts_down_pool_before_join()
     print("scenario_store_quit_pool: PASS")
 
 

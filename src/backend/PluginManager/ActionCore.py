@@ -706,7 +706,7 @@ class ActionCore(rpyc.Service):
         from src.backend.PluginManager.PluginManager import (
             backend_guard_env,
             build_backend_launch_command,
-            ensure_backend_venv,
+            attempt_backend_venv_repair,
             inject_backend_guard,
         )
 
@@ -720,7 +720,7 @@ class ActionCore(rpyc.Service):
         # Validate the venv before command construction; the owning plugin must
         # rebuild an environment stranded by a Python upgrade.
         if venv_path is not None:
-            ensure_backend_venv(venv_path, self.plugin_base.PATH, self.action_id)
+            attempt_backend_venv_repair(venv_path, self.plugin_base.PATH, self.action_id)
 
         command = build_backend_launch_command(backend_path, venv_path, port, open_in_terminal)
 

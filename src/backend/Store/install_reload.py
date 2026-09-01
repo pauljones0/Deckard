@@ -16,7 +16,7 @@ def reload_after_install(plugin_id: str) -> "str | None":
     plugin_manager.load_plugins()
     plugin_manager.init_plugins()
     plugin_manager.generate_action_index()
-    error = plugin_manager.load_error_of(plugin_id)
+    error = plugin_manager.get_load_error(plugin_id)
     if error is not None:
         # Report that installed files did not produce a working plugin.
         body = f"{plugin_id} was installed but could not load: {error}"

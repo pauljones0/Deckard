@@ -109,7 +109,7 @@ class ActionChooser(Gtk.Box):
 
         n_failed, n_disabled = 0, 0
         if gl.plugin_manager is not None:
-            n_failed, n_disabled = gl.plugin_manager.get_load_health()
+            n_failed, n_disabled = gl.plugin_manager.get_load_issue_counts()
 
         if n_failed > 0:
             text = (f"No actions available -- {n_failed} plugin{'s' if n_failed != 1 else ''} "

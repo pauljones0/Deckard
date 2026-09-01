@@ -279,7 +279,7 @@ def check_match_ladder(selector, label: str) -> None:
           f"ranks the closest first, over {len(QUERIES)} queries")
 
 
-def check_holding_beats_resembling(page_manager_factory) -> None:
+def check_containment_ranks_above_fuzzy_match(page_manager_factory) -> None:
     """Rank names containing the query above names that only resemble it."""
     stub = StubSelector(page_manager_factory(TIER_CORPUS))
     stub.query(TIER_QUERY)
@@ -306,7 +306,7 @@ class RealSelector:
 
 # 3. The keyboard must reach a row and open it.
 
-def check_search_entry_takes_focus(selector) -> None:
+def check_search_entry_focus(selector) -> None:
     """Put keyboard focus in the search entry whenever the list opens."""
     open_list(selector)
     pump_until(lambda: focus_is_inside(selector.search_entry), 10,
@@ -315,7 +315,7 @@ def check_search_entry_takes_focus(selector) -> None:
     print("PASS: opening the list puts the keyboard focus in the search entry")
 
 
-def check_tab_reaches_a_row(selector) -> None:
+def check_tab_row_focus(selector) -> None:
     """Move focus from the entry to a row without the scroller intercepting it."""
     assert not selector.scrolled_window.get_focusable(), (
         "the scrolled window is focusable, so it swallows the focus that "
@@ -334,7 +334,7 @@ def check_tab_reaches_a_row(selector) -> None:
     print("PASS: focus leaving the search entry lands on the first row")
 
 
-def check_focus_returns_to_the_entry(selector) -> None:
+def check_reopen_focus(selector) -> None:
     """Return focus from a selected row to the search entry when reopening."""
     first = selector.visible_rows()[0]
     first.grab_focus()
@@ -349,7 +349,7 @@ def check_focus_returns_to_the_entry(selector) -> None:
     print("PASS: reopening the list puts the focus back in the search entry")
 
 
-def check_arrows_move_the_selection(selector) -> None:
+def check_arrow_selection(selector) -> None:
     """Move list selection with arrows while the search entry retains focus."""
     set_query(selector, "")
     rows = selector.visible_rows()
@@ -409,7 +409,7 @@ def check_arrows_move_the_selection(selector) -> None:
           "ordinary keys to the entry")
 
 
-def check_enter_opens_the_top_match(selector, controller, page_manager) -> None:
+def check_enter_match_activation(selector, controller, page_manager) -> None:
     """Enter after typing must open the best match with no further keys."""
     open_list(selector)
     set_query(selector, "vol")
@@ -556,7 +556,7 @@ def check_signal_refresh(selector, controller, page_manager) -> None:
           "header follows the deck's own page change")
 
 
-def check_selection_never_outlives_its_page(selector, controller,
+def check_deleted_page_selection_cleanup(selector, controller,
                                             page_manager) -> None:
     """Clear the header and settings target when the selected page disappears."""
     from src.Signals import Signals
@@ -649,7 +649,7 @@ def check_selection_never_outlives_its_page(selector, controller,
           "settings button refuses a page the backend no longer lists")
 
 
-def check_no_deck_disables_the_button(selector, deck_stack) -> None:
+def check_no_deck_button_state(selector, deck_stack) -> None:
     """With no deck on screen there is no page to switch, so the button goes."""
     deck_stack.visible = False
     selector.update_selected()
@@ -665,7 +665,7 @@ def check_no_deck_disables_the_button(selector, deck_stack) -> None:
 
 # 7. The list must open on the page the deck holds.
 
-def check_opens_on_the_selected_page(selector, controller, page_manager) -> None:
+def check_selected_page_scroll(selector, controller, page_manager) -> None:
     """Open a long list with the deck's selected page inside the viewport."""
     from src.Signals import Signals
 
@@ -704,7 +704,7 @@ def check_opens_on_the_selected_page(selector, controller, page_manager) -> None
     print("PASS: a long list opens scrolled to the page the deck holds")
 
 
-def check_reopen_clears_the_query(selector) -> None:
+def check_reopen_query_reset(selector) -> None:
     """Clear a prior query when reopening so the full page list is visible."""
     open_list(selector)
     set_query(selector, "gam")
@@ -751,7 +751,7 @@ def main() -> int:
     gl.page_manager = page_manager
 
     check_match_ladder(StubSelector(page_manager), "the ladder over stubs")
-    check_holding_beats_resembling(
+    check_containment_ranks_above_fuzzy_match(
         lambda names: FakePageManager(page_dir, names))
 
     if not has_display():
@@ -784,19 +784,19 @@ def main() -> int:
     assert placeholder != "header-page-selector-search-hint", (
         "the search entry shows the raw locale key as its placeholder")
 
-    check_search_entry_takes_focus(selector)
+    check_search_entry_focus(selector)
     check_match_ladder(RealSelector(selector), "the rendered list")
-    check_tab_reaches_a_row(selector)
-    check_focus_returns_to_the_entry(selector)
-    check_reopen_clears_the_query(selector)
-    check_arrows_move_the_selection(selector)
+    check_tab_row_focus(selector)
+    check_reopen_focus(selector)
+    check_reopen_query_reset(selector)
+    check_arrow_selection(selector)
     check_empty_state(selector, page_manager)
-    check_enter_opens_the_top_match(selector, controller, page_manager)
+    check_enter_match_activation(selector, controller, page_manager)
     check_selection_loads_page(selector, controller, page_manager)
     check_signal_refresh(selector, controller, page_manager)
-    check_selection_never_outlives_its_page(selector, controller, page_manager)
-    check_no_deck_disables_the_button(selector, deck_stack)
-    check_opens_on_the_selected_page(selector, controller, page_manager)
+    check_deleted_page_selection_cleanup(selector, controller, page_manager)
+    check_no_deck_button_state(selector, deck_stack)
+    check_selected_page_scroll(selector, controller, page_manager)
     cold_start_selector = check_no_backend_yet(main_window)
     assert cold_start_selector is not None
 

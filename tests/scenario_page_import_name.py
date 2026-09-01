@@ -37,7 +37,7 @@ class FakePageEditor:
         self.page_manager = FakePageManagerWindow()
 
 
-class FakeMenuButtonSelf:
+class FakeMenuButtonReceiver:
     """Duck-typed self that exposes what the callback dereferences,
     .selected_file and .pageEditor.page_manager.page_selector."""
 
@@ -64,8 +64,8 @@ def main() -> None:
         json.dump(page_dict, f)
 
     # Import under a fresh name. Both the dialog and the direct path end here.
-    fake_self = FakeMenuButtonSelf(FakeFile(src_path))
-    MenuButton.import_page_name_selected_callback(fake_self, "ImportedPage")
+    initial_import = FakeMenuButtonReceiver(FakeFile(src_path))
+    MenuButton.import_page_name_selected_callback(initial_import, "ImportedPage")
 
     expected_path = os.path.join(gl.page_manager.PAGE_PATH, "ImportedPage.json")
     assert os.path.isfile(expected_path), (
@@ -73,24 +73,24 @@ def main() -> None:
     )
     with open(expected_path) as f:
         assert json.load(f) == page_dict, "imported page content does not match the source file"
-    assert fake_self.pageEditor.page_manager.page_selector.added_paths == [expected_path], (
+    assert initial_import.pageEditor.page_manager.page_selector.added_paths == [expected_path], (
         "the imported page was not added to the page selector"
     )
-    assert fake_self.selected_file is None, "selected_file was not cleared after import"
+    assert initial_import.selected_file is None, "selected_file was not cleared after import"
     assert gl.page_manager.find_matching_page_path("ImportedPage") == expected_path
 
     # Importing onto an existing name must return cleanly, without touching
     # the selector and without raising. FileExistsError is caught.
-    fake_self2 = FakeMenuButtonSelf(FakeFile(src_path))
-    MenuButton.import_page_name_selected_callback(fake_self2, "ImportedPage")
-    assert fake_self2.pageEditor.page_manager.page_selector.added_paths == [], (
+    duplicate_import = FakeMenuButtonReceiver(FakeFile(src_path))
+    MenuButton.import_page_name_selected_callback(duplicate_import, "ImportedPage")
+    assert duplicate_import.pageEditor.page_manager.page_selector.added_paths == [], (
         "duplicate-name import must not add a selector row"
     )
 
     # A dotted name typed in the rename dialog must survive whole. Truncation
     # at the first dot would rename the user's page to "backup".
-    fake_self3 = FakeMenuButtonSelf(FakeFile(src_path))
-    MenuButton.import_page_name_selected_callback(fake_self3, "backup.v2")
+    dotted_import = FakeMenuButtonReceiver(FakeFile(src_path))
+    MenuButton.import_page_name_selected_callback(dotted_import, "backup.v2")
 
     dotted_path = os.path.join(gl.page_manager.PAGE_PATH, "backup.v2.json")
     assert os.path.isfile(dotted_path), (
@@ -100,7 +100,7 @@ def main() -> None:
     assert not os.path.exists(os.path.join(gl.page_manager.PAGE_PATH, "backup.json")), (
         "the '.v2' suffix was stripped -- page saved as 'backup' instead of 'backup.v2'"
     )
-    assert fake_self3.pageEditor.page_manager.page_selector.added_paths == [dotted_path], (
+    assert dotted_import.pageEditor.page_manager.page_selector.added_paths == [dotted_path], (
         "the dotted-name page was not added to the selector under its full name"
     )
     assert gl.page_manager.find_matching_page_path("backup.v2") == dotted_path, (

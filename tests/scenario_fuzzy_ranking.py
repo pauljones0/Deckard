@@ -70,12 +70,12 @@ def test_ranking_order() -> None:
 def test_sort_comparator_still_returns_int() -> None:
     # Mirrors the -1, 0 and 1 comparators in the choosers and the action
     # chooser. They compare float scores and must hand GTK an int.
-    def sort_func(name1: str, name2: str, search: str) -> int:
-        fuzz1 = fuzz.ratio(name1, search)
-        fuzz2 = fuzz.ratio(name2, search)
-        if fuzz1 > fuzz2:
+    def sort_func(left_name: str, right_name: str, search: str) -> int:
+        left_score = fuzz.ratio(left_name, search)
+        right_score = fuzz.ratio(right_name, search)
+        if left_score > right_score:
             return -1
-        if fuzz1 < fuzz2:
+        if left_score < right_score:
             return 1
         return 0
 
@@ -114,8 +114,8 @@ def test_cached_static_wrapper() -> None:
     class Selector:
         @staticmethod
         @lru_cache(maxsize=1000)
-        def calc_ratio(str1, str2) -> float:
-            return fuzz.ratio(str1.lower(), str2.lower())
+        def calc_ratio(left_text, right_text) -> float:
+            return fuzz.ratio(left_text.lower(), right_text.lower())
 
     Selector.calc_ratio.cache_clear()
     first = Selector.calc_ratio("Volume_Up", "volume up")

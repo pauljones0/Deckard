@@ -111,7 +111,7 @@ def make_bus() -> "tuple[RecordingHidapi, BusDevice, dict[str, BusDevice]]":
     return RecordingHidapi(bus), deck, others
 
 
-def test_a_present_deck_answers_yes_and_opens_nothing_else() -> None:
+def test_present_deck_filtered_probe() -> None:
     hidapi, deck_device, others = make_bus()
     deck = HidFakeDeck(serial_number="hid-present",
                        transport=HidTransport(hidapi, deck_device))
@@ -131,7 +131,7 @@ def test_a_present_deck_answers_yes_and_opens_nothing_else() -> None:
     print("PASS: a present deck answers yes and no other device is opened")
 
 
-def test_an_absent_deck_answers_no() -> None:
+def test_absent_deck_probe() -> None:
     hidapi, deck_device, others = make_bus()
     deck = HidFakeDeck(serial_number="hid-absent",
                        transport=HidTransport(hidapi, deck_device))
@@ -154,7 +154,7 @@ def test_an_absent_deck_answers_no() -> None:
     print("PASS: an absent deck answers no")
 
 
-def test_the_unfiltered_walk_opens_the_whole_bus() -> None:
+def test_unfiltered_probe_cost() -> None:
     """Confirm that the library fallback opens the full modeled bus."""
     hidapi, deck_device, _ = make_bus()
     transport = HidTransport(hidapi, deck_device)
@@ -169,7 +169,7 @@ def test_the_unfiltered_walk_opens_the_whole_bus() -> None:
     print(f"PASS: the unfiltered walk opens all {len(opened)} devices on the bus")
 
 
-def test_the_filter_follows_the_deck_and_not_one_vendor() -> None:
+def test_deck_specific_vendor_filter() -> None:
     hidapi, elgato_device, _ = make_bus()
     mirabox = BusDevice("/dev/hid/dock", MIRABOX, STREAMDOCK_293S, "dock-1")
     hidapi.bus.append(mirabox)
@@ -186,7 +186,7 @@ def test_the_filter_follows_the_deck_and_not_one_vendor() -> None:
     print("PASS: the filter follows the deck's own vendor and product")
 
 
-def test_a_deck_with_no_hid_transport_keeps_the_library_answer() -> None:
+def test_no_hid_transport_fallback() -> None:
     """A fake deck and a remote deck carry no hidapi transport. Neither may
     lose its answer to a probe that assumes one."""
     plain = FaultyFakeDeck(serial_number="hid-fallback")
@@ -218,7 +218,7 @@ def test_a_deck_with_no_hid_transport_keeps_the_library_answer() -> None:
     print("PASS: a deck with no hid transport keeps the library's answer")
 
 
-def test_the_reader_watchdog_probe_is_filtered() -> None:
+def test_reader_watchdog_filtered_probe() -> None:
     """The watchdog asks this question of every deck whose reader has exited,
     and it is the caller that pays for it every sweep."""
     hidapi, deck_device, _ = make_bus()
@@ -235,7 +235,7 @@ def test_the_reader_watchdog_probe_is_filtered() -> None:
     print("PASS: the reader watchdog probe is filtered")
 
 
-def test_the_probe_does_not_wait_on_the_device_write_lock() -> None:
+def test_probe_avoids_write_lock() -> None:
     """Check that a handle-free probe does not wait behind the device write lock."""
     hidapi, deck_device, _ = make_bus()
     deck = HidFakeDeck(serial_number="hid-lock",
@@ -278,13 +278,13 @@ def main() -> None:
     # Install only the globals required by fake-deck construction.
     fixtures.install_stub_globals()
 
-    test_a_present_deck_answers_yes_and_opens_nothing_else()
-    test_an_absent_deck_answers_no()
-    test_the_unfiltered_walk_opens_the_whole_bus()
-    test_the_filter_follows_the_deck_and_not_one_vendor()
-    test_a_deck_with_no_hid_transport_keeps_the_library_answer()
-    test_the_reader_watchdog_probe_is_filtered()
-    test_the_probe_does_not_wait_on_the_device_write_lock()
+    test_present_deck_filtered_probe()
+    test_absent_deck_probe()
+    test_unfiltered_probe_cost()
+    test_deck_specific_vendor_filter()
+    test_no_hid_transport_fallback()
+    test_reader_watchdog_filtered_probe()
+    test_probe_avoids_write_lock()
     print("ALL PASS: scenario_filtered_hid_enumeration")
 
 

@@ -82,8 +82,10 @@ def check_dial_gif_loads(controller) -> None:
     dial = controller.inputs[Input.Dial][0]
     gif_path = os.path.join(gl.DATA_PATH, "media", "dial.gif")
     frames = [Image.new("RGBA", (48, 48), (0, 0, 0, 0)) for _ in range(3)]
-    for i, fr in enumerate(frames):
-        ImageDraw.Draw(fr).ellipse([2 + i * 3, 8, 22 + i * 3, 28], fill=(220, 30, 30, 255))
+    for i, frame in enumerate(frames):
+        ImageDraw.Draw(frame).ellipse(
+            [2 + i * 3, 8, 22 + i * 3, 28], fill=(220, 30, 30, 255)
+        )
     os.makedirs(os.path.dirname(gif_path), exist_ok=True)
     frames[0].save(gif_path, format="GIF", save_all=True, append_images=frames[1:],
                    duration=[100] * 3, loop=0, disposal=2)

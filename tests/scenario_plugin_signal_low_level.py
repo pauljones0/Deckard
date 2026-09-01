@@ -58,7 +58,7 @@ def check_trigger_signal_kwargs_single_shot():
     )
 
 
-def check_eventholder_partial_dedupe_no_crash():
+def check_event_holder_partial_deduplication():
     from src.backend.PluginManager.EventHolder import EventHolder
 
     hits = []
@@ -87,7 +87,7 @@ class _SlottedOwner:
         self.calls += 1
 
 
-def check_slots_owner_falls_back_strong():
+def check_slotted_owner_uses_strong_reference():
     owner = _SlottedOwner()
 
     # The owner really is non-weak-referenceable.
@@ -220,15 +220,15 @@ def check_remove_actions_survives_null_id():
 
 
 def main() -> None:
-    fixtures.start_watchdog(60, label="scenario_plugin_signal_lows")
+    fixtures.start_watchdog(60, label="scenario_plugin_signal_low_level")
     assert threading.current_thread() is threading.main_thread()
     check_trigger_signal_kwargs_single_shot()
-    check_eventholder_partial_dedupe_no_crash()
-    check_slots_owner_falls_back_strong()
+    check_event_holder_partial_deduplication()
+    check_slotted_owner_uses_strong_reference()
     check_launch_backend_path_validation()
     check_get_own_key_via_get_input()
     check_remove_actions_survives_null_id()
-    print("PASS: scenario_plugin_signal_lows")
+    print("PASS: scenario_plugin_signal_low_level")
 
 
 if __name__ == "__main__":

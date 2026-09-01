@@ -47,7 +47,7 @@ from src.backend.Store.install_request import (
     INSTALL_ACTION,
     UPDATE_ACTION,
     ConfirmedActionGate,
-    is_store_id,
+    is_safe_store_id,
 )
 from src.backend.Store.store_result import Ok
 from src.windows.ui_adapter import GtkUIAdapter
@@ -472,7 +472,7 @@ class App(Adw.Application):
 
         self.install_gate = ConfirmedActionGate(
             INSTALL_ACTION, self._install_plugin, self._confirm_install_request,
-            target_type="s", validate=is_store_id)
+            target_type="s", validate=is_safe_store_id)
         self.install_plugin_action = self.install_gate.add_to(self)
 
     def _dialog_parent(self) -> "Gtk.Window | None":
@@ -606,7 +606,7 @@ class App(Adw.Application):
             button=("Install", "app.install-plugin", GLib.Variant.new_string(plugin_id))
         )
     def open_store(self, callback_agreed: bool | None = None) -> None:
-        agreed = gl.settings_manager.app().responsibility_notes_agreed
+        agreed = gl.settings_manager.app().responsibility_notes_accepted
 
         if not agreed:
             if callback_agreed is None:

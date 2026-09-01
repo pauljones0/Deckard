@@ -163,12 +163,12 @@ def _node_path(directory: str) -> "str | None":
 
 def _candidates(vendor_id: int, product_id: int) -> "list[_Candidate]":
     """Every USB device on the bus with this vendor and product id."""
-    found: "list[_Candidate]" = []
+    candidates: "list[_Candidate]" = []
     try:
         names = sorted(os.listdir(SYSFS_USB_DEVICES))
     except OSError as e:
         log.warning(f"Cannot list the USB devices under {SYSFS_USB_DEVICES}: {e}")
-        return found
+        return candidates
     for name in names:
         directory = os.path.join(SYSFS_USB_DEVICES, name)
         if _read_ids(directory) != (vendor_id, product_id):
@@ -176,9 +176,9 @@ def _candidates(vendor_id: int, product_id: int) -> "list[_Candidate]":
         node = _node_path(directory)
         if node is None:
             continue
-        found.append(_Candidate(name=name, serial=_read_sysfs(directory, "serial"),
-                                node=node))
-    return found
+        candidates.append(_Candidate(name=name, serial=_read_sysfs(directory, "serial"),
+                                     node=node))
+    return candidates
 
 
 def find_device_node(vendor_id: int, product_id: int, serial: "str | None",
@@ -263,10 +263,10 @@ def reset_usb_device(vendor_id: "int | None", product_id: "int | None",
         return None
     try:
         # The device behind the node, asked through the descriptor the ioctl goes to.
-        found = _descriptor_identity(fd)
-        if found != (vendor_id, product_id):
-            reported = ("no readable device descriptor" if found is None
-                        else f"{found[0]:04x}:{found[1]:04x}")
+        descriptor_identity = _descriptor_identity(fd)
+        if descriptor_identity != (vendor_id, product_id):
+            reported = ("no readable device descriptor" if descriptor_identity is None
+                        else f"{descriptor_identity[0]:04x}:{descriptor_identity[1]:04x}")
             log.error(
                 f"Deck {label}: the USB node {node} reports {reported}, not "
                 f"{vendor_id:04x}:{product_id:04x}, so it is another device now. No "
@@ -325,12 +325,12 @@ def reset_wedged_deck(deck: object, serial: "str | None" = None) -> "str | None"
     Reset a deck that will not open, at most once per device identity for the life of the process,
     and return the node that took the reset.
     """
-    vendor_id, product_id, resolved = _identity(deck, serial)
-    label = resolved or "unknown"
+    vendor_id, product_id, resolved_serial = _identity(deck, serial)
+    label = resolved_serial or "unknown"
     if vendor_id != ELGATO_VENDOR_ID or product_id is None:
         log.debug(f"Deck {label}: not an Elgato USB device, so no reset is issued")
         return None
-    key = f"{vendor_id:04x}:{product_id:04x}:{resolved or 'no-serial'}"
+    key = f"{vendor_id:04x}:{product_id:04x}:{resolved_serial or 'no-serial'}"
     with _reset_identities_lock:
         if key in _reset_identities:
             log.warning(
@@ -340,7 +340,7 @@ def reset_wedged_deck(deck: object, serial: "str | None" = None) -> "str | None"
         # Claimed ahead of the reset, so two threads cannot both reset this device: the boot
         # enumeration and the USB hotplug monitor reach here on threads of their own.
         _reset_identities.add(key)
-    node = reset_usb_device(vendor_id, product_id, resolved, label)
+    node = reset_usb_device(vendor_id, product_id, resolved_serial, label)
     if node is None:
         # No reset was issued, so this device has not spent anything.
         with _reset_identities_lock:

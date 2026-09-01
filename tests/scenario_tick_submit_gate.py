@@ -244,7 +244,7 @@ def raising_gate_still_submits(controller, probe, identifier) -> None:
           f"submits for {identifier}")
 
 
-def shut_down_pool_leaves_the_tick_quiet(controller, probe, identifier) -> None:
+def check_shutdown_pool_tick(controller, probe, identifier) -> None:
     """A shut-down but attached pool drops ticks without raising or stranding
     re-entrancy flags; this final check leaves the pool unusable."""
     controller_input = controller.get_input(identifier)
@@ -310,7 +310,7 @@ def main() -> None:
         added_action_resumes_submits(controller, probe, with_action)
         raising_gate_still_submits(controller, probe, raising)
         # Last: it leaves the deck without a usable action pool.
-        shut_down_pool_leaves_the_tick_quiet(controller, probe, with_action)
+        check_shutdown_pool_tick(controller, probe, with_action)
     finally:
         probe.remove()
         teardown(controller)

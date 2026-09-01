@@ -68,10 +68,10 @@ def check_live_attribution() -> None:
         assert guard.refusal_reason(server_side) is None, guard.refusal_reason(server_side)
         print("PASS: a live loopback peer attributes to this uid and is accepted")
 
-        rows = guard.listen_rows_of_port(port)
+        rows = guard.listening_rows_for_port(port)
         inode = os.fstat(listener.fileno()).st_ino
         assert any(r.inode == inode and r.local_ip == "127.0.0.1" for r in rows), rows
-        print("PASS: listen_rows_of_port finds the listener with its inode")
+        print("PASS: listening_rows_for_port finds the listener with its inode")
 
         assert guard.pid_owns_inode(os.getpid(), inode) is True
         assert guard.pid_owns_inode(os.getpid(), 2**31 + 12345) is False

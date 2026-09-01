@@ -18,13 +18,13 @@ from src.backend.DeckManagement.InputIdentifier import Input
 from src.backend.atomic_json import atomic_write_json
 
 
-class PageContent(Protocol):
+class PageFlushSource(Protocol):
     """A Page or PageDocument that holds a page's unwritten shared content.
     Off-deck edits mark the document because no Page exists; the record selects the serializer."""
 
     json_path: str
 
-    def get_without_action_objects(self) -> dict[str, Any]:
+    def snapshot_for_save(self) -> dict[str, Any]:
         """Give the content as it goes into the file, without live objects."""
         ...
 
@@ -105,7 +105,7 @@ class _Pending:
     # raw path for backup naming because the canonical key and moved json_path differ.
     __slots__ = ("source", "path", "first_marked", "handle")
 
-    def __init__(self, source: PageContent, path: str, first_marked: float) -> None:
+    def __init__(self, source: PageFlushSource, path: str, first_marked: float) -> None:
         self.source = source
         self.path = path
         self.first_marked = first_marked
@@ -123,14 +123,14 @@ class PageFlush:
         self._pending: dict[str, _Pending] = {}
         # Back up once per path per session; only discard removes the record when
         # another writer takes the file, and the user's page count bounds the set.
-        self._backed_up: set[str] = set()
+        self._backed_up_paths: set[str] = set()
         # Take this guard alone, or after a save lock when both are needed. Never
         # acquire a save lock under it; file writes and backup copies stay outside it.
         self._pending_guard = threading.Lock()
         self._scheduler: Scheduler = scheduler if scheduler is not None else TimerWheelScheduler()
         self._clock: Callable[[], float] = clock if clock is not None else time.monotonic
 
-    def mark_dirty(self, source: PageContent) -> None:
+    def mark_dirty(self, source: PageFlushSource) -> None:
         """Record the latest shared source and re-arm at DEBOUNCE_S without file I/O.
         MAX_DIRTY_AGE_S bounds deferral before an attempt; failed writes can exceed it."""
         # One entry per file is sufficient because every Page and its document
@@ -153,7 +153,7 @@ class PageFlush:
             delay = min(DEBOUNCE_S, max(0.0, deadline - now))
             entry.handle = self._scheduler.schedule(delay, lambda: self._fire(key))
 
-    def pending_source(self, path: str) -> "PageContent | None":
+    def pending_source(self, path: str) -> "PageFlushSource | None":
         """Return the pending source for external ordering assertions, or None."""
         with self._pending_guard:
             entry = self._pending.get(canonical_path(path))
@@ -191,7 +191,7 @@ class PageFlush:
             try:
                 self._back_up_once(key, entry.path, source)
 
-                without_objects = source.get_without_action_objects()
+                without_objects = source.snapshot_for_save()
                 for type in Input.KeyTypes:
                     source.move_key_to_end(without_objects, type)
                 # Atomic replace, so an interrupted write leaves no truncated
@@ -233,19 +233,19 @@ class PageFlush:
                 self._scheduler.cancel(entry.handle)
             entry.handle = self._scheduler.schedule(RETRY_S, lambda: self._fire(key))
 
-    def _back_up_once(self, key: str, path: str, source: PageContent) -> None:
+    def _back_up_once(self, key: str, path: str, source: PageFlushSource) -> None:
         """Back up the locked path once per session before overwriting it.
         The corrupt-primary heal copy uses path because moves can repoint source.json_path."""
         # Atomic writes cannot corrupt the primary, so one pre-write copy serves external
         # corruption. Missing or invalid files count as done; only a raised I/O error retries.
         with self._pending_guard:
-            if key in self._backed_up:
+            if key in self._backed_up_paths:
                 return
         # Copy outside the registry guard so GTK marks do not wait on file I/O;
         # the held save lock prevents two copies for this path.
         source.make_backup(path)
         with self._pending_guard:
-            self._backed_up.add(key)
+            self._backed_up_paths.add(key)
 
     def flush_all(self) -> None:
         """Flush every pending path for whole-tree readers and process exit.
@@ -267,7 +267,7 @@ class PageFlush:
         with save_lock(key):
             with self._pending_guard:
                 entry = self._pending.pop(key, None)
-                self._backed_up.discard(key)
+                self._backed_up_paths.discard(key)
         if entry is not None and entry.handle is not None:
             self._scheduler.cancel(entry.handle)
 

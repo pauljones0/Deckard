@@ -134,12 +134,12 @@ def test_catalog_keeps_entry_with_failed_thumbnail() -> None:
 
 
 def main() -> None:
-    fixtures.start_watchdog(30, label="scenario_store_poison_survival")
+    fixtures.start_watchdog(30, label="scenario_store_optional_fetch_failure")
     test_prepare_icon_survives_failed_thumbnail()
     test_prepare_wallpaper_survives_failed_thumbnail()
     test_prepare_sd_plus_bar_wallpaper_survives_failed_thumbnail()
     test_catalog_keeps_entry_with_failed_thumbnail()
-    print("scenario_store_poison_survival: PASS")
+    print("scenario_store_optional_fetch_failure: PASS")
 
 
 if __name__ == "__main__":

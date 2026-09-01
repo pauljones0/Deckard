@@ -8,7 +8,7 @@ from xml.dom import minidom
 import run_all
 
 
-def test_junit_survives_control_chars_in_output() -> None:
+def test_junit_control_char_output() -> None:
     noisy = "row \x1b[31mRED\x1b[0m\nbell\x07 esc\x1b vt\x0b nul\x00 keep\ttab"
     results = [
         ("scenario_ok.py", "PASS", 0.10, "plain \x1b[32mgreen\x1b[0m out"),
@@ -32,7 +32,7 @@ def test_junit_survives_control_chars_in_output() -> None:
 
 
 def main() -> None:
-    test_junit_survives_control_chars_in_output()
+    test_junit_control_char_output()
     print("scenario_junit_control_chars: OK")
 
 

@@ -98,7 +98,7 @@ class DeckName(Adw.EntryRow):
         name = self.get_text().strip()
 
         settings = gl.settings_manager.deck(self.deck_serial_number)
-        settings.set_value("name", name)
+        settings.set_top_level_value("name", name)
         settings.save()
 
         # Show what was stored. Space the user typed around the name is not in
@@ -185,7 +185,7 @@ class Rotation(Adw.PreferencesRow):
         rot = int(active_name)
 
         deck_settings = gl.settings_manager.deck(self.deck_serial_number)
-        deck_settings.set_value("rotation", rot)
+        deck_settings.set_top_level_value("rotation", rot)
         deck_settings.save()
 
         self.settings_page.deck_controller.set_rotation(rot)
@@ -246,7 +246,7 @@ class Brightness(LazyMapTasks, Adw.PreferencesRow):
 
         # Update and save brightness in deck settings
         deck_settings = gl.settings_manager.deck(self.deck_serial_number)
-        deck_settings.set("brightness", "value", value)
+        deck_settings.set_section_value("brightness", "value", value)
         deck_settings.save()
 
         # Check if brightness is overwritten by the current page (there may
@@ -508,7 +508,7 @@ class Screensaver(LazyMapTasks, Adw.PreferencesRow):
 
     def on_toggle_enable(self, toggle_switch: Gtk.Switch, state: bool) -> None:
         config = gl.settings_manager.deck(self.deck_serial_number)
-        config.set("screensaver", "enable", state)
+        config.set_section_value("screensaver", "enable", state)
         # Save
         config.save()
         # Update enable if not overwritten by the active page
@@ -519,7 +519,7 @@ class Screensaver(LazyMapTasks, Adw.PreferencesRow):
 
     def on_toggle_loop(self, toggle_switch: Gtk.Switch, state: bool) -> None:
         config = gl.settings_manager.deck(self.deck_serial_number)
-        config.set("screensaver", "loop", state)
+        config.set_section_value("screensaver", "loop", state)
         # Save
         config.save()
 
@@ -529,7 +529,7 @@ class Screensaver(LazyMapTasks, Adw.PreferencesRow):
 
     def on_change_fps(self, spinner: Gtk.SpinButton) -> None:
         config = gl.settings_manager.deck(self.deck_serial_number)
-        config.set("screensaver", "fps", spinner.get_value_as_int())
+        config.set_section_value("screensaver", "fps", spinner.get_value_as_int())
         # Save
         config.save()
         # Update fps if not overwritten by the active page
@@ -538,7 +538,7 @@ class Screensaver(LazyMapTasks, Adw.PreferencesRow):
 
     def on_change_time(self, spinner: Gtk.SpinButton) -> None:
         config = gl.settings_manager.deck(self.deck_serial_number)
-        config.set("screensaver", "time-delay", round(spinner.get_value_as_int()))
+        config.set_section_value("screensaver", "time-delay", round(spinner.get_value_as_int()))
         # Save
         config.save()
         # Update time if not overwritten by the active page
@@ -547,7 +547,7 @@ class Screensaver(LazyMapTasks, Adw.PreferencesRow):
 
     def on_change_brightness(self, scale: Gtk.Scale) -> None:
         config = gl.settings_manager.deck(self.deck_serial_number)
-        config.set("screensaver", "brightness", scale.get_value())
+        config.set_section_value("screensaver", "brightness", scale.get_value())
         # Save
         config.save()
         # Update brightness if not overwritten by the active page
@@ -572,7 +572,7 @@ class Screensaver(LazyMapTasks, Adw.PreferencesRow):
     def update_image(self, image_path: "str | None") -> None:
         self.set_thumbnail(image_path)
         settings = gl.settings_manager.deck(self.deck_serial_number)
-        settings.set("screensaver", "media-path", image_path)
+        settings.set_section_value("screensaver", "media-path", image_path)
         settings.save()
 
         deck_controller = self.settings_page.deck_controller

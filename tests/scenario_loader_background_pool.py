@@ -25,7 +25,7 @@ def pump_main_context(rounds: int = 50) -> None:
             ctx.iteration(False)
 
 
-def test_pool_work_runs_off_the_caller_thread() -> None:
+def test_background_work_runs_off_caller() -> None:
     """run_in_background must run the work on a pool worker and hand back at
     once, so a caller on the main thread keeps running while the work blocks."""
     started = threading.Event()
@@ -116,7 +116,7 @@ def test_worker_reaches_main_once() -> None:
     print("PASS: the pool worker reaches the main loop and the callback runs once")
 
 
-def test_store_page_ensure_loaded_uses_the_pool() -> None:
+def test_store_page_load_uses_background_pool() -> None:
     """Bind StorePage methods to a stub and require pool-based loading without GTK."""
     from src.windows.Store.StorePage import StorePage
 
@@ -182,10 +182,10 @@ def test_recommendations_retry_uses_the_pool() -> None:
 
 def main() -> None:
     fixtures.start_watchdog(WATCHDOG_SECONDS, label="scenario_loader_background_pool")
-    test_pool_work_runs_off_the_caller_thread()
+    test_background_work_runs_off_caller()
     test_pool_logs_a_failure()
     test_worker_reaches_main_once()
-    test_store_page_ensure_loaded_uses_the_pool()
+    test_store_page_load_uses_background_pool()
     test_recommendations_retry_uses_the_pool()
     print("scenario_loader_background_pool: PASS")
 

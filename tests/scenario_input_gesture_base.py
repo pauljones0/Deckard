@@ -31,7 +31,7 @@ class RecordingAction(ActionCore):
         self.tag = tag
         self.received: list = []
 
-    def _raw_event_callback(self, event, data=None):
+    def _raw_event_callback(self, event, event_data=None):
         self.received.append(event)
 
 
@@ -59,7 +59,7 @@ def leg_one_body_serves_every_input() -> None:
     print("PASS: one cancel_gesture and one on_hold_timer_end serve every input type")
 
 
-def leg_hold_start_keeps_its_own_event_class(controller, deck, page) -> None:
+def leg_hold_start_event_class(controller, deck, page) -> None:
     """Dispatch each input type's own HOLD_START_EVENT from the shared body."""
     controller.hold_time = 0.3
 
@@ -164,7 +164,7 @@ def leg_cancel_parity(controller, deck, page) -> None:
     print("PASS: the base cancel drops the whole gesture on a key and on a dial")
 
 
-def leg_touchscreen_inherits_a_quiet_body(controller) -> None:
+def leg_touchscreen_quiet_body(controller) -> None:
     """Let a touchscreen call both bodies without an event or exception."""
     touchscreen = controller.get_input(Input.Touchscreen("sd-plus"))
     assert touchscreen is not None, "the fake deck has no touchscreen"
@@ -192,9 +192,9 @@ def main() -> None:
         page = controller.active_page
         assert page is not None
 
-        leg_hold_start_keeps_its_own_event_class(controller, deck, page)
+        leg_hold_start_event_class(controller, deck, page)
         leg_cancel_parity(controller, deck, page)
-        leg_touchscreen_inherits_a_quiet_body(controller)
+        leg_touchscreen_quiet_body(controller)
     finally:
         fixtures.teardown(controller)
 

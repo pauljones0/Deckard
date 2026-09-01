@@ -339,10 +339,10 @@ class Page:
 
         self.save()
 
-    def get_without_action_objects(self) -> _Dict[str, Any]:
+    def snapshot_for_save(self) -> _Dict[str, Any]:
         # The document owns the content and its file shape. The flush writes
         # pages that no deck shows, and those have no Page to ask.
-        return self._document.get_without_action_objects()
+        return self._document.snapshot_for_save()
 
     def get_all_actions(self, action_dict: ActionObjects | None = None) -> list[ActionCore]:
         if action_dict is None:

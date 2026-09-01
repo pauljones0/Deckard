@@ -72,7 +72,7 @@ def _make_touch_state(saturation_holder) -> ControllerTouchScreenState:
     return state
 
 
-def check_keepcheck_reacquires_on_sat_change() -> None:
+def check_saturation_change_rebuilds_background_video() -> None:
     fixtures.install_stub_globals()
     # A path only. The spy InputVideo never opens it, but the method builds a
     # real one, so something must exist on disk.
@@ -91,8 +91,8 @@ def check_keepcheck_reacquires_on_sat_change() -> None:
         # bakes saturation 1.0 into its cache.
         state._get_background_video_frame(video_path, fps=30, loop=True)
         assert len(_SpyInputVideo.instances) == 1, "first call must construct one InputVideo"
-        v1 = _SpyInputVideo.instances[0]
-        assert v1.baked_saturation == 1.0, f"first video should bake 1.0, got {v1.baked_saturation}"
+        initial_video = _SpyInputVideo.instances[0]
+        assert initial_video.baked_saturation == 1.0, f"first video should bake 1.0, got {initial_video.baked_saturation}"
 
         # The same path with the saturation changed to 1.3, as a slider move
         # does. A repeat composite must not keep serving the 1.0-baked video.
@@ -117,9 +117,9 @@ def check_keepcheck_reacquires_on_sat_change() -> None:
 
 
 def main() -> None:
-    fixtures.start_watchdog(WATCHDOG_SECONDS, label="scenario_saturation_keepcheck")
-    check_keepcheck_reacquires_on_sat_change()
-    print("PASS: scenario_saturation_keepcheck")
+    fixtures.start_watchdog(WATCHDOG_SECONDS, label="scenario_saturation_video_rebuild")
+    check_saturation_change_rebuilds_background_video()
+    print("PASS: scenario_saturation_video_rebuild")
 
 
 if __name__ == "__main__":

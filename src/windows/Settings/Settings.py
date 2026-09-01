@@ -584,16 +584,16 @@ class StorePageGroup(Adw.PreferencesGroup):
         self.auto_update = Adw.SwitchRow(title=gl.lm.get("settings-store-settings-auto-update"), active=True)
         self.add(self.auto_update)
 
-        self.install_scripts = Adw.ComboRow(
+        self.install_script_policy = Adw.ComboRow(
             title=gl.lm.get("settings-store-install-scripts-title"),
             subtitle=gl.lm.get("settings-store-install-scripts-subtitle"),
         )
-        self.install_scripts.set_model(Gtk.StringList.new([
+        self.install_script_policy.set_model(Gtk.StringList.new([
             gl.lm.get("settings-store-install-scripts-ask"),
             gl.lm.get("settings-store-install-scripts-always"),
             gl.lm.get("settings-store-install-scripts-never"),
         ]))
-        self.add(self.install_scripts)
+        self.add(self.install_script_policy)
 
         self.custom_stores = CustomContentGroup(title=gl.lm.get("settings-store-custom-stores-header"),
                                                 description=gl.lm.get("settings-store-custom-stores-subtitle"),
@@ -609,15 +609,15 @@ class StorePageGroup(Adw.PreferencesGroup):
 
         # Connect signals
         self.auto_update.connect("notify::active", self.on_auto_update_toggled)
-        self.install_scripts.connect("notify::selected", self.on_install_scripts_changed)
+        self.install_script_policy.connect("notify::selected", self.on_install_scripts_changed)
 
     def load_defaults(self) -> None:
         self.auto_update.set_active(self.settings.app_settings.auto_update)
         try:
-            index = self.INSTALL_SCRIPT_MODES.index(self.settings.app_settings.install_scripts)
+            index = self.INSTALL_SCRIPT_MODES.index(self.settings.app_settings.install_script_policy)
         except ValueError:
             index = 0
-        self.install_scripts.set_selected(index)
+        self.install_script_policy.set_selected(index)
 
     def on_auto_update_toggled(self, *args: Any) -> None:
         self.settings.app_settings.auto_update = self.auto_update.get_active()
@@ -626,9 +626,9 @@ class StorePageGroup(Adw.PreferencesGroup):
         self.settings.save_json()
 
     def on_install_scripts_changed(self, *args: Any) -> None:
-        index = self.install_scripts.get_selected()
+        index = self.install_script_policy.get_selected()
         if index < len(self.INSTALL_SCRIPT_MODES):
-            self.settings.app_settings.install_scripts = self.INSTALL_SCRIPT_MODES[index]
+            self.settings.app_settings.install_script_policy = self.INSTALL_SCRIPT_MODES[index]
             self.settings.save_json()
 
 class CustomContentGroup(BetterPreferencesGroup):
@@ -654,7 +654,7 @@ class CustomContentGroup(BetterPreferencesGroup):
 
     def on_toggle_enable(self, switch: Gtk.Switch, *args: Any) -> None:
         settings = gl.settings_manager.app()
-        settings.set("store", self.enable_key, switch.get_active())
+        settings.set_section_value("store", self.enable_key, switch.get_active())
 
         settings.save()
 

@@ -49,7 +49,7 @@ def test_renamed_setters_exist() -> None:
     )
 
 
-def test_rows_hold_their_caption_under_a_name_of_their_own() -> None:
+def test_rows_store_caption_in_distinct_attribute() -> None:
     attribute_row = AttributeRow(title="Name:", attr="Error")
     assert attribute_row.title_label.get_label() == "Name:"
     assert attribute_row.attribute_label.get_label() == "Error"
@@ -76,7 +76,7 @@ def test_rows_hold_their_caption_under_a_name_of_their_own() -> None:
     )
 
 
-def test_renamed_setters_drive_the_same_labels() -> None:
+def test_renamed_setters_update_existing_labels() -> None:
     attribute_row = AttributeRow(title="Name:", attr="Error")
     attribute_row.set_attribute_title("Author:")
     attribute_row.set_attribute("core447")
@@ -108,8 +108,8 @@ def main() -> None:
     fixtures.start_watchdog(30, label="scenario_store_info_page_shadowing")
     test_inherited_setters_are_not_shadowed()
     test_renamed_setters_exist()
-    test_rows_hold_their_caption_under_a_name_of_their_own()
-    test_renamed_setters_drive_the_same_labels()
+    test_rows_store_caption_in_distinct_attribute()
+    test_renamed_setters_update_existing_labels()
     print("scenario_store_info_page_shadowing: PASS")
 
 

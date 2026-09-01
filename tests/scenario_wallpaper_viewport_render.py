@@ -79,9 +79,9 @@ def main() -> int:
         # Deck settings view during background load
         page = controller.active_page
         deck_config = gl.settings_manager.deck(controller.serial_number())
-        deck_config.set("background", "enable", True)
-        deck_config.set("background", "media-path", two_tone)
-        deck_config.set("background", "view", {"x": 0.2, "y": 0.5, "scale": 2.0})
+        deck_config.set_section_value("background", "enable", True)
+        deck_config.set_section_value("background", "media-path", two_tone)
+        deck_config.set_section_value("background", "view", {"x": 0.2, "y": 0.5, "scale": 2.0})
         deck_config.save()
         controller.load_background(page, update=False)
         if background.image is None or background.image.view != (0.2, 0.5, 2.0):
@@ -89,10 +89,10 @@ def main() -> int:
                             f"{None if background.image is None else background.image.view}")
 
         # Slideshow entries in both settings shapes
-        second = write_two_tone(os.path.join(media_dir, "two_tone_b.png"))
-        deck_config.set("background", "media-paths", [
+        legacy_entry_path = write_two_tone(os.path.join(media_dir, "two_tone_b.png"))
+        deck_config.set_section_value("background", "media-paths", [
             {"path": two_tone, "view": {"x": 0.8, "y": 0.5, "scale": 2.0}},
-            second,
+            legacy_entry_path,
         ])
         deck_config.save()
         controller.load_background(page, update=False)
@@ -102,7 +102,7 @@ def main() -> int:
         else:
             if show.views.get(two_tone) != (0.8, 0.5, 2.0):
                 failures.append(f"the object entry's view was lost: {show.views}")
-            if show.views.get(second) != (0.5, 0.5, 1.0):
+            if show.views.get(legacy_entry_path) != (0.5, 0.5, 1.0):
                 failures.append(f"the legacy string entry must read as the "
                                 f"default view: {show.views}")
             if background.image is None or background.image.view != (0.8, 0.5, 2.0):
@@ -117,18 +117,18 @@ def main() -> int:
             # A view for a frame not on screen is stored without touching the
             # frame that is, so the deck does not jump.
             showing_before = background.image
-            if not background.set_slideshow_view(second, (0.6, 0.5, 3.0)):
+            if not background.set_slideshow_view(legacy_entry_path, (0.6, 0.5, 3.0)):
                 failures.append("set_slideshow_view did not find the rotation entry")
             if background.image is not showing_before:
                 failures.append("set_slideshow_view swapped the showing frame")
-            if show.views.get(second) != (0.6, 0.5, 3.0):
-                failures.append(f"set_slideshow_view did not store: {show.views.get(second)}")
+            if show.views.get(legacy_entry_path) != (0.6, 0.5, 3.0):
+                failures.append(f"set_slideshow_view did not store: {show.views.get(legacy_entry_path)}")
             if background.set_slideshow_view("/not/in/rotation.png", (0.5, 0.5, 2.0)):
                 failures.append("set_slideshow_view claimed a path the rotation lacks")
 
         # Page override view
-        deck_config.set("background", "enable", False)
-        deck_config.set("background", "media-paths", [])
+        deck_config.set_section_value("background", "enable", False)
+        deck_config.set_section_value("background", "media-paths", [])
         deck_config.save()
         page.dict.setdefault("settings", {})["background"] = {
             "overwrite": True, "show": True, "media-path": two_tone,

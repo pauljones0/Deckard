@@ -8,7 +8,7 @@ from src.backend.DeckManagement.InputIdentifier import Input  # noqa: E402
 from src.backend.DeckManagement.deck_controller import input_state_classes  # noqa: E402
 
 
-CONFIG = {
+INPUT_CONFIG = {
     "states": {
         "0": {
             "labels": {"bottom": {"text": "OLD-PAGE"}},
@@ -27,33 +27,33 @@ def main() -> int:
 
         # Supersede inside own_actions_update to model a blocked plugin callback
         # that resumes after the page switched.
-        current = {"value": True}
+        load_is_current = {"value": True}
         real_update = input_state_classes.ControllerKeyState.own_actions_update
 
         def superseding_update(self):
-            current["value"] = False
+            load_is_current["value"] = False
             return real_update(self)
 
         input_state_classes.ControllerKeyState.own_actions_update = superseding_update
         try:
-            key.load_from_input_dict(CONFIG, update=False,
-                                     still_current=lambda: current["value"])
+            key.load_from_input_dict(INPUT_CONFIG, update=False,
+                                     still_current=lambda: load_is_current["value"])
         finally:
             input_state_classes.ControllerKeyState.own_actions_update = real_update
 
         state = key.get_active_state()
-        landed = state.label_manager.page_labels.get("bottom")
-        if landed is not None and landed.text == "OLD-PAGE":
+        bottom_label = state.label_manager.page_labels.get("bottom")
+        if bottom_label is not None and bottom_label.text == "OLD-PAGE":
             failures.append("a superseded load still wrote the old page's label")
 
         # --- A current load applies everything.
-        current["value"] = True
-        key.load_from_input_dict(CONFIG, update=False,
-                                 still_current=lambda: current["value"])
+        load_is_current["value"] = True
+        key.load_from_input_dict(INPUT_CONFIG, update=False,
+                                 still_current=lambda: load_is_current["value"])
         state = key.get_active_state()
-        landed = state.label_manager.page_labels.get("bottom")
-        if landed is None or landed.text != "OLD-PAGE":
-            failures.append(f"a current load did not apply the label: {landed}")
+        bottom_label = state.label_manager.page_labels.get("bottom")
+        if bottom_label is None or bottom_label.text != "OLD-PAGE":
+            failures.append(f"a current load did not apply the label: {bottom_label}")
 
         # A stale generation must not load; a current generation must pass a
         # live still_current probe that tracks later generation changes.
@@ -74,8 +74,8 @@ def main() -> int:
                 if calls:
                     failures.append("a stale-generation load reached the input")
 
-                live_gen = controller._page_load_generation
-                controller._load_input_if_current(key, page, update=False, gen=live_gen)
+                current_gen = controller._page_load_generation
+                controller._load_input_if_current(key, page, update=False, gen=current_gen)
                 if len(calls) != 1 or calls[0] is None:
                     failures.append("the current load did not carry a still_current probe")
                 elif not calls[0]():

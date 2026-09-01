@@ -219,14 +219,16 @@ def check_drain_race_exactly_once(notify) -> None:
 
         # In interleaving B the drain pops the task before the reclaim. The
         # reclaim backs off, so exactly one delivery happens.
-        app2 = Recorder(visible=True)
+        drain_owned_app = Recorder(visible=True)
         gl.app = None
-        gl.app_loading_finished_tasks = _FlipOnAppend(app2, drain_before_remove=True)
+        gl.app_loading_finished_tasks = _FlipOnAppend(
+            drain_owned_app, drain_before_remove=True
+        )
         call_from_worker(notify.error, "boot-window report")
         pump()
-        assert [(kind, text) for kind, text, _ in app2.toasts] == [
+        assert [(kind, text) for kind, text, _ in drain_owned_app.toasts] == [
             ("error", "boot-window report")
-        ], f"drain-owned delivery must happen exactly once: {app2.toasts}"
+        ], f"drain-owned delivery must happen exactly once: {drain_owned_app.toasts}"
     finally:
         gl.app_loading_finished_tasks = original_tasks
 

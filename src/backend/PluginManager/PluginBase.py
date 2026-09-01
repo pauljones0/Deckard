@@ -887,7 +887,7 @@ class PluginBase(rpyc.Service):
         from src.backend.PluginManager.PluginManager import (
             backend_guard_env,
             build_backend_launch_command,
-            ensure_backend_venv,
+            attempt_backend_venv_repair,
             inject_backend_guard,
         )
 
@@ -901,7 +901,7 @@ class PluginBase(rpyc.Service):
         # Before the argv, which reads the venv's interpreter and refuses a
         # venv that a Python upgrade stranded.
         if venv_path is not None:
-            ensure_backend_venv(venv_path, self.PATH, self.get_plugin_id_from_folder_name())
+            attempt_backend_venv_repair(venv_path, self.PATH, self.get_plugin_id_from_folder_name())
 
         command = build_backend_launch_command(backend_path, venv_path, port, open_in_terminal)
 

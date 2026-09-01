@@ -323,7 +323,7 @@ class StoreBackend:
             # Permit stale fallback after a failed forced fetch.
             # Bound staleness by fetched time because reads renew the last-use clock.
             if self.store_cache.is_cached(url=repo_url, branch=branch_name, path=file_path, data_type=data_type):
-                fetched = self.store_cache.get_fetched_date(url=repo_url, branch=branch_name, path=file_path, data_type=data_type)
+                fetched = self.store_cache.get_fetched_timestamp(url=repo_url, branch=branch_name, path=file_path, data_type=data_type)
                 if fetched is not None and time.time() - fetched <= StoreCache.DAYS_TO_KEEP * 24 * 60 * 60:
                     log.warning(f"Serving cached copy of {file_path} from {repo_url} after failed fetch")
                     with self.store_cache.open_cache_file(url=repo_url, branch=branch_name, path=file_path, data_type=data_type, mode=read_mode) as f:
@@ -419,7 +419,7 @@ class StoreBackend:
                 # Resolve legacy installs before workers make local update decisions.
                 self.resolve_unstamped_installs(base_dir, data_list + custom_entries)
 
-            futures = [self._prepare_pool.submit(process_func, data, include_images, True) for data in data_list]
+            futures = [self._prepare_pool.submit(process_func, entry, include_images, True) for entry in data_list]
             futures += [self._prepare_pool.submit(process_func, asset, include_images, False)
                         for asset in custom_entries]
 
@@ -441,11 +441,11 @@ class StoreBackend:
                 # Do not reuse an installed-assets snapshot across passes.
                 self._installed_index = None
 
-    def _as_store_result(self, data: "list[StoreDataT] | None") -> "StoreResult[list[StoreDataT]]":
+    def _as_store_result(self, catalog_entries: "list[StoreDataT] | None") -> "StoreResult[list[StoreDataT]]":
         # Convert total catalog failure to the typed error channel.
-        if data is None:
+        if catalog_entries is None:
             return Err(ErrReason.NO_CONNECTION, "no store catalog could be fetched")
-        return Ok(data)
+        return Ok(catalog_entries)
 
     def get_all_plugins(self, include_images: bool = True) -> StoreResult[list[PluginData]]:
         return self._as_store_result(self.process_store_data(self.PLUGIN_FILE, self.prepare_plugin, self.get_custom_plugins, PluginData, include_images, gl.PLUGIN_DIR))
@@ -750,13 +750,13 @@ class StoreBackend:
         if not pending:
             return
 
-        def plausible_first(entry: dict[str, Any]) -> int:
+        def claim_priority(entry: dict[str, Any]) -> int:
             entry_ref = parse_repo_url(entry.get("url"))
             if entry_ref is None:
                 return 2
             return 0 if any(entry_ref.repo.lower() in asset_id.lower() for asset_id in pending) else 1
 
-        for entry in sorted(entries, key=plausible_first):
+        for entry in sorted(entries, key=claim_priority):
             if not pending:
                 return
             try:
@@ -1267,27 +1267,27 @@ class StoreBackend:
 
     # Share safe install and removal for data-only packs; plugins need script and reload handling.
 
-    def _install_asset(self, data: "IconData | WallpaperData | SDPlusBarWallpaperData", desc: AssetTypeDescriptor) -> StoreResult[None]:
+    def _install_asset(self, asset: "IconData | WallpaperData | SDPlusBarWallpaperData", desc: AssetTypeDescriptor) -> StoreResult[None]:
         """Transactionally install one data-only asset into its type directory.
         Return INVALID_ASSET for an unsafe id or missing URL."""
-        asset_id = data.asset_id
+        asset_id = asset.asset_id
         if not self.is_safe_asset_id(asset_id):
-            log.error(f"Refusing to install {desc.display_name} with unsafe id {asset_id!r} from {data.github}")
+            log.error(f"Refusing to install {desc.display_name} with unsafe id {asset_id!r} from {asset.github}")
             return Err(ErrReason.INVALID_ASSET, f"unsafe {desc.display_name} id {asset_id!r}")
 
-        github = data.github
+        github = asset.github
         if github is None:
             log.error(f"Refusing to install {desc.display_name} {asset_id!r}: no repository url")
             return Err(ErrReason.INVALID_ASSET, f"no repository url for {desc.display_name} {asset_id!r}")
 
         asset_path = os.path.join(getattr(self, desc.base_dir_attr)(), asset_id)
         # Ignore plugin compatibility metadata for data-only packs.
-        return self.download_repo(repo_url=github, directory=asset_path, commit_sha=data.commit_sha, expected_id=asset_id,
+        return self.download_repo(repo_url=github, directory=asset_path, commit_sha=asset.commit_sha, expected_id=asset_id,
                                   gate_app_version=False)
 
-    def _uninstall_asset(self, data: "IconData | WallpaperData | SDPlusBarWallpaperData", desc: AssetTypeDescriptor) -> "int | None":
+    def _uninstall_asset(self, asset: "IconData | WallpaperData | SDPlusBarWallpaperData", desc: AssetTypeDescriptor) -> "int | None":
         """Delete one data-only asset, or return 400 for an unsafe id."""
-        asset_id = data.asset_id
+        asset_id = asset.asset_id
         if not self.is_safe_asset_id(asset_id):
             log.error(f"Refusing to uninstall {desc.display_name} with unsafe id {asset_id!r}")
             return 400

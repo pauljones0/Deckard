@@ -90,7 +90,7 @@ def _surface(cls, prefix: str) -> "dict":
     }
 
 
-def check_presets_match_the_hardware() -> None:
+def check_preset_hardware_parity() -> None:
     """Every named preset answers what its device class answers."""
     assert set(MODEL_SOURCES) | {"default"} == set(FAKE_DECK_MODELS), (
         f"the presets are {sorted(FAKE_DECK_MODELS)} but this scenario knows "
@@ -142,7 +142,7 @@ def check_presets_match_the_hardware() -> None:
     print("PASS: every preset reports the geometry and identity of the device it models")
 
 
-def check_no_preset_claims_the_elgato_identity() -> None:
+def check_fake_preset_usb_identity() -> None:
     """Check that fake decks avoid USB reset and use the liveness fallback."""
     assert usb_reset.ELGATO_VENDOR_ID == USBVendorIDs.USB_VID_ELGATO, (
         f"the vendor id the reset guards, {usb_reset.ELGATO_VENDOR_ID:#06x}, is not the one "
@@ -203,7 +203,7 @@ def _parser_answering(names):
         del cli_args.argparser.parse_args
 
 
-def check_the_flag_shapes_each_deck() -> None:
+def check_flag_model_selection() -> None:
     """What the command line gives the fake deck at each index."""
     with _flags("--fake-deck-model", "xl"):
         picked = [fake_deck_model_for_index(i) for i in range(3)]
@@ -265,7 +265,7 @@ def check_the_flag_shapes_each_deck() -> None:
           "name default leaves a deck alone")
 
 
-def check_the_deck_says_which_model_it_is() -> None:
+def check_model_display_name() -> None:
     """A deck shaped like a real model names it, and no other deck changes."""
     assert fake_deck_display_name(0, FAKE_DECK_MODELS["xl"]) == "Fake Deck 1 (Stream Deck XL)", (
         f"got {fake_deck_display_name(0, FAKE_DECK_MODELS['xl'])!r}")
@@ -285,7 +285,7 @@ def check_the_deck_says_which_model_it_is() -> None:
     print("PASS: a fake deck of a named model says which model it is")
 
 
-def check_a_model_refuses_a_shape_that_cannot_work() -> None:
+def check_invalid_model_shapes() -> None:
     """The three shapes that fail far from their cause are refused at the model."""
     cases = (
         ("the Elgato vendor id", FAKE_DECK_MODELS["xl"],
@@ -402,7 +402,7 @@ def _settle_keys(controller, deck, page, key_count: int) -> None:
         f"{key_count} keys painted")
 
 
-def check_controller_over_each_geometry() -> None:
+def check_controller_geometries() -> None:
     """Check controller input registries and page painting across model geometries."""
     media = fixtures.make_test_png(os.path.join(gl.DATA_PATH, "media", "model_bg.png"),
                                    color=(12, 200, 90))
@@ -441,9 +441,9 @@ def check_controller_over_each_geometry() -> None:
             painted = {e[3] for e in deck.ops_by_name("set_key_image")}
             assert painted == {f"key:{k}" for k in range(rows * cols)}, (
                 f"{name}: the page painted {sorted(painted)}, expected every key of the grid")
-            assert controller.deck.key_image_format()["size"] == model.key_image.size, (
+            assert controller.deck.key_image_format()["size"] == model.key_format.size, (
                 f"{name}: the encoder was handed {controller.deck.key_image_format()['size']}, "
-                f"expected {model.key_image.size}")
+                f"expected {model.key_format.size}")
         finally:
             fixtures.teardown(controller)
 
@@ -531,14 +531,14 @@ def main() -> None:
     fixtures.start_watchdog(80, label="scenario_fake_deck_models")
     fixtures._install_integration_globals()
 
-    check_presets_match_the_hardware()
-    check_no_preset_claims_the_elgato_identity()
-    check_a_model_refuses_a_shape_that_cannot_work()
+    check_preset_hardware_parity()
+    check_fake_preset_usb_identity()
+    check_invalid_model_shapes()
     check_model_selection_rules()
-    check_the_flag_shapes_each_deck()
-    check_the_deck_says_which_model_it_is()
+    check_flag_model_selection()
+    check_model_display_name()
     check_default_shape_is_unchanged()
-    check_controller_over_each_geometry()
+    check_controller_geometries()
 
     print("PASS: scenario_fake_deck_models")
 

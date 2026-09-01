@@ -84,7 +84,7 @@ def logind_reads_locked_hint():
     print("PASS: logind LockedHint=False leaves the lock to the event path")
 
 
-def logind_read_is_inert_without_a_session():
+def check_logind_read_without_session_is_inert():
     from src.backend.LockScreenManager.Detectors.Logind import LogindLockScreenDetector
 
     # A failed resolution leaves session_path None. The read must not raise
@@ -142,7 +142,7 @@ def screen_saver_reads_get_active():
     print("PASS: screen saver GetActive=False leaves the lock to the event path")
 
 
-def base_read_is_inert_without_a_source():
+def check_sourceless_base_read_is_inert():
     from src.backend.LockScreenManager.LockScreenDetector import LockScreenDetector
 
     # A detector with no session-bus screen saver (Hyprland shape) recorded no
@@ -155,7 +155,7 @@ def base_read_is_inert_without_a_source():
     print("PASS: a detector with no screen saver source reads nothing")
 
 
-def manager_setup_calls_the_read():
+def check_setup_reads_initial_lock_state():
     """setup() must invoke read_initial_lock_state on the chosen detector."""
     import src.backend.LockScreenManager.LockScreenManager as lsm_mod
     from src.backend.LockScreenManager.LockScreenManager import LockScreenManager
@@ -185,7 +185,7 @@ def manager_setup_calls_the_read():
     print("PASS: LockScreenManager.setup() reads the initial lock state")
 
 
-def real_startup_lock_then_unlock_engages_the_branch():
+def check_startup_unlock_releases_decks():
     """Require the first unlock to release decks enumerated after a startup lock.
     State must remain synchronized when the initial read precedes the deck manager."""
     import globals as gl
@@ -263,7 +263,7 @@ def real_startup_lock_then_unlock_engages_the_branch():
     print("PASS: a real startup lock disengages on the first real unlock")
 
 
-def initial_deck_work_runs_on_the_main_loop():
+def check_initial_deck_work_runs_on_main():
     """Marshal initial deck lock work to the main loop when the bus read is late.
     Screen-saver and interaction changes must not run on the setup thread."""
     import threading
@@ -351,12 +351,12 @@ def main() -> None:
     fixtures.start_watchdog(30, label="scenario_lock_startup_state")
 
     logind_reads_locked_hint()
-    logind_read_is_inert_without_a_session()
+    check_logind_read_without_session_is_inert()
     screen_saver_reads_get_active()
-    base_read_is_inert_without_a_source()
-    manager_setup_calls_the_read()
-    real_startup_lock_then_unlock_engages_the_branch()
-    initial_deck_work_runs_on_the_main_loop()
+    check_sourceless_base_read_is_inert()
+    check_setup_reads_initial_lock_state()
+    check_startup_unlock_releases_decks()
+    check_initial_deck_work_runs_on_main()
 
     print("PASS: scenario_lock_startup_state")
 

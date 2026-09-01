@@ -97,7 +97,7 @@ def check_page_save(controller) -> None:
     page = controller.active_page
     before = read_json(page.json_path)
 
-    # A top-level key that get_without_action_objects does not traverse, but
+    # A top-level key that snapshot_for_save does not traverse, but
     # json.dump chokes on mid-serialization.
     page.dict["poison"] = Unserializable()
     # save marks the page; flush logs serialization failure and retires the edit.
