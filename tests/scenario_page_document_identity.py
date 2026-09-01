@@ -213,7 +213,7 @@ def check_nonblank_refresh() -> int:
     # The order, deterministically.
     seen = []
     document.apply_loaded_content(ProbedContent(without_settings,
-                                 lambda: seen.append(dict(document.data))))
+                                                lambda: seen.append(dict(document.data))))
     if not seen:
         print("FAIL: the probe never ran -- the ordering check is vacuous")
         return 1

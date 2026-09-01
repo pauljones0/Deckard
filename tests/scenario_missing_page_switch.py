@@ -496,13 +496,13 @@ def check_manual_restore_keeps_the_page(page_manager: FakePageManager) -> None:
           "page when that page does not build")
 
     check_failed_restore_preserves_manual_path(page_manager, controller,
-                                            auto_page, manual_path)
+                                               auto_page, manual_path)
 
 
 def check_failed_restore_preserves_manual_path(page_manager: FakePageManager,
-                                            controller: FakeController,
-                                            auto_page: FakePage,
-                                            manual_path: str) -> None:
+                                               controller: FakeController,
+                                               auto_page: FakePage,
+                                               manual_path: str) -> None:
     """Keep the automatic mark and manual path when a restore cannot build.
     A later window change must be able to retry the restore."""
     grabber = WindowGrabber.__new__(WindowGrabber)

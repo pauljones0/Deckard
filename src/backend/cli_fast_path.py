@@ -48,7 +48,7 @@ def handle_preboot_cli(args: Namespace,
         # Refuse input that cannot be parked beside a listing instead of dropping it.
         # Parkable requests survive because their store outlives this process.
         refusals = cli_forward.unparkable_failures(cli_forward.plan_requests(args),
-                                          cli_forward.LISTING_MESSAGE)
+                                                   cli_forward.LISTING_MESSAGE)
         if refusals:
             return Outcome(exit_code=1, failures=tuple(refusals))
         return BOOT

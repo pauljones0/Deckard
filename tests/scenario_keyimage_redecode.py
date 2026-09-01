@@ -151,7 +151,7 @@ def main() -> int:
     Image.new("RGBA", (600, 600), (200, 30, 30, 255)).save(big_path)
     with Image.open(big_path) as im:
         swapped_key_image = InputImage(swap_stub, im.convert("RGBA").resize((80, 80)),
-                                path=big_path)
+                                       path=big_path)
 
     held = swapped_key_image.get_raw_image()
     swap_stub._layout.size = 6.0  # now needs more than the 80px retained copy

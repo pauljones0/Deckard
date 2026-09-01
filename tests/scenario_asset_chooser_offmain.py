@@ -144,7 +144,7 @@ def make_page(cls):
 
 
 def check_runtime_widget_threads(label: str, module_path: str, class_name: str,
-                  min_constructions: int) -> int:
+                                 min_constructions: int) -> int:
     import importlib
 
     module = importlib.import_module(module_path)

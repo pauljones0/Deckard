@@ -113,7 +113,7 @@ class MissingRow(Adw.PreferencesRow):
             # The row label is sufficient only when this plugin failed and nothing was installed.
             # Notify for dependency failure or partial installation.
             requested_plugin_failed = (report.failed is not None
-                                    and report.failed.asset is plugin)
+                                       and report.failed.asset is plugin)
             if report.installed or not requested_plugin_failed:
                 name = plugin.plugin_name or plugin.plugin_id or "the plugin"
                 noun = dependencies.failure_noun(report, "plugin")

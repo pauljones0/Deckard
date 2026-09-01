@@ -492,7 +492,7 @@ class WindowGrabber:
             return True
 
     def _effective_page_path(self, deck_controller: "DeckController",
-                                 active_page: "Page") -> str:
+                             active_page: "Page") -> str:
         """The page path this deck settles on once the loads in flight land.
         Call under the routing lock."""
         pending_manual = self._pending_manual_path(deck_controller)

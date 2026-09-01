@@ -18,12 +18,16 @@ select = [
   "E722",  # bare `except:` — house style is a narrow except or @log.catch
   "B030",  # `except` handlers that aren't exception classes/tuples
   "SIM105",  # try/except/pass that a contextlib.suppress states as intent
+  "F821",  # undefined names — catches lines left referencing a renamed symbol
 ]
 
 [tool.ruff.lint.per-file-ignores]
 # This module's one suppressible swallow is left for a separate change that
 # rewrites it as contextlib.suppress. Drop this entry with that change.
 "src/backend/DeckManagement/deck_controller/media_writer.py" = ["SIM105"]
+# The gc leg deletes its locals (`del controller`, `del deck`) so the weakref
+# can collect; pyflakes then misreads the earlier lambda references as unbound.
+"tests/scenario_deck_close.py" = ["F821"]
 
 [tool.pyright]
 # Editor/LSP navigation config only. The type gate is ty (lint:types).

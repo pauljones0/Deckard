@@ -109,7 +109,7 @@ FAKE_DECK_PRESETS: "tuple[FakeDeckModel, ...]" = (
         name="mini",
         key_layout=(2, 3),
         key_format=SurfaceFormat(size=(80, 80), format="BMP", flip=(False, True),
-                                rotation=90),
+                                 rotation=90),
         deck_type="Stream Deck Mini",
         product_id=0x0063,
     ),

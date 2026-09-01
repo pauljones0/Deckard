@@ -475,10 +475,10 @@ def check_venv_check_precedes_argv_build() -> None:
     os.unlink(os.path.join(venv_path, "bin", "python"))
 
     seen: list = []
-    real_ensure = plugin_manager_module.attempt_backend_venv_repair
+    real_repair = plugin_manager_module.attempt_backend_venv_repair
     real_subprocess = plugin_base_module.subprocess
 
-    def recording_ensure(path, plugin_path, name):
+    def recording_repair(path, plugin_path, name):
         # Record without rebuilding; command refusal then proves that the check ran first.
         seen.append((path, plugin_path, name))
 
@@ -497,14 +497,14 @@ def check_venv_check_precedes_argv_build() -> None:
     plugin._backend_via_terminal = False
     plugin._backend_ready = types.SimpleNamespace(clear=lambda: None)
 
-    plugin_manager_module.attempt_backend_venv_repair = recording_ensure
+    plugin_manager_module.attempt_backend_venv_repair = recording_repair
     plugin_base_module.subprocess = types.SimpleNamespace(Popen=_refuse_spawn)
     try:
         plugin.launch_backend(fixtures.__file__, venv_path=venv_path)
     except (ValueError, _LaunchStop):
         pass
     finally:
-        plugin_manager_module.attempt_backend_venv_repair = real_ensure
+        plugin_manager_module.attempt_backend_venv_repair = real_repair
         plugin_base_module.subprocess = real_subprocess
 
     assert seen == [(venv_path, plugin_dir, plugin.get_plugin_id_from_folder_name())], (

@@ -557,7 +557,7 @@ def check_signal_refresh(selector, controller, page_manager) -> None:
 
 
 def check_deleted_page_selection_cleanup(selector, controller,
-                                            page_manager) -> None:
+                                         page_manager) -> None:
     """Clear the header and settings target when the selected page disappears."""
     from src.Signals import Signals
 

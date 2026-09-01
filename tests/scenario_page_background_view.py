@@ -21,8 +21,8 @@ def main() -> int:
 
         # Store the view beside other override keys
         page_manager.overwrite_background_settings(page_path, overwrite=True, show=True,
-                                         media_path=media,
-                                         view={"x": 0.2, "y": 0.5, "scale": 2.0})
+                                                   media_path=media,
+                                                   view={"x": 0.2, "y": 0.5, "scale": 2.0})
         stored = page_manager.get_background_settings(page_path)
         if stored.get("view") != {"x": 0.2, "y": 0.5, "scale": 2.0}:
             failures.append(f"the view was not stored: {stored}")

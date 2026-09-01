@@ -336,7 +336,7 @@ class FakeRow:
 
 
 def make_reorder_fixture(action_ids, image_control=0, background_control=0,
-               label_controls=(0, 0, 0), include_control_keys=True):
+                         label_controls=(0, 0, 0), include_control_keys=True):
     """Build a fake controller, page, and expander with the add button last."""
     state = {"actions": [{"id": a, "settings": {"marker": a}} for a in action_ids]}
     if include_control_keys:
@@ -374,7 +374,7 @@ def make_reorder_fixture(action_ids, image_control=0, background_control=0,
 
 
 def make_sparse_reorder_fixture(entries, image_control=None, background_control=None,
-                    label_controls=None):
+                                label_controls=None):
     """Build loaded rows, keyed None failures, and skipped no-id entries.
     Write each control index only when supplied."""
     actions = []
@@ -501,8 +501,8 @@ if raised is None:
 
 print("(3) the down button on the middle row")
 controller, page, expander, rows = make_reorder_fixture(["A", "B", "C"], image_control=1,
-                                              background_control=2,
-                                              label_controls=[2, 2, 2])
+                                                        background_control=2,
+                                                        label_controls=[2, 2, 2])
 raised = capture_exception(ActionRow.on_click_down, rows[1], None)
 
 check("on_click_down does not raise", raised is None, repr(raised))
@@ -545,8 +545,8 @@ check("the down button on the last row saves nothing", page.save_calls == 0, str
 
 print("(3) two clicks between sidebar rebuilds")
 controller, page, expander, rows = make_reorder_fixture(["A", "B", "C"], image_control=2,
-                                              background_control=0,
-                                              label_controls=[2, 0, 1])
+                                                        background_control=0,
+                                                        label_controls=[2, 0, 1])
 c_row = rows[2]
 raised = capture_exception(ActionRow.on_click_up, c_row, None)
 raised = raised or capture_exception(ActionRow.on_click_up, c_row, None)
@@ -595,7 +595,7 @@ check("absent label permissions are not created",
 
 # A corrupt label value names no action, and the write must still complete.
 controller, page, expander, rows = make_reorder_fixture(["A", "B", "C"],
-                                              include_control_keys=False)
+                                                        include_control_keys=False)
 state_dict(page)["label-control-actions"] = "not a list"
 raised = capture_exception(ActionRow.on_click_up, rows[1], None)
 check("a corrupt label permission does not raise", raised is None, repr(raised))
@@ -789,8 +789,8 @@ class RecordingIdle:
 
 print("(4) a drop moves the action, once the drag is over")
 controller, page, expander, rows = make_reorder_fixture(["A", "B", "C"], image_control=0,
-                                              background_control=1,
-                                              label_controls=[0, 1, 2])
+                                                        background_control=1,
+                                                        label_controls=[0, 1, 2])
 real_glib = action_manager.GLib
 real_action_row = action_manager.ActionRow
 action_manager.GLib = RecordingIdle()

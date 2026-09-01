@@ -261,7 +261,7 @@ def check_settings_accessors_pass_through() -> None:
     assert services.settings_manager() is replacement
     assert services.app_settings().hold_time == 0.25
 
-    print("PASS: settings()/app_settings()/deck_settings() pass through unwrapped")
+    print("PASS: settings_manager()/app_settings()/deck_settings() pass through unwrapped")
 
 
 def check_page_manager_pair() -> None:

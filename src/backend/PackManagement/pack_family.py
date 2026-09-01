@@ -12,7 +12,7 @@ This programm comes with ABSOLUTELY NO WARRANTY!
 You should have received a copy of the GNU General Public License
 along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-One manager, one pack and one asset, shared by every family of installable art.
+One discovery, one pack and one asset, shared by every family of installable art.
 
 Icons, wallpapers and SD+ bar wallpapers all ship as packs. A pack is a folder
 that holds a manifest.json, a thumbnail the manifest names, a folder of asset

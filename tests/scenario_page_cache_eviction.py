@@ -159,7 +159,7 @@ def leg_set_pages_to_cache_shrink() -> int:
 
 
 # Leg 4. Pages on a controller without an active page count toward the budget
-# but cannot be evicted, which displaces evictions onto live controllers.
+# but cannot be evicted, which displaces evictions onto active controllers.
 def leg_active_none_distorts_budget() -> int:
     reset_page_cache()
     # A controller mid-init or torn down but not discarded has active_page
@@ -168,15 +168,15 @@ def leg_active_none_distorts_budget() -> int:
     active_controller = fresh_controller("budget-live")
     gl.page_manager.max_pages = 100
 
-    # Ghost holds 4 cached pages but has active_page None.
+    # The inactive controller holds 4 cached pages but has active_page None.
     cache_page(inactive_controller, "Ghost0")
     cache_page(inactive_controller, "Ghost1")
     cache_page(inactive_controller, "Ghost2")
     cache_page(inactive_controller, "Ghost3")
-    # Live controller holds 4 pages, one active.
+    # The active controller holds 4 pages, the last one active.
     live_pages = [cache_page(active_controller, f"Live{i}") for i in range(4)]
     active_controller.active_page = live_pages[-1]
-    # ghost.active_page stays None (the distortion condition).
+    # inactive_controller.active_page stays None (the distortion condition).
 
     if cached_count(inactive_controller) != 4 or cached_count(active_controller) != 4:
         print(
@@ -185,35 +185,35 @@ def leg_active_none_distorts_budget() -> int:
         )
         return 1
 
-    # Total 8 with budget 5 requires three evictions, all from the live deck
-    # because the ghost deck does not provide eviction candidates.
+    # Total 8 with budget 5 requires three evictions, all from the active
+    # controller because the inactive controller provides no eviction candidates.
     gl.page_manager.max_pages = 5
     gl.page_manager.clear_old_cached_pages()
 
     inactive_left = cached_count(inactive_controller)
     active_left = cached_count(active_controller)
 
-    # The ghost's pages are never reclaimed, because active_page None skips
-    # them.
+    # The inactive controller's pages are never reclaimed, because active_page
+    # None skips them.
     if inactive_left != 4:
         print(f"FAIL(4): an active_page=None controller's pages were evicted "
               f"({inactive_left}/4 left) -- if this changed, the :236 guard was "
               f"altered (a pin-count redesign landing?); rewrite this "
               f"leg to the new budget contract")
         return 1
-    # The live controller takes all 3 evictions, from 4 pages down to 1.
+    # The active controller takes all 3 evictions, from 4 pages down to 1.
     if active_left != 1:
-        print(f"FAIL(4): expected the live controller over-evicted to 1 page "
+        print(f"FAIL(4): expected the active controller over-evicted to 1 page "
               f"(all 3 excess evictions displaced onto it by the inactive controller's "
-              f"budget distortion), got {live_left} left -- if the distortion "
+              f"budget distortion), got {active_left} left -- if the distortion "
               f"was fixed (a pin-count redesign), rewrite this leg to "
               f"the new budget contract")
         return 1
     if active_controller.active_page.json_path not in cached_paths(active_controller):
-        print("FAIL(4): the live controller's active page was evicted")
+        print("FAIL(4): the active controller's active page was evicted")
         return 1
     print("PASS(4): an active_page=None controller inflates `total` and "
-          "displaces all evictions onto live controllers; its own pages are "
+          "displaces all evictions onto active controllers; its own pages are "
           "never reclaimed (audit row-5 budget distortion, documented)")
     return 0
 

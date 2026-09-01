@@ -68,7 +68,7 @@ def check_pageless_deck_routing() -> None:
     pageless = StubWindowGrabberDeckController("HOTPLUG", active_page=None,
                                     page_auto_loaded=True)
     healthy = StubWindowGrabberDeckController("GOOD",
-                                   active_page=StubPage("/pages/other.json"))
+                                              active_page=StubPage("/pages/other.json"))
     deck_manager.deck_controller.extend([pageless, healthy])
 
     gl.page_manager = StubPageManager({
@@ -107,7 +107,7 @@ def check_pageless_guard_is_noop() -> None:
     deck_manager = fixtures.install_stub_globals()
 
     pageless = StubWindowGrabberDeckController("HOTPLUG", active_page=None,
-                                    page_auto_loaded=True)
+                                               page_auto_loaded=True)
     deck_manager.deck_controller.append(pageless)
 
     gl.page_manager = StubPageManager({

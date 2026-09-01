@@ -209,7 +209,7 @@ def _parse_page_requests(raw: list[Any]) -> tuple[list[tuple[str, str]],
             failures.append(f"Error: Invalid page name in {where}: '{page_name}'")
             continue
         encoding_error = (_unsendable_error(where, "The serial number", serial_number)
-                      or _unsendable_error(where, "The page name", page_name))
+                          or _unsendable_error(where, "The page name", page_name))
         if encoding_error:
             failures.append(encoding_error)
             continue
@@ -233,7 +233,7 @@ def _parse_state_requests(raw: list[Any]) -> tuple[list[tuple[str, str, str, int
             failures.append(f"Error: Invalid page name in {where}: '{page_name}'")
             continue
         encoding_error = (_unsendable_error(where, "The serial number", serial_number)
-                      or _unsendable_error(where, "The page name", page_name))
+                          or _unsendable_error(where, "The page name", page_name))
         if encoding_error:
             failures.append(encoding_error)
             continue
@@ -276,7 +276,7 @@ def _parse_emulate_requests(raw: list[Any]) -> tuple[list[tuple[str, str, str, s
             failures.append(f"Error: Invalid page name in {where}: '{page_name}'")
             continue
         encoding_error = (_unsendable_error(where, "The serial number", serial_number)
-                      or _unsendable_error(where, "The page name", page_name))
+                          or _unsendable_error(where, "The page name", page_name))
         if encoding_error:
             failures.append(encoding_error)
             continue
@@ -519,7 +519,7 @@ def _plan_instance_verbs(args: Namespace) -> tuple[list[tuple[str, tuple[str, ..
             validation_error = _unsendable_error(where, "The page name", page)
             if not validation_error and coords:
                 validation_error = (_unsendable_error(where, "The coordinates", coords)
-                       or _coords_error(where, coords))
+                                    or _coords_error(where, coords))
             if validation_error:
                 failures.append(validation_error)
             else:
@@ -531,7 +531,7 @@ def _plan_instance_verbs(args: Namespace) -> tuple[list[tuple[str, tuple[str, ..
             continue
         source_name, new_name = pair
         validation_error = (_unsendable_error(flag, "The page name", source_name)
-               or _unsendable_error(flag, "The new page name", new_name))
+                            or _unsendable_error(flag, "The new page name", new_name))
         if not validation_error and not source_name:
             validation_error = f"Error: Invalid page name in {flag}: '{source_name}'"
         if not validation_error and not new_name:
