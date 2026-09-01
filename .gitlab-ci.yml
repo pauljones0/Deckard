@@ -561,6 +561,8 @@ release:github:
     GIT_COMMITTER_NAME: "Deckard release bot"
     GIT_COMMITTER_EMAIL: "noreply@github.com"
   before_script:
+    # The scenario jobs hand the shared checkout to a non-root user; git refuses it here otherwise.
+    - git config --global --add safe.directory "$CI_PROJECT_DIR"
     - git clone --depth 1 --branch "$CI_AUTOMATION_REF"
         "https://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_SERVER_HOST}/nb-labs/ci-automation.git" .ci-automation
 
