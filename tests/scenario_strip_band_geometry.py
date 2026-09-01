@@ -111,23 +111,18 @@ def main() -> None:
     assert band == (0, grid_h + gap, span, grid_h + gap + band_h), f"band box {band}"
     assert canvas_h == grid_h + gap + band_h
 
-    # The rotation layer turns this layout and owns nothing of it. At
-    # rotation 0 it must hand the measured answer straight back, offset and
-    # box included, so an unturned deck composes exactly what strip_band
-    # laid out. This asserts through band_layout rather than restating its
-    # numbers, so a recalibration moves both sides at once.
+    # Rotation 0 must hand strip_band's measured layout back unchanged, offset and box included.
+    # Asserting through band_layout's outputs keeps a recalibration from breaking this leg.
     unturned = oriented_band(plus, 0, (grid_w, grid_h))
     assert unturned.canvas_size == (canvas_w, canvas_h), unturned
     assert unturned.key_origin == (grid_x, 0), unturned
     assert unturned.box == band, unturned
 
-    # Every quarter turn is a rigid turn of that same layout: the canvas
-    # transposes, the grid keeps its size in the user's frame, and the band
-    # keeps its own, so no rotation may quietly resize or re-derive it.
+    # Every quarter turn is a rigid turn of the same layout: the canvas transposes,
+    # and the grid and the band keep their sizes.
     for rotation in (90, 180, 270):
         swapped = rotation in (90, 270)
-        # key_layout() turns with the deck, so the caller's grid is the one
-        # the user sees: the transpose of the device's at the quarter turns.
+        # key_layout() turns with the deck, so the caller's grid transposes at the quarter turns.
         turned = oriented_band(plus, rotation,
                                (grid_h, grid_w) if swapped else (grid_w, grid_h))
         assert turned.canvas_size == ((canvas_h, canvas_w) if swapped
@@ -136,15 +131,12 @@ def main() -> None:
         t_w, t_h = turned.box[2] - turned.box[0], turned.box[3] - turned.box[1]
         assert (t_w, t_h) == ((box_h, box_w) if swapped else (box_w, box_h)), (
             rotation, turned)
-        # The band lies on the edge the user sees it against: left at 90,
-        # top at 180, right at 270.
+        # The band lies on the edge the user sees it against: left at 90, top at 180, right at 270.
         edge = {90: turned.box[0] == 0, 180: turned.box[1] == 0,
                 270: turned.box[2] == turned.canvas_size[0]}[rotation]
         assert edge, f"rotation {rotation} put the band at {turned.box}"
-        # The grid origin is pinned exactly, expressed through band_layout's
-        # own outputs so a recalibration moves both sides. A fit-on-canvas
-        # bound alone leaves slack that lets a dropped grid_x overhang pass,
-        # which misaligns every key crop along the strip's long axis.
+        # The grid origin is pinned exactly through band_layout's outputs; a fit-on-canvas
+        # bound alone would let a dropped grid_x overhang pass and misalign every key crop.
         expected_origin = {
             90: (canvas_h - grid_h, grid_x),
             180: (canvas_w - grid_x - grid_w, canvas_h - grid_h),

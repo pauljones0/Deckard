@@ -97,14 +97,10 @@ def _encode_tile_native(key: "ControllerKey", tile: Image.Image, video_md5: str,
 
 def _encode_strip_native(touchscreen: "ControllerTouchScreen", image: Image.Image) -> bytes:
     """Encode the strip as an oriented JPEG, flattening RGBA onto black.
-    Preserve the caller's image for preview and close every intermediate.
-    image is the strip in the user's frame, the tall one on a quarter-turned deck;
-    encode_native_touchscreen turns it into the device's buffer. A deck turned while the
-    composite was in flight leaves it the wrong size for the new frame, so it is dropped
-    here, before an encode that could only fit it to the wrong axis, as the empty bytes
-    the strip ticket already reads as nothing to write; the repaint at the new size
-    follows the turn."""
+    Preserve the caller's image for preview and close every intermediate."""
     logical_size = touchscreen.deck_controller.deck.logical_touchscreen_size()
+    # A composite left the wrong size by a turn in flight is dropped as empty bytes, which
+    # the strip ticket reads as nothing to write; the repaint at the new size follows.
     if logical_size is not None and image.size != logical_size:
         log.debug(f"dropping a {image.size} strip composite; the deck now "
                   f"composes at {logical_size}")

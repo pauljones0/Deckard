@@ -699,11 +699,7 @@ class BetterDeck():
 
     def _touchscreen_size(self) -> "tuple[int, int] | None":
         """The device's own strip size, or None for a deck that has no
-        touchscreen or reports no size for it.
-
-        A deck without a strip reports a zero size rather than nothing, and a
-        zero is no strip: it has no pixel to turn and no extent to map a
-        touch against."""
+        touchscreen or reports no size or a zero size for it."""
         image_format = getattr(self.deck, "touchscreen_image_format", None)
         if image_format is None:
             return None
@@ -718,10 +714,8 @@ class BetterDeck():
         return int(size[0]), int(size[1])
 
     def _strip_turn(self) -> int:
-        """The counter-clockwise turn between the strip the user sees and the device's strip.
-        Every strip surface derives from this one answer -- the encode turn, the logical size,
-        the touch map, the dial slot order, and the band edge -- so no two can disagree.
-        A deck with no strip size has nothing to turn or map, so it answers 0."""
+        """The counter-clockwise turn from the strip the user sees to the device's strip.
+        Every strip surface reads this one value, so no two can disagree; 0 with no strip."""
         if self._touchscreen_size() is None:
             return 0
         return self.rotation
@@ -736,20 +730,16 @@ class BetterDeck():
         return self._strip_turn() in (90, 270)
 
     def logical_touchscreen_size(self) -> "tuple[int, int] | None":
-        """The strip size in the frame the user sees, or None for a deck with no strip.
-        Every strip composer draws at this size and reads nothing else: the device's own size
-        at 0 and 180, its transpose at 90 and 270. The encode boundary turns the composite
-        once, with expansion, into the device's fixed buffer."""
+        """The strip size every strip composer draws at, or None for a deck with no strip.
+        The device's own size at 0 and 180, its transpose at 90 and 270."""
         size = self._touchscreen_size()
         if size is None:
             return None
         return (size[1], size[0]) if self.strip_is_transposed() else size
 
     def dial_slot_order(self) -> SlotOrder:
-        """How the dial slots divide the strip the user sees.
-        At 90 and 270 the slots stack down the strip instead of running across it. A clockwise
-        quarter turn brings the strip's starting end to the top, the other turn brings it to
-        the bottom, so dial 0 stays the knob at that end at every rotation."""
+        """How the dial slots divide the strip the user sees: across it, or down it at 90 and 270.
+        Dial 0 stays at the end the turn carried it to: the top at 90, the bottom at 270."""
         turn = self._strip_turn()
         if turn == 90:
             return "y-down"
@@ -759,26 +749,21 @@ class BetterDeck():
 
     def touchscreen_image_rotation(self) -> int:
         """Counter-clockwise degrees that turn a composed strip into the device's orientation.
-        The composite is drawn at logical_touchscreen_size(), the buffer's transpose at 90 and
-        270, so the turn runs with expansion and the turned composite fills the buffer exactly."""
+        At 90 and 270 the composite is the buffer's transpose; the turn runs with expansion."""
         return self._strip_turn()
 
     def logical_touch_value(self, value: "dict[str, int]") -> "dict[str, int]":
-        """Map reported touch positions into the composed strip's frame without changing the
-        input dict. 180 mirrors both axes; 90 and 270 swap the axes with one of them mirrored,
-        which turns a position through a quarter circle, and both ends of a drag move together.
-        A pair transposes only when both members are present, and an off-strip position stays
-        where it is; see _mirror_position. The library hands one event dict to every consumer,
-        so the dict is copied, never edited in place."""
+        """Map reported touch positions into the composed strip's frame, on a copy of the dict.
+        180 mirrors both axes; 90 and 270 swap them with one mirrored, when both are present."""
         turn = self._strip_turn()
         if not turn or not isinstance(value, dict):
             return value
         size = self._touchscreen_size()
         if size is None:
-            # Unreachable while _strip_turn() answers on the same size. It stays because this
-            # reads the size a second time, and a None here would map against nothing.
+            # Unreachable while _strip_turn() reads the same size; a second read, so guard it.
             return value
         width, height = size
+        # The library hands one event dict to every consumer.
         mapped = dict(value)
         if turn == 180:
             for key in ("x", "x_out"):
@@ -790,9 +775,7 @@ class BetterDeck():
             return mapped
         for x_key, y_key in (("x", "y"), ("x_out", "y_out")):
             if x_key not in mapped or y_key not in mapped:
-                # Deliberate: a quarter turn reads one axis off the other, so
-                # a lone axis names no position in the turned frame and is
-                # carried through rather than guessed at.
+                # A quarter turn reads each axis off the other; a lone axis passes through unmapped.
                 continue
             device_x, device_y = mapped[x_key], mapped[y_key]
             if turn == 90:

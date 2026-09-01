@@ -129,10 +129,8 @@ def check_rotation_direction() -> int:
 
 
 def check_strip_turn() -> int:
-    """Turn the strip composite counter-clockwise by the deck's rotation to cancel the
-    clockwise physical turn; PIL's Image.rotate takes that direction. The composite is
-    drawn at the logical size, the device buffer's transpose at the quarter turns, so
-    the turn runs with expansion and lands in the buffer exactly."""
+    """The strip turns counter-clockwise by the rotation, PIL's direction, to cancel the physical
+    turn, at the logical size: the device buffer's transpose at the quarter turns."""
     deck = FaultyFakeDeck(serial_number="rot-strip", model="plus")
     wrapped_deck = BetterDeck(deck)
     width, height = STRIP_SIZE
@@ -173,14 +171,8 @@ def check_strip_turn() -> int:
 
 
 def check_slot_order() -> int:
-    """The dial slots divide the strip the user sees.
-
-    They run across an upright strip and stack down a strip standing on its
-    side. Which end holds dial 0 follows the turn: the dial index map is one
-    for one at both quarter turns, so dial 0 stays the knob at the end of the
-    device the strip starts at, and a clockwise turn brings that end to the
-    top while the turn the other way brings it to the bottom.
-    """
+    """The dial slots run across an upright strip and stack down a turned one.
+    Dial 0 keeps the knob at the end the strip starts at: the top at 90, the bottom at 270."""
     deck = FaultyFakeDeck(serial_number="rot-slot", model="plus")
     wrapped_deck = BetterDeck(deck)
 
@@ -209,16 +201,8 @@ def check_touch_value() -> int:
 
     original = {"x": 100, "y": 20, "x_out": 700, "y_out": 80}
 
-    # The composite reached the device turned counter-clockwise by the rotation,
-    # so a reported position turns back clockwise by it, both axes and both ends
-    # of a drag:
-    # 0: nothing moves.
-    # 180: the far corner, so both axes mirror.
-    # 90: the clockwise quarter turn lays the device's x=0 end at the top of what
-    #     the user sees, so a device y reads as a logical x from the other side
-    #     and a device x reads as a logical y straight through.
-    # 270: the same turn the other way: a device y reads as a logical x straight
-    #     through, and a device x as a logical y from the other side.
+    # A reported position turns back clockwise by the rotation, both axes and both drag ends.
+    # 180 mirrors both axes; 90 mirrors the device y into x, 270 mirrors the device x into y.
     expected_by_rotation = {
         0: dict(original),
         90: {"x": height - 1 - original["y"], "y": original["x"],
@@ -257,8 +241,7 @@ def check_touch_value() -> int:
               f"{mapped}")
         return 1
 
-    # A pair transposes together or not at all. A lone axis cannot name a
-    # position in the turned frame, so it is carried through.
+    # A pair transposes together or not at all; a lone axis is carried through.
     wrapped_deck.set_rotation(90)
     lone = wrapped_deck.logical_touch_value({"x": 100})
     if lone != {"x": 100}:

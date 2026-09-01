@@ -296,19 +296,8 @@ def check_touch_dispatch(controller, model_name: str) -> int:
                   f"the end of the strip, reached {events}")
             return 1
 
-        # A drag the user drew from right to left, at each rotation. The
-        # device reports it in its own frame, so the endpoints below are the
-        # ones a finger moving right to left under the user's hand produces
-        # on a deck turned that way, and every one of them must come out as
-        # the same left-going drag.
-        #
-        # 0: right to left along the device's own strip.
-        # 180: the deck is upside down, so the device reports it left to
-        #      right.
-        # 90: the strip stands on its side and the user's left to right runs
-        #     across it, which is the device's own y axis. The quarter turn
-        #     clockwise sends a growing device y to a shrinking user x.
-        # 270: the same axis the other way, so a shrinking device y.
+        # A drag the user drew right to left, as the device reports it at each rotation:
+        # reversed at 180, a growing device y at 90 and a shrinking one at 270.
         drag = {
             0: (width - 1 - device_x, 50, device_x, 50),
             90: (400, 20, 400, 80),

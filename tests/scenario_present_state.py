@@ -100,9 +100,7 @@ def main() -> None:
     enqueued, _ = offer(state, writer, TARGET_HASH)
     assert enqueued, "after a reset, identical content must reach the device again"
 
-    # An encode that answers empty bytes is a mid-turn straggler. It must not
-    # reach the writer slot, where it would displace a valid pending paint
-    # with a write that never happens, and it must leave no hash trace.
+    # An empty encode is a mid-turn straggler: no writer slot, no hash trace.
     state, writer = make_present_fixture()
     enqueued = state.offer(writer, page=None, config_gen=7, img_hash=TARGET_HASH,
                            encode=lambda: b"")

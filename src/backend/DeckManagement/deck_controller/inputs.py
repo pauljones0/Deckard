@@ -952,8 +952,7 @@ class ControllerTouchScreen(ControllerInput["ControllerTouchScreenState", Touchs
         return self.get_active_state().tick_background_video(now)
 
     def get_dial_image_area(self, identifier: Input.Dial) -> tuple[int, int, int, int]:
-        # The slot in the frame the user sees: across an upright strip, down
-        # a strip that stands on its side. The deck owns which of the two.
+        # The slot in the frame the user sees; the deck decides whether slots run across or down.
         return dial_slot_box(identifier.index,
                              len(self.deck_controller.inputs[Input.Dial]),
                              self.get_screen_dimensions(),
@@ -1022,8 +1021,7 @@ class ControllerTouchScreen(ControllerInput["ControllerTouchScreenState", Touchs
                     )
 
     def get_dial_for_touch(self, value: "dict[str, int]") -> "ControllerDial | None":
-        # value is already in the user's frame; see BetterDeck's
-        # logical_touch_value. A touch off the strip answers no dial.
+        # value is already mapped by BetterDeck.logical_touch_value; off the strip reaches no dial.
         dial_index = dial_slot_at(value, len(self.deck_controller.inputs[Input.Dial]),
                                   self.get_screen_dimensions(),
                                   self.deck_controller.deck.dial_slot_order())

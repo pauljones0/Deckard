@@ -240,8 +240,7 @@ class StubDeckController:
         return (800, 100)
 
     def device_touchscreen_image_size(self):
-        # The device buffer the write task reads; the stub stays at rotation 0,
-        # where it equals the logical size above.
+        # The device buffer the write task reads; at rotation 0 it equals the logical size above.
         return (800, 100)
 
     def is_visual(self) -> bool:

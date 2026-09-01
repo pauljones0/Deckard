@@ -540,8 +540,8 @@ class DeckController:
             cache_budget.set_min_age(cache, min_age)
 
     def device_touchscreen_image_size(self) -> tuple[int, int]:
-        """The strip size in the device's own frame, which no rotation turns and
-        which the band calibration is stated in. A dead deck keeps get_key_image_size's contract."""
+        """The strip size in the device's own frame; the band calibration is stated in it.
+        A dead deck gets the SD+ fallback without a memo, like get_key_image_size."""
         size = self._touchscreen_image_size
         if size is None:
             if not self.get_alive():
@@ -551,16 +551,13 @@ class DeckController:
         return size
 
     def get_touchscreen_image_size(self) -> tuple[int, int]:
-        # What every strip composer draws at: the device's own size at 0 and 180,
-        # its transpose at 90 and 270. The device buffer is read at the write.
+        # The size every strip composer draws at; the write task reads the device size itself.
         size = self.device_touchscreen_image_size()
         return (size[1], size[0]) if self.deck.strip_is_transposed() else size
 
     def logical_key_spacing(self) -> tuple[int, int]:
-        """The key gaps in the frame the user sees: the device's own pair at 0
-        and 180, swapped at 90 and 270 to match key_layout()'s turned counts.
-        The SD+ pair is asymmetric, so a turned grid derived with the device
-        pair would misplace every crop."""
+        """The key gaps in the frame the user sees, swapped at 90 and 270 like key_layout().
+        The SD+ pair is asymmetric; a grid turned with the device pair misplaces every crop."""
         spacing = self.key_spacing
         return (spacing[1], spacing[0]) if self.deck.get_rotation() in (90, 270) else spacing
 

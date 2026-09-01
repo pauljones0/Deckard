@@ -1,16 +1,5 @@
 """Verify native strip orientation with a non-symmetric 800 by 100 image and
-loss-tolerant corner brightness checks.
-
-The keys turn on the producer side in _to_rotated_rgb and the strip in
-_encode_strip_native, so the media thread writes what the device expects and
-no consumer below it holds a second copy of the rule. Each leg encodes a strip
-with a bright corner block shorter than the strip is tall, so a half turn moves
-it on both axes and a one-axis mirror lands in a corner the checks refuse; JPEG
-is lossy, so legs compare corner means with a wide margin. On a quarter-turned
-deck the composite is the device buffer's transpose and the turn expands it
-back into that buffer; a last leg pins the unturned bytes against a fixture the
-scenario builds itself. The 800 by 100 strip is the Stream Deck + shape the
-fake deck models."""
+loss-tolerant corner brightness checks."""
 import fixtures  # noqa: F401  (import first: sets up the isolated data dir)
 
 import io
@@ -45,9 +34,7 @@ class _StubTouchScreen:
 
 def make_strip(mode: str, size: "tuple[int, int]") -> Image.Image:
     """A black strip of size with a bright block in its top-left corner.
-
-    The block keeps the strip's own aspect, so it comes out BLOCK_W by
-    BLOCK_H in the device's frame whichever way the strip was turned."""
+    The block follows the strip's aspect, so it is BLOCK_W by BLOCK_H in the device's frame."""
     fill = (0, 0, 0, 255) if mode == "RGBA" else (0, 0, 0)
     strip = Image.new(mode, size, fill)
     block_size = (BLOCK_W, BLOCK_H) if size[0] >= size[1] else (BLOCK_H, BLOCK_W)
@@ -117,14 +104,8 @@ def check_strip_pixels(mode: str) -> int:
         decoded.close()
         strip.close()
 
-        # Where the block lands on the device, read off a turned deck: the
-        # composite's top-left corner comes to lie wherever the turn carries it.
-        # 0: nowhere, so the top-left.
-        # 180: the opposite corner, moved on both axes; a one-axis mirror lands
-        #      top-right or bottom-left, which the dark checks below refuse.
-        # 90: the clockwise quarter turn is cancelled counter-clockwise, so the
-        #     top-left corner swings down to the device's bottom-left.
-        # 270: the same turn the other way, so it swings up to the top-right.
+        # Where the composite's top-left corner lands on the device; the dark checks below
+        # refuse a one-axis mirror, which would land top-right or bottom-left at 180.
         lit = {0: "top_left", 90: "bottom_left", 180: "bottom_right",
                270: "top_right"}[rotation]
         if not means[lit] > 200:
@@ -145,15 +126,8 @@ def check_strip_pixels(mode: str) -> int:
 
 
 def check_rotation_zero_bytes() -> int:
-    """An unturned deck gets exactly the bytes it got before the strip
-    learned to transpose.
-
-    The fixture is built here, from the steps the encode ran before this
-    scenario's subject changed: flatten an RGBA composite onto black, no
-    resize because the composite is already the device's size, no turn, and
-    the same JPEG settings. A turn or a resize that creeps into the
-    unturned path changes these bytes.
-    """
+    """An unturned deck gets the bytes of a plain flatten-and-save, with no resize and no turn.
+    A turn or a resize that creeps into the unturned path changes these bytes."""
     deck = FaultyFakeDeck(serial_number="strip-identity", model="plus")
     better = BetterDeck(deck)
     better.set_rotation(0)
@@ -181,8 +155,7 @@ def check_rotation_zero_bytes() -> int:
 
 def check_mid_turn_straggler() -> int:
     """A composite shaped for the other orientation encodes to empty bytes.
-    Each drop site reads one turn, so a rotation landing between compose and
-    encode drops the frame instead of raising or fitting the wrong axis."""
+    Each drop site reads one turn, so a rotation between compose and encode drops the frame."""
     deck = BetterDeck(FaultyFakeDeck(serial_number="rot-straggler", model="plus"))
     touchscreen = _StubTouchScreen(deck)
     tall_size = (STRIP_SIZE[1], STRIP_SIZE[0])

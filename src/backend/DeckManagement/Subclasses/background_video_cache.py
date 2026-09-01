@@ -38,12 +38,9 @@ class BackgroundVideoCache(Mp4FrameCache[list[Image.Image]]):
         # Extended frames append a strip slice after the key tiles.
         # Their larger canvas makes them incompatible with plain caches.
         self.extend_touchscreen = extend_touchscreen and self.deck_controller.deck.is_touch()
-        # One rotation read for the whole snapshot: the grid spacing, strip_size,
-        # and the band side below must come from the same turn, or a rotation
-        # landing between two live reads mixes frames.
+        # One rotation read for the whole snapshot; two live reads could straddle a turn.
         rotation = self.deck_controller.deck.get_rotation()
-        # key_layout() above already turned with the deck, so the asymmetric
-        # SD+ gaps turn with it or every crop lands off its key.
+        # key_layout() already turned with the deck; the asymmetric SD+ gaps must turn with it.
         if rotation in (90, 270):
             self.spacing = (self.spacing[1], self.spacing[0])
         device_size = (self.deck_controller.device_touchscreen_image_size()
@@ -53,21 +50,14 @@ class BackgroundVideoCache(Mp4FrameCache[list[Image.Image]]):
             ((device_size[1], device_size[0]) if rotation in (90, 270) else device_size)
             if device_size is not None else None)
         self.entries_per_frame = self.key_count + (1 if self.extend_touchscreen else 0)
-        # _canvas_size() fills this before any crop runs: the encode canvas, the
-        # key grid's origin inside it (the band can overhang the grid and takes
-        # the top or the left edge on a turned deck), and the band's crop box.
-        # It is a snapshot, so the render thread reads no controller state.
+        # _canvas_size() fills this before any crop, so the render thread reads no controller state.
         self.band: "StripBand | None" = None
 
-        # The band edge below exists only for the extended canvas; the plain
-        # canvas is the key grid alone. The rotation itself still shapes that
-        # grid through the turned layout and spacing.
         self.rotation = rotation
         self.key_layout_str = f"{self.key_layout[0]}x{self.key_layout[1]}"
         if self.extend_touchscreen:
-            # The band edge is part of the frames, so a cache built for one
-            # edge must not be served for another. The unturned deck keeps
-            # the plain suffix, and its caches stay valid.
+            # The band edge is baked into the frames, so the cache name carries it.
+            # Rotation 0 keeps the plain suffix, so its caches stay valid.
             side = STRIP_SIDES.get(self.rotation, "bottom")
             self.key_layout_str += "+strip" if side == "bottom" else f"+strip-{side}"
 
@@ -100,10 +90,8 @@ class BackgroundVideoCache(Mp4FrameCache[list[Image.Image]]):
         grid = (key_width + spacing_x * (key_cols - 1),
                 key_height + spacing_y * (key_rows - 1))
 
-        # Extend to the key-grid and strip union, including gap and overhang --
-        # the same strip_band layout BackgroundImage cuts from, turned onto the
-        # edge the user sees the strip against. Snapshot layout here so the
-        # render thread does not read controller state.
+        # The same strip_band layout BackgroundImage cuts from, turned with the deck.
+        # Snapshot it here, so the render thread reads no controller state.
         band = flat_band(grid)
         if self.extend_touchscreen:
             band = oriented_band(self.deck_controller, self.rotation, grid)
@@ -184,8 +172,7 @@ class BackgroundVideoCache(Mp4FrameCache[list[Image.Image]]):
 
     def crop_strip_from_deck_sized_image(self, image: Image.Image,
                                          band: "StripBand | None" = None) -> Image.Image:
-        """The strip's view of the extended canvas, at strip resolution. The
-        band lies on the canvas edge the user sees beside the strip."""
+        """The strip's view of the extended canvas, at strip resolution."""
         band = band or self.band
         if band is None:
             # Raise if layout was not initialized instead of resizing a 0x0 crop to black.
@@ -205,8 +192,7 @@ class BackgroundVideoCache(Mp4FrameCache[list[Image.Image]]):
         row = key // key_cols
         col = key % key_cols
 
-        # Offset from origin, where the key grid starts: the strip band moves it
-        # when it overhangs the grid or takes the top or the left edge.
+        # origin is where the key grid starts; the band can move it off the canvas corner.
         start_x = origin[0] + col * (key_width + spacing_x)
         start_y = origin[1] + row * (key_height + spacing_y)
 

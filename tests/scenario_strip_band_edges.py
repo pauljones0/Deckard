@@ -1,21 +1,5 @@
-"""An extended background cuts its band from the edge the user sees.
-
-Over a real DeckController on a Stream Deck + shape:
-
-  (a) an extended background cuts its band from the edge of the wallpaper the
-      user sees beside the strip, which is below the key grid on an unturned
-      deck, above it at 180, and to one side at the quarter turns. The keys
-      keep their own part of the wallpaper when the band takes the top or the
-      left edge;
-  (b) the same of the video cache, which crops its own canvas and captures
-      the rotation for itself, so a capture taken at the wrong moment shows
-      up there and nowhere else.
-
-Both legs use a wallpaper with one gradient down and another across, so the
-band's own mean says which edge it came off. The alternative, comparing crop
-boxes, would restate the arithmetic under test. The geometry the composers
-read is pinned in scenario_strip_transpose and scenario_betterdeck_rotation.
-"""
+"""Verify an extended background cuts its band from the edge the user sees beside the strip, over
+the image path and the video cache at every rotation; a two-axis gradient tells the edges apart."""
 import fixtures  # noqa: F401  (import first: sets up the isolated data dir)
 
 import os
@@ -31,10 +15,7 @@ from src.backend.DeckManagement.deck_controller.background_media import Backgrou
 
 ROTATIONS = (0, 90, 180, 270)
 DEVICE_STRIP = (800, 100)
-# Which edge of the wallpaper the strip lies against, in the user's view.
-# Hold a Stream Deck + and turn it clockwise: the strip that sat below the key
-# grid comes to lie to the left. Turn it the other way and it lies to the
-# right; turn it over and it lies above.
+# The edge the strip lies against in the user's view, per clockwise quarter turn.
 BAND_SIDES = {0: "bottom", 90: "left", 180: "top", 270: "right"}
 
 
@@ -102,10 +83,8 @@ def check_band_edge(controller) -> int:
                   f"grid, so the band comes off that edge")
             return 1
 
-        # A band on the top or the left edge moves the key grid, and a crop
-        # that ignores that shows the first key a piece of the band.
-        # The band is the darkest part of the canvas on this channel there, so
-        # the first key must start past its far edge, bezel gap included.
+        # A top or left band moves the key grid; the first key must start past the band's far
+        # edge, bezel gap included, or the crop shows a piece of the band.
         if side in ("top", "left"):
             key_low = channel_stats(tiles[0], channel)[1]
             if key_low <= band_high:
@@ -133,13 +112,8 @@ def check_band_edge(controller) -> int:
 
 
 def check_video_band_edge(controller) -> int:
-    """(b) The same over the video cache, which crops its own canvas.
-
-    The image path and this one share the band arithmetic but capture the
-    rotation separately, so a capture taken at the wrong moment shows up
-    here alone. The canvas is fed in directly, because what is under test is
-    the crop and not the decoder.
-    """
+    """(b) The same over the video cache, which captures the rotation for itself.
+    The canvas is fed in directly; the crop is under test, not the decoder."""
     import numpy as np
 
     background = controller.background
@@ -156,8 +130,7 @@ def check_video_band_edge(controller) -> int:
         try:
             source = gradient_wallpaper()
             canvas = source.resize(cache.out_size, Image.Resampling.LANCZOS)
-            # _payload_from_bgr converts back to RGB, so hand it the channels
-            # the decoder would.
+            # _payload_from_bgr converts back to RGB, so hand it the channels the decoder would.
             entries = cache._payload_from_bgr(np.array(canvas)[:, :, ::-1].copy())
             strip = entries[-1]
 

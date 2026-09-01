@@ -1,28 +1,5 @@
-"""The touch strip is composed in the frame the user sees.
-
-The wrapper answers the geometry (scenario_betterdeck_rotation pins those
-answers); this drives the composers that read it, over a real DeckController
-on a Stream Deck + shape:
-
-  (a) the strip composite, the empty strip and the frame size a plugin video
-      is cached at all take the logical size, which is the transpose of the
-      device's buffer at the quarter turns;
-  (b) the dial slots divide the axis the user sees, cover the strip exactly
-      once, and dial 0 sits at the end the turn brought it to: the top at 90
-      and the bottom at 270;
-  (c) a touch reaches the slot it landed in, and a touch off the strip
-      reaches no slot;
-  (d) the turned key grid swaps the asymmetric SD+ gaps with the layout, so
-      the grid the composers derive is the transpose of the flat one;
-  (e) the background prebuild keep-check refuses a video provider built for
-      another turn, whose canvas and band side are baked at construction.
-
-That the turn hands the measured layout back unchanged at rotation 0, and
-turns it rigidly at the rest, is pinned in scenario_strip_band_geometry,
-whose fixture reads as a real SD+ and so carries a band that overhangs its
-key grid. This deck's band does not, so the grid offset carries no signal
-here. The band-edge crops themselves are pinned in scenario_strip_band_edges.
-"""
+"""Verify the strip composers over a real DeckController on a Stream Deck + at every rotation:
+canvas sizes, dial slots and their order, touch to slot, turned key gaps, video keep-check."""
 import fixtures  # noqa: F401  (import first: sets up the isolated data dir)
 
 import os
@@ -69,8 +46,7 @@ def check_composite_size(controller) -> int:
             print(f"FAIL(a): rotation {rotation}: the composers draw at "
                   f"{controller.get_touchscreen_image_size()}, expected {expected}")
             return 1
-        # The controller hands out the size the wrapper answers. Two sources
-        # that drift apart would compose one size and turn another.
+        # The controller and the wrapper must agree, or one size composes and another turns.
         if tuple(controller.deck.logical_touchscreen_size()) != expected:
             print(f"FAIL(a): rotation {rotation}: the deck answers "
                   f"{controller.deck.logical_touchscreen_size()} while the "
@@ -125,10 +101,7 @@ def check_slot_rects(controller) -> int:
                       f"overlap at {lower} and {upper}")
                 return 1
 
-        # Which end holds dial 0. The dial index map is one for one at both
-        # quarter turns, so dial 0 stays the knob at the end of the device the
-        # strip starts at. The clockwise turn brings that end to the top; the
-        # turn the other way brings it to the bottom.
+        # Dial 0 keeps the knob at the end the strip starts at: the top at 90, the bottom at 270.
         if vertical:
             first_top = boxes[0][1] == 0
             if first_top != (rotation == 90):
@@ -220,10 +193,7 @@ def check_turned_grid_spacing(controller) -> int:
 
 def check_rotation_change_rebuilds_video(controller) -> int:
     """(e) The prebuild keep-check refuses a provider built for another turn.
-
-    The deck turns directly, without set_rotation's page reload, and the check
-    runs over its own Background: the reload's background load runs on its own
-    thread and would replace a provider installed on the controller's."""
+    The deck turns directly over its own Background; set_rotation's reload swaps the provider."""
     background = background_media.Background(controller)
     background.extend_to_touchscreen = True
     path = os.path.join(gl.DATA_PATH, "keepcheck.mp4")
