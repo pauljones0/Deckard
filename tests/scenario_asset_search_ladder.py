@@ -82,7 +82,7 @@ def test_ladder_rungs() -> None:
     print("PASS: exact, prefix, word prefix, contains and miss each score their rung")
 
 
-def test_tokens_are_an_and() -> None:
+def test_all_query_tokens_must_match() -> None:
     # Every word of the query must be in the name.
     assert matches("volume_up", "volume up")
     assert not matches("volume_up", "volume down")
@@ -140,7 +140,7 @@ def test_cache_is_released_on_demand() -> None:
     print("PASS: the scoring cache is released on demand")
 
 
-def test_a_word_written_with_a_separator() -> None:
+def test_joined_query_matches_separated_name() -> None:
     """Retry missed tokens against a separator-free name at its earned rung."""
     for name in ("wi-fi", "wi_fi", "wi.fi"):
         assert score(name, "wifi") == SCORE_EXACT, f"{name} did not answer wifi"
@@ -244,7 +244,7 @@ def test_comparator_contract() -> None:
     print("PASS: the comparator returns ints and is antisymmetric")
 
 
-def test_rank_key_orders_the_same_way() -> None:
+def test_rank_key_matches_comparator_order() -> None:
     """Keep rank-key order equal to comparator order across merged packs."""
     for query in ("battery", "play", "volume up"):
         names = BATTERY + NOT_BATTERY + ["airplay", "volume_up", "volume_down"]
@@ -310,16 +310,16 @@ def main() -> int:
 
     test_normalize_folds_separators()
     test_ladder_rungs()
-    test_tokens_are_an_and()
+    test_all_query_tokens_must_match()
     test_empty_query_keeps_everything()
     test_empty_query_costs_nothing()
     test_cache_is_released_on_demand()
-    test_a_word_written_with_a_separator()
+    test_joined_query_matches_separated_name()
     test_threshold_is_the_lowest_rung()
     test_battery_regression()
     test_ranking_order()
     test_comparator_contract()
-    test_rank_key_orders_the_same_way()
+    test_rank_key_matches_comparator_order()
     test_ranker_is_reused_and_bounded()
     test_module_stays_headless()
 

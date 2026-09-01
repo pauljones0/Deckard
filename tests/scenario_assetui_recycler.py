@@ -441,29 +441,31 @@ def test_iconpack_drain_runs_task_once() -> None:
         stub.pack_chooser.build_finished = True
         stub.leaf_chooser.build_finished = True
 
-        d1 = threading.Thread(
+        blocked_drainer = threading.Thread(
             target=stack_mod.IconPackChooserStack.on_load_finished, args=(stub,),
-            name="drainer1",
+            name="BlockedDrainer",
         )
-        d1.start()
-        assert first_task_entered.wait(timeout=5), "drainer1 never entered its first task"
+        blocked_drainer.start()
+        assert first_task_entered.wait(timeout=5), (
+            "the blocked drainer never entered its first task"
+        )
 
-        # drainer2 enters while drainer1 is parked in task[0].
-        d2 = threading.Thread(
+        # The competing drainer enters while the first is parked in task[0].
+        competing_drainer = threading.Thread(
             target=stack_mod.IconPackChooserStack.on_load_finished, args=(stub,),
-            name="drainer2",
+            name="CompetingDrainer",
         )
-        d2.start()
-        d2.join(timeout=5)
+        competing_drainer.start()
+        competing_drainer.join(timeout=5)
         # The first drainer has cleared the queue, so the second must return.
-        assert not d2.is_alive(), (
-            "drainer2 did not return -- it re-entered the drain and re-ran a "
+        assert not competing_drainer.is_alive(), (
+            "the competing drainer did not return -- it re-entered the drain and re-ran a "
             "task (double-run) instead of seeing the queue already cleared"
         )
 
         release_first_task.set()
-        d1.join(timeout=5)
-        assert not d1.is_alive()
+        blocked_drainer.join(timeout=5)
+        assert not blocked_drainer.is_alive()
 
         assert sorted(ran) == sorted(paths), (
             f"double-run/lost tasks: delivered {sorted(ran)}, wanted {sorted(paths)}"

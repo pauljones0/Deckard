@@ -128,16 +128,16 @@ def check_cache_poison_recovery() -> None:
 
     # Prime the cache, then poison the cached entry with undecodable garbage,
     # which is what a crash or a full disk mid-save leaves.
-    first = gl.media_manager.get_thumbnail(valid)
-    assert not first.info.get("sc_broken")
+    initial_thumbnail = gl.media_manager.get_thumbnail(valid)
+    assert not initial_thumbnail.info.get("sc_broken")
     assert os.path.exists(cache_path)
     with open(cache_path, "wb") as f:
         f.write(b"poisoned cache entry")
 
     # The next call must return the real thumbnail, not the placeholder.
-    second = gl.media_manager.get_thumbnail(valid)
-    assert isinstance(second, Image.Image)
-    assert not second.info.get("sc_broken"), (
+    recovered_thumbnail = gl.media_manager.get_thumbnail(valid)
+    assert isinstance(recovered_thumbnail, Image.Image)
+    assert not recovered_thumbnail.info.get("sc_broken"), (
         "a poisoned cache entry must not wedge a valid source file to the "
         "broken placeholder -- it must be dropped and regenerated"
     )

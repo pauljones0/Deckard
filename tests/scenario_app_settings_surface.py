@@ -134,7 +134,7 @@ def check_tables_reexported_by_identity() -> None:
     print("PASS: the tables are re-exported by identity, and the font fallbacks keep their own semantics")
 
 
-def check_shared_copy_is_one_object() -> None:
+def check_cached_app_settings_identity() -> None:
     """Share one app-settings dict until a persisted write replaces it."""
     manager = fresh_manager({"general": {"hold-time": 0.4}})
 
@@ -228,7 +228,7 @@ def check_defaults_copied_per_read() -> None:
     print("PASS: defaults are copied per read, and the copying views still copy")
 
 
-def check_defaults_at_read_tripwire() -> None:
+def check_default_reads_and_unknown_writes() -> None:
     """Read absent defaults without write-back and reject unknown writes."""
     manager = fresh_manager({})
 
@@ -418,7 +418,7 @@ def check_batch_save_writes_snapshot() -> None:
     print("PASS: the dialog's other rows still batch-save the whole snapshot (deliberate)")
 
 
-def check_launch_counter_path_unchanged() -> None:
+def check_launch_counter_uses_shared_view() -> None:
     """Keep launch-counter reads and writes on the shared settings view."""
     import src.app as app_mod
 
@@ -445,7 +445,7 @@ def check_launch_counter_path_unchanged() -> None:
     print("PASS: the launch counter increments and persists through the shared view")
 
 
-def check_no_module_opens_settings_file() -> None:
+def check_converted_readers_use_settings_view() -> None:
     """Require app-settings readers to use the typed surface or its snapshot."""
     for path in CONVERTED_READERS:
         with open(path, encoding="utf-8") as f:
@@ -463,17 +463,17 @@ def main() -> int:
     fixtures.start_watchdog(WATCHDOG_SECONDS, label="scenario_app_settings_surface")
 
     check_tables_reexported_by_identity()
-    check_shared_copy_is_one_object()
+    check_cached_app_settings_identity()
     check_stored_containers_shared_by_reference()
     check_defaults_copied_per_read()
-    check_defaults_at_read_tripwire()
+    check_default_reads_and_unknown_writes()
     check_reads_do_not_reresolve_path()
     check_moved_symlink_refollow()
     check_snapshot_private_read_from_disk()
     check_font_row_keeps_sibling_settings()
     check_batch_save_writes_snapshot()
-    check_launch_counter_path_unchanged()
-    check_no_module_opens_settings_file()
+    check_launch_counter_uses_shared_view()
+    check_converted_readers_use_settings_view()
 
     print("ALL PASS: scenario_app_settings_surface")
     return 0

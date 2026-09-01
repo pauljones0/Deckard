@@ -143,7 +143,7 @@ def make_page(cls):
     return page
 
 
-def check_runtime(label: str, module_path: str, class_name: str,
+def check_runtime_widget_threads(label: str, module_path: str, class_name: str,
                   min_constructions: int) -> int:
     import importlib
 
@@ -319,7 +319,7 @@ WORKER_ENTRIES = ("build", "_run_pack_search")
 MIN_SEARCH_WORKERS_CHECKED = 3
 
 
-def check_static(label: str, module_path: str, class_name: str) -> tuple[int, int, int]:
+def check_static_widget_construction(label: str, module_path: str, class_name: str) -> tuple[int, int, int]:
     """Returns (rc, subclass-owned worker-side hooks, worker entries checked)."""
     import importlib
 
@@ -611,7 +611,7 @@ def check_stack_drain_marshals() -> int:
     return 0
 
 
-def check_real_window() -> int:
+def check_live_gtk_flow_boxes() -> int:
     """Check six attached flow boxes against live GTK when a display exists."""
     import importlib
     import os
@@ -636,7 +636,7 @@ def check_real_window() -> int:
 
         def get_attribution(self): return {}
 
-    class RealFakePack:
+    class LiveGtkPackStub:
         name = "fake-pack"
 
         def __init__(self):
@@ -647,9 +647,9 @@ def check_real_window() -> int:
         def get_icons(self): return list(self._assets)
         def get_wallpapers(self): return list(self._assets)
 
-    class RealFakeManager:
+    class LiveGtkPackManagerStub:
         def __init__(self):
-            self._packs = {f"pack-{i}": RealFakePack() for i in range(2)}
+            self._packs = {f"pack-{i}": LiveGtkPackStub() for i in range(2)}
 
         def get_icon_packs(self): return dict(self._packs)
         def get_wallpaper_packs(self): return dict(self._packs)
@@ -660,9 +660,9 @@ def check_real_window() -> int:
         def remove_asset_by_id(self, asset_id): pass
         def add_custom_media_set_by_ui(self, *a, **k): pass
 
-    gl.icon_pack_manager = RealFakeManager()
-    gl.wallpaper_pack_manager = RealFakeManager()
-    gl.sd_plus_bar_wallpaper_pack_manager = RealFakeManager()
+    gl.icon_pack_manager = LiveGtkPackManagerStub()
+    gl.wallpaper_pack_manager = LiveGtkPackManagerStub()
+    gl.sd_plus_bar_wallpaper_pack_manager = LiveGtkPackManagerStub()
     gl.asset_manager_backend = EmptyBackend()
     gl.lm = types.SimpleNamespace(get=lambda key, *a, **k: key)
     gl.app = None
@@ -726,7 +726,7 @@ def check_real_window() -> int:
     # Drill into a pack the way a click does, then let the recycler bind. A
     # rendered child must be visible and carry the pack asset.
     leaf_pages = [p for p in pages if getattr(p, "asset_flow", None) is not None]
-    pack = RealFakePack()
+    pack = LiveGtkPackStub()
     for page in leaf_pages:
         page.load_for_pack(pack)
     pump_until(
@@ -779,8 +779,8 @@ def main() -> int:
     hooks_checked = 0
     searchers_checked = 0
     for label, module_path, class_name, minimum in CASES:
-        rc |= check_runtime(label, module_path, class_name, minimum)
-        static_rc, hooks, searchers = check_static(label, module_path, class_name)
+        rc |= check_runtime_widget_threads(label, module_path, class_name, minimum)
+        static_rc, hooks, searchers = check_static_widget_construction(label, module_path, class_name)
         rc |= static_rc
         hooks_checked += hooks
         searchers_checked += searchers
@@ -809,7 +809,7 @@ def main() -> int:
         rc |= check_marshal_timeout(label, module_path, class_name)
     rc |= check_stack_drain_marshals()
     # Run last, because it installs a real window and real gl.* collaborators.
-    rc |= check_real_window()
+    rc |= check_live_gtk_flow_boxes()
 
     if rc == 0:
         print("ALL PASS: scenario_asset_chooser_offmain")

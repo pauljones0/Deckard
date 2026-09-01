@@ -41,7 +41,7 @@ def check_publication_slot() -> None:
     print("PASS: the rebuild publishes into the shared action index slot")
 
 
-def check_rebuild_replaces_the_index() -> None:
+def check_rebuild_replaces_index() -> None:
     """Verify each rebuild adds installed holders and drops uninstalled ones."""
     holders = seed_registry()
     pm = PluginManager()
@@ -64,7 +64,7 @@ def check_rebuild_replaces_the_index() -> None:
     print("PASS: a rebuild replaces the index instead of merging into it")
 
 
-def check_same_thread_reader_inside_the_rebuild() -> None:
+def check_reentrant_read_during_rebuild() -> None:
     """Probe a same-thread read from inside the rebuild window."""
     seed_registry()
     pm = PluginManager()
@@ -93,7 +93,7 @@ def check_same_thread_reader_inside_the_rebuild() -> None:
     print("PASS: a read inside the rebuild resolves the installed holder")
 
 
-def check_concurrent_reader_inside_the_rebuild() -> None:
+def check_concurrent_read_during_rebuild() -> None:
     """Park a bounded reader inside the rebuild before publication."""
     seed_registry()
     pm = PluginManager()
@@ -142,9 +142,9 @@ def main() -> None:
     fixtures.start_watchdog(60, label="scenario_action_index_publish")
 
     check_publication_slot()
-    check_rebuild_replaces_the_index()
-    check_same_thread_reader_inside_the_rebuild()
-    check_concurrent_reader_inside_the_rebuild()
+    check_rebuild_replaces_index()
+    check_reentrant_read_during_rebuild()
+    check_concurrent_read_during_rebuild()
 
     print("PASS: scenario_action_index_publish")
 

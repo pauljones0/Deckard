@@ -474,7 +474,7 @@ def check_emulate_validation_is_syntax_only() -> None:
     print("PASS: a malformed press rejects the whole command before anything happens")
 
 
-def check_event_words_match_the_control_plane() -> None:
+def check_event_vocabulary_matches_control_plane() -> None:
     """Keep the pre-globals CLI event vocabulary equal to the control plane's."""
     from src.backend import control_plane
 
@@ -503,7 +503,7 @@ def check_coordinate_failures_read_alike() -> None:
     print("PASS: both verbs refuse the same coordinates with the same sentence")
 
 
-def check_call_timeout_outlasts_the_instances_own_waits() -> None:
+def check_control_timeout_covers_instance_waits() -> None:
     """Keep the control timeout above the instance's combined input and press waits.
 
     A shorter timeout can report failure before a non-idempotent press completes.
@@ -572,7 +572,7 @@ class _StubGio:
             return ""
 
 
-def check_control_calls_take_the_longer_timeout() -> None:
+def check_control_and_probe_timeouts() -> None:
     """Use the long timeout for controls and the short timeout for the probe."""
     transport = object.__new__(cli_forward._BusTransport)
     connection = _RecordingConnection()
@@ -595,7 +595,7 @@ def check_control_calls_take_the_longer_timeout() -> None:
     print("PASS: a control call spends the control timeout and a probe does not")
 
 
-def check_unparkable_is_the_one_rule() -> None:
+def check_unparkable_request_classification() -> None:
     """Use one refusal rule for requests that cannot be parked in either CLI path."""
     situations = (cli_forward.NOT_RUNNING_MESSAGE,
                   cli_forward.CLOSE_RUNNING_MESSAGE,
@@ -631,7 +631,7 @@ def check_unparkable_is_the_one_rule() -> None:
     print("PASS: one rule decides what a boot cannot apply, and presses are it")
 
 
-def check_no_requests_touches_nothing() -> None:
+def check_empty_command_skips_transport_and_parking() -> None:
     clear_parking()
     recorder = Recorder(running=True)
 
@@ -680,7 +680,7 @@ DUMP = ('{"decks": [{"serial": "deck-a", "active_page": "Main", '
         '"brightness": 60}], "pages": ["Main", "Home"]}')
 
 
-def check_json_prints_the_dump() -> None:
+def check_json_state_output() -> None:
     clear_parking()
     recorder = Recorder(query=DUMP)
 
@@ -693,7 +693,7 @@ def check_json_prints_the_dump() -> None:
     print("PASS: --json prints the running instance's state as one object")
 
 
-def check_get_brightness_reads_the_dump() -> None:
+def check_brightness_from_state_dump() -> None:
     clear_parking()
     recorder = Recorder(query=DUMP)
     verdict = cli_forward.route_cli_requests(
@@ -763,7 +763,7 @@ def check_list_actions_forwards() -> None:
     print("PASS: --list-actions forwards the page and optional coordinates")
 
 
-def check_read_and_page_verbs_refuse_without_instance() -> None:
+def check_instance_verbs_require_running_instance() -> None:
     """Every new verb needs a running instance, and none of them park."""
     for argv in (["--json"], ["--get-brightness", "deck-a"],
                  ["--list-actions", "Main"], ["--list-actions", "Main", "0,0"],
@@ -806,7 +806,7 @@ def check_instance_verb_syntax_is_checked() -> None:
     print("PASS: a malformed read or command verb is refused before the bus")
 
 
-def check_instance_verb_older_instance_reports_once() -> None:
+def check_old_instance_query_reports_once() -> None:
     clear_parking()
     recorder = Recorder(running=True, raises=cli_forward.OlderInstance())
     verdict = cli_forward.route_cli_requests(parse(["--json"]), recorder)
@@ -831,21 +831,21 @@ def main() -> None:
         check_emulate_cannot_be_parked()
         check_emulate_refuses_close_running()
         check_emulate_validation_is_syntax_only()
-        check_event_words_match_the_control_plane()
+        check_event_vocabulary_matches_control_plane()
         check_coordinate_failures_read_alike()
-        check_call_timeout_outlasts_the_instances_own_waits()
-        check_control_calls_take_the_longer_timeout()
-        check_unparkable_is_the_one_rule()
-        check_no_requests_touches_nothing()
+        check_control_timeout_covers_instance_waits()
+        check_control_and_probe_timeouts()
+        check_unparkable_request_classification()
+        check_empty_command_skips_transport_and_parking()
         check_unreachable_bus_is_reported()
-        check_json_prints_the_dump()
-        check_get_brightness_reads_the_dump()
+        check_json_state_output()
+        check_brightness_from_state_dump()
         check_command_verbs_forward()
         check_command_refusal_comes_back()
         check_list_actions_forwards()
-        check_read_and_page_verbs_refuse_without_instance()
+        check_instance_verbs_require_running_instance()
         check_instance_verb_syntax_is_checked()
-        check_instance_verb_older_instance_reports_once()
+        check_old_instance_query_reports_once()
     finally:
         clear_parking()
 

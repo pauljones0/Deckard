@@ -22,7 +22,7 @@ class FlippingController:
         return self._page if self._reads <= self._live_reads else None
 
 
-def part_a_get_own_actions() -> None:
+def check_get_own_actions_snapshot() -> None:
     from src.backend.DeckManagement.DeckController import ControllerInputState
 
     sentinel = ["sentinel-action"]
@@ -47,7 +47,7 @@ def part_a_get_own_actions() -> None:
     print("PASS: get_own_actions survives a post-check active_page flip")
 
 
-def part_b_load_page_tail(controller) -> None:
+def check_load_page_after_active_page_clear(controller) -> None:
     from src.Signals import Signals
 
     seed_path = fixtures.seed_page("GuardTailPage")
@@ -81,7 +81,7 @@ def part_b_load_page_tail(controller) -> None:
     print("PASS: load_page tail signals ChangePage despite a racing active_page null")
 
 
-def part_c_load_default_page(controller) -> None:
+def check_default_page_after_active_page_clear(controller) -> None:
     fixtures.seed_page("StateReqPage")
 
     loaded = []
@@ -107,7 +107,7 @@ def part_c_load_default_page(controller) -> None:
     print("PASS: load_default_page state-request branch survives active_page=None")
 
 
-def part_d_close_clears_pending(controller) -> None:
+def check_close_clears_pending_page(controller) -> None:
     sentinel = object()
     controller._screensaver_pending_page = sentinel
     controller.close(remove_media=True)
@@ -121,18 +121,18 @@ def part_d_close_clears_pending(controller) -> None:
 def main() -> None:
     fixtures.start_watchdog(60, label="scenario_active_page_guards")
 
-    part_a_get_own_actions()
+    check_get_own_actions_snapshot()
 
     controller_b = fixtures.make_headless_controller(serial="guards-b")
     try:
-        part_b_load_page_tail(controller_b)
+        check_load_page_after_active_page_clear(controller_b)
     finally:
         fixtures.teardown(controller_b)
 
     controller_cd = fixtures.make_headless_controller(serial="guards-cd")
     try:
-        part_c_load_default_page(controller_cd)
-        part_d_close_clears_pending(controller_cd)
+        check_default_page_after_active_page_clear(controller_cd)
+        check_close_clears_pending_page(controller_cd)
     finally:
         fixtures.teardown(controller_cd)
 

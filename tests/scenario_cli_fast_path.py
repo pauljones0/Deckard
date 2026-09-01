@@ -196,7 +196,7 @@ EMULATE_ARGV = ["--emulate-input", "deck-a", "Alpha", "0,0", "press"]
 EMULATE_FORWARDS = [("emulate", "deck-a", "Alpha", "0,0", "press")]
 
 
-def leg_press_needs_a_running_instance() -> None:
+def leg_emulated_input_requires_running_instance() -> None:
     """Forward a press to a running instance or refuse it without booting."""
     print("leg 1b: an emulated input against a running instance, or nothing")
 
@@ -844,7 +844,7 @@ def main() -> int:
     fixtures.start_watchdog(WATCHDOG_SECONDS, label="scenario_cli_fast_path")
 
     leg_decision_table()
-    leg_press_needs_a_running_instance()
+    leg_emulated_input_requires_running_instance()
     leg_instance_verbs()
     leg_both_halves_answer_alike()
     leg_import_fence()
