@@ -7,6 +7,8 @@ bundle as a release asset.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-01
+
 ### Added
 
 - Pan and zoom the wallpaper. An "Adjust View" button under the background
@@ -131,6 +133,69 @@ bundle as a release asset.
   the same questions the store does.
 
 ### Changed
+- Mark the checkout safe before the release job runs git (!392)
+- Clarify fork-authored Python names (!391)
+- Make tray re-registration tests desktop-independent (!389)
+- Complete the Python prose review (!388)
+- Clarify T through V scenario documentation (!387)
+- Clarify remaining S-scenario documentation (!386)
+- Clarify store scenario documentation (!385)
+- Clarify Q, R, W, and X scenario documentation (!384)
+- Clarify remaining P-scenario documentation (!383)
+- Clarify page scenario documentation (!382)
+- Clarify L through O scenario documentation (!381)
+- Clarify I through K scenario documentation (!380)
+- Clarify F through H scenario documentation (!379)
+- Clarify D and E scenario documentation (!378)
+- Clarify C-scenario documentation (!377)
+- Clarify B-scenario documentation (!376)
+- Clarify A-scenario documentation (!375)
+- Clarify test and hardware documentation (!374)
+- Clarify application service documentation (!373)
+- Clarify window and UI documentation (!372)
+- Clarify main window documentation (!371)
+- Clarify asset and store UI documentation (!370)
+- Clarify desktop integration documentation (!369)
+- Clarify asset and pack documentation (!368)
+- Clarify store backend documentation (!367)
+- Clarify page management documentation (!366)
+- Clarify persistence documentation (!365)
+- Clarify plugin manager documentation (!364)
+- Clarify signal and dispatch documentation (!363)
+- Clarify plugin API documentation (!362)
+- Clarify render pipeline documentation (!361)
+- Clarify media writer documentation (!360)
+- Clarify deck lifecycle documentation (!359)
+- Clarify support module documentation (!358)
+- Add reproducible Python comment inventory (!357)
+- Type the deck-to-input dispatch with one event object per kind (!353)
+- Move page background waits off the media writer (!350)
+- Instrument physical input latency through the render path (!349)
+- Run the full scenario suite on a nightly schedule (!348)
+- Gate releases on static checks and a blocking scenario smoke subset (!346)
+- Share one adapter for the private Adw list containers (!345)
+- Share one locale-selection policy between the locale managers (!344)
+- Type the custom-plugin branch as optional (!343)
+- Convert only the preview frame that wins the mirror slot (!342)
+- Record the media loop metric as a work-rate (!340)
+- Bound the window-query helpers and derive the Flatpak runtime from the manifest (!338)
+- Bound the event lanes and keep plugin dunders off coordination locks (!337)
+- Harden the tile cache, video-cache sweep, and timer wheel against races (!336)
+- Fix dial, touchscreen, and background GIF media handling (!335)
+- Reject stale background renders and superseded page loads at their commit boundaries (!334)
+- Track the hardware harness and give it an unattended orchestrator (!333)
+- Serialize the deck reader, release, and pool-replacement lifecycles (!332)
+- Recover a store install left half-swapped by a crash (!331)
+- Make page-write, backup, and migration failures recoverable (!330)
+- Make startup and shutdown terminal paths dependable (!329)
+- Confine page rename to the pages directory and refuse overwrites (!328)
+- Require a token on every Remote Decks endpoint and bind loopback (!327)
+- Replace string-path UI reachability guards with typed accessors (!323)
+- Run window loaders on the shared background pool (!322)
+- Establish an error-handling house style and enforce contextlib.suppress (!319)
+- Share one deferred on-map drain across the settings and sidebar widgets (!314)
+- Stop bundling pyusb in the flatpak build (!312)
+- Settle the deck between emulated input legs (!303)
 
 - Switching pages no longer competes with store loads, importers, or
   window-title watching for background workers: each deck decodes its page
