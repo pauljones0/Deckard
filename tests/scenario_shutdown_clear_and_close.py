@@ -12,7 +12,7 @@ import globals as gl
 
 
 def main() -> None:
-    fixtures.start_watchdog(60, label="scenario_shutdown_clearclose")
+    fixtures.start_watchdog(60, label="scenario_shutdown_clear_and_close")
     controller = fixtures.make_headless_controller(serial="shutdown-cc-1")
     deck = fixtures.raw_deck(controller)
     key_count = controller.deck.key_count()
@@ -70,7 +70,7 @@ def main() -> None:
     if tick_thread is not None:
         tick_thread.join(timeout=2.0)
 
-    print("PASS: scenario_shutdown_clearclose")
+    print("PASS: scenario_shutdown_clear_and_close")
 
 
 if __name__ == "__main__":

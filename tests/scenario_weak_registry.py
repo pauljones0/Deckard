@@ -195,17 +195,17 @@ def check_prune_logs_debug():
 
     # A live registry must not spam the prune log. A snapshot with only
     # live entries logs nothing.
-    records2: list[str] = []
-    handle2 = log.add(lambda message: records2.append(str(message)), level="DEBUG")
+    live_records: list[str] = []
+    live_sink_id = log.add(lambda message: live_records.append(str(message)), level="DEBUG")
     try:
         registry = CallbackRegistry()
         owner = _Owner()
         registry.add(owner.method)
         assert len(registry.snapshot()) == 1
-        assert not any("pruning dead callback" in r for r in records2), records2
+        assert not any("pruning dead callback" in r for r in live_records), live_records
         owner.method  # keep the owner referenced past the snapshot above
     finally:
-        log.remove(handle2)
+        log.remove(live_sink_id)
 
 
 def check_custom_eq_is_never_called() -> None:

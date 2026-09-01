@@ -74,7 +74,7 @@ class InfoPage(Gtk.Box):
         self.license_description = DescriptionRow(title="License Description:", desc="N/A")
         self.legal_group.add(self.license_description)
 
-    def set_pack_name(self, name: str | None) -> None:
+    def set_asset_name(self, name: str | None) -> None:
         self.name_row.set_attribute(name)
 
     def set_description(self, description: str | None) -> None:

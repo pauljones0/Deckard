@@ -119,8 +119,8 @@ class QueryRanker:
 
     def __init__(self, query: str) -> None:
         self.query = query
-        self._query_normalized = normalize(query)
-        self._tokens = self._query_normalized.split(" ") if self._query_normalized else []
+        self._normalized_query = normalize(query)
+        self._tokens = self._normalized_query.split(" ") if self._normalized_query else []
         self._keys: dict[str, RankKey] = {}
 
     @property
@@ -166,7 +166,7 @@ class QueryRanker:
         if self.is_empty:
             # Equal score, position, and length leave empty queries alphabetical
             return (-SCORE_EXACT, 0, 0, normalized)
-        if normalized == self._query_normalized:
+        if normalized == self._normalized_query:
             return (-SCORE_EXACT, 0, len(normalized), normalized)
 
         # Built on the first token that misses, and only for a name that

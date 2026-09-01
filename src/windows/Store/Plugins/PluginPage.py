@@ -56,8 +56,8 @@ class PluginPreview(StoreAssetPreview):
     @override
     def _install_kwargs(self) -> "dict[str, Any]":
         # Plugin scripts require main-loop consent before worker installation
-        from src.windows.Store.install_consent import make_consent
-        return {"ask_install_script": make_consent(self.store)}
+        from src.windows.Store.install_consent import make_install_script_consent
+        return {"ask_install_script": make_install_script_consent(self.store)}
 
     @staticmethod
     @override

@@ -68,7 +68,7 @@ class DeckName(Adw.EntryRow):
 
         # Apply-handler ID, or None while disconnected.
         # Tracking keeps connect and disconnect idempotent.
-        self._apply_handler: int | None = None
+        self._apply_handler_id: int | None = None
 
         # The switcher does not shorten a long label, so the row refuses what
         # the switcher cannot show. See DECK_NAME_MAX_LENGTH.
@@ -80,13 +80,13 @@ class DeckName(Adw.EntryRow):
         self.connect("map", self.load_default)
 
     def connect_signal(self) -> None:
-        if self._apply_handler is None:
-            self._apply_handler = self.connect("apply", self.on_apply)
+        if self._apply_handler_id is None:
+            self._apply_handler_id = self.connect("apply", self.on_apply)
 
     def disconnect_signal(self) -> None:
-        if self._apply_handler is not None:
-            self.disconnect(self._apply_handler)
-            self._apply_handler = None
+        if self._apply_handler_id is not None:
+            self.disconnect(self._apply_handler_id)
+            self._apply_handler_id = None
 
     def deck_stack(self) -> Any:
         """Return this settings page's deck stack, or None when it is detached.
@@ -98,7 +98,7 @@ class DeckName(Adw.EntryRow):
         name = self.get_text().strip()
 
         settings = gl.settings_manager.deck(self.deck_serial_number)
-        settings.set_value("name", name)
+        settings.set_top_level_value("name", name)
         settings.save()
 
         # Show what was stored. Space the user typed around the name is not in
@@ -131,7 +131,7 @@ class Rotation(Adw.PreferencesRow):
 
         # Active-handler ID, or None while disconnected.
         # Tracking keeps connect and disconnect idempotent.
-        self._rotation_handler: int | None = None
+        self._rotation_handler_id: int | None = None
 
         self.build()
 
@@ -165,13 +165,13 @@ class Rotation(Adw.PreferencesRow):
         self.connect_signal()
 
     def connect_signal(self) -> None:
-        if self._rotation_handler is None:
-            self._rotation_handler = self.toggle_group.connect("notify::active", self.on_value_changed)
+        if self._rotation_handler_id is None:
+            self._rotation_handler_id = self.toggle_group.connect("notify::active", self.on_value_changed)
 
     def disconnect_signal(self) -> None:
-        if self._rotation_handler is not None:
-            self.toggle_group.disconnect(self._rotation_handler)
-            self._rotation_handler = None
+        if self._rotation_handler_id is not None:
+            self.toggle_group.disconnect(self._rotation_handler_id)
+            self._rotation_handler_id = None
 
     def on_value_changed(self, _: Adw.ToggleGroup, __: GObject.ParamSpec) -> None:
         GLib.idle_add(self.on_value_changed_idle)
@@ -185,7 +185,7 @@ class Rotation(Adw.PreferencesRow):
         rot = int(active_name)
 
         deck_settings = gl.settings_manager.deck(self.deck_serial_number)
-        deck_settings.set_value("rotation", rot)
+        deck_settings.set_top_level_value("rotation", rot)
         deck_settings.save()
 
         self.settings_page.deck_controller.set_rotation(rot)
@@ -211,7 +211,7 @@ class Brightness(LazyMapTasks, Adw.PreferencesRow):
 
         # Value-changed handler ID, or None while disconnected.
         # Tracking keeps connect and disconnect idempotent.
-        self._scale_handler: int | None = None
+        self._scale_handler_id: int | None = None
 
         self.build()
 
@@ -246,7 +246,7 @@ class Brightness(LazyMapTasks, Adw.PreferencesRow):
 
         # Update and save brightness in deck settings
         deck_settings = gl.settings_manager.deck(self.deck_serial_number)
-        deck_settings.set("brightness", "value", value)
+        deck_settings.set_section_value("brightness", "value", value)
         deck_settings.save()
 
         # Check if brightness is overwritten by the current page (there may
@@ -276,13 +276,13 @@ class Brightness(LazyMapTasks, Adw.PreferencesRow):
             self.connect_signal()
 
     def connect_signal(self) -> None:
-        if self._scale_handler is None:
-            self._scale_handler = self.scale.connect("value-changed", self.on_value_changed)
+        if self._scale_handler_id is None:
+            self._scale_handler_id = self.scale.connect("value-changed", self.on_value_changed)
 
     def disconnect_signal(self) -> None:
-        if self._scale_handler is not None:
-            self.scale.disconnect(self._scale_handler)
-            self._scale_handler = None
+        if self._scale_handler_id is not None:
+            self.scale.disconnect(self._scale_handler_id)
+            self._scale_handler_id = None
 
 
 class Saturation(LazyMapTasks, Adw.PreferencesRow):
@@ -296,7 +296,7 @@ class Saturation(LazyMapTasks, Adw.PreferencesRow):
 
         # Value-changed handler ID, or None while disconnected.
         # Tracking keeps connect and disconnect idempotent.
-        self._scale_handler: int | None = None
+        self._scale_handler_id: int | None = None
 
         self.build()
 
@@ -354,13 +354,13 @@ class Saturation(LazyMapTasks, Adw.PreferencesRow):
             self.connect_signal()
 
     def connect_signal(self) -> None:
-        if self._scale_handler is None:
-            self._scale_handler = self.scale.connect("value-changed", self.on_value_changed)
+        if self._scale_handler_id is None:
+            self._scale_handler_id = self.scale.connect("value-changed", self.on_value_changed)
 
     def disconnect_signal(self) -> None:
-        if self._scale_handler is not None:
-            self.scale.disconnect(self._scale_handler)
-            self._scale_handler = None
+        if self._scale_handler_id is not None:
+            self.scale.disconnect(self._scale_handler_id)
+            self._scale_handler_id = None
 
 
 class Screensaver(LazyMapTasks, Adw.PreferencesRow):
@@ -371,7 +371,7 @@ class Screensaver(LazyMapTasks, Adw.PreferencesRow):
 
         # Handler ID by widget key, absent while disconnected.
         # Tracking keeps connect and disconnect idempotent.
-        self._handlers: dict[str, int] = {}
+        self._handler_ids: dict[str, int] = {}
 
         self.build()
 
@@ -466,14 +466,14 @@ class Screensaver(LazyMapTasks, Adw.PreferencesRow):
 
     def connect_signals(self) -> None:
         for key, widget, signal, callback in self._signal_bindings():
-            if self._handlers.get(key) is None:
-                self._handlers[key] = widget.connect(signal, callback)
+            if self._handler_ids.get(key) is None:
+                self._handler_ids[key] = widget.connect(signal, callback)
 
     def disconnect_signals(self) -> None:
         for key, widget, _signal, _callback in self._signal_bindings():
-            handler = self._handlers.pop(key, None)
-            if handler is not None:
-                widget.disconnect(handler)
+            handler_id = self._handler_ids.pop(key, None)
+            if handler_id is not None:
+                widget.disconnect(handler_id)
 
     def load_defaults(self) -> None:
         self.disconnect_signals()
@@ -508,7 +508,7 @@ class Screensaver(LazyMapTasks, Adw.PreferencesRow):
 
     def on_toggle_enable(self, toggle_switch: Gtk.Switch, state: bool) -> None:
         config = gl.settings_manager.deck(self.deck_serial_number)
-        config.set("screensaver", "enable", state)
+        config.set_section_value("screensaver", "enable", state)
         # Save
         config.save()
         # Update enable if not overwritten by the active page
@@ -519,7 +519,7 @@ class Screensaver(LazyMapTasks, Adw.PreferencesRow):
 
     def on_toggle_loop(self, toggle_switch: Gtk.Switch, state: bool) -> None:
         config = gl.settings_manager.deck(self.deck_serial_number)
-        config.set("screensaver", "loop", state)
+        config.set_section_value("screensaver", "loop", state)
         # Save
         config.save()
 
@@ -529,7 +529,7 @@ class Screensaver(LazyMapTasks, Adw.PreferencesRow):
 
     def on_change_fps(self, spinner: Gtk.SpinButton) -> None:
         config = gl.settings_manager.deck(self.deck_serial_number)
-        config.set("screensaver", "fps", spinner.get_value_as_int())
+        config.set_section_value("screensaver", "fps", spinner.get_value_as_int())
         # Save
         config.save()
         # Update fps if not overwritten by the active page
@@ -538,7 +538,7 @@ class Screensaver(LazyMapTasks, Adw.PreferencesRow):
 
     def on_change_time(self, spinner: Gtk.SpinButton) -> None:
         config = gl.settings_manager.deck(self.deck_serial_number)
-        config.set("screensaver", "time-delay", round(spinner.get_value_as_int()))
+        config.set_section_value("screensaver", "time-delay", round(spinner.get_value_as_int()))
         # Save
         config.save()
         # Update time if not overwritten by the active page
@@ -547,7 +547,7 @@ class Screensaver(LazyMapTasks, Adw.PreferencesRow):
 
     def on_change_brightness(self, scale: Gtk.Scale) -> None:
         config = gl.settings_manager.deck(self.deck_serial_number)
-        config.set("screensaver", "brightness", scale.get_value())
+        config.set_section_value("screensaver", "brightness", scale.get_value())
         # Save
         config.save()
         # Update brightness if not overwritten by the active page
@@ -572,7 +572,7 @@ class Screensaver(LazyMapTasks, Adw.PreferencesRow):
     def update_image(self, image_path: "str | None") -> None:
         self.set_thumbnail(image_path)
         settings = gl.settings_manager.deck(self.deck_serial_number)
-        settings.set("screensaver", "media-path", image_path)
+        settings.set_section_value("screensaver", "media-path", image_path)
         settings.save()
 
         deck_controller = self.settings_page.deck_controller

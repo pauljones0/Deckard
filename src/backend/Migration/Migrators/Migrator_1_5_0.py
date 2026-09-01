@@ -114,15 +114,15 @@ class Migrator_1_5_0(Migrator):
             key_dict = page["keys"][key]
             # Handle both the flat shape and beta.5's nested states, including stray top-level data.
             # Track identities because a flat key is its own state and must be rewritten once.
-            rewrite_dicts = []
+            rewrite_targets = []
             seen_ids = set()
             for candidate in ([key_dict] + list(key_dict.get("states", {}).values())):
                 if not isinstance(candidate, dict) or id(candidate) in seen_ids:
                     continue
                 seen_ids.add(id(candidate))
-                rewrite_dicts.append(candidate)
+                rewrite_targets.append(candidate)
 
-            for state_dict in rewrite_dicts:
+            for state_dict in rewrite_targets:
                 for label in state_dict.get("labels", {}):
                     if state_dict["labels"][label].get("text") == "":
                         state_dict["labels"][label]["text"] = None

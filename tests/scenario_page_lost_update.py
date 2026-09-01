@@ -111,7 +111,7 @@ def remove_commit_hooks(saved) -> None:
     page_flush.atomic_write_json = saved[1]
 
 
-def check_plugin_save_and_settings_write_survive(controller) -> int:
+def check_concurrent_plugin_and_settings_writes(controller) -> int:
     """A plugin thread saves the page while the page's settings are
     written."""
     fresh_flush()
@@ -175,7 +175,7 @@ def check_plugin_save_and_settings_write_survive(controller) -> int:
     return 0
 
 
-def check_page_replace_outlives_pending_edit(controller) -> int:
+def check_pending_edit_page_replacement(controller) -> int:
     """Replace page and file together while an earlier edit remains pending."""
     fresh_flush()
     path = seed_page_with_action("ReplaceCross")
@@ -265,7 +265,7 @@ def check_no_loss_under_contention(controller) -> int:
     page_flush.get().flush_all()
 
     on_disk = read_file(path)
-    in_memory = page.get_without_action_objects()
+    in_memory = page.snapshot_for_save()
     if on_disk != in_memory:
         print(f"FAIL: the file and the page disagree after concurrent edits\n"
               f"  file: {on_disk}\n  page: {in_memory}")
@@ -284,7 +284,7 @@ def check_no_loss_under_contention(controller) -> int:
     return 0
 
 
-def check_asset_sweep_edits_held_page(controller) -> int:
+def check_held_page_asset_sweep(controller) -> int:
     """Strip assets from held and unheld pages without losing pending edits."""
     fresh_flush()
     asset = os.path.join(gl.DATA_PATH, "asset.png")
@@ -342,9 +342,9 @@ def main() -> int:
     failures = 0
     try:
         for check in (
-            check_plugin_save_and_settings_write_survive,
-            check_page_replace_outlives_pending_edit,
-            check_asset_sweep_edits_held_page,
+            check_concurrent_plugin_and_settings_writes,
+            check_pending_edit_page_replacement,
+            check_held_page_asset_sweep,
             check_no_loss_under_contention,
         ):
             failures += check(controller)

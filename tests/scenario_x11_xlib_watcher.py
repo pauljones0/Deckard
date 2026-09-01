@@ -344,7 +344,7 @@ def check_fallback_no_display() -> None:
 
 # Check 5. The decode helpers turn events and properties into the right Window
 
-def check_decode_helpers() -> None:
+def check_event_and_property_decoding() -> None:
     display = FakeDisplay(windows={0x20: ("Mozilla Firefox", "firefox")}, active_id=0x20)
     root = display.screen().root
     active_atom = display.intern_atom("_NET_ACTIVE_WINDOW")
@@ -443,7 +443,7 @@ def main() -> None:
     check_reports_title_change()
     check_survives_raising_route()
     check_fallback_no_display()
-    check_decode_helpers()
+    check_event_and_property_decoding()
     check_connection_drop_raises_stops()
     check_connection_drop_eof_stops()
     print("PASS: scenario_x11_xlib_watcher")

@@ -47,7 +47,7 @@ _UNSET: Any = object()
 class PageEntry(TypedDict):
     """One cached page slot, with the Page object and its LRU stamp."""
     page: "Page"
-    page_number: int
+    lru_stamp: int
 
 
 class PageManagerBackend:
@@ -76,7 +76,7 @@ class PageManagerBackend:
         # Apply the same +1 used when the Settings UI changes the cache budget.
         n_cached_pages = self.settings_manager.app().n_cached_pages
         self.max_pages = int(n_cached_pages) + 1
-        self.page_number = 0
+        self._next_lru_stamp = 0
 
         self.MAX_BACKUPS = 5
         self.PAGE_PATH = os.path.join(gl.DATA_PATH, "pages")
@@ -92,8 +92,11 @@ class PageManagerBackend:
         page = Page(json_path=path, deck_controller=deck_controller)
         with self._pages_lock:
             self.pages.setdefault(deck_controller, {})
-            self.pages[deck_controller][path] = {"page": page, "page_number": self.page_number}
-            self.page_number += 1
+            self.pages[deck_controller][path] = {
+                "page": page,
+                "lru_stamp": self._next_lru_stamp,
+            }
+            self._next_lru_stamp += 1
 
         return page
 
@@ -104,9 +107,9 @@ class PageManagerBackend:
             with self._pages_lock:
                 entry = self.pages.get(deck_controller, {}).get(path)
                 if entry is not None:
-                    entry["page_number"] = self.page_number
+                    entry["lru_stamp"] = self._next_lru_stamp
                     page: Page | None = entry["page"]
-                    self.page_number += 1
+                    self._next_lru_stamp += 1
                     self.pins.reserve_fetch(page, deck_controller)
                     return page
 
@@ -233,7 +236,7 @@ class PageManagerBackend:
                         continue
                     if self.pins.is_pinned(page):
                         continue
-                    evictable.append((page_data["page_number"], controller_pages, path, page))
+                    evictable.append((page_data["lru_stamp"], controller_pages, path, page))
 
             evictable.sort(key=lambda entry: entry[0])
             to_evict = evictable[:excess]
@@ -256,14 +259,14 @@ class PageManagerBackend:
             # Run plugin teardown outside the lock so a wedged hook cannot block cache users.
             page.clear_action_objects()
 
-    def _page_is_live(self, page_obj: "Page") -> bool:
+    def _page_is_live(self, page: "Page") -> bool:
         """Return whether a controller shows or has stashed this Page."""
         # A screensaver stash stays live until hide and must not be evicted.
         # Controller fields cover exact ownership; pins cover unnamed transition windows.
         for controller in (gl.deck_manager.deck_controller if gl.deck_manager is not None else []):
-            if controller.active_page is page_obj:
+            if controller.active_page is page:
                 return True
-            if getattr(controller, "_screensaver_pending_page", None) is page_obj:
+            if getattr(controller, "_screensaver_pending_page", None) is page:
                 return True
         return False
 
@@ -606,12 +609,12 @@ class PageManagerBackend:
         if not os.path.exists(path) and os.path.exists(backup_path) and use_backup:
             path = backup_path
 
-        data, corrupt = self.settings_manager.load_settings_reporting_corruption(path)
+        data, corrupt = self.settings_manager.load_settings_with_corruption_status(path)
 
         # Use a valid backup for a corrupt primary when available, regardless of use_backup.
         # Quarantine success is irrelevant; an empty result could erase the page on save.
         if corrupt and path != backup_path and os.path.exists(backup_path):
-            healed, backup_corrupt = self.settings_manager.load_settings_reporting_corruption(backup_path)
+            healed, backup_corrupt = self.settings_manager.load_settings_with_corruption_status(backup_path)
             if not backup_corrupt:
                 data = healed
                 # Report the backup content served; the next save rewrites the primary.
@@ -630,7 +633,7 @@ class PageManagerBackend:
                                         inputs=reload_inputs)
 
     @staticmethod
-    def _strip_asset(page_dict: dict[str, Any], abs_target_path: str) -> bool:
+    def _clear_asset_path(page_dict: dict[str, Any], abs_target_path: str) -> bool:
         """Remove one asset path from page content and return whether it was present."""
         page_had_asset = False
 
@@ -661,17 +664,17 @@ class PageManagerBackend:
             if document is not None:
                 # Scan a snapshot because concurrent mutation can invalidate iteration.
                 # Edit only after a match; both passes are idempotent, and second finds remainder.
-                page_had_asset = self._strip_asset(
-                    document.get_without_action_objects(), abs_target_path)
+                page_had_asset = self._clear_asset_path(
+                    document.snapshot_for_save(), abs_target_path)
                 if page_had_asset:
                     with document.edit() as page_dict:
-                        self._strip_asset(page_dict, abs_target_path)
+                        self._clear_asset_path(page_dict, abs_target_path)
             else:
                 # Flush unheld pages before bypassing get_page_data.
                 # Corrupt reads preserve sidecar and backup, leave no match, and skip the write.
                 page_flush.get().flush_path(page_path)
                 page_dict = self.settings_manager.load_settings_from_file(page_path)
-                page_had_asset = self._strip_asset(page_dict, abs_target_path)
+                page_had_asset = self._clear_asset_path(page_dict, abs_target_path)
                 if page_had_asset:
                     atomic_write_json(page_path, page_dict)
 
@@ -775,7 +778,7 @@ class PageManagerBackend:
         with self.get_document(path).edit() as data:
             data["settings"] = settings
 
-    def any_auto_change_rule_enabled(self) -> bool:
+    def has_enabled_auto_change_rule(self) -> bool:
         """Return whether any page enables an active-window change rule.
         This gates the watcher and uses the same accessor as rule matching."""
         # No index lists rules, so scan until the first hit; a full-deck page is about 16 KB.

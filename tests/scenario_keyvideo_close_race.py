@@ -174,19 +174,19 @@ def wait_for_builders_at_most(limit: int, timeout: float = 3.0) -> list[threadin
     """Poll for a settled builder count after the bounded inline join.
     A loaded builder can finish shortly after the 0.5-second join expires."""
     deadline = time.monotonic() + timeout
-    alive = live_tile_cache_builders()
-    while len(alive) > limit and time.monotonic() < deadline:
+    live_builders = live_tile_cache_builders()
+    while len(live_builders) > limit and time.monotonic() < deadline:
         time.sleep(0.02)
-        alive = live_tile_cache_builders()
-    return alive
+        live_builders = live_tile_cache_builders()
+    return live_builders
 
 
 def assert_no_tile_cache_builders(context: str) -> None:
     """Require release to join each detached tile-cache builder.
     A live cv2 decode during interpreter exit can abort the process."""
-    alive = live_tile_cache_builders()
-    assert not alive, (
-        f"{len(alive)} tile-cache-builder thread(s) still decoding after "
+    live_builders = live_tile_cache_builders()
+    assert not live_builders, (
+        f"{len(live_builders)} tile-cache-builder thread(s) still decoding after "
         f"{context} -- release() did not join the builder it signalled, and "
         f"they would be killed mid-cv2 at interpreter exit"
     )
@@ -237,7 +237,7 @@ def check_release_joins_builder() -> None:
     print(f"PASS: release joins the builder it signalled ({elapsed * 1000:.0f} ms)")
 
 
-def check_acquire_returns_refcount_on_reader_failure() -> None:
+def check_reader_failure_releases_acquired_reference() -> None:
     """Return the acquired reference when reader construction raises.
     Otherwise the entry and builder remain pinned for a missing consumer."""
     _enable_video_cache()
@@ -279,7 +279,7 @@ def check_acquire_returns_refcount_on_reader_failure() -> None:
     print("PASS: a failed reader construction returns its reference and stops the builder")
 
 
-def check_adoption_give_up_keeps_one_builder() -> None:
+def check_single_builder_after_adoption_failure() -> None:
     """Keep one builder when a reader gives up on a missing shared cache file.
     A second consumer retains the entry while a new acquire tests handle reuse."""
     _enable_video_cache()
@@ -323,13 +323,13 @@ def check_adoption_give_up_keeps_one_builder() -> None:
     second = mp4_tile_cache.acquire(video_path, out_size)
     try:
         # Count while the first builder is active so join timing cannot hide duplicates.
-        alive = live_tile_cache_builders()
+        live_builders = live_tile_cache_builders()
         assert first_builder.is_alive(), (
             "the first builder ended before the re-acquire -- the source is "
             "too short for this check"
         )
-        assert len(alive) <= 1, (
-            f"{len(alive)} tile-cache builders decoding the same source after "
+        assert len(live_builders) <= 1, (
+            f"{len(live_builders)} tile-cache builders decoding the same source after "
             f"an adoption give-up plus a fresh acquire -- the give-up left the "
             f"old builder running while a replacement started"
         )
@@ -353,8 +353,8 @@ def main() -> None:
     check_real_inputvideo_close()
     assert_no_tile_cache_builders("the real-registry InputVideo close")
     check_release_joins_builder()
-    check_acquire_returns_refcount_on_reader_failure()
-    check_adoption_give_up_keeps_one_builder()
+    check_reader_failure_releases_acquired_reference()
+    check_single_builder_after_adoption_failure()
     print("PASS: scenario_keyvideo_close_race")
 
 

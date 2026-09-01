@@ -225,7 +225,7 @@ class KeyButton(Gtk.Frame):
         if key is None:
             # A stale identifier or changed deck model can leave this input absent.
             # Return state 0 because every input defines it as the default.
-            log.warning(f"No input {self.identifier} on deck {self._deck_name()}; reading state 0")
+            log.warning(f"No input {self.identifier} on deck {self._deck_serial()}; reading state 0")
             return 0
         return key.state
 
@@ -533,7 +533,7 @@ class KeyButton(Gtk.Frame):
         services.require_main_window().sidebar.load_for_identifier(self.identifier, self.state)
         return False
 
-    def _deck_name(self) -> str:
+    def _deck_serial(self) -> str:
         """Return the cached deck serial for logging.
         Do not access hardware while reporting a missing input."""
         controller = self.key_grid.deck_controller
@@ -548,7 +548,7 @@ class KeyButton(Gtk.Frame):
     def remove_media(self) -> None:
         key = self.get_key()
         if key is None:
-            log.warning(f"No input {self.identifier} on deck {self._deck_name()}; nothing to remove media from")
+            log.warning(f"No input {self.identifier} on deck {self._deck_serial()}; nothing to remove media from")
             return
         state = key.get_active_state()
 

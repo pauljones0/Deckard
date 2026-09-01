@@ -121,7 +121,7 @@ class PageEditor(Adw.NavigationPage):
         self.editor_main_box.append(self.screensaver_group)
 
         # Every group in one list, so teardown reaches all of them.
-        self.groups: list[PageEditorGroup] = [
+        self.teardown_groups: list[PageEditorGroup] = [
             self.name_group, self.default_page_group, self.auto_change_group,
             self.brightness_group, self.background_group, self.screensaver_group,
         ]
@@ -172,7 +172,7 @@ class PageEditor(Adw.NavigationPage):
         This order preserves unapplied text and prevents callbacks on dead widgets.
         """
         self.auto_change_group.commit_pending_patterns()
-        for group in self.groups:
+        for group in self.teardown_groups:
             group.disconnect_events()
 
 class PageEditorGroup(Adw.PreferencesGroup):
@@ -181,7 +181,7 @@ class PageEditorGroup(Adw.PreferencesGroup):
         self.page_editor = page_editor
         # Track one handler per binding key so repeated connect and disconnect
         # operations neither stack callbacks nor disconnect an absent handler.
-        self._handlers: dict[str, int] = {}
+        self._handler_ids: dict[str, int] = {}
         self.build()
 
     def build(self) -> None:
@@ -196,14 +196,14 @@ class PageEditorGroup(Adw.PreferencesGroup):
 
     def connect_events(self) -> None:
         for key, widget, signal, callback in self._signal_bindings():
-            if self._handlers.get(key) is None:
-                self._handlers[key] = widget.connect(signal, callback)
+            if self._handler_ids.get(key) is None:
+                self._handler_ids[key] = widget.connect(signal, callback)
 
     def disconnect_events(self) -> None:
         for key, widget, _signal, _callback in self._signal_bindings():
-            handler = self._handlers.pop(key, None)
-            if handler is not None:
-                widget.disconnect(handler)
+            handler_id = self._handler_ids.pop(key, None)
+            if handler_id is not None:
+                widget.disconnect(handler_id)
 
     def load_config_settings(self, page_path: str) -> None:
         pass
@@ -339,11 +339,11 @@ class AutoChangeGroup(PageEditorGroup):
 
         # Commit on focus leave too, or text abandoned by a click or window
         # close remains only in the widget.
-        self.title_focus = Gtk.EventControllerFocus()
-        self.title_entry.add_controller(self.title_focus)
+        self.title_focus_controller = Gtk.EventControllerFocus()
+        self.title_entry.add_controller(self.title_focus_controller)
 
-        self.wm_class_focus = Gtk.EventControllerFocus()
-        self.wm_class_entry.add_controller(self.wm_class_focus)
+        self.wm_class_focus_controller = Gtk.EventControllerFocus()
+        self.wm_class_entry.add_controller(self.wm_class_focus_controller)
 
         self.matching_window_expander = MatchingWindowExpander(auto_change_group=self)
         self.add(self.matching_window_expander)
@@ -355,8 +355,8 @@ class AutoChangeGroup(PageEditorGroup):
             ("stay-on-page", self.stay_on_page_toggle, "notify::active", self.on_stay_on_page_changed),
             ("title-apply", self.title_entry, "apply", self.on_title_entry_applied),
             ("wm-class-apply", self.wm_class_entry, "apply", self.on_wm_class_entry_applied),
-            ("title-leave", self.title_focus, "leave", self.on_title_focus_left),
-            ("wm-class-leave", self.wm_class_focus, "leave", self.on_wm_class_focus_left),
+            ("title-leave", self.title_focus_controller, "leave", self.on_title_focus_left),
+            ("wm-class-leave", self.wm_class_focus_controller, "leave", self.on_wm_class_focus_left),
         ]
 
     @override
@@ -430,16 +430,16 @@ class AutoChangeGroup(PageEditorGroup):
 
         title = self.title_entry.get_text()
         wm_class = self.wm_class_entry.get_text()
-        committed = False
+        patterns_changed = False
 
         if not self.is_stored_pattern("title", title):
             page_manager.overwrite_auto_change_settings(path=path, regex_title=title)
-            committed = True
+            patterns_changed = True
         if not self.is_stored_pattern("wm-class", wm_class):
             page_manager.overwrite_auto_change_settings(path=path, wm_class=wm_class)
-            committed = True
+            patterns_changed = True
 
-        if committed:
+        if patterns_changed:
             self.recheck_active_window()
 
     def is_stored_pattern(self, key: str, text: str) -> bool:
@@ -624,17 +624,17 @@ class BackgroundGroup(PageEditorGroup):
         media_path = background_settings.get("media-path")
         if not media_path:
             return
-        showing = self._controllers_showing_page()
+        showing_controllers = self._controllers_showing_page()
         # Prefer a deck showing this page for canvas geometry; otherwise use any connected deck.
         # Without a connected deck, no viewport target exists.
-        controllers = showing or list(services.require_deck_manager().deck_controller)
+        controllers = showing_controllers or list(services.require_deck_manager().deck_controller)
         if not controllers:
             return
-        geometry = controllers[0]
+        reference_controller = controllers[0]
         dialog = ViewportDialog(
             [(media_path, normalize_view(background_settings.get("view")))],
             canvas_size=lambda: background_canvas_size(
-                geometry, geometry.background.extend_to_touchscreen),
+                reference_controller, reference_controller.background.extend_to_touchscreen),
             on_live=self.on_view_live,
             on_commit=self.on_view_commit,
         )

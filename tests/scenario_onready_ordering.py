@@ -146,30 +146,30 @@ def check_gates() -> int:
         fixtures.teardown(controller)
 
     # Raising on_ready still opens the gates.
-    controller2 = make_headless_controller(serial="onready-2")
+    raising_controller = make_headless_controller(serial="onready-2")
     try:
         from loguru import logger as _log
-        page2 = controller2.active_page
+        raising_page = raising_controller.active_page
         ident = Input.Key("0x0")
-        action2 = make_action(RaisingReadyAction, controller2, page2, ident)
-        state2 = controller2.get_input(ident).states[0]
+        raising_action = make_action(RaisingReadyAction, raising_controller, raising_page, ident)
+        raising_state = raising_controller.get_input(ident).states[0]
         # Silence the expected on_ready traceback until completion is observed.
         _log.disable("")
         try:
-            page2.initialize_actions()
-            ready = wait_until(lambda: action2.on_ready_finished, timeout=5)
+            raising_page.initialize_actions()
+            ready = wait_until(lambda: raising_action.on_ready_finished, timeout=5)
         finally:
             _log.enable("")
         if not ready:
             print("FAIL: raising on_ready left on_ready_finished unset (action dead forever)")
             return 1
-        state2.own_actions_tick()
-        if action2.tick_calls < 1:
+        raising_state.own_actions_tick()
+        if raising_action.tick_calls < 1:
             print("FAIL: tick not delivered after raising on_ready")
             return 1
         print("PASS: raising on_ready still opens the gates")
     finally:
-        fixtures.teardown(controller2)
+        fixtures.teardown(raising_controller)
     return 0
 
 

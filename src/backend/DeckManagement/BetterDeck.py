@@ -30,7 +30,7 @@ from StreamDeck.Devices.StreamDeck import DialEventType, TouchscreenEventType
 READ_THREAD_JOIN_TIMEOUT_S = 1.0
 
 
-class _ReleasedOpen:
+class _BlockedOpen:
     """Ignore reader-loop reopen calls until a deliberate open removes this shadow."""
 
     def __init__(self, device_name: str) -> None:
@@ -45,10 +45,10 @@ def _install_release_shadow(device: "Any") -> None:
     Shadows open() on this device instance, so nothing re-opens it. open_device_handle lifts it, so
     a handle released by a failed attempt can still be taken up again.
     """
-    if isinstance(getattr(device, "open", None), _ReleasedOpen):
+    if isinstance(getattr(device, "open", None), _BlockedOpen):
         return
     try:
-        device.open = _ReleasedOpen(type(device).__name__)
+        device.open = _BlockedOpen(type(device).__name__)
     except (AttributeError, TypeError):
         # A handle that refuses the attribute keeps its own open(), and the
         # two flags are then the only defense against the resume loop.
@@ -61,7 +61,7 @@ def open_device_handle(device: "Any", resume_from_suspend: bool = True) -> None:
     Opens a device handle, and lifts any release shadow first. The deck-open retry re-uses the
     handle of an attempt that released it, and only this makes that handle take an open() again.
     """
-    if isinstance(getattr(device, "open", None), _ReleasedOpen):
+    if isinstance(getattr(device, "open", None), _BlockedOpen):
         del device.open
     device.open(resume_from_suspend)
 

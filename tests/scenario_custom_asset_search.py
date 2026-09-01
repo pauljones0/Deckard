@@ -126,7 +126,7 @@ def class_def_of(cls: type) -> ast.ClassDef:
 INSTALL_CALLS = {
     "set_filter_func": "filter_func",
     "set_sort_func": "sort_func",
-    "set_factory": "factory_func",
+    "set_item_binder": "item_binder",
 }
 
 
@@ -184,7 +184,7 @@ def check_hooks_installed(flow: CustomAssetChooserFlowBox) -> None:
     assert callable(flow.sort_func), (
         "the flow box installed no sort hook (sort_func is "
         f"{flow.sort_func!r}) -- the grid keeps backend order")
-    assert callable(flow.factory_func), "the flow box installed no factory"
+    assert callable(flow.item_binder), "the flow box installed no factory"
 
     assert flow.filter_func == flow._filter_asset, (
         f"the filter hook is {flow.filter_func!r}, not this box's "
@@ -304,7 +304,7 @@ def check_real_grid(flow: CustomAssetChooserFlowBox, chooser: FakeChooser,
 # Each entry names a base and only the constructor slots that store hooks.
 BASES = (
     ("src.windows.AssetManager.DynamicFlowBox", "DynamicFlowBox",
-     frozenset({"filter_func", "sort_func", "factory_func"})),
+     frozenset({"filter_func", "sort_func", "item_binder"})),
     # Keep this base covered before its first subclass appears.
     ("GtkHelper.DynamicFlowBox", "DynamicFlowBox",
      frozenset({"filter", "sort", "factory"})),

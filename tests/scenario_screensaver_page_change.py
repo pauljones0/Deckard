@@ -13,7 +13,7 @@ import globals as gl
 WATCHDOG_SECONDS = 30
 
 
-def _signature(controller, deck, page, key_count):
+def _paint_signature(controller, deck, page, key_count):
     deck.clear_journal()
     controller.load_page(page, allow_reload=True)
     ok = fixtures.wait_until(
@@ -45,7 +45,7 @@ def main() -> None:
 
     # Learn page B's paint signature in isolation so a leak onto the deck is
     # detectable by hash.
-    sig_b = _signature(controller, deck, page_b, key_count)
+    sig_b = _paint_signature(controller, deck, page_b, key_count)
 
     # Settle on page A, then raise the screensaver.
     controller.load_page(page_a, allow_reload=True)

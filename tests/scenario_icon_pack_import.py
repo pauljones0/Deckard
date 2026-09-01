@@ -76,7 +76,7 @@ def clear_packs() -> None:
     shutil.rmtree(PACKS_ROOT, ignore_errors=True)
 
 
-def check_extensions_are_what_the_app_renders() -> None:
+def check_renderable_extensions() -> None:
     """Require import formats to come from the app's renderable format lists."""
     extensions = pack_import.importable_extensions()
     assert extensions == {"png", "jpg", "jpeg", "svg", "gif"}, (
@@ -142,8 +142,8 @@ def check_archive_with_nested_folders() -> None:
     assert icon_names(pack) == {"top.png", "left.png", "right.png", "tiny.png"}, (
         f"the pack holds {sorted(icon_names(pack))}"
     )
-    assert "Base" in pack.pack_structure and "arrows" in pack.pack_structure, (
-        f"the folder structure is {sorted(pack.pack_structure)}"
+    assert "Base" in pack.assets_by_folder and "arrows" in pack.assets_by_folder, (
+        f"the folder structure is {sorted(pack.assets_by_folder)}"
     )
     deep = [icon for icon in pack.get_icons() if os.path.basename(icon.path) == "tiny.png"][0]
     assert os.path.basename(os.path.dirname(deep.path)) == "arrows", (
@@ -169,16 +169,16 @@ def check_wrapper_folder_is_stripped() -> None:
     })
     folder = pack_import.import_icon_pack(archive, "Wrapped")
     pack = packs()[folder]
-    assert "Base" in pack.pack_structure, (
+    assert "Base" in pack.assets_by_folder, (
         f"the one top folder of the archive must go, the structure is "
-        f"{sorted(pack.pack_structure)}"
+        f"{sorted(pack.assets_by_folder)}"
     )
-    assert "arrows" in pack.pack_structure
-    assert "my-icons-main" not in pack.pack_structure
+    assert "arrows" in pack.assets_by_folder
+    assert "my-icons-main" not in pack.assets_by_folder
     print("PASS: an archive built from one folder does not gain a level")
 
 
-def check_flat_archive_keeps_its_one_picture() -> None:
+def check_flat_archive_single_picture() -> None:
     """Keep a top-level picture because it is not a wrapper folder."""
     clear_packs()
     archive = make_zip("flat.zip", {"only.png": png_bytes()})
@@ -220,7 +220,7 @@ def check_write_target_is_checked() -> None:
     print("PASS: a destination outside the pack is refused before the write")
 
 
-def check_escaping_member_refuses_the_whole_archive() -> None:
+def check_archive_rejects_escaping_member_path() -> None:
     clear_packs()
     archive = make_zip("escape.zip", {
         "good.png": png_bytes(),
@@ -243,7 +243,7 @@ def check_escaping_member_refuses_the_whole_archive() -> None:
     print("PASS: one escaping member refuses the whole archive and writes nothing")
 
 
-def check_absolute_member_refuses_the_whole_archive() -> None:
+def check_archive_rejects_absolute_member_path() -> None:
     clear_packs()
     archive = make_zip("absolute.zip", {"/tmp/escaped.png": png_bytes(), "ok.png": png_bytes()})
     try:
@@ -260,13 +260,17 @@ def check_empty_archive_is_refused() -> None:
     clear_packs()
     empty = make_zip("empty.zip", {})
     text_only = make_zip("text.zip", {"readme.txt": b"nothing to see"})
-    for archive, what in ((empty, "an empty archive"), (text_only, "an archive of no pictures")):
+    for archive, source_description in (
+        (empty, "an empty archive"), (text_only, "an archive of no pictures")
+    ):
         try:
             pack_import.import_icon_pack(archive, "Empty Pack")
         except PackImportError as error:
-            assert str(error).strip(), f"{what} must be refused with a sentence"
+            assert str(error).strip(), (
+                f"{source_description} must be refused with a sentence"
+            )
         else:
-            raise AssertionError(f"{what} became a pack")
+            raise AssertionError(f"{source_description} became a pack")
     assert pack_folders() == [], f"a refused import left {pack_folders()}"
     print("PASS: an archive with no pictures is refused with a message")
 
@@ -310,7 +314,7 @@ def check_folder_import() -> None:
     print("PASS: a folder of pictures becomes a readable pack")
 
 
-def check_folder_name_collisions_inside_a_pack() -> None:
+def check_internal_folder_name_collision() -> None:
     """Two source files of one name in different deep folders both survive."""
     clear_packs()
     source = scratch("collide-folder")
@@ -342,7 +346,7 @@ def check_banner_is_used_when_given() -> None:
     print("PASS: the chosen banner becomes the pack thumbnail")
 
 
-def check_folder_import_skips_a_symlinked_file() -> None:
+def check_folder_import_skips_symlink() -> None:
     """Do not follow linked files, which os.walk lists with followlinks disabled."""
     clear_packs()
     outside = write_png(os.path.join(scratch("outside"), "secret.png"), colour=(7, 7, 7, 255))
@@ -380,7 +384,7 @@ def check_folder_import_skips_a_symlinked_file() -> None:
     print("PASS: a folder import copies no file a link points at")
 
 
-def check_folder_import_refuses_a_special_file() -> None:
+def check_folder_import_rejects_special_file() -> None:
     """A named pipe named like a picture is refused, not read forever."""
     if not hasattr(os, "mkfifo"):
         print("SKIP: no mkfifo on this platform")
@@ -404,7 +408,7 @@ def check_folder_import_refuses_a_special_file() -> None:
     print("PASS: a special file in a folder is refused, not read")
 
 
-def check_folder_import_refuses_a_hardlink_out() -> None:
+def check_folder_import_rejects_external_hardlink() -> None:
     """Refuse hardlinks because a regular-file check cannot contain their data."""
     clear_packs()
     secret = os.path.join(scratch("hardlink-secret"), "private.png")
@@ -466,13 +470,13 @@ def check_damaged_archive_is_refused() -> None:
     good = make_zip("whole.zip", {"a.png": png_bytes()})
     damaged = os.path.join(scratch("zips"), "damaged.zip")
     with open(good, "rb") as handle:
-        data = bytearray(handle.read())
+        archive_bytes = bytearray(handle.read())
     # Flip bytes in the member's data region, well before the central
     # directory at the tail, so is_zipfile still passes and the read fails.
-    for offset in range(40, min(80, len(data) - 60)):
-        data[offset] ^= 0xFF
+    for offset in range(40, min(80, len(archive_bytes) - 60)):
+        archive_bytes[offset] ^= 0xFF
     with open(damaged, "wb") as handle:
-        handle.write(data)
+        handle.write(archive_bytes)
     assert zipfile.is_zipfile(damaged), "the corruption must leave a readable central directory"
 
     try:
@@ -530,7 +534,7 @@ def check_staging_is_unique_per_run() -> None:
     print("PASS: each import gets its own staging directory")
 
 
-def check_sweep_spares_a_live_tree() -> None:
+def check_sweep_preserves_live_tree() -> None:
     """A sweep removes a dead import's tree and spares a live one."""
     os.makedirs(PACKS_ROOT, exist_ok=True)
     live = pack_import._new_staging(PACKS_ROOT)
@@ -550,7 +554,7 @@ def check_sweep_spares_a_live_tree() -> None:
     print("PASS: a sweep spares a live tree and removes a dead one")
 
 
-def check_wedged_leftover_does_not_block_a_new_import() -> None:
+def check_wedged_staging_recovery() -> None:
     """Use a unique staging path when a read-only leftover survives the sweep."""
     clear_packs()
     os.makedirs(PACKS_ROOT, exist_ok=True)
@@ -573,7 +577,7 @@ def check_wedged_leftover_does_not_block_a_new_import() -> None:
     print("PASS: a leftover that cannot be removed does not wedge a name")
 
 
-def check_reload_removes_the_old_grid() -> None:
+def check_reload_replaces_grid() -> None:
     """Remove the old pack grid before reload builds its replacement."""
     from src.windows.AssetManager.GenericAssetChooser import GenericPackChooserPage
 
@@ -619,7 +623,7 @@ def check_reload_removes_the_old_grid() -> None:
     print("PASS: reload removes the old grid and does not stack builds")
 
 
-def check_name_collision_takes_a_suffix() -> None:
+def check_name_collision_suffix() -> None:
     clear_packs()
     first_source = scratch("dup-a")
     write_png(os.path.join(first_source, "a.png"))
@@ -640,7 +644,7 @@ def check_name_collision_takes_a_suffix() -> None:
     print("PASS: a second pack of one name takes its own folder and keeps the name")
 
 
-def check_folder_name_is_one_safe_component() -> None:
+def check_pack_folder_name_safety() -> None:
     """Whatever the user types, the folder name holds the same four rules."""
     names = (
         "../../escape",
@@ -680,7 +684,7 @@ def check_folder_name_is_one_safe_component() -> None:
     print("PASS: a pack folder name is always one safe visible component")
 
 
-def check_a_pack_name_needs_text() -> None:
+def check_pack_name_required() -> None:
     source = scratch("named")
     write_png(os.path.join(source, "a.png"))
     for name in ("", "   "):
@@ -694,20 +698,22 @@ def check_a_pack_name_needs_text() -> None:
 
 
 def check_missing_source_is_refused() -> None:
-    for source, what in (
+    for source, source_description in (
         (os.path.join(gl.DATA_PATH, "not-there.zip"), "a path that is not there"),
         (write_png(os.path.join(scratch("lonely"), "single.png")), "a single picture"),
     ):
         try:
             pack_import.import_icon_pack(source, "Missing Pack")
         except PackImportError as error:
-            assert str(error).strip(), f"{what} must be refused with a sentence"
+            assert str(error).strip(), (
+                f"{source_description} must be refused with a sentence"
+            )
         else:
-            raise AssertionError(f"{what} became a pack")
+            raise AssertionError(f"{source_description} became a pack")
     print("PASS: a missing source and a lone file are refused")
 
 
-def check_a_failed_import_registers_no_pack() -> None:
+def check_failed_import_leaves_no_registration() -> None:
     """A failure part way through leaves no pack and no staging tree."""
     clear_packs()
     source = scratch("fail-folder")
@@ -741,7 +747,7 @@ def check_a_failed_import_registers_no_pack() -> None:
     print("PASS: a failed import registers no pack and leaves nothing behind")
 
 
-def check_a_killed_import_leaves_no_visible_pack() -> None:
+def check_killed_import_cleanup() -> None:
     """Keep an interrupted staging tree hidden until the next import sweeps it."""
     clear_packs()
     os.makedirs(PACKS_ROOT, exist_ok=True)
@@ -767,7 +773,7 @@ def check_a_killed_import_leaves_no_visible_pack() -> None:
     print("PASS: a killed import leaves nothing a reader trusts, and is swept")
 
 
-def check_import_writes_the_store_layout() -> None:
+def check_import_store_layout() -> None:
     """Write the store layout so the chooser needs only one reader."""
     clear_packs()
     source = scratch("layout-folder")
@@ -804,19 +810,19 @@ def check_every_label_key_is_filled() -> None:
             keys |= set(re.findall(r'gl\.lm\.get\("([^"]+)"\)', source_file.read()))
     assert len(keys) >= 12, f"the import UI asks for only {sorted(keys)}"
 
-    lm = LocaleManager(CSV_PATH)
-    assert len(lm.available_locales) >= 5, (
-        f"expected at least the five shipped locales, found {lm.available_locales}"
+    locale_manager = LocaleManager(CSV_PATH)
+    assert len(locale_manager.available_locales) >= 5, (
+        f"expected at least the five shipped locales, found {locale_manager.available_locales}"
     )
     for key in sorted(keys):
-        row = lm.locale_data.get(key)
+        row = locale_manager.locale_data.get(key)
         assert row is not None, f"locales.csv carries no row for {key}"
-        for language in lm.available_locales:
+        for language in locale_manager.available_locales:
             assert row.get(language, "").strip(), f"{language} has no label for {key}"
     print(f"PASS: all {len(keys)} import labels are filled for every shipped locale")
 
 
-def check_the_import_dialog_builds() -> None:
+def check_import_dialog_construction() -> None:
     """Build the real dialog and require a name and source before import."""
     if not fixtures.has_usable_display():
         print("SKIP: no usable display; the import dialog is not built")
@@ -880,16 +886,16 @@ def check_the_import_dialog_builds() -> None:
         )
         fresh.destroy()
 
-        _check_only_import_starts_the_worker(dialog, window, source)
-        _check_file_choice_ignores_a_pathless_location(dialog)
-        _check_finish_guards_a_closed_window(window)
+        _check_import_response_starts_worker(dialog, window, source)
+        _check_pathless_file_choice_ignored(dialog)
+        _check_finish_after_window_close(window)
     finally:
         dialog.destroy()
         window.destroy()
     print("PASS: the import dialog builds and waits for a name and a source")
 
 
-def _check_finish_guards_a_closed_window(window) -> None:
+def _check_finish_after_window_close(window) -> None:
     """Do not touch disposed widgets when worker completion follows window close."""
     from src.windows.AssetManager.IconPacks.ImportDialog import ImportPackDialog
 
@@ -922,7 +928,7 @@ def _check_finish_guards_a_closed_window(window) -> None:
         dialog.destroy()
 
 
-def _check_only_import_starts_the_worker(dialog, window, source) -> None:
+def _check_import_response_starts_worker(dialog, window, source) -> None:
     """Only the import response starts a worker. Cancel starts none."""
     import src.windows.AssetManager.IconPacks.ImportDialog as import_dialog_mod
 
@@ -949,7 +955,7 @@ def _check_only_import_starts_the_worker(dialog, window, source) -> None:
         pack_import.set_import_running(False)
 
 
-def _check_file_choice_ignores_a_pathless_location(dialog) -> None:
+def _check_pathless_file_choice_ignored(dialog) -> None:
     """A chosen location with no local path hands nothing to the callback."""
     from src.windows.AssetManager.IconPacks.ImportDialog import _FileChoice
 
@@ -969,7 +975,7 @@ def _check_file_choice_ignores_a_pathless_location(dialog) -> None:
 def main() -> None:
     fixtures.start_watchdog(60, label="scenario_icon_pack_import")
 
-    check_extensions_are_what_the_app_renders()
+    check_renderable_extensions()
     check_member_rule()
     check_resolved_within()
 
@@ -977,39 +983,39 @@ def main() -> None:
 
     check_archive_with_nested_folders()
     check_wrapper_folder_is_stripped()
-    check_flat_archive_keeps_its_one_picture()
+    check_flat_archive_single_picture()
     check_oversized_archive_is_refused()
-    check_escaping_member_refuses_the_whole_archive()
-    check_absolute_member_refuses_the_whole_archive()
+    check_archive_rejects_escaping_member_path()
+    check_archive_rejects_absolute_member_path()
     check_empty_archive_is_refused()
     check_lying_member_size_is_refused()
 
     check_folder_import()
-    check_folder_name_collisions_inside_a_pack()
+    check_internal_folder_name_collision()
     check_banner_is_used_when_given()
-    check_folder_import_skips_a_symlinked_file()
-    check_folder_import_refuses_a_special_file()
-    check_folder_import_refuses_a_hardlink_out()
+    check_folder_import_skips_symlink()
+    check_folder_import_rejects_special_file()
+    check_folder_import_rejects_external_hardlink()
     check_folder_import_refuses_over_budget()
     check_damaged_archive_is_refused()
     check_undecodable_banner_falls_back()
 
     check_staging_is_unique_per_run()
-    check_sweep_spares_a_live_tree()
-    check_wedged_leftover_does_not_block_a_new_import()
-    check_reload_removes_the_old_grid()
+    check_sweep_preserves_live_tree()
+    check_wedged_staging_recovery()
+    check_reload_replaces_grid()
 
-    check_name_collision_takes_a_suffix()
-    check_folder_name_is_one_safe_component()
-    check_a_pack_name_needs_text()
+    check_name_collision_suffix()
+    check_pack_folder_name_safety()
+    check_pack_name_required()
     check_missing_source_is_refused()
 
-    check_a_failed_import_registers_no_pack()
-    check_a_killed_import_leaves_no_visible_pack()
-    check_import_writes_the_store_layout()
+    check_failed_import_leaves_no_registration()
+    check_killed_import_cleanup()
+    check_import_store_layout()
 
     check_every_label_key_is_filled()
-    check_the_import_dialog_builds()
+    check_import_dialog_construction()
 
     print("PASS: scenario_icon_pack_import")
 

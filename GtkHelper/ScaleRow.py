@@ -56,7 +56,7 @@ class ScaleRow(Adw.ActionRow):
 
         # Store one handler id per connected key to make disconnect idempotent.
         # A reconnect cannot stack a second handler.
-        self._handlers: dict[str, int] = {}
+        self._handler_ids: dict[str, int] = {}
 
         self.left = Gtk.Label(label=str(min), hexpand=False, halign=Gtk.Align.END)
         self.right = Gtk.Label(label=str(max), hexpand=False, halign=Gtk.Align.START)
@@ -107,14 +107,14 @@ class ScaleRow(Adw.ActionRow):
 
     def _connect_signals(self) -> None:
         for key, widget, signal, callback in self._signal_bindings():
-            if self._handlers.get(key) is None:
-                self._handlers[key] = widget.connect(signal, callback)
+            if self._handler_ids.get(key) is None:
+                self._handler_ids[key] = widget.connect(signal, callback)
 
     def _disconnect_signals(self) -> None:
         for key, widget, _signal, _callback in self._signal_bindings():
-            handler = self._handlers.pop(key, None)
-            if handler is not None:
-                widget.disconnect(handler)
+            handler_id = self._handler_ids.pop(key, None)
+            if handler_id is not None:
+                widget.disconnect(handler_id)
 
     def get_value(self) -> float:
         return self._adjustment.get_value()

@@ -59,7 +59,7 @@ def _dialog(parent: "Gtk.Window | None", title: str, heading: str, body: str,
     dialog.present()
 
 
-def make_consent(parent: "Gtk.Window | None") -> Callable[[str], bool]:
+def make_install_script_consent(parent: "Gtk.Window | None") -> Callable[[str], bool]:
     """Return parent-bound install-script consent that defaults to decline."""
     def ask(display_name: str) -> bool:
         return _ask(f"install-script prompt for {display_name}", lambda record: _dialog(
@@ -79,7 +79,7 @@ def make_consent(parent: "Gtk.Window | None") -> Callable[[str], bool]:
     return ask
 
 
-def make_set_consent(parent: "Gtk.Window | None") -> Callable[[str, "Plan"], bool]:
+def make_dependency_consent(parent: "Gtk.Window | None") -> Callable[[str, "Plan"], bool]:
     """Return consent for the complete dependency plan before any download."""
     def ask(root_name: str, plan: "Plan") -> bool:
         listed = "\n".join(f"• {name}" for name in plan.names())

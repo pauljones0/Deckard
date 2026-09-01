@@ -47,7 +47,7 @@ def _make_test_gif(path: str, size=(320, 320), n_frames: int = 6) -> None:
     )
 
 
-def check_large_gif_is_fit() -> None:
+def check_large_gif_is_fitted() -> None:
     gif_path = os.path.join(gl.DATA_PATH, "media", "large_test.gif")
     os.makedirs(os.path.dirname(gif_path), exist_ok=True)
     _make_test_gif(gif_path, size=(320, 320), n_frames=6)
@@ -242,7 +242,7 @@ def main() -> None:
     # Provide the cache setting read at construction; alpha keeps these GIFs in RAM.
     fixtures.install_stub_globals({"performance": {"cache-videos": True}})
     fixtures.start_watchdog(60, label="scenario_gif_fit")
-    check_large_gif_is_fit()
+    check_large_gif_is_fitted()
     check_small_gif_keeps_source_size()
     check_gif_preserves_aspect_ratio()
     check_disposal_method_1_gif()

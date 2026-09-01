@@ -18,13 +18,13 @@ class _FakeAction(ActionCore):
             state=0,
             input_ident=None,
         )
-        self._fake_settings: dict = {}
+        self._settings: dict = {}
 
     def get_settings(self):
-        return self._fake_settings
+        return self._settings
 
     def set_settings(self, settings: dict):
-        self._fake_settings = settings
+        self._settings = settings
 
 
 def check_combo_row_no_selection_sentinel() -> None:
@@ -36,7 +36,7 @@ def check_combo_row_no_selection_sentinel() -> None:
 
     sentinel = ComboRowItem("sentinel")
 
-    class _Fake:
+    class _ComboRowStub:
         def __init__(self, selected):
             self._selected = selected
 
@@ -46,14 +46,14 @@ def check_combo_row_no_selection_sentinel() -> None:
         def get_item_at(self, index):
             return sentinel
 
-    no_selection = _Fake(Gtk.INVALID_LIST_POSITION)
+    no_selection = _ComboRowStub(Gtk.INVALID_LIST_POSITION)
     result = ComboRow.get_selected_item(no_selection)
     assert result is None, (
         "get_selected_item must return None for INVALID_LIST_POSITION, "
         f"got {result!r}"
     )
 
-    selected = _Fake(1)
+    selected = _ComboRowStub(1)
     result = ComboRow.get_selected_item(selected)
     assert result is sentinel, (
         "get_selected_item must return the item at a valid selection index"

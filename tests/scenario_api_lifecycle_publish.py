@@ -545,7 +545,7 @@ def serials_registered(manager) -> list[str]:
     return [controller.serial_number() for controller in manager.deck_controller]
 
 
-def leg_publish_lag_direction(manager, observer: Observer) -> None:
+def leg_controllers_property_follows_publication(manager, observer: Observer) -> None:
     """Make Controllers follow published objects rather than manager contents.
     Main-context marshaling creates both publication and removal lag windows."""
     deck = FaultyFakeDeck(serial_number=SERIAL_LATE, deck_type="Fake Deck")
@@ -680,7 +680,7 @@ def run_legs(bus_address: str) -> None:
         assert_agreement(observer, "after a replug")
         leg_inverted_replug_order(manager, observer)
         assert_agreement(observer, "after a publish and unpublish crossed")
-        leg_publish_lag_direction(manager, observer)
+        leg_controllers_property_follows_publication(manager, observer)
         leg_stop_service(manager, observer)
         leg_failed_publish_commits_nothing()
     finally:

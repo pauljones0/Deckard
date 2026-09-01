@@ -23,21 +23,21 @@ class CatalogItem:
     """A catalog record and the descriptor that installs it."""
 
     descriptor: AssetTypeDescriptor
-    data: StoreAssetData
+    asset: StoreAssetData
 
     @property
     def asset_id(self) -> str:
         # Records without ids are excluded from indexes and rejected as roots.
-        return self.data.asset_id or ""
+        return self.asset.asset_id or ""
 
     @property
     def display_name(self) -> str:
         """Return the display name, or the manifest id when no name is available."""
-        return self.data.asset_name or self.asset_id
+        return self.asset.asset_name or self.asset_id
 
     @property
     def installed(self) -> bool:
-        return self.data.local_sha is not None
+        return self.asset.local_sha is not None
 
 
 @dataclass(frozen=True)
@@ -120,21 +120,21 @@ class CatalogIndex:
             log.error(f"Could not read the {noun} catalog while resolving dependencies: "
                       f"{result.detail or result.reason.value}")
             return
-        for data in result.value:
-            asset_id = data.asset_id
+        for asset in result.value:
+            asset_id = asset.asset_id
             if not isinstance(asset_id, str) or not asset_id:
                 continue
             # Keep the first asset class for duplicate ids to make resolution stable.
-            self._items.setdefault(asset_id, CatalogItem(descriptor, data))
+            self._items.setdefault(asset_id, CatalogItem(descriptor, asset))
 
 
 def manifest_reader(backend: Any) -> "Callable[[CatalogItem], dict[str, Any] | None]":
     """Build a reader that fetches manifests only at catalog-specified commits or branches."""
     def read(item: CatalogItem) -> "dict[str, Any] | None":
-        url = item.data.github
+        url = item.asset.github
         if url is None:
             return None
-        return backend.get_manifest(url, item.data.commit_sha or item.data.branch)
+        return backend.get_manifest(url, item.asset.commit_sha or item.asset.branch)
 
     return read
 
@@ -224,7 +224,7 @@ def install_plan(plan: Plan, backend: Any,
         if item.descriptor.is_plugin and ask_install_script is not None:
             # Pass install-script consent only to plugin installers.
             kwargs["ask_install_script"] = ask_install_script
-        result = getattr(backend, item.descriptor.install_attr)(item.data, **kwargs)
+        result = getattr(backend, item.descriptor.install_attr)(item.asset, **kwargs)
         # Narrow the result because Err is truthy.
         if isinstance(result, Err):
             log.error(f"Stopping the install set at {item.asset_id}: "
@@ -234,9 +234,9 @@ def install_plan(plan: Plan, backend: Any,
     return InstallReport(tuple(installed))
 
 
-def plugin_item(data: StoreAssetData) -> CatalogItem:
+def plugin_item(asset: StoreAssetData) -> CatalogItem:
     """One catalog plugin record as the root of a plan."""
-    return CatalogItem(PLUGIN, data)
+    return CatalogItem(PLUGIN, asset)
 
 
 def install_with_dependencies(

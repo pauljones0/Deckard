@@ -37,7 +37,7 @@ def main() -> None:
     # Shell-only syntax, a redirection and an && chain. Neither survives an
     # argv-list rewrite, so the string and shell contract must hold.
     marker = os.path.join(gl.DATA_PATH, "run_command_marker")
-    second = os.path.join(gl.DATA_PATH, "run_command_marker_2")
+    copied_marker = os.path.join(gl.DATA_PATH, "run_command_marker_2")
     assert not os.path.exists(marker)
 
     # Sample while the command runs because active_children() reaps short-lived
@@ -46,9 +46,9 @@ def main() -> None:
 
     def _command_finished() -> bool:
         forked.extend(multiprocessing.active_children())
-        return os.path.exists(second)
+        return os.path.exists(copied_marker)
 
-    run_command(f"echo detached > '{marker}' && cp '{marker}' '{second}'")
+    run_command(f"echo detached > '{marker}' && cp '{marker}' '{copied_marker}'")
 
     assert fixtures.wait_until(_command_finished, timeout=15.0, interval=0.005), (
         "the shell command never ran -- run_command must keep its "

@@ -35,25 +35,25 @@ def main() -> int:
 
     path = seed_page("SharedPage")
 
-    ctrl_a = RecordingController("reload-a")
-    ctrl_b = RecordingController("reload-b")
+    caller_controller = RecordingController("reload-a")
+    sibling_controller = RecordingController("reload-b")
 
-    page_a = Page(json_path=path, deck_controller=ctrl_a)
-    page_b = Page(json_path=path, deck_controller=ctrl_b)
-    ctrl_a.active_page = page_a
-    ctrl_b.active_page = page_b
+    caller_page = Page(json_path=path, deck_controller=caller_controller)
+    sibling_page = Page(json_path=path, deck_controller=sibling_controller)
+    caller_controller.active_page = caller_page
+    sibling_controller.active_page = sibling_page
 
-    gl.deck_manager.deck_controller = [ctrl_a, ctrl_b]
+    gl.deck_manager.deck_controller = [caller_controller, sibling_controller]
 
-    page_a.reload_similar_pages()  # identifier=None, reload_self=False
+    caller_page.reload_similar_pages()  # identifier=None, reload_self=False
 
-    if ctrl_a.loaded_pages:
-        print(f"FAIL: caller's own controller was reloaded despite reload_self=False: {ctrl_a.loaded_pages}")
+    if caller_controller.loaded_pages:
+        print(f"FAIL: caller's own controller was reloaded despite reload_self=False: {caller_controller.loaded_pages}")
         return 1
-    if ctrl_b.loaded_pages != [page_b]:
-        got = ["page_a (the CALLER'S page)" if p is page_a else
-               ("page_b" if p is page_b else repr(p)) for p in ctrl_b.loaded_pages]
-        print(f"FAIL: sibling controller received {got}, expected its own [page_b]")
+    if sibling_controller.loaded_pages != [sibling_page]:
+        got = ["caller_page (the CALLER'S page)" if p is caller_page else
+               ("sibling_page" if p is sibling_page else repr(p)) for p in sibling_controller.loaded_pages]
+        print(f"FAIL: sibling controller received {got}, expected its own [sibling_page]")
         return 1
 
     # An active_page that flips to None mid-scan must not raise AttributeError.
@@ -72,7 +72,7 @@ def main() -> int:
             self._reads += 1
             return self._page if self._reads <= 1 else None
 
-    probe_page = Page(json_path=path, deck_controller=ctrl_a)
+    probe_page = Page(json_path=path, deck_controller=caller_controller)
     flipping = FlippingController("reload-flip", probe_page)
     gl.deck_manager.deck_controller = [flipping]
     try:

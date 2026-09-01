@@ -319,7 +319,7 @@ def test_completed_download_leaves_no_sidecar(server, base) -> None:
     print("PASS: a completed download lands whole and its sidecar is gone")
 
 
-def test_target_stays_absent_until_the_body_is_whole() -> None:
+def test_atomic_target_visibility() -> None:
     """Check target invisibility after a chunk lands but before a failed transfer ends."""
     directory = _scratch_dir("torn")
     target = os.path.join(directory, "asset.png")
@@ -356,7 +356,7 @@ def test_target_stays_absent_until_the_body_is_whole() -> None:
     print("PASS: the target path stays absent until the whole body arrived")
 
 
-def test_stale_sidecar_is_reaped_and_a_recent_one_is_kept(server, base) -> None:
+def test_sidecar_age_cleanup(server, base) -> None:
     """Check age-based cleanup of stale sidecars while preserving recent ones."""
     directory = _scratch_dir("orphans")
     target = os.path.join(directory, "asset.bin")
@@ -384,7 +384,7 @@ def test_stale_sidecar_is_reaped_and_a_recent_one_is_kept(server, base) -> None:
     print("PASS: the next download reaps a stale sidecar and keeps a recent one")
 
 
-def test_a_running_download_survives_a_reap_that_finds_its_sidecar_old(server, base) -> None:
+def test_reaper_preserves_inflight_sidecar(server, base) -> None:
     """Check that the in-flight registry protects a live sidecar despite old mtime."""
     directory = _scratch_dir("in-flight")
     slow_url = "http://stub/slow.bin"
@@ -527,9 +527,9 @@ def main() -> None:
         test_download_leaves_no_partial_file(server, base)
         test_download_rejects_error_status(server, base)
         test_completed_download_leaves_no_sidecar(server, base)
-        test_target_stays_absent_until_the_body_is_whole()
-        test_stale_sidecar_is_reaped_and_a_recent_one_is_kept(server, base)
-        test_a_running_download_survives_a_reap_that_finds_its_sidecar_old(server, base)
+        test_atomic_target_visibility()
+        test_sidecar_age_cleanup(server, base)
+        test_reaper_preserves_inflight_sidecar(server, base)
         test_concurrent_downloads_take_separate_sidecars()
     finally:
         server.shutdown()

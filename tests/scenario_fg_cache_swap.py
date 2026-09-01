@@ -48,16 +48,16 @@ def main() -> int:
     asset = _FakeAsset(red_src)
 
     # Populate the cache with the red source.
-    out1 = lm.add_image_to_background(asset.image, background, cache_token=asset)
-    if _dominant(out1) != RED:
-        print(f"FAIL(setup): first composite is not RED: {_dominant(out1)}")
+    red_composite = lm.add_image_to_background(asset.image, background, cache_token=asset)
+    if _dominant(red_composite) != RED:
+        print(f"FAIL(setup): first composite is not RED: {_dominant(red_composite)}")
         return 1
 
     # Swap pixels while keeping asset identity, layout, and source size unchanged.
     asset.image = green_src
-    out2 = lm.add_image_to_background(asset.image, background, cache_token=asset)
+    green_composite = lm.add_image_to_background(asset.image, background, cache_token=asset)
 
-    got = _dominant(out2)
+    got = _dominant(green_composite)
     if got != GREEN:
         print(f"FAIL: composite after an in-place image swap served the stale "
               f"cached foreground: got {got}, expected GREEN {GREEN} -- "

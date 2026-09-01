@@ -47,7 +47,7 @@ class IconPackChooserStack(GenericPackChooserStack[IconChooserPage]):
     LEAF_CHILD_TITLE = "Icon Chooser"
 
     @override
-    def prepare(self) -> None:
+    def initialize_page_state(self) -> None:
         self.on_loads_finished_tasks: list[Callable[[], Any]] = []
         # Serialize both worker completion flags with the deferred-task queue
         self._loads_lock = threading.Lock()

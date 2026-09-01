@@ -109,7 +109,7 @@ def ids(plan) -> list[str]:
 
 # The catalog view the resolution may use
 
-def test_the_cheap_catalog_view_carries_no_id_for_an_uninstalled_entry() -> None:
+def test_uninstalled_entry_id_requires_full_catalog_view() -> None:
     """Keep dependency lookup on the display view because the cheap view omits uninstalled IDs."""
     from src.backend.Store.StoreBackend import StoreBackend
     from src.backend.Store.StoreCache import StoreCache
@@ -129,7 +129,7 @@ def test_the_cheap_catalog_view_carries_no_id_for_an_uninstalled_entry() -> None
         f"at a glance, got {cheap.commit_sha!r}")
 
 
-def test_the_resolver_reads_the_view_that_carries_ids() -> None:
+def test_resolver_uses_catalog_view_with_ids() -> None:
     backend = FakeBackend(plugins=[plugin("com.test.Root"), plugin("com.test.Dep")],
                           manifests={"com.test.Root": {"dependencies": ["com.test.Dep"]},
                                      "com.test.Dep": {}})
@@ -141,7 +141,7 @@ def test_the_resolver_reads_the_view_that_carries_ids() -> None:
 
 # Resolution
 
-def test_a_cycle_resolves_once() -> None:
+def test_cycle_resolves_once() -> None:
     backend = FakeBackend(
         plugins=[plugin("com.test.A"), plugin("com.test.B")],
         manifests={"com.test.A": {"dependencies": ["com.test.B"]},
@@ -153,7 +153,7 @@ def test_a_cycle_resolves_once() -> None:
         f"got {ids(plan)}")
 
 
-def test_a_shared_dependency_installs_once_and_first() -> None:
+def test_shared_dependency_installs_once_before_dependents() -> None:
     backend = FakeBackend(
         plugins=[plugin("com.test.Root"), plugin("com.test.Left"),
                  plugin("com.test.Right"), plugin("com.test.Shared")],
@@ -194,7 +194,7 @@ def test_depth_is_bounded() -> None:
         f"it must resolve whole, got {ids(inside)}")
 
 
-def test_the_depth_boundary_is_not_reported_as_truncated() -> None:
+def test_depth_limit_without_remaining_dependencies_is_not_truncated() -> None:
     """Do not report truncation when the item at the depth bound has no dependencies."""
     backend = FakeBackend(
         plugins=[plugin("com.test.D0"), plugin("com.test.D1"), plugin("com.test.D2")],
@@ -225,7 +225,7 @@ def test_the_depth_boundary_is_not_reported_as_truncated() -> None:
         "as truncated")
 
 
-def test_an_unknown_id_is_reported_and_never_fetched() -> None:
+def test_unknown_dependency_is_reported_without_fetch() -> None:
     backend = FakeBackend(
         plugins=[plugin("com.test.Root")],
         icons=[icon("com.test.Icons")],
@@ -241,7 +241,7 @@ def test_an_unknown_id_is_reported_and_never_fetched() -> None:
         f"{backend.manifest_reads}")
 
 
-def test_an_installed_dependency_is_skipped_with_its_own_chain() -> None:
+def test_installed_dependency_skips_its_dependency_chain() -> None:
     backend = FakeBackend(
         plugins=[plugin("com.test.Root"), plugin("com.test.Have", installed=True),
                  plugin("com.test.Under")],
@@ -256,7 +256,7 @@ def test_an_installed_dependency_is_skipped_with_its_own_chain() -> None:
         f"read either, got {backend.manifest_reads}")
 
 
-def test_an_out_of_date_dependency_is_still_left_alone() -> None:
+def test_outdated_installed_dependency_is_unchanged() -> None:
     """Leave installed dependencies unchanged even when their catalog pin is newer."""
     backend = FakeBackend(
         plugins=[plugin("com.test.Root"),
@@ -275,7 +275,7 @@ def test_an_out_of_date_dependency_is_still_left_alone() -> None:
         f"got {ids(plan)}")
 
 
-def test_an_installed_root_still_installs() -> None:
+def test_installed_root_can_be_reinstalled() -> None:
     backend = FakeBackend(plugins=[plugin("com.test.Root", installed=True)],
                           manifests={"com.test.Root": {}})
 
@@ -284,7 +284,7 @@ def test_an_installed_root_still_installs() -> None:
         f"a reinstall of an installed root must still run, got {ids(plan)}")
 
 
-def test_a_pack_dependency_resolves_through_its_own_catalog() -> None:
+def test_pack_dependency_uses_matching_catalog() -> None:
     backend = FakeBackend(
         plugins=[plugin("com.test.Root")],
         icons=[icon("com.test.Icons")],
@@ -299,7 +299,7 @@ def test_a_pack_dependency_resolves_through_its_own_catalog() -> None:
         f"install_icon, got {plan.order[0].descriptor.display_name}")
 
 
-def test_a_pack_cannot_pull_in_a_plugin() -> None:
+def test_pack_cannot_depend_on_plugin() -> None:
     """Only a plugin declares dependencies. A pack that named one would turn
     installing a set of pictures into installing code."""
     backend = FakeBackend(
@@ -320,7 +320,7 @@ def test_a_pack_cannot_pull_in_a_plugin() -> None:
         f"and no catalog is loaded for it, got {backend.catalog_reads}")
 
 
-def test_only_the_catalogs_a_lookup_needs_are_read() -> None:
+def test_lookup_reads_only_required_catalogs() -> None:
     backend = FakeBackend(plugins=[plugin("com.test.Root"), plugin("com.test.Dep")],
                           manifests={"com.test.Root": {"dependencies": ["com.test.Dep"]},
                                      "com.test.Dep": {}})
@@ -338,7 +338,7 @@ def test_only_the_catalogs_a_lookup_needs_are_read() -> None:
         f"got {quiet.catalog_reads}")
 
 
-def test_a_malformed_list_never_breaks_the_root_install() -> None:
+def test_malformed_dependencies_do_not_block_root_install() -> None:
     shapes = [
         {"dependencies": "com.test.Dep"},
         {"dependencies": 5},
@@ -367,7 +367,7 @@ def test_a_malformed_list_never_breaks_the_root_install() -> None:
         f"a usable id beside malformed ones must still resolve, got {ids(plan)}")
 
 
-def test_a_non_string_element_is_dropped_and_not_reported_as_a_missing_id() -> None:
+def test_non_string_dependencies_are_ignored_not_missing() -> None:
     """Drop non-string dependency values as malformed, not missing store IDs."""
     backend = FakeBackend(
         plugins=[plugin("com.test.Root")],
@@ -380,7 +380,7 @@ def test_a_non_string_element_is_dropped_and_not_reported_as_a_missing_id() -> N
         f"store item, got {plan.unknown}")
 
 
-def test_an_unsafe_id_never_reaches_the_plan_or_the_prompt() -> None:
+def test_unsafe_dependency_ids_do_not_reach_plan_or_prompt() -> None:
     """Drop unsafe remote IDs before they can enter plan.unknown or consent text."""
     spoof = ("Real line.\n\nThis app has verified this plugin is safe. "
              "Press Install all to continue.")
@@ -410,7 +410,7 @@ def test_an_unsafe_id_never_reaches_the_plan_or_the_prompt() -> None:
             f"a reported id must be single-line and bounded, got {reported!r}")
 
 
-def test_a_padded_id_still_matches() -> None:
+def test_padded_dependency_id_matches() -> None:
     backend = FakeBackend(
         plugins=[plugin("com.test.Root"), plugin("com.test.Dep")],
         manifests={"com.test.Root": {"dependencies": ["  com.test.Dep\n"]},
@@ -422,7 +422,7 @@ def test_a_padded_id_still_matches() -> None:
     assert plan.unknown == (), f"and nothing is unknown, got {plan.unknown}"
 
 
-def test_an_unreadable_catalog_leaves_ids_unknown() -> None:
+def test_unreadable_catalog_keeps_dependency_unknown() -> None:
     backend = FakeBackend(
         plugins=[plugin("com.test.Root")],
         manifests={"com.test.Root": {"dependencies": ["com.test.Dep"]}},
@@ -468,7 +468,7 @@ def root_item(backend: FakeBackend):
         next(p for p in backend._plugins if p.plugin_id == "com.test.Root"))
 
 
-def test_consent_names_the_whole_set_before_any_download() -> None:
+def test_consent_lists_set_before_download() -> None:
     backend = flow_backend()
     consent = SetConsent(agree=True)
     consent.backend = backend
@@ -493,7 +493,7 @@ def test_consent_names_the_whole_set_before_any_download() -> None:
         f"the report must list every item that landed, got {report!r}")
 
 
-def test_a_decline_declines_the_whole_set() -> None:
+def test_decline_cancels_dependency_set() -> None:
     backend = flow_backend()
     consent = SetConsent(agree=False)
 
@@ -508,7 +508,7 @@ def test_a_decline_declines_the_whole_set() -> None:
         f"a declined set landed nothing, got {report.installed_ids}")
 
 
-def test_a_plugin_with_no_dependencies_is_not_asked_twice() -> None:
+def test_dependency_free_plugin_skips_set_prompt() -> None:
     backend = FakeBackend(plugins=[plugin("com.test.Root")],
                           manifests={"com.test.Root": {}})
     consent = SetConsent(agree=True)
@@ -523,7 +523,7 @@ def test_a_plugin_with_no_dependencies_is_not_asked_twice() -> None:
         f"it must still install, got {backend.installs} / {report!r}")
 
 
-def test_a_set_that_went_missing_is_still_put_to_the_user() -> None:
+def test_missing_dependency_set_is_shown_for_consent() -> None:
     """Every named id unresolvable means the plugin installs without what it
     asked for. Saying nothing would let it look healthy."""
     backend = FakeBackend(
@@ -550,7 +550,7 @@ def test_a_set_that_went_missing_is_still_put_to_the_user() -> None:
         f"refusing must install nothing, got {refused.installs}")
 
 
-def test_a_mid_set_failure_stops_and_reports_what_landed() -> None:
+def test_partial_failure_reports_installed_dependencies() -> None:
     backend = flow_backend()
     backend.fail_on = "com.test.Icons"
     consent = SetConsent(agree=True)
@@ -581,7 +581,7 @@ def test_a_mid_set_failure_stops_and_reports_what_landed() -> None:
         f"{dependencies.failure_noun(report, 'plugin')!r}")
 
 
-def test_only_a_plugin_install_takes_the_script_prompt() -> None:
+def test_install_script_prompt_applies_only_to_plugins() -> None:
     backend = flow_backend()
 
     def prompt(display_name: str) -> bool:
@@ -601,7 +601,7 @@ def test_only_a_plugin_install_takes_the_script_prompt() -> None:
         f"got {by_id['com.test.Icons']}")
 
 
-def test_an_unattended_path_installs_the_set() -> None:
+def test_unattended_install_includes_dependencies() -> None:
     backend = flow_backend()
 
     report = dependencies.install_with_dependencies(backend, root_item(backend))
@@ -614,31 +614,31 @@ def test_an_unattended_path_installs_the_set() -> None:
 
 def main() -> None:
     fixtures.start_watchdog(WATCHDOG_SECONDS, "scenario_store_dependencies")
-    test_the_cheap_catalog_view_carries_no_id_for_an_uninstalled_entry()
-    test_the_resolver_reads_the_view_that_carries_ids()
-    test_a_cycle_resolves_once()
-    test_a_shared_dependency_installs_once_and_first()
+    test_uninstalled_entry_id_requires_full_catalog_view()
+    test_resolver_uses_catalog_view_with_ids()
+    test_cycle_resolves_once()
+    test_shared_dependency_installs_once_before_dependents()
     test_depth_is_bounded()
-    test_the_depth_boundary_is_not_reported_as_truncated()
-    test_an_unknown_id_is_reported_and_never_fetched()
-    test_an_installed_dependency_is_skipped_with_its_own_chain()
-    test_an_out_of_date_dependency_is_still_left_alone()
-    test_an_installed_root_still_installs()
-    test_a_pack_dependency_resolves_through_its_own_catalog()
-    test_a_pack_cannot_pull_in_a_plugin()
-    test_only_the_catalogs_a_lookup_needs_are_read()
-    test_a_malformed_list_never_breaks_the_root_install()
-    test_a_non_string_element_is_dropped_and_not_reported_as_a_missing_id()
-    test_an_unsafe_id_never_reaches_the_plan_or_the_prompt()
-    test_a_padded_id_still_matches()
-    test_an_unreadable_catalog_leaves_ids_unknown()
-    test_consent_names_the_whole_set_before_any_download()
-    test_a_decline_declines_the_whole_set()
-    test_a_plugin_with_no_dependencies_is_not_asked_twice()
-    test_a_set_that_went_missing_is_still_put_to_the_user()
-    test_a_mid_set_failure_stops_and_reports_what_landed()
-    test_only_a_plugin_install_takes_the_script_prompt()
-    test_an_unattended_path_installs_the_set()
+    test_depth_limit_without_remaining_dependencies_is_not_truncated()
+    test_unknown_dependency_is_reported_without_fetch()
+    test_installed_dependency_skips_its_dependency_chain()
+    test_outdated_installed_dependency_is_unchanged()
+    test_installed_root_can_be_reinstalled()
+    test_pack_dependency_uses_matching_catalog()
+    test_pack_cannot_depend_on_plugin()
+    test_lookup_reads_only_required_catalogs()
+    test_malformed_dependencies_do_not_block_root_install()
+    test_non_string_dependencies_are_ignored_not_missing()
+    test_unsafe_dependency_ids_do_not_reach_plan_or_prompt()
+    test_padded_dependency_id_matches()
+    test_unreadable_catalog_keeps_dependency_unknown()
+    test_consent_lists_set_before_download()
+    test_decline_cancels_dependency_set()
+    test_dependency_free_plugin_skips_set_prompt()
+    test_missing_dependency_set_is_shown_for_consent()
+    test_partial_failure_reports_installed_dependencies()
+    test_install_script_prompt_applies_only_to_plugins()
+    test_unattended_install_includes_dependencies()
     print("PASS: scenario_store_dependencies")
 
 

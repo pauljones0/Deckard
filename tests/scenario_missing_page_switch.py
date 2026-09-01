@@ -182,7 +182,7 @@ def check_auto_switch_keeps_the_page(page_manager: FakePageManager) -> None:
           "matched page does not build, and marks nothing until one does")
 
 
-def check_hand_pick_ends_the_automatic_mark(
+def check_manual_pick_clears_auto_mark(
         page_manager: FakePageManager) -> None:
     """End automatic state when the user selects a page.
     The selected page becomes the next automatic restore destination."""
@@ -243,7 +243,7 @@ def check_hand_pick_ends_the_automatic_mark(
           "the page the deck comes back to")
 
 
-def check_a_command_switch_ends_the_automatic_mark(
+def check_command_switch_clears_auto_mark(
         page_manager: FakePageManager) -> None:
     """End automatic state for successful control-plane page commands.
     Failed and already-active commands must preserve the existing mark."""
@@ -355,7 +355,7 @@ def check_a_command_switch_ends_the_automatic_mark(
           "becomes the page the deck comes back to")
 
 
-def check_a_load_that_raises_keeps_the_mark(
+def check_failed_load_preserves_auto_mark(
         page_manager: FakePageManager) -> None:
     """Restore the automatic mark when a manual page load raises.
     The deck still shows the automatic page and must not record it as manual."""
@@ -419,7 +419,7 @@ def check_a_load_that_raises_keeps_the_mark(
           "that made it")
 
 
-def check_switch_during_a_restore_keeps_the_way_back(
+def check_restore_race_preserves_manual_path(
         page_manager: FakePageManager) -> None:
     """Keep the manual destination when an automatic switch lands during restore.
     The restore claim disambiguates the still-visible automatic page."""
@@ -495,14 +495,14 @@ def check_manual_restore_keeps_the_page(page_manager: FakePageManager) -> None:
     print("PASS: the restore to the manually chosen page keeps the deck's "
           "page when that page does not build")
 
-    check_failed_restore_keeps_the_way_back(page_manager, controller,
-                                            auto_page, manual_path)
+    check_failed_restore_preserves_manual_path(page_manager, controller,
+                                               auto_page, manual_path)
 
 
-def check_failed_restore_keeps_the_way_back(page_manager: FakePageManager,
-                                            controller: FakeController,
-                                            auto_page: FakePage,
-                                            manual_path: str) -> None:
+def check_failed_restore_preserves_manual_path(page_manager: FakePageManager,
+                                               controller: FakeController,
+                                               auto_page: FakePage,
+                                               manual_path: str) -> None:
     """Keep the automatic mark and manual path when a restore cannot build.
     A later window change must be able to retry the restore."""
     grabber = WindowGrabber.__new__(WindowGrabber)
@@ -564,10 +564,10 @@ def main() -> int:
     check_selector_keeps_the_page(page_manager)
     check_auto_switch_keeps_the_page(FakePageManager(page_dir))
     check_manual_restore_keeps_the_page(FakePageManager(page_dir))
-    check_hand_pick_ends_the_automatic_mark(FakePageManager(page_dir))
-    check_a_command_switch_ends_the_automatic_mark(FakePageManager(page_dir))
-    check_a_load_that_raises_keeps_the_mark(FakePageManager(page_dir))
-    check_switch_during_a_restore_keeps_the_way_back(
+    check_manual_pick_clears_auto_mark(FakePageManager(page_dir))
+    check_command_switch_clears_auto_mark(FakePageManager(page_dir))
+    check_failed_load_preserves_auto_mark(FakePageManager(page_dir))
+    check_restore_race_preserves_manual_path(
         FakePageManager(page_dir))
 
     print("ALL PASS: scenario_missing_page_switch")

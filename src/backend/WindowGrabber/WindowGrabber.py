@@ -252,7 +252,7 @@ class WindowGrabber:
                 return
 
             try:
-                wanted = page_manager.any_auto_change_rule_enabled()
+                wanted = page_manager.has_enabled_auto_change_rule()
             except Exception:
                 # Keep the current state when rules cannot be read.
                 # Guessing can start unwanted work or stop a working auto-change.
@@ -347,7 +347,7 @@ class WindowGrabber:
             return
 
         try:
-            wanted = page_manager.any_auto_change_rule_enabled()
+            wanted = page_manager.has_enabled_auto_change_rule()
         except Exception:
             log.opt(exception=True).warning("Could not determine whether any window auto-change rule is enabled")
             return
@@ -461,7 +461,7 @@ class WindowGrabber:
             active_page = deck_controller.active_page
             if active_page is None:
                 return None
-            if self._page_the_deck_will_show(deck_controller, active_page) == page_path:
+            if self._effective_page_path(deck_controller, active_page) == page_path:
                 if deck_controller not in self._pending_manual_loads:
                     # Mark it now because no page build can fail first.
                     # Do not mark an in-flight manual choice, even when a rule also names it.
@@ -479,7 +479,7 @@ class WindowGrabber:
                 # owns the decision now.
                 return False
             pending_manual = self._pending_manual_path(deck_controller)
-            if self._page_the_deck_will_show(deck_controller, active_page) == page_path:
+            if self._effective_page_path(deck_controller, active_page) == page_path:
                 return False
 
             if pending_manual is not None:
@@ -491,8 +491,8 @@ class WindowGrabber:
             deck_controller.page_auto_loaded = True
             return True
 
-    def _page_the_deck_will_show(self, deck_controller: "DeckController",
-                                 active_page: "Page") -> str:
+    def _effective_page_path(self, deck_controller: "DeckController",
+                             active_page: "Page") -> str:
         """The page path this deck settles on once the loads in flight land.
         Call under the routing lock."""
         pending_manual = self._pending_manual_path(deck_controller)
@@ -593,7 +593,7 @@ class WindowGrabber:
         """Return the manual page to restore, or None when this routing owns no restore.
         Stay read-only until build succeeds so failure can retry without losing the choice."""
         with self._dispatch_lock:
-            if not self._restore_still_owned(deck_controller, active_page):
+            if not self._owns_restore(deck_controller, active_page):
                 return None
             return deck_controller.last_manual_loaded_page_path
 
@@ -602,12 +602,12 @@ class WindowGrabber:
         """Clear the automatic mark and claim the manual target if this route owns it.
         Recheck after build; keep GTK loading outside while the claim protects the choice."""
         with self._dispatch_lock:
-            if not self._restore_still_owned(deck_controller, active_page):
+            if not self._owns_restore(deck_controller, active_page):
                 return None
             deck_controller.page_auto_loaded = False
             return self._begin_manual_load(deck_controller, manual_path)
 
-    def _restore_still_owned(self, deck_controller: "DeckController", active_page: "Page") -> bool:
+    def _owns_restore(self, deck_controller: "DeckController", active_page: "Page") -> bool:
         """Answers whether a restore off active_page is this routing's to make.
         Call under the routing lock."""
         if not getattr(deck_controller, "page_auto_loaded", False):

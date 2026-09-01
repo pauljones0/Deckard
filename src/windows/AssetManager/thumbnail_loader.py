@@ -197,7 +197,7 @@ def _deserialize(data: bytes) -> Any:
         bits, width, height, rowstride)
 
 
-def _real_decode(key: Key) -> bytes | None:
+def _decode_thumbnail_bytes(key: Key) -> bytes | None:
     """Decode and serialize off-main; return None for unreadable files."""
     from gi.repository import GdkPixbuf, GLib
 
@@ -211,7 +211,7 @@ def _real_decode(key: Key) -> bytes | None:
     return _serialize(pixbuf)
 
 
-def _real_apply(target: Any, data: bytes | None) -> None:
+def _apply_thumbnail_bytes(target: Any, data: bytes | None) -> None:
     """Show the decoded thumbnail on target, or the broken-image icon on a
     failed decode. Runs on the main loop."""
     if data is None:
@@ -255,8 +255,8 @@ def build_loader() -> ThumbnailLoader:
         run_on_main(fn)
 
     return ThumbnailLoader(
-        decode=_real_decode,
-        apply=_real_apply,
+        decode=_decode_thumbnail_bytes,
+        apply=_apply_thumbnail_bytes,
         marshal=marshal,
         cache=shared_cache(),
         pool=shared_pool(),

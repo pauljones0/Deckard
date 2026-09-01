@@ -141,7 +141,7 @@ class DeckReaderSupervisor:
         self._in_flight = False
         # Latched. The deck stays down until a replug builds a new controller.
         self.given_up = False
-        self._last_give_up_log = 0.0
+        self._last_give_up_log_at = 0.0
         # Whether this deck's handle is down, so the writer must drop device writes.
         self._handle_down = False
         # Counters for the scenarios and for a field log read.
@@ -177,7 +177,7 @@ class DeckReaderSupervisor:
                 return False
             if self.consecutive_attempts >= MAX_CONSECUTIVE_ATTEMPTS:
                 self.given_up = True
-                self._last_give_up_log = now
+                self._last_give_up_log_at = now
                 latch_now = True
             else:
                 # Reserve the attempt and clear the previous hold here, before the message is
@@ -191,7 +191,7 @@ class DeckReaderSupervisor:
             # log line reaches a sink, and the hook is third-party code.
             self._set_handle_down(True)
             log.error(
-                f"Deck {self._serial()}: {MAX_CONSECUTIVE_ATTEMPTS} reopen attempts in a "
+                f"Deck {self._deck_label()}: {MAX_CONSECUTIVE_ATTEMPTS} reopen attempts in a "
                 f"row did not bring the input reader back. This deck is now left alone: "
                 f"it takes no input, it receives no more writes, and its screens keep "
                 f"the last picture they were given. Replug it to recover.")
@@ -218,7 +218,7 @@ class DeckReaderSupervisor:
             self._hold_deadline = None
             self.consecutive_attempts = 0
             self.holds += 1
-        log.info(f"Deck {self._serial()}: the reopened input reader held; "
+        log.info(f"Deck {self._deck_label()}: the reopened input reader held; "
                  f"the attempt count is clear.")
 
     def allow_one_more_round(self) -> None:
@@ -230,7 +230,7 @@ class DeckReaderSupervisor:
             self.given_up = False
             self.consecutive_attempts = 0
             self._hold_deadline = None
-        log.warning(f"Deck {self._serial()}: the deck was given up and then reset, so it "
+        log.warning(f"Deck {self._deck_label()}: the deck was given up and then reset, so it "
                     f"takes one more round of reopen attempts.")
 
     def note_still_down(self) -> None:
@@ -238,11 +238,11 @@ class DeckReaderSupervisor:
         still down. Watchdog thread only."""
         now = time.monotonic()
         with self._lock:
-            if now - self._last_give_up_log < GIVE_UP_LOG_GAP_S:
+            if now - self._last_give_up_log_at < GIVE_UP_LOG_GAP_S:
                 return
-            self._last_give_up_log = now
+            self._last_give_up_log_at = now
         log.warning(
-            f"Deck {self._serial()}: the input reader is still down and this deck was "
+            f"Deck {self._deck_label()}: the input reader is still down and this deck was "
             f"given up. It takes no input and receives no writes. Replug it to recover.")
 
     def run_attempt(self, stopping: "Callable[[], bool]") -> bool:
@@ -253,7 +253,7 @@ class DeckReaderSupervisor:
             return self._reopen(stopping)
         except Exception:
             log.opt(exception=True).error(
-                f"Deck {self._serial()}: the reader reopen attempt failed")
+                f"Deck {self._deck_label()}: the reader reopen attempt failed")
             self._set_handle_down(True)
             return False
         finally:
@@ -282,7 +282,7 @@ class DeckReaderSupervisor:
             return False
 
         log.warning(
-            f"Deck {self._serial()}: the input reader thread is gone while the device is "
+            f"Deck {self._deck_label()}: the input reader thread is gone while the device is "
             f"still connected, so the deck takes no input. Reopening the handle.")
         # Close through the release seam so no other path reopens the stopped reader.
         controller._release_handle()
@@ -304,19 +304,19 @@ class DeckReaderSupervisor:
                     last_probe = now
                     if not _still_connected(deck):
                         log.warning(
-                            f"Deck {self._serial()}: the device left the bus during the "
+                            f"Deck {self._deck_label()}: the device left the bus during the "
                             f"reopen. The disconnect sweep owns it now.")
                         return False
                 if now >= deadline:
                     log.warning(
-                        f"Deck {self._serial()}: the handle did not open within "
+                        f"Deck {self._deck_label()}: the handle did not open within "
                         f"{REOPEN_DEADLINE_S:g}s: {e}")
                     return False
                 time.sleep(REOPEN_RETRY_GAP_S)
 
         if reader_is_dead(deck):
             log.warning(
-                f"Deck {self._serial()}: the handle re-opened but the reader thread did not "
+                f"Deck {self._deck_label()}: the handle re-opened but the reader thread did not "
                 f"start, so the deck still takes no input.")
             return False
 
@@ -330,7 +330,7 @@ class DeckReaderSupervisor:
         controller._schedule_full_repaint()
         self._arm_hold()
         self.reopens += 1
-        log.info(f"Deck {self._serial()}: the input reader is back and the deck repaints. "
+        log.info(f"Deck {self._deck_label()}: the input reader is back and the deck repaints. "
                  f"It counts as recovered once it holds for {HOLD_WINDOW_S:g}s.")
         return True
 
@@ -364,9 +364,9 @@ class DeckReaderSupervisor:
             escalation(self.controller)
         except Exception:
             log.opt(exception=True).error(
-                f"Deck {self._serial()}: the give-up escalation hook raised")
+                f"Deck {self._deck_label()}: the give-up escalation hook raised")
 
-    def _serial(self) -> str:
+    def _deck_label(self) -> str:
         return cast(str, getattr(self.controller, "_serial_number", None) or "unknown")
 
 

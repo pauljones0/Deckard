@@ -37,7 +37,7 @@ ORIGINAL_BUS = os.environ.get("DBUS_SESSION_BUS_ADDRESS", "")
 
 
 # Build invalid UTF-8 argv text through Python's surrogateescape path.
-NOT_UTF8 = "Alpha" + b"\xff".decode("utf-8", "surrogateescape")
+SURROGATE_ARG = "Alpha" + b"\xff".decode("utf-8", "surrogateescape")
 
 
 def parse(argv: list[str]):
@@ -77,7 +77,7 @@ def leg_decision_table() -> None:
 
     # A running instance takes every request, and the invocation is over.
     recorder = Recorder(running=True)
-    outcome = cli_fast_path.answer_from_running_instance(parse(FORWARD_ARGV), recorder)
+    outcome = cli_fast_path.handle_preboot_cli(parse(FORWARD_ARGV), recorder)
     assert outcome.exit_code == 0, (
         f"a forward the instance accepted must end the invocation with a "
         f"success code, not {outcome.exit_code!r}")
@@ -88,7 +88,7 @@ def leg_decision_table() -> None:
 
     # With no instance, hand the untouched invocation to the boot path.
     recorder = Recorder(running=False)
-    outcome = cli_fast_path.answer_from_running_instance(parse(FORWARD_ARGV), recorder)
+    outcome = cli_fast_path.handle_preboot_cli(parse(FORWARD_ARGV), recorder)
     assert outcome.exit_code is None, (
         f"with nothing running the invocation must boot, not exit "
         f"{outcome.exit_code!r} -- its requests would be lost")
@@ -99,7 +99,7 @@ def leg_decision_table() -> None:
     # --close-running replaces the instance, so its requests belong to the
     # decks this launch opens next and it must boot to park them.
     recorder = Recorder(running=True)
-    outcome = cli_fast_path.answer_from_running_instance(
+    outcome = cli_fast_path.handle_preboot_cli(
         parse([*FORWARD_ARGV, "--close-running"]), recorder)
     assert outcome.exit_code is None, (
         f"--close-running must boot, not exit {outcome.exit_code!r}")
@@ -111,7 +111,7 @@ def leg_decision_table() -> None:
     # it, so it is that command whatever else the line carries.
     for verb in ("--list-devices", "--list-pages"):
         recorder = Recorder(running=True)
-        outcome = cli_fast_path.answer_from_running_instance(
+        outcome = cli_fast_path.handle_preboot_cli(
             parse([*FORWARD_ARGV, verb]), recorder)
         assert outcome.exit_code is None, (
             f"{verb} must boot so this process can answer it, not exit "
@@ -122,7 +122,7 @@ def leg_decision_table() -> None:
 
     # An ordinary launch carries no request and is not this module's business.
     recorder = Recorder(running=True)
-    outcome = cli_fast_path.answer_from_running_instance(parse(["--devel"]), recorder)
+    outcome = cli_fast_path.handle_preboot_cli(parse(["--devel"]), recorder)
     assert outcome.exit_code is None, (
         f"a launch with no request must boot, not exit {outcome.exit_code!r}")
     assert recorder.calls == [], (
@@ -138,15 +138,15 @@ def leg_decision_table() -> None:
                   str(cli_forward.MAX_STATE_NUMBER + 1)],
                  ["--change-state", "deck-a", "Alpha", "0,0", "99999999999999"],
                   # Reject surrogateescaped argv before transport encoding.
-                 ["--change-page", "deck-a", NOT_UTF8],
-                 ["--change-page", NOT_UTF8, "Alpha"],
-                 ["--change-state", "deck-a", NOT_UTF8, "0,0", "1"],
-                 ["--change-state", NOT_UTF8, "Alpha", "0,0", "1"],
+                 ["--change-page", "deck-a", SURROGATE_ARG],
+                 ["--change-page", SURROGATE_ARG, "Alpha"],
+                 ["--change-state", "deck-a", SURROGATE_ARG, "0,0", "1"],
+                 ["--change-state", SURROGATE_ARG, "Alpha", "0,0", "1"],
                   # Reject malformed input before --close-running stops the instance.
                  ["--change-state", "deck-a", "Alpha", "0,0", "not-a-number",
                   "--close-running"]):
         recorder = Recorder(running=True)
-        outcome = cli_fast_path.answer_from_running_instance(parse(argv), recorder)
+        outcome = cli_fast_path.handle_preboot_cli(parse(argv), recorder)
         assert outcome.exit_code == 1, (
             f"{argv} is malformed and must fail, not exit {outcome.exit_code!r}")
         assert cli_forward.USAGE in outcome.failures, outcome.failures
@@ -157,7 +157,7 @@ def leg_decision_table() -> None:
     # Let the boot path retry a bus that is unavailable during early login.
     recorder = Recorder(running=True)
     with bus_transport_raising():
-        outcome = cli_fast_path.answer_from_running_instance(parse(FORWARD_ARGV))
+        outcome = cli_fast_path.handle_preboot_cli(parse(FORWARD_ARGV))
     assert outcome.exit_code is None, (
         f"an unreachable bus must hand the invocation back, not exit "
         f"{outcome.exit_code!r} -- the boot path builds the same transport and "
@@ -168,7 +168,7 @@ def leg_decision_table() -> None:
     # Report a send race instead of booting over an instance that may own decks.
     broke = cli_forward.TransportError("the connection is closed")
     recorder = Recorder(running=True, raises=broke)
-    outcome = cli_fast_path.answer_from_running_instance(parse(FORWARD_ARGV), recorder)
+    outcome = cli_fast_path.handle_preboot_cli(parse(FORWARD_ARGV), recorder)
     assert outcome.exit_code == 1, (
         f"a send that failed must exit non-zero, not {outcome.exit_code!r} -- "
         f"a zero reads as applied")
@@ -176,13 +176,13 @@ def leg_decision_table() -> None:
 
     # An instance without the methods answers every request the same way.
     recorder = Recorder(running=True, raises=cli_forward.OlderInstance())
-    outcome = cli_fast_path.answer_from_running_instance(parse(FORWARD_ARGV), recorder)
+    outcome = cli_fast_path.handle_preboot_cli(parse(FORWARD_ARGV), recorder)
     assert outcome.exit_code == 1, outcome.exit_code
     assert outcome.failures == (cli_forward.SKEW_MESSAGE,), outcome.failures
 
     # One request refused and the rest applied is still a failed command.
     recorder = Recorder(running=True, answers={"deck-a": "no such page"})
-    outcome = cli_fast_path.answer_from_running_instance(parse(FORWARD_ARGV), recorder)
+    outcome = cli_fast_path.handle_preboot_cli(parse(FORWARD_ARGV), recorder)
     assert outcome.exit_code == 1, outcome.exit_code
     assert outcome.failures == ("no such page",), outcome.failures
     assert recorder.forwards() == FORWARDS, (
@@ -196,14 +196,14 @@ EMULATE_ARGV = ["--emulate-input", "deck-a", "Alpha", "0,0", "press"]
 EMULATE_FORWARDS = [("emulate", "deck-a", "Alpha", "0,0", "press")]
 
 
-def leg_press_needs_a_running_instance() -> None:
+def leg_emulated_input_requires_running_instance() -> None:
     """Forward a press to a running instance or refuse it without booting."""
     print("leg 1b: an emulated input against a running instance, or nothing")
 
     # An instance is running. This is the whole reason the verb exists, and it
     # ends here without the application being imported at all.
     recorder = Recorder(running=True)
-    outcome = cli_fast_path.answer_from_running_instance(parse(EMULATE_ARGV), recorder)
+    outcome = cli_fast_path.handle_preboot_cli(parse(EMULATE_ARGV), recorder)
     assert outcome.exit_code == 0, (
         f"a press the instance accepted must end the invocation with a success "
         f"code, not {outcome.exit_code!r}")
@@ -213,7 +213,7 @@ def leg_press_needs_a_running_instance() -> None:
 
     # A boot cannot apply a press before its deck exists, so refuse it here.
     recorder = Recorder(running=False)
-    outcome = cli_fast_path.answer_from_running_instance(parse(EMULATE_ARGV), recorder)
+    outcome = cli_fast_path.handle_preboot_cli(parse(EMULATE_ARGV), recorder)
     assert outcome.exit_code == 1, (
         f"with nothing running a press must end the invocation, not boot: "
         f"{outcome.exit_code!r}")
@@ -223,7 +223,7 @@ def leg_press_needs_a_running_instance() -> None:
 
     # --close-running makes this launch the instance, which is the same case.
     recorder = Recorder(running=True)
-    outcome = cli_fast_path.answer_from_running_instance(
+    outcome = cli_fast_path.handle_preboot_cli(
         parse([*EMULATE_ARGV, "--close-running"]), recorder)
     assert outcome.exit_code == 1, (
         f"--close-running cannot press either, and must not boot: "
@@ -236,7 +236,7 @@ def leg_press_needs_a_running_instance() -> None:
     # A press beside a parkable request refuses the whole command, so half of
     # it is never applied by a process the other half was not meant for.
     recorder = Recorder(running=False)
-    outcome = cli_fast_path.answer_from_running_instance(
+    outcome = cli_fast_path.handle_preboot_cli(
         parse([*FORWARD_ARGV, *EMULATE_ARGV]), recorder)
     assert outcome.exit_code == 1, outcome.exit_code
     assert outcome.failures == (cli_forward.NOT_RUNNING_MESSAGE,), outcome.failures
@@ -246,9 +246,9 @@ def leg_press_needs_a_running_instance() -> None:
     # so here rather than at the transport.
     for argv in (["--emulate-input", "deck-a", "Alpha", "0,0", "smash"],
                  ["--emulate-input", "deck-a", "Alpha", "nope", "press"],
-                 ["--emulate-input", "deck-a", NOT_UTF8, "0,0", "press"]):
+                 ["--emulate-input", "deck-a", SURROGATE_ARG, "0,0", "press"]):
         recorder = Recorder(running=True)
-        outcome = cli_fast_path.answer_from_running_instance(parse(argv), recorder)
+        outcome = cli_fast_path.handle_preboot_cli(parse(argv), recorder)
         assert outcome.exit_code == 1, (
             f"{argv} is malformed and must fail, not exit {outcome.exit_code!r}")
         assert cli_forward.USAGE in outcome.failures, outcome.failures
@@ -258,7 +258,7 @@ def leg_press_needs_a_running_instance() -> None:
     for running in (True, False):
         for verb in ("--list-pages", "--list-devices"):
             recorder = Recorder(running=running)
-            outcome = cli_fast_path.answer_from_running_instance(
+            outcome = cli_fast_path.handle_preboot_cli(
                 parse([*EMULATE_ARGV, verb]), recorder)
             assert outcome.exit_code == 1, (
                 f"{verb} with a press must refuse the line, not exit "
@@ -271,7 +271,7 @@ def leg_press_needs_a_running_instance() -> None:
     # that the boot can apply.
     for verb in ("--list-pages", "--list-devices"):
         recorder = Recorder(running=True)
-        outcome = cli_fast_path.answer_from_running_instance(
+        outcome = cli_fast_path.handle_preboot_cli(
             parse([*FORWARD_ARGV, verb]), recorder)
         assert outcome.exit_code is None, (
             f"{verb} must boot so this process can answer it, not exit "
@@ -290,7 +290,7 @@ def leg_instance_verbs() -> None:
 
     # --json prints the dump and ends with success, no application imported.
     recorder = Recorder(running=True, query=DUMP)
-    outcome = cli_fast_path.answer_from_running_instance(parse(["--json"]), recorder)
+    outcome = cli_fast_path.handle_preboot_cli(parse(["--json"]), recorder)
     assert outcome.exit_code == 0, outcome
     assert outcome.output == (DUMP,), outcome.output
     assert ("query_state",) in recorder.calls, recorder.calls
@@ -298,7 +298,7 @@ def leg_instance_verbs() -> None:
 
     # --get-brightness reads one deck out of the same dump.
     recorder = Recorder(running=True, query=DUMP)
-    outcome = cli_fast_path.answer_from_running_instance(
+    outcome = cli_fast_path.handle_preboot_cli(
         parse(["--get-brightness", "deck-a"]), recorder)
     assert outcome.exit_code == 0 and outcome.output == ("60",), outcome
 
@@ -312,7 +312,7 @@ def leg_instance_verbs() -> None:
         (["--list-actions", "Main"], ("list_actions", "Main", "")),
     ):
         recorder = Recorder(running=True, query=DUMP)
-        outcome = cli_fast_path.answer_from_running_instance(parse(argv), recorder)
+        outcome = cli_fast_path.handle_preboot_cli(parse(argv), recorder)
         assert outcome.exit_code == 0, (argv, outcome)
         assert call in recorder.calls, (argv, recorder.calls)
 
@@ -321,7 +321,7 @@ def leg_instance_verbs() -> None:
                  ["--set-brightness", "deck-a", "60"], ["--sleep", "deck-a"],
                  ["--rename-page", "Main", "Home"]):
         recorder = Recorder(running=False)
-        outcome = cli_fast_path.answer_from_running_instance(parse(argv), recorder)
+        outcome = cli_fast_path.handle_preboot_cli(parse(argv), recorder)
         assert outcome.exit_code == 1, (argv, outcome)
         assert outcome.failures == (cli_forward._NOT_RUNNING_INSTANCE_MESSAGE,), (
             argv, outcome.failures)
@@ -330,20 +330,20 @@ def leg_instance_verbs() -> None:
 
     # A malformed verb voids the command before the bus, running or not.
     recorder = Recorder(running=True)
-    outcome = cli_fast_path.answer_from_running_instance(
+    outcome = cli_fast_path.handle_preboot_cli(
         parse(["--set-brightness", "deck-a", "nope"]), recorder)
     assert outcome.exit_code == 1 and cli_forward.USAGE in outcome.failures, outcome
     assert recorder.calls == [], recorder.calls
 
     # Refuse an unreachable read instead of booting an application to answer it.
     with bus_transport_raising():
-        outcome = cli_fast_path.answer_from_running_instance(parse(["--json"]))
+        outcome = cli_fast_path.handle_preboot_cli(parse(["--json"]))
     assert outcome.exit_code == 1, outcome
     assert outcome.failures and "session bus" in outcome.failures[0], outcome.failures
 
     # Treat an explicit empty serial as a supplied verb, not an absent verb.
     for argv in (["--sleep", ""], ["--wake", ""], ["--get-brightness", ""]):
-        outcome = cli_fast_path.answer_from_running_instance(
+        outcome = cli_fast_path.handle_preboot_cli(
             parse(argv), Recorder(running=True, query=DUMP))
         assert outcome.exit_code is not None, (
             f"{argv} booted the application instead of answering: {outcome}")
@@ -400,8 +400,8 @@ def leg_both_halves_answer_alike() -> None:
 
         fast_recorder = Recorder(running=running)
         boot_recorder = Recorder(running=running)
-        fast = cli_fast_path.answer_from_running_instance(parse(line), fast_recorder)
-        boot = cli_forward.forward_cli_requests(parse(line), boot_recorder)
+        fast = cli_fast_path.handle_preboot_cli(parse(line), fast_recorder)
+        boot = cli_forward.route_cli_requests(parse(line), boot_recorder)
 
         assert tuple(boot.failures) == fast.failures, (
             f"{what}: the fast path says {fast.failures} and the boot path says "
@@ -421,7 +421,7 @@ def leg_both_halves_answer_alike() -> None:
     gl.api_page_requests.clear()
     gl.api_state_requests.clear()
     recorder = Recorder(running=False)
-    boot = cli_forward.forward_cli_requests(
+    boot = cli_forward.route_cli_requests(
         parse([*FORWARD_ARGV, "--list-pages"]), recorder)
     assert not boot.handled and boot.failures == [], boot
     assert recorder.forwards() == [], recorder.forwards()
@@ -465,7 +465,7 @@ class Transport:
     def __init__(self):
         self.calls = []
 
-    def is_running(self):
+    def has_running_instance(self):
         return True
 
     def change_page(self, serial, page):
@@ -490,7 +490,7 @@ args = argparse.Namespace(change_page=[["deck", "Page"]], change_state=None,
                           sleep=None, wake=None, list_actions=None,
                           rename_page=None, duplicate_page=None)
 transport = Transport()
-outcome = cli_fast_path.answer_from_running_instance(args, transport)
+outcome = cli_fast_path.handle_preboot_cli(args, transport)
 print("DECIDED %r %r" % (outcome.exit_code, transport.calls))
 report("decide")
 '''
@@ -701,7 +701,7 @@ def leg_entry_point() -> None:
              ["--change-state", SERIAL, "Alpha", "0,0",
               str(cli_forward.MAX_STATE_NUMBER + 1)]),
             ("a page name argv carried as non-UTF-8 bytes",
-             ["--change-page", SERIAL, NOT_UTF8]),
+             ["--change-page", SERIAL, SURROGATE_ARG]),
         ):
             reset_record(record)
             proc, _ = run_main(["--data", scratch_data, *bad_argv], sentinel)
@@ -844,7 +844,7 @@ def main() -> int:
     fixtures.start_watchdog(WATCHDOG_SECONDS, label="scenario_cli_fast_path")
 
     leg_decision_table()
-    leg_press_needs_a_running_instance()
+    leg_emulated_input_requires_running_instance()
     leg_instance_verbs()
     leg_both_halves_answer_alike()
     leg_import_fence()

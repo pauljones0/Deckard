@@ -52,7 +52,7 @@ def check_source_rate_fidelity() -> None:
     print("PASS: each source renders at its own rate on the shared loop")
 
 
-def check_no_drift_over_a_minute() -> None:
+def check_minute_drift() -> None:
     clock = FakeClock()
     media_loop.install_clock(clock)
     try:
@@ -188,7 +188,7 @@ class FakeVideo(media_loop.FrameScheduled):
         return self._rate
 
 
-def check_writer_paces_background_to_source_rate() -> None:
+def check_background_source_rate_pacing() -> None:
     controller, media_player, _deck_manager = fixtures.make_stub_controller(n_keys=1)
     clock = TickingClock()
     media_loop.install_clock(clock)
@@ -211,13 +211,13 @@ def check_writer_paces_background_to_source_rate() -> None:
             media_player._wake_event.set()
             assert media_player._run_one_tick(), "the tick asked to stop"
 
-        per_second = renders["n"] / seconds
-        assert per_second <= 24.5, (
-            f"a 24 fps source rendered {per_second:.1f} times per simulated "
+        renders_per_second = renders["n"] / seconds
+        assert renders_per_second <= 24.5, (
+            f"a 24 fps source rendered {renders_per_second:.1f} times per simulated "
             f"second on the {MEDIA_LOOP_FPS} Hz loop; the deadline must cap "
             f"it at the source rate")
-        assert per_second >= 22.0, (
-            f"a 24 fps source rendered only {per_second:.1f} times per "
+        assert renders_per_second >= 22.0, (
+            f"a 24 fps source rendered only {renders_per_second:.1f} times per "
             f"simulated second; the deadline starves the source")
     finally:
         media_loop.install_clock(None)
@@ -244,10 +244,10 @@ def check_clock_seam() -> None:
 
 fixtures.start_watchdog(90, "frame deadlines")
 check_source_rate_fidelity()
-check_no_drift_over_a_minute()
+check_minute_drift()
 check_catch_up_without_burst()
 check_away_gap_resync()
 check_source_render_rates()
-check_writer_paces_background_to_source_rate()
+check_background_source_rate_pacing()
 check_clock_seam()
 print("SCENARIO PASS")

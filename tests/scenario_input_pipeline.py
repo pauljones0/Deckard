@@ -27,9 +27,9 @@ _DELIVERED: list = []
 _DELIVERED_LOCK = threading.Lock()
 
 
-def _record(ident, event, data):
+def _record(ident, event, event_data):
     with _DELIVERED_LOCK:
-        _DELIVERED.append((ident, event, data))
+        _DELIVERED.append((ident, event, event_data))
 
 
 def _delivered_events(ident=None):
@@ -76,8 +76,8 @@ class RecordingAction(ActionCore):
         for ev in events:
             # A fresh closure per event, so the recorded event is the right one.
             def make_cb(event=ev, ident=ident):
-                def cb(data=None):
-                    _record(ident, event, data)
+                def cb(event_data=None):
+                    _record(ident, event, event_data)
                 return cb
             self.add_event_assigner(EventAssigner(
                 id=f"rec_{ident}_{ev.string_name}",
@@ -108,7 +108,7 @@ class _Holder:
         )
 
 
-class _PluginManager:
+class _StubPluginManager:
     def get_action_holder_from_id(self, action_id):
         return _Holder() if action_id == "dev_test_RecordingAction" else None
 
@@ -373,7 +373,7 @@ def test_event_map_junk_keys() -> int:
 
 def main() -> int:
     start_watchdog(75, "input_pipeline")
-    gl.plugin_manager = _PluginManager()
+    gl.plugin_manager = _StubPluginManager()
     rc = test_key_events_rotation_0()
     rc |= test_rotation_90_remap()
     rc |= test_dial_events()

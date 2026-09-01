@@ -8,7 +8,7 @@ import globals as gl
 from src.Signals.Signals import ChangePage
 
 WATCHDOG_SECONDS = 30
-HANDLER_SLEEP = 3.0
+HANDLER_SLEEP_SECONDS = 3.0
 
 
 def _install_sync_change_page_dispatch():
@@ -41,7 +41,7 @@ def main() -> None:
 
     def slow_change_page_handler(ctrl, old_path, new_path):
         handler_started.set()
-        time.sleep(HANDLER_SLEEP)
+        time.sleep(HANDLER_SLEEP_SECONDS)
 
     gl.signal_manager.connect_signal(ChangePage, slow_change_page_handler)
 
@@ -100,9 +100,9 @@ def main() -> None:
         assert "dt" in hide_elapsed, "hide() thread did not record completion"
         assert "dt" in concurrent_load_elapsed, "concurrent load_page() thread did not record completion"
 
-        # hide() takes about HANDLER_SLEEP through the synchronous phase-3 handler.
+        # hide() takes about HANDLER_SLEEP_SECONDS through the synchronous phase-3 handler.
         # The lock probe is the regression assertion.
-        assert hide_elapsed["dt"] >= HANDLER_SLEEP * 0.9, (
+        assert hide_elapsed["dt"] >= HANDLER_SLEEP_SECONDS * 0.9, (
             "fixture sanity: hide()'s phase-3 load_page() did not appear to "
             "run the synchronously-dispatched handler at all"
         )
@@ -110,13 +110,13 @@ def main() -> None:
         assert lock_probe_elapsed.get("got"), "the lock probe never acquired _load_page_lock"
 
         # During ChangePage dispatch, another thread must acquire _load_page_lock within one second.
-        # Dispatch under the lock would block it for the remaining HANDLER_SLEEP.
+        # Dispatch under the lock would block it for the remaining HANDLER_SLEEP_SECONDS.
         assert lock_probe_elapsed["dt"] < 1.0, (
             f"acquiring _load_page_lock took {lock_probe_elapsed['dt']:.2f}s while "
             f"a ChangePage handler was sleeping -- the transition is holding the "
             f"lock across a plugin callback (G-B1 regression)"
         )
-        assert total < HANDLER_SLEEP + 5.0, f"scenario took {total:.2f}s total -- unexpectedly slow"
+        assert total < HANDLER_SLEEP_SECONDS + 5.0, f"scenario took {total:.2f}s total -- unexpectedly slow"
 
         # The concurrent, independent load_page() call must still have landed.
         # The racing hide() transition must not drop or corrupt it.

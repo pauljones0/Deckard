@@ -30,11 +30,11 @@ class SettingsManager:
 
     @staticmethod
     def load_settings_from_file(file_path: str) -> dict[str, Any]:
-        data, _corrupt = SettingsManager.load_settings_reporting_corruption(file_path)
+        data, _corrupt = SettingsManager.load_settings_with_corruption_status(file_path)
         return data
 
     @staticmethod
-    def load_settings_reporting_corruption(file_path: str) -> tuple[dict[str, Any], bool]:
+    def load_settings_with_corruption_status(file_path: str) -> tuple[dict[str, Any], bool]:
         """Return data and a corruption flag from the store.
         Existing invalid or wrong-root files are corrupt; missing files and {} are not."""
         return settings_store.get().load_file(file_path)

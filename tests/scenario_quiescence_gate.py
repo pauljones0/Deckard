@@ -24,7 +24,7 @@ def key_writes(deck, since: int = 0) -> list:
     return [e for e in deck.ops_after(since) if e[2] == "set_key_image"]
 
 
-def animation_writes(deck, since: int = 0) -> list:
+def image_writes(deck, since: int = 0) -> list:
     return [e for e in deck.ops_after(since)
             if e[2] in ("set_key_image", "set_touchscreen_image")]
 
@@ -47,11 +47,11 @@ def wait_until_quiet(deck, quiet_for: float = 0.5, timeout: float = 10.0) -> boo
     return False
 
 
-def _window_closed(media_player, for_s: float = 0.25) -> bool:
-    """Return whether the settle window rendered no ticks for for_s.
+def _gate_window_stays_closed(media_player, duration_s: float = 0.25) -> bool:
+    """Return whether the settle window rendered no ticks for duration_s.
     Read gate_window_ticks directly because producers can write while gated."""
     seen = media_player.gate_window_ticks
-    deadline = time.monotonic() + for_s
+    deadline = time.monotonic() + duration_s
     while time.monotonic() < deadline:
         time.sleep(0.02)
         if media_player.gate_window_ticks != seen:
@@ -100,7 +100,9 @@ def main() -> None:
         assert controller.animations_gated() is False, (
             "nothing may gate before a presence monitor exists"
         )
-        monitor = PresenceMonitor(mode=MODE_SCREENSAVER, idle_detector=False)
+        monitor = PresenceMonitor(
+            mode=MODE_SCREENSAVER, enable_idle_detector=False
+        )
         gl.presence_monitor = monitor
         set_locked(monitor, True)
         assert controller.animations_gated() is False, (
@@ -110,7 +112,11 @@ def main() -> None:
         monitor.stop()
 
         # Opt in, then lock. Gating engages.
-        monitor = PresenceMonitor(mode=MODE_SYSTEM_IDLE, minutes=1, idle_detector=False)
+        monitor = PresenceMonitor(
+            mode=MODE_SYSTEM_IDLE,
+            idle_minutes=1,
+            enable_idle_detector=False,
+        )
         gl.presence_monitor = monitor
         signature_a = {k: deck.last_op_for(f"key:{k}") for k in range(key_count)}
         assert all(signature_a.values()), "fixture sanity: not every key painted page A"
@@ -131,7 +137,7 @@ def main() -> None:
         time.sleep(OBSERVE_S)
         ticks = media_player.media_ticks - ticks_before
         gated = media_player.gated_ticks - gated_before
-        stray = animation_writes(deck)
+        stray = image_writes(deck)
         assert not stray, (
             f"{len(stray)} animation write(s) reached the device while gated: "
             f"{[(e[2], e[3]) for e in stray[:5]]}"
@@ -250,7 +256,7 @@ def main() -> None:
             # The window must close GATE_WINDOW_MAX_S after observing the generation.
             # The timeout permits observation and loaded-machine delays.
             assert fixtures.wait_until(
-                lambda: _window_closed(media_player, for_s=0.25), timeout=3
+                lambda: _gate_window_stays_closed(media_player, duration_s=0.25), timeout=3
             ), (
                 "the render window never closed while a full-rate producer kept "
                 "the task queues non-empty -- the gate is doing nothing at all "
@@ -269,10 +275,10 @@ def main() -> None:
             )
             # Animation is off but the producer is not. Every write in that
             # observation is the producer's own key-0 paint.
-            foreign = [e for e in animation_writes(deck) if e[3] != "key:0"]
-            assert not foreign, (
-                f"{len(foreign)} animation write(s) beyond the producer's own key "
-                f"while gated: {[(e[2], e[3]) for e in foreign[:5]]}"
+            non_producer_writes = [e for e in image_writes(deck) if e[3] != "key:0"]
+            assert not non_producer_writes, (
+                f"{len(non_producer_writes)} animation write(s) beyond the producer's own key "
+                f"while gated: {[(e[2], e[3]) for e in non_producer_writes[:5]]}"
             )
             assert [e for e in deck.journal() if e[3] == "key:0"], (
                 "the producer's paints stopped landing -- the deadline gated "

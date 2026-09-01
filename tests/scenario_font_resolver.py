@@ -52,7 +52,7 @@ def check_font_name_round_trips() -> None:
     print(f"PASS: font_name_from_path({path!r}) -> {name!r}")
 
 
-def check_fallback_font_lazy_at_import() -> None:
+def check_fallback_font_is_lazy_at_import() -> None:
     # Use a fresh interpreter to observe the lazy module attribute.
     script = (
         "import sys, tempfile\n"
@@ -117,7 +117,7 @@ def main() -> None:
     check_weight_selects_different_files()
     check_resolved_file_openable()
     check_font_name_round_trips()
-    check_fallback_font_lazy_at_import()
+    check_fallback_font_is_lazy_at_import()
     check_no_matplotlib_imported()
     print("PASS: scenario_font_resolver")
 

@@ -83,7 +83,7 @@ def _opaque_source(size=(144, 144)) -> Image.Image:
     return image
 
 
-def _give_media(key, source: Image.Image) -> None:
+def _set_key_image(key, source: Image.Image) -> None:
     state = key.get_active_state()
     state.set_image(InputImage(controller_input=key, image=source), update=False)
 
@@ -107,7 +107,7 @@ def check_default_shrinks(controller) -> None:
         "the shrink must default to on, or a deck nobody configured changes behaviour"
 
     key = _key(controller, 0)
-    _give_media(key, _opaque_source())
+    _set_key_image(key, _opaque_source())
     _set_tiles(controller, TILE_COLORS[0])
 
     at_rest = _composite(key)
@@ -156,10 +156,10 @@ def check_shrink_is_centred(controller) -> None:
     print("PASS: the shrink a pressed key draws is centred on its margin")
 
 
-def check_setting_stops_the_shrink(controller) -> None:
+def check_shrink_disabled(controller) -> None:
     """Verify disabling shrink makes pressed and resting image bytes equal."""
     key = _key(controller, 1)
-    _give_media(key, _opaque_source())
+    _set_key_image(key, _opaque_source())
     _set_tiles(controller, TILE_COLORS[1])
 
     _set_shrink(False)
@@ -195,14 +195,14 @@ def check_setting_stops_the_shrink(controller) -> None:
     print("PASS: the setting stops the shrink, and both directions reach the next press")
 
 
-def check_press_keeps_no_composite(controller) -> None:
+def check_pressed_key_skips_composite_cache(controller) -> None:
     """Keep pressed composites out of the covered-key cache when shrink is off.
     Cache admission must follow the press branch, not byte equality with the resting image."""
     _set_shrink(False)
     _disarm_repaint_retry(controller)
     key = _key(controller, 2)
     state = key.get_active_state()
-    _give_media(key, _opaque_source())
+    _set_key_image(key, _opaque_source())
     _set_tiles(controller, TILE_COLORS[0])
 
     key.update()
@@ -236,14 +236,14 @@ def check_press_keeps_no_composite(controller) -> None:
     print("PASS: a press keeps a covered key out of the cache with the shrink off")
 
 
-def check_press_inside_composite_stores_nothing(controller) -> None:
+def check_mid_composite_press_skips_cache(controller) -> None:
     """Reject cache storage when a shrink-disabled press starts and ends during composition.
     Both outer reads and the image match rest, so only the executed press branch can reject it."""
     _set_shrink(False)
     _disarm_repaint_retry(controller)
     key = _key(controller, 3)
     state = key.get_active_state()
-    _give_media(key, _opaque_source())
+    _set_key_image(key, _opaque_source())
     _set_tiles(controller, TILE_COLORS[2])
 
     key.update()
@@ -321,9 +321,9 @@ def main() -> None:
         _settle(controller)
         check_default_shrinks(controller)
         check_shrink_is_centred(controller)
-        check_setting_stops_the_shrink(controller)
-        check_press_keeps_no_composite(controller)
-        check_press_inside_composite_stores_nothing(controller)
+        check_shrink_disabled(controller)
+        check_pressed_key_skips_composite_cache(controller)
+        check_mid_composite_press_skips_cache(controller)
         check_setting_round_trip()
         print("PASS: scenario_press_shrink_setting")
     finally:

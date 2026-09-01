@@ -148,15 +148,15 @@ def check_writes_are_sparse_and_tripwired() -> None:
     data: dict = {}
     view = DeckSettings(data)
 
-    view.set("screensaver", "enable", True)
+    view.set_section_value("screensaver", "enable", True)
     assert data == {"screensaver": {"enable": True}}, (
         f"a write persisted more than the key it was given: {data}"
     )
-    view.set_value("rotation", 90)
+    view.set_top_level_value("rotation", 90)
     assert data == {"screensaver": {"enable": True}, "rotation": 90}
 
     for name, key in (("screensaver", "brightnes"), ("screensvaer", "enable")):
-        for call in (lambda: view.get(name, key), lambda: view.set(name, key, 1)):
+        for call in (lambda: view.get(name, key), lambda: view.set_section_value(name, key, 1)):
             try:
                 call()
             except KeyError:
@@ -177,8 +177,8 @@ def check_writes_are_sparse_and_tripwired() -> None:
 
     # A section is a section and a bare value is a bare value. Confusing them
     # would write a shape no reader expects.
-    for call in (lambda: view.get("screensaver"), lambda: view.set_value("screensaver", 1),
-                 lambda: view.get("rotation", "value"), lambda: view.set("rotation", "value", 1)):
+    for call in (lambda: view.get("screensaver"), lambda: view.set_top_level_value("screensaver", 1),
+                 lambda: view.get("rotation", "value"), lambda: view.set_section_value("rotation", "value", 1)):
         try:
             call()
         except KeyError:
@@ -194,7 +194,7 @@ def check_scalar_in_section_slot() -> None:
     view = DeckSettings(data)
     assert view.get("screensaver", "brightness") == 30
     assert view.section("screensaver")["loop"] is True
-    view.set("screensaver", "enable", True)
+    view.set_section_value("screensaver", "enable", True)
     assert data == {"screensaver": {"enable": True}}
     print("PASS: a scalar where a section belongs reads as the table")
 
@@ -324,7 +324,7 @@ def check_keyless_screensaver_loops_dims() -> None:
         fixtures.teardown(controller)
 
 
-def check_deck_loops_page_does_not() -> None:
+def check_background_loop_defaults() -> None:
     """Require deck backgrounds to loop and page backgrounds to remain one-shot."""
     gif = make_gif("bg.gif")
     serial = "deck-defaults-bg"
@@ -408,7 +408,7 @@ class _Widget:
     def __init__(self, value=None):
         self.value = value
         self.handlers: dict = {}
-        self._next_handler = 1
+        self._next_handler_id = 1
         self.visible = None
 
     def get_value(self):
@@ -457,8 +457,8 @@ class _Widget:
             handler(self)
 
     def connect(self, signal, handler):
-        hid = self._next_handler
-        self._next_handler += 1
+        hid = self._next_handler_id
+        self._next_handler_id += 1
         self.handlers[hid] = handler
         return hid
 
@@ -545,7 +545,7 @@ class BrightnessRow(_Row):
         self.scale = _Widget(0)
         # The real row is in this state by the time load_default runs. It defers
         # itself to map, which is after __init__ connected the handler.
-        self._scale_handler = None
+        self._scale_handler_id = None
         self.connect_signal()
 
     def connect_signal(self):
@@ -570,7 +570,7 @@ class SaturationRow(_Row):
         from src.windows.mainWindow.elements.DeckSettings.DeckGroup import Saturation
         self._real = Saturation
         self.scale = _Widget(1.0)
-        self._scale_handler = None
+        self._scale_handler_id = None
         self.connect_signal()
 
     def connect_signal(self):
@@ -593,7 +593,7 @@ class RotationRow(_Row):
         from src.windows.mainWindow.elements.DeckSettings.DeckGroup import Rotation
         self._real = Rotation
         self.toggle_group = _Widget(0)
-        self._rotation_handler = None
+        self._rotation_handler_id = None
         self.connect_signal()
 
     def connect_signal(self):
@@ -676,7 +676,7 @@ def open_every_row(serial, controller):
     return rows
 
 
-def check_first_open_writes_moves_nothing() -> None:
+def check_first_open_has_no_side_effects() -> None:
     serial = "deck-defaults-first-open"
     fixtures._install_integration_globals()
     path = deck_settings_file(serial)
@@ -797,7 +797,7 @@ def check_control_use_saves_sparsely() -> None:
     print("PASS: using a control still saves, and saves only what was chosen")
 
 
-def check_reopened_row_one_handler() -> None:
+def check_reopened_row_has_one_handler() -> None:
     """Require each row reload to retain exactly one live signal handler."""
     serial = "deck-defaults-reopen"
     seed_deck_settings(serial, {"rotation": 90})
@@ -855,7 +855,7 @@ class PageScreensaverGroup:
         self.media_selector_button = _Widget()
         self.updates = 0
         # The tracked handler ids the real connect and disconnect keep.
-        self._handlers = {}
+        self._handler_ids = {}
         self._signal_bindings = MethodType(ScreensaverGroup._signal_bindings, self)
         for name in _PAGE_SCREENSAVER_HANDLERS:
             setattr(self, name, MethodType(getattr(ScreensaverGroup, name), self))
@@ -925,15 +925,15 @@ if __name__ == "__main__":
 
     check_fresh_deck_table_brightness()
     check_keyless_screensaver_loops_dims()
-    check_deck_loops_page_does_not()
+    check_background_loop_defaults()
     check_locked_deck_shows_config()
     check_locked_deck_blanks_without_screensaver()
 
-    check_first_open_writes_moves_nothing()
+    check_first_open_has_no_side_effects()
     check_fresh_page_shows_table()
     check_persisted_value_shown_untouched()
     check_control_use_saves_sparsely()
-    check_reopened_row_one_handler()
+    check_reopened_row_has_one_handler()
     check_page_editor_adds_no_handlers()
 
     print("\nALL PASS: scenario_deck_settings_defaults")

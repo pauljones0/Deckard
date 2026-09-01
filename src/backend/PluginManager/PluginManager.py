@@ -97,34 +97,34 @@ def frontend_authenticator(sock: "socket.socket") -> "tuple[socket.socket, None]
 
 
 def verify_backend_port(port: int, process: subprocess.Popen[bytes] | None,
-                        via_terminal: bool, owner: str) -> str:
+                        via_terminal: bool, display_name: str) -> str:
     """Return a verified loopback address for a launched backend.
     Raise RuntimeError for unowned, unverifiable, or non-loopback listeners before rpyc connects.
     """
-    rows = deckard_rpyc_guard.listen_rows_of_port(port)
+    rows = deckard_rpyc_guard.listening_rows_for_port(port)
     if via_terminal:
         # Terminal services detach process ancestry, so verify the listener's
         # owner UID instead.
-        matched = [row for row in rows if row.uid == os.getuid()]
+        matching_rows = [row for row in rows if row.uid == os.getuid()]
         detail = "no listener on that port belongs to this user"
     elif process is None:
-        matched: list[deckard_rpyc_guard.TcpRow] = []
+        matching_rows: list[deckard_rpyc_guard.TcpRow] = []
         detail = "no backend process was launched"
     else:
-        matched = [row for row in rows
-                   if deckard_rpyc_guard.pid_owns_inode(process.pid, row.inode)]
+        matching_rows = [row for row in rows
+                         if deckard_rpyc_guard.pid_owns_inode(process.pid, row.inode)]
         detail = f"no listener on that port belongs to the launched backend (pid {process.pid})"
-    if not matched:
-        message = f"{owner}: refused backend registration on port {port}: {detail}"
+    if not matching_rows:
+        message = f"{display_name}: refused backend registration on port {port}: {detail}"
         log.error(message)
         raise RuntimeError(message)
 
     # Refuse wildcard-only listeners because they expose the backend to the LAN.
-    loopback = [row for row in matched if deckard_rpyc_guard.is_loopback(row.local_ip)]
-    if not loopback:
-        addresses = ", ".join(sorted({row.local_ip for row in matched}))
+    loopback_rows = [row for row in matching_rows if deckard_rpyc_guard.is_loopback(row.local_ip)]
+    if not loopback_rows:
+        addresses = ", ".join(sorted({row.local_ip for row in matching_rows}))
         message = (
-            f"{owner}: refused backend registration on port {port}: the backend "
+            f"{display_name}: refused backend registration on port {port}: the backend "
             f"listens only on a non-loopback address ({addresses}); the loopback "
             f"guard did not take effect in that process"
         )
@@ -132,19 +132,19 @@ def verify_backend_port(port: int, process: subprocess.Popen[bytes] | None,
         raise RuntimeError(message)
     # rpyc's client resolves and connects AF_INET first, so prefer an IPv4
     # loopback row when one exists.
-    for row in loopback:
+    for row in loopback_rows:
         if row.local_ip.startswith("127."):
             return row.local_ip
-    return loopback[0].local_ip
+    return loopback_rows[0].local_ip
 
 
-def terminate_refused_backend(process: subprocess.Popen[bytes] | None, owner: str) -> None:
+def terminate_refused_backend(process: subprocess.Popen[bytes] | None, display_name: str) -> None:
     """Terminate a refused backend asynchronously so its exposed or unverifiable listener closes.
     Do not block the rpyc service thread; child disconnect tears down the frontend.
     """
     if process is None:
         return
-    log.warning(f"{owner}: terminating the refused backend process (pid {process.pid})")
+    log.warning(f"{display_name}: terminating the refused backend process (pid {process.pid})")
     threading.Thread(target=terminate_backend_process, args=(process,),
                      name="terminate_refused_backend", daemon=True).start()
 
@@ -200,8 +200,8 @@ def backend_guard_env() -> dict[str, str]:
 
 
 # Rebuild venvs stranded by removed interpreters at most once per process.
-_rebuilt_venvs: set[str] = set()
-# Guards _rebuilt_venvs and the per-venv lock table alone. Short critical
+_venv_rebuild_attempts: set[str] = set()
+# Guards _venv_rebuild_attempts and the per-venv lock table alone. Short critical
 # sections, never held across a rebuild.
 _rebuild_registry_lock = threading.Lock()
 # Serialize each venv rebuild so concurrent plugin and action readiness cannot
@@ -266,8 +266,8 @@ def stale_venv_reason(venv_path: str) -> str | None:
     # exists() follows the link, so a dangling bin/python reads as absent.
     if not os.path.exists(interpreter):
         tag = venv_python_tag(venv_path)
-        built_for = f" (it was built for Python {tag})" if tag else ""
-        return f"its interpreter is gone{built_for}"
+        version_note = f" (it was built for Python {tag})" if tag else ""
+        return f"its interpreter is gone{version_note}"
     if not _interpreter_runs(interpreter):
         return "its interpreter no longer starts"
     return None
@@ -290,7 +290,7 @@ def _rebuild_lock_for(key: str) -> threading.Lock:
         return lock
 
 
-def ensure_backend_venv(venv_path: str, plugin_dir: str, display_name: str) -> None:
+def attempt_backend_venv_repair(venv_path: str, plugin_dir: str, display_name: str) -> None:
     """Rebuild a stale venv through the confined install gate once per process and one at a time.
     Only "always" runs unattended; use timeout and guard; failures can restore the stale tree.
     """
@@ -302,18 +302,18 @@ def ensure_backend_venv(venv_path: str, plugin_dir: str, display_name: str) -> N
         if reason is None:
             return
         with _rebuild_registry_lock:
-            if key in _rebuilt_venvs:
+            if key in _venv_rebuild_attempts:
                 return
         _rebuild_backend_venv(venv_path, plugin_dir, display_name, reason)
         # Booked only after the attempt returned. An attempt that raised is
         # not an answer about this venv, so the next process tries again.
         with _rebuild_registry_lock:
-            _rebuilt_venvs.add(key)
+            _venv_rebuild_attempts.add(key)
 
 
 def _rebuild_backend_venv(venv_path: str, plugin_dir: str, display_name: str,
                           reason: str) -> None:
-    """One rebuild attempt. ensure_backend_venv owns the locking and the
+    """One rebuild attempt. attempt_backend_venv_repair owns the locking and the
     once-per-process book-keeping."""
     from src.backend.Store import install_script
 
@@ -419,9 +419,9 @@ class PluginManager:
         ).start()
 
     def _warm_up_plugins(self) -> None:
-        for plugin_id, plugin in list(PluginBase.plugins.items()):
+        for plugin_id, plugin_entry in list(PluginBase.plugins.items()):
             # Skip malformed entries that contain no plugin object.
-            plugin_base = plugin.get("object")
+            plugin_base = plugin_entry.get("object")
             if plugin_base is None:
                 continue
             # Skip a marked plugin, but concurrent workers can both pass this
@@ -526,17 +526,17 @@ class PluginManager:
     def _plugin_folder_of(subclass: "type[PluginBase]") -> str:
         """Return the PluginBase subclass folder under PLUGIN_DIR.
         Modules use plugins.<folder>.main, matching load_errors keys."""
-        module = cast(str, getattr(subclass, "__module__", "") or "")
-        parts = module.split(".")
+        module_name = cast(str, getattr(subclass, "__module__", "") or "")
+        parts = module_name.split(".")
         if len(parts) >= 2 and parts[0] == "plugins":
             return parts[1]
-        return module or str(subclass)
+        return module_name or str(subclass)
 
     @staticmethod
     def _is_plugin_disabled(plugin_base: PluginBase) -> bool:
         return any(entry.get("object") is plugin_base for entry in PluginBase.disabled_plugins.values())
 
-    def load_error_of(self, folder: str) -> "str | None":
+    def get_load_error(self, folder: str) -> "str | None":
         """The recorded load failure of one plugin folder, or None."""
         with self._load_errors_lock:
             return self.load_errors.get(folder)
@@ -613,7 +613,7 @@ class PluginManager:
 
         return action_id.split("::")[0]
     
-    def get_load_health(self) -> tuple[int, int]:
+    def get_load_issue_counts(self) -> tuple[int, int]:
         """Return failed and disabled plugin counts for the empty-action UI.
         Lock load errors against worker-thread reloads."""
         with self._load_errors_lock:

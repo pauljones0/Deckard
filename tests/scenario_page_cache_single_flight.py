@@ -7,7 +7,7 @@ import time
 import globals as gl
 from fixtures import FaultyFakeDeck, seed_page, start_watchdog
 
-import src.backend.PageManagement.PageManagerBackend as pmb
+import src.backend.PageManagement.PageManagerBackend as page_manager_backend
 
 
 class StubController:
@@ -30,18 +30,18 @@ def main() -> int:
 
     # Count constructions and widen the cache-miss window so every thread
     # reaches the miss path before the first construction completes.
-    construct_count = [0]
+    construction_count = [0]
     count_lock = threading.Lock()
-    real_page = pmb.Page
+    real_page = page_manager_backend.Page
 
     class SlowPage(real_page):
         def __init__(self, json_path, deck_controller, *args, **kwargs):
             with count_lock:
-                construct_count[0] += 1
+                construction_count[0] += 1
             time.sleep(0.2)
             super().__init__(json_path, deck_controller, *args, **kwargs)
 
-    pmb.Page = SlowPage
+    page_manager_backend.Page = SlowPage
     try:
         n_threads = 6
         barrier = threading.Barrier(n_threads)
@@ -60,24 +60,24 @@ def main() -> int:
                 print("FAIL: get_page worker did not finish (deadlock?)")
                 return 1
 
-        distinct = {id(r) for r in results}
+        page_ids = {id(r) for r in results}
         if None in results:
             print(f"FAIL: get_page returned None for an existing page: {results}")
             return 1
-        if len(distinct) != 1:
-            print(f"FAIL: concurrent get_page returned {len(distinct)} distinct Page objects")
+        if len(page_ids) != 1:
+            print(f"FAIL: concurrent get_page returned {len(page_ids)} distinct Page objects")
             return 1
-        if construct_count[0] != 1:
-            print(f"FAIL: Page constructed {construct_count[0]} times (expected 1)")
+        if construction_count[0] != 1:
+            print(f"FAIL: Page constructed {construction_count[0]} times (expected 1)")
             return 1
 
         # A later call must hit the cache, not construct again.
         again = gl.page_manager.get_page(path, controller)
-        if again is not results[0] or construct_count[0] != 1:
+        if again is not results[0] or construction_count[0] != 1:
             print("FAIL: follow-up get_page did not reuse the cached Page")
             return 1
     finally:
-        pmb.Page = real_page
+        page_manager_backend.Page = real_page
 
     # The failure path uses a nonexistent page. Two racing callers must both
     # get None, and neither may hang on the other's in-flight entry.

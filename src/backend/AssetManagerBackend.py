@@ -280,8 +280,8 @@ class AssetManagerBackend(list[Any]):
         # Chooser drops use a worker, so create the GTK dialog in the main-thread idle callback.
         # Pass the window so the modal dialog has a parent.
         def show() -> None:
-            dial = Gtk.AlertDialog(message=message, detail=detail, modal=True)
-            dial.show(window)
+            dialog = Gtk.AlertDialog(message=message, detail=detail, modal=True)
+            dialog.show(window)
         GLib.idle_add(show)
 
     def add_custom_media_set_by_ui(self, url: str | None, path: str | None) -> str | None:

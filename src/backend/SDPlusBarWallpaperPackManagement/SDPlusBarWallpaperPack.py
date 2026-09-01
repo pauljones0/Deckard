@@ -28,4 +28,4 @@ class SDPlusBarWallpaperPack(Pack[SDPlusBarWallpaper]):
         return SDPlusBarWallpaper(wallpaper_pack=self, path=path)
 
     def get_wallpapers(self) -> list[SDPlusBarWallpaper]:
-        return self.get_content_from_structure()
+        return self.get_assets()

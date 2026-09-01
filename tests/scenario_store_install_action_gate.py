@@ -14,7 +14,7 @@ from src.backend.Store.install_request import (  # noqa: E402
     INSTALL_ACTION,
     UPDATE_ACTION,
     ConfirmedActionGate,
-    is_store_id,
+    is_safe_store_id,
 )
 from src.backend.Store.store_result import Err, Ok  # noqa: E402
 from src.windows.Store.StoreData import PluginData  # noqa: E402
@@ -134,7 +134,7 @@ def settle(seconds: float = 1.0) -> None:
 
 # Bus legs
 
-def leg_surface_carries_both_actions(peer: Peer) -> None:
+def check_exported_actions_available(peer: Peer) -> None:
     """The exported surface really does carry both actions today. Every leg
     below this one would pass vacuously if it did not."""
     names = peer.list_actions()
@@ -144,7 +144,7 @@ def leg_surface_carries_both_actions(peer: Peer) -> None:
             f"otherwise these legs prove nothing about it; got {names}")
 
 
-def leg_external_activation_needs_a_yes(peer: Peer, recorder: Recorder) -> None:
+def check_external_activation_requires_confirmation(peer: Peer, recorder: Recorder) -> None:
     recorder.clear()
     recorder.agree = False
 
@@ -157,7 +157,7 @@ def leg_external_activation_needs_a_yes(peer: Peer, recorder: Recorder) -> None:
         f"nothing else while it is refused, got {recorder.events}")
 
 
-def leg_confirmed_activation_installs(peer: Peer, recorder: Recorder) -> None:
+def check_confirmed_activation_runs_install(peer: Peer, recorder: Recorder) -> None:
     recorder.clear()
     recorder.agree = True
 
@@ -170,7 +170,7 @@ def leg_confirmed_activation_installs(peer: Peer, recorder: Recorder) -> None:
         f"and only after the confirmation, got {recorder.events}")
 
 
-def leg_update_action_is_gated(peer: Peer, recorder: Recorder) -> None:
+def check_update_activation_requires_confirmation(peer: Peer, recorder: Recorder) -> None:
     """The twin of the install action. It carries no target, and an update
     reinstalls every out-of-date asset, so it must not run unconfirmed."""
     recorder.clear()
@@ -192,7 +192,7 @@ def leg_update_action_is_gated(peer: Peer, recorder: Recorder) -> None:
         f"a confirmed update must run, and only after the answer, got {recorder.events}")
 
 
-def leg_a_bad_target_never_reaches_a_dialog(peer: Peer, recorder: Recorder,
+def check_invalid_target_skips_confirmation(peer: Peer, recorder: Recorder,
                                             gate: ConfirmedActionGate) -> None:
     """Reject traversal, multiline, and unbounded targets before the dialog."""
     recorder.clear()
@@ -209,7 +209,7 @@ def leg_a_bad_target_never_reaches_a_dialog(peer: Peer, recorder: Recorder,
         "/absolute/path",
     ]
     for target in hostile:
-        assert not is_store_id(target) or not target.strip(), (
+        assert not is_safe_store_id(target) or not target.strip(), (
             f"{target!r} must not read as a store id, or this leg proves nothing")
         peer.activate(INSTALL_ACTION, target)
 
@@ -223,7 +223,7 @@ def leg_a_bad_target_never_reaches_a_dialog(peer: Peer, recorder: Recorder,
         f"dialog, got {recorder.events}")
 
 
-def leg_one_request_at_a_time(peer: Peer, recorder: Recorder) -> None:
+def check_concurrent_requests_are_rejected(peer: Peer, recorder: Recorder) -> None:
     recorder.clear()
     recorder.agree = True
     recorder.confirm_block = threading.Event()
@@ -260,13 +260,13 @@ def leg_one_request_at_a_time(peer: Peer, recorder: Recorder) -> None:
 # Use one gate per in-process leg because each leg changes gate state.
 # request() is the entry point used by on_activate.
 
-def leg_the_slot_is_held_until_the_work_ends() -> None:
+def check_gate_stays_closed_during_work() -> None:
     """The slot must cover the install and not only the dialog. Two installs
     of one id would swap the same directory under each other."""
     recorder = Recorder(agree=True)
     recorder.worker_block = threading.Event()
     gate = ConfirmedActionGate(INSTALL_ACTION, recorder.worker, recorder.confirm,
-                               target_type="s", validate=is_store_id)
+                               target_type="s", validate=is_safe_store_id)
     try:
         assert gate.request(GOOD_ID) is True, "the first request must be accepted"
         wait_for(recorder, 2, "the worker to start")
@@ -288,13 +288,13 @@ def leg_the_slot_is_held_until_the_work_ends() -> None:
         "the gate must reopen once the install finishes")
 
 
-def leg_a_failed_confirmation_is_not_an_agreement() -> None:
+def check_confirmation_error_rejects_request() -> None:
     """A confirmation that raises answers no. A peer that makes the dialog
     fail must not get an install out of it."""
     recorder = Recorder(agree=True)
     recorder.raise_in_confirm = True
     gate = ConfirmedActionGate(INSTALL_ACTION, recorder.worker, recorder.confirm,
-                               target_type="s", validate=is_store_id)
+                               target_type="s", validate=is_safe_store_id)
     gate.request(GOOD_ID)
     wait_for(recorder, 1, "the raising confirmation to run")
     settle(1.5)
@@ -303,12 +303,12 @@ def leg_a_failed_confirmation_is_not_an_agreement() -> None:
         f"{recorder.events}")
 
 
-def leg_refusals_make_the_action_quiet() -> None:
+def check_repeated_refusals_suppress_prompts() -> None:
     """A looping peer must not get a fresh modal for every Cancel. One
     mistaken Cancel still leaves the user their retry."""
     recorder = Recorder(agree=False)
     gate = ConfirmedActionGate(INSTALL_ACTION, recorder.worker, recorder.confirm,
-                               target_type="s", validate=is_store_id)
+                               target_type="s", validate=is_safe_store_id)
 
     assert gate.request(GOOD_ID) is True, "the first request must be accepted"
     wait_for(recorder, 1, "the first refusal")
@@ -329,7 +329,7 @@ def leg_refusals_make_the_action_quiet() -> None:
     # not about use.
     fresh = Recorder(agree=True)
     ok_gate = ConfirmedActionGate(INSTALL_ACTION, fresh.worker, fresh.confirm,
-                                  target_type="s", validate=is_store_id)
+                                  target_type="s", validate=is_safe_store_id)
     for round_index in range(3):
         # Counted up front. The gate's thread appends while this runs, so a
         # target read after the request could already be behind.
@@ -342,7 +342,7 @@ def leg_refusals_make_the_action_quiet() -> None:
         f"each agreed request must confirm then work, got {fresh.events}")
 
 
-def leg_internal_path_installs_unprompted(recorder: Recorder) -> None:
+def check_internal_install_skips_confirmation(recorder: Recorder) -> None:
     """Keep direct store-window, missing-action, and onboarding installs unprompted."""
     from src.backend.Store.StoreBackend import StoreBackend
     from src.backend.Store.StoreCache import StoreCache
@@ -359,7 +359,7 @@ def leg_internal_path_installs_unprompted(recorder: Recorder) -> None:
         def generate_action_index(self) -> None: self.calls.append("generate_action_index")
         def get_plugins(self) -> dict: return {}
         def get_plugin_by_id(self, plugin_id, include_disabled=True): return None
-        def load_error_of(self, folder): return None
+        def get_load_error(self, folder): return None
 
     class RecordingSignalManager:
         def __init__(self) -> None:
@@ -392,7 +392,7 @@ def leg_internal_path_installs_unprompted(recorder: Recorder) -> None:
         f"confirmation, got {recorder.events}")
 
 
-def leg_the_app_wires_both_actions_through_a_gate() -> None:
+def check_app_exports_gated_actions() -> None:
     """Activate the application's own exported actions through a duck-typed instance."""
     import types
 
@@ -433,24 +433,24 @@ def leg_the_app_wires_both_actions_through_a_gate() -> None:
         f"both actions must confirm, got {confirmed}")
 
 
-def leg_the_id_gate_is_the_installers_own() -> None:
+def check_store_id_validation_matches_installer() -> None:
     """The target check must be the one the installer applies, so a target
     it accepts is one the install would accept."""
     from src.backend.Store.StoreBackend import StoreBackend
 
-    assert is_store_id is not None
+    assert is_safe_store_id is not None
     for value in (GOOD_ID, "com_test_Direct", "a"):
-        assert is_store_id(value) is StoreBackend.is_safe_asset_id(value) is True, (
+        assert is_safe_store_id(value) is StoreBackend.is_safe_asset_id(value) is True, (
             f"{value!r} must read as a store id on both checks")
     assert install_request.REFUSALS_BEFORE_QUIET >= 2, (
         "one mistaken Cancel must not arm the quiet period")
 
 
-def run_legs(bus_address: str) -> None:
+def run_gate_checks(bus_address: str) -> None:
     install_recorder = Recorder()
     install_gate = ConfirmedActionGate(
         INSTALL_ACTION, install_recorder.worker, install_recorder.confirm,
-        target_type="s", validate=is_store_id)
+        target_type="s", validate=is_safe_store_id)
     update_recorder = Recorder()
     update_gate = ConfirmedActionGate(
         UPDATE_ACTION, update_recorder.worker, update_recorder.confirm)
@@ -467,18 +467,18 @@ def run_legs(bus_address: str) -> None:
 
     peer = Peer(bus_address, object_path)
     try:
-        leg_surface_carries_both_actions(peer)
-        leg_external_activation_needs_a_yes(peer, install_recorder)
-        leg_confirmed_activation_installs(peer, install_recorder)
-        leg_update_action_is_gated(peer, update_recorder)
-        leg_a_bad_target_never_reaches_a_dialog(peer, install_recorder, install_gate)
-        leg_one_request_at_a_time(peer, install_recorder)
-        leg_the_slot_is_held_until_the_work_ends()
-        leg_a_failed_confirmation_is_not_an_agreement()
-        leg_refusals_make_the_action_quiet()
-        leg_the_app_wires_both_actions_through_a_gate()
-        leg_the_id_gate_is_the_installers_own()
-        leg_internal_path_installs_unprompted(install_recorder)
+        check_exported_actions_available(peer)
+        check_external_activation_requires_confirmation(peer, install_recorder)
+        check_confirmed_activation_runs_install(peer, install_recorder)
+        check_update_activation_requires_confirmation(peer, update_recorder)
+        check_invalid_target_skips_confirmation(peer, install_recorder, install_gate)
+        check_concurrent_requests_are_rejected(peer, install_recorder)
+        check_gate_stays_closed_during_work()
+        check_confirmation_error_rejects_request()
+        check_repeated_refusals_suppress_prompts()
+        check_app_exports_gated_actions()
+        check_store_id_validation_matches_installer()
+        check_internal_install_skips_confirmation(install_recorder)
     finally:
         peer.close()
 
@@ -487,7 +487,7 @@ def main() -> None:
     fixtures.start_watchdog(WATCHDOG_SECONDS, "scenario_store_install_action_gate")
     bus_proc, bus_address = start_private_bus()
     try:
-        run_legs(bus_address)
+        run_gate_checks(bus_address)
     finally:
         stop_private_bus(bus_proc)
 

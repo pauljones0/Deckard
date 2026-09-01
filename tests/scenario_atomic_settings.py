@@ -24,7 +24,7 @@ def read_json(path: str):
         return json.load(f)
 
 
-def check_settings_manager() -> None:
+def check_settings_manager_atomic_write() -> None:
     path = os.path.join(gl.DATA_PATH, "settings", "atomic_test.json")
     good = {"keep": True, "nested": {"a": 1}}
 
@@ -45,7 +45,7 @@ def check_settings_manager() -> None:
     print("PASS: SettingsManager.save_settings_to_file survives a mid-write fault")
 
 
-def check_plugin_base() -> None:
+def check_plugin_settings_atomic_write() -> None:
     from src.backend.PluginManager.PluginBase import PluginBase
 
     plugin = object.__new__(PluginBase)  # set_settings only touches settings_path
@@ -97,7 +97,7 @@ def check_page_save(controller) -> None:
     page = controller.active_page
     before = read_json(page.json_path)
 
-    # A top-level key that get_without_action_objects does not traverse, but
+    # A top-level key that snapshot_for_save does not traverse, but
     # json.dump chokes on mid-serialization.
     page.dict["poison"] = Unserializable()
     # save marks the page; flush logs serialization failure and retires the edit.
@@ -315,8 +315,8 @@ def main() -> None:
     fixtures.start_watchdog(60, label="scenario_atomic_settings")
     controller = fixtures.make_headless_controller(serial="atomic-1")
     try:
-        check_settings_manager()
-        check_plugin_base()
+        check_settings_manager_atomic_write()
+        check_plugin_settings_atomic_write()
         check_add_page()
         check_page_save(controller)
         check_font_defaults_merge()

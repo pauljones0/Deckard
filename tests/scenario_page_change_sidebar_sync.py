@@ -22,7 +22,7 @@ def _pump(duration: float = 0.1) -> None:
         time.sleep(0.005)
 
 
-class _Recorder:
+class _CallCounter:
     def __init__(self):
         self.calls = 0
 
@@ -70,7 +70,7 @@ def main() -> None:
         _pump()
 
         # 1. The visible deck changed page, so the sidebar refreshes.
-        update = _Recorder()
+        update = _CallCounter()
         adapter._window = _fake_window(visible_child=own_child, sidebar_update=update)
         ui_port.get().on_page_changed(controller)
         _pump()
@@ -81,7 +81,7 @@ def main() -> None:
 
         # 2. Another deck is visible. The sidebar mirrors the visible deck's
         # selection, so it must not reload.
-        update = _Recorder()
+        update = _CallCounter()
         adapter._window = _fake_window(visible_child=SimpleNamespace(),
                                        sidebar_update=update)
         ui_port.get().on_page_changed(controller)
@@ -92,7 +92,7 @@ def main() -> None:
 
         # 3. A sidebar sub-view is up. The refresh must not pull the user
         # out of it.
-        update = _Recorder()
+        update = _CallCounter()
         adapter._window = _fake_window(visible_child=own_child, sidebar_update=update,
                                        subview_active=True)
         ui_port.get().on_page_changed(controller)
@@ -103,7 +103,7 @@ def main() -> None:
         )
 
         # 4. Many coalesced triggers arm one idle and give one refresh.
-        update = _Recorder()
+        update = _CallCounter()
         adapter._window = _fake_window(visible_child=own_child, sidebar_update=update)
         ui_port.get().on_page_changed(controller)
         ui_port.get().on_page_changed(controller)
@@ -120,7 +120,7 @@ def main() -> None:
 
         # 5. An unbound controller gets no refresh and no crash. A None child
         # must not match a None visible child.
-        update = _Recorder()
+        update = _CallCounter()
         adapter._window = _fake_window(visible_child=None, sidebar_update=update)
         adapter.unbind(controller)
         ui_port.get().on_page_changed(controller)

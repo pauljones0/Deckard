@@ -33,7 +33,7 @@ class FakePool:
         self.shutdowns += 1
 
 
-class FakeMain:
+class FakeMainLoop:
     """Queue callbacks so decodes accumulate before a main-loop flush."""
 
     def __init__(self):
@@ -62,7 +62,7 @@ class Target:
 class Recorder:
     """A fake decode and a fake apply that record what ran and when."""
 
-    def __init__(self, main: FakeMain):
+    def __init__(self, main: FakeMainLoop):
         self.main = main
         self.decoded: list[str] = []
         self.delivered: list[tuple[object, bytes | None]] = []
@@ -79,14 +79,14 @@ class Recorder:
         self.delivered.append((target, data))
 
 
-def make_loader(main: FakeMain, recorder: Recorder, pool: FakePool,
+def make_loader(main: FakeMainLoop, recorder: Recorder, pool: FakePool,
                 cache: ByteLRUCache) -> ThumbnailLoader:
     return ThumbnailLoader(decode=recorder.decode, apply=recorder.apply,
                            marshal=main.marshal, cache=cache, pool=pool)
 
 
-def fresh():
-    main = FakeMain()
+def make_loader_fixture():
+    main = FakeMainLoop()
     recorder = Recorder(main)
     pool = FakePool()
     cache = ByteLRUCache(max_bytes=8 * 1024 * 1024)
@@ -96,7 +96,7 @@ def fresh():
 
 def check_decode_is_deferred() -> int:
     """A miss submits to the pool instead of decoding on the caller's thread."""
-    main, recorder, pool, cache, loader = fresh()
+    main, recorder, pool, cache, loader = make_loader_fixture()
     target = Target()
     loader.request("k", target)
     if recorder.decoded:
@@ -118,7 +118,7 @@ def check_decode_is_deferred() -> int:
 
 def check_lifo_order() -> int:
     """The newest request decodes first."""
-    main, recorder, pool, cache, loader = fresh()
+    main, recorder, pool, cache, loader = make_loader_fixture()
     targets = {name: Target() for name in ("a", "b", "c")}
     for name in ("a", "b", "c"):
         loader.request(name, targets[name])
@@ -140,7 +140,7 @@ def check_lifo_order() -> int:
 
 def check_weakref_cancels_before_decode() -> int:
     """A target gone before its task runs takes no decode, delivery, or raise."""
-    main, recorder, pool, cache, loader = fresh()
+    main, recorder, pool, cache, loader = make_loader_fixture()
     target = Target()
     loader.request("k", target)
     del target
@@ -162,7 +162,7 @@ def check_weakref_cancels_before_decode() -> int:
 
 def check_weakref_cancels_before_delivery() -> int:
     """A target gone after decode but before the flush takes no delivery."""
-    main, recorder, pool, cache, loader = fresh()
+    main, recorder, pool, cache, loader = make_loader_fixture()
     target = Target()
     loader.request("k", target)
     pool.run_all()
@@ -183,7 +183,7 @@ def check_weakref_cancels_before_delivery() -> int:
 
 def check_cache_serves_repeat() -> int:
     """A repeated key is delivered from the cache without another decode."""
-    main, recorder, pool, cache, loader = fresh()
+    main, recorder, pool, cache, loader = make_loader_fixture()
     first = Target()
     loader.request("k", first)
     pool.run_all()
@@ -212,7 +212,7 @@ def check_cache_serves_repeat() -> int:
 
 def check_page_flip_cancels_pending() -> int:
     """A page flip cancels requests that have not decoded."""
-    main, recorder, pool, cache, loader = fresh()
+    main, recorder, pool, cache, loader = make_loader_fixture()
     stale = Target()
     loader.request("stale", stale)
     loader.begin_generation()
@@ -232,7 +232,7 @@ def check_page_flip_cancels_pending() -> int:
 
 def check_page_flip_drops_stale_result() -> int:
     """A page flip drops old decoded results but permits new requests."""
-    main, recorder, pool, cache, loader = fresh()
+    main, recorder, pool, cache, loader = make_loader_fixture()
     old = Target()
     loader.request("old", old)
     pool.run_all()  # decoded under the old epoch, waiting for the flush
@@ -259,7 +259,7 @@ def check_page_flip_drops_stale_result() -> int:
 
 def check_batched_delivery() -> int:
     """A decode wave is delivered in one marshalled main-loop pass."""
-    main, recorder, pool, cache, loader = fresh()
+    main, recorder, pool, cache, loader = make_loader_fixture()
     targets = [Target() for _ in range(5)]
     for i, target in enumerate(targets):
         loader.request(f"k{i}", target)

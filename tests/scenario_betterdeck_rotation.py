@@ -12,7 +12,7 @@ ROTATIONS = (0, 90, 180, 270)
 PLUS = FAKE_DECK_MODELS["plus"]
 ORIGINAL = FAKE_DECK_MODELS["original"]
 N_DIALS = PLUS.dial_count
-STRIP_SIZE = PLUS.touchscreen_image.size
+STRIP_SIZE = PLUS.touchscreen_format.size
 
 # Device oracle, row-major 2x4: 90 maps (r,c)->(c,rows-1-r); p0->l1 and p4->l0.
 # 270 turns opposite; 180 reverses, catching formulas that agree in the wrong direction.
@@ -29,7 +29,7 @@ def check_rotation() -> int:
     # The Original's 3 by 5 grid, so the literals below hold and a
     # non-square grid is what the permutation is checked over.
     deck = FaultyFakeDeck(serial_number="rot-1", model="original")
-    better = BetterDeck(deck)
+    wrapped_deck = BetterDeck(deck)
     rows, cols = ORIGINAL.key_layout
     if (rows, cols) != (3, 5):
         print(f"FAIL(a): the Original preset is now {(rows, cols)}; the "
@@ -40,8 +40,8 @@ def check_rotation() -> int:
     physical = list(range(total))  # value == its physical index
 
     for rotation in (0, 90, 180, 270):
-        better.set_rotation(rotation)
-        out = better.reorder_physical_for_rotation(physical)
+        wrapped_deck.set_rotation(rotation)
+        out = wrapped_deck.reorder_physical_for_rotation(physical)
 
         # The result must stay a permutation, with nothing lost or duplicated.
         if sorted(out) != physical:
@@ -51,7 +51,7 @@ def check_rotation() -> int:
 
         # Physical value p must occupy logical slot l where get_physical_index(l) == p.
         for logical in range(total):
-            p = better.get_physical_index(logical)
+            p = wrapped_deck.get_physical_index(logical)
             if out[logical] != physical[p]:
                 print(f"FAIL(a): rotation {rotation}: out[{logical}] = "
                       f"{out[logical]}, expected value from physical slot "
@@ -60,8 +60,8 @@ def check_rotation() -> int:
 
     # For a 3-by-5 grid at 90 degrees, get_logical_index(0) = 2, so orig[0] must land at out[2].
     # The literal checks placement; check_rotation_direction uses the device table for direction.
-    better.set_rotation(90)
-    out = better.reorder_physical_for_rotation(physical)
+    wrapped_deck.set_rotation(90)
+    out = wrapped_deck.reorder_physical_for_rotation(physical)
     if out[2] != 0:
         print(f"FAIL(a): literal check: out[2] = {out[2]}, expected 0")
         return 1
@@ -76,15 +76,15 @@ def check_async_setters() -> int:
     deck.set_key_callback_async = lambda cb, loop=None: received.setdefault("key", (cb, loop))
     deck.set_dial_callback_async = lambda cb, loop=None: received.setdefault("dial", (cb, loop))
     deck.set_touchscreen_callback_async = lambda cb, loop=None: received.setdefault("touch", (cb, loop))
-    better = BetterDeck(deck)
+    wrapped_deck = BetterDeck(deck)
 
     async def cb(*a):
         pass
 
     try:
-        better.set_key_callback_async(cb)
-        better.set_dial_callback_async(cb)
-        better.set_touchscreen_callback_async(cb)
+        wrapped_deck.set_key_callback_async(cb)
+        wrapped_deck.set_dial_callback_async(cb)
+        wrapped_deck.set_touchscreen_callback_async(cb)
     except RecursionError:
         print("FAIL(b): async callback setter recursed into itself")
         return 1
@@ -101,7 +101,7 @@ def check_rotation_direction() -> int:
     """Compare key rotation with a table read from the turned deck.
     Inverse permutation checks alone can pass when both maps use the same wrong direction."""
     deck = FaultyFakeDeck(serial_number="rot-direction", model="plus")
-    better = BetterDeck(deck)
+    wrapped_deck = BetterDeck(deck)
     if tuple(PLUS.key_layout) != (DIRECTION_ROWS, DIRECTION_COLS):
         print(f"FAIL(g): the Stream Deck + preset is now {PLUS.key_layout}; "
               f"the table below was read off a "
@@ -110,13 +110,13 @@ def check_rotation_direction() -> int:
     total = DIRECTION_ROWS * DIRECTION_COLS
 
     for rotation, table in DIRECTION_TABLE.items():
-        better.set_rotation(rotation)
-        logical = [better.get_logical_index(p) for p in range(total)]
+        wrapped_deck.set_rotation(rotation)
+        logical = [wrapped_deck.get_logical_index(p) for p in range(total)]
         if logical != table:
             print(f"FAIL(g): rotation {rotation} maps the physical keys to "
                   f"{logical}; a deck turned that way puts them at {table}")
             return 1
-        physical = [better.get_physical_index(l) for l in table]
+        physical = [wrapped_deck.get_physical_index(l) for l in table]
         if physical != list(range(total)):
             print(f"FAIL(g): rotation {rotation}: the physical map disagrees "
                   f"with the turned deck; it sends {table} back to "
@@ -132,12 +132,12 @@ def check_strip_turn() -> int:
     """Turn the strip end for end only at 180 degrees.
     At 90/270 the fixed buffer shape would squash a rotated upright composite."""
     deck = FaultyFakeDeck(serial_number="rot-strip", model="plus")
-    better = BetterDeck(deck)
+    wrapped_deck = BetterDeck(deck)
 
     expected = {0: 0, 90: 0, 180: 180, 270: 0}
     for rotation in ROTATIONS:
-        better.set_rotation(rotation)
-        turn = better.touchscreen_image_rotation()
+        wrapped_deck.set_rotation(rotation)
+        turn = wrapped_deck.touchscreen_image_rotation()
         if turn != expected[rotation]:
             print(f"FAIL(c): rotation {rotation}: strip turn {turn}, "
                   f"expected {expected[rotation]}")
@@ -150,7 +150,7 @@ def check_strip_turn() -> int:
 def check_touch_value() -> int:
     """A touch position is mapped to where the strip was composed."""
     deck = FaultyFakeDeck(serial_number="rot-touch", model="plus")
-    better = BetterDeck(deck)
+    wrapped_deck = BetterDeck(deck)
     width, height = STRIP_SIZE
     if tuple(deck.touchscreen_image_format()["size"]) != STRIP_SIZE:
         print(f"FAIL(d): the fake deck's strip is not {STRIP_SIZE}; the "
@@ -160,16 +160,16 @@ def check_touch_value() -> int:
     original = {"x": 100, "y": 20, "x_out": 700, "y_out": 80}
 
     for rotation in (0, 90, 270):
-        better.set_rotation(rotation)
-        mapped = better.logical_touch_value(dict(original))
+        wrapped_deck.set_rotation(rotation)
+        mapped = wrapped_deck.logical_touch_value(dict(original))
         if mapped != original:
             print(f"FAIL(d): rotation {rotation} moved a touch position to "
                   f"{mapped}; the strip is written in the device's own "
                   f"orientation there, so nothing moves")
             return 1
 
-    better.set_rotation(180)
-    mapped = better.logical_touch_value(original)
+    wrapped_deck.set_rotation(180)
+    mapped = wrapped_deck.logical_touch_value(original)
     expected = {
         "x": width - 1 - original["x"],
         "y": height - 1 - original["y"],
@@ -192,7 +192,7 @@ def check_touch_value() -> int:
         return 1
 
     # Keys the mapper does not know are carried through untouched.
-    carried = better.logical_touch_value({"x": 0, "y": 0, "pressure": 7})
+    carried = wrapped_deck.logical_touch_value({"x": 0, "y": 0, "pressure": 7})
     if carried.get("pressure") != 7:
         print(f"FAIL(d): rotation 180 dropped an unmapped key: {carried}")
         return 1
@@ -200,8 +200,8 @@ def check_touch_value() -> int:
     # Keep out-of-range positions outside at every rotation; the library does not clamp them.
     # Mirroring x == width to -1 would make consumer slot arithmetic select the first slot.
     for rotation in ROTATIONS:
-        better.set_rotation(rotation)
-        edge = better.logical_touch_value({"x": width, "y": height})
+        wrapped_deck.set_rotation(rotation)
+        edge = wrapped_deck.logical_touch_value({"x": width, "y": height})
         if 0 <= edge["x"] < width or 0 <= edge["y"] < height:
             print(f"FAIL(d): rotation {rotation} moved a touch at "
                   f"({width}, {height}), which is past the strip, onto it: "
@@ -215,9 +215,9 @@ def check_touch_value() -> int:
 def check_dial_order() -> int:
     """Dial order follows the strip: reversed at 180, one for one elsewhere."""
     deck = FaultyFakeDeck(serial_number="rot-dial", model="plus")
-    better = BetterDeck(deck)
-    if better.dial_count() != N_DIALS:
-        print(f"FAIL(e): the fake deck has {better.dial_count()} dials; the "
+    wrapped_deck = BetterDeck(deck)
+    if wrapped_deck.dial_count() != N_DIALS:
+        print(f"FAIL(e): the fake deck has {wrapped_deck.dial_count()} dials; the "
               f"literals below assume {N_DIALS}")
         return 1
 
@@ -225,8 +225,8 @@ def check_dial_order() -> int:
     deck.dial_states = lambda: [True] + [False] * (N_DIALS - 1)
 
     for rotation in ROTATIONS:
-        better.set_rotation(rotation)
-        logical = [better.get_logical_dial_index(p) for p in range(N_DIALS)]
+        wrapped_deck.set_rotation(rotation)
+        logical = [wrapped_deck.get_logical_dial_index(p) for p in range(N_DIALS)]
         expected = (list(reversed(range(N_DIALS))) if rotation == 180
                     else list(range(N_DIALS)))
         if logical != expected:
@@ -239,16 +239,16 @@ def check_dial_order() -> int:
             return 1
         # The map is its own inverse, which is what lets one reversal serve
         # both the event path and the slot the composite drew.
-        round_trip = [better.get_physical_dial_index(l) for l in logical]
+        round_trip = [wrapped_deck.get_physical_dial_index(l) for l in logical]
         if round_trip != list(range(N_DIALS)):
             print(f"FAIL(e): rotation {rotation} dial map is not its own "
                   f"inverse: {round_trip}")
             return 1
 
         # dial_states() is reported in logical order, as key_states() is.
-        states = better.dial_states()
+        states = wrapped_deck.dial_states()
         pressed = states.index(True)
-        if pressed != better.get_logical_dial_index(0):
+        if pressed != wrapped_deck.get_logical_dial_index(0):
             print(f"FAIL(e): rotation {rotation}: physical dial 0 is pressed, "
                   f"dial_states() reports logical {pressed} pressed")
             return 1
@@ -260,19 +260,19 @@ def check_dial_order() -> int:
 def check_event_remap() -> int:
     """The dial and touchscreen callbacks carry logical values."""
     deck = FaultyFakeDeck(serial_number="rot-events", model="plus")
-    better = BetterDeck(deck)
+    wrapped_deck = BetterDeck(deck)
 
     dials: "list[int]" = []
     touches: "list[dict]" = []
-    better.set_dial_callback(lambda _deck, dial, _event, _value: dials.append(dial))
-    better.set_touchscreen_callback(lambda _deck, _event, value: touches.append(value))
+    wrapped_deck.set_dial_callback(lambda _deck, dial, _event, _value: dials.append(dial))
+    wrapped_deck.set_touchscreen_callback(lambda _deck, _event, value: touches.append(value))
 
     for rotation in ROTATIONS:
-        better.set_rotation(rotation)
+        wrapped_deck.set_rotation(rotation)
 
         dials.clear()
         deck.fire_dial_event(0, "TURN", 1)
-        expected_dial = better.get_logical_dial_index(0)
+        expected_dial = wrapped_deck.get_logical_dial_index(0)
         if dials != [expected_dial]:
             print(f"FAIL(f): rotation {rotation}: physical dial 0 dispatched "
                   f"{dials}, expected [{expected_dial}]")
@@ -280,7 +280,7 @@ def check_event_remap() -> int:
 
         touches.clear()
         deck.fire_touchscreen_event("SHORT", {"x": 10, "y": 10})
-        expected_touch = better.logical_touch_value({"x": 10, "y": 10})
+        expected_touch = wrapped_deck.logical_touch_value({"x": 10, "y": 10})
         if touches != [expected_touch]:
             print(f"FAIL(f): rotation {rotation}: a touch at (10, 10) "
                   f"dispatched {touches}, expected [{expected_touch}]")

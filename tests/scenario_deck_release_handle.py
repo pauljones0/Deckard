@@ -306,7 +306,7 @@ def test_release_beats_the_resume_loop() -> None:
     print("PASS: a release the reader cannot undo, even from inside the reopen loop")
 
 
-def test_out_of_range_rotation_comes_up_unrotated() -> None:
+def test_invalid_rotation_defaults_to_zero() -> None:
     """Require an unusable persisted rotation to leave the deck running unrotated."""
     serial = "release-rotation"
     settings = gl.settings_manager.get_deck_settings(serial)
@@ -343,7 +343,7 @@ def main() -> None:
     test_failed_settings_read_releases_handle()
     test_failed_tail_releases_handle()
     test_generic_retry_arm_releases_handle()
-    test_out_of_range_rotation_comes_up_unrotated()
+    test_invalid_rotation_defaults_to_zero()
     print("ALL PASS: scenario_deck_release_handle")
 
 

@@ -12,7 +12,7 @@ This programm comes with ABSOLUTELY NO WARRANTY!
 You should have received a copy of the GNU General Public License
 along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-One manager, one pack and one asset, shared by every family of installable art.
+One discovery, one pack and one asset, shared by every family of installable art.
 
 Icons, wallpapers and SD+ bar wallpapers all ship as packs. A pack is a folder
 that holds a manifest.json, a thumbnail the manifest names, a folder of asset
@@ -141,9 +141,9 @@ class Pack(Generic[AssetT]):
         self.path = path
         self.is_valid = True
         self.name = self.get_manifest().get("name") or os.path.basename(path)
-        self.pack_structure: dict[str, list[AssetT]] = {}
+        self.assets_by_folder: dict[str, list[AssetT]] = {}
 
-        self.generate_folder_structure(self.ASSET_MANIFEST_KEY)
+        self.load_assets_by_folder(self.ASSET_MANIFEST_KEY)
 
     def make_asset(self, path: str) -> AssetT:
         """Build one asset of the family's own leaf class."""
@@ -192,15 +192,15 @@ class Pack(Generic[AssetT]):
         self.is_valid = False
         return None
 
-    def get_content_from_structure(self) -> list[AssetT]:
-        content: list[AssetT] = []
+    def get_assets(self) -> list[AssetT]:
+        assets: list[AssetT] = []
 
-        for folder_content in self.pack_structure.values():
-            content.extend(folder_content)
+        for folder_assets in self.assets_by_folder.values():
+            assets.extend(folder_assets)
 
-        return content
+        return assets
 
-    def generate_folder_structure(self, asset_path: str) -> None:
+    def load_assets_by_folder(self, asset_path: str) -> None:
         manifest = self.get_manifest()
 
         if self.is_valid is False:
@@ -219,30 +219,30 @@ class Pack(Generic[AssetT]):
             self.is_valid = False
             return
 
-        base_dir_content = self.load_content(pack_path)
-        if base_dir_content:
-            self.pack_structure["Base"] = base_dir_content
+        base_assets = self.load_assets(pack_path)
+        if base_assets:
+            self.assets_by_folder["Base"] = base_assets
 
         subfolders = [entry for entry in os.scandir(pack_path) if entry.is_dir()]
 
         for folder in subfolders:
-            self.pack_structure[folder.name] = self.load_content(folder.path)
+            self.assets_by_folder[folder.name] = self.load_assets(folder.path)
 
-    def load_content(self, folder_path: str | os.PathLike[str]) -> list[AssetT]:
-        content: list[AssetT] = []
+    def load_assets(self, folder_path: str | os.PathLike[str]) -> list[AssetT]:
+        assets: list[AssetT] = []
 
         for entry in os.scandir(folder_path):
             if os.path.isdir(entry.path):
                 continue
-            content.append(self.make_asset(entry.path))
+            assets.append(self.make_asset(entry.path))
 
-        return content
+        return assets
 
 
 PackT = TypeVar("PackT", bound=Pack[Any])
 
 
-class PackManager(Generic[PackT]):
+class PackDiscovery(Generic[PackT]):
     """Discovery for one family. It holds no pack between calls."""
 
     DATA_DIR: ClassVar[str]
@@ -250,7 +250,7 @@ class PackManager(Generic[PackT]):
 
     def __init_subclass__(cls) -> None:
         super().__init_subclass__()
-        check_family_contract(cls, PackManager, ("DATA_DIR", "LABEL"), ("make_pack",))
+        check_family_contract(cls, PackDiscovery, ("DATA_DIR", "LABEL"), ("make_pack",))
 
     def __init__(self) -> None:
         self.packs: dict[str, PackT] = {}

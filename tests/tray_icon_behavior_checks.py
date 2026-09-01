@@ -9,7 +9,7 @@ from src.tray import TrayIcon, icon_search_roots, tray_icon_theme_path
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
 
-def check_item_and_menu_take_their_own_paths() -> None:
+def check_tray_object_paths() -> None:
     tray = TrayIcon()
     sni = tray.sni_service
 
@@ -36,7 +36,7 @@ def check_item_and_menu_take_their_own_paths() -> None:
     print("PASS: the tray item and its menu take their own D-Bus paths")
 
 
-def check_icon_theme_path_only_when_the_host_lacks_the_icon() -> None:
+def check_host_aware_icon_theme_path() -> None:
     bundled = os.path.join(REPO_ROOT, "Assets", "icons")
     saved = {
         name: os.environ.get(name)

@@ -38,7 +38,7 @@ def request(port, method, path, token=None, body=None):
     return response.status, data
 
 
-def handler_leg():
+def check_handler_authentication():
     manager = RecordingManager()
     handler = create_handler(manager, TOKEN)
     server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
@@ -89,7 +89,7 @@ def handler_leg():
         thread.join(timeout=5)
 
 
-def manager_leg():
+def check_manager_bind_failure():
     from src.backend.DeckManagement.Subclasses.RemoteDeckManager import RemoteDeckManager
 
     blocker = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -106,6 +106,6 @@ def manager_leg():
         blocker.close()
 
 
-handler_leg()
-manager_leg()
+check_handler_authentication()
+check_manager_bind_failure()
 print("scenario_remote_deck_auth: OK")

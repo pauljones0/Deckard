@@ -160,7 +160,7 @@ class FakeCommentGroup:
         self.comment_row = FakeEntryRow()
         self.action = None
         self.index = 0
-        self._comment_handler = None
+        self._comment_handler_id = None
         self.connect_signals()
 
 
@@ -196,7 +196,7 @@ class FakeLabelToggle:
         self.action_row = action_row
         self.indicators = [FakeIndicator() for _ in range(3)]
         self.config_buttons = [FakeCheckButton(i) for i in range(3)]
-        self._label_handlers: dict[int, int] = {}
+        self._label_handler_ids: dict[int, int] = {}
         self.connect_signals()
 
 
@@ -221,8 +221,8 @@ class FakeActionRow:
     def __init__(self) -> None:
         self.allow_image_toggle = FakeToggle()
         self.allow_background_toggle = FakeToggle()
-        self._image_handler = None
-        self._background_handler = None
+        self._image_handler_id = None
+        self._background_handler_id = None
         self.image_toggles = 0
         self.background_toggles = 0
         self.connect_image_signal()
@@ -241,7 +241,7 @@ def _install(page) -> None:
     services.require_main_window = lambda: mw
 
 
-def test_comment_row_reconnects_after_midload_raise() -> None:
+def test_comment_row_reconnects_after_load_failure() -> None:
     """A load that raises mid-update must still leave the comment row wired."""
     page = FakePage()
     _install(page)
@@ -270,7 +270,7 @@ def test_comment_row_reconnects_after_midload_raise() -> None:
     )
 
 
-def test_comment_row_wires_exactly_once_across_loads() -> None:
+def test_comment_row_keeps_one_handler() -> None:
     """Repeated loads must not raise and must leave exactly one handler."""
     page = FakePage()
     page.comments[1] = "note"
@@ -292,7 +292,7 @@ def test_comment_row_wires_exactly_once_across_loads() -> None:
     assert page.comments[1] == "note"
 
 
-def test_image_toggle_reconnects_after_midupdate_raise() -> None:
+def test_image_toggle_reconnects_after_update_failure() -> None:
     """A set_image_toggled that raises must still leave the toggle wired."""
     row = FakeActionRow()
     assert row.allow_image_toggle.handler_count() == 1, "toggle must start wired"
@@ -316,7 +316,7 @@ def test_image_toggle_reconnects_after_midupdate_raise() -> None:
     )
 
 
-def test_background_toggle_reconnects_after_midupdate_raise() -> None:
+def test_background_toggle_reconnects_after_update_failure() -> None:
     """A set_background_toggled that raises must still leave the toggle wired."""
     row = FakeActionRow()
     assert row.allow_background_toggle.handler_count() == 1, "toggle must start wired"
@@ -340,7 +340,7 @@ def test_background_toggle_reconnects_after_midupdate_raise() -> None:
     )
 
 
-def test_toggles_wire_exactly_once_across_updates() -> None:
+def test_toggles_keep_one_handler() -> None:
     """Repeated updates must leave one handler, so one click reports once."""
     row = FakeActionRow()
     row.set_image_toggled(True)
@@ -367,7 +367,7 @@ def test_toggles_wire_exactly_once_across_updates() -> None:
     assert row.allow_image_toggle.get_active() is False
 
 
-def test_label_toggle_reconnects_after_midupdate_raise() -> None:
+def test_label_toggle_reconnects_after_update_failure() -> None:
     """A partial set_active failure must leave all three buttons wired."""
     host = FakeLabelHost()
     toggle = FakeLabelToggle(host)
@@ -396,7 +396,7 @@ def test_label_toggle_reconnects_after_midupdate_raise() -> None:
     )
 
 
-def test_label_toggle_wires_exactly_once_across_updates() -> None:
+def test_label_toggle_keeps_one_handler() -> None:
     """Repeated updates must leave one handler per button."""
     host = FakeLabelHost()
     toggle = FakeLabelToggle(host)
@@ -423,13 +423,13 @@ def test_label_toggle_wires_exactly_once_across_updates() -> None:
 
 def main() -> None:
     fixtures.start_watchdog(30, label="scenario_action_reconnect")
-    test_comment_row_reconnects_after_midload_raise()
-    test_comment_row_wires_exactly_once_across_loads()
-    test_image_toggle_reconnects_after_midupdate_raise()
-    test_background_toggle_reconnects_after_midupdate_raise()
-    test_toggles_wire_exactly_once_across_updates()
-    test_label_toggle_reconnects_after_midupdate_raise()
-    test_label_toggle_wires_exactly_once_across_updates()
+    test_comment_row_reconnects_after_load_failure()
+    test_comment_row_keeps_one_handler()
+    test_image_toggle_reconnects_after_update_failure()
+    test_background_toggle_reconnects_after_update_failure()
+    test_toggles_keep_one_handler()
+    test_label_toggle_reconnects_after_update_failure()
+    test_label_toggle_keeps_one_handler()
     print("PASS: scenario_action_reconnect")
 
 

@@ -78,7 +78,7 @@ def check_shipped_icon_theme_resolves() -> None:
           f"all {len(shipped)} icon dirs")
 
 
-def check_flatpak_manifest_installs_the_app_icon() -> None:
+def check_flatpak_icon_install() -> None:
     with open(FLATPAK_MANIFEST, encoding="utf-8") as manifest_file:
         manifest = manifest_file.read()
     pattern = (

@@ -35,11 +35,11 @@ class _Recorder:
 
     def __init__(self):
         self.calls: list[tuple] = []
-        self.got = threading.Event()
+        self.delivery_event = threading.Event()
 
     def __call__(self, *args, **kwargs):
         self.calls.append((args, kwargs))
-        self.got.set()
+        self.delivery_event.set()
 
 
 def _holder(hold: BackendEventHold, event_id: str) -> EventHolder:
@@ -61,7 +61,7 @@ def check_held_then_delivered_on_connect() -> None:
     assert not recorder.calls, "the event was delivered before the backend registered"
 
     hold.release()
-    assert recorder.got.wait(10), "the held event was never delivered after the release"
+    assert recorder.delivery_event.wait(10), "the held event was never delivered after the release"
     args, kwargs = recorder.calls[0]
     assert args == ("test::held", "payload"), (
         f"the held event lost the event id contract of the first argument: {args}"
@@ -81,7 +81,7 @@ def check_observed_event_is_not_delayed() -> None:
 
     hold.arm()
     holder.trigger_event("now")
-    assert recorder.got.wait(10), "an event with a live observer was held instead of dispatched"
+    assert recorder.delivery_event.wait(10), "an event with a live observer was held instead of dispatched"
     assert hold.armed, "dispatching an observed event closed the window"
     hold.release()
     assert len(recorder.calls) == 1, (
@@ -107,7 +107,7 @@ def check_coalescing_and_multiple_ids() -> None:
     second.add_listener(recorder_b)
     hold.release()
 
-    assert recorder_a.got.wait(10) and recorder_b.got.wait(10), "a held event was lost"
+    assert recorder_a.delivery_event.wait(10) and recorder_b.delivery_event.wait(10), "a held event was lost"
     # Per-holder lanes serialize delivery.
     # After the first, wait briefly to detect an erroneous second delivery.
     assert not _wait_until(lambda: len(recorder_a.calls) > 1, timeout=0.5), (
@@ -122,7 +122,7 @@ def check_coalescing_and_multiple_ids() -> None:
     print("PASS: the hold keeps one entry per event id, and the newest wins")
 
 
-def check_a_live_dispatch_supersedes_the_held_value() -> None:
+def check_live_dispatch_supersedes_held_value() -> None:
     """Do not replay a held value after a newer live dispatch.
     Otherwise release leaves the observer's final state stale."""
     hold = BackendEventHold(label="supersede", bound_s=30.0)
@@ -133,7 +133,7 @@ def check_a_live_dispatch_supersedes_the_held_value() -> None:
     recorder = _Recorder()
     holder.add_listener(recorder)
     holder.trigger_event("fresh")
-    assert recorder.got.wait(10), "the live event was not dispatched"
+    assert recorder.delivery_event.wait(10), "the live event was not dispatched"
 
     hold.release()
     assert not _wait_until(lambda: len(recorder.calls) > 1, timeout=0.5), (
@@ -146,7 +146,7 @@ def check_a_live_dispatch_supersedes_the_held_value() -> None:
     print("PASS: a live dispatch supersedes what the window holds for that event")
 
 
-def check_two_holders_sharing_an_event_id() -> None:
+def check_shared_event_id_preserves_holders() -> None:
     """Keep separate held entries for holders that share one event ID.
     Keying by event ID alone would silently replace the first holder's event."""
     hold = BackendEventHold(label="shared-id", bound_s=30.0)
@@ -163,17 +163,17 @@ def check_two_holders_sharing_an_event_id() -> None:
     second.add_listener(second_recorder)
     hold.release()
 
-    assert first_recorder.got.wait(10), (
+    assert first_recorder.delivery_event.wait(10), (
         "the first holder's event was replaced by the second holder's; the hold "
         "keys on the event id alone"
     )
-    assert second_recorder.got.wait(10), "the second holder's event was lost"
+    assert second_recorder.delivery_event.wait(10), "the second holder's event was lost"
     assert first_recorder.calls[0][0] == ("test::shared", "from-first")
     assert second_recorder.calls[0][0] == ("test::shared", "from-second")
     print("PASS: two holders sharing an event id keep an entry each")
 
 
-def check_the_deadline_does_not_move() -> None:
+def check_deadline_remains_fixed() -> None:
     """Keep the launch-time deadline fixed when later events arrive.
     Rearming per offer lets a chatty source hold events for the process lifetime."""
     hold = BackendEventHold(label="deadline", bound_s=0.1)
@@ -192,7 +192,7 @@ def check_the_deadline_does_not_move() -> None:
     print("PASS: a later event does not move the window's deadline")
 
 
-def check_bound_expiry_drops_and_shuts() -> None:
+def check_expiry_drops_events_and_disarms() -> None:
     """The window closes on its own, drops what it holds and stops holding."""
     hold = BackendEventHold(label="expiry", bound_s=0.05)
     holder = _holder(hold, "test::expiry")
@@ -212,7 +212,7 @@ def check_bound_expiry_drops_and_shuts() -> None:
 
     # A trigger after the window shut goes out the normal way.
     holder.trigger_event("after")
-    assert recorder.got.wait(10), "a trigger after the expiry was still held"
+    assert recorder.delivery_event.wait(10), "a trigger after the expiry was still held"
     assert recorder.calls[0][0] == ("test::expiry", "after")
     print("PASS: the bound closes the window, drops what it holds and stops holding")
 
@@ -251,7 +251,7 @@ def check_generation_guard_across_reconnect() -> None:
     fresh.trigger_event("second-attempt")
     fresh.add_listener(fresh_recorder)
     hold.release()
-    assert fresh_recorder.got.wait(10), "the new connection's held event was not delivered"
+    assert fresh_recorder.delivery_event.wait(10), "the new connection's held event was not delivered"
     assert fresh_recorder.calls[0][0] == ("test::generation-fresh", "second-attempt")
 
     # Entry generation blocks stale delivery if release races a relaunch,
@@ -286,17 +286,17 @@ def check_cancel_drops_without_delivery() -> None:
         f"cancel delivered what it was asked to drop: {recorder.calls}"
     )
     holder.trigger_event("after")
-    assert recorder.got.wait(10), "a trigger after the cancel was still held"
+    assert recorder.delivery_event.wait(10), "a trigger after the cancel was still held"
     print("PASS: a teardown shuts the window and drops what it holds")
 
 
-def check_holder_without_a_plugin_still_dispatches() -> None:
+def check_pluginless_holder_dispatches() -> None:
     """An EventHolder built without a plugin keeps dispatching."""
     holder = EventHolder(plugin_base=None, event_id="test::no-plugin")
     recorder = _Recorder()
     holder.add_listener(recorder)
     holder.trigger_event("value")
-    assert recorder.got.wait(10), "a holder without a plugin stopped dispatching"
+    assert recorder.delivery_event.wait(10), "a holder without a plugin stopped dispatching"
 
     try:
         EventHolder(plugin_base=None, event_id_suffix="Suffix")
@@ -307,7 +307,7 @@ def check_holder_without_a_plugin_still_dispatches() -> None:
     print("PASS: a holder without a plugin dispatches, and the suffix form is refused")
 
 
-def _wiring_plugin(hold: BackendEventHold) -> PluginBase:
+def _plugin_with_launch_state(hold: BackendEventHold) -> PluginBase:
     """A PluginBase with the launch state alone. __init__ needs a real plugin
     directory that this contract never touches."""
     plugin = PluginBase.__new__(PluginBase)
@@ -318,14 +318,14 @@ def _wiring_plugin(hold: BackendEventHold) -> PluginBase:
     plugin.backend = None
     plugin.backend_connection = None
     plugin.backend_process = None
-    plugin._backend_launch_gen = 0
+    plugin._backend_launch_generation = 0
     plugin._backend_stop_requested = False
     plugin._backend_via_terminal = False
     plugin._backend_ready = threading.Event()
     return plugin
 
 
-def check_hold_exists_without_a_full_init() -> None:
+def check_hold_without_plugin_init() -> None:
     """Provide one shared hold when a plugin skips PluginBase.__init__.
     Launch, registration, teardown, and event holders all access this property."""
     plugin = PluginBase.__new__(PluginBase)
@@ -387,9 +387,9 @@ class _LaunchStop(Exception):
     """Ends launch_backend at the spawn, after the wiring under test ran."""
 
 
-def check_launch_backend_opens_the_window() -> None:
+def check_launch_arms_hold() -> None:
     hold = BackendEventHold(label="wiring-arm", bound_s=30.0)
-    plugin = _wiring_plugin(hold)
+    plugin = _plugin_with_launch_state(hold)
     real_subprocess = plugin_base_module.subprocess
 
     def _refuse(*args, **kwargs):
@@ -407,9 +407,9 @@ def check_launch_backend_opens_the_window() -> None:
     print("PASS: launch_backend opens the hold window before it spawns the backend")
 
 
-def check_register_backend_closes_the_window() -> None:
+def check_registration_releases_hold() -> None:
     hold = BackendEventHold(label="wiring-release", bound_s=30.0)
-    plugin = _wiring_plugin(hold)
+    plugin = _plugin_with_launch_state(hold)
     holder = EventHolder(plugin_base=plugin, event_id="test::wiring")
     recorder = _Recorder()
 
@@ -429,14 +429,14 @@ def check_register_backend_closes_the_window() -> None:
         plugin_base_module.rpyc = real_rpyc
 
     assert not hold.armed, "register_backend did not close the hold window"
-    assert recorder.got.wait(10), (
+    assert recorder.delivery_event.wait(10), (
         "register_backend closed the window without delivering what it held"
     )
     assert recorder.calls[0][0] == ("test::wiring", "during-connect")
     print("PASS: register_backend closes the hold window and delivers what it held")
 
 
-def check_release_happens_before_the_plugin_hook() -> None:
+def check_release_precedes_ready_hook() -> None:
     """Close the window before on_backend_ready runs.
     Events fired while the hook synchronizes backend state must dispatch immediately."""
     hold = BackendEventHold(label="hook-order", bound_s=30.0)
@@ -452,7 +452,7 @@ def check_release_happens_before_the_plugin_hook() -> None:
     plugin.backend = None
     plugin.backend_connection = None
     plugin.backend_process = None
-    plugin._backend_launch_gen = 0
+    plugin._backend_launch_generation = 0
     plugin._backend_stop_requested = False
     plugin._backend_via_terminal = False
     plugin._backend_ready = threading.Event()
@@ -475,9 +475,9 @@ def check_release_happens_before_the_plugin_hook() -> None:
     print("PASS: the hold window is shut before the plugin's backend hook runs")
 
 
-def check_teardown_closes_the_window() -> None:
+def check_teardown_cancels_hold() -> None:
     hold = BackendEventHold(label="wiring-cancel", bound_s=30.0)
-    plugin = _wiring_plugin(hold)
+    plugin = _plugin_with_launch_state(hold)
     holder = EventHolder(plugin_base=plugin, event_id="test::teardown")
     recorder = _Recorder()
 
@@ -505,18 +505,18 @@ def main() -> None:
     check_held_then_delivered_on_connect()
     check_observed_event_is_not_delayed()
     check_coalescing_and_multiple_ids()
-    check_a_live_dispatch_supersedes_the_held_value()
-    check_two_holders_sharing_an_event_id()
-    check_the_deadline_does_not_move()
-    check_bound_expiry_drops_and_shuts()
+    check_live_dispatch_supersedes_held_value()
+    check_shared_event_id_preserves_holders()
+    check_deadline_remains_fixed()
+    check_expiry_drops_events_and_disarms()
     check_generation_guard_across_reconnect()
     check_cancel_drops_without_delivery()
-    check_holder_without_a_plugin_still_dispatches()
-    check_hold_exists_without_a_full_init()
-    check_launch_backend_opens_the_window()
-    check_register_backend_closes_the_window()
-    check_release_happens_before_the_plugin_hook()
-    check_teardown_closes_the_window()
+    check_pluginless_holder_dispatches()
+    check_hold_without_plugin_init()
+    check_launch_arms_hold()
+    check_registration_releases_hold()
+    check_release_precedes_ready_hook()
+    check_teardown_cancels_hold()
 
     print("PASS: scenario_backend_event_hold")
 

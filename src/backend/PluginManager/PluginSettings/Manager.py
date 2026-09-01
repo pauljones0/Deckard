@@ -104,12 +104,12 @@ class Manager(Generic[AssetT]):
         return out
 
     def load_json(self, json_data: dict[str, Any]) -> None:
-        data = json_data.get(self._json_key, None)
+        serialized_assets = json_data.get(self._json_key, None)
 
-        if not data:
+        if not serialized_assets:
             return
 
-        for key, value in data.items():
+        for key, value in serialized_assets.items():
             asset = self._asset_type.from_json(value)
             if asset is None:
                 # The concrete asset classes always build one; the base

@@ -30,13 +30,13 @@ class ManualScheduler:
 
 
 class FakeSource:
-    """A minimal PageContent the seam can flush."""
+    """A minimal PageFlushSource the seam can flush."""
 
     def __init__(self, path: str):
         self.json_path = path
         self.backups = 0
 
-    def get_without_action_objects(self) -> dict[str, Any]:
+    def snapshot_for_save(self) -> dict[str, Any]:
         return {"keys": {}}
 
     def move_key_to_end(self, dictionary: dict[str, Any], key: str) -> None:
@@ -91,28 +91,30 @@ def main() -> int:
             failures.append(f"the retry did not write the page: {writes}")
 
         # --- Quit flush persists a still-pending edit ---------------------
-        sched2 = ManualScheduler()
-        flush2 = PageFlush(scheduler=sched2, clock=lambda: clock[0])
-        src2 = FakeSource(path)
-        flush2.mark_dirty(src2)
+        quit_scheduler = ManualScheduler()
+        quit_flush = PageFlush(scheduler=quit_scheduler, clock=lambda: clock[0])
+        quit_source = FakeSource(path)
+        quit_flush.mark_dirty(quit_source)
         outcomes[:] = [OSError("temporarily unavailable")]
-        flush2.flush_path(path)  # transient fail, retained
+        quit_flush.flush_path(path)  # transient fail, retained
         writes.clear()
         outcomes[:] = [None]
-        flush2.flush_all()  # the quit path retries and succeeds
+        quit_flush.flush_all()  # the quit path retries and succeeds
         if writes != [path]:
             failures.append(f"quit flush did not persist the retained edit: {writes}")
-        if flush2.pending_source(path) is not None:
+        if quit_flush.pending_source(path) is not None:
             failures.append("quit flush left the edit pending after a good write")
 
         # --- Permanent serialization failure is retired -------------------
-        sched3 = ManualScheduler()
-        flush3 = PageFlush(scheduler=sched3, clock=lambda: clock[0])
-        src3 = FakeSource(path)
-        flush3.mark_dirty(src3)
+        serialization_scheduler = ManualScheduler()
+        serialization_flush = PageFlush(
+            scheduler=serialization_scheduler, clock=lambda: clock[0]
+        )
+        serialization_source = FakeSource(path)
+        serialization_flush.mark_dirty(serialization_source)
         outcomes[:] = [TypeError("not JSON serializable")]
-        flush3.flush_path(path)
-        if flush3.pending_source(path) is not None:
+        serialization_flush.flush_path(path)
+        if serialization_flush.pending_source(path) is not None:
             failures.append("a permanent serialization failure was not retired")
     finally:
         page_flush.atomic_write_json = real_write

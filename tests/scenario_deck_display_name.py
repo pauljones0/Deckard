@@ -106,11 +106,11 @@ class _FakeStack:
 
 def name_deck(serial: str, name: str) -> None:
     settings = gl.settings_manager.deck(serial)
-    settings.set_value("name", name)
+    settings.set_top_level_value("name", name)
     settings.save()
 
 
-def check_display_name_never_answers_none() -> None:
+def check_display_name_always_returns_text() -> None:
     """Require every input to resolve to a non-empty switcher label."""
     empties = (None, "", "   ", 0, [], {})
     for stored in empties:
@@ -160,7 +160,7 @@ def check_display_name_trims_and_caps() -> None:
     print("PASS: the label is trimmed and cut to the cap")
 
 
-def check_cap_cuts_the_chosen_name_only() -> None:
+def check_name_cap_excludes_fallbacks() -> None:
     """Apply the length cap only to user names, not device-provided fallbacks."""
     long_model = "Fake Deck 1 (Stream Deck Original)"
     assert len(long_model) > DECK_NAME_MAX_LENGTH, "pick a model name past the cap"
@@ -192,7 +192,7 @@ def check_base_title_reads_the_settings() -> None:
     print("PASS: the base title reads the chosen name and falls back to the model")
 
 
-def check_base_title_keys_on_the_fresh_device_serial() -> None:
+def check_base_title_uses_live_serial() -> None:
     """Read the name by current device serial, with the memoized serial as fallback.
     The two serials can differ during boot under USB contention.
     """
@@ -218,7 +218,7 @@ def check_base_title_keys_on_the_fresh_device_serial() -> None:
     print("PASS: the title reads the name under the fresh device serial")
 
 
-def check_base_title_survives_a_dead_device() -> None:
+def check_base_title_handles_dead_device() -> None:
     """A model read that raises still gives a title, and never None."""
     stack = _FakeStack()
     got = stack.base_title(_FakeController("dead-1", deck_raises=True), "dead-1")
@@ -235,7 +235,7 @@ def check_base_title_survives_a_dead_device() -> None:
     print("PASS: a dead or nameless device still resolves to a title")
 
 
-def check_suffix_applies_to_a_chosen_name() -> None:
+def check_chosen_name_gets_duplicate_suffix() -> None:
     """Two decks under one chosen name read "Name" and "Name (2)"."""
     stack = _FakeStack()
     for serial in ("dup-1", "dup-2", "dup-3"):
@@ -253,7 +253,7 @@ def check_suffix_applies_to_a_chosen_name() -> None:
     print("PASS: identically named decks read Studio, Studio (2), Studio (3)")
 
 
-def check_suffix_leaves_the_model_digits_alone() -> None:
+def check_model_digits_survive_duplicate_suffix() -> None:
     stack = _FakeStack()
     titles = [
         stack.get_page_attributes(_FakeController(f"mk-{i}"))[1]
@@ -265,7 +265,7 @@ def check_suffix_leaves_the_model_digits_alone() -> None:
     print("PASS: a second MK.2 reads MK.2 (2) and never MK.3")
 
 
-def check_named_and_unnamed_decks_do_not_collide() -> None:
+def check_title_namespace_collisions() -> None:
     """A chosen name equal to another deck's model name still gets a suffix."""
     stack = _FakeStack()
     name_deck("mix-2", "Stream Deck MK.2")
@@ -290,7 +290,7 @@ def check_attributes_are_cached_per_controller() -> None:
     print("PASS: a controller keeps the title it was given")
 
 
-def check_every_title_is_a_non_empty_string() -> None:
+def check_titles_are_nonempty_strings() -> None:
     """The tuple's title is a string, whatever the device answers."""
     stack = _FakeStack()
     cases = (
@@ -309,7 +309,7 @@ def check_every_title_is_a_non_empty_string() -> None:
     print("PASS: every stack title is a non-empty string")
 
 
-def check_unreadable_serial_is_the_one_none() -> None:
+def check_only_unreadable_serial_returns_none() -> None:
     """Return no attributes only when the stack-child serial is unreadable."""
     stack = _FakeStack()
     assert stack.get_page_attributes(_FakeController("x", serial_raises=True)) is None
@@ -357,7 +357,7 @@ def check_repeated_renames_gain_no_suffix() -> None:
     print("PASS: repeated renames gain no suffix")
 
 
-def check_rename_to_a_taken_name_gets_a_suffix() -> None:
+def check_taken_name_rename_adds_suffix() -> None:
     stack = _FakeStack()
     first = _FakeController("two-1")
     second = _FakeController("two-2", deck_type="Stream Deck XL")
@@ -378,7 +378,7 @@ def check_rename_to_a_taken_name_gets_a_suffix() -> None:
     print("PASS: a rename onto a taken title takes the suffix")
 
 
-def check_rename_of_an_absent_child_records_the_title() -> None:
+def check_absent_child_rename_records_title() -> None:
     """No live child costs the retitle and nothing else."""
     stack = _FakeStack()
     controller = _FakeController("absent-1")
@@ -391,7 +391,7 @@ def check_rename_of_an_absent_child_records_the_title() -> None:
     print("PASS: a rename with no live child still records the title")
 
 
-def check_rename_of_an_unknown_controller_is_a_no_op() -> None:
+def check_unknown_controller_rename_is_noop() -> None:
     stack = _FakeStack()
     stack.refresh_page_title(_FakeController("unknown-1"))
     assert stack.deck_names == [] and stack.deck_attributes == {}, (
@@ -400,7 +400,7 @@ def check_rename_of_an_unknown_controller_is_a_no_op() -> None:
     print("PASS: renaming a controller the stack never saw changes nothing")
 
 
-def check_empty_name_returns_the_model_title() -> None:
+def check_empty_name_uses_model_title() -> None:
     stack = _FakeStack()
     controller = _FakeController("clear-1")
     _number, title = stack.get_page_attributes(controller)
@@ -602,7 +602,7 @@ def check_the_row_holds_no_timeout() -> None:
     print("PASS: the name row writes on apply and arms no main-loop source")
 
 
-def check_real_name_row_wires_and_saves() -> None:
+def check_real_name_row_save_flow() -> None:
     """Build a real DeckName to check its cap, apply handler, and map reload.
     This check needs libadwaita and a display.
     """
@@ -633,12 +633,12 @@ def check_real_name_row_wires_and_saves() -> None:
             f"the row must refuse more than the switcher can show, its cap is "
             f"{row.get_max_length()}"
         )
-        assert row._apply_handler is not None, (
+        assert row._apply_handler_id is not None, (
             "construction must wire the apply handler, or no name ever saves"
         )
         # A second load, as a page re-map runs, must leave the handler wired.
         row.load_default()
-        assert row._apply_handler is not None, (
+        assert row._apply_handler_id is not None, (
             "a reload must leave the apply handler wired"
         )
 
@@ -661,28 +661,28 @@ def main() -> None:
     fixtures.start_watchdog(30, label="scenario_deck_display_name")
     fixtures.install_stub_globals()
 
-    check_display_name_never_answers_none()
+    check_display_name_always_returns_text()
     check_display_name_precedence()
     check_display_name_trims_and_caps()
-    check_cap_cuts_the_chosen_name_only()
+    check_name_cap_excludes_fallbacks()
     check_reading_the_name_writes_nothing()
 
     check_base_title_reads_the_settings()
-    check_base_title_keys_on_the_fresh_device_serial()
-    check_base_title_survives_a_dead_device()
-    check_suffix_applies_to_a_chosen_name()
-    check_suffix_leaves_the_model_digits_alone()
-    check_named_and_unnamed_decks_do_not_collide()
+    check_base_title_uses_live_serial()
+    check_base_title_handles_dead_device()
+    check_chosen_name_gets_duplicate_suffix()
+    check_model_digits_survive_duplicate_suffix()
+    check_title_namespace_collisions()
     check_attributes_are_cached_per_controller()
-    check_every_title_is_a_non_empty_string()
-    check_unreadable_serial_is_the_one_none()
+    check_titles_are_nonempty_strings()
+    check_only_unreadable_serial_returns_none()
 
     check_rename_retitles_the_live_child()
     check_repeated_renames_gain_no_suffix()
-    check_rename_to_a_taken_name_gets_a_suffix()
-    check_rename_of_an_absent_child_records_the_title()
-    check_rename_of_an_unknown_controller_is_a_no_op()
-    check_empty_name_returns_the_model_title()
+    check_taken_name_rename_adds_suffix()
+    check_absent_child_rename_records_title()
+    check_unknown_controller_rename_is_noop()
+    check_empty_name_uses_model_title()
 
     check_apply_writes_trims_and_retitles()
     check_apply_clears_the_name()
@@ -691,7 +691,7 @@ def main() -> None:
 
     check_locale_key_is_filled()
     check_the_row_holds_no_timeout()
-    check_real_name_row_wires_and_saves()
+    check_real_name_row_save_flow()
 
     print("PASS: scenario_deck_display_name")
 

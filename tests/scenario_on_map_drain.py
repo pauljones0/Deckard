@@ -13,7 +13,7 @@ class _Widget(LazyMapTasks):
         self.on_map_tasks = []
 
 
-def test_drain_runs_in_order_then_clears() -> None:
+def test_ordered_drain_clears_queue() -> None:
     widget = _Widget()
     order: list[int] = []
     widget.on_map_tasks.append(lambda: order.append(1))
@@ -42,7 +42,7 @@ def test_second_map_runs_nothing() -> None:
     )
 
 
-def test_raising_task_aborts_and_keeps_queue() -> None:
+def test_failed_drain_preserves_queue() -> None:
     # A raising task stops later tasks, preserves the queue, and propagates its error.
     widget = _Widget()
     runs: list[str] = []
@@ -69,9 +69,9 @@ def test_raising_task_aborts_and_keeps_queue() -> None:
 
 def main() -> None:
     fixtures.start_watchdog(30, label="scenario_on_map_drain")
-    test_drain_runs_in_order_then_clears()
+    test_ordered_drain_clears_queue()
     test_second_map_runs_nothing()
-    test_raising_task_aborts_and_keeps_queue()
+    test_failed_drain_preserves_queue()
     print("PASS: scenario_on_map_drain")
 
 

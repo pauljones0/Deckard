@@ -122,7 +122,7 @@ def _png_bytes() -> bytes:
 THUMBNAIL_BYTES = _png_bytes()
 
 
-class _Answer:
+class _RemoteResponse:
     """What request_from_url hands back. get_remote_file reads .text for a
     text fetch and .content for a binary one."""
 
@@ -143,14 +143,14 @@ class _FakeStore:
         self.image_decodes = 0
         self._lock = threading.Lock()
 
-    def request_from_url(self, url: str) -> "_Answer":
+    def request_from_url(self, url: str) -> "_RemoteResponse":
         with self._lock:
             self.urls.append(url)
         path = url.split("/", 5)[-1] if url.count("/") >= 5 else url
         # Match exact filenames because the SD+ filename ends with Wallpapers.json.
         entries = self.catalogs.get(path.rsplit("/", 1)[-1])
         if entries is not None:
-            return _Answer(text=json.dumps([e.catalog_json() for e in entries]))
+            return _RemoteResponse(text=json.dumps([e.catalog_json() for e in entries]))
         if path.endswith("manifest.json"):
             entry = self._entry_for(url)
             if entry is None:
@@ -160,10 +160,10 @@ class _FakeStore:
                 # place of json.
                 with self._lock:
                     self.manifest_fetches += 1
-                return _Answer(text="<html>504 Gateway Timeout</html>")
+                return _RemoteResponse(text="<html>504 Gateway Timeout</html>")
             with self._lock:
                 self.manifest_fetches += 1
-            return _Answer(text=json.dumps({
+            return _RemoteResponse(text=json.dumps({
                 "id": entry.asset_id,
                 "name": entry.repo,
                 "version": NEW_VERSION,
@@ -175,7 +175,7 @@ class _FakeStore:
         if path.endswith(".png"):
             with self._lock:
                 self.image_fetches += 1
-            return _Answer(content=THUMBNAIL_BYTES)
+            return _RemoteResponse(content=THUMBNAIL_BYTES)
         raise StoreFetchError(url, "not found")
 
     def _entry_for(self, url: str) -> "_Entry | None":
@@ -184,7 +184,7 @@ class _FakeStore:
                 return entry
         return None
 
-    def requests_naming(self, repo: str) -> list[str]:
+    def requests_for_repo(self, repo: str) -> list[str]:
         return [url for url in self.urls if f"/acme/{repo}/" in url]
 
     @property
@@ -396,9 +396,9 @@ def test_update_check_skips_uninstalled() -> None:
     for entry in entries:
         if entry.installed is not None:
             continue
-        assert store.requests_naming(entry.repo) == [], (
+        assert store.requests_for_repo(entry.repo) == [], (
             f"an entry the user never installed ({entry.repo}) must cost no "
-            f"request of its own, got {store.requests_naming(entry.repo)}"
+            f"request of its own, got {store.requests_for_repo(entry.repo)}"
         )
 
     assert store.non_catalog_requests == [], (
@@ -659,7 +659,7 @@ def test_store_window_gets_full_prepare() -> None:
         f"every fetched thumbnail must still be decoded, got {store.image_decodes}"
     )
     uninstalled = plugins_catalog[1]
-    assert store.requests_naming(uninstalled.repo), (
+    assert store.requests_for_repo(uninstalled.repo), (
         "the store window must still describe entries the user has not installed"
     )
     shown = next(p for p in plugins if p.plugin_id == "com_acme_Legacy")
@@ -716,7 +716,7 @@ def test_bad_entry_does_not_abort_pass() -> None:
     )
 
 
-def test_stamp_naming_dropped_repo_re_resolved() -> None:
+def test_unclaimed_origin_is_reidentified_and_restamped() -> None:
     """Re-identify and restamp an install whose ORIGIN names an unclaimed repository."""
     _stub_globals()
     _reset_local_state()
@@ -776,7 +776,7 @@ def main() -> None:
     test_branch_pinned_entry_resolves_tip()
     test_store_window_gets_full_prepare()
     test_bad_entry_does_not_abort_pass()
-    test_stamp_naming_dropped_repo_re_resolved()
+    test_unclaimed_origin_is_reidentified_and_restamped()
     test_stamp_matches_catalog_case_insensitive()
     print("scenario_store_update_check_cost: PASS")
 

@@ -15,7 +15,7 @@ def read_settings(path: str) -> dict:
         return json.load(f).get("settings", {})
 
 
-def check_edit_survives_activation_then_save(controller) -> None:
+def check_activation_edit_persistence(controller) -> None:
     # A second page, cached for this controller but not active yet.
     target_path = fixtures.seed_page("ActivateTarget")
     cached_page = gl.page_manager.get_page(target_path, controller)
@@ -73,7 +73,7 @@ def check_edit_survives_activation_then_save(controller) -> None:
     print("PASS: a non-active edit survives activation + a subsequent save()")
 
 
-def check_edit_activate_second_edit(controller) -> None:
+def check_activation_reedit_persistence(controller) -> None:
     """Keep both settings edits across non-active edit, activation, and re-edit."""
     target_path = fixtures.seed_page("ActivateTarget2")
     cached = gl.page_manager.get_page(target_path, controller)
@@ -102,8 +102,8 @@ def main() -> None:
     fixtures.start_watchdog(45, label="scenario_page_settings_activate_roundtrip")
     controller = fixtures.make_headless_controller(serial="activate-roundtrip-1")
     try:
-        check_edit_survives_activation_then_save(controller)
-        check_edit_activate_second_edit(controller)
+        check_activation_edit_persistence(controller)
+        check_activation_reedit_persistence(controller)
     finally:
         fixtures.teardown(controller)
 

@@ -76,17 +76,17 @@ def check_raising_async_observer_logs_traceback():
 
 def check_raising_observer_isolation():
     # The observer after a raising one still runs.
-    ran = []
+    survivor_calls = []
 
     def exploding(*args, **kwargs):
         raise RuntimeError("first observer dies")
 
     def survivor(*args, **kwargs):
-        ran.append(args)
+        survivor_calls.append(args)
 
     with _LogCapture(level="ERROR"):
         event_dispatch.dispatch([exploding, survivor], ("evt",), {}, label="test::Isolation")
-        assert wait_until(lambda: len(ran) == 1, timeout=5.0), (
+        assert wait_until(lambda: len(survivor_calls) == 1, timeout=5.0), (
             "observer after a raising one never ran -- batch isolation broke"
         )
 

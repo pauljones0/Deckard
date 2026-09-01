@@ -25,7 +25,7 @@ class StubController:
         return self.deck.get_serial_number()
 
 
-def reset_world() -> None:
+def reset_page_cache() -> None:
     """Clear shared controllers and cached pages before each leg."""
     gl.deck_manager.deck_controller.clear()
     gl.page_manager.pages.clear()
@@ -38,19 +38,19 @@ def fresh_controller(serial: str) -> StubController:
     return c
 
 
-def arm(page) -> None:
+def add_action_sentinel(page) -> None:
     """Inject an action sentinel that makes cache teardown observable."""
     page.action_objects["sentinel"] = {"0x0": {0: {0: object()}}}
 
 
-def actions_alive(page) -> bool:
+def sentinel_actions_present(page) -> bool:
     return bool(page.action_objects.get("sentinel"))
 
 
 # Leg 1. A page fetched but not yet activated survives eviction pressure,
 # stays whole, and is still the cache's page for its key.
 def leg_fetched_page_survives_pressure() -> int:
-    reset_world()
+    reset_page_cache()
     controller = fresh_controller("pin-fetch")
     # Roomy budget during setup so get_page's own eviction pass does not
     # reclaim the fillers before the leg has built its state.
@@ -65,7 +65,7 @@ def leg_fetched_page_survives_pressure() -> int:
     # or installs it, which protects this unactivated target.
     target_path = seed_page("PinTarget")
     target = gl.page_manager.get_page(target_path, controller)
-    arm(target)
+    add_action_sentinel(target)
     if target is None or len(fillers) != 2:
         print("FAIL(1-setup): the cache was not seeded")
         return 1
@@ -74,7 +74,7 @@ def leg_fetched_page_survives_pressure() -> int:
     gl.page_manager.max_pages = 1
     gl.page_manager.clear_old_cached_pages()
 
-    if not actions_alive(target):
+    if not sentinel_actions_present(target):
         print("FAIL(1): the page fetched but not yet activated was gutted -- "
               "its caller is about to hand a corpse to load_page")
         return 1
@@ -105,7 +105,7 @@ def leg_fetched_page_survives_pressure() -> int:
 # Leg 2. One reservation per deck bounds abandoned fetches when a caller
 # raises between fetching and loading a page.
 def leg_abandoned_fetches_bounded() -> int:
-    reset_world()
+    reset_page_cache()
     controller = fresh_controller("pin-abandon")
     gl.page_manager.max_pages = 100
 
@@ -262,7 +262,7 @@ def leg_brackets_are_counted(controller) -> int:
 def leg_screensaver_handoff_survives_pressure(controller) -> int:
     saver = controller.screen_saver
     deferred = gl.page_manager.get_page(seed_page("PinHandoff"), controller)
-    arm(deferred)
+    add_action_sentinel(deferred)
 
     saver.show()
     try:
@@ -293,7 +293,7 @@ def leg_screensaver_handoff_survives_pressure(controller) -> int:
         saver.showing = False
         controller._screensaver_pending_page = None
 
-    if not actions_alive(deferred):
+    if not sentinel_actions_present(deferred):
         print("FAIL(6): the page the screensaver was holding was gutted in "
               "the hand-off gap -- dismissing the screensaver restores a page "
               "whose every action is dead")
@@ -453,7 +453,7 @@ def reservation_of(controller):
 
 
 def leg_delete_pending_page_retires_reservation() -> int:
-    reset_world()
+    reset_page_cache()
     controller = fresh_controller("pin-rm-pending")
     pins = gl.page_manager.pins
     gl.page_manager.max_pages = 100
@@ -488,7 +488,7 @@ def leg_delete_pending_page_retires_reservation() -> int:
 
 
 def leg_delete_last_page_retires_reservation() -> int:
-    reset_world()
+    reset_page_cache()
     controller = fresh_controller("pin-rm-last")
     pins = gl.page_manager.pins
     gl.page_manager.max_pages = 100
@@ -533,7 +533,7 @@ def main() -> int:
 
     # The remaining legs drive the real load path, so they need a real
     # controller rather than the stubs above.
-    reset_world()
+    reset_page_cache()
     gl.page_manager.max_pages = 100
     controller = fixtures.make_headless_controller(serial="pin-load",
                                                    page_name="PinLoadHome")

@@ -193,7 +193,7 @@ def _defined_names(node: "ast.ClassDef") -> "set[str]":
     }
 
 
-def test_shared_store_classes_carry_the_collapsed_methods() -> None:
+def test_shared_store_classes_define_collapsed_methods() -> None:
     """The guard's own footing. A rename that empties the lists above would
     make every check below pass over nothing."""
     from src.windows.Store.AssetPage import StoreAssetPage, StoreAssetPreview
@@ -216,7 +216,7 @@ def test_shared_store_classes_carry_the_collapsed_methods() -> None:
     )
 
 
-def test_no_store_tab_regrows_a_per_family_copy() -> None:
+def test_store_subclasses_do_not_restore_family_copies() -> None:
     """A subclass of the shared tab or card may not redefine a collapsed
     method. Four copies of one method is where the version gate drifted."""
     seen_pages: set[str] = set()
@@ -270,7 +270,7 @@ def test_no_store_tab_regrows_a_per_family_copy() -> None:
     )
 
 
-def test_every_asset_class_reaches_the_store_through_a_descriptor_row() -> None:
+def test_each_asset_type_uses_descriptor_row() -> None:
     """The tabs the store window builds come from the descriptor table, so a
     new asset class is a row and not a fourth copy of the page."""
     from src.backend.Store.asset_types import ASSET_TYPES
@@ -285,7 +285,7 @@ def test_every_asset_class_reaches_the_store_through_a_descriptor_row() -> None:
             )
 
 
-def test_uninstall_row_matches_the_card_that_reads_it() -> None:
+def test_uninstall_descriptor_matches_preview_method() -> None:
     """Require each shared uninstall row to accept its record or provide a card override."""
     import inspect
 
@@ -326,10 +326,10 @@ def main() -> None:
     test_verdict_matches_runtime_gate_on_suffixed_versions()
     test_preview_delegates_to_helper()
     test_duplicate_copies_are_gone()
-    test_shared_store_classes_carry_the_collapsed_methods()
-    test_no_store_tab_regrows_a_per_family_copy()
-    test_every_asset_class_reaches_the_store_through_a_descriptor_row()
-    test_uninstall_row_matches_the_card_that_reads_it()
+    test_shared_store_classes_define_collapsed_methods()
+    test_store_subclasses_do_not_restore_family_copies()
+    test_each_asset_type_uses_descriptor_row()
+    test_uninstall_descriptor_matches_preview_method()
     print("scenario_store_version_gate: PASS")
 
 

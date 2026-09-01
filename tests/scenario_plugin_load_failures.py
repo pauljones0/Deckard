@@ -106,13 +106,13 @@ def main() -> None:
 
     from src.backend.PluginManager.PluginBase import PluginBase
     from src.backend.PluginManager.PluginManager import PluginManager
-    from src.backend.notify import Notify
+    from src.backend.notify import Notifier
 
     seed_plugins()
 
     # main.create_global_objects installs this before the plugin load, and
     # the load-failure report goes through it.
-    gl.notify = Notify()
+    gl.notify = Notifier()
 
     pm = PluginManager()
     gl.plugin_manager = pm
@@ -190,7 +190,7 @@ def main() -> None:
     )
 
     # The health counts feed the Add-Action empty state.
-    n_failed, n_disabled = pm.get_load_health()
+    n_failed, n_disabled = pm.get_load_issue_counts()
     assert n_failed == 3, f"expected 3 failed plugins, got {n_failed} ({pm.load_errors})"
     assert n_disabled == 2, f"expected 2 disabled plugins, got {n_disabled}"
 
@@ -204,7 +204,7 @@ def main() -> None:
     def reader() -> None:
         try:
             while not stop.is_set():
-                n_failed, n_disabled = pm.get_load_health()
+                n_failed, n_disabled = pm.get_load_issue_counts()
                 # Only seeded broken folders belong here, so a count outside
                 # the seeded range reveals a torn rebuild.
                 assert 0 <= n_failed <= 8, f"torn load_errors read: {n_failed}"
@@ -221,23 +221,23 @@ def main() -> None:
         stop.set()
         reader_thread.join(timeout=10)
     assert not reader_thread.is_alive(), "load_health reader thread hung"
-    assert not reader_error, f"get_load_health raced the reload rebuild: {reader_error[0]!r}"
+    assert not reader_error, f"get_load_issue_counts raced the reload rebuild: {reader_error[0]!r}"
 
-    health_before = pm.get_load_health()
-    assert health_before == pm.get_load_health(), "get_load_health must be stable at rest"
+    health_before = pm.get_load_issue_counts()
+    assert health_before == pm.get_load_issue_counts(), "get_load_issue_counts must be stable at rest"
 
     # Hold _load_errors_lock to prove a health read cannot overlap a background
     # rebuild and must block until release.
     assert hasattr(pm, "_load_errors_lock"), (
         "load_errors reads/writes must be guarded by a lock (cross-thread "
-        "store-install reload vs main-thread get_load_health)"
+        "store-install reload vs main-thread get_load_issue_counts)"
     )
     blocked = threading.Event()
     returned = threading.Event()
 
     def blocked_reader() -> None:
         blocked.set()
-        pm.get_load_health()  # must not complete until the lock is free
+        pm.get_load_issue_counts()  # must not complete until the lock is free
         returned.set()
 
     with pm._load_errors_lock:
@@ -246,10 +246,10 @@ def main() -> None:
         assert blocked.wait(timeout=5), "reader thread never started"
         # The reader must not return while the lock is held.
         assert not returned.wait(timeout=0.5), (
-            "get_load_health() returned while the load_errors lock was held "
+            "get_load_issue_counts() returned while the load_errors lock was held "
             "-- the read is not serialized against the rebuild"
         )
-    assert returned.wait(timeout=5), "get_load_health() never completed after lock release"
+    assert returned.wait(timeout=5), "get_load_issue_counts() never completed after lock release"
     t.join(timeout=5)
 
     # An uninstalled plugin's error is pruned on the next load.

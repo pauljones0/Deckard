@@ -120,7 +120,7 @@ def test_install_script_runs_without_shell() -> None:
         def generate_action_index(self): pass
         def get_plugins(self): return {}
         def get_plugin_by_id(self, plugin_id, include_disabled=True): return None
-        def load_error_of(self, folder): return None
+        def get_load_error(self, folder): return None
 
     class StubSignalManager:
         def trigger_signal(self, *a, **k): pass

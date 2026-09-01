@@ -84,7 +84,7 @@ def marker_records(records: list[str], marker: str = MARKER) -> int:
     return sum(marker in record for record in records)
 
 
-def leg_raising_input_does_not_stop_the_walk(controller, records, raiser, observer) -> None:
+def check_input_failure_isolation(controller, records, raiser, observer) -> None:
     """A failing input costs its own tick, and nothing else on the deck."""
     assert fixtures.wait_until(lambda: raiser.count() >= 3, timeout=20.0), (
         f"the failing input was dispatched only {raiser.count()} times -- the "
@@ -121,7 +121,7 @@ def leg_raising_input_does_not_stop_the_walk(controller, records, raiser, observ
           "input in the walk and still ticks the input behind it")
 
 
-def leg_the_log_is_rate_limited(controller, records, raiser) -> None:
+def check_log_rate_limit(controller, records, raiser) -> None:
     """A failure on every walk must not write a traceback on every walk."""
     records.clear()
     started = time.monotonic()
@@ -159,7 +159,7 @@ def leg_suppressed_failures_are_reported(controller, records, raiser) -> None:
     print("  leg PASS: the suppressed failures ride as a count on a later record")
 
 
-def leg_the_walk_itself_may_raise(controller, records, raiser, observer) -> None:
+def check_walk_failure_isolation(controller, records, raiser, observer) -> None:
     """A failure outside all inputs costs one walk but not the thread."""
     real_screen_saver = controller.screen_saver
     records.clear()
@@ -209,11 +209,11 @@ def main() -> None:
     # against many failures and the run stays short.
     controller.TICK_DELAY = FAST_TICK_DELAY
     try:
-        leg_raising_input_does_not_stop_the_walk(controller, records, raiser, observer)
-        leg_the_log_is_rate_limited(controller, records, raiser)
+        check_input_failure_isolation(controller, records, raiser, observer)
+        check_log_rate_limit(controller, records, raiser)
         leg_suppressed_failures_are_reported(controller, records, raiser)
         # Last: it stops every input tick while it runs.
-        leg_the_walk_itself_may_raise(controller, records, raiser, observer)
+        check_walk_failure_isolation(controller, records, raiser, observer)
     finally:
         raiser.remove()
         observer.remove()

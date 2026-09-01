@@ -35,19 +35,19 @@ class FakeGLib:
         self.armed: dict[int, tuple[int, object]] = {}
         self.fires = 0
         self.idles: list[object] = []
-        self._next = 100
+        self._next_source_id = 100
 
     def timeout_add(self, delay_ms, callback, *args):
-        source_id = self._next
-        self._next += 1
+        source_id = self._next_source_id
+        self._next_source_id += 1
         self.armed[source_id] = (delay_ms, callback)
         return source_id
 
     def idle_add(self, callback, *args):
         """Run the callback immediately and retain it for inspection.
         This supports any borrowed image-row path that submits work through idle_add."""
-        source_id = self._next
-        self._next += 1
+        source_id = self._next_source_id
+        self._next_source_id += 1
         self.idles.append(callback)
         callback(*args)
         return source_id
@@ -84,7 +84,7 @@ def install_glib() -> FakeGLib:
 install_glib()
 
 
-def media_file(name: str) -> str:
+def create_media_file(name: str) -> str:
     """A real file, because is_video() stats the path before it looks at the
     extension."""
     path = os.path.join(gl.DATA_PATH, "media", name)
@@ -99,12 +99,12 @@ class FakeSpinner:
 
     def __init__(self) -> None:
         self._handlers: dict[int, object] = {}
-        self._next = 1
+        self._next_handler_id = 1
         self._value = 0.0
 
     def connect(self, signal, handler):
-        hid = self._next
-        self._next += 1
+        hid = self._next_handler_id
+        self._next_handler_id += 1
         self._handlers[hid] = handler
         return hid
 
@@ -126,7 +126,7 @@ class FakeSpinner:
         return len(self._handlers)
 
 
-class FakeRevert:
+class FakeRevertButton:
     """The revert arrow, which build() starts hidden."""
 
     def __init__(self) -> None:
@@ -144,12 +144,12 @@ class FakePage:
     None means that no rate key exists, which is the required revert state."""
 
     def __init__(self, media_path=None, background_image=None,
-                 media_fps=None, background_fps=None, native=None) -> None:
+                 media_fps=None, background_fps=None, native_fps=None) -> None:
         self.media_path = media_path
         self.background_image = background_image
         self.media_fps = media_fps
         self.background_fps = background_fps
-        self.native = native
+        self.native_fps = native_fps
         self.writes: list[tuple] = []
         self.native_reads = 0
 
@@ -159,7 +159,7 @@ class FakePage:
     def get_background_image(self, identifier, state):
         return self.background_image
 
-    def has_media_fps(self, identifier, state):
+    def has_media_fps_override(self, identifier, state):
         return self.media_fps is not None
 
     def get_media_fps(self, identifier, state):
@@ -167,13 +167,13 @@ class FakePage:
 
     def get_media_native_fps(self, identifier, state):
         self.native_reads += 1
-        return self.native
+        return self.native_fps
 
     def set_media_fps(self, identifier, state, fps, update=True):
         self.media_fps = fps
         self.writes.append(("media", fps))
 
-    def has_background_fps(self, identifier, state):
+    def has_background_fps_override(self, identifier, state):
         return self.background_fps is not None
 
     def get_background_fps(self, identifier, state):
@@ -200,7 +200,7 @@ class FakeFpsRow:
     connect_signals = VideoFpsRow.connect_signals
     disconnect_signals = VideoFpsRow.disconnect_signals
     _reveal_revert = VideoFpsRow._reveal_revert
-    _request_revert = VideoFpsRow._request_revert
+    _update_revert_visibility = VideoFpsRow._update_revert_visibility
     _uses_media_fps = VideoFpsRow._uses_media_fps
     _write_fps = VideoFpsRow._write_fps
     _stored_fps = VideoFpsRow._stored_fps
@@ -209,10 +209,10 @@ class FakeFpsRow:
 
     def __init__(self) -> None:
         self.spinner = FakeSpinner()
-        self.revert_button = FakeRevert()
+        self.revert_button = FakeRevertButton()
         self.active_identifier = None
         self.active_state = None
-        self._change_handler = None
+        self._change_handler_id = None
         self._reveal_source = None
         self.visible = None
         self.connect_signals()
@@ -252,7 +252,7 @@ class FakeMainWindow:
         return self._page
 
 
-def install(page) -> None:
+def install_page_context(page) -> None:
     window = FakeMainWindow(page)
     services.require_main_window = lambda: window
     # The loaders reach the window through gl.app, and the change handlers
@@ -272,8 +272,8 @@ def check_gif_media_shows_the_row() -> int:
         (DIAL, "clip.mp4", True, "an mp4 on a dial"),
     ]
     for identifier, name, expected, description in cases:
-        page = FakePage(media_path=media_file(name) if name else None)
-        install(page)
+        page = FakePage(media_path=create_media_file(name) if name else None)
+        install_page_context(page)
         row = FakeFpsRow()
         expander = FakeExpander(row, FakeLoopRow())
         expander.active_identifier = identifier
@@ -293,10 +293,10 @@ def check_gif_media_shows_the_row() -> int:
     return 0
 
 
-def check_revert_hidden_until_a_rate_is_set() -> int:
+def check_revert_hidden_without_override() -> int:
     """The arrow means there is something to revert to."""
-    page = FakePage(media_path=media_file("clip.gif"), native=9.6)
-    install(page)
+    page = FakePage(media_path=create_media_file("clip.gif"), native_fps=9.6)
+    install_page_context(page)
     row = FakeFpsRow()
     row.load_for_identifier(KEY, 0)
     if row.revert_button.visible is not False:
@@ -325,13 +325,13 @@ def check_revert_hidden_until_a_rate_is_set() -> int:
 
 def check_native_rate_is_clamped_into_range() -> int:
     """A media rate outside the spinner's range must not corrupt the row."""
-    for native, expected in ((87.5, 30), (0.4, 1), (None, 30)):
-        page = FakePage(media_path=media_file("clip.gif"), native=native)
-        install(page)
+    for native_fps, expected in ((87.5, 30), (0.4, 1), (None, 30)):
+        page = FakePage(media_path=create_media_file("clip.gif"), native_fps=native_fps)
+        install_page_context(page)
         row = FakeFpsRow()
         row.load_for_identifier(KEY, 0)
         if row.spinner.get_value() != expected:
-            print(f"FAIL(clamp): media running at {native!r} fps put "
+            print(f"FAIL(clamp): media running at {native_fps!r} fps put "
                   f"{row.spinner.get_value()!r} in the row; the range is "
                   f"{FakeFpsRow.MIN_FPS} to {FakeFpsRow.MAX_FPS} and an "
                   f"unknown rate falls back to {expected}")
@@ -343,8 +343,8 @@ def check_native_rate_is_clamped_into_range() -> int:
 def check_change_then_revert_round_trip() -> int:
     """An edit stores a rate; a revert clears it and shows the media's own."""
     glib = install_glib()
-    page = FakePage(media_path=media_file("clip.gif"), native=9.6)
-    install(page)
+    page = FakePage(media_path=create_media_file("clip.gif"), native_fps=9.6)
+    install_page_context(page)
     row = FakeFpsRow()
     row.load_for_identifier(KEY, 0)
 
@@ -374,16 +374,16 @@ def check_change_then_revert_round_trip() -> int:
         print(f"FAIL(revert): after a revert the row must show the media's own "
               f"rate (9.6 rounds to 10), got {row.spinner.get_value()!r}")
         return 1
-    print("PASS: an edit stores a rate and a revert clears it back to native")
+    print("PASS: an edit stores a rate and a revert clears it back to native FPS")
     return 0
 
 
-def check_the_arrow_waits_for_the_delay() -> int:
+def check_arrow_waits_for_reveal_delay() -> int:
     """Delay the arrow until the edited rate settles.
     Immediate visibility shifts the spinner sideways within the same linked-box frame."""
     glib = install_glib()
-    page = FakePage(media_path=media_file("clip.gif"), native=9.6)
-    install(page)
+    page = FakePage(media_path=create_media_file("clip.gif"), native_fps=9.6)
+    install_page_context(page)
     row = FakeFpsRow()
     row.load_for_identifier(KEY, 0)
 
@@ -406,7 +406,7 @@ def check_the_arrow_waits_for_the_delay() -> int:
     return 0
 
 
-def check_the_delay_outlasts_a_burst_of_steps() -> int:
+def check_reveal_delay_exceeds_step_burst() -> int:
     """Keep the reveal delay between 150 and 500 ms.
     It must outlast 50 ms repeats and a 150 ms pass, but stay tied to the edit."""
     if not 150 <= VideoFpsRow.REVEAL_DELAY_MS <= 500:
@@ -420,12 +420,12 @@ def check_the_delay_outlasts_a_burst_of_steps() -> int:
     return 0
 
 
-def check_a_quick_pass_reveals_nothing() -> int:
+def check_ceiling_round_trip_cancels_reveal() -> int:
     """Show no arrow when a rate returns to the ceiling within the delay.
     This prevents a flash at the start of a downward range pass."""
     glib = install_glib()
-    page = FakePage(media_path=media_file("clip.gif"), native=9.6)
-    install(page)
+    page = FakePage(media_path=create_media_file("clip.gif"), native_fps=9.6)
+    install_page_context(page)
     row = FakeFpsRow()
     row.load_for_identifier(KEY, 0)
 
@@ -455,12 +455,12 @@ def check_a_quick_pass_reveals_nothing() -> int:
     return 0
 
 
-def hidden_row_after_an_edit(rate_survives):
+def prepare_hidden_row_after_edit(rate_survives):
     """Arm a reveal, then hide the row without rebinding, as for an input with no video.
     rate_survives selects whether the retained binding still has a rate at reveal time."""
     glib = install_glib()
-    page = FakePage(media_path=media_file("clip.gif"), native=9.6)
-    install(page)
+    page = FakePage(media_path=create_media_file("clip.gif"), native_fps=9.6)
+    install_page_context(page)
     row = FakeFpsRow()
     expander = FakeExpander(row, FakeLoopRow())
     expander.active_identifier = KEY
@@ -478,10 +478,10 @@ def hidden_row_after_an_edit(rate_survives):
     return glib, row
 
 
-def check_a_hidden_row_reveals_for_its_own_binding() -> int:
+def check_hidden_row_reveal_uses_current_binding() -> int:
     """Read the page when a delayed reveal runs instead of trusting the edit that armed it.
     A hidden row keeps its prior binding, whose rate can disappear before the callback."""
-    glib, row = hidden_row_after_an_edit(rate_survives=False)
+    glib, row = prepare_hidden_row_after_edit(rate_survives=False)
     if row.visible is not False:
         print("FAIL(hidden): the row stayed on screen with no video to rate")
         return 1
@@ -496,7 +496,7 @@ def check_a_hidden_row_reveals_for_its_own_binding() -> int:
               "reading the page")
         return 1
 
-    glib, row = hidden_row_after_an_edit(rate_survives=True)
+    glib, row = prepare_hidden_row_after_edit(rate_survives=True)
     glib.elapse()
     if row.revert_button.visible is not True:
         print("FAIL(hidden): the reveal dropped an arrow the input still "
@@ -510,12 +510,12 @@ def check_a_hidden_row_reveals_for_its_own_binding() -> int:
     return 0
 
 
-def check_a_spent_or_cancelled_reveal_leaves_no_id() -> int:
+def check_finished_reveal_clears_source_id() -> int:
     """Clear the source ID after both reveal completion and cancellation.
     A retained stale ID makes the next cancel warn while leaving its intended reveal active."""
     glib = install_glib()
-    page = FakePage(media_path=media_file("clip.gif"), native=9.6)
-    install(page)
+    page = FakePage(media_path=create_media_file("clip.gif"), native_fps=9.6)
+    install_page_context(page)
     row = FakeFpsRow()
     row.load_for_identifier(KEY, 0)
     row.spinner.set_value(6)
@@ -529,8 +529,8 @@ def check_a_spent_or_cancelled_reveal_leaves_no_id() -> int:
         return 1
 
     glib = install_glib()
-    page = FakePage(media_path=media_file("clip.gif"), native=9.6)
-    install(page)
+    page = FakePage(media_path=create_media_file("clip.gif"), native_fps=9.6)
+    install_page_context(page)
     row = FakeFpsRow()
     row.load_for_identifier(KEY, 0)
     row.spinner.set_value(6)
@@ -545,12 +545,12 @@ def check_a_spent_or_cancelled_reveal_leaves_no_id() -> int:
     return 0
 
 
-def check_a_load_drops_a_pending_reveal() -> int:
+def check_load_cancels_pending_reveal() -> int:
     """Cancel a reveal when loading another input.
     The new binding can have no explicit rate and therefore require no arrow."""
     glib = install_glib()
-    page = FakePage(media_path=media_file("clip.gif"), native=9.6)
-    install(page)
+    page = FakePage(media_path=create_media_file("clip.gif"), native_fps=9.6)
+    install_page_context(page)
     row = FakeFpsRow()
     row.load_for_identifier(KEY, 0)
 
@@ -571,12 +571,12 @@ def check_a_load_drops_a_pending_reveal() -> int:
     return 0
 
 
-def check_a_shown_arrow_is_not_re_armed() -> int:
+def check_visible_arrow_skips_rearm() -> int:
     """Keep an already visible arrow through further edits.
     Restarting the delay would hide an arrow earned by the stored rate."""
     glib = install_glib()
-    page = FakePage(media_path=media_file("clip.gif"), media_fps=12, native=9.6)
-    install(page)
+    page = FakePage(media_path=create_media_file("clip.gif"), media_fps=12, native_fps=9.6)
+    install_page_context(page)
     row = FakeFpsRow()
     row.load_for_identifier(KEY, 0)
     if row.revert_button.visible is not True:
@@ -596,11 +596,11 @@ def check_a_shown_arrow_is_not_re_armed() -> int:
     return 0
 
 
-def check_top_of_range_stores_no_rate() -> int:
+def check_max_fps_clears_override() -> int:
     """Clear the rate key when the spinner reaches its ceiling.
     The ceiling limits nothing, so storing it would offer a revert for an ineffective override."""
-    page = FakePage(media_path=media_file("clip.gif"), media_fps=8, native=9.6)
-    install(page)
+    page = FakePage(media_path=create_media_file("clip.gif"), media_fps=8, native_fps=9.6)
+    install_page_context(page)
     row = FakeFpsRow()
     row.load_for_identifier(KEY, 0)
 
@@ -618,12 +618,12 @@ def check_top_of_range_stores_no_rate() -> int:
     return 0
 
 
-def check_stored_top_reads_as_no_rate() -> int:
+def check_stored_max_fps_reads_as_no_override() -> int:
     """A page written before this rule can carry the ceiling. It limits
     nothing, so the row must treat it as no rate at all."""
-    page = FakePage(media_path=media_file("clip.gif"),
-                    media_fps=FakeFpsRow.MAX_FPS, native=12.0)
-    install(page)
+    page = FakePage(media_path=create_media_file("clip.gif"),
+                    media_fps=FakeFpsRow.MAX_FPS, native_fps=12.0)
+    install_page_context(page)
     row = FakeFpsRow()
     row.load_for_identifier(KEY, 0)
     if row.revert_button.visible is not False:
@@ -642,8 +642,8 @@ def check_stored_top_reads_as_no_rate() -> int:
 def check_revert_leaves_the_row_wired() -> int:
     """Reconnect the spinner after a revert writes its value.
     Leaving the handler disconnected silently drops every later edit."""
-    page = FakePage(media_path=media_file("clip.gif"), media_fps=20, native=10.0)
-    install(page)
+    page = FakePage(media_path=create_media_file("clip.gif"), media_fps=20, native_fps=10.0)
+    install_page_context(page)
     row = FakeFpsRow()
     row.load_for_identifier(KEY, 0)
 
@@ -673,8 +673,8 @@ def check_revert_leaves_the_row_wired() -> int:
 
 def check_touchscreen_uses_the_background_seam() -> int:
     """The same row edits a touchscreen background, through its own keys."""
-    page = FakePage(background_image=media_file("wall.mp4"), background_fps=15)
-    install(page)
+    page = FakePage(background_image=create_media_file("wall.mp4"), background_fps=15)
+    install_page_context(page)
     row = FakeFpsRow()
     row.load_for_identifier(TOUCHSCREEN, 0)
     if row.spinner.get_value() != 15 or row.revert_button.visible is not True:
@@ -702,18 +702,18 @@ def check_touchscreen_uses_the_background_seam() -> int:
 def main() -> int:
     fixtures.start_watchdog(60, "background_fps_row")
     rc = check_gif_media_shows_the_row()
-    rc |= check_revert_hidden_until_a_rate_is_set()
+    rc |= check_revert_hidden_without_override()
     rc |= check_native_rate_is_clamped_into_range()
     rc |= check_change_then_revert_round_trip()
-    rc |= check_the_arrow_waits_for_the_delay()
-    rc |= check_the_delay_outlasts_a_burst_of_steps()
-    rc |= check_a_quick_pass_reveals_nothing()
-    rc |= check_a_hidden_row_reveals_for_its_own_binding()
-    rc |= check_a_spent_or_cancelled_reveal_leaves_no_id()
-    rc |= check_a_load_drops_a_pending_reveal()
-    rc |= check_a_shown_arrow_is_not_re_armed()
-    rc |= check_top_of_range_stores_no_rate()
-    rc |= check_stored_top_reads_as_no_rate()
+    rc |= check_arrow_waits_for_reveal_delay()
+    rc |= check_reveal_delay_exceeds_step_burst()
+    rc |= check_ceiling_round_trip_cancels_reveal()
+    rc |= check_hidden_row_reveal_uses_current_binding()
+    rc |= check_finished_reveal_clears_source_id()
+    rc |= check_load_cancels_pending_reveal()
+    rc |= check_visible_arrow_skips_rearm()
+    rc |= check_max_fps_clears_override()
+    rc |= check_stored_max_fps_reads_as_no_override()
     rc |= check_revert_leaves_the_row_wired()
     rc |= check_touchscreen_uses_the_background_seam()
     return rc

@@ -249,13 +249,13 @@ def check_asset_manager_quarantines(plugin) -> None:
     assert read(os.path.join(os.path.dirname(path), names[0])).encode() == bad
 
     # The save_assets write below replaces the file wholesale.
-    bad2 = corrupt(path, "asset-save")
+    corrupt_save_payload = corrupt(path, "asset-save")
     am.save_assets()
 
     names = sidecars(path)
     assert len(names) == 2, f"save_assets destroyed the corrupt file, got {names}"
     contents = {read(os.path.join(os.path.dirname(path), n)) for n in names}
-    assert bad2.decode() in contents, "save_assets overwrote the corrupt file unpreserved"
+    assert corrupt_save_payload.decode() in contents, "save_assets overwrote the corrupt file unpreserved"
     with open(path) as f:
         assert "assets" in json.load(f), "save_assets did not write the new content"
 

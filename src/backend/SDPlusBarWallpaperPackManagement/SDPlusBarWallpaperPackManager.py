@@ -15,10 +15,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 from typing import override
 
-from src.backend.PackManagement.pack_family import PackManager
+from src.backend.PackManagement.pack_family import PackDiscovery
 from src.backend.SDPlusBarWallpaperPackManagement.SDPlusBarWallpaperPack import SDPlusBarWallpaperPack
 
-class SDPlusBarWallpaperPackManager(PackManager[SDPlusBarWallpaperPack]):
+class SDPlusBarWallpaperPackManager(PackDiscovery[SDPlusBarWallpaperPack]):
     """Discovery for the SD+ bar wallpaper packs under the data path."""
 
     DATA_DIR = "sd_plus_bar_wallpapers"

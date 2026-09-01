@@ -293,7 +293,7 @@ def check_mirror_pushes_coalesce() -> None:
     # The deadline is the slot's own. It starts at the drain that painted
     # "strip-first", not at the pushes above.
     slot = adapter._mirror_slots[(controller, ts_ident)]
-    if time.monotonic() < slot._last_drain + TOUCHSCREEN_UI_INTERVAL_S:
+    if time.monotonic() < slot._last_drain_monotonic_s + TOUCHSCREEN_UI_INTERVAL_S:
         assert strip.painted == ["strip-first"], (
             "the touchscreen mirror painted inside its interval: "
             f"{strip.painted!r}"
@@ -381,12 +381,12 @@ def check_dial_preview_rides_strip_payload() -> None:
 
     class _FakeIconSelector:
         def __init__(self):
-            self.task_ids = itertools.count()
+            self._task_id_counter = itertools.count()
             self.latest_task_id = None
             self.painted: list = []
 
         def get_new_task_id(self):
-            return next(self.task_ids)
+            return next(self._task_id_counter)
 
         def set_pixbuf_and_del(self, pixbuf, task_id=None):
             self.painted.append((pixbuf, task_id))
@@ -400,13 +400,13 @@ def check_dial_preview_rides_strip_payload() -> None:
     icon_selector = _FakeIconSelector()
     touchscreen = SimpleNamespace(get_dial_image_area=lambda ident: (0, 0, 40, 100))
     strip = SimpleNamespace(
-        task_ids=itertools.count(),
+        _task_id_counter=itertools.count(),
         latest_task_id=None,
         screenbar=SimpleNamespace(
             deck_controller=SimpleNamespace(get_input=lambda ident: touchscreen)),
         painted=[],
     )
-    strip.get_new_task_id = lambda: next(strip.task_ids)
+    strip.get_new_task_id = lambda: next(strip._task_id_counter)
     strip.set_pixbuf_and_del = lambda pixbuf, task_id=None: strip.painted.append(task_id)
     strip._prepare_dial_preview = lambda image: ScreenBarImage._prepare_dial_preview(
         strip, image)

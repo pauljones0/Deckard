@@ -136,14 +136,14 @@ def test_three_types_share_their_widgets() -> None:
 # AssetChooser.show_for_path also routes through that stack.
 ALLOWED_STACK_METHODS = {
     # _show_pack_asset is the main-thread widget half of worker-callable routing.
-    "IconPackChooserStack": {"prepare", "show_for_path", "_show_pack_asset",
+    "IconPackChooserStack": {"initialize_page_state", "show_for_path", "_show_pack_asset",
                              "get_is_build_finished", "on_load_finished"},
     "WallpaperPackChooserStack": set(),
     "SDPlusBarWallpaperPackChooserStack": set(),
 }
 
 
-def test_no_pack_stack_regrows_the_shared_body() -> None:
+def test_pack_stacks_keep_shared_construction() -> None:
     """A stack subclass names its two page classes and its leaf title. The
     construction of the pair belongs to the shared base."""
     offences = []
@@ -167,7 +167,7 @@ def test_no_pack_stack_regrows_the_shared_body() -> None:
         "per-family pack-stack copies came back: " + "; ".join(offences))
 
     # The base must still carry what the subclasses are barred from holding.
-    for name in ("__init__", "build", "prepare"):
+    for name in ("__init__", "build", "initialize_page_state"):
         assert name in vars(GenericPackChooserStack), (
             f"GenericPackChooserStack no longer defines {name}; this check "
             "would pass over nothing")
@@ -269,7 +269,7 @@ def make_pack_page(cls, search: str):
     return page
 
 
-def test_pack_grid_filters_on_the_pack_name() -> None:
+def test_pack_grid_filters_by_name() -> None:
     for label, cls in PACK_CHOOSER_CLASSES.items():
         page = make_pack_page(cls, "")
         kept = [name for name in PACKS if page.filter_pack_child(pack_card(name))]
@@ -312,7 +312,7 @@ def test_pack_grid_installs_its_filter() -> None:
     print("PASS: the pack grid installs the pack filter on its flow box")
 
 
-def test_every_search_box_reaches_a_page() -> None:
+def test_search_pages_override_apply_search() -> None:
     """Require every page with a search box to override the inert base hook."""
     pages = dict(PACK_CHOOSER_CLASSES)
     pages.update({f"{label} assets": cls for label, cls in CHOOSER_CLASSES.items()})
@@ -344,15 +344,15 @@ def main() -> int:
     test_three_types_key_on_path()
     test_three_types_share_implementation()
     test_three_types_share_their_widgets()
-    test_no_pack_stack_regrows_the_shared_body()
+    test_pack_stacks_keep_shared_construction()
     test_empty_query_sorts_alphabetically()
     test_query_filters_below_threshold()
     test_query_orders_by_descending_score()
     test_comparator_returns_int()
     test_helpers_and_methods_agree()
-    test_pack_grid_filters_on_the_pack_name()
+    test_pack_grid_filters_by_name()
     test_pack_grid_installs_its_filter()
-    test_every_search_box_reaches_a_page()
+    test_search_pages_override_apply_search()
 
     print("ALL PASS: scenario_asset_chooser_logic")
     return 0

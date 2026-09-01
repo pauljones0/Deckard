@@ -21,7 +21,7 @@ class StubController:
         return self.deck.get_serial_number()
 
 
-def reset_world() -> None:
+def reset_page_cache() -> None:
     """Clear shared controllers and cached pages before each leg."""
     gl.deck_manager.deck_controller.clear()
     gl.page_manager.pages.clear()
@@ -29,9 +29,9 @@ def reset_world() -> None:
 
 
 def fresh_controller(serial: str) -> StubController:
-    c = StubController(serial)
-    gl.deck_manager.deck_controller.append(c)
-    return c
+    controller = StubController(serial)
+    gl.deck_manager.deck_controller.append(controller)
+    return controller
 
 
 def cache_page(controller, name: str):
@@ -49,7 +49,7 @@ def cached_count(controller):
 
 # Leg 1. clear_old_cached_pages removes exactly (total - max_pages) pages.
 def leg_excess_count() -> int:
-    reset_world()
+    reset_page_cache()
     controller = fresh_controller("budget-excess")
     # A large budget during setup, so the clear_old_cached_pages that get_page
     # runs after each load evicts no candidate before the set is complete.
@@ -81,20 +81,20 @@ def leg_excess_count() -> int:
     return 0
 
 
-# Leg 2. Eviction removes the lowest page_number entries first. get_page bumps
-# page_number on every access, so a re-touched page outlives an older sibling.
+# Leg 2. Eviction removes the lowest lru_stamp entries first. get_page bumps
+# lru_stamp on every access, so a re-touched page outlives an older sibling.
 def leg_oldest_first() -> int:
-    reset_world()
+    reset_page_cache()
     controller = fresh_controller("budget-oldest")
     gl.page_manager.max_pages = 100
 
-    # Load in order A, B, C, D. page_number ascends A<B<C<D.
+    # Load in order A, B, C, D. lru_stamp ascends A<B<C<D.
     paths = {name: seed_page(f"Order{name}") for name in ("A", "B", "C", "D")}
     for name in ("A", "B", "C", "D"):
         gl.page_manager.get_page(paths[name], controller)
 
-    # Re-touch A. get_page bumps its page_number to the newest. Now the
-    # oldest-by-page_number order is B < C < D < A.
+    # Re-touch A. get_page bumps its lru_stamp to the newest. Now the
+    # oldest-by-lru_stamp order is B < C < D < A.
     gl.page_manager.get_page(paths["A"], controller)
 
     # Make D active, so it is exempt whatever its number. The decision among
@@ -112,12 +112,12 @@ def leg_oldest_first() -> int:
         return 1
     if paths["A"] not in survivors:
         print("FAIL(2): the re-touched (newest) page A was wrongly evicted -- "
-              "page_number bump on access is not respected by the ordering")
+              "lru_stamp bump on access is not respected by the ordering")
         return 1
     if paths["D"] not in survivors:
         print("FAIL(2): the active page D was evicted")
         return 1
-    print("PASS(2): eviction removes the lowest-page_number (oldest-access) "
+    print("PASS(2): eviction removes the lowest-lru_stamp (oldest-access) "
           "pages first")
     return 0
 
@@ -125,7 +125,7 @@ def leg_oldest_first() -> int:
 # Leg 3. A shrink through set_pages_to_cache runs an eviction pass. A grow
 # evicts nothing.
 def leg_set_pages_to_cache_shrink() -> int:
-    reset_world()
+    reset_page_cache()
     controller = fresh_controller("budget-shrink")
     gl.page_manager.max_pages = 100
 
@@ -159,58 +159,61 @@ def leg_set_pages_to_cache_shrink() -> int:
 
 
 # Leg 4. Pages on a controller without an active page count toward the budget
-# but cannot be evicted, which displaces evictions onto live controllers.
+# but cannot be evicted, which displaces evictions onto active controllers.
 def leg_active_none_distorts_budget() -> int:
-    reset_world()
+    reset_page_cache()
     # A controller mid-init or torn down but not discarded has active_page
     # None and still holds cached pages.
-    ghost = fresh_controller("budget-ghost")
-    live = fresh_controller("budget-live")
+    inactive_controller = fresh_controller("budget-ghost")
+    active_controller = fresh_controller("budget-live")
     gl.page_manager.max_pages = 100
 
-    # Ghost holds 4 cached pages but has active_page None.
-    cache_page(ghost, "Ghost0")
-    cache_page(ghost, "Ghost1")
-    cache_page(ghost, "Ghost2")
-    cache_page(ghost, "Ghost3")
-    # Live controller holds 4 pages, one active.
-    live_pages = [cache_page(live, f"Live{i}") for i in range(4)]
-    live.active_page = live_pages[-1]
-    # ghost.active_page stays None (the distortion condition).
+    # The inactive controller holds 4 cached pages but has active_page None.
+    cache_page(inactive_controller, "Ghost0")
+    cache_page(inactive_controller, "Ghost1")
+    cache_page(inactive_controller, "Ghost2")
+    cache_page(inactive_controller, "Ghost3")
+    # The active controller holds 4 pages, the last one active.
+    live_pages = [cache_page(active_controller, f"Live{i}") for i in range(4)]
+    active_controller.active_page = live_pages[-1]
+    # inactive_controller.active_page stays None (the distortion condition).
 
-    if cached_count(ghost) != 4 or cached_count(live) != 4:
-        print(f"FAIL(4-setup): ghost={cached_count(ghost)} live={cached_count(live)}")
+    if cached_count(inactive_controller) != 4 or cached_count(active_controller) != 4:
+        print(
+            f"FAIL(4-setup): inactive={cached_count(inactive_controller)} "
+            f"active={cached_count(active_controller)}"
+        )
         return 1
 
-    # Total 8 with budget 5 requires three evictions, all from the live deck
-    # because the ghost deck does not provide eviction candidates.
+    # Total 8 with budget 5 requires three evictions, all from the active
+    # controller because the inactive controller provides no eviction candidates.
     gl.page_manager.max_pages = 5
     gl.page_manager.clear_old_cached_pages()
 
-    ghost_left = cached_count(ghost)
-    live_left = cached_count(live)
+    inactive_left = cached_count(inactive_controller)
+    active_left = cached_count(active_controller)
 
-    # The ghost's pages are never reclaimed, because active_page None skips
-    # them.
-    if ghost_left != 4:
+    # The inactive controller's pages are never reclaimed, because active_page
+    # None skips them.
+    if inactive_left != 4:
         print(f"FAIL(4): an active_page=None controller's pages were evicted "
-              f"({ghost_left}/4 left) -- if this changed, the :236 guard was "
+              f"({inactive_left}/4 left) -- if this changed, the :236 guard was "
               f"altered (a pin-count redesign landing?); rewrite this "
               f"leg to the new budget contract")
         return 1
-    # The live controller takes all 3 evictions, from 4 pages down to 1.
-    if live_left != 1:
-        print(f"FAIL(4): expected the live controller over-evicted to 1 page "
-              f"(all 3 excess evictions displaced onto it by the ghost's "
-              f"budget distortion), got {live_left} left -- if the distortion "
+    # The active controller takes all 3 evictions, from 4 pages down to 1.
+    if active_left != 1:
+        print(f"FAIL(4): expected the active controller over-evicted to 1 page "
+              f"(all 3 excess evictions displaced onto it by the inactive controller's "
+              f"budget distortion), got {active_left} left -- if the distortion "
               f"was fixed (a pin-count redesign), rewrite this leg to "
               f"the new budget contract")
         return 1
-    if live.active_page.json_path not in cached_paths(live):
-        print("FAIL(4): the live controller's active page was evicted")
+    if active_controller.active_page.json_path not in cached_paths(active_controller):
+        print("FAIL(4): the active controller's active page was evicted")
         return 1
     print("PASS(4): an active_page=None controller inflates `total` and "
-          "displaces all evictions onto live controllers; its own pages are "
+          "displaces all evictions onto active controllers; its own pages are "
           "never reclaimed (audit row-5 budget distortion, documented)")
     return 0
 

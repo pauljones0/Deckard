@@ -136,7 +136,7 @@ def check_presence_still_decides_the_index() -> None:
     print("PASS: presence, and not the page reference alone, decides the action index")
 
 
-def check_attached_readers_still_reach_the_page() -> None:
+def check_attached_actions_read_and_write_page() -> None:
     """Require attached actions to continue reading and writing through their page."""
     reads: list = []
 
@@ -184,7 +184,7 @@ def main() -> None:
     check_clear_action_objects_detaches()
     check_detached_readers_answer()
     check_presence_still_decides_the_index()
-    check_attached_readers_still_reach_the_page()
+    check_attached_actions_read_and_write_page()
 
     print("PASS: scenario_detached_action_guards")
 

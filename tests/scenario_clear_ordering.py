@@ -57,8 +57,8 @@ def main() -> None:
     # Model screensaver entry: clear first, then require later content to survive.
     deck.clear_journal()
 
-    seq2 = media_player.next_submit_seq()
-    media_player.submit_control(ClearMsg(seq=seq2))
+    screensaver_clear_seq = media_player.next_submit_seq()
+    media_player.submit_control(ClearMsg(seq=screensaver_clear_seq))
     content_img = fixtures.make_native_image(fill=3)
     media_player.add_image_task(0, content_img, page=page, config_gen=gen)
 

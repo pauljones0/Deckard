@@ -38,12 +38,12 @@ MAX_NAME_ATTEMPTS = 100
 #: and streamed copies enforce the same bound.
 MAX_UNPACKED_BYTES = 512 * 1024 * 1024
 
-_COPY_CHUNK = 256 * 1024
+_COPY_CHUNK_BYTES = 256 * 1024
 
 #: The staging directories this session holds open. A sweep spares these, so a
 #: live import's tree survives a second import that starts while it runs.
 _staging_lock = threading.Lock()
-_live_staging: set[str] = set()
+_live_staging_paths: set[str] = set()
 
 #: GTK-main-thread state that prevents a second dialog import while one is active.
 _import_in_flight = False
@@ -134,13 +134,13 @@ def _folder_plan(folder: str) -> list[_PlannedFile]:
     """Plan importable, non-symlink files under folder without following linked directories.
     Copying later validates ordinary files and enforces the byte budget."""
     taken: set[str] = set()
-    planned: list[_PlannedFile] = []
+    planned_files: list[_PlannedFile] = []
     for path in sorted(_walk_files(folder)):
         if not _is_importable(path):
             continue
         relative = os.path.relpath(path, folder)
-        planned.append(_PlannedFile(_planned_destination(relative, taken), path))
-    return planned
+        planned_files.append(_PlannedFile(_planned_destination(relative, taken), path))
+    return planned_files
 
 
 def _walk_files(folder: str) -> Iterator[str]:
@@ -154,32 +154,32 @@ def _walk_files(folder: str) -> Iterator[str]:
             yield full
 
 
-def _copy_planned_files(planned: list[_PlannedFile], assets_dir: str) -> None:
+def _copy_planned_files(planned_files: list[_PlannedFile], assets_dir: str) -> None:
     """Copy only ordinary, single-link files; reject pipes, devices, symlinks, and hardlinks.
     Links can reach external data; count streamed bytes against MAX_UNPACKED_BYTES."""
     written = 0
-    for item in planned:
+    for planned_file in planned_files:
         try:
-            info = os.lstat(item.source)
+            source_stat = os.lstat(planned_file.source)
         except OSError as error:
             raise PackImportError(
                 "A file in this folder could not be read, so nothing was imported."
             ) from error
-        if not stat.S_ISREG(info.st_mode):
+        if not stat.S_ISREG(source_stat.st_mode):
             raise PackImportError(
                 "A file in this folder is not an ordinary picture, so nothing "
                 "was imported."
             )
-        if info.st_nlink > 1:
+        if source_stat.st_nlink > 1:
             raise PackImportError(
                 "A file in this folder is shared with another outside it, so "
                 "nothing was imported."
             )
-        target = _checked_target(assets_dir, item.dest_rel)
+        target = _checked_target(assets_dir, planned_file.dest_rel)
         os.makedirs(os.path.dirname(target), exist_ok=True)
-        with open(item.source, "rb") as source_file, open(target, "wb") as out:
+        with open(planned_file.source, "rb") as source_file, open(target, "wb") as out:
             while True:
-                chunk = source_file.read(_COPY_CHUNK)
+                chunk = source_file.read(_COPY_CHUNK_BYTES)
                 if not chunk:
                     break
                 written += len(chunk)
@@ -203,23 +203,23 @@ def _archive_plan(archive: zipfile.ZipFile) -> list[_PlannedFile]:
                 "nothing from it was imported."
             )
 
-    infos = [info for info in archive.infolist() if not info.is_dir()]
-    declared = sum(info.file_size for info in infos)
+    members = [member for member in archive.infolist() if not member.is_dir()]
+    declared = sum(member.file_size for member in members)
     if declared > MAX_UNPACKED_BYTES:
         raise PackImportError("This archive is too large to import as an icon pack.")
-    names = [info.filename for info in infos]
+    names = [member.filename for member in members]
 
     prefix = _common_top_folder(names)
     taken: set[str] = set()
-    planned: list[_PlannedFile] = []
+    planned_files: list[_PlannedFile] = []
     for name in sorted(names):
         if not _is_importable(name):
             continue
         relative = name[len(prefix):] if prefix and name.startswith(prefix) else name
         if not relative:
             continue
-        planned.append(_PlannedFile(_planned_destination(relative, taken), name))
-    return planned
+        planned_files.append(_PlannedFile(_planned_destination(relative, taken), name))
+    return planned_files
 
 
 def _common_top_folder(names: list[str]) -> str:
@@ -238,25 +238,25 @@ def _declared_size(archive: zipfile.ZipFile, member: str) -> int:
     return archive.getinfo(member).file_size
 
 
-def _extract_planned_files(archive: zipfile.ZipFile, planned: list[_PlannedFile],
+def _extract_planned_files(archive: zipfile.ZipFile, planned_files: list[_PlannedFile],
                            assets_dir: str) -> None:
-    for item in planned:
+    for planned_file in planned_files:
         try:
-            limit = _declared_size(archive, item.source)
+            limit = _declared_size(archive, planned_file.source)
         except KeyError as error:
             # A missing planned member from the same open archive indicates a malformed handle.
             # Convert the lookup error to the import contract.
             raise PackImportError(
                 "This archive is damaged, so nothing from it was imported."
             ) from error
-        target = _checked_target(assets_dir, item.dest_rel)
+        target = _checked_target(assets_dir, planned_file.dest_rel)
         os.makedirs(os.path.dirname(target), exist_ok=True)
         # The member is opened by name and written to a path this module built,
         # so the archive chooses what comes out and never where it goes.
         written = 0
-        with archive.open(item.source, "r") as member, open(target, "wb") as out:
+        with archive.open(planned_file.source, "r") as member, open(target, "wb") as out:
             while True:
-                chunk = member.read(_COPY_CHUNK)
+                chunk = member.read(_COPY_CHUNK_BYTES)
                 if not chunk:
                     break
                 written += len(chunk)
@@ -297,7 +297,7 @@ def _is_decodable(path: str) -> bool:
         return False
 
 
-def _write_thumbnail(staging: str, assets_dir: str, planned: list[_PlannedFile],
+def _write_thumbnail(staging: str, assets_dir: str, planned_files: list[_PlannedFile],
                      banner_path: str | None) -> str:
     """Write a valid banner or the first raster icon as the thumbnail.
     Use the first planned icon only when all are SVG; check the destination before copying."""
@@ -307,7 +307,14 @@ def _write_thumbnail(staging: str, assets_dir: str, planned: list[_PlannedFile],
         shutil.copyfile(banner_path, _checked_target(staging, name))
         return name
 
-    chosen = next((item for item in planned if _extension(item.dest_rel) != "svg"), planned[0])
+    chosen = next(
+        (
+            planned_file
+            for planned_file in planned_files
+            if _extension(planned_file.dest_rel) != "svg"
+        ),
+        planned_files[0],
+    )
     source = os.path.join(assets_dir, chosen.dest_rel)
     name = f"thumbnail{os.path.splitext(chosen.dest_rel)[1].lower()}"
     shutil.copyfile(source, _checked_target(staging, name))
@@ -319,13 +326,13 @@ def _new_staging(root: str) -> str:
     The shared lock prevents stale-tree sweeps from seeing a new live directory as untracked."""
     with _staging_lock:
         staging = tempfile.mkdtemp(prefix=".", suffix=STAGING_SUFFIX, dir=root)
-        _live_staging.add(staging)
+        _live_staging_paths.add(staging)
     return staging
 
 
 def _forget_staging(staging: str) -> None:
     with _staging_lock:
-        _live_staging.discard(staging)
+        _live_staging_paths.discard(staging)
 
 
 def _discard_staging(staging: str) -> None:
@@ -338,7 +345,7 @@ def _sweep_stale_staging(root: str) -> None:
     """Attempt to remove stale hidden staging trees but spare paths tracked by this session.
     Hold _staging_lock across listing and removal so new live trees cannot appear untracked."""
     with _staging_lock:
-        live = set(_live_staging)
+        live_staging_paths = set(_live_staging_paths)
         try:
             entries = os.listdir(root)
         except OSError:
@@ -347,7 +354,7 @@ def _sweep_stale_staging(root: str) -> None:
             if not (entry.startswith(".") and entry.endswith(STAGING_SUFFIX)):
                 continue
             path = os.path.join(root, entry)
-            if path in live:
+            if path in live_staging_paths:
                 continue
             if os.path.isdir(path) and not os.path.islink(path):
                 _remove_tree(path)
@@ -410,8 +417,15 @@ def import_icon_pack(source: str, name: str, description: str = "",
 def _import_from_folder(source: str, title: str, description: str,
                         banner_path: str | None) -> str:
     plan = _folder_plan(source)
-    return _build_pack(title, description, banner_path, plan, lambda planned, assets_dir:
-                       _copy_planned_files(planned, assets_dir))
+    return _build_pack(
+        title,
+        description,
+        banner_path,
+        plan,
+        lambda planned_files, assets_dir: _copy_planned_files(
+            planned_files, assets_dir
+        ),
+    )
 
 
 def _import_from_archive(source: str, title: str, description: str,
@@ -420,8 +434,15 @@ def _import_from_archive(source: str, title: str, description: str,
     # cannot vanish under a handle held open, and the file is read once.
     with zipfile.ZipFile(source, "r") as archive:
         plan = _archive_plan(archive)
-        return _build_pack(title, description, banner_path, plan, lambda planned, assets_dir:
-                           _extract_planned_files(archive, planned, assets_dir))
+        return _build_pack(
+            title,
+            description,
+            banner_path,
+            plan,
+            lambda planned_files, assets_dir: _extract_planned_files(
+                archive, planned_files, assets_dir
+            ),
+        )
 
 
 def _build_pack(title: str, description: str, banner_path: str | None,

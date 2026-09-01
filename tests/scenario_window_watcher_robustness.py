@@ -40,7 +40,7 @@ class StubDeck:
         return self._serial
 
 
-class StubWGDeckController:
+class StubWindowGrabberDeckController:
     def __init__(self, serial: str, active_page: StubPage | None,
                  page_auto_loaded: bool = False):
         self.deck = StubDeck(serial)
@@ -65,10 +65,10 @@ def check_pageless_deck_routing() -> None:
 
     # Put a pageless, auto-loaded deck first so an unguarded stay-on-page branch
     # dereferences active_page before routing the healthy deck.
-    pageless = StubWGDeckController("HOTPLUG", active_page=None,
+    pageless = StubWindowGrabberDeckController("HOTPLUG", active_page=None,
                                     page_auto_loaded=True)
-    healthy = StubWGDeckController("GOOD",
-                                   active_page=StubPage("/pages/other.json"))
+    healthy = StubWindowGrabberDeckController("GOOD",
+                                              active_page=StubPage("/pages/other.json"))
     deck_manager.deck_controller.extend([pageless, healthy])
 
     gl.page_manager = StubPageManager({
@@ -106,8 +106,8 @@ def check_pageless_guard_is_noop() -> None:
     # hide a missing None guard.
     deck_manager = fixtures.install_stub_globals()
 
-    pageless = StubWGDeckController("HOTPLUG", active_page=None,
-                                    page_auto_loaded=True)
+    pageless = StubWindowGrabberDeckController("HOTPLUG", active_page=None,
+                                               page_auto_loaded=True)
     deck_manager.deck_controller.append(pageless)
 
     gl.page_manager = StubPageManager({

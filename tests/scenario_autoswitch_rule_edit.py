@@ -176,7 +176,7 @@ def _registered(controller: StubDeckController, page_paths: list[str]):
     """Register a stub deck and cache its pages to avoid real Page construction."""
     gl.deck_manager.deck_controller.append(controller)
     gl.page_manager.pages[controller] = {
-        path: {"page": StubPage(path), "page_number": number}
+        path: {"page": StubPage(path), "lru_stamp": number}
         for number, path in enumerate(page_paths)
     }
     try:
@@ -316,7 +316,7 @@ def check_rule_without_patterns_is_inert() -> None:
         assert controller.page_auto_loaded is False
 
 
-def check_cleared_pattern_does_not_take_over() -> None:
+def check_cleared_pattern_stays_inert() -> None:
     """Keep the deck stable while its only rule pattern is cleared for editing."""
     _clear_pages()
     manual_path = _write_page("Manual")
@@ -355,7 +355,7 @@ def check_cleared_pattern_does_not_take_over() -> None:
         )
 
 
-def check_recheck_applies_the_window_in_front() -> None:
+def check_recheck_applies_foreground_window() -> None:
     _clear_pages()
     manual_path = _write_page("Manual")
     rule_path = _write_page("Browser")
@@ -433,7 +433,7 @@ def check_recheck_restores_a_disabled_rule() -> None:
         )
 
 
-def check_recheck_without_a_window_in_front() -> None:
+def check_recheck_without_foreground_window() -> None:
     """A desktop that names no front window leaves nothing to match. The
     re-check must ask, find nothing, and change no deck."""
     _clear_pages()
@@ -467,7 +467,7 @@ def check_recheck_without_a_window_in_front() -> None:
         assert controller.loaded_pages == []
 
 
-def check_recheck_is_inert_with_no_rule() -> None:
+def check_recheck_inert_without_rules() -> None:
     """Skip integration, desktop, and D-Bus work when no rule is enabled."""
     _clear_pages()
     _write_page("Plain")
@@ -571,7 +571,7 @@ def check_recheck_and_watcher_load_once() -> None:
         )
 
 
-def check_a_reported_window_never_routes_on_the_caller() -> None:
+def check_reported_window_routes_off_caller() -> None:
     """Route reports from any session-bus caller off the GTK caller thread.
     A route there can self-wait for 30 s and leave the page half built."""
     _clear_pages()
@@ -655,7 +655,7 @@ def check_a_reported_window_never_routes_on_the_caller() -> None:
     )
 
 
-def check_a_load_in_flight_does_not_block_another_deck() -> None:
+def check_deck_loads_do_not_block_routing() -> None:
     """Keep per-deck decisions atomic without holding the routing lock during load."""
     _clear_pages()
     manual_path = _write_page("Manual")
@@ -690,10 +690,10 @@ def check_a_load_in_flight_does_not_block_another_deck() -> None:
 
     with _registered(quick, [manual_path, rule_path]):
         with _registered(slow, [manual_path, rule_path]):
-            first = threading.Thread(target=route, name="StubRoutingHeld")
-            second = threading.Thread(target=route, name="StubRoutingFree")
+            blocked_routing = threading.Thread(target=route, name="StubRoutingHeld")
+            concurrent_routing = threading.Thread(target=route, name="StubRoutingFree")
             try:
-                first.start()
+                blocked_routing.start()
                 assert load_started.wait(TIMEOUT_S), (
                     "the first routing never reached the held load"
                 )
@@ -701,7 +701,7 @@ def check_a_load_in_flight_does_not_block_another_deck() -> None:
                 # The first routing is inside the load now. Clear what it left
                 # on the quick deck, so only the second routing can set it.
                 quick.page_auto_loaded = False
-                second.start()
+                concurrent_routing.start()
 
                 assert fixtures.wait_until(
                     lambda: quick.page_auto_loaded is True, OBSERVE_S
@@ -711,17 +711,17 @@ def check_a_load_in_flight_does_not_block_another_deck() -> None:
                 )
             finally:
                 release_load.set()
-                first.join(TIMEOUT_S)
-                second.join(TIMEOUT_S)
+                blocked_routing.join(TIMEOUT_S)
+                concurrent_routing.join(TIMEOUT_S)
 
-            assert not first.is_alive() and not second.is_alive()
+            assert not blocked_routing.is_alive() and not concurrent_routing.is_alive()
             assert slow.loaded_pages == [rule_path], (
                 f"the held deck must end on the page its rule names, once, "
                 f"got {slow.loaded_pages}"
             )
 
 
-def check_restore_runs_once_under_a_race() -> None:
+def check_restore_once_under_race() -> None:
     """Restore once when two routings concurrently find no matching rule.
     Read the manual path and clear the automatic flag atomically."""
     _clear_pages()
@@ -767,7 +767,7 @@ def check_restore_runs_once_under_a_race() -> None:
         )
 
 
-def check_foreground_window_publishes_only_on_change() -> None:
+def check_foreground_publish_on_change() -> None:
     """Publish PropertiesChanged only when the foreground window changes."""
     published: list[tuple] = []
     original_emit = api._emit_properties_changed
@@ -804,17 +804,17 @@ def main() -> None:
     check_wm_class_only_rule_fires()
     check_empty_pattern_matches_every_window()
     check_rule_without_patterns_is_inert()
-    check_cleared_pattern_does_not_take_over()
-    check_recheck_applies_the_window_in_front()
+    check_cleared_pattern_stays_inert()
+    check_recheck_applies_foreground_window()
     check_recheck_restores_a_disabled_rule()
-    check_recheck_without_a_window_in_front()
-    check_recheck_is_inert_with_no_rule()
+    check_recheck_without_foreground_window()
+    check_recheck_inert_without_rules()
     check_recheck_coalesces()
     check_recheck_and_watcher_load_once()
-    check_a_reported_window_never_routes_on_the_caller()
-    check_a_load_in_flight_does_not_block_another_deck()
-    check_restore_runs_once_under_a_race()
-    check_foreground_window_publishes_only_on_change()
+    check_reported_window_routes_off_caller()
+    check_deck_loads_do_not_block_routing()
+    check_restore_once_under_race()
+    check_foreground_publish_on_change()
 
     print("PASS: scenario_autoswitch_rule_edit")
 

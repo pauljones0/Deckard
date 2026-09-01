@@ -100,7 +100,7 @@ def deck_stack() -> "DeckStack | None":
 
 # Settings
 
-def settings() -> SettingsManager:
+def settings_manager() -> SettingsManager:
     """Return the late-bound settings manager with a concrete type.
     Before global initialization this preserves the raw None result despite the annotation."""
     return gl.settings_manager

@@ -99,19 +99,22 @@ class MissingRow(Adw.PreferencesRow):
             return
         # Install the plugin and its manifest dependencies, then inspect the report before UI reset.
         # Both consent prompts marshal from this worker to the main loop.
-        from src.windows.Store.install_consent import make_consent, make_set_consent
+        from src.windows.Store.install_consent import (
+            make_dependency_consent,
+            make_install_script_consent,
+        )
         window = gl.app.main_win if gl.app is not None else None
         report = dependencies.install_with_dependencies(
             backend, dependencies.plugin_item(plugin),
-            confirm_set=make_set_consent(window),
-            ask_install_script=make_consent(window))
+            confirm_set=make_dependency_consent(window),
+            ask_install_script=make_install_script_consent(window))
         if not report.ok:
             self.show_install_error()
             # The row label is sufficient only when this plugin failed and nothing was installed.
             # Notify for dependency failure or partial installation.
-            failed_is_the_plugin = (report.failed is not None
-                                    and report.failed.data is plugin)
-            if report.installed or not failed_is_the_plugin:
+            requested_plugin_failed = (report.failed is not None
+                                       and report.failed.asset is plugin)
+            if report.installed or not requested_plugin_failed:
                 name = plugin.plugin_name or plugin.plugin_id or "the plugin"
                 noun = dependencies.failure_noun(report, "plugin")
                 gl.notify.error(dependencies.failure_message(report, name),

@@ -7,7 +7,7 @@ import globals as gl
 from src.backend import startup_queue
 
 
-class Notify:
+class Notifier:
     def info(self, text: str, title: str | None = None) -> None:
         """Non-urgent feedback. Toast while the window is up, desktop
         notification otherwise. Safe to call from any thread."""

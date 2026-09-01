@@ -99,7 +99,7 @@ def check_pixel_parity() -> None:
         fixtures.teardown(controller)
 
 
-def check_alpha_ink_exact_cached() -> None:
+def check_cached_alpha_ink_is_exact() -> None:
     """Require cached semi-transparent ink to match PIL coverage blending.
     The static path must not use the scroll strip's straight-alpha carve-out."""
     from src.backend.DeckManagement.InputIdentifier import Input
@@ -295,21 +295,21 @@ def check_draw_count_contract() -> None:
         label_calls.clear()
         time.sleep(3.0)
         steady_rasters = len(text_calls)
-        steady_labelings = len(label_calls)
+        steady_composites = len(label_calls)
     finally:
         ImageDraw.ImageDraw.text = orig_text
         LabelManager.add_labels_to_image = orig_add
         if controller is not None:
             fixtures.teardown(controller)
 
-    assert steady_labelings >= 30, (
-        f"only {steady_labelings} label composites in 3s of animated background "
+    assert steady_composites >= 30, (
+        f"only {steady_composites} label composites in 3s of animated background "
         f"-- the keys are not re-rendering, so a zero raster count proves nothing")
     assert steady_rasters == 0, (
-        f"{steady_rasters} label rasterizations across {steady_labelings} "
+        f"{steady_rasters} label rasterizations across {steady_composites} "
         f"composites of unchanged static labels -- draw.text is back in the "
         f"per-frame path")
-    print(f"PASS: {steady_labelings} steady-state label composites in 3s cost "
+    print(f"PASS: {steady_composites} steady-state label composites in 3s cost "
           f"{steady_rasters} rasterizations ({warm_rasters} during warm-up)")
 
 
@@ -470,7 +470,7 @@ def check_visible_labels_memo_race() -> None:
         fixtures.teardown(controller)
 
 
-def check_many_line_label_not_cached() -> None:
+def check_multiline_label_not_cached() -> None:
     """Bound static-label retention by height and operation cost, not only width.
     Recording runs on the sole device writer and must reject 500-line labels early."""
     from src.backend.DeckManagement.DeckController import LabelManager
@@ -548,7 +548,7 @@ def check_many_line_label_not_cached() -> None:
         fixtures.teardown(controller)
 
 
-def check_many_line_scroll_not_cached() -> None:
+def check_multiline_scroll_not_cached() -> None:
     """Bound scroll strips by total bytes, not only width.
     Rolling labels enable the strip path for a many-line label below the width cap."""
     from src.backend.DeckManagement.DeckController import LabelManager
@@ -786,15 +786,15 @@ def check_mutation_round_gaps() -> None:
 def main() -> None:
     fixtures.start_watchdog(75, label="scenario_label_strip_cache")
     check_pixel_parity()
-    check_alpha_ink_exact_cached()
+    check_cached_alpha_ink_is_exact()
     check_pathological_label_not_cached()
     check_label_edits_invalidate()
     check_draw_count_contract()
     check_labelless_key_identity()
     check_composed_memo_race()
     check_visible_labels_memo_race()
-    check_many_line_label_not_cached()
-    check_many_line_scroll_not_cached()
+    check_multiline_label_not_cached()
+    check_multiline_scroll_not_cached()
     check_partial_interception_refused()
     check_mutation_round_gaps()
     print("scenario_label_strip_cache: OK")

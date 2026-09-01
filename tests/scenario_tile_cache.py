@@ -39,37 +39,37 @@ def check_shared_file_one_builder() -> None:
     _make_test_video(video_path, n_frames=40, size=(160, 120))
 
     size = (64, 64)
-    r1 = mp4_tile_cache.acquire(video_path, size, 1.0)
-    r2 = mp4_tile_cache.acquire(video_path, size, 1.0)
+    first_reader = mp4_tile_cache.acquire(video_path, size, 1.0)
+    second_reader = mp4_tile_cache.acquire(video_path, size, 1.0)
     try:
         key = mp4_tile_cache._registry_key(video_path, size, 1.0)
         entry = mp4_tile_cache._registry[key]
 
         assert entry.refcount == 2, f"expected refcount 2 after two acquires, got {entry.refcount}"
-        assert r1 is not r2, "each consumer must get its own reader instance"
-        assert r1._registry_entry is r2._registry_entry, "both readers must share one registry entry"
-        assert r1.cache_path == r2.cache_path == entry.path, "both readers must target the same cache file"
+        assert first_reader is not second_reader, "each consumer must get its own reader instance"
+        assert first_reader._registry_entry is second_reader._registry_entry, "both readers must share one registry entry"
+        assert first_reader.cache_path == second_reader.cache_path == entry.path, "both readers must target the same cache file"
         # Separate captures prevent one reader's seek from moving another.
-        assert r1.cap is not r2.cap or r1.cap is None, "consumers must not share a VideoCapture"
+        assert first_reader.cap is not second_reader.cap or first_reader.cap is None, "consumers must not share a VideoCapture"
 
         assert entry.builder_thread is not None, "first acquire with no promoted cache must start a builder"
         builder_thread_from_first_acquire = entry.builder_thread
 
         # A third consumer, while the builder still runs, must not start a
         # second builder thread for the same key.
-        r3 = mp4_tile_cache.acquire(video_path, size, 1.0)
+        additional_reader = mp4_tile_cache.acquire(video_path, size, 1.0)
         try:
             assert entry.builder_thread is builder_thread_from_first_acquire, (
                 "a second acquire on the same in-flight key must not start a second builder"
             )
         finally:
-            mp4_tile_cache.release(r3)
+            mp4_tile_cache.release(additional_reader)
 
         assert fixtures.wait_until(lambda: entry.ready, timeout=10.0), "builder never promoted the cache file"
         assert os.path.isfile(entry.path), "promoted cache file must exist on disk"
     finally:
-        mp4_tile_cache.release(r1)
-        mp4_tile_cache.release(r2)
+        mp4_tile_cache.release(first_reader)
+        mp4_tile_cache.release(second_reader)
 
     print("PASS: two consumers share one cache file and one builder thread")
 
@@ -177,28 +177,28 @@ def check_release_to_zero_closes_captures() -> None:
     _make_test_video(video_path, n_frames=20, size=(160, 120))
 
     size = (48, 48)
-    r1 = mp4_tile_cache.acquire(video_path, size, 1.0)
-    r2 = mp4_tile_cache.acquire(video_path, size, 1.0)
-    r1.get_frame(0)
-    r2.get_frame(0)
+    first_reader = mp4_tile_cache.acquire(video_path, size, 1.0)
+    second_reader = mp4_tile_cache.acquire(video_path, size, 1.0)
+    first_reader.get_frame(0)
+    second_reader.get_frame(0)
 
     key = mp4_tile_cache._registry_key(video_path, size, 1.0)
     entry = mp4_tile_cache._registry[key]
 
-    mp4_tile_cache.release(r1)
+    mp4_tile_cache.release(first_reader)
     assert key in mp4_tile_cache._registry, "registry entry must survive while refcount > 0"
-    assert r1.cap is None and r1._cache_cap is None, "a released reader's captures must be closed"
+    assert first_reader.cap is None and first_reader._cache_cap is None, "a released reader's captures must be closed"
 
-    mp4_tile_cache.release(r2)
+    mp4_tile_cache.release(second_reader)
     assert key not in mp4_tile_cache._registry, "registry entry must be dropped once refcount reaches 0"
-    assert r2.cap is None and r2._cache_cap is None, "a released reader's captures must be closed"
+    assert second_reader.cap is None and second_reader._cache_cap is None, "a released reader's captures must be closed"
 
     # A fresh acquire must use a promoted file or start a new builder.
-    r3 = mp4_tile_cache.acquire(video_path, size, 1.0)
+    fresh_reader = mp4_tile_cache.acquire(video_path, size, 1.0)
     try:
-        assert r3.get_frame(0) is not None
+        assert fresh_reader.get_frame(0) is not None
     finally:
-        mp4_tile_cache.release(r3)
+        mp4_tile_cache.release(fresh_reader)
 
     print("PASS: release to refcount zero closes captures and drops the registry entry")
 
@@ -269,23 +269,23 @@ def check_saturation_key_and_path_agree() -> None:
 
     # End to end, a second consumer whose raw factor lands in an existing
     # entry's bucket must target the file that entry's builder wrote.
-    r1 = mp4_tile_cache.acquire(video_path, size, 1.0)
+    base_reader = mp4_tile_cache.acquire(video_path, size, 1.0)
     try:
-        entry = r1._registry_entry
+        entry = base_reader._registry_entry
         assert fixtures.wait_until(lambda: entry.ready, timeout=10.0), "builder never promoted"
-        r2 = mp4_tile_cache.acquire(video_path, size, 1.004)
+        bucket_reader = mp4_tile_cache.acquire(video_path, size, 1.004)
         try:
-            assert r2._registry_entry is entry, "1.004 must land in the 1.0 entry's bucket"
-            assert r2.cache_path == entry.path, (
-                f"reader targets {r2.cache_path} but the entry's builder wrote "
+            assert bucket_reader._registry_entry is entry, "1.004 must land in the 1.0 entry's bucket"
+            assert bucket_reader.cache_path == entry.path, (
+                f"reader targets {bucket_reader.cache_path} but the entry's builder wrote "
                 f"{entry.path} -- the reader would wait on this file forever"
             )
-            r2.get_frame(0)
-            assert r2.is_cache_complete(), "reader must adopt the promoted shared cache"
+            bucket_reader.get_frame(0)
+            assert bucket_reader.is_cache_complete(), "reader must adopt the promoted shared cache"
         finally:
-            mp4_tile_cache.release(r2)
+            mp4_tile_cache.release(bucket_reader)
     finally:
-        mp4_tile_cache.release(r1)
+        mp4_tile_cache.release(base_reader)
 
     print("PASS: registry key and cache-file suffix always agree on the saturation bucket")
 
@@ -299,11 +299,11 @@ def check_missing_shared_cache_self_heals() -> None:
     size = (48, 48)
 
     # Build and promote once, then drop the registry entry. The file stays.
-    r0 = mp4_tile_cache.acquire(video_path, size, 1.0)
-    entry0 = r0._registry_entry
-    assert fixtures.wait_until(lambda: entry0.ready, timeout=10.0), "builder never promoted"
-    path = entry0.path
-    mp4_tile_cache.release(r0)
+    initial_reader = mp4_tile_cache.acquire(video_path, size, 1.0)
+    promoted_entry = initial_reader._registry_entry
+    assert fixtures.wait_until(lambda: promoted_entry.ready, timeout=10.0), "builder never promoted"
+    path = promoted_entry.path
+    mp4_tile_cache.release(initial_reader)
     assert os.path.isfile(path)
 
     # A deterministic re-creation of the race. The entry stat'ed the file as

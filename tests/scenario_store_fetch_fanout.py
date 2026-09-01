@@ -175,12 +175,12 @@ def test_download_repo_guards_unresolved_sha() -> None:
 
 
 def main() -> None:
-    fixtures.start_watchdog(30, label="scenario_store_gather_offload")
+    fixtures.start_watchdog(30, label="scenario_store_fetch_fanout")
     test_catalog_fanout_overlaps()
     test_lookup_respects_fetch_limiter()
     test_network_failure_raises_store_fetch_error()
     test_download_repo_guards_unresolved_sha()
-    print("scenario_store_gather_offload: PASS")
+    print("scenario_store_fetch_fanout: PASS")
 
 
 if __name__ == "__main__":

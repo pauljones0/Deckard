@@ -53,7 +53,7 @@ def check_base_double_register_no_orphan() -> None:
           "registration")
 
 
-def check_sni_double_register_keeps_menu_live() -> None:
+def check_sni_reregistration() -> None:
     original_watch = trayicon_mod.Gio.bus_watch_name_on_connection
     original_unwatch = trayicon_mod.Gio.bus_unwatch_name
     trayicon_mod.Gio.bus_watch_name_on_connection = lambda *args, **kwargs: 12345

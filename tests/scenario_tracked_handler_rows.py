@@ -24,31 +24,31 @@ class FakeWidget:
     """Record handlers by id and reject function-based disconnection."""
 
     def __init__(self) -> None:
-        self._handlers: dict[int, object] = {}
+        self._handlers_by_id: dict[int, object] = {}
         self._next = 1
         self.raise_on_set = False
 
     def connect(self, signal, handler):
         hid = self._next
         self._next += 1
-        self._handlers[hid] = handler
+        self._handlers_by_id[hid] = handler
         return hid
 
     def disconnect(self, hid):
-        if hid not in self._handlers:
+        if hid not in self._handlers_by_id:
             # GTK warns and leaves the handler in place for an unknown id.
             raise ValueError(f"no handler with id {hid}")
-        del self._handlers[hid]
+        del self._handlers_by_id[hid]
 
     def disconnect_by_func(self, func):
         raise AssertionError("a row disconnected by function, not by tracked id")
 
     def fire(self):
-        for handler in list(self._handlers.values()):
+        for handler in list(self._handlers_by_id.values()):
             handler(self, None)
 
     def handler_count(self):
-        return len(self._handlers)
+        return len(self._handlers_by_id)
 
     def set_text(self, text):
         if self.raise_on_set:
@@ -90,7 +90,7 @@ class FakeToggleWidget(FakeWidget):
 def _make_gen_row(cls, widget):
     """Build only the wiring state required by generative row signal methods."""
     row = object.__new__(cls)
-    row._signal_handlers = {}
+    row._handler_ids = {}
     row._widget = widget
     row._built = True
     row._build_flag_lock = threading.Lock()
@@ -127,7 +127,7 @@ def _check_row(cls, widget, carrier, label) -> None:
     )
 
 
-def test_generative_rows_wire_once_and_unwire_once() -> None:
+def check_generative_row_wiring() -> None:
     switch = FakeWidget()
     _check_row(SwitchRow, switch, switch, "SwitchRow")
 
@@ -144,7 +144,7 @@ def test_generative_rows_wire_once_and_unwire_once() -> None:
     _check_row(ToggleRow, toggle, toggle.toggle_group, "ToggleRow")
 
 
-def test_spin_row_tracks_both_of_its_widgets() -> None:
+def check_spin_row_widget_tracking() -> None:
     """The spin row tracks its adjustment and row handlers separately."""
     row = _make_gen_row(SpinRow, FakeWidget())
     row._adjustment = FakeWidget()
@@ -160,7 +160,7 @@ def test_spin_row_tracks_both_of_its_widgets() -> None:
     assert row._widget.handler_count() == 0, "the spin row stayed wired"
 
 
-def test_entry_row_reset_leaves_one_handler() -> None:
+def check_entry_row_reset_handler() -> None:
     """A cursor-preserving reset reconnects once, including after a failed write."""
     widget = FakeWidget()
     row = _make_gen_row(EntryRow, widget)
@@ -187,7 +187,7 @@ def test_entry_row_reset_leaves_one_handler() -> None:
 
 def _make_scale_row(add_text_entry):
     row = ScaleRow.__new__(ScaleRow)
-    row._handlers = {}
+    row._handler_ids = {}
     row._add_text_entry = add_text_entry
     row._adjustment = FakeWidget()
     row.entry_row = FakeWidget()
@@ -196,7 +196,7 @@ def _make_scale_row(add_text_entry):
     return row
 
 
-def test_scale_row_wires_every_binding_once() -> None:
+def check_scale_row_binding_wiring() -> None:
     row = _make_scale_row(add_text_entry=True)
 
     row._connect_signals()
@@ -215,7 +215,7 @@ def test_scale_row_wires_every_binding_once() -> None:
     assert row.entry_row_controller.handler_count() == 0, "the controller stayed wired"
 
 
-def test_scale_row_reset_reconnects_after_raise() -> None:
+def check_scale_reset_failure_reconnect() -> None:
     """A text write that raises must still leave the row wired."""
     row = _make_scale_row(add_text_entry=True)
     row._connect_signals()
@@ -237,7 +237,7 @@ def test_scale_row_reset_reconnects_after_raise() -> None:
 
 def _make_screensaver_group():
     group = ScreensaverGroup.__new__(ScreensaverGroup)
-    group._handlers = {}
+    group._handler_ids = {}
     group.overwrite_expander = FakeWidget()
     group.enable_screensaver_toggle = FakeWidget()
     group.delay_spin = FakeWidget()
@@ -248,7 +248,7 @@ def _make_screensaver_group():
     return group
 
 
-def test_page_editor_group_wires_once_per_load() -> None:
+def check_editor_wiring_per_load() -> None:
     """Repeated page loads leave one handler on each row."""
     group = _make_screensaver_group()
     group.load_config_settings = lambda page_path: None
@@ -274,7 +274,7 @@ def test_page_editor_group_wires_once_per_load() -> None:
     )
 
 
-def test_page_editor_group_reconnects_after_midload_raise() -> None:
+def check_editor_reconnect_after_load_failure() -> None:
     """A load that raises must still leave the group wired."""
     group = _make_screensaver_group()
 
@@ -298,7 +298,7 @@ def test_page_editor_group_reconnects_after_midload_raise() -> None:
     )
 
 
-def test_page_editor_group_teardown_is_idempotent() -> None:
+def check_editor_teardown_idempotence() -> None:
     """Teardown runs after a load already dropped the handlers."""
     group = _make_screensaver_group()
     group.load_config_settings = lambda page_path: None
@@ -311,9 +311,9 @@ def test_page_editor_group_teardown_is_idempotent() -> None:
     assert group.delay_spin.handler_count() == 0, "the delay spinner stayed wired"
 
 
-def test_plugin_settings_flow_box_wires_once() -> None:
+def check_plugin_flow_box_wiring() -> None:
     page = PluginSettingsPage.__new__(PluginSettingsPage)
-    page._flow_box_handler = None
+    page._flow_box_handler_id = None
     page.flow_box = FakeWidget()
 
     def _on_click(*args):
@@ -333,15 +333,15 @@ def test_plugin_settings_flow_box_wires_once() -> None:
 
 def main() -> None:
     fixtures.start_watchdog(30, label="scenario_tracked_handler_rows")
-    test_generative_rows_wire_once_and_unwire_once()
-    test_spin_row_tracks_both_of_its_widgets()
-    test_entry_row_reset_leaves_one_handler()
-    test_scale_row_wires_every_binding_once()
-    test_scale_row_reset_reconnects_after_raise()
-    test_page_editor_group_wires_once_per_load()
-    test_page_editor_group_reconnects_after_midload_raise()
-    test_page_editor_group_teardown_is_idempotent()
-    test_plugin_settings_flow_box_wires_once()
+    check_generative_row_wiring()
+    check_spin_row_widget_tracking()
+    check_entry_row_reset_handler()
+    check_scale_row_binding_wiring()
+    check_scale_reset_failure_reconnect()
+    check_editor_wiring_per_load()
+    check_editor_reconnect_after_load_failure()
+    check_editor_teardown_idempotence()
+    check_plugin_flow_box_wiring()
     print("PASS: scenario_tracked_handler_rows")
 
 

@@ -31,7 +31,7 @@ class RecorderGroup:
         self.rows.append(row)
 
 
-def make_recommendations_self():
+def make_recommendations_stub():
     calls = {"loading": [], "error": 0}
     fake = types.SimpleNamespace(
         defaults=[],
@@ -49,7 +49,7 @@ def check_recommendations_offline() -> None:
     # Leg 1a. An Err from the read boundary shows the error state. Iterating
     # the Err instead raises TypeError and kills the loader thread.
     gl.store_backend = types.SimpleNamespace(get_all_plugins=lambda: Err(ErrReason.NO_CONNECTION))
-    fake, calls = make_recommendations_self()
+    fake, calls = make_recommendations_stub()
     PluginRecommendations.load(fake)
     assert calls["error"] == 1, (
         "an Err from get_all_plugins must show the error state (pre-fix: "
@@ -63,14 +63,14 @@ def check_recommendations_offline() -> None:
         raise RuntimeError("store exploded")
 
     gl.store_backend = types.SimpleNamespace(get_all_plugins=boom)
-    fake, calls = make_recommendations_self()
+    fake, calls = make_recommendations_stub()
     PluginRecommendations.load(fake)
     assert calls["error"] == 1, "a raising fetch must also show the error state"
 
     # Leg 1c. An Ok still completes the load. The list holds only falsy
     # entries, so no widgets get built, and build_rows stops the spinner.
     gl.store_backend = types.SimpleNamespace(get_all_plugins=lambda: Ok([None, None]))
-    fake, calls = make_recommendations_self()
+    fake, calls = make_recommendations_stub()
     PluginRecommendations.load(fake)
     pump_main_context()
     assert calls["loading"] == [True, False], (
@@ -174,7 +174,7 @@ def check_missing_row_spinner_recovers() -> None:
     print("PASS: MissingRow install surfaces failure when the store is unreachable")
 
 
-def check_missing_row_names_the_failed_dependency_class() -> None:
+def check_missing_row_reports_dependency_type() -> None:
     """Name the actual failed dependency class in MissingRow notifications.
     A pack failure must not be reported as failure of the selected plugin."""
     import types as _types
@@ -215,10 +215,10 @@ def check_missing_row_names_the_failed_dependency_class() -> None:
     gl.app = None  # so the install parents its prompts on no window
 
     # Answer the set prompt without a real dialog. MissingRow imports
-    # make_set_consent at call time, so patching the module attribute lands.
+    # make_dependency_consent at call time, so patching the module attribute lands.
     asked: list = []
-    original_set_consent = install_consent.make_set_consent
-    install_consent.make_set_consent = lambda parent: (
+    original_set_consent = install_consent.make_dependency_consent
+    install_consent.make_dependency_consent = lambda parent: (
         lambda root_name, plan: (asked.append(root_name), True)[1])
 
     class _Notify:
@@ -258,7 +258,7 @@ def check_missing_row_names_the_failed_dependency_class() -> None:
         pump_main_context()
     finally:
         timer_wheel.schedule = real_schedule
-        install_consent.make_set_consent = original_set_consent
+        install_consent.make_dependency_consent = original_set_consent
 
     assert asked, "the set prompt must have been reached"
     assert installed == ["com_root_Icons"], (
@@ -275,7 +275,7 @@ def check_missing_row_names_the_failed_dependency_class() -> None:
 
 def check_install_failures_toast() -> None:
     from src.windows.Onboarding.OnboardingWindow import OnboardingScreen5
-    from src.backend.notify import Notify
+    from src.backend.notify import Notifier
 
     toasts = []
     gl.app = types.SimpleNamespace(
@@ -287,7 +287,7 @@ def check_install_failures_toast() -> None:
     )
     # The real facade runs here. The onboarding path reports through
     # gl.notify, and its main-thread routing is under test.
-    gl.notify = Notify()
+    gl.notify = Notifier()
 
     def get_plugin_for_id(plugin_id):
         return None  # unresolvable, so the install fails
@@ -337,7 +337,7 @@ def main() -> None:
     check_recommendations_offline()
     check_get_plugin_for_id_offline()
     check_missing_row_spinner_recovers()
-    check_missing_row_names_the_failed_dependency_class()
+    check_missing_row_reports_dependency_type()
     check_install_failures_toast()
     print("PASS: scenario_onboarding_store_offline")
 

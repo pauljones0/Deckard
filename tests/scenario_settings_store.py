@@ -127,11 +127,11 @@ def check_corrupt_flag_describes_read() -> None:
     write_raw(path, GARBAGE)
     store().invalidate_path(path)
 
-    data, corrupt = store().read_reporting_corruption(settings_store.DECK, serial)
+    data, corrupt = store().read_with_corruption_status(settings_store.DECK, serial)
     assert (data, corrupt) == ({}, True), f"the healing read misreported: {(data, corrupt)}"
 
     # The file is quarantined now, so a re-read finds it absent.
-    assert store().read_reporting_corruption(settings_store.DECK, serial) == ({}, False), (
+    assert store().read_with_corruption_status(settings_store.DECK, serial) == ({}, False), (
         "the corrupt flag was cached with the content and is now reported forever"
     )
     print("PASS: the corrupt flag describes the read that healed, not the surface")

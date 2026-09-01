@@ -164,21 +164,21 @@ def check_touchscreen_background_saturation() -> None:
     # Changing the factor must miss the fitted-background memo.
     # A key containing only path, mtime, and size would serve stale enhancement.
     state = _make_touch_state(1.0)
-    first = state._get_fitted_background_image(bg_path, strip_size)
+    before_change = state._get_fitted_background_image(bg_path, strip_size)
     state.controller_touch.deck_controller.saturation = 1.3
-    second = state._get_fitted_background_image(bg_path, strip_size)
-    assert first.tobytes() != second.tobytes(), (
+    boosted_image = state._get_fitted_background_image(bg_path, strip_size)
+    assert before_change.tobytes() != boosted_image.tobytes(), (
         "fitted-background cache served a stale enhancement after a "
         "saturation change: the cache key must include the factor"
     )
-    assert abs(_mean_hsv_saturation(second) - sat_boosted) < 0.01, (
+    assert abs(_mean_hsv_saturation(boosted_image) - sat_boosted) < 0.01, (
         "post-change fitted image should match a fresh 1.3 enhancement"
     )
 
     # Within one factor the cache still hits and returns a copy.
-    third = state._get_fitted_background_image(bg_path, strip_size)
-    assert third.tobytes() == second.tobytes()
-    assert third is not second, "cache must hand out copies, not the cached object"
+    cached_copy = state._get_fitted_background_image(bg_path, strip_size)
+    assert cached_copy.tobytes() == boosted_image.tobytes()
+    assert cached_copy is not boosted_image, "cache must hand out copies, not the cached object"
 
     print("PASS: touchscreen background image carries the saturation boost (cache keyed on factor)")
 

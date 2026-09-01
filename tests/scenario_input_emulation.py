@@ -79,7 +79,7 @@ class StubWheel:
             lambda: any(n == name for (_d, n) in self.log), timeout=timeout)
 
 
-def press_on_a_worker(plane, controller, wheel, page_ref="EmuMain", coords=COORDS,
+def start_worker_press(plane, controller, wheel, page_ref="EmuMain", coords=COORDS,
                       event="press"):
     """Start a press on a worker and wait until it reaches the wheel.
     Return the blocked thread and the dict that later receives its result."""
@@ -235,7 +235,7 @@ def leg_wheel_choreography(plane, controller) -> None:
     print("PASS: a press is one job due at once and a release behind it")
 
 
-def leg_short_press_clamps_to_the_hold_time(plane, controller) -> None:
+def leg_short_press_hold_clamp(plane, controller) -> None:
     """Clamp a short press below a shorter deck hold threshold.
     A 0.05-second threshold requires the 0.025-second release below."""
     load(controller, "EmuMain")
@@ -347,7 +347,7 @@ def leg_press_switches_page_first(plane, controller) -> None:
     print("PASS: a press on another page switches to it and lands on its actions")
 
 
-def leg_press_waits_for_the_rebuild(plane, controller) -> None:
+def leg_rebuild_wait(plane, controller) -> None:
     """Wait for the asynchronous input rebuild queued by the page switch.
     Holding the fast fake-deck rebuild makes a skipped barrier observable."""
     load(controller, "EmuMain")
@@ -392,7 +392,7 @@ def leg_press_waits_for_the_rebuild(plane, controller) -> None:
     print("PASS: a press waits for the rebuild its own page switch queued")
 
 
-def leg_press_refuses_a_page_that_moved(plane, controller) -> None:
+def leg_page_moved_press(plane, controller) -> None:
     """Cancel a press when the active page changes before delivery.
     The replacement page shares the key, so an incorrect delivery is visible."""
     load(controller, "EmuMain")
@@ -440,7 +440,7 @@ def leg_press_refuses_a_page_that_moved(plane, controller) -> None:
     print("PASS: a press whose page moved is refused instead of landing elsewhere")
 
 
-def leg_press_survives_a_reload_of_the_same_page(plane, controller) -> None:
+def leg_same_page_reload(plane, controller) -> None:
     """Accept a new Page object loaded from the same requested file."""
     load(controller, "EmuMain")
     controller.hold_time = 2.0
@@ -451,7 +451,7 @@ def leg_press_survives_a_reload_of_the_same_page(plane, controller) -> None:
     saved_wait = control_plane._PRESS_START_WAIT_S
     control_plane._PRESS_START_WAIT_S = 30.0
     try:
-        caller, answer = press_on_a_worker(plane, controller, wheel)
+        caller, answer = start_worker_press(plane, controller, wheel)
         # The same file, built again. This is what an eviction leaves behind.
         rebuilt = gl.page_manager.load_page(path, controller)
         assert rebuilt is not None and rebuilt is not controller.active_page, (
@@ -480,7 +480,7 @@ def leg_press_survives_a_reload_of_the_same_page(plane, controller) -> None:
     print("PASS: a press survives its page being rebuilt from the same file")
 
 
-def leg_locked_in_the_gap_refuses_the_press(plane, controller) -> None:
+def leg_lock_before_delivery(plane, controller) -> None:
     """Refuse a press when the session locks between request and delivery.
     The deck must recheck because disabled interaction drops input silently."""
     load(controller, "EmuMain")
@@ -490,7 +490,7 @@ def leg_locked_in_the_gap_refuses_the_press(plane, controller) -> None:
     saved_wait = control_plane._PRESS_START_WAIT_S
     control_plane._PRESS_START_WAIT_S = 30.0
     try:
-        caller, answer = press_on_a_worker(plane, controller, wheel)
+        caller, answer = start_worker_press(plane, controller, wheel)
         controller.allow_interaction = False
         wheel.fire_next()
         caller.join(timeout=10)
@@ -510,7 +510,7 @@ def leg_locked_in_the_gap_refuses_the_press(plane, controller) -> None:
     print("PASS: a session locked in the gap refuses the press at the deck")
 
 
-def leg_press_gives_up_when_the_wheel_stalls(plane, controller) -> None:
+def leg_stalled_press_timeout(plane, controller) -> None:
     """Cancel the wheel job when its caller times out.
     Ownership must prevent a reported failure from pressing the key later."""
     load(controller, "EmuMain")
@@ -541,7 +541,7 @@ def leg_press_gives_up_when_the_wheel_stalls(plane, controller) -> None:
     print("PASS: a press the caller gave up on is not made by the job behind it")
 
 
-def leg_release_arms_when_the_press_raises(plane, controller) -> None:
+def leg_release_after_press_error(plane, controller) -> None:
     """Release a key even when press dispatch raises.
     The wheel swallows job errors, so release must not depend on clean return."""
     load(controller, "EmuMain")
@@ -594,7 +594,7 @@ def leg_swallowed_press_arms_no_release(plane, controller) -> None:
     saved_keys = controller.inputs[Input.Key]
     control_plane._PRESS_START_WAIT_S = 30.0
     try:
-        caller, answer = press_on_a_worker(plane, controller, wheel)
+        caller, answer = start_worker_press(plane, controller, wheel)
         # The input set goes out from under the press.
         controller.inputs[Input.Key] = []
         wheel.fire_next()
@@ -615,7 +615,7 @@ def leg_swallowed_press_arms_no_release(plane, controller) -> None:
     print("PASS: a press the deck swallows arms no release")
 
 
-def leg_release_only_ends_its_own_gesture(plane, controller) -> None:
+def leg_stale_release_gesture_isolation(plane, controller) -> None:
     """End only the gesture created by the matching emulated press.
     A stale release must not end a later physical press on the same key."""
     load(controller, "EmuMain")
@@ -662,7 +662,7 @@ def leg_release_only_ends_its_own_gesture(plane, controller) -> None:
     print("PASS: a release ends the gesture its own press took, and no other")
 
 
-def leg_second_press_on_a_held_key_is_refused(plane, controller) -> None:
+def leg_held_key_second_press(plane, controller) -> None:
     """Refuse a second press while the key is held.
     Hardware cannot produce overlapping DOWN events with one shared release."""
     load(controller, "EmuMain")
@@ -714,7 +714,7 @@ def leg_bad_event_word_moves_nothing(plane, controller) -> None:
     print("PASS: an unknown event word is refused, and the deck stays where it was")
 
 
-def leg_failures_match_the_state_verb(plane, controller) -> None:
+def leg_state_verb_failures(plane, controller) -> None:
     """Return the same coordinate failures for press and state-change verbs."""
     load(controller, "EmuMain")
 
@@ -742,7 +742,7 @@ def leg_failures_match_the_state_verb(plane, controller) -> None:
     print("PASS: a press and a state change refuse the same request identically")
 
 
-def leg_locked_session_refuses_the_press(plane, controller) -> None:
+def leg_locked_session_press(plane, controller) -> None:
     """Report blocked input instead of sending a press into a locked session."""
     load(controller, "EmuMain")
     pipeline._reset_delivered()
@@ -763,7 +763,7 @@ def leg_locked_session_refuses_the_press(plane, controller) -> None:
     print("PASS: a locked session refuses the press instead of dropping it")
 
 
-def leg_bounds_follow_the_rotation(plane) -> None:
+def leg_rotated_bounds(plane) -> None:
     """Bound both verbs against the rotated logical layout, not raw geometry."""
     controller = fixtures.make_headless_controller(serial=ROTATED_SERIAL)
     try:
@@ -807,7 +807,7 @@ def leg_bounds_follow_the_rotation(plane) -> None:
 def main() -> None:
     fixtures.start_watchdog(WATCHDOG_SECONDS, label="scenario_input_emulation")
     fixtures._install_integration_globals()
-    gl.plugin_manager = pipeline._PluginManager()
+    gl.plugin_manager = pipeline._StubPluginManager()
 
     # The plain seed first: it creates the pages directory the action pages are
     # written into, and gives the controller a default page to boot onto.
@@ -824,28 +824,28 @@ def main() -> None:
         # Settle centrally so each leg starts without pending input work.
         for leg in (
             leg_wheel_choreography,
-            leg_short_press_clamps_to_the_hold_time,
+            leg_short_press_hold_clamp,
             leg_short_press_semantics,
             leg_long_press_semantics,
             leg_press_switches_page_first,
-            leg_press_waits_for_the_rebuild,
-            leg_press_refuses_a_page_that_moved,
-            leg_press_survives_a_reload_of_the_same_page,
-            leg_locked_in_the_gap_refuses_the_press,
-            leg_press_gives_up_when_the_wheel_stalls,
-            leg_release_arms_when_the_press_raises,
+            leg_rebuild_wait,
+            leg_page_moved_press,
+            leg_same_page_reload,
+            leg_lock_before_delivery,
+            leg_stalled_press_timeout,
+            leg_release_after_press_error,
             leg_swallowed_press_arms_no_release,
-            leg_release_only_ends_its_own_gesture,
-            leg_second_press_on_a_held_key_is_refused,
+            leg_stale_release_gesture_isolation,
+            leg_held_key_second_press,
             leg_bad_event_word_moves_nothing,
-            leg_failures_match_the_state_verb,
-            leg_locked_session_refuses_the_press,
+            leg_state_verb_failures,
+            leg_locked_session_press,
         ):
             leg(plane, controller)
             settle(controller)
         # This one builds a deck of its own and tears it down again, and no
         # leg follows it, so it owes nothing to the deck above.
-        leg_bounds_follow_the_rotation(plane)
+        leg_rotated_bounds(plane)
     finally:
         control_plane.timer_wheel = timer_wheel_real
         fixtures.teardown(controller)

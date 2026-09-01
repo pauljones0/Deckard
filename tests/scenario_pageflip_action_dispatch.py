@@ -76,7 +76,7 @@ class RunCommandLikeAction(RecordingAction):
             self.registered_down = False
 
 
-def inject(page, ident: Input.Key, actions: list) -> None:
+def inject_actions(page, ident: Input.Key, actions: list) -> None:
     """Places stub action objects where get_all_actions_for_input reads them,
     at action_objects[input_type][json_identifier][state][index]."""
     per_state = page.action_objects.setdefault(ident.input_type, {}).setdefault(ident.json_identifier, {})
@@ -109,8 +109,8 @@ def main() -> None:
             tag="page_b_recorder",
             deck_controller=controller, page=page_b, input_ident=ident)
 
-        inject(page_a, ident, [change_action, run_action])
-        inject(page_b, ident, [bleed_recorder])
+        inject_actions(page_a, ident, [change_action, run_action])
+        inject_actions(page_b, ident, [bleed_recorder])
 
         # Press 1. DOWN flips the page mid-gesture.
         deck.fire_key_event(0, True)
@@ -160,7 +160,7 @@ def main() -> None:
         sentinel = RecordingAction(
             tag="snapshot_sentinel",
             deck_controller=controller, page=page_a, input_ident=ident)
-        inject(page_a, ident, [change_action, run_action, sentinel])
+        inject_actions(page_a, ident, [change_action, run_action, sentinel])
 
         controller.load_page(page_a)
         assert fixtures.wait_until(lambda: controller.active_page is page_a)
@@ -200,7 +200,7 @@ def main() -> None:
         survivor = RecordingAction(
             tag="survivor",
             deck_controller=controller, page=page_b, input_ident=ident_iso)
-        inject(page_b, ident_iso, [raiser, survivor])
+        inject_actions(page_b, ident_iso, [raiser, survivor])
 
         deck.fire_key_event(1, True)  # physical key 1 is "1x0" on the 2x4 layout
         assert fixtures.wait_until(lambda: DOWN in survivor.received)
@@ -219,7 +219,7 @@ def main() -> None:
         ss_recorder = RecordingAction(
             tag="ss_recorder",
             deck_controller=controller, page=page_b, input_ident=ident_ss)
-        inject(page_b, ident_ss, [ss_recorder])
+        inject_actions(page_b, ident_ss, [ss_recorder])
 
         key_held = controller.get_input(ident_ss)
         deck.fire_key_event(2, True)  # physical key 2 is "2x0" on the 2x4 layout

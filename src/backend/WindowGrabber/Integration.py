@@ -37,17 +37,17 @@ QUERY_TIMEOUT_MS = int(QUERY_TIMEOUT_S * 1000)
 # Rate limit for the timeout/kill warnings, so a helper that hangs on every
 # poll logs once a minute and not once a second.
 _QUERY_WARN_GAP_S = 60.0
-_last_query_warn = 0.0
+_last_query_warning_at = 0.0
 _query_warn_lock = threading.Lock()
 
 
 def _warn_query_timeout(message: str) -> None:
-    global _last_query_warn
+    global _last_query_warning_at
     with _query_warn_lock:
         now = time.monotonic()
-        if now - _last_query_warn < _QUERY_WARN_GAP_S:
+        if now - _last_query_warning_at < _QUERY_WARN_GAP_S:
             return
-        _last_query_warn = now
+        _last_query_warning_at = now
     log.warning(message)
 
 

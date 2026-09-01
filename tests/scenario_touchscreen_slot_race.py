@@ -11,7 +11,7 @@ import time
 from fixtures import start_watchdog
 
 
-def hook_types(media_player):
+def install_touchscreen_read_hooks(media_player):
     """Install a touchscreen-task property that fires an armed read hook."""
     # Return the pre-producer value to expose a deterministic check-and-set race.
     base = type(media_player)
@@ -51,14 +51,14 @@ def hook_types(media_player):
     return media_player
 
 
-def check_drain_half() -> int:
+def check_touchscreen_drain_race() -> int:
     from src.backend.DeckManagement.InputIdentifier import Input
 
     controller, media_player, _ = fixtures.make_stub_controller(
         serial="slotrace-1", has_touchscreen=True
     )
     touch = controller.inputs[Input.Touchscreen][0]
-    media_player = hook_types(media_player)
+    media_player = install_touchscreen_read_hooks(media_player)
 
     produced = threading.Event()
 
@@ -108,7 +108,7 @@ def check_drain_half() -> int:
     return 0
 
 
-def check_clear_half() -> int:
+def check_image_clear_race() -> int:
     from src.backend.DeckManagement.InputIdentifier import Input
     from src.backend.DeckManagement.DeckController import ClearMsg
 
@@ -167,7 +167,7 @@ def check_clear_half() -> int:
     return 0
 
 
-def check_writecap_putback() -> int:
+def check_write_cap_putback_race() -> int:
     """A newer producer frame wins an atomic over-budget putback race."""
     from src.backend.DeckManagement.InputIdentifier import Input
 
@@ -175,7 +175,7 @@ def check_writecap_putback() -> int:
         serial="slotrace-3", has_touchscreen=True
     )
     touch = controller.inputs[Input.Touchscreen][0]
-    media_player = hook_types(media_player)
+    media_player = install_touchscreen_read_hooks(media_player)
 
     # A recent write forces the seeded frame into the over-budget putback.
     media_player._last_touch_write = time.time()
@@ -281,9 +281,9 @@ def check_slot_wipes() -> int:
 
 def main() -> int:
     start_watchdog(40, "touchscreen_slot_race")
-    rc = check_drain_half()
-    rc |= check_clear_half()
-    rc |= check_writecap_putback()
+    rc = check_touchscreen_drain_race()
+    rc |= check_image_clear_race()
+    rc |= check_write_cap_putback_race()
     rc |= check_slot_wipes()
     return rc
 

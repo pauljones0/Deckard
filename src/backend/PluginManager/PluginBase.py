@@ -95,7 +95,7 @@ class PluginBase(rpyc.Service):
         self.backend_process: subprocess.Popen[bytes] | None = None
         # The generation disarms watchdogs superseded by relaunch; the stop flag
         # suppresses errors when deactivation or unload requested the exit.
-        self._backend_launch_gen: int = 0
+        self._backend_launch_generation: int = 0
         self._backend_stop_requested: bool = False
         # register_backend relaxes its port-ownership check for a terminal
         # launch, where the backend is not a child of the Popen handle.
@@ -164,35 +164,35 @@ class PluginBase(rpyc.Service):
         folder_name = self.get_plugin_id_from_folder_name()
         plugin_id = self.get_plugin_id()
         id_dir = os.path.join(plugins_root, plugin_id)
-        id_settings = os.path.join(id_dir, "settings.json")
+        id_settings_path = os.path.join(id_dir, "settings.json")
 
         if plugin_id != folder_name:
-            folder_dir = os.path.join(plugins_root, folder_name)
-            folder_settings = os.path.join(folder_dir, "settings.json")
+            legacy_settings_dir = os.path.join(plugins_root, folder_name)
+            legacy_settings_path = os.path.join(legacy_settings_dir, "settings.json")
 
-            if os.path.isfile(id_settings):
+            if os.path.isfile(id_settings_path):
                 # Prefer existing id-path settings, but preserve and report a
                 # second folder-name copy.
-                if os.path.isfile(folder_settings):
+                if os.path.isfile(legacy_settings_path):
                     log.warning(
                         f"Plugin {plugin_id}: settings exist under both {id_dir} "
-                        f"(used) and {folder_dir} (ignored, left in place)"
+                        f"(used) and {legacy_settings_dir} (ignored, left in place)"
                     )
-            elif os.path.isfile(folder_settings):
+            elif os.path.isfile(legacy_settings_path):
                 # Quarantine exposes legacy settings to migration and can
                 # restore older data, so warn before that fallback becomes active.
                 try:
-                    quarantined = sorted(
+                    quarantined_files = sorted(
                         e for e in os.listdir(id_dir)
                         if e.startswith("settings.json.corrupt")
                     )
                 except OSError:
-                    quarantined = []
-                if quarantined:
+                    quarantined_files = []
+                if quarantined_files:
                     log.warning(
                         f"Plugin {plugin_id}: the id-path settings in {id_dir} were "
-                        f"quarantined ({', '.join(quarantined)}) and the legacy "
-                        f"folder-name settings in {folder_dir} are being migrated in "
+                        f"quarantined ({', '.join(quarantined_files)}) and the legacy "
+                        f"folder-name settings in {legacy_settings_dir} are being migrated in "
                         f"-- the plugin will come back with those OLDER settings, not "
                         f"the quarantined ones"
                     )
@@ -203,33 +203,33 @@ class PluginBase(rpyc.Service):
                         # The fast path moves the whole directory, which keeps
                         # the sibling files beside settings.json.
                         os.makedirs(plugins_root, exist_ok=True)
-                        os.rename(folder_dir, id_dir)
+                        os.rename(legacy_settings_dir, id_dir)
                     else:
                         # Complete an existing id directory with the legacy
                         # files, then remove the legacy directory if empty.
                         os.makedirs(id_dir, exist_ok=True)
-                        for entry in os.listdir(folder_dir):
+                        for entry in os.listdir(legacy_settings_dir):
                             dest = os.path.join(id_dir, entry)
                             if not os.path.exists(dest):
-                                os.rename(os.path.join(folder_dir, entry), dest)
+                                os.rename(os.path.join(legacy_settings_dir, entry), dest)
                         # Ignore a remaining name collision or directory-removal
                         # failure; both leave the selected settings intact.
                         with contextlib.suppress(OSError):
-                            os.rmdir(folder_dir)
+                            os.rmdir(legacy_settings_dir)
                     log.info(
                         f"Plugin {plugin_id}: migrated settings from folder-name "
-                        f"path {folder_dir} to id path {id_dir}"
+                        f"path {legacy_settings_dir} to id path {id_dir}"
                     )
                 except OSError as e:
                     # Keep reading the settings where they are, instead of an
                     # empty start.
                     log.opt(exception=e).error(
                         f"Plugin {plugin_id}: could not migrate settings dir "
-                        f"{folder_dir} -> {id_dir}; keeping the folder-name path"
+                        f"{legacy_settings_dir} -> {id_dir}; keeping the folder-name path"
                     )
-                    return folder_settings
+                    return legacy_settings_path
 
-        return id_settings
+        return id_settings_path
 
     def register(self, plugin_name: str | None = None, github_repo: str | None = None, plugin_version: str | None = None,
                  app_version: str | None = None) -> None:
@@ -283,16 +283,16 @@ class PluginBase(rpyc.Service):
         # This keeps it in disabled_plugins instead of absent from both registries.
         version_check_failed = False
         try:
-            app_version_matching = self.is_app_version_matching()
+            app_version_matches = self.is_app_version_matching()
         except Exception as e:
             log.opt(exception=e).error(
                 f"Plugin {self.plugin_id}: could not check version compatibility "
                 f"(app-version={self.app_version!r}, minimum-app-version={self.min_app_version!r}). Disabling plugin."
             )
-            app_version_matching = False
+            app_version_matches = False
             version_check_failed = True
 
-        if app_version_matching:
+        if app_version_matches:
             PluginBase.plugins[self.plugin_id] = {
                 "object": self,
                 "plugin_version": self.plugin_version,
@@ -548,12 +548,12 @@ class PluginBase(rpyc.Service):
 
     # Guard lazy per-instance lock creation for rpyc or harness instances built
     # through __new__ without __init__.
-    _settings_lock_guard = threading.Lock()
+    _settings_lock_creation_lock = threading.Lock()
 
     def _get_settings_lock(self) -> threading.Lock:
         lock = getattr(self, "_settings_lock", None)
         if lock is None:
-            with PluginBase._settings_lock_guard:
+            with PluginBase._settings_lock_creation_lock:
                 lock = getattr(self, "_settings_lock", None)
                 if lock is None:
                     lock = threading.Lock()
@@ -887,7 +887,7 @@ class PluginBase(rpyc.Service):
         from src.backend.PluginManager.PluginManager import (
             backend_guard_env,
             build_backend_launch_command,
-            ensure_backend_venv,
+            attempt_backend_venv_repair,
             inject_backend_guard,
         )
 
@@ -901,7 +901,7 @@ class PluginBase(rpyc.Service):
         # Before the argv, which reads the venv's interpreter and refuses a
         # venv that a Python upgrade stranded.
         if venv_path is not None:
-            ensure_backend_venv(venv_path, self.PATH, self.get_plugin_id_from_folder_name())
+            attempt_backend_venv_repair(venv_path, self.PATH, self.get_plugin_id_from_folder_name())
 
         command = build_backend_launch_command(backend_path, venv_path, port, open_in_terminal)
 
@@ -914,7 +914,7 @@ class PluginBase(rpyc.Service):
 
         log.info(f"Launching backend: {command}")
         self._backend_stop_requested = False
-        self._backend_launch_gen += 1
+        self._backend_launch_generation += 1
         self._backend_via_terminal = open_in_terminal
         # Clear readiness and arm the event hold after validation but before
         # spawn so both belong only to this launch.
@@ -928,9 +928,16 @@ class PluginBase(rpyc.Service):
         if self.backend_connection is None:
             # Registration often exceeds the 0.3-second wait during boot;
             # continue watching so a late, failed, or timed-out start is visible.
-            self._watch_backend_registration(self.backend_process, self._backend_launch_gen)
+            self._watch_backend_registration(
+                self.backend_process, self._backend_launch_generation
+            )
 
-    def _watch_backend_registration(self, process: subprocess.Popen[bytes], launch_gen: int, timeout: float = 30.0) -> None:
+    def _watch_backend_registration(
+        self,
+        process: subprocess.Popen[bytes],
+        launch_generation: int,
+        timeout: float = 30.0,
+    ) -> None:
         """Report registration latency, process exit, or timeout on a bounded daemon thread.
         Process lifecycle remains owned by launch, disconnect, and termination paths."""
         # Disarm silently after relaunch, a requested stop, or app shutdown.
@@ -940,7 +947,7 @@ class PluginBase(rpyc.Service):
             start = time.time()
             deadline = start + timeout
             while time.time() < deadline:
-                if self._backend_launch_gen != launch_gen:
+                if self._backend_launch_generation != launch_generation:
                     # A relaunch has its own watchdog; do not attribute its
                     # registration or the old process exit to this generation.
                     return

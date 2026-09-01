@@ -237,7 +237,9 @@ def check_settings_accessors_pass_through() -> None:
     manager = fixtures.StubSettingsManager(app_settings={"general": {"hold-time": 0.75}})
     gl.settings_manager = manager
 
-    assert services.settings() is manager, "settings() must be the manager itself"
+    assert services.settings_manager() is manager, (
+        "settings_manager() must return the manager itself"
+    )
 
     view = services.app_settings()
     assert isinstance(view, AppSettings)
@@ -256,10 +258,10 @@ def check_settings_accessors_pass_through() -> None:
     # Per-call slot read.
     replacement = fixtures.StubSettingsManager(app_settings={"general": {"hold-time": 0.25}})
     gl.settings_manager = replacement
-    assert services.settings() is replacement
+    assert services.settings_manager() is replacement
     assert services.app_settings().hold_time == 0.25
 
-    print("PASS: settings()/app_settings()/deck_settings() pass through unwrapped")
+    print("PASS: settings_manager()/app_settings()/deck_settings() pass through unwrapped")
 
 
 def check_page_manager_pair() -> None:

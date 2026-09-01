@@ -17,7 +17,7 @@ def check(name: str, condition: bool, detail: str = "") -> None:
         FAILURES.append(name)
 
 
-def call(handler, *args):
+def capture_exception(handler, *args):
     """Invoke a handler and return the exception instead of raising it."""
     try:
         handler(*args)
@@ -47,9 +47,9 @@ def check_onboarding_icon_size() -> None:
 
 def check_plugin_settings_sorted() -> None:
     print("(2) the plugin settings list sorts by name and keeps its guards")
-    from src.windows.Settings import PluginSettingsPage as pssp
+    from src.windows.Settings import PluginSettingsPage as plugin_settings_page
 
-    load = pssp.PluginSettingsGroup.load
+    load = plugin_settings_page.PluginSettingsGroup.load
 
     class RecordingExpander:
         def __init__(self, settings_group, plugin_base):
@@ -87,9 +87,9 @@ def check_plugin_settings_sorted() -> None:
         load(group)
         return group, [base.plugin_name for base in group.added]
 
-    real_expander = pssp.PluginExpander
+    real_expander = plugin_settings_page.PluginExpander
     real_manager = gl.plugin_manager
-    pssp.PluginExpander = RecordingExpander
+    plugin_settings_page.PluginExpander = RecordingExpander
     try:
         # Discovery order is deliberately not alphabetical and the names mix
         # case, so only a case-insensitive sort gives the order below.
@@ -120,13 +120,13 @@ def check_plugin_settings_sorted() -> None:
         # exists, and load must return without touching the rows.
         gl.plugin_manager = None
         group = FakeGroup()
-        raised = call(load, group)
+        raised = capture_exception(load, group)
         check("load with no plugin manager does not raise", raised is None, repr(raised))
         check("load with no plugin manager clears and adds nothing",
               group.added == [] and group.cleared == 1,
               f"{group.added} / {group.cleared}")
     finally:
-        pssp.PluginExpander = real_expander
+        plugin_settings_page.PluginExpander = real_expander
         gl.plugin_manager = real_manager
 
 

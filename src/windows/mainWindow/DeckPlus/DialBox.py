@@ -354,7 +354,7 @@ class Dial(Gtk.Frame):
         return False
 
     def on_cut(self, *args: Any) -> bool:
-        if self._get_dial() is None:
+        if self._get_controller_dial() is None:
             return False
         self.on_copy()
         self.on_remove()
@@ -366,7 +366,7 @@ class Dial(Gtk.Frame):
 
         # Remove existing action objects because shared bases do not identify individual actions.
         # Stop before the page write when the deck has no such dial.
-        if self._get_dial() is None:
+        if self._get_controller_dial() is None:
             return False
         self.on_remove()
         
@@ -389,7 +389,7 @@ class Dial(Gtk.Frame):
             services.require_main_window().sidebar.load_for_identifier(self.identifier, dial.state)
         return False
 
-    def _get_dial(self) -> "ControllerDial | None":
+    def _get_controller_dial(self) -> "ControllerDial | None":
         """Return the live dial, or None when the deck has no such dial.
         Cut and paste use this guard because remove can return before their later work."""
         if gl.app is None:

@@ -6,18 +6,18 @@ import fixtures
 
 
 def main() -> None:
-    fixtures.start_watchdog(60, label="scenario_straggler")
+    fixtures.start_watchdog(60, label="scenario_stale_generation_paint")
     controller, media_player, deck_manager = fixtures.make_stub_controller()
     deck = controller.deck
     page = controller.active_page
-    gen_g = controller._page_load_generation
+    original_generation = controller._page_load_generation
 
     # Supersede generation G without a page switch, as load_page does under its lock.
     stale_image = fixtures.make_native_image(fill=1)
-    media_player.add_image_task(0, stale_image, page=page, config_gen=gen_g)
+    media_player.add_image_task(0, stale_image, page=page, config_gen=original_generation)
 
     new_gen = controller.bump_generation()
-    assert new_gen == gen_g + 1, f"expected gen to bump to {gen_g + 1}, got {new_gen}"
+    assert new_gen == original_generation + 1, f"expected gen to bump to {original_generation + 1}, got {new_gen}"
 
     media_player.perform_media_player_tasks()  # one media cycle
 
@@ -34,7 +34,7 @@ def main() -> None:
     assert landed is not None, "current-gen frame must land"
     assert landed[2] == "set_key_image"
 
-    print("PASS: scenario_straggler")
+    print("PASS: scenario_stale_generation_paint")
 
 
 if __name__ == "__main__":

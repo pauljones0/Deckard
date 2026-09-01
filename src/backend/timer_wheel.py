@@ -23,7 +23,7 @@ from collections.abc import Callable
 from loguru import logger as log
 
 
-def _NOOP() -> None:
+def _noop() -> None:
     """The callback a cancelled handle carries, so cancel() can drop the real
     closure without leaving _callback None for a probe to trip on."""
 
@@ -86,9 +86,9 @@ class TimerWheel:
             if handle._fired or handle._cancelled:
                 return
             handle._cancelled = True
-            # Replace the closure with _NOOP while the cancelled handle remains in the heap.
+            # Replace the closure with _noop while the cancelled handle remains in the heap.
             # Compaction or front removal later reclaims its small record.
-            handle._callback = _NOOP
+            handle._callback = _noop
             # Avoid a scan on each cancel; _run drops front entries.
             # Compact once the cancelled share reaches half of a large heap.
             self._cancelled_pending += 1

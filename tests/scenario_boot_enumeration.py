@@ -122,10 +122,12 @@ def phase_pickup_exactly_once() -> None:
     assert manager.deck_controller[0].serial_number() == "boot-rescan-1"
 
     # Re-arming after a deck is present must not re-add it either.
-    n_before = ScriptedDeviceManager.enumerate_calls
+    enumerate_calls_before = ScriptedDeviceManager.enumerate_calls
     manager.start_boot_rescan()
     assert fixtures.wait_until(lambda: not manager._boot_rescan_thread.is_alive(), timeout=10)
-    assert ScriptedDeviceManager.enumerate_calls > n_before, "re-armed rescan never enumerated"
+    assert ScriptedDeviceManager.enumerate_calls > enumerate_calls_before, (
+        "re-armed rescan never enumerated"
+    )
     assert len(manager.deck_controller) == 1, "re-armed rescan duplicated the deck"
 
     for controller in list(manager.deck_controller):

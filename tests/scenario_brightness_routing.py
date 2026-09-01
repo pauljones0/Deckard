@@ -18,10 +18,10 @@ def main() -> None:
 
     # Call from a thread that is not the media thread, which mirrors a GTK
     # slider or a DeckGroup UI callback.
-    def _set():
+    def _set_brightness():
         controller.set_brightness(42)
 
-    caller = threading.Thread(target=_set, name="brightness-caller")
+    caller = threading.Thread(target=_set_brightness, name="brightness-caller")
     caller.start()
     caller.join(timeout=2)
     assert not caller.is_alive(), "set_brightness() must return immediately (non-blocking submit)"

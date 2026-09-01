@@ -26,17 +26,17 @@ class Outcome:
 BOOT = Outcome()
 
 
-def runs_in_this_process(args: Namespace) -> bool:
+def is_local_listing(args: Namespace) -> bool:
     """Return whether main.py must answer the command after its own imports.
     Listing commands take precedence over other arguments."""
-    return cli_forward.answered_by_a_listing(args)
+    return cli_forward.is_listing_command(args)
 
 
-def answer_from_running_instance(args: Namespace,
-                                 transport: Transport | None = None) -> Outcome:
+def handle_preboot_cli(args: Namespace,
+                       transport: Transport | None = None) -> Outcome:
     """Forward requests or return BOOT without printing or exiting.
     transport can inject a bus implementation."""
-    if cli_forward.any_instance_verb(args):
+    if cli_forward.has_instance_verb(args):
         # Answer instance verbs here because reads cannot be parked.
         # Never boot the full application only to answer one.
         outcome = cli_forward.answer_instance_verbs(args, transport)
@@ -44,11 +44,11 @@ def answer_from_running_instance(args: Namespace,
                        failures=tuple(outcome.failures),
                        output=tuple(outcome.output))
 
-    if runs_in_this_process(args):
-        # Refuse unparkable input beside a listing instead of dropping it.
+    if is_local_listing(args):
+        # Refuse input that cannot be parked beside a listing instead of dropping it.
         # Parkable requests survive because their store outlives this process.
-        refusals = cli_forward.unparkable(cli_forward.plan_requests(args),
-                                          cli_forward.LISTING_MESSAGE)
+        refusals = cli_forward.unparkable_failures(cli_forward.plan_requests(args),
+                                                   cli_forward.LISTING_MESSAGE)
         if refusals:
             return Outcome(exit_code=1, failures=tuple(refusals))
         return BOOT
@@ -62,7 +62,7 @@ def answer_from_running_instance(args: Namespace,
     if args.close_running:
         # Park requests for the replacement instance after --close-running.
         # Refuse inputs that cannot be parked.
-        refusals = cli_forward.unparkable(plan, cli_forward.CLOSE_RUNNING_MESSAGE)
+        refusals = cli_forward.unparkable_failures(plan, cli_forward.CLOSE_RUNNING_MESSAGE)
         if refusals:
             return Outcome(exit_code=1, failures=tuple(refusals))
         return BOOT
@@ -75,10 +75,10 @@ def answer_from_running_instance(args: Namespace,
             # No request was applied, so handing back is safe.
             return BOOT
 
-    if not transport.is_running():
-        # Refuse unparkable requests when no instance can apply them.
+    if not transport.has_running_instance():
+        # Refuse requests that cannot be parked when no instance can apply them.
         # Booting would otherwise report success without applying the input.
-        refusals = cli_forward.unparkable(plan, cli_forward.NOT_RUNNING_MESSAGE)
+        refusals = cli_forward.unparkable_failures(plan, cli_forward.NOT_RUNNING_MESSAGE)
         if refusals:
             return Outcome(exit_code=1, failures=tuple(refusals))
 

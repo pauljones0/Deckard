@@ -62,7 +62,7 @@ class SchemaView:
         merged.update(copy.deepcopy(dict(self._stored_section(name))))
         return merged
 
-    def set(self, name: str, key: str, value: Any) -> None:
+    def set_section_value(self, name: str, key: str, value: Any) -> None:
         """Store one setting inside section name. This writes nothing else,
         so every key still absent keeps following the schema."""
         if key not in self._section_defaults(name):
@@ -75,7 +75,7 @@ class SchemaView:
             self.data[name] = section
         section[key] = value
 
-    def set_value(self, name: str, value: Any) -> None:
+    def set_top_level_value(self, name: str, value: Any) -> None:
         """Store one top-level setting, which the file holds as a bare
         value."""
         self._top_level(name)
@@ -160,7 +160,7 @@ class AppSettings(SchemaView):
 
     @hold_time.setter
     def hold_time(self, value: float) -> None:
-        self.set("general", "hold-time", value)
+        self.set_section_value("general", "hold-time", value)
 
     @property
     def rolling_labels(self) -> bool:
@@ -168,7 +168,7 @@ class AppSettings(SchemaView):
 
     @rolling_labels.setter
     def rolling_labels(self, value: bool) -> None:
-        self.set("general", "rolling-labels", value)
+        self.set_section_value("general", "rolling-labels", value)
 
     @property
     def shrink_on_press(self) -> bool:
@@ -176,7 +176,7 @@ class AppSettings(SchemaView):
 
     @shrink_on_press.setter
     def shrink_on_press(self, value: bool) -> None:
-        self.set("general", "shrink-on-press", value)
+        self.set_section_value("general", "shrink-on-press", value)
 
     @property
     def app_launches(self) -> int:
@@ -184,7 +184,7 @@ class AppSettings(SchemaView):
 
     @app_launches.setter
     def app_launches(self, value: int) -> None:
-        self.set("general", "app-launches", value)
+        self.set_section_value("general", "app-launches", value)
 
     @property
     def show_donate_window(self) -> bool:
@@ -192,7 +192,7 @@ class AppSettings(SchemaView):
 
     @show_donate_window.setter
     def show_donate_window(self, value: bool) -> None:
-        self.set("general", "show-donate-window", value)
+        self.set_section_value("general", "show-donate-window", value)
 
     @property
     def default_font(self) -> dict[str, Any]:
@@ -200,7 +200,7 @@ class AppSettings(SchemaView):
 
     @default_font.setter
     def default_font(self, value: dict[str, Any]) -> None:
-        self.set("general", "default-font", value)
+        self.set_section_value("general", "default-font", value)
 
     def font_default(self, key: str) -> Any:
         """A general.default-font subkey. A falsy stored value falls back to
@@ -216,7 +216,7 @@ class AppSettings(SchemaView):
 
     @tray_icon.setter
     def tray_icon(self, value: bool) -> None:
-        self.set("ui", "tray-icon", value)
+        self.set_section_value("ui", "tray-icon", value)
 
     @property
     def allow_white_mode(self) -> bool:
@@ -224,7 +224,7 @@ class AppSettings(SchemaView):
 
     @allow_white_mode.setter
     def allow_white_mode(self, value: bool) -> None:
-        self.set("ui", "allow-white-mode", value)
+        self.set_section_value("ui", "allow-white-mode", value)
 
     @property
     def show_notifications(self) -> bool:
@@ -232,7 +232,7 @@ class AppSettings(SchemaView):
 
     @show_notifications.setter
     def show_notifications(self, value: bool) -> None:
-        self.set("ui", "show-notifications", value)
+        self.set_section_value("ui", "show-notifications", value)
 
     @property
     def auto_open_action_config(self) -> bool:
@@ -240,7 +240,7 @@ class AppSettings(SchemaView):
 
     @auto_open_action_config.setter
     def auto_open_action_config(self, value: bool) -> None:
-        self.set("ui", "auto-open-action-config", value)
+        self.set_section_value("ui", "auto-open-action-config", value)
 
     @property
     def emulate_at_double_click(self) -> bool:
@@ -248,7 +248,7 @@ class AppSettings(SchemaView):
 
     @emulate_at_double_click.setter
     def emulate_at_double_click(self, value: bool) -> None:
-        self.set("key-grid", "emulate-at-double-click", value)
+        self.set_section_value("key-grid", "emulate-at-double-click", value)
 
     @property
     def enable_fps_warnings(self) -> bool:
@@ -256,7 +256,7 @@ class AppSettings(SchemaView):
 
     @enable_fps_warnings.setter
     def enable_fps_warnings(self, value: bool) -> None:
-        self.set("warnings", "enable-fps-warnings", value)
+        self.set_section_value("warnings", "enable-fps-warnings", value)
 
     @property
     def keep_running(self) -> bool | None:
@@ -264,7 +264,7 @@ class AppSettings(SchemaView):
 
     @keep_running.setter
     def keep_running(self, value: bool | None) -> None:
-        self.set("system", "keep-running", value)
+        self.set_section_value("system", "keep-running", value)
 
     @property
     def autostart(self) -> bool:
@@ -272,7 +272,7 @@ class AppSettings(SchemaView):
 
     @autostart.setter
     def autostart(self, value: bool) -> None:
-        self.set("system", "autostart", value)
+        self.set_section_value("system", "autostart", value)
 
     @property
     def lock_on_lock_screen(self) -> bool:
@@ -280,7 +280,7 @@ class AppSettings(SchemaView):
 
     @lock_on_lock_screen.setter
     def lock_on_lock_screen(self, value: bool) -> None:
-        self.set("system", "lock-on-lock-screen", value)
+        self.set_section_value("system", "lock-on-lock-screen", value)
 
     @property
     def n_cached_pages(self) -> int:
@@ -288,7 +288,7 @@ class AppSettings(SchemaView):
 
     @n_cached_pages.setter
     def n_cached_pages(self, value: int) -> None:
-        self.set("performance", "n-cached-pages", value)
+        self.set_section_value("performance", "n-cached-pages", value)
 
     @property
     def cache_videos(self) -> bool:
@@ -296,7 +296,7 @@ class AppSettings(SchemaView):
 
     @cache_videos.setter
     def cache_videos(self, value: bool) -> None:
-        self.set("performance", "cache-videos", value)
+        self.set_section_value("performance", "cache-videos", value)
 
     @property
     def animation_pause_mode(self) -> str:
@@ -304,7 +304,7 @@ class AppSettings(SchemaView):
 
     @animation_pause_mode.setter
     def animation_pause_mode(self, value: str) -> None:
-        self.set("performance", "animation-pause-mode", value)
+        self.set_section_value("performance", "animation-pause-mode", value)
 
     @property
     def animation_idle_minutes(self) -> int:
@@ -312,7 +312,7 @@ class AppSettings(SchemaView):
 
     @animation_idle_minutes.setter
     def animation_idle_minutes(self, value: int) -> None:
-        self.set("performance", "animation-idle-minutes", value)
+        self.set_section_value("performance", "animation-idle-minutes", value)
 
     @property
     def auto_update(self) -> bool:
@@ -320,26 +320,26 @@ class AppSettings(SchemaView):
 
     @auto_update.setter
     def auto_update(self, value: bool) -> None:
-        self.set("store", "auto-update", value)
+        self.set_section_value("store", "auto-update", value)
 
     @property
-    def install_scripts(self) -> str:
+    def install_script_policy(self) -> str:
         # Accept only "ask", "always", or "never" for downloaded install code;
         # invalid data falls back to the safe "ask" policy.
         value = self.get("store", "install-scripts")
         return cast(str, value if value in ("ask", "always", "never") else "ask")
 
-    @install_scripts.setter
-    def install_scripts(self, value: str) -> None:
-        self.set("store", "install-scripts", value)
+    @install_script_policy.setter
+    def install_script_policy(self, value: str) -> None:
+        self.set_section_value("store", "install-scripts", value)
 
     @property
-    def responsibility_notes_agreed(self) -> bool:
+    def responsibility_notes_accepted(self) -> bool:
         return cast(bool, self.get("store", "responsibility-notes-agreed"))
 
-    @responsibility_notes_agreed.setter
-    def responsibility_notes_agreed(self, value: bool) -> None:
-        self.set("store", "responsibility-notes-agreed", value)
+    @responsibility_notes_accepted.setter
+    def responsibility_notes_accepted(self, value: bool) -> None:
+        self.set_section_value("store", "responsibility-notes-agreed", value)
 
     @property
     def enable_custom_stores(self) -> bool:
@@ -347,7 +347,7 @@ class AppSettings(SchemaView):
 
     @enable_custom_stores.setter
     def enable_custom_stores(self, value: bool) -> None:
-        self.set("store", "enable-custom-stores", value)
+        self.set_section_value("store", "enable-custom-stores", value)
 
     @property
     def enable_custom_plugins(self) -> bool:
@@ -355,7 +355,7 @@ class AppSettings(SchemaView):
 
     @enable_custom_plugins.setter
     def enable_custom_plugins(self, value: bool) -> None:
-        self.set("store", "enable-custom-plugins", value)
+        self.set_section_value("store", "enable-custom-plugins", value)
 
     @property
     def custom_stores(self) -> list[Any]:
@@ -363,7 +363,7 @@ class AppSettings(SchemaView):
 
     @custom_stores.setter
     def custom_stores(self, value: list[Any]) -> None:
-        self.set("store", "custom-stores", value)
+        self.set_section_value("store", "custom-stores", value)
 
     @property
     def custom_plugins(self) -> list[Any]:
@@ -371,7 +371,7 @@ class AppSettings(SchemaView):
 
     @custom_plugins.setter
     def custom_plugins(self, value: list[Any]) -> None:
-        self.set("store", "custom-plugins", value)
+        self.set_section_value("store", "custom-plugins", value)
 
     @property
     def n_fake_decks(self) -> int:
@@ -379,7 +379,7 @@ class AppSettings(SchemaView):
 
     @n_fake_decks.setter
     def n_fake_decks(self, value: int) -> None:
-        self.set("dev", "n-fake-decks", value)
+        self.set_section_value("dev", "n-fake-decks", value)
 
     @property
     def n_remote_decks(self) -> int:
@@ -387,7 +387,7 @@ class AppSettings(SchemaView):
 
     @n_remote_decks.setter
     def n_remote_decks(self, value: int) -> None:
-        self.set("dev", "n-remote-decks", value)
+        self.set_section_value("dev", "n-remote-decks", value)
 
 
 class PluginSettings:
@@ -401,7 +401,7 @@ class PluginSettings:
         """Return the object, or None for absent, quarantined, unreadable, or non-object content.
         An empty object remains a real document that migration can rewrite."""
         try:
-            content, corrupt = get().read_reporting_corruption(PLUGIN, self.path)
+            content, corrupt = get().read_with_corruption_status(PLUGIN, self.path)
         except OSError as e:
             log.opt(exception=e).error(
                 f"Could not read plugin settings file {self.path} -- treating it as "

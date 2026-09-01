@@ -304,10 +304,10 @@ class SettingsStore:
     def read(self, spec: SurfaceSpec, key: str | None = None) -> Any:
         """Return content or an empty root; cached reads copy unless the surface is shared.
         Mutations need write() to persist; shared readers see each other's in-memory changes."""
-        data, _corrupt = self.read_reporting_corruption(spec, key)
+        data, _corrupt = self.read_with_corruption_status(spec, key)
         return data
 
-    def read_reporting_corruption(self, spec: SurfaceSpec, key: str | None = None) -> tuple[Any, bool]:
+    def read_with_corruption_status(self, spec: SurfaceSpec, key: str | None = None) -> tuple[Any, bool]:
         """Return content and whether this read found an existing unparseable or wrong-root file.
         Missing, {}, and cache hits are false; later reads are false if quarantine succeeded."""
         path = spec.path(key)
@@ -317,7 +317,7 @@ class SettingsStore:
         resolved = self._resolve_for_read(path)
         with self._cache_lock:
             if resolved in self._cache:
-                return self._handout(spec, self._cache[resolved]), False
+                return self._value_for_reader(spec, self._cache[resolved]), False
             # Record generation under the miss lock so every later write must
             # change it before this read can populate the cache.
             generation = self._invalidations.get(resolved, 0)
@@ -333,7 +333,7 @@ class SettingsStore:
                 data = self._cache.setdefault(resolved, data)
             # A changed generation means this parse predates a write; return it
             # to this caller but do not cache it, so the next reader loads afresh.
-        return self._handout(spec, data), corrupt
+        return self._value_for_reader(spec, data), corrupt
 
     def read_fresh(self, spec: SurfaceSpec, key: str | None = None) -> Any:
         """Read a private disk snapshot without reading or filling any cache entry.
@@ -429,7 +429,7 @@ class SettingsStore:
             return resolved
 
     @staticmethod
-    def _handout(spec: SurfaceSpec, data: Any) -> Any:
+    def _value_for_reader(spec: SurfaceSpec, data: Any) -> Any:
         """Return the cached object for shared surfaces and a deep copy otherwise."""
         return data if spec.shared else copy.deepcopy(data)
 

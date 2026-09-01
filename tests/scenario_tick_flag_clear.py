@@ -146,7 +146,7 @@ def give_action(controller, identifier, action_id):
     return controller_input.get_active_state()
 
 
-def raise_in_the_window_leaves_no_stranded_flag(controller, probe, identifier) -> None:
+def check_tick_raise_clears_flag(controller, probe, identifier) -> None:
     """A raise between the flag write and submit must not silence the input."""
     state = give_action(controller, identifier, fixtures.STUB_ACTION_ID)
 
@@ -180,7 +180,7 @@ def raise_in_the_window_leaves_no_stranded_flag(controller, probe, identifier) -
           f"{observed} iterations)")
 
 
-def the_normal_path_clears_once_and_not_early(controller, probe, identifier) -> None:
+def check_tick_flag_clear_timing(controller, probe, identifier) -> None:
     """A submitted tick keeps its flag until one completion callback clears it."""
     state = give_action(controller, identifier, fixtures.STUB_ACTION_ID)
 
@@ -252,8 +252,8 @@ def main() -> None:
         raising = keys[0].identifier
         normal = keys[1].identifier
 
-        raise_in_the_window_leaves_no_stranded_flag(controller, probe, raising)
-        the_normal_path_clears_once_and_not_early(controller, probe, normal)
+        check_tick_raise_clears_flag(controller, probe, raising)
+        check_tick_flag_clear_timing(controller, probe, normal)
     finally:
         probe.remove()
         teardown(controller)

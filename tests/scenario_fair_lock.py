@@ -19,7 +19,7 @@ def _wait_for_queue_depth(lock: FairLock, depth: int) -> None:
     )
 
 
-def check_service_order_is_arrival_order() -> None:
+def check_fifo_service_order() -> None:
     lock = FairLock()
     served = []
 
@@ -293,7 +293,7 @@ def check_install_guards() -> None:
 def main() -> None:
     fixtures.start_watchdog(WATCHDOG_SECONDS, label="scenario_fair_lock")
 
-    check_service_order_is_arrival_order()
+    check_fifo_service_order()
     check_hot_loop_cannot_starve_waiter()
     check_exception_path_releases()
     check_lock_protocol_semantics()

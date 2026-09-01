@@ -14,7 +14,7 @@ from src.backend.Store.StoreCache import StoreCache
 from src.backend.Store.store_result import StoreFetchError
 
 
-class Item:
+class PluginDataStub:
     """Stands in for PluginData. process_store_data filters by data_class."""
     def __init__(self, name):
         self.name = name
@@ -32,12 +32,12 @@ def test_fanout_survives_poison_entry() -> None:
     def fake_prepare(entry, include_images=True, verified=False):
         if entry["name"] == "poison":
             raise RuntimeError("boom: one misconfigured store entry")
-        return Item(entry["name"])
+        return PluginDataStub(entry["name"])
 
     sb.get_stores = fake_get_stores
     sb.fetch_and_parse_store_json = fake_fetch_and_parse
 
-    results = sb.process_store_data("Plugins.json", fake_prepare, None, Item)
+    results = sb.process_store_data("Plugins.json", fake_prepare, None, PluginDataStub)
     assert results is not None, "healthy entries must survive"
     names = sorted(item.name for item in results)
     assert names == ["good-1", "good-2"], (

@@ -28,4 +28,4 @@ class IconPack(Pack[Icon]):
         return Icon(icon_pack=self, path=path)
 
     def get_icons(self) -> list[Icon]:
-        return self.get_content_from_structure()
+        return self.get_assets()

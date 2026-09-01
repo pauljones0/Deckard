@@ -87,11 +87,11 @@ def check_buttons_start_insensitive() -> None:
     print("PASS: both nav buttons start insensitive")
 
 
-def check_nav_pages_a_loaded_box() -> None:
+def check_loaded_box_navigation() -> None:
     box: DynamicFlowBox = DynamicFlowBox(Child)
     items = list(range(box.N_ITEMS_PER_PAGE * 2))
     box.set_item_list(items)
-    box.set_factory(factory)
+    box.set_item_binder(factory)
 
     box.show_range(0, box.N_ITEMS_PER_PAGE)
     pump()
@@ -146,7 +146,7 @@ def main() -> int:
     check_offset_exists()
     check_nav_before_first_range()
     check_buttons_start_insensitive()
-    check_nav_pages_a_loaded_box()
+    check_loaded_box_navigation()
     print("ALL PASS: scenario_flow_box_nav")
     return 0
 

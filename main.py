@@ -51,7 +51,7 @@ from cli_args import argparser as _cli_argparser
 from src.backend import cli_fast_path as _cli_fast_path
 
 try:
-    _cli_outcome = _cli_fast_path.answer_from_running_instance(_cli_argparser.parse_args())
+    _cli_outcome = _cli_fast_path.handle_preboot_cli(_cli_argparser.parse_args())
 except Exception as _error:
     _cli_outcome = _cli_fast_path.Outcome(
         exit_code=1,
@@ -90,7 +90,7 @@ from src.backend.WallpaperPackManagement.WallpaperPackManager import WallpaperPa
 from src.backend.SDPlusBarWallpaperPackManagement.SDPlusBarWallpaperPackManager import SDPlusBarWallpaperPackManager
 from src.backend.Store.StoreBackend import StoreBackend
 from src.backend.Store.store_result import Err
-from src.backend.notify import Notify
+from src.backend.notify import Notifier
 from autostart import setup_autostart, ensure_app_desktop_entry
 from src.Signals.SignalManager import SignalManager
 from src.backend.WindowGrabber.WindowGrabber import WindowGrabber
@@ -185,7 +185,7 @@ def create_global_objects():
 
     # Construct before plugin loading first reports to the user.
     # The desktop-notification fallback reads app settings.
-    gl.notify = Notify()
+    gl.notify = Notifier()
 
     gl.signal_manager = SignalManager()
 
@@ -408,7 +408,7 @@ def make_api_calls():
     Absent or parked requests boot; an unserviceable press exits with its reason.
 
     """
-    verdict = cli_forward.forward_cli_requests(gl.argparser.parse_args())
+    verdict = cli_forward.route_cli_requests(gl.argparser.parse_args())
     for line in verdict.output:
         print(line)
     for failure in verdict.failures:

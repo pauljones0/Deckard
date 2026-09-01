@@ -202,18 +202,18 @@ class ProbedContent(dict):
         return list(super().keys())
 
 
-def check_refresh_never_blanks_section() -> int:
+def check_nonblank_refresh() -> int:
     """Verify refresh adds new content before removing dropped sections."""
     path = seed_page("Concurrent")
     document = gl.page_manager.get_document(path)
     with_settings = {"keys": {"0x0": {"states": {"0": {}}}}, "settings": {"a": 1}}
     without_settings = {"keys": {"1x1": {"states": {"0": {}}}}}
-    document.adopt(with_settings)
+    document.apply_loaded_content(with_settings)
 
     # The order, deterministically.
     seen = []
-    document.adopt(ProbedContent(without_settings,
-                                 lambda: seen.append(dict(document.data))))
+    document.apply_loaded_content(ProbedContent(without_settings,
+                                                lambda: seen.append(dict(document.data))))
     if not seen:
         print("FAIL: the probe never ran -- the ordering check is vacuous")
         return 1
@@ -248,7 +248,7 @@ def check_refresh_never_blanks_section() -> int:
     sys.setswitchinterval(1e-6)
     try:
         for i in range(20000):
-            document.adopt(with_settings if i % 2 else without_settings)
+            document.apply_loaded_content(with_settings if i % 2 else without_settings)
     finally:
         sys.setswitchinterval(previous_interval)
         stop.set()
@@ -281,7 +281,7 @@ def check_heal_through_document() -> int:
     return 0
 
 
-def check_two_spellings_one_page() -> int:
+def check_path_aliases_share_document() -> int:
     """A symlinked second name for the pages directory, which is the shape a
     data directory under a symlink gives every page in it."""
     path = seed_page("TwoSpellings")
@@ -326,7 +326,7 @@ def check_two_spellings_one_page() -> int:
     return 0
 
 
-def check_rename_preserves_live_page() -> int:
+def check_live_page_rename() -> int:
     """Keep in-memory edits when a move mints a Page for another deck."""
     old_path = seed_page("RenameMe")
     ctrl_a = StubController("rename-a")
@@ -409,7 +409,7 @@ def check_rename_over_live_page() -> int:
     return 0
 
 
-def check_settings_write_keeps_pending_edit() -> int:
+def check_pending_edit_during_settings_write() -> int:
     """Two seams cross here. A page edit is still on its timer while the
     whole settings section is written."""
     path = seed_page("SettingsCross")
@@ -445,7 +445,7 @@ def check_settings_write_keeps_pending_edit() -> int:
     return 0
 
 
-def check_dict_cannot_be_replaced() -> int:
+def check_page_dict_read_only() -> int:
     path = seed_page("NoSetter")
     page = Page(json_path=path, deck_controller=StubController("nosetter-1"))
     try:
@@ -464,13 +464,13 @@ def main() -> int:
 
     for check in (check_identity,
                   check_refresh_preserves_aliasing,
-                  check_refresh_never_blanks_section,
+                  check_nonblank_refresh,
                   check_heal_through_document,
-                  check_two_spellings_one_page,
-                  check_rename_preserves_live_page,
+                  check_path_aliases_share_document,
+                  check_live_page_rename,
                   check_rename_over_live_page,
-                  check_settings_write_keeps_pending_edit,
-                  check_dict_cannot_be_replaced):
+                  check_pending_edit_during_settings_write,
+                  check_page_dict_read_only):
         WRITES.clear()
         if check() != 0:
             return 1

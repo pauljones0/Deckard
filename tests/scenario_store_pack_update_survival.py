@@ -78,7 +78,7 @@ def check_wallpaper_pack_survives_failed_update() -> None:
     print("PASS: wallpaper pack survives a failed update")
 
 
-def check_sd_plus_pack_survives_failure() -> None:
+def check_sd_plus_pack_survives_failed_update() -> None:
     sb = _make_backend()
     data = SDPlusBarWallpaperData(github="https://github.com/test/SDPlus", id="com_test_SDPlus",
                                   commit_sha="d" * 40)
@@ -95,11 +95,11 @@ def check_sd_plus_pack_survives_failure() -> None:
 
 
 def main() -> None:
-    fixtures.start_watchdog(30, label="scenario_store_b06_pack_survival")
+    fixtures.start_watchdog(30, label="scenario_store_pack_update_survival")
     check_icon_pack_survives_failed_update()
     check_wallpaper_pack_survives_failed_update()
-    check_sd_plus_pack_survives_failure()
-    print("PASS: scenario_store_b06_pack_survival")
+    check_sd_plus_pack_survives_failed_update()
+    print("PASS: scenario_store_pack_update_survival")
 
 
 if __name__ == "__main__":

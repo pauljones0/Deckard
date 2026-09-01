@@ -30,7 +30,7 @@ def actions_alive(page) -> bool:
     return bool(page.action_objects.get("sentinel"))
 
 
-def arm(page):
+def seed_action_sentinel(page):
     # Real schema depth is type, json_identifier, state, then index to action.
     page.action_objects["sentinel"] = {"0x0": {0: {0: object()}}}
 
@@ -46,7 +46,7 @@ def main() -> int:
     # 1. A screensaver-pending page survives eviction pressure.
     pages = fill_cache(controller, 6, "Evict")
     pending = pages[0]  # oldest -> first eviction candidate
-    arm(pending)
+    seed_action_sentinel(pending)
     controller._screensaver_pending_page = pending
     controller.active_page = pages[-1]
 
@@ -67,27 +67,27 @@ def main() -> int:
     print("PASS: stale pages still get evicted under pressure")
 
     # 2. Activation between the snapshot and the teardown, made deterministic.
-    controller2 = StubController("evict-2")
-    gl.deck_manager.deck_controller.append(controller2)
-    pages2 = fill_cache(controller2, 6, "Toctou")
-    victim_a, victim_b = pages2[0], pages2[1]
-    arm(victim_a)
-    arm(victim_b)
-    controller2.active_page = pages2[-1]
+    activation_controller = StubController("evict-2")
+    gl.deck_manager.deck_controller.append(activation_controller)
+    activation_pages = fill_cache(activation_controller, 6, "Toctou")
+    cleared_page, activated_page = activation_pages[0], activation_pages[1]
+    seed_action_sentinel(cleared_page)
+    seed_action_sentinel(activated_page)
+    activation_controller.active_page = activation_pages[-1]
 
-    real_clear = victim_a.clear_action_objects
+    real_clear = cleared_page.clear_action_objects
 
     def clear_and_activate():
         # Runs during the eviction loop, outside the lock. This is the page
         # switch the snapshot could not see.
-        controller2.active_page = victim_b
+        activation_controller.active_page = activated_page
         real_clear()
 
-    victim_a.clear_action_objects = clear_and_activate
+    cleared_page.clear_action_objects = clear_and_activate
 
     gl.page_manager.clear_old_cached_pages()
 
-    if not actions_alive(victim_b):
+    if not actions_alive(activated_page):
         print("FAIL(2): a page activated mid-eviction was gutted while "
               "ACTIVE (snapshot TOCTOU)")
         return 1
@@ -95,21 +95,21 @@ def main() -> int:
 
     # 3. Pop under lock before teardown so a concurrent get_page uses the
     # single-flight builder instead of receiving the object being cleared.
-    controller3 = StubController("evict-3")
-    gl.deck_manager.deck_controller.append(controller3)
-    pages3 = fill_cache(controller3, 6, "Refetch")
-    victim = pages3[0]  # oldest -> first eviction candidate
+    refetch_controller = StubController("evict-3")
+    gl.deck_manager.deck_controller.append(refetch_controller)
+    refetch_pages = fill_cache(refetch_controller, 6, "Refetch")
+    victim = refetch_pages[0]  # oldest -> first eviction candidate
     victim_path = victim.json_path
-    controller3.active_page = pages3[-1]
+    refetch_controller.active_page = refetch_pages[-1]
 
     captured = {}
-    real_clear3 = victim.clear_action_objects
+    original_refetch_clear = victim.clear_action_objects
 
     def clear_and_refetch():
         # Runs during the eviction loop, outside the lock and after the pop. A
         # concurrent get_page() for the same controller and path lands here.
-        captured["page"] = gl.page_manager.get_page(victim_path, controller3)
-        real_clear3()
+        captured["page"] = gl.page_manager.get_page(victim_path, refetch_controller)
+        original_refetch_clear()
 
     victim.clear_action_objects = clear_and_refetch
 
@@ -125,7 +125,7 @@ def main() -> int:
         return 1
     # The fresh object is usable and not itself gutted. A newly minted Page has
     # its own action_objects dict, untouched by the victim teardown.
-    arm(refetched)
+    seed_action_sentinel(refetched)
     if not actions_alive(refetched):
         print("FAIL(3): the freshly minted Page is not usable")
         return 1

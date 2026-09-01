@@ -26,7 +26,7 @@ import time
 
 # Reap a target's temp file after this many seconds if a hard kill orphaned it
 # between write and rename.
-STALE_TMP_MAX_AGE = 60 * 60
+STALE_TMP_MAX_AGE_S = 60 * 60
 
 # Keep three forensic sidecars per primary so repeated corruption cannot fill
 # the configuration directory; these copies are not version history.
@@ -49,7 +49,7 @@ def _process_umask() -> int:
 
 
 def _reap_stale_tmp_siblings(dir_path: str, target_basename: str) -> None:
-    """Remove this target's orphaned temp files after STALE_TMP_MAX_AGE.
+    """Remove this target's orphaned temp files after STALE_TMP_MAX_AGE_S.
     The age guard preserves concurrent live writes, and races with another reaper are harmless."""
     prefix = f".save-{target_basename}."
     try:
@@ -62,7 +62,7 @@ def _reap_stale_tmp_siblings(dir_path: str, target_basename: str) -> None:
             continue
         path = os.path.join(dir_path, entry)
         try:
-            if now - os.stat(path).st_mtime > STALE_TMP_MAX_AGE:
+            if now - os.stat(path).st_mtime > STALE_TMP_MAX_AGE_S:
                 os.remove(path)
         except OSError:
             pass

@@ -71,7 +71,7 @@ if TYPE_CHECKING:
     from src.backend.WallpaperPackManagement.WallpaperPackManager import WallpaperPackManager
     from src.backend.SDPlusBarWallpaperPackManagement.SDPlusBarWallpaperPackManager import SDPlusBarWallpaperPackManager
     from src.backend.Store.StoreBackend import StoreBackend
-    from src.backend.notify import Notify
+    from src.backend.notify import Notifier
     from src.Signals.SignalManager import SignalManager
     from src.backend.WindowGrabber.WindowGrabber import WindowGrabber
     from src.backend.Wayland.Wayland import Wayland
@@ -108,7 +108,7 @@ icon_pack_manager: "IconPackManager | None" = None # None-checked in the DBus AP
 wallpaper_pack_manager: "WallpaperPackManager" = None  # ty: ignore[invalid-assignment]  # late-init: main.create_global_objects
 sd_plus_bar_wallpaper_pack_manager: "SDPlusBarWallpaperPackManager" = None  # ty: ignore[invalid-assignment]  # late-init: main.create_global_objects
 store_backend: "StoreBackend | None" = None # None-checked in App.on_quit's cache flush
-notify: "Notify" = None  # ty: ignore[invalid-assignment]  # late-init: main.create_global_objects; see src/backend/notify.py
+notify: "Notifier" = None  # ty: ignore[invalid-assignment]  # late-init: main.create_global_objects; see src/backend/notify.py
 signal_manager: "SignalManager" = None  # ty: ignore[invalid-assignment]  # late-init: main.create_global_objects
 window_grabber: "WindowGrabber | None" = None # None-checked in the DBus API
 # Constructed only with WAYLAND_DISPLAY, so None is normal on X11.

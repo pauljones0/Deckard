@@ -339,10 +339,10 @@ class Page:
 
         self.save()
 
-    def get_without_action_objects(self) -> _Dict[str, Any]:
+    def snapshot_for_save(self) -> _Dict[str, Any]:
         # The document owns the content and its file shape. The flush writes
         # pages that no deck shows, and those have no Page to ask.
-        return self._document.get_without_action_objects()
+        return self._document.snapshot_for_save()
 
     def get_all_actions(self, action_dict: ActionObjects | None = None) -> list[ActionCore]:
         if action_dict is None:
@@ -963,7 +963,7 @@ class Page:
         value = self._get_dict_value(self._media_fps_keys(identifier, state))
         return DEFAULT_MEDIA_FPS if value is None else int(value)
 
-    def has_media_fps(self, identifier: InputIdentifier, state: int) -> bool:
+    def has_media_fps_override(self, identifier: InputIdentifier, state: int) -> bool:
         """Return whether this state's media has an explicit frame-rate cap.
         The sidebar shows its revert control only when a cap exists."""
         return self._get_dict_value(self._media_fps_keys(identifier, state)) is not None
@@ -1038,7 +1038,7 @@ class Page:
         value = self._get_dict_value(self._background_fps_keys(identifier, state))
         return DEFAULT_MEDIA_FPS if value is None else int(value)
 
-    def has_background_fps(self, identifier: InputIdentifier, state: int) -> bool:
+    def has_background_fps_override(self, identifier: InputIdentifier, state: int) -> bool:
         """Does the page carry an explicit cap for this state's background?"""
         return self._get_dict_value(self._background_fps_keys(identifier, state)) is not None
 

@@ -195,7 +195,7 @@ def _expected_update(data_cls, id_field, *, verified: bool):
     })
 
 
-def test_full_view_matrix_identical() -> None:
+def test_full_view_matches_each_asset_schema() -> None:
     """With include_image True, all four wrappers build the same row from the
     same manifest, attribution and thumbnail, field for field."""
     _stub_globals()
@@ -212,7 +212,7 @@ def test_full_view_matrix_identical() -> None:
         assert actual.image is IMAGE, f"full/{key}: image must be the stubbed object"
 
 
-def test_update_view_matrix_identical() -> None:
+def test_update_view_matches_each_asset_schema() -> None:
     """With include_image False the update-check row is built field for
     field, with nothing installed and no display field fetched or set."""
     _stub_globals()
@@ -502,7 +502,7 @@ def test_update_all_counts_only_successful_installs() -> None:
         )
 
 
-def test_update_everything_dispatches_legs() -> None:
+def test_update_everything_dispatches_asset_updates() -> None:
     """Dispatch and sum all update legs in ASSET_TYPES order, with plugins first."""
     _stub_globals()
     sb = _make_backend()
@@ -592,7 +592,7 @@ def test_install_refuses_unsafe_id_and_url() -> None:
         )
 
 
-def test_uninstall_removes_dir_keeps_returns() -> None:
+def test_uninstall_removes_directory_and_preserves_result() -> None:
     """The three data-only uninstallers rmtree the per-type directory and
     return None. An unsafe id returns 400 and touches nothing."""
     _stub_globals()
@@ -626,8 +626,8 @@ def test_uninstall_removes_dir_keeps_returns() -> None:
 
 def main() -> None:
     fixtures.start_watchdog(60, label="scenario_store_asset_families")
-    test_full_view_matrix_identical()
-    test_update_view_matrix_identical()
+    test_full_view_matches_each_asset_schema()
+    test_update_view_matches_each_asset_schema()
     test_incompatible_entry_flags_but_still_builds()
     test_plugin_branch_arm_resolves_and_records_branch()
     test_branch_field_gated_by_is_plugin()
@@ -640,10 +640,10 @@ def main() -> None:
     test_canonical_properties_map_fields()
     test_update_decision_matrix_per_type()
     test_update_all_counts_only_successful_installs()
-    test_update_everything_dispatches_legs()
+    test_update_everything_dispatches_asset_updates()
     test_install_passes_dir_and_expected_id()
     test_install_refuses_unsafe_id_and_url()
-    test_uninstall_removes_dir_keeps_returns()
+    test_uninstall_removes_directory_and_preserves_result()
     print("scenario_store_asset_families: PASS")
 
 

@@ -36,7 +36,7 @@ class StateSwitcher(Gtk.ScrolledWindow):
 
         # Visible-child-name handler ID, or None while disconnected.
         # Tracking keeps connect and disconnect idempotent.
-        self._switch_handler: int | None = None
+        self._switch_handler_id: int | None = None
 
         self.build()
 
@@ -114,13 +114,13 @@ class StateSwitcher(Gtk.ScrolledWindow):
             self._connect_signal()
 
     def _connect_signal(self) -> None:
-        if self._switch_handler is None:
-            self._switch_handler = self.stack.connect("notify::visible-child-name", self.on_state_switch)
+        if self._switch_handler_id is None:
+            self._switch_handler_id = self.stack.connect("notify::visible-child-name", self.on_state_switch)
 
     def _disconnect_signal(self) -> None:
-        if self._switch_handler is not None:
-            self.stack.disconnect(self._switch_handler)
-            self._switch_handler = None
+        if self._switch_handler_id is not None:
+            self.stack.disconnect(self._switch_handler_id)
+            self._switch_handler_id = None
 
     def add_switch_callback(self, callback: Callable[[], object]) -> None:
         self.switch_callbacks.append(callback)

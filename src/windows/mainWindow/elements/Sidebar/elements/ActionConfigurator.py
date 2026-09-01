@@ -103,7 +103,7 @@ class CommentGroup(Adw.PreferencesGroup):
         self.index: int = None  # ty: ignore[invalid-assignment]  # late-init: load_for_action
         # Changed-handler ID, or None while disconnected.
         # Tracking keeps connect and disconnect idempotent.
-        self._comment_handler: int | None = None
+        self._comment_handler_id: int | None = None
         self.build()
 
     def build(self) -> None:
@@ -133,13 +133,13 @@ class CommentGroup(Adw.PreferencesGroup):
         services.require_main_window().sidebar.key_editor.action_editor.load_for_identifier(self.action.input_ident, self.action.state)
 
     def connect_signals(self) -> None:
-        if self._comment_handler is None:
-            self._comment_handler = self.comment_row.connect("changed", self.on_comment_changed)
+        if self._comment_handler_id is None:
+            self._comment_handler_id = self.comment_row.connect("changed", self.on_comment_changed)
 
     def disconnect_signals(self) -> None:
-        if self._comment_handler is not None:
-            self.comment_row.disconnect(self._comment_handler)
-            self._comment_handler = None
+        if self._comment_handler_id is not None:
+            self.comment_row.disconnect(self._comment_handler_id)
+            self._comment_handler_id = None
     
 
     def get_comment(self) -> str | None:
@@ -444,7 +444,7 @@ class EventAssignerRow(Adw.ComboRow):
 
         # Selection-handler ID, or None while disconnected.
         # Tracking keeps connect and disconnect idempotent.
-        self._selected_handler: int | None = None
+        self._selected_handler_id: int | None = None
 
         # Create the item list factory
         self.factory = Gtk.SignalListItemFactory()
@@ -470,13 +470,13 @@ class EventAssignerRow(Adw.ComboRow):
 
 
     def _connect_signal(self) -> None:
-        if self._selected_handler is None:
-            self._selected_handler = self.connect("notify::selected", self.on_changed)
+        if self._selected_handler_id is None:
+            self._selected_handler_id = self.connect("notify::selected", self.on_changed)
 
     def _disconnect_signal(self) -> None:
-        if self._selected_handler is not None:
-            self.disconnect(self._selected_handler)
-            self._selected_handler = None
+        if self._selected_handler_id is not None:
+            self.disconnect(self._selected_handler_id)
+            self._selected_handler_id = None
 
     def set_available_events(self, events: list[EventAssigner]) -> None:
         self._disconnect_signal()

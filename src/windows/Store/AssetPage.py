@@ -171,10 +171,10 @@ class StoreAssetPreview(StorePreview):
             log.error(f"Store backend unavailable; cannot install {asset_id}")
             self.notify_install_failure()
             return False
-        from src.windows.Store.install_consent import make_set_consent
+        from src.windows.Store.install_consent import make_dependency_consent
         report = dependencies.install_with_dependencies(
             backend, dependencies.CatalogItem(self.descriptor, self.asset_data),
-            confirm_set=make_set_consent(self.store), **self._install_kwargs())
+            confirm_set=make_dependency_consent(self.store), **self._install_kwargs())
         if report.declined:
             # Nothing downloaded, so the button keeps the state it had.
             return False
@@ -182,7 +182,7 @@ class StoreAssetPreview(StorePreview):
             log.error(f"Failed to install {noun} {asset_id}: {report.error!r}")
             # Use dependency detail when another item failed or any item installed
             failed_is_this_card = (report.failed is not None
-                                   and report.failed.data is self.asset_data)
+                                   and report.failed.asset is self.asset_data)
             if report.installed or not failed_is_this_card:
                 name = self.asset_data.asset_name or asset_id or noun
                 failed_noun = dependencies.failure_noun(report, noun)
@@ -230,7 +230,7 @@ class StoreAssetPreview(StorePreview):
         page = self.store_page
         page.set_info_visible(True)
 
-        page.info_page.set_pack_name(self.asset_data.asset_name)
+        page.info_page.set_asset_name(self.asset_data.asset_name)
         page.info_page.set_description(self.asset_data.description)
         page.info_page.set_author(self.asset_data.author)
         page.info_page.set_version(self.asset_data.asset_version)

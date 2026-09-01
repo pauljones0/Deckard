@@ -32,7 +32,7 @@ class TcpRow(NamedTuple):
     inode: int
 
 
-def normalize_ip(ip: str) -> str:
+def unmap_ipv4_address(ip: str) -> str:
     """Fold an IPv4-mapped IPv6 address to its IPv4 form."""
     if ip.startswith("::ffff:") and "." in ip:
         return ip[len("::ffff:"):]
@@ -40,7 +40,7 @@ def normalize_ip(ip: str) -> str:
 
 
 def is_loopback(ip: str) -> bool:
-    ip = normalize_ip(ip)
+    ip = unmap_ipv4_address(ip)
     return ip == "::1" or ip.startswith("127.")
 
 
@@ -52,7 +52,7 @@ def _decode_proc_endpoint(field: str) -> tuple[str, int]:
     if sys.byteorder == "little":
         raw = b"".join(raw[i:i + 4][::-1] for i in range(0, len(raw), 4))
     family = socket.AF_INET if len(raw) == 4 else socket.AF_INET6
-    return normalize_ip(socket.inet_ntop(family, raw)), int(port_hex, 16)
+    return unmap_ipv4_address(socket.inet_ntop(family, raw)), int(port_hex, 16)
 
 
 def parse_proc_tcp(text: str) -> list[TcpRow]:
@@ -87,7 +87,7 @@ def _read_rows() -> list[TcpRow]:
 
 def _endpoint_of(addr: "tuple[str, int] | tuple[str, int, int, int]") -> tuple[str, int]:
     # AF_INET gives (ip, port); AF_INET6 gives (ip, port, flowinfo, scope_id).
-    return normalize_ip(addr[0]), addr[1]
+    return unmap_ipv4_address(addr[0]), addr[1]
 
 
 def uid_of_peer(sock: socket.socket) -> int | None:
@@ -107,7 +107,7 @@ def uid_of_peer(sock: socket.socket) -> int | None:
     return None
 
 
-def listen_rows_of_port(port: int) -> list[TcpRow]:
+def listening_rows_for_port(port: int) -> list[TcpRow]:
     return [row for row in _read_rows()
             if row.state == TCP_LISTEN and row.local_port == port]
 

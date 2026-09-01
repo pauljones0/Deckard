@@ -706,7 +706,7 @@ class ActionCore(rpyc.Service):
         from src.backend.PluginManager.PluginManager import (
             backend_guard_env,
             build_backend_launch_command,
-            ensure_backend_venv,
+            attempt_backend_venv_repair,
             inject_backend_guard,
         )
 
@@ -720,7 +720,7 @@ class ActionCore(rpyc.Service):
         # Validate the venv before command construction; the owning plugin must
         # rebuild an environment stranded by a Python upgrade.
         if venv_path is not None:
-            ensure_backend_venv(venv_path, self.plugin_base.PATH, self.action_id)
+            attempt_backend_venv_repair(venv_path, self.plugin_base.PATH, self.action_id)
 
         command = build_backend_launch_command(backend_path, venv_path, port, open_in_terminal)
 
@@ -830,20 +830,22 @@ class ActionCore(rpyc.Service):
     def _destroy_gen_ui_batch(snapshot: list["GenerativeUI[Any]"]) -> None:
         """Destroy a GenerativeUI teardown snapshot on the GTK main loop.
         GenerativeUI.destroy() then runs inline and cannot re-queue or deadlock."""
-        for obj in snapshot:
+        for generative_ui in snapshot:
             try:
-                owner = obj.action_core
-                if owner is not None and obj in owner.generative_ui_objects:
+                owner = generative_ui.action_core
+                if owner is not None and generative_ui in owner.generative_ui_objects:
                     # A live action re-registered this object after the snapshot;
                     # its current owner must retain it.
                     continue
-                if getattr(obj, "_widget", None) is None:
+                if getattr(generative_ui, "_widget", None) is None:
                     # It built no widget, so there is nothing to unparent, and
                     # it left generative_ui_objects already.
                     continue
-                obj.destroy()
+                generative_ui.destroy()
             except Exception:
-                log.opt(exception=True).error(f"Failed to destroy GenerativeUI object {obj!r}")
+                log.opt(exception=True).error(
+                    f"Failed to destroy GenerativeUI object {generative_ui!r}"
+                )
 
     def _release_backend_resources(self) -> None:
         """Detach and tear down the rpyc server, connection, and process.
