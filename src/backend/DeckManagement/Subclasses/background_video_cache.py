@@ -38,11 +38,14 @@ class BackgroundVideoCache(Mp4FrameCache[list[Image.Image]]):
         # Extended frames append a strip slice after the key tiles.
         # Their larger canvas makes them incompatible with plain caches.
         self.extend_touchscreen = extend_touchscreen and self.deck_controller.deck.is_touch()
-        # One rotation read for the whole snapshot: strip_size and the band
-        # side below must come from the same turn, or a rotation landing
-        # between two live reads mixes frames.
-        rotation = (self.deck_controller.deck.get_rotation()
-                    if self.extend_touchscreen else 0)
+        # One rotation read for the whole snapshot: the grid spacing, strip_size,
+        # and the band side below must come from the same turn, or a rotation
+        # landing between two live reads mixes frames.
+        rotation = self.deck_controller.deck.get_rotation()
+        # key_layout() above already turned with the deck, so the asymmetric
+        # SD+ gaps turn with it or every crop lands off its key.
+        if rotation in (90, 270):
+            self.spacing = (self.spacing[1], self.spacing[0])
         device_size = (self.deck_controller.device_touchscreen_image_size()
                        if self.extend_touchscreen else None)
         # The annotation follows the real value, a (width, height) pair.
@@ -56,10 +59,9 @@ class BackgroundVideoCache(Mp4FrameCache[list[Image.Image]]):
         # It is a snapshot, so the render thread reads no controller state.
         self.band: "StripBand | None" = None
 
-        # The strip geometry exists only for the extended canvas, so the
-        # rotation is read only there, as GifBackground reads it. Without the
-        # extension the canvas is the key grid alone and no band edge follows
-        # from it.
+        # The band edge below exists only for the extended canvas; the plain
+        # canvas is the key grid alone. The rotation itself still shapes that
+        # grid through the turned layout and spacing.
         self.rotation = rotation
         self.key_layout_str = f"{self.key_layout[0]}x{self.key_layout[1]}"
         if self.extend_touchscreen:

@@ -85,6 +85,11 @@ class PresentState:
                 and img_hash == self.last_enqueued_hash):
             return False
         native_image = encode()
+        if not native_image:
+            # A mid-turn straggler encodes to empty bytes. Enqueueing it would
+            # displace a valid pending paint in the writer slot with a write
+            # that never happens; the repaint at the new size follows the turn.
+            return False
         self.last_enqueued_hash = img_hash
         tracker = getattr(getattr(media_player, "deck_controller", None), "input_latency", None)
         latency_sample = tracker.current_sample() if tracker is not None else None

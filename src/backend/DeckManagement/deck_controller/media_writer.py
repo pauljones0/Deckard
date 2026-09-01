@@ -105,14 +105,20 @@ def encode_native_touchscreen(deck: "BetterDeck", image: "Image.Image", quality:
     Copying preserves UI reuse; lower quality cuts the largest device write and mutex hold.
     image is the strip in the frame the user sees, so the fit measures the logical size,
     the device buffer's transpose on a quarter-turned deck, which the turn then expands
-    into. A wrongly sized composite lands well inside that buffer once turned, so the
-    turned size is checked as well.
+    into. One turn read serves the fit, the turn, and the size check; a rotation landing
+    between two live reads would fit one frame and turn another. A composite shaped for
+    the other orientation is a mid-turn straggler and encodes to the empty bytes the
+    strip ticket reads as nothing to write; the repaint at the new size follows.
     """
     fmt = deck.touchscreen_image_format()
-    if image.size != (logical_size := deck.logical_touchscreen_size() or fmt["size"]):
+    turn = (deck.touchscreen_image_rotation() + fmt["rotation"]) % 360
+    logical_size = (fmt["size"][1], fmt["size"][0]) if turn % 180 == 90 else fmt["size"]
+    if image.size != logical_size:
+        if (image.size[1], image.size[0]) == logical_size:
+            return b""
         image = image.copy()
         image.thumbnail(logical_size)
-    if turn := (deck.touchscreen_image_rotation() + fmt["rotation"]) % 360:
+    if turn:
         image = image.rotate(turn, expand=True)
     if image.size != fmt["size"]:
         raise ValueError(f"the strip composite is {image.size} after the turn, and the device buffer is {fmt['size']}")

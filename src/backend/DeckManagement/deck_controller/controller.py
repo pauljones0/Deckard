@@ -556,6 +556,14 @@ class DeckController:
         size = self.device_touchscreen_image_size()
         return (size[1], size[0]) if self.deck.strip_is_transposed() else size
 
+    def logical_key_spacing(self) -> tuple[int, int]:
+        """The key gaps in the frame the user sees: the device's own pair at 0
+        and 180, swapped at 90 and 270 to match key_layout()'s turned counts.
+        The SD+ pair is asymmetric, so a turned grid derived with the device
+        pair would misplace every crop."""
+        spacing = self.key_spacing
+        return (spacing[1], spacing[0]) if self.deck.get_rotation() in (90, 270) else spacing
+
     # Page loading
 
     def load_default_page(self) -> None:

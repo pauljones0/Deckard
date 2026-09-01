@@ -280,6 +280,9 @@ class GifBackground(FrameScheduled):
 
         deck = deck_controller.deck
         self.extend_touchscreen = extend_touchscreen and deck.is_touch()
+        # One rotation read for the whole frame geometry, and the value the
+        # prebuild keep-check compares against a later turn.
+        self.rotation = deck.get_rotation()
 
         # Strip size and box exist only for extended canvas geometry; readers guard both.
         self.strip_size: "tuple[int, int] | None" = None
@@ -289,7 +292,11 @@ class GifBackground(FrameScheduled):
             key_rows, key_cols = deck.key_layout()
             self.key_count = deck.key_count()
             key_w, key_h = deck.key_image_format()['size']
+            # key_layout() above already turned with the deck, so the asymmetric
+            # SD+ gaps turn with it, from the same rotation read.
             spacing_x, spacing_y = deck_controller.key_spacing
+            if self.rotation in (90, 270):
+                spacing_x, spacing_y = spacing_y, spacing_x
 
             grid = (key_w * key_cols + spacing_x * (key_cols - 1),
                     key_h * key_rows + spacing_y * (key_rows - 1))
@@ -302,7 +309,7 @@ class GifBackground(FrameScheduled):
             band: StripBand = flat_band(grid)
             if self.extend_touchscreen:
                 self.strip_size = deck_controller.get_touchscreen_image_size()
-                band = oriented_band(deck_controller, deck.get_rotation(), grid)
+                band = oriented_band(deck_controller, self.rotation, grid)
                 self._strip_box = band.box
             origin_x, origin_y = band.key_origin
 

@@ -20,6 +20,7 @@ from PIL import Image
 from fixtures import FaultyFakeDeck, start_watchdog
 
 from src.backend.DeckManagement.BetterDeck import BetterDeck
+from src.backend.DeckManagement.deck_controller.media_writer import encode_native_touchscreen
 from src.backend.DeckManagement.deck_controller.native_encode import _encode_strip_native
 
 ROTATIONS = (0, 90, 180, 270)
@@ -178,6 +179,41 @@ def check_rotation_zero_bytes() -> int:
     return 0
 
 
+def check_mid_turn_straggler() -> int:
+    """A composite shaped for the other orientation encodes to empty bytes.
+    Each drop site reads one turn, so a rotation landing between compose and
+    encode drops the frame instead of raising or fitting the wrong axis."""
+    deck = BetterDeck(FaultyFakeDeck(serial_number="rot-straggler", model="plus"))
+    touchscreen = _StubTouchScreen(deck)
+    tall_size = (STRIP_SIZE[1], STRIP_SIZE[0])
+
+    deck.set_rotation(0)
+    tall = Image.new("RGB", tall_size, (0, 0, 0))
+    outer = _encode_strip_native(touchscreen, tall)
+    inner = encode_native_touchscreen(deck, tall)
+    tall.close()
+    if outer != b"" or inner != b"":
+        print(f"FAIL(straggler): rotation 0 encoded a {tall_size} composite "
+              f"to {len(outer)} and {len(inner)} bytes, expected empty at "
+              f"both drop sites")
+        return 1
+
+    deck.set_rotation(90)
+    wide = Image.new("RGB", STRIP_SIZE, (0, 0, 0))
+    outer = _encode_strip_native(touchscreen, wide)
+    inner = encode_native_touchscreen(deck, wide)
+    wide.close()
+    if outer != b"" or inner != b"":
+        print(f"FAIL(straggler): rotation 90 encoded a {STRIP_SIZE} composite "
+              f"to {len(outer)} and {len(inner)} bytes, expected empty at "
+              f"both drop sites")
+        return 1
+
+    print("PASS: a composite shaped for the other orientation drops as empty "
+          "bytes")
+    return 0
+
+
 def main() -> int:
     start_watchdog(60, "touchscreen_rotation")
     fixtures.install_stub_globals()
@@ -185,6 +221,7 @@ def main() -> int:
     rc = check_strip_pixels("RGBA")
     rc |= check_strip_pixels("RGB")
     rc |= check_rotation_zero_bytes()
+    rc |= check_mid_turn_straggler()
     return rc
 
 

@@ -31,7 +31,7 @@ from src.backend.DeckManagement import media_loop
 from src.backend.DeckManagement.media_loop import MEDIA_LOOP_FPS, FrameScheduled
 from src.backend.DeckManagement.deck_controller.gif_pipeline import GifBackground, GifBudgetExceeded
 from src.backend.DeckManagement.deck_controller.slideshow import IN_ORDER, Slideshow
-from src.backend.DeckManagement.deck_controller.strip_band import band_layout, clamp_box
+from src.backend.DeckManagement.deck_controller.strip_band import clamp_box
 from src.backend.DeckManagement.deck_controller.viewport import (
     DEFAULT_VIEW, media_entries, normalize_view, render_viewport,
 )
@@ -53,12 +53,15 @@ def background_canvas_size(deck_controller: "DeckController", extend_touchscreen
         return None
     key_rows, key_cols = deck.key_layout()
     key_width, key_height = deck_controller.get_key_image_size()
-    spacing_x, spacing_y = deck_controller.key_spacing
+    spacing_x, spacing_y = deck_controller.logical_key_spacing()
     canvas_width = key_width * key_cols + spacing_x * (key_cols - 1)
     canvas_height = key_height * key_rows + spacing_y * (key_rows - 1)
     if extend_touchscreen and deck.is_touch():
-        canvas_width, canvas_height, _grid_x, _band = \
-            band_layout(deck_controller, canvas_width, canvas_height)
+        # The same oriented layout the deck composes at, so the editor preview
+        # canvas keeps the real shape on a turned deck.
+        band = oriented_band(deck_controller, deck.get_rotation(),
+                             (canvas_width, canvas_height))
+        return band.canvas_size
     return (canvas_width, canvas_height)
 
 
@@ -325,9 +328,13 @@ class Background:
         if is_video(path):
             extend = self.extend_to_touchscreen and self.deck_controller.deck.is_touch()
             if allow_keep:
-                # Rebuild the same path when extension geometry or baked saturation changes.
+                # Rebuild the same path when the extension geometry, the deck's
+                # rotation, or the baked saturation changes. A provider keeps the
+                # canvas and band side it was built at, so a kept one would cut
+                # the strip off the wrong edge after a turn.
                 if (self.video is not None and self.video.video_path == path
                         and self.video.extend_touchscreen == extend
+                        and self.video.rotation == self.deck_controller.deck.get_rotation()
                         and self.video.view == view
                         and abs(self.video.saturation - self.deck_controller.get_display_saturation()) <= 0.001):
                     # Carry the path so apply_prebuilt validates this lock-free keep verdict.
@@ -499,7 +506,7 @@ class BackgroundImage:
         deck."""
         key_rows, key_cols = self.deck_controller.deck.key_layout()
         key_width, key_height = self.deck_controller.get_key_image_size()
-        spacing_x, spacing_y = self.deck_controller.key_spacing
+        spacing_x, spacing_y = self.deck_controller.logical_key_spacing()
         return (key_width * key_cols + spacing_x * (key_cols - 1),
                 key_height * key_rows + spacing_y * (key_rows - 1))
 
@@ -632,7 +639,7 @@ class BackgroundImage:
 
         key_rows, key_cols = deck.key_layout()
         key_width, key_height = deck.key_image_format()['size']
-        spacing_x, spacing_y = self.deck_controller.key_spacing
+        spacing_x, spacing_y = self.deck_controller.logical_key_spacing()
 
         row = key // key_cols
         col = key % key_cols
