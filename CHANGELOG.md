@@ -7,6 +7,8 @@ bundle as a release asset.
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-09-02
+
 ### Fixed
 
 - The What's New page of the About dialog shows this changelog's entry for
