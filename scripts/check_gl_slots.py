@@ -35,7 +35,6 @@ FROZEN_SLOTS: dict[str, str] = {
     "deckard_version": "fork release version from the VERSION file, shown to users",
     "logs": "bounded ring buffer of recent log records",
     "logs_lock": "guards the log ring against concurrent iteration",
-    "release_notes": "release notes markup shown after an update",
     "fallback_font": "lazily resolved fallback font, served by the module __getattr__",
 
     # Services, published by main.create_global_objects unless noted.

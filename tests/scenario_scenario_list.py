@@ -23,6 +23,7 @@ SMOKE_SCENARIOS = [
     "scenario_runner_timeout_descendants.py",
     "scenario_floor_import.py",
     "scenario_comment_inventory.py",
+    "scenario_release_notes.py",
     "scenario_scenario_list.py",
 ]
 
