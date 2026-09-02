@@ -137,6 +137,9 @@ lint:types:
     paths:
       - .pip-cache
   script:
+    # dbus-python ships no wheel and compiles against the dbus-1 headers.
+    - apt-get update -qq
+    - apt-get install -y -qq --no-install-recommends libdbus-1-dev
     - python -m venv .venv
     - .venv/bin/pip install --quiet --upgrade pip
     - grep -v '^PyGObject==' requirements.txt > /tmp/req-typecheck.txt
@@ -234,7 +237,7 @@ changelog-check:
     - apt-get update -qq
     - |
       apt-get install -y -qq --no-install-recommends \
-        python3 python3-gi python3-venv python3-dev pkg-config gcc libc6-dev \
+        python3 python3-gi python3-venv python3-dev pkg-config gcc libc6-dev libdbus-1-dev libglib2.0-dev \
         gir1.2-gtk-4.0 gir1.2-adw-1 gir1.2-xdp-1.0 libadwaita-1-0 \
         dbus-daemon xvfb xauth git
     - python3 -m venv --system-site-packages .venv
@@ -324,7 +327,7 @@ test:flatpak-python:
     - apt-get update -qq
     - >-
       apt-get install -y -qq --no-install-recommends gcc libc6-dev pkg-config
-      libcairo2-dev libgirepository1.0-dev
+      libcairo2-dev libgirepository1.0-dev libdbus-1-dev libglib2.0-dev
     - pip install --quiet -r flatpak/requirements-manifest-tools.txt
     - python flatpak/ci/generate_python_manifest.py --check
     - python flatpak/ci/check_python_payload.py --cache-dir .flatpak-python-archives
