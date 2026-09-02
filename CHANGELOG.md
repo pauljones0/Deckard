@@ -203,6 +203,49 @@ bundle as a release asset.
   The check now takes about a tenth of the time and touches no device but
   the deck.
 
+- A second launch now hands off to the running Deckard through the application
+  framework itself, instead of the app deciding for itself whether one was
+  already running. Two launches starting at the same moment — a session
+  autostart alongside a restored session — can no longer both reach the decks.
+- `--close-running` that does not manage to close the running Deckard now
+  exits with an error instead of reporting success, and it waits for the
+  instance to actually let go rather than for a fixed five seconds. Against an
+  instance that is itself still starting up it waits until that instance can
+  answer before asking it to quit, so the two can no longer leave you with
+  nothing running at all.
+- Dragging a key onto another position now changes the page in one step. The
+  two keys used to be exchanged one at a time with a save around each stage,
+  so the page file was written three times for one drag and a write landing
+  mid-swap could put one key's actions under both positions until the next
+  save corrected it. Choosing an icon for a key no longer saves the page a
+  second time on top of the save that setting it already made.
+- Page edits are written in the background about a second after the last
+  change, instead of once per keystroke. Typing a label used to write the
+  whole page file — with two disk syncs — for every character, on the same
+  thread that draws the window. The page is still written immediately when
+  you switch page, close a deck or quit the app, and whenever anything reads
+  the file, so what you see and what is exported or backed up is always
+  current. The trade: a crash or power cut can now cost the last second of
+  edits — up to five while you are typing continuously — where before it
+  could cost none.
+- The active window is no longer watched in the background unless a page
+  actually uses a window auto-change rule. Previously every session polled
+  the foreground window continuously — several helper processes a second on
+  X11 and KDE — whether or not any page asked for it. The watcher now starts
+  the moment the first rule is enabled and stops when the last one is removed.
+  Consequently the D-Bus `ForegroundWindow` property now tracks the desktop
+  only while window rules are in use; it can still be set from outside at any
+  time via `NotifyForegroundWindow`.
+- Startup is faster and much quieter on the network: the automatic store
+  update check now reads the store catalogue plus what is already installed,
+  instead of downloading a thumbnail, a manifest and an attribution file for
+  every asset in the store — including the ones you never installed. Opening
+  the store window still loads the full listing with images.
+- Log files are now pruned automatically (the ten most recent rotations are
+  kept) and default verbosity is lower — files record debug level and up, the
+  console info and up. Set `SC_LOG_TRACE=1` to restore full trace logging on
+  every sink for diagnosis.
+
 ### Fixed
 
 - A page rename that fails partway no longer leaves an empty or half-written
@@ -463,76 +506,6 @@ bundle as a release asset.
   deck showing a different page; it now writes only to the decks that currently
   show the page it was called on.
 
-### Security
-
-- A plugin install or an asset update that another program on your desktop
-  session asks for now waits for your answer. The app publishes an
-  install-plugin control and an update-all-assets control on the session bus,
-  which is how the buttons of its own notifications reach it, and any other
-  program on the session could use the same controls. An update is the wider
-  of the two, because it reinstalls every out-of-date asset and a plugin may
-  run its own setup step while it installs. Either request now raises a dialog
-  that names what would happen, and nothing starts until you agree. The dialog
-  comes before the store is contacted, so a request you refuse costs nothing;
-  one request is handled at a time, and it stays held until the work finishes,
-  so two installs cannot run over each other. A request whose plugin name is
-  not a valid store id is dropped without a dialog, and after two refusals in
-  a row the control goes quiet for a minute, so a program cannot keep raising
-  dialogs at you. The store window, the first-run page and the "install the
-  missing plugin" button never used those controls and are unchanged.
-
-- Installing a plugin from the store now asks before it runs the plugin's
-  install steps, and runs them confined. A plugin can ship a setup step
-  that runs on this computer at install time; one such step silently
-  changed a system setting outside the app. The store now asks before
-  running a plugin's install steps, and, where the bwrap sandbox tool is
-  present, runs each step on a read-only system with access only to the
-  plugin's own folder and no connection to the desktop session. Where
-  bwrap is not available the step still runs, with the desktop session
-  hidden from it as far as the environment allows; the prompt is the main
-  protection there. A hung step is stopped instead of holding the install
-  open, and declining an update keeps the working plugin in place. A new
-  setting under Store, "Plugin install scripts" (ask, always or never),
-  controls the prompt; the prompt appears for store installs, while an
-  automatic update of a plugin you already installed runs its steps
-  without asking unless you declined them before.
-- Plugin backends now listen on the local machine only, and accept
-  connections from the desktop session that started them. A plugin backend
-  used to open a network port that any machine on the same network could
-  reach, and anything running on the computer could connect to the app's
-  plugin ports; a connection to one of those ports could run code as the
-  user. The app now starts each backend on a loopback-only port, checks that
-  a connecting program is the same user on the same machine, and refuses and
-  shuts down a backend that is still reachable from the network.
-- Importing pages now stays inside the pages directory. An imported file
-  names its pages, and a page name that pointed at a location outside the
-  pages folder used to send the write there and could overwrite an unrelated
-  file. The import now keeps every write inside the pages folder and skips a
-  page or a deck whose name points outside it, while a normal import lands as
-  before.
-- Deleting a page now stays inside the pages directory. The request that
-  removes a page named the file to delete, and a name that pointed outside the
-  pages folder could delete an unrelated file. The delete now keeps to the
-  pages folder and refuses a name that points outside it, while removing a real
-  page works as before.
-- A log you share no longer leaks a credential that sits after a scheme word.
-  When a log line held a secret such as `token: Token <secret>` or
-  `api_key: Basic <credential>`, the redaction that hides secrets before you
-  share a log removed only the scheme word and left the secret in place, and
-  for some schemes it left the whole value. The secret after the scheme word
-  is now removed, and a token or api-key header name is recognised with an
-  `X-` prefix as well.
-- A log you share no longer names the machines on your network. A plugin that
-  talks to a Home Assistant instance or an MQTT broker logs the address it
-  connects to, and a log you posted for help described your network to
-  everyone who read it. A host name and an ip address in a log now read as
-  `<host>` and `<ip>`, and so does the name of this computer. The scheme, the
-  port and the path of a url stay, loopback addresses stay, and the public
-  sites the app itself uses stay, such as GitHub, so a store or a connection
-  problem is still diagnosable from the log.
-
-### Fixed
-
 - Quitting now hands the deck back reliably, so the next start finds it free.
   The app closed the device while the library still watched it for button
   presses, and that watcher could take the handle straight back, leaving the
@@ -764,50 +737,73 @@ bundle as a release asset.
   itself; the installed tree now holds only the application and its bundled
   environment.
 
-### Changed
+### Security
 
-- A second launch now hands off to the running Deckard through the application
-  framework itself, instead of the app deciding for itself whether one was
-  already running. Two launches starting at the same moment — a session
-  autostart alongside a restored session — can no longer both reach the decks.
-- `--close-running` that does not manage to close the running Deckard now
-  exits with an error instead of reporting success, and it waits for the
-  instance to actually let go rather than for a fixed five seconds. Against an
-  instance that is itself still starting up it waits until that instance can
-  answer before asking it to quit, so the two can no longer leave you with
-  nothing running at all.
-- Dragging a key onto another position now changes the page in one step. The
-  two keys used to be exchanged one at a time with a save around each stage,
-  so the page file was written three times for one drag and a write landing
-  mid-swap could put one key's actions under both positions until the next
-  save corrected it. Choosing an icon for a key no longer saves the page a
-  second time on top of the save that setting it already made.
-- Page edits are written in the background about a second after the last
-  change, instead of once per keystroke. Typing a label used to write the
-  whole page file — with two disk syncs — for every character, on the same
-  thread that draws the window. The page is still written immediately when
-  you switch page, close a deck or quit the app, and whenever anything reads
-  the file, so what you see and what is exported or backed up is always
-  current. The trade: a crash or power cut can now cost the last second of
-  edits — up to five while you are typing continuously — where before it
-  could cost none.
-- The active window is no longer watched in the background unless a page
-  actually uses a window auto-change rule. Previously every session polled
-  the foreground window continuously — several helper processes a second on
-  X11 and KDE — whether or not any page asked for it. The watcher now starts
-  the moment the first rule is enabled and stops when the last one is removed.
-  Consequently the D-Bus `ForegroundWindow` property now tracks the desktop
-  only while window rules are in use; it can still be set from outside at any
-  time via `NotifyForegroundWindow`.
-- Startup is faster and much quieter on the network: the automatic store
-  update check now reads the store catalogue plus what is already installed,
-  instead of downloading a thumbnail, a manifest and an attribution file for
-  every asset in the store — including the ones you never installed. Opening
-  the store window still loads the full listing with images.
-- Log files are now pruned automatically (the ten most recent rotations are
-  kept) and default verbosity is lower — files record debug level and up, the
-  console info and up. Set `SC_LOG_TRACE=1` to restore full trace logging on
-  every sink for diagnosis.
+- A plugin install or an asset update that another program on your desktop
+  session asks for now waits for your answer. The app publishes an
+  install-plugin control and an update-all-assets control on the session bus,
+  which is how the buttons of its own notifications reach it, and any other
+  program on the session could use the same controls. An update is the wider
+  of the two, because it reinstalls every out-of-date asset and a plugin may
+  run its own setup step while it installs. Either request now raises a dialog
+  that names what would happen, and nothing starts until you agree. The dialog
+  comes before the store is contacted, so a request you refuse costs nothing;
+  one request is handled at a time, and it stays held until the work finishes,
+  so two installs cannot run over each other. A request whose plugin name is
+  not a valid store id is dropped without a dialog, and after two refusals in
+  a row the control goes quiet for a minute, so a program cannot keep raising
+  dialogs at you. The store window, the first-run page and the "install the
+  missing plugin" button never used those controls and are unchanged.
+
+- Installing a plugin from the store now asks before it runs the plugin's
+  install steps, and runs them confined. A plugin can ship a setup step
+  that runs on this computer at install time; one such step silently
+  changed a system setting outside the app. The store now asks before
+  running a plugin's install steps, and, where the bwrap sandbox tool is
+  present, runs each step on a read-only system with access only to the
+  plugin's own folder and no connection to the desktop session. Where
+  bwrap is not available the step still runs, with the desktop session
+  hidden from it as far as the environment allows; the prompt is the main
+  protection there. A hung step is stopped instead of holding the install
+  open, and declining an update keeps the working plugin in place. A new
+  setting under Store, "Plugin install scripts" (ask, always or never),
+  controls the prompt; the prompt appears for store installs, while an
+  automatic update of a plugin you already installed runs its steps
+  without asking unless you declined them before.
+- Plugin backends now listen on the local machine only, and accept
+  connections from the desktop session that started them. A plugin backend
+  used to open a network port that any machine on the same network could
+  reach, and anything running on the computer could connect to the app's
+  plugin ports; a connection to one of those ports could run code as the
+  user. The app now starts each backend on a loopback-only port, checks that
+  a connecting program is the same user on the same machine, and refuses and
+  shuts down a backend that is still reachable from the network.
+- Importing pages now stays inside the pages directory. An imported file
+  names its pages, and a page name that pointed at a location outside the
+  pages folder used to send the write there and could overwrite an unrelated
+  file. The import now keeps every write inside the pages folder and skips a
+  page or a deck whose name points outside it, while a normal import lands as
+  before.
+- Deleting a page now stays inside the pages directory. The request that
+  removes a page named the file to delete, and a name that pointed outside the
+  pages folder could delete an unrelated file. The delete now keeps to the
+  pages folder and refuses a name that points outside it, while removing a real
+  page works as before.
+- A log you share no longer leaks a credential that sits after a scheme word.
+  When a log line held a secret such as `token: Token <secret>` or
+  `api_key: Basic <credential>`, the redaction that hides secrets before you
+  share a log removed only the scheme word and left the secret in place, and
+  for some schemes it left the whole value. The secret after the scheme word
+  is now removed, and a token or api-key header name is recognised with an
+  `X-` prefix as well.
+- A log you share no longer names the machines on your network. A plugin that
+  talks to a Home Assistant instance or an MQTT broker logs the address it
+  connects to, and a log you posted for help described your network to
+  everyone who read it. A host name and an ip address in a log now read as
+  `<host>` and `<ip>`, and so does the name of this computer. The scheme, the
+  port and the path of a url stay, loopback addresses stay, and the public
+  sites the app itself uses stay, such as GitHub, so a store or a connection
+  problem is still diagnosable from the log.
 
 ## [0.2.1] - 2026-08-09
 
