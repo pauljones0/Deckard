@@ -18,6 +18,7 @@ import gi
 
 from src.backend import http_client
 from src.backend.DeckManagement.HelperMethods import open_web
+from src.backend.release_notes import load_release_notes
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
@@ -200,9 +201,12 @@ class HeaderHamburgerMenuButton(Gtk.MenuButton):
         self.about.set_debug_info("".join(logs_snapshot))
         self.about.set_debug_info_filename(os.path.join(gl.DATA_PATH, "logs", "logs.log"))
 
-        self.about.set_release_notes(gl.release_notes)  
-        self.about.set_release_notes_version(gl.app_version)
-        
+        # What's New shows this release's CHANGELOG.md entry; the row stays hidden without one.
+        notes = load_release_notes(os.path.join(gl.top_level_dir, "CHANGELOG.md"), gl.deckard_version)
+        if notes is not None:
+            self.about.set_release_notes(notes.markup)
+            self.about.set_release_notes_version(notes.version)
+
         self.about.present(services.require_app().get_active_window())
 
         # Fetch contributors off the main thread so network delay cannot freeze the UI.

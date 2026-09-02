@@ -149,23 +149,6 @@ del _read_deckard_version
 logs: "deque[str]" = deque(maxlen=10000)
 logs_lock = threading.Lock()
 
-release_notes: str = """
-<p>Features:</p>
-    <ul>
-        <li>Add uninstall button to plugin settings page</li>
-    </ul>
-<p>Improvements:</p>
-    <ul>
-        <li>Improved page switch speed</li>
-        <li>Reduce idle CPU usage</li>
-        <li>Improve Hyprland active window detection</li>
-        <li>Switch to new GNOME runtime</li>
-    </ul>
-<p>Fixes:</p>
-    <ul>
-    </ul>
-"""
-
 
 def __getattr__(name: str) -> Any:
     """PEP 562 module-level lazy attribute.

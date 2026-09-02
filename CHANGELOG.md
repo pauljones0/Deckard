@@ -7,6 +7,14 @@ bundle as a release asset.
 
 ## [Unreleased]
 
+### Fixed
+
+- The What's New page of the About dialog shows this changelog's entry for
+  the Deckard release you run, labelled with that release's version. It used
+  to show a fixed list of StreamController changes under the upstream version
+  number. A build with no matching entry shows the newest released entry, and
+  a build with no changelog at all shows no What's New page.
+
 ## [0.3.0] - 2026-09-01
 
 ### Added
