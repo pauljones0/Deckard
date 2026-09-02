@@ -11,11 +11,11 @@ build-commands:
 - PATH="${PWD}/.build-tools/bin:${PATH}" PYTHONPATH="${PWD}/.build-tools:${FLATPAK_DEST}/lib/python3.13/site-packages"
   pip3 install --verbose --exists-action=i --ignore-installed --no-index --find-links="file://${PWD}"
   --prefix=${FLATPAK_DEST} --no-build-isolation --no-deps async-lru cairocffi cairosvg certifi cffi charset-normalizer
-  contourpy cssselect2 cycler dasbus defusedxml evdev fonttools fuzzywuzzy idna kiwisolver levenshtein
-  loguru matplotlib numpy opencv-python-headless packaging pillow plumbum psutil pulsectl pycparser pygobject
-  pyparsing python-dateutil python-wayland-extra python-xlib pyudev rapidfuzz requests rpyc setproctitle
-  six streamcontroller-plugin-tools streamcontroller-streamdeck tinycss2 typing-extensions urllib3 usb-monitor
-  webencodings websocket-client
+  contourpy cssselect2 cycler dasbus dbus-python defusedxml evdev fonttools fuzzywuzzy idna kiwisolver
+  levenshtein loguru matplotlib numpy opencv-python-headless packaging pillow plumbum psutil pulsectl
+  pyclip pycparser pygobject pyparsing python-dateutil python-wayland-extra python-xlib pyudev rapidfuzz
+  requests rpyc setproctitle six streamcontroller-plugin-tools streamcontroller-streamdeck tinycss2 typing-extensions
+  urllib3 usb-monitor webencodings websocket-client
 sources:
 - type: file
   url: https://files.pythonhosted.org/packages/fa/9f/3c3503693386c4b0f245eaf5ca6198e3b28879ca0a40bde6b0e319793453/async_lru-2.0.4-py3-none-any.whl
@@ -68,6 +68,9 @@ sources:
 - type: file
   url: https://files.pythonhosted.org/packages/e1/b4/4d55b9359bc34d56b29b943b378331dd8aaea6db6d0543e5d97fed4b1af7/dasbus-1.7-py3-none-any.whl
   sha256: 0a9433e9e72c2c865fa2d5ef824ac4ef49b540cf57f6396e515c2f314e5c14cd
+- type: file
+  url: https://files.pythonhosted.org/packages/ff/24/63118050c7dd7be04b1ccd60eab53fef00abe844442e1b6dec92dae505d6/dbus-python-1.4.0.tar.gz
+  sha256: 991666e498f60dbf3e49b8b7678f5559b8a65034fdf61aae62cdecdb7d89c770
 - type: file
   url: https://files.pythonhosted.org/packages/07/6c/aa3f2f849e01cb6a001cd8554a88d4c77c5c1a31c95bdf1cf9301e6d9ef4/defusedxml-0.7.1-py2.py3-none-any.whl
   sha256: a352e7e428770286cc899e2542b6cdaedb2b4953ff269a210103ec58f6198a61
@@ -175,6 +178,9 @@ sources:
 - type: file
   url: https://files.pythonhosted.org/packages/26/7c/ab4637b028d9ee12280ab9342f28310e613d5ca30c4d72d2aebeaa6a4969/pycairo-1.29.1.tar.gz
   sha256: 4fbd26b4af24c9787d84cf5448e34eb8dca064b732479aaecd03109520eebd5f
+- type: file
+  url: https://files.pythonhosted.org/packages/7d/4f/4b02e2c232ddf694bca0baea3049b886eeb80ee3d89c415067f5191596c1/pyclip-0.7.0-py3-none-any.whl
+  sha256: a7b7ea2cfad2dd61e86a529af588d006070d3eb0bd32981afaee5215f4604fec
 - type: file
   url: https://files.pythonhosted.org/packages/0c/c3/44f3fbbfa403ea2a7c779186dc20772604442dde72947e7d01069cbe98e3/pycparser-3.0-py3-none-any.whl
   sha256: b727414169a36b7d524c1c3e31839a521725078d7b2ff038656844266160a992

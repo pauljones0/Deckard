@@ -17,6 +17,7 @@
 async-lru==2.0.4          # src/backend/Store/StoreBackend.py
 CairoSVG==2.7.1           # src/backend/DeckManagement/HelperMethods.py (svg2png)
 dasbus==1.7               # src/api.py (DBus API service)
+dbus-python==1.4.0        # ecosystem pin: MediaPlugin imports dbus (MPRIS player control)
 evdev==1.9.1              # src/backend/PageManagement/Page.py, StreamDeckUI importer; also used by OSPlugin/VolumeMixer
 fonttools==4.56.0         # src/backend/DeckManagement/Subclasses/KeyLabel.py (symbol-font detection)
 fuzzywuzzy==0.18.0        # ecosystem pin: VolumeMixer plugin (actions/Dial.py, actions/MuteKey.py) imports fuzzywuzzy and ships no requirements.txt of its own; app code has migrated to rapidfuzz
@@ -29,6 +30,7 @@ packaging==24.2           # version checks/migrators (Migrator.py, ActionHolder.
 pillow==11.1.0            # PIL, used throughout image handling
 psutil==7.0.0             # DeckController.py, MediaManager.py (memory/process telemetry)
 pulsectl==24.12.0         # ecosystem pin: AudioSwitcher, AudioControl and VolumeMixer plugins import pulsectl directly and ship no requirements.txt of their own
+pyclip==0.7.0             # ecosystem pin: OSPlugin's WriteText action (clipboard)
 python-wayland-extra==0.7.0  # src/backend/Wayland/Wayland.py
 python-xlib==0.33         # src/backend/WindowGrabber/Integrations/X11.py (import name Xlib): active-window watch over the X event stream, plus the one-shot window queries
 rapidfuzz==3.14.3         # Store/AssetManager/ActionChooser/PageSelector search (7 call sites); version matches the wheel already vendored via Levenshtein

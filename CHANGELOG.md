@@ -14,6 +14,10 @@ bundle as a release asset.
   to show a fixed list of StreamController changes under the upstream version
   number. A build with no matching entry shows the newest released entry, and
   a build with no changelog at all shows no What's New page.
+- The MediaPlugin and OSPlugin store plugins load again on the AUR package and
+  the Flatpak. Both import a module the app itself no longer needs, so those
+  modules had dropped out of the packaged Python environment; they ship with it
+  again.
 
 ## [0.3.0] - 2026-09-01
 
