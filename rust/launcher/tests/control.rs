@@ -52,7 +52,18 @@ fn native_daemon_cli_persistence_and_clean_shutdown() {
         assert!(Instant::now() < deadline);
         std::thread::sleep(Duration::from_millis(20));
     }
-    let value = command(tmp.path(), json!({"method":"status"}));
+    let output = Command::new(env!("CARGO_BIN_EXE_deckard"))
+        .arg("--data")
+        .arg(tmp.path())
+        .arg("--json")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let value: Value = serde_json::from_slice(&output.stdout).unwrap();
     let serial = value["devices"][0]["serial"].as_str().unwrap();
     assert_eq!(value["runtime"], "Rust");
     command(

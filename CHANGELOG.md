@@ -1,19 +1,19 @@
-# 0.4.0 — Native Rust application
+# Changelog
+
+Notable changes to this fork. Versions use the root `VERSION` file and
+`vX.Y.Z` tags. Since 0.4.0, the application is Rust and releases provide
+AppImage, DEB, RPM and portable archives for x86-64 and ARM64. Earlier
+entries describe the historical Python application and Flatpak releases.
+
+## [Unreleased]
+
+## [0.4.0] - 2026-10-05
 
 - Replace the Python/GTK runtime and plugin widget API with Rust/egui and executable JSON-RPC API 1.
 - Audit original StreamController through 0f439967 and retain nazbert/Deckard through a3609c7. See docs/upstream-audit.md for commit-by-commit disposition.
 - Add architecture-specific AppImage, DEB, RPM and portable Linux releases, bundled media/input helpers, native plugin/page packages and README download links.
 - Add native regression tests for rendering, persistence, device state, CLI/IPC, plugin boundaries and transactional installs.
 - Preserve old page documents and unknown plugin settings; Python plugin actions require native replacements.
-
-# Changelog
-
-Notable changes to this fork. Versions are the fork's own release line (root
-`VERSION` file, `vX.Y.Z` tags), independent of upstream StreamController's
-`app_version` in `globals.py`. Each release publishes an installable flatpak
-bundle as a release asset.
-
-## [Unreleased]
 
 ## [0.3.1] - 2026-09-02
 

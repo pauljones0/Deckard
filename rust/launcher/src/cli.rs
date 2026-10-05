@@ -89,6 +89,9 @@ impl Args {
         let mut requests = Vec::new();
         let mut push =
             |method: &str, params: Value| requests.push(json!({"method":method,"params":params}));
+        if self.json {
+            push("status", json!({}));
+        }
         if self.close_running {
             push("quit", json!({}))
         }
