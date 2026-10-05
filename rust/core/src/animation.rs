@@ -70,6 +70,10 @@ impl GifPlayer {
     pub fn current_image(&self) -> &RgbaImage {
         &self.canvas
     }
+    #[cfg(test)]
+    pub(crate) fn defer_until(&mut self, deadline: Instant) {
+        self.deadline = deadline;
+    }
     pub fn tick(&mut self, now: Instant) -> Result<&RgbaImage> {
         if self.finished || now < self.deadline {
             return Ok(&self.canvas);

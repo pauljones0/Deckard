@@ -1012,11 +1012,17 @@ mod tests {
         let mut renderer = Renderer::new(1024 * 1024).unwrap();
         let first = renderer.render(Kind::Plus, &config).unwrap();
         assert_eq!(renderer.scaled.len(), 1, "shared media resizes once");
+        // Use a controlled deadline: encoding time on slower runners must not
+        // advance (or loop) the GIF while checking composition reuse.
+        let deadline = Instant::now() + std::time::Duration::from_secs(3600);
+        if let Asset::Gif(player) = renderer.assets.get_mut(&path).unwrap() {
+            player.defer_until(deadline);
+        }
         let repeated = renderer.render(Kind::Plus, &config).unwrap();
         assert!(Arc::ptr_eq(&first.tiles[0].rgb, &repeated.tiles[0].rgb));
         if let Asset::Gif(player) = renderer.assets.get_mut(&path).unwrap() {
             player
-                .tick(Instant::now() + std::time::Duration::from_millis(150))
+                .tick(deadline + std::time::Duration::from_millis(1))
                 .unwrap();
         } else {
             panic!("GIF must be loaded");
