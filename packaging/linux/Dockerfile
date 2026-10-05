@@ -6,7 +6,7 @@ RUN sed 's/^deb /deb-src /' /etc/apt/sources.list > /etc/apt/sources.list.d/deck
     build-essential ca-certificates curl git pkg-config libudev-dev \
     cmake nasm libxkbcommon-dev libxkbcommon-x11-0 libwayland-dev libx11-dev libxi-dev \
     libxrandr-dev libxcursor-dev libxinerama-dev libgl1-mesa-dev libegl1-mesa-dev \
-    patchelf rpm squashfs-tools dpkg-dev zstd python3 ffmpeg xdotool wtype pulseaudio-utils \
+    patchelf rpm squashfs-tools dpkg-dev zstd python3 ffmpeg xdotool wtype pulseaudio pulseaudio-utils \
     xvfb xauth dbus-x11 mesa-utils x11-utils xdg-utils
 
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -o /tmp/rustup.sh \
@@ -24,6 +24,7 @@ RUN --mount=type=cache,target=/root/.cargo/registry --mount=type=cache,target=/c
     && cp /cargo-target/release/deckard /cargo-target/release/deckard-plugin-example target/release/
 RUN target/release/deckard --doctor \
     && target/release/deckard --smoke-test --skip-load-hardware-decks --fake-deck-model plus --data /tmp/deckard-smoke
+RUN python3 benchmarks/audio_fixture.py --native target/release/deckard
 RUN mkdir -p /tmp/deckard-ui-smoke/pages \
     && cp examples/starter-page.json /tmp/deckard-ui-smoke/pages/Main.json \
     && mkdir -p /tmp/deckard-ui-smoke/plugins-native/example \
