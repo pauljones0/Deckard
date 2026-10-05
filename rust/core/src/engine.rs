@@ -726,6 +726,7 @@ fn start_device(
         let mut old_dials = vec![false; kind.encoder_count() as usize];
         let mut sent_brightness = None;
         let mut touch_colors = HashMap::new();
+        let mut led_revision = None;
         let mut pending: Option<Arc<Frame>> = None;
         let mut tile_index = 0;
         while !stop.load(Ordering::Relaxed) {
@@ -739,6 +740,7 @@ fn start_device(
                         deck = Some(device);
                         hashes.clear();
                         touch_colors.clear();
+                        led_revision = None;
                         sent_brightness = None;
                         old_buttons.fill(false);
                         old_dials.fill(false);
@@ -771,58 +773,46 @@ fn start_device(
                         sent_brightness = Some(brightness)
                     }
                 }
-                if kind == Kind::Studio
-                    && let Some(config) = shared.lock().unwrap().config(&serial)
-                {
-                    for encoder in 0..2 {
-                        let input = encoder.to_string();
-                        let state = render::active_state(&config, "dials", &input);
-                        let color = if config.sleeping {
-                            [0, 0, 0, 255]
-                        } else {
-                            render::color(
-                                &render::effective_input(&config, "dials", &input)["states"]
-                                    [state.to_string()]["background"]["color"],
-                                [255, 255, 255, 255],
-                            )
-                        };
-                        if touch_colors.get(&encoder) != Some(&color) {
-                            if deck
-                                .set_encoder_color(encoder, color[0], color[1], color[2])
-                                .is_err()
-                            {
-                                failed = true;
-                            } else {
-                                touch_colors.insert(encoder, color);
-                            }
-                        }
-                    }
-                }
-                if kind == Kind::Neo {
+                if matches!(kind, Kind::Studio | Kind::Neo) && led_revision != Some(revision) {
+                    // Clone only when the configuration changes; never hold the engine lock over USB writes.
                     let config = shared.lock().unwrap().config(&serial);
                     if let Some(config) = config {
-                        for point in 0..kind.touchpoint_count() {
-                            let input = format!("touch-{point}");
-                            let state = render::active_state(&config, "keys", &input);
+                        let count = if kind == Kind::Studio {
+                            kind.encoder_count()
+                        } else {
+                            kind.touchpoint_count()
+                        };
+                        for point in 0..count {
+                            let (family, input) = if kind == Kind::Studio {
+                                ("dials", point.to_string())
+                            } else {
+                                ("keys", format!("touch-{point}"))
+                            };
+                            let state = render::active_state(&config, family, &input);
                             let color = if config.sleeping {
                                 [0, 0, 0, 255]
                             } else {
                                 render::color(
-                                    &render::effective_input(&config, "keys", &input)["states"]
+                                    &render::effective_input(&config, family, &input)["states"]
                                         [state.to_string()]["background"]["color"],
                                     [255, 255, 255, 255],
                                 )
                             };
                             if touch_colors.get(&point) != Some(&color) {
-                                if deck
-                                    .set_touchpoint_color(point, color[0], color[1], color[2])
-                                    .is_err()
-                                {
+                                let result = if kind == Kind::Studio {
+                                    deck.set_encoder_color(point, color[0], color[1], color[2])
+                                } else {
+                                    deck.set_touchpoint_color(point, color[0], color[1], color[2])
+                                };
+                                if result.is_err() {
                                     failed = true;
                                 } else {
                                     touch_colors.insert(point, color);
                                 }
                             }
+                        }
+                        if !failed {
+                            led_revision = Some(revision);
                         }
                     }
                 }
@@ -913,6 +903,7 @@ fn start_device(
                 pending = None;
                 hashes.clear();
                 touch_colors.clear();
+                led_revision = None;
                 sent_brightness = None;
                 retry = Instant::now() + Duration::from_millis(500);
                 let mut engine = shared.lock().unwrap();
