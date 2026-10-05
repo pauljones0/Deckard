@@ -1,0 +1,11 @@
+{
+  "compositor": "Weston 15.0.1, headless GL, kiosk shell, 1280x800",
+  "render_node": "/dev/dri/renderD128",
+  "egl_vendor": "NVIDIA",
+  "egl_version": "1.5",
+  "gl_renderer": "NVIDIA GeForce RTX 5070/PCIe/SSE2",
+  "gl_version": "OpenGL ES 3.2 NVIDIA 610.57.04",
+  "gtk_version": "4.22.4",
+  "adwaita_version": "1.9.3",
+  "client_gpu_verification": "Application process file descriptors showed the same renderD128 and NVIDIA device nodes."
+}

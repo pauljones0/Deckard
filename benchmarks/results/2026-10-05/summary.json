@@ -1,0 +1,284 @@
+{
+  "runs": [
+    {
+      "timestamp": "2026-10-05T22:49:46Z",
+      "platform": "Linux-7.2.5-3-omarchy-x86_64-with-glibc2.44",
+      "cpu": "AMD Ryzen 7 9800X3D 8-Core Processor",
+      "logical_cpus": 8,
+      "python": "Python 3.13.16",
+      "upstreams": {
+        "original": "0f439967a16a8bfdc859439b0ae2b1370185aa06",
+        "direct": "a3609c7de63347dbc7e031926826898950600c83"
+      },
+      "native_sha256": "e51b7b58703aecbc1cf8374aba536a509566e740125253cf5f58d8172c9df849",
+      "git_head": "ffc2c9f3624cc1c6dd8b964e187cb2a03a8e039c",
+      "git_dirty": false,
+      "warmup_seconds": 30.0,
+      "sample_seconds": 30.0,
+      "trials": 3,
+      "units": {
+        "cpu_percent": "100% = one logical CPU, sum of app and descendants; including waited child CPU; Linux process accounting at 10 ms resolution",
+        "memory_mib": "PSS sums app and descendants, 1 MiB = 1048576 bytes"
+      },
+      "instrumented": false,
+      "background": false,
+      "wayland_runtime": "/tmp/deckard-benchmark-wayland",
+      "rendering": "Wayland, 1280x800 Weston headless EGL, hardware GPU, one fake Plus, 8 labelled keys, no plugins, no hardware USB"
+    },
+    {
+      "timestamp": "2026-10-05T23:07:48Z",
+      "platform": "Linux-7.2.5-3-omarchy-x86_64-with-glibc2.44",
+      "cpu": "AMD Ryzen 7 9800X3D 8-Core Processor",
+      "logical_cpus": 8,
+      "python": "Python 3.13.16",
+      "upstreams": {
+        "original": "0f439967a16a8bfdc859439b0ae2b1370185aa06",
+        "direct": "a3609c7de63347dbc7e031926826898950600c83"
+      },
+      "native_sha256": "e51b7b58703aecbc1cf8374aba536a509566e740125253cf5f58d8172c9df849",
+      "git_head": "116a7052e52729b5e2e2b9b692f8ac24f372b380",
+      "git_dirty": true,
+      "warmup_seconds": 30.0,
+      "sample_seconds": 30.0,
+      "trials": 3,
+      "units": {
+        "cpu_percent": "100% = one logical CPU, sum of app and descendants; including waited child CPU; Linux process accounting at 10 ms resolution",
+        "memory_mib": "PSS sums app and descendants, 1 MiB = 1048576 bytes"
+      },
+      "instrumented": false,
+      "background": true,
+      "wayland_runtime": "/tmp/deckard-benchmark-wayland",
+      "rendering": "Wayland, 1280x800 Weston headless EGL, hardware GPU, one fake Plus, 8 labelled keys, no plugins, no hardware USB"
+    }
+  ],
+  "scenarios": [
+    {
+      "mode": "Editor visible",
+      "workload": "static",
+      "apps": {
+        "original": {
+          "cpu_percent": {
+            "median": 0.13331114848734557,
+            "min": 0.0999827659606481,
+            "max": 0.13331179464444087
+          },
+          "pss_mib": {
+            "median": 292.9892578125,
+            "min": 292.9169921875,
+            "max": 294.25537109375
+          },
+          "rss_mib": {
+            "median": 351.6015625,
+            "min": 351.515625,
+            "max": 352.8046875
+          }
+        },
+        "direct": {
+          "cpu_percent": {
+            "median": 0.06665594518452943,
+            "min": 0.06665573756975277,
+            "max": 0.06665625098536487
+          },
+          "pss_mib": {
+            "median": 261.87109375,
+            "min": 259.70556640625,
+            "max": 261.90869140625
+          },
+          "rss_mib": {
+            "median": 320.29296875,
+            "min": 318.15625,
+            "max": 320.35546875
+          }
+        },
+        "rust": {
+          "cpu_percent": {
+            "median": 0.09998808013765775,
+            "min": 0.0333301132044483,
+            "max": 0.09998831643854268
+          },
+          "pss_mib": {
+            "median": 177.5517578125,
+            "min": 177.20556640625,
+            "max": 181.56201171875
+          },
+          "rss_mib": {
+            "median": 217.4453125,
+            "min": 217.1171875,
+            "max": 221.4140625
+          }
+        }
+      }
+    },
+    {
+      "mode": "Editor visible",
+      "workload": "animated",
+      "apps": {
+        "original": {
+          "cpu_percent": {
+            "median": 6.232246338996421,
+            "min": 6.132269297534686,
+            "max": 6.265723284958223
+          },
+          "pss_mib": {
+            "median": 334.54150390625,
+            "min": 334.47314453125,
+            "max": 337.14453125
+          },
+          "rss_mib": {
+            "median": 393.08203125,
+            "min": 392.94140625,
+            "max": 395.82421875
+          }
+        },
+        "direct": {
+          "cpu_percent": {
+            "median": 3.666071836003448,
+            "min": 3.599377887724444,
+            "max": 3.6993990374388415
+          },
+          "pss_mib": {
+            "median": 298.12255859375,
+            "min": 297.853515625,
+            "max": 298.880859375
+          },
+          "rss_mib": {
+            "median": 356.53125,
+            "min": 356.2890625,
+            "max": 357.375
+          }
+        },
+        "rust": {
+          "cpu_percent": {
+            "median": 4.899446515075486,
+            "min": 4.866087086984044,
+            "max": 4.966156418263307
+          },
+          "pss_mib": {
+            "median": 186.802734375,
+            "min": 186.673828125,
+            "max": 189.103515625
+          },
+          "rss_mib": {
+            "median": 226.6796875,
+            "min": 226.56640625,
+            "max": 229.09765625
+          }
+        }
+      }
+    },
+    {
+      "mode": "Background",
+      "workload": "static",
+      "apps": {
+        "original": {
+          "cpu_percent": {
+            "median": 0.0999876224522277,
+            "min": 0.06665835309462115,
+            "max": 0.09998876684863102
+          },
+          "pss_mib": {
+            "median": 167.19775390625,
+            "min": 166.8935546875,
+            "max": 167.3291015625
+          },
+          "rss_mib": {
+            "median": 204.38671875,
+            "min": 204.2109375,
+            "max": 204.48046875
+          }
+        },
+        "direct": {
+          "cpu_percent": {
+            "median": 0.03332953254343859,
+            "min": 0.03332930921365981,
+            "max": 0.03332966094128225
+          },
+          "pss_mib": {
+            "median": 148.8251953125,
+            "min": 148.740234375,
+            "max": 149.00537109375
+          },
+          "rss_mib": {
+            "median": 185.62890625,
+            "min": 185.59765625,
+            "max": 186.0
+          }
+        },
+        "rust": {
+          "cpu_percent": {
+            "median": 0.06666208942540387,
+            "min": 0.06666202020828695,
+            "max": 0.09999251414369696
+          },
+          "pss_mib": {
+            "median": 63.9716796875,
+            "min": 63.9697265625,
+            "max": 64.2822265625
+          },
+          "rss_mib": {
+            "median": 66.66015625,
+            "min": 66.65234375,
+            "max": 66.97265625
+          }
+        }
+      }
+    },
+    {
+      "mode": "Background",
+      "workload": "animated",
+      "apps": {
+        "original": {
+          "cpu_percent": {
+            "median": 4.06612685146052,
+            "min": 4.032803679147295,
+            "max": 4.09946450143917
+          },
+          "pss_mib": {
+            "median": 198.169921875,
+            "min": 197.38525390625,
+            "max": 199.0927734375
+          },
+          "rss_mib": {
+            "median": 235.3046875,
+            "min": 234.546875,
+            "max": 236.36328125
+          }
+        },
+        "direct": {
+          "cpu_percent": {
+            "median": 2.233076503334014,
+            "min": 2.2330473899035175,
+            "max": 2.2663758186535086
+          },
+          "pss_mib": {
+            "median": 194.9560546875,
+            "min": 193.9482421875,
+            "max": 195.21533203125
+          },
+          "rss_mib": {
+            "median": 231.85546875,
+            "min": 230.765625,
+            "max": 232.0546875
+          }
+        },
+        "rust": {
+          "cpu_percent": {
+            "median": 1.0665895551923745,
+            "min": 1.033251950242628,
+            "max": 1.0665908891528197
+          },
+          "pss_mib": {
+            "median": 64.453125,
+            "min": 64.4482421875,
+            "max": 64.5166015625
+          },
+          "rss_mib": {
+            "median": 67.15234375,
+            "min": 67.05859375,
+            "max": 67.203125
+          }
+        }
+      }
+    }
+  ]
+}

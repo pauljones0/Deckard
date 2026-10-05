@@ -20,7 +20,24 @@ Based on [StreamController](https://github.com/StreamController/StreamController
 
 Bundles include FFmpeg, audio/input helpers and the native example plugin. They require a Linux desktop with **glibc 2.35 or newer** and working OpenGL/EGL drivers: for example Ubuntu 22.04+, Debian 12+, Mint 21+ and current Fedora/Arch. They do not support Alpine/musl. File dialogs use your desktop's XDG portal. [Build details, checksums and troubleshooting](docs/linux-builds.md).
 
-Connect your deck and launch Deckard. Select an input, choose an action and edit its labels or image. In **Store → Pages**, load the catalog and install **Rust Starter** for a ready-made page. Select that page in the editor; its native plugin is included. **Settings** includes autostart and an **Enable USB access** button for portable installations. DEB/RPM installers install the USB rules automatically; reconnect the deck if permission errors persist. Authentication is required only for installing system USB rules.
+Connect your deck and launch Deckard. Select an input, choose an action and edit its labels or image. In **Store → Pages**, load the catalog and install **Rust Starter** for a ready-made page. Select that page in the editor; its native plugin is included. **Settings** includes autostart and an **Enable USB access** button for portable installations. DEB/RPM installers install the USB rules automatically; reconnect the deck if permission errors persist. The portable access helper requires administrator authentication.
+
+## More room for your stream 🦀
+
+**Background animation: 74% less CPU and 67% less RAM than the original; 52% less CPU and 67% less RAM than the direct upstream.**
+
+Each application cell shows **CPU / RAM**. CPU is percent of one logical core; RAM is proportional resident memory (PSS). Negative changes mean lower resource use.
+
+| Workload | Original StreamController | Direct upstream Deckard | Rust Deckard | vs original | vs direct |
+| --- | ---: | ---: | ---: | --- | --- |
+| Editor visible · static | 0.13% / 293 MiB | 0.07% / 262 MiB | **0.10% / 178 MiB** | CPU: idle floor; RAM -39% | CPU: idle floor; RAM -32% |
+| Editor visible · 8 animated keys | 6.23% / 335 MiB | 3.67% / 298 MiB | **4.90% / 187 MiB** | CPU -21%; RAM -44% | CPU +34%; RAM -37% |
+| Background · static | 0.10% / 167 MiB | 0.03% / 149 MiB | **0.07% / 64 MiB** | CPU: idle floor; RAM -62% | CPU: idle floor; RAM -57% |
+| Background · 8 animated keys | 4.07% / 198 MiB | 2.23% / 195 MiB | **1.07% / 64 MiB** | CPU -74%; RAM -67% | CPU -52%; RAM -67% |
+
+The visible editor has a tradeoff: Rust uses **34% more CPU than the optimized direct upstream** during animation, while using **37% less RAM**. Static CPU values are near the accounting floor, so their tiny differences are not treated as speedups. CPU savings are resource savings; input-response latency was not measured.
+
+Measured on a Ryzen 7 9800X3D / NVIDIA RTX 5070, using three trials per case, 30 seconds warmup and 30 seconds sampling, a private 1280×800 GPU-backed Wayland session, one fake Plus and eight labelled keys. The GIF requests 10 FPS; separate frame checks observed roughly 9–10 FPS on all eight keys. No installed plugins or physical USB hardware were used. The Python baselines share one dependency environment; applications retain their default renderers/encoders. [Methodology and reproduction](benchmarks/README.md), [raw samples and revisions](benchmarks/results/2026-10-05), [frame validation](benchmarks/results/2026-10-05/validation).
 
 ## What the Rust port includes
 

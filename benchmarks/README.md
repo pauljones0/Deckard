@@ -2,6 +2,14 @@
 
 These scripts run the real applications, including their interfaces and device-rendering workers. Python here is **measurement/test tooling only** and is never bundled into native Deckard.
 
+[Recorded results, summary and frame validation](results/2026-10-05). Regenerate the README table with:
+
+```sh
+.venv/bin/python benchmarks/summarize.py \
+  benchmarks/results/2026-10-05/visible \
+  benchmarks/results/2026-10-05/background
+```
+
 ## What is compared
 
 - Original StreamController: `0f439967a16a8bfdc859439b0ae2b1370185aa06`.
@@ -72,3 +80,13 @@ The timed Rust executable was built at `ffc2c9f3624cc1c6dd8b964e187cb2a03a8e039c
 The Rust investigations found a static editor repaint timer, redundant composition of unchanged GIF frames, repeated resizing of shared media and per-frame GPU texture creation. The implementation now repaints after state or pixel changes, reuses unchanged composed frames, shares resized media within a render and updates existing GPU textures. Playback sampling remains anchored to its clock. Render validation and regression tests check that these savings retain changing pixels, timing, labels, rotation and settings invalidation.
 
 These are local full-application measurements, not a universal promise for every controller, desktop, plugin or animation. Plugin artwork/continuous status integrations are outside the tested workload. CPU is not a latency measure; a “CPU reduction” or CPU-budget ratio must not be described as an input-response speedup. Physical USB throughput, end-to-end input latency, GPU utilization and ARM performance require separate measurements.
+
+## Native action integration
+
+With `pulseaudio`, `pactl` and `paplay` installed, this command creates its own temporary null-sink server, runs the native integration checks and cleans up the server and stream. It does not connect to your desktop audio server:
+
+```sh
+python3 benchmarks/audio_fixture.py --native target/release/deckard
+```
+
+This also runs inside both architecture builds. The fixture validates the actual bundled-helper baseline: older `pactl` interprets decimal percentage arguments differently, so native volume control sends unambiguous integer PulseAudio units.

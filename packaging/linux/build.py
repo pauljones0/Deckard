@@ -43,6 +43,11 @@ def copy_application(prefix):
         shutil.copy2(ROOT / name, share / name)
     if (ROOT / "docs").exists():
         shutil.copytree(ROOT / "docs", share / "docs")
+    benchmark_docs = share / "benchmarks"
+    benchmark_docs.mkdir()
+    shutil.copy2(ROOT / "benchmarks/README.md", benchmark_docs / "README.md")
+    if (ROOT / "benchmarks/results").exists():
+        shutil.copytree(ROOT / "benchmarks/results", benchmark_docs / "results")
     plugin = share / "plugins/example"
     plugin.mkdir(parents=True)
     shutil.copy2(ROOT / "examples/plugin/manifest.json", plugin / "manifest.json")
