@@ -16,7 +16,7 @@ use std::{
     sync::Arc,
     time::Instant,
 };
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub struct RenderConfig {
     pub page: Value,
     pub sticky: Value,
@@ -66,6 +66,11 @@ pub struct Renderer {
     pub animated: bool,
     asset_frames: HashMap<PathBuf, Arc<RgbaImage>>,
     last_revision: u64,
+    gif_frames: HashMap<PathBuf, (u64, Arc<RgbaImage>)>,
+    previous_config: Option<(Kind, RenderConfig)>,
+    previous_frame: Option<Frame>,
+    scaled: HashMap<(usize, u32, u32, String, String), Arc<RgbaImage>>,
+    scaled_bytes: usize,
     stamps: HashMap<PathBuf, (u64, std::time::SystemTime)>,
     glyphs: std::cell::RefCell<GlyphCache>,
     pub errors: Vec<String>,
@@ -145,6 +150,11 @@ impl Renderer {
             animated: false,
             asset_frames: HashMap::new(),
             last_revision: u64::MAX,
+            gif_frames: HashMap::new(),
+            previous_config: None,
+            previous_frame: None,
+            scaled: HashMap::new(),
+            scaled_bytes: 0,
             stamps: HashMap::new(),
             glyphs: std::cell::RefCell::new(HashMap::new()),
             errors: Vec::new(),
@@ -155,6 +165,11 @@ impl Renderer {
         self.assets.clear();
         self.asset_frames.clear();
         self.stamps.clear();
+        self.gif_frames.clear();
+        self.previous_frame = None;
+        self.previous_config = None;
+        self.scaled.clear();
+        self.scaled_bytes = 0;
         self.animated = false;
     }
     fn asset_playback(
@@ -266,8 +281,19 @@ impl Renderer {
             Asset::Static(image) => Some(image.clone()),
             Asset::Gif(player) => {
                 self.animated |= player.running();
-                match player.tick(Instant::now()) {
-                    Ok(frame) => Some(Arc::new(frame.clone())),
+                match player.tick(Instant::now()).map(|_| ()) {
+                    Ok(()) => {
+                        let sequence = player.sequence;
+                        let frame = player.current_image();
+                        let cached = self
+                            .gif_frames
+                            .entry(path.clone())
+                            .or_insert_with(|| (sequence, Arc::new(frame.clone())));
+                        if cached.0 != sequence {
+                            *cached = (sequence, Arc::new(frame.clone()));
+                        }
+                        Some(cached.1.clone())
+                    }
                     Err(error) => {
                         self.errors.push(format!("GIF {}: {error}", path.display()));
                         *asset = Asset::Failed;
@@ -304,9 +330,40 @@ impl Renderer {
                         .is_some_and(|stamp| self.stamps.get(path) == Some(&stamp))
             });
         }
+        self.gif_frames
+            .retain(|path, _| self.assets.contains_key(path));
         self.used.clear();
-        self.asset_frames.clear();
+        let previous_assets = std::mem::take(&mut self.asset_frames);
         self.animated = false;
+        let slideshow = config.page["background"]["media-paths"]
+            .as_array()
+            .is_some_and(|paths| paths.len() > 1);
+        if !slideshow
+            && self
+                .previous_config
+                .as_ref()
+                .is_some_and(|(previous_kind, previous)| {
+                    *previous_kind == kind && previous == config
+                })
+        {
+            // Advance playback clocks, but reuse the composed frame until its pixels change.
+            let paths: Vec<_> = self.assets.keys().cloned().collect();
+            for path in paths {
+                self.asset_playback(&path.to_string_lossy(), 1, 1, &Value::Null);
+            }
+            if self.asset_frames.len() == previous_assets.len()
+                && self.asset_frames.iter().all(|(path, frame)| {
+                    previous_assets
+                        .get(path)
+                        .is_some_and(|previous| Arc::ptr_eq(frame, previous))
+                })
+                && let Some(frame) = &self.previous_frame
+            {
+                return Ok(frame.clone());
+            }
+        }
+        self.scaled.clear();
+        self.scaled_bytes = 0;
         let (rows, cols) = layout(kind, config.rotation);
         let mut fmt = kind.key_image_format();
         if kind == Kind::PlusXl {
@@ -434,8 +491,8 @@ impl Renderer {
                 .flatten()
                 {
                     if let Some(img) = self.asset_playback(path, w, h, &state["media"]) {
-                        let img = media_layout(&img, w, h, &state["media"], "cover");
-                        imageops::overlay(&mut tile, &img, 0, 0);
+                        let img = self.scaled_media(&img, w, h, &state["media"], "cover");
+                        imageops::overlay(&mut tile, img.as_ref(), 0, 0);
                     }
                 }
                 self.labels(&mut tile, state);
@@ -495,7 +552,8 @@ impl Renderer {
                     {
                         imageops::overlay(
                             &mut strip,
-                            &media_layout(&image, sw, sh, &state["media"], "contain"),
+                            self.scaled_media(&image, sw, sh, &state["media"], "contain")
+                                .as_ref(),
                             0,
                             0,
                         );
@@ -532,7 +590,8 @@ impl Renderer {
                         {
                             imageops::overlay(
                                 &mut part,
-                                &media_layout(&img, tw, th, &state["media"], "contain"),
+                                self.scaled_media(&img, tw, th, &state["media"], "contain")
+                                    .as_ref(),
                                 0,
                                 0,
                             )
@@ -571,11 +630,40 @@ impl Renderer {
         };
         self.assets.retain(|p, _| self.used.contains(p));
         self.stamps.retain(|p, _| self.used.contains(p));
-        Ok(Frame {
+        self.gif_frames.retain(|path, _| self.used.contains(path));
+        let frame = Frame {
             tiles,
             strip,
             revision: config.revision,
-        })
+        };
+        self.previous_config = Some((kind, config.clone()));
+        self.previous_frame = Some(frame.clone());
+        Ok(frame)
+    }
+    fn scaled_media(
+        &mut self,
+        source: &Arc<RgbaImage>,
+        width: u32,
+        height: u32,
+        options: &Value,
+        mode: &str,
+    ) -> Arc<RgbaImage> {
+        let key = (
+            Arc::as_ptr(source) as usize,
+            width,
+            height,
+            options.to_string(),
+            mode.to_owned(),
+        );
+        if let Some(image) = self.scaled.get(&key) {
+            return image.clone();
+        }
+        let image = Arc::new(media_layout(source, width, height, options, mode));
+        if self.scaled_bytes.saturating_add(image.as_raw().len()) <= 16 * 1024 * 1024 {
+            self.scaled_bytes += image.as_raw().len();
+            self.scaled.insert(key, image.clone());
+        }
+        image
     }
     fn encode(
         &mut self,
@@ -896,6 +984,52 @@ pub fn default_config(page: Value) -> RenderConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn unchanged_animation_reuses_composition_but_new_frames_and_settings_invalidate_it() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("animation.gif");
+        {
+            let mut file = std::fs::File::create(&path).unwrap();
+            let mut encoder = gif::Encoder::new(&mut file, 2, 2, &[255, 0, 0, 0, 255, 0]).unwrap();
+            for index in [0, 1] {
+                encoder
+                    .write_frame(&gif::Frame {
+                        width: 2,
+                        height: 2,
+                        delay: 10,
+                        buffer: vec![index; 4].into(),
+                        ..Default::default()
+                    })
+                    .unwrap();
+            }
+        }
+        let state = json!({"states":{"0":{"media":{"path":path,"fps":10,"loop":true}}}});
+        let mut page = json!({"keys":{}});
+        for key in 0..8 {
+            page["keys"][format!("{}x{}", key % 4, key / 4)] = state.clone();
+        }
+        let mut config = default_config(page);
+        let mut renderer = Renderer::new(1024 * 1024).unwrap();
+        let first = renderer.render(Kind::Plus, &config).unwrap();
+        assert_eq!(renderer.scaled.len(), 1, "shared media resizes once");
+        let repeated = renderer.render(Kind::Plus, &config).unwrap();
+        assert!(Arc::ptr_eq(&first.tiles[0].rgb, &repeated.tiles[0].rgb));
+        if let Asset::Gif(player) = renderer.assets.get_mut(&path).unwrap() {
+            player
+                .tick(Instant::now() + std::time::Duration::from_millis(150))
+                .unwrap();
+        } else {
+            panic!("GIF must be loaded");
+        }
+        let changed = renderer.render(Kind::Plus, &config).unwrap();
+        assert_ne!(first.tiles[0].identity, changed.tiles[0].identity);
+        assert_eq!(&changed.tiles[0].rgb[..3], &[0, 255, 0]);
+        config.sleeping = true;
+        let sleeping = renderer.render(Kind::Plus, &config).unwrap();
+        assert!(sleeping.tiles[0].rgb.iter().all(|byte| *byte == 0));
+        renderer.release_media();
+        assert!(renderer.previous_frame.is_none());
+    }
     #[test]
     fn persisted_media_layout_preserves_size_alignment_and_contain() {
         let image = RgbaImage::from_pixel(20, 10, Rgba([255, 0, 0, 255]));

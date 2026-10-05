@@ -67,6 +67,9 @@ impl GifPlayer {
     pub fn memory(&self) -> usize {
         self.canvas.as_raw().len() * 3
     }
+    pub fn current_image(&self) -> &RgbaImage {
+        &self.canvas
+    }
     pub fn tick(&mut self, now: Instant) -> Result<&RgbaImage> {
         if self.finished || now < self.deadline {
             return Ok(&self.canvas);
@@ -74,9 +77,10 @@ impl GifPlayer {
         if self.sequence != 0 && now < self.sample {
             return Ok(&self.canvas);
         }
-        self.sample = now
-            + Duration::from_micros(1_000_000 / u64::from(self.fps.clamp(1, 60)))
-                .saturating_sub(Duration::from_millis(1));
+        let interval = Duration::from_micros(1_000_000 / u64::from(self.fps.clamp(1, 60)));
+        // Keep the sampling clock anchored: delayed polling must not reduce the FPS cap.
+        let phase = now.saturating_duration_since(self.sample).as_micros() % interval.as_micros();
+        self.sample = now + interval - Duration::from_micros(phase as u64);
         for _ in 0..8 {
             if self.finished || now < self.deadline {
                 break;

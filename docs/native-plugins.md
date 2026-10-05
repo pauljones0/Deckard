@@ -11,7 +11,7 @@ Place `manifest.json` and your executable in one directory under `plugins-native
   "api": 1,
   "id": "example",
   "name": "Rust example",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "executable": "deckard-plugin-example",
   "source": "https://github.com/pauljones0/Deckard",
   "actions": [{

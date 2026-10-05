@@ -9,6 +9,12 @@ use std::path::PathBuf;
     long_about = "Deckard controls Elgato Stream Decks without Python. Native plugins use executable JSON-RPC API v1. Use --fake-deck-model plus to explore without hardware."
 )]
 pub struct Args {
+    /// Preview supported replacements and list actions needing a native implementation.
+    #[arg(long)]
+    pub inspect_legacy_actions: bool,
+    /// Back up pages/sticky actions and apply audited native replacements.
+    #[arg(long)]
+    pub migrate_legacy_actions: bool,
     #[arg(long)]
     pub data: Option<PathBuf>,
     #[arg(short = 'b', long = "background")]
@@ -91,6 +97,12 @@ impl Args {
             |method: &str, params: Value| requests.push(json!({"method":method,"params":params}));
         if self.json {
             push("status", json!({}));
+        }
+        if self.inspect_legacy_actions {
+            push("inspect-legacy-actions", json!({}));
+        }
+        if self.migrate_legacy_actions {
+            push("migrate-legacy-actions", json!({}));
         }
         if self.close_running {
             push("quit", json!({}))

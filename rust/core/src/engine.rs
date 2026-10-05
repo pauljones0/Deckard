@@ -25,12 +25,14 @@ pub struct Device {
     pub fake: bool,
     pub connected: bool,
     pub page: String,
+    pub previous_page: Option<String>,
     pub brightness: u8,
     pub sleeping: bool,
     pub states: HashMap<String, usize>,
     pub pressed: HashSet<String>,
     pub last_input: Instant,
     pub frame: Option<Arc<Frame>>,
+    pub rendered_frames: u64,
 }
 pub struct Engine {
     pub docs: Documents,
@@ -43,6 +45,7 @@ pub struct Engine {
     pub locked: bool,
     pub generation: u64,
     pub plugin_revision: u64,
+    pub mixer: crate::audio::Mixer,
     overlays: HashMap<(String, String, String, usize), Value>,
 }
 pub type Shared = Arc<Mutex<Engine>>;
@@ -62,6 +65,10 @@ impl Engine {
             locked: false,
             generation: 0,
             plugin_revision: 0,
+            mixer: crate::audio::Mixer {
+                increment: 10.0,
+                ..Default::default()
+            },
             overlays: HashMap::new(),
         })))
     }
@@ -191,7 +198,7 @@ impl Engine {
         })
     }
     pub fn status(&self) -> Value {
-        let mut devices:Vec<_>=self.devices.values().map(|d|json!({"serial":d.serial,"model":format!("{:?}",d.kind),"fake":d.fake,"connected":d.connected,"page":d.page,"brightness":d.brightness,"sleeping":d.sleeping})).collect();
+        let mut devices:Vec<_>=self.devices.values().map(|d|json!({"serial":d.serial,"model":format!("{:?}",d.kind),"fake":d.fake,"connected":d.connected,"page":d.page,"brightness":d.brightness,"sleeping":d.sleeping,"rendered_frames":d.rendered_frames,"frame_tiles":d.frame.as_ref().map(|f|f.tiles.iter().map(|t|json!({"key":t.key,"width":t.width,"height":t.height,"identity":t.identity})).collect::<Vec<_>>())})).collect();
         devices.sort_by_key(|d| d["serial"].as_str().unwrap_or("").to_owned());
         json!({"version":env!("CARGO_PKG_VERSION"),"runtime":"Rust","plugin_api":1,"devices":devices,"pages":self.docs.pages.keys().collect::<Vec<_>>(),"errors":self.errors,"locked":self.locked})
     }
@@ -228,6 +235,62 @@ impl Engine {
         let name = p["page"].as_str().unwrap_or("Main");
         let serial = p["serial"].as_str().unwrap_or("");
         match method {
+            "inspect-legacy-actions" | "migrate-legacy-actions" => {
+                let apply = method == "migrate-legacy-actions";
+                if apply {
+                    let connections = crate::legacy_actions::obs_connections(&self.docs.root)?;
+                    if let Some(profiles) = connections.as_object() {
+                        for (name, profile) in profiles {
+                            if self.docs.settings["obs"]["connections"][name].is_null() {
+                                self.docs.settings["obs"]["connections"][name] = profile.clone();
+                            }
+                        }
+                        if !profiles.is_empty() {
+                            self.docs.save_settings()?;
+                        }
+                    }
+                }
+                let mut reports = Vec::new();
+                for folder in ["pages", "sticky"] {
+                    if let Ok(entries) = std::fs::read_dir(self.docs.root.join(folder)) {
+                        for entry in entries {
+                            let path = entry?.path();
+                            if path.extension().is_some_and(|e| e == "json")
+                                && !path.to_string_lossy().contains(".corrupt-")
+                            {
+                                let mut report = crate::legacy_actions::migrate_file(
+                                    &path,
+                                    &self.docs.root,
+                                    apply,
+                                )?;
+                                if let Some(remaining) = report["remaining"].as_array_mut() {
+                                    remaining.retain(|item| {
+                                        !self.plugins.iter().any(|plugin| {
+                                            plugin.manifest.actions.iter().any(|action| {
+                                                item["id"].as_str()
+                                                    == Some(
+                                                        format!(
+                                                            "{}::{}",
+                                                            plugin.manifest.id, action.id
+                                                        )
+                                                        .as_str(),
+                                                    )
+                                            })
+                                        })
+                                    });
+                                }
+                                reports.push(report);
+                            }
+                        }
+                    }
+                }
+                if apply {
+                    self.docs = Documents::open(self.docs.root.clone())?;
+                    self.overlays.clear();
+                    self.generation += 1;
+                }
+                return Ok(json!({"applied":apply,"documents":reports}));
+            }
             "status" | "list-devices" => return Ok(self.status()),
             "list-pages" => return Ok(json!(self.docs.pages.keys().collect::<Vec<_>>())),
             "show" => self.show_window = true,
@@ -275,6 +338,9 @@ impl Engine {
             "change-page" => {
                 ensure!(self.docs.pages.contains_key(name), "page not found");
                 let device = self.devices.get_mut(serial).context("device not found")?;
+                if device.page != name {
+                    device.previous_page = Some(device.page.clone());
+                }
                 device.page = name.into();
                 device.pressed.clear();
                 device.states.clear();
@@ -540,6 +606,30 @@ impl Runtime {
         threads.push(thread::spawn(move || {
             action_loop(actions_shared, receiver, actions_stop)
         }));
+        let monitor_shared = shared.clone();
+        let monitor_stop = stop.clone();
+        threads.push(thread::spawn(move || {
+            let mut next = Instant::now();
+            while !monitor_stop.load(Ordering::Relaxed) {
+                if Instant::now() >= next {
+                    next = Instant::now() + Duration::from_secs(1);
+                    let active = {
+                        let engine = monitor_shared.lock().unwrap();
+                        engine.devices.values().any(|d| {
+                            engine
+                                .docs
+                                .pages
+                                .get(&d.page)
+                                .is_some_and(|p| p["deckard"]["native-mixer"] == true)
+                        })
+                    };
+                    if active && let Err(error) = refresh_mixers(&monitor_shared) {
+                        monitor_shared.lock().unwrap().error(error);
+                    }
+                }
+                thread::sleep(Duration::from_millis(100));
+            }
+        }));
         let manager_shared = shared.clone();
         let manager_stop = stop.clone();
         let manager_events = events.clone();
@@ -615,6 +705,7 @@ impl Drop for Runtime {
         for thread in self.threads.drain(..) {
             let _ = thread.join();
         }
+        crate::uinput::shutdown();
     }
 }
 fn start_device(
@@ -643,12 +734,14 @@ fn start_device(
                     fake,
                     connected: fake,
                     page,
+                    previous_page: None,
                     brightness,
                     sleeping: false,
                     states: HashMap::new(),
                     pressed: HashSet::new(),
                     last_input: Instant::now(),
                     frame: None,
+                    rendered_frames: 0,
                 },
             );
             engine.generation += 1;
@@ -704,7 +797,8 @@ fn start_device(
                                 .devices
                                 .get_mut(&render_serial)
                             {
-                                device.frame = Some(frame)
+                                device.frame = Some(frame);
+                                device.rendered_frames += 1;
                             }
                         }
                         Err(error) => render_shared
@@ -1153,6 +1247,38 @@ fn action_loop(shared: Shared, events: Receiver<InputEvent>, stop: Arc<AtomicBoo
         }
     }
 }
+fn refresh_mixers(shared: &Shared) -> Result<()> {
+    let streams = crate::audio::streams()?;
+    let mut engine = shared.lock().unwrap();
+    let devices: Vec<_> = engine
+        .devices
+        .values()
+        .filter(|d| {
+            engine
+                .docs
+                .pages
+                .get(&d.page)
+                .is_some_and(|p| p["deckard"]["native-mixer"] == true)
+        })
+        .map(|d| (d.serial.clone(), d.kind, d.page.clone()))
+        .collect();
+    for (serial, kind, name) in devices {
+        let page = crate::audio::mixer_page(
+            kind,
+            engine.docs.settings["devices"][&serial]["rotation"]
+                .as_u64()
+                .unwrap_or(0) as u16,
+            &streams,
+            *engine.mixer.offsets.get(&serial).unwrap_or(&0),
+            engine.mixer.increment,
+        );
+        if engine.docs.pages.get(&name) != Some(&page) {
+            engine.docs.pages.insert(name, page);
+            engine.generation += 1;
+        }
+    }
+    Ok(())
+}
 fn run_action(
     shared: &Shared,
     event: &InputEvent,
@@ -1162,6 +1288,152 @@ fn run_action(
     let id = action["id"].as_str().context("action ID missing")?;
     let settings = &action["settings"];
     match id {
+        "native::input" => {
+            crate::uinput::execute(settings["operation"].as_str().unwrap_or("keys"), settings)?
+        }
+        "native::delay" => {
+            let delay = settings["delay"].as_f64().unwrap_or(0.0);
+            ensure!(
+                delay.is_finite() && (0.0..=5.0).contains(&delay),
+                "delay must be zero to five seconds"
+            );
+            thread::sleep(Duration::from_secs_f64(delay));
+        }
+        "native::launch" => crate::desktop::launch(
+            settings["path"]
+                .as_str()
+                .context("application path missing")?,
+        )?,
+        "native::audio" => crate::audio::control(
+            settings["target"].as_str().unwrap_or("output"),
+            settings["operation"].as_str().unwrap_or("toggle-mute"),
+            settings["value"].as_f64().unwrap_or(5.0),
+        )?,
+        "native::obs" => {
+            let connection = {
+                let engine = shared.lock().unwrap();
+                let name = settings["connection"].as_str().unwrap_or("default");
+                engine.docs.settings["obs"]["connections"][name].clone()
+            };
+            ensure!(
+                connection.is_object(),
+                "OBS connection profile is missing; configure obs.connections in Settings"
+            );
+            crate::obs::execute(settings, &connection)?;
+        }
+        "native::mixer" => {
+            let operation = settings["operation"].as_str().unwrap_or("open");
+            if operation == "exit" {
+                let mut engine = shared.lock().unwrap();
+                if let Some(page) = engine.mixer.originals.remove(&event.serial) {
+                    engine.command(&json!({"method":"change-page","params":{"serial":event.serial,"page":page}}))?;
+                }
+            } else if ["mute", "volume-up", "volume-down"].contains(&operation) {
+                let streams = crate::audio::streams()?;
+                let (offset, increment) = {
+                    let engine = shared.lock().unwrap();
+                    (
+                        *engine.mixer.offsets.get(&event.serial).unwrap_or(&0),
+                        engine.mixer.increment,
+                    )
+                };
+                let index = if event.family == "dials" {
+                    event.input.parse::<usize>()?
+                } else {
+                    event
+                        .input
+                        .split('x')
+                        .next()
+                        .context("mixer coordinates")?
+                        .parse::<usize>()?
+                        .saturating_sub(1)
+                };
+                if let Some(stream) = streams.get(offset + index) {
+                    crate::audio::control(
+                        &format!("stream:{}", stream.id),
+                        if operation == "mute" {
+                            "toggle-mute"
+                        } else {
+                            "set-volume"
+                        },
+                        (stream.volume
+                            + if operation == "volume-up" {
+                                increment
+                            } else {
+                                -increment
+                            })
+                        .clamp(0.0, 100.0),
+                    )?;
+                }
+            } else {
+                let streams = crate::audio::streams()?;
+                let mut engine = shared.lock().unwrap();
+                let device = engine
+                    .devices
+                    .get(&event.serial)
+                    .context("mixer device missing")?;
+                let kind = device.kind;
+                let rotation = engine.docs.settings["devices"][&event.serial]["rotation"]
+                    .as_u64()
+                    .unwrap_or(0) as u16;
+                let original = device.page.clone();
+                let page = format!("Native Mixer {}", event.serial);
+                ensure!(
+                    engine
+                        .docs
+                        .pages
+                        .get(&page)
+                        .is_none_or(|p| p["deckard"]["native-mixer"] == true),
+                    "mixer page name is already in use"
+                );
+                if operation == "open" {
+                    if original != page {
+                        engine
+                            .mixer
+                            .originals
+                            .insert(event.serial.clone(), original);
+                    }
+                    engine.mixer.offsets.insert(event.serial.clone(), 0);
+                    engine.mixer.increment = settings["increments"]
+                        .as_f64()
+                        .unwrap_or(10.0)
+                        .clamp(0.0, 100.0);
+                }
+                let step = (render::layout(kind, rotation).1 as usize)
+                    .saturating_sub(1)
+                    .max(1);
+                let offset = engine
+                    .mixer
+                    .offsets
+                    .entry(event.serial.clone())
+                    .or_default();
+                match operation {
+                    "right" => *offset = (*offset + step).min(streams.len().saturating_sub(1)),
+                    "left" => *offset = offset.saturating_sub(step),
+                    "open" => {}
+                    _ => anyhow::bail!("unsupported mixer operation"),
+                };
+                let offset = *offset;
+                let increment = engine.mixer.increment;
+                engine.docs.put(
+                    &page,
+                    crate::audio::mixer_page(kind, rotation, &streams, offset, increment),
+                )?;
+                engine.command(
+                    &json!({"method":"change-page","params":{"serial":event.serial,"page":page}}),
+                )?;
+            }
+        }
+        "native::media" => crate::mpris::control(
+            settings["method"].as_str().unwrap_or("PlayPause"),
+            settings["player"].as_str().unwrap_or(""),
+        )?,
+        "native::shell" => crate::desktop::run_shell(
+            settings["command"]
+                .as_str()
+                .context("shell command missing")?,
+            settings["detached"].as_bool().unwrap_or(true),
+        )?,
         "native::command" => {
             let argv: Vec<String> = settings["argv"]
                 .as_array()
@@ -1184,10 +1456,43 @@ fn run_action(
             crate::desktop::run_command(&["xdg-open".into(), url.into()], Duration::from_secs(5))?;
         }
         "native::page" => {
-            shared.lock().unwrap().command(&json!({"method":"change-page","params":{"serial":event.serial,"page":settings["page"]}}))?;
+            let mut engine = shared.lock().unwrap();
+            let serial = settings["serial"]
+                .as_str()
+                .filter(|s| engine.devices.contains_key(*s))
+                .unwrap_or(&event.serial)
+                .to_owned();
+            engine.command(
+                &json!({"method":"change-page","params":{"serial":serial,"page":settings["page"]}}),
+            )?;
+        }
+        "native::previous-page" => {
+            let mut engine = shared.lock().unwrap();
+            let page = engine.devices[&event.serial]
+                .previous_page
+                .clone()
+                .context("no previous page")?;
+            engine.command(
+                &json!({"method":"change-page","params":{"serial":event.serial,"page":page}}),
+            )?;
         }
         "native::state" => {
-            shared.lock().unwrap().command(&json!({"method":"change-state","params":{"serial":event.serial,"family":event.family,"input":event.input,"state":settings["state"]}}))?;
+            shared.lock().unwrap().command(&json!({"method":"change-state","params":{"serial":event.serial,"family":settings["family"].as_str().unwrap_or(&event.family),"input":settings["input"].as_str().unwrap_or(&event.input),"state":settings["state"]}}))?;
+        }
+        "native::adjust-brightness" => {
+            let mut engine = shared.lock().unwrap();
+            let value = (engine.devices[&event.serial].brightness as f64
+                + settings["adjust"].as_f64().unwrap_or(5.0))
+            .clamp(
+                settings["min_brightness"]
+                    .as_f64()
+                    .unwrap_or(0.0)
+                    .clamp(0.0, 100.0),
+                100.0,
+            );
+            engine.command(
+                &json!({"method":"set-brightness","params":{"serial":event.serial,"value":value}}),
+            )?;
         }
         "native::brightness" => {
             shared.lock().unwrap().command(&json!({"method":"set-brightness","params":{"serial":event.serial,"value":settings["value"]}}))?;
@@ -1232,16 +1537,38 @@ fn run_action(
                     }
                     argv
                 } else {
-                    vec!["wtype".into(), "--".into(), text.into()]
+                    vec![
+                        "wtype".into(),
+                        "-d".into(),
+                        settings["delay_ms"]
+                            .as_f64()
+                            .unwrap_or(10.0)
+                            .clamp(0.0, 1000.0)
+                            .round()
+                            .to_string(),
+                        "--".into(),
+                        text.into(),
+                    ]
                 }
             } else {
-                vec![
+                let mut argv = vec![
                     "xdotool".into(),
                     if id == "native::text" { "type" } else { "key" }.into(),
                     "--clearmodifiers".into(),
-                    "--".into(),
-                    text.into(),
-                ]
+                ];
+                if id == "native::text" {
+                    argv.extend([
+                        "--delay".into(),
+                        settings["delay_ms"]
+                            .as_f64()
+                            .unwrap_or(10.0)
+                            .clamp(0.0, 1000.0)
+                            .round()
+                            .to_string(),
+                    ]);
+                }
+                argv.extend(["--".into(), text.into()]);
+                argv
             };
             crate::desktop::run_command(&argv, Duration::from_secs(5))?;
         }

@@ -8,17 +8,17 @@ Based on [StreamController](https://github.com/StreamController/StreamController
 
 ## Download and play
 
-[**Download Deckard 0.4.0**](https://github.com/pauljones0/Deckard/releases/tag/v0.4.0). Pick your format and architecture below. Intel/AMD PCs use **x86-64**; 64-bit ARM computers use **ARM64**.
+[**Download Deckard 0.4.1**](https://github.com/pauljones0/Deckard/releases/tag/v0.4.1). Pick your format and architecture below. Intel/AMD PCs use **x86-64**; 64-bit ARM computers use **ARM64**.
 
 | Linux build | x86-64 | ARM64 | Start it |
 | --- | --- | --- | --- |
-| AppImage | [Download](https://github.com/pauljones0/Deckard/releases/download/v0.4.0/deckard-0.4.0-x86_64.AppImage) | [Download](https://github.com/pauljones0/Deckard/releases/download/v0.4.0/deckard-0.4.0-aarch64.AppImage) | In file properties, allow executing the file; double-click. |
-| Ubuntu / Debian / Mint / Pop!_OS DEB | [Download](https://github.com/pauljones0/Deckard/releases/download/v0.4.0/deckard-0.4.0-x86_64.deb) | [Download](https://github.com/pauljones0/Deckard/releases/download/v0.4.0/deckard-0.4.0-aarch64.deb) | Open in your software installer, install, then launch **Deckard**. |
-| Fedora / compatible RPM systems | [Download](https://github.com/pauljones0/Deckard/releases/download/v0.4.0/deckard-0.4.0-x86_64.rpm) | [Download](https://github.com/pauljones0/Deckard/releases/download/v0.4.0/deckard-0.4.0-aarch64.rpm) | Open in your software installer, install, then launch **Deckard**. |
-| Portable archive | [Download](https://github.com/pauljones0/Deckard/releases/download/v0.4.0/deckard-0.4.0-x86_64.tar.gz) | [Download](https://github.com/pauljones0/Deckard/releases/download/v0.4.0/deckard-0.4.0-aarch64.tar.gz) | Extract; open `deckard/bin/deckard`. Keep the extracted directory together. |
+| AppImage | [Download](https://github.com/pauljones0/Deckard/releases/download/v0.4.1/deckard-0.4.1-x86_64.AppImage) | [Download](https://github.com/pauljones0/Deckard/releases/download/v0.4.1/deckard-0.4.1-aarch64.AppImage) | In file properties, allow executing the file; double-click. |
+| Ubuntu / Debian / Mint / Pop!_OS DEB | [Download](https://github.com/pauljones0/Deckard/releases/download/v0.4.1/deckard-0.4.1-x86_64.deb) | [Download](https://github.com/pauljones0/Deckard/releases/download/v0.4.1/deckard-0.4.1-aarch64.deb) | Open in your software installer, install, then launch **Deckard**. |
+| Fedora / compatible RPM systems | [Download](https://github.com/pauljones0/Deckard/releases/download/v0.4.1/deckard-0.4.1-x86_64.rpm) | [Download](https://github.com/pauljones0/Deckard/releases/download/v0.4.1/deckard-0.4.1-aarch64.rpm) | Open in your software installer, install, then launch **Deckard**. |
+| Portable archive | [Download](https://github.com/pauljones0/Deckard/releases/download/v0.4.1/deckard-0.4.1-x86_64.tar.gz) | [Download](https://github.com/pauljones0/Deckard/releases/download/v0.4.1/deckard-0.4.1-aarch64.tar.gz) | Extract; open `deckard/bin/deckard`. Keep the extracted directory together. |
 | Arch / EndeavourOS / Manjaro | [PKGBUILD](packaging/aur/deckard-git/PKGBUILD) | Same PKGBUILD | `makepkg -si`; launch **Deckard**. This option builds from source. |
 
-Bundles include FFmpeg, input helpers and the native example plugin. They require a Linux desktop with **glibc 2.35 or newer** and working OpenGL/EGL drivers: for example Ubuntu 22.04+, Debian 12+, Mint 21+ and current Fedora/Arch. They do not support Alpine/musl. File dialogs use your desktop's XDG portal. [Build details, checksums and troubleshooting](docs/linux-builds.md).
+Bundles include FFmpeg, audio/input helpers and the native example plugin. They require a Linux desktop with **glibc 2.35 or newer** and working OpenGL/EGL drivers: for example Ubuntu 22.04+, Debian 12+, Mint 21+ and current Fedora/Arch. They do not support Alpine/musl. File dialogs use your desktop's XDG portal. [Build details, checksums and troubleshooting](docs/linux-builds.md).
 
 Connect your deck and launch Deckard. Select an input, choose an action and edit its labels or image. In **Store → Pages**, load the catalog and install **Rust Starter** for a ready-made page. Select that page in the editor; its native plugin is included. **Settings** includes autostart and an **Enable USB access** button for portable installations. DEB/RPM installers install the USB rules automatically; reconnect the deck if permission errors persist. Authentication is required only for installing system USB rules.
 
@@ -33,13 +33,15 @@ Connect your deck and launch Deckard. Select an input, choose an action and edit
 - Native plugin/page/icon catalogs, branch filtering, source links, custom icon packs, lazy GUI startup, tray Open/Restart/Quit and an expanded CLI.
 - Optional AI page proposals through a configurable endpoint. AI is off by default; proposals are reviewed before saving and command/text/hotkey actions require explicit permission in the UI.
 
-**Plugin API changed:** Python/GTK plugins do not run. Existing page JSON and unknown plugin settings are retained, but old actions must be replaced with built-in actions or native plugins. See the [new executable plugin interface](docs/native-plugins.md) and [working Rust example](rust/plugin-example). This is a breaking application port, with a new egui interface; it does not reproduce every GTK dialog or Python plugin integration.
+**Common plugins now have native replacements.** Both upstreams recommend OSPlugin, DeckPlugin, MediaPlugin, OBSPlugin and VolumeMixer. Rust now includes their common OS controls, deck/page actions, MPRIS playback, OBS WebSocket v5 controls and application volume mixing. Open **Settings → Inspect legacy actions → Migrate supported actions** to translate saved actions, with exact backups and a report of unsupported modes. [Coverage, setup and migration guide](docs/plugin-migration.md).
+
+**Plugin API changed:** Python/GTK plugins do not run. Existing page JSON and unknown plugin settings are retained. See the [new executable plugin interface](docs/native-plugins.md) and [working Rust example](rust/plugin-example). This is a breaking application port, with a new egui interface; it does not reproduce every GTK dialog or Python plugin integration.
 
 Tests cover native rendering, fake devices, persistence, IPC, plugin failure boundaries and isolated GUI startup. Physical USB hardware and every desktop/compositor combination still need testing on their respective machines; the old fork's multi-day Python soak results do not establish Rust soak coverage.
 
 ## Data and migration
 
-Native data lives in `${XDG_DATA_HOME:-~/.local/share}/deckard`; `--data /path` selects another directory. Existing Deckard data at that location is reused. On first launch, previous Deckard/StreamController Flatpak data is copied if the native directory does not exist, without deleting the original. Device settings, default pages, backgrounds and brightness migrate into `settings/native.json`; page documents retain unknown fields. Symbolic links in a copied legacy tree are skipped. Keep a backup before replacing old plugin actions.
+Native data lives in `${XDG_DATA_HOME:-~/.local/share}/deckard`; `--data /path` selects another directory. Existing Deckard data at that location is reused. On first launch, previous Deckard/StreamController Flatpak data is copied if the native directory does not exist, without deleting the original. Device settings, default pages, backgrounds and brightness migrate into `settings/native.json`; page documents retain unknown fields. Symbolic links in a copied legacy tree are skipped. Supported actions can be converted with the reversible migration described above; unsupported actions remain intact.
 
 ## CLI
 
@@ -48,6 +50,8 @@ deckard --doctor
 deckard --daemon-only
 deckard --list-devices
 deckard --list-pages
+deckard --inspect-legacy-actions
+deckard --migrate-legacy-actions
 deckard --create-page Work
 deckard --export-page Work ~/Work.deckard.zip
 deckard --export-all ~/deckard-pages

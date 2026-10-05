@@ -29,7 +29,7 @@ def copy_application(prefix):
     shutil.copy2(ROOT / "target/release/deckard", prefix / "bin/deckard-bin")
     (prefix / "bin/deckard").write_text('#!/bin/sh\nbundle="$(CDPATH= cd -- "$(dirname -- "$(readlink -f -- "$0")")/.." && pwd)"\nexport PATH="$bundle/bin:$PATH"\nexport LD_LIBRARY_PATH="$bundle/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"\nexec "$bundle/bin/deckard-bin" "$@"\n')
     (prefix / "bin/deckard").chmod(0o755)
-    for program in ("ffmpeg", "xdotool", "wtype"):
+    for program in ("ffmpeg", "xdotool", "wtype", "pactl"):
         shutil.copy2(shutil.which(program), prefix / "bin" / program)
     shutil.copy2(ROOT / "packaging/linux/install-udev.sh", prefix / "bin/install-udev.sh")
     (prefix / "bin/install-udev.sh").chmod(0o755)
@@ -50,7 +50,7 @@ def copy_application(prefix):
 
 
 def copy_libraries(prefix):
-    source_packages = {"ffmpeg", "xdotool", "wtype"}
+    source_packages = {"ffmpeg", "xdotool", "wtype", "pulseaudio-utils"}
     library = prefix / "lib"
     library.mkdir()
     seeds = list((prefix / "bin").iterdir())
@@ -100,7 +100,7 @@ def copy_libraries(prefix):
             source_packages.add(package)
             copyright = Path("/usr/share/doc") / package / "copyright"
             if copyright.exists(): shutil.copy2(copyright, licenses / f"{package}-copyright")
-    for name in ("ffmpeg", "xdotool", "wtype"):
+    for name in ("ffmpeg", "xdotool", "wtype", "pactl"):
         copyright = Path("/usr/share/doc") / name / "copyright"
         if copyright.exists():
             shutil.copy2(copyright, licenses / f"{name}-copyright")
@@ -159,7 +159,7 @@ def deb(prefix, output, work):
     control.mkdir()
     arch = "amd64" if ARCH == "x86_64" else "arm64"
     (control / "control").write_text(f"Package: deckard\nVersion: {VERSION}\nArchitecture: {arch}\nMaintainer: Deckard contributors\nSection: utils\nPriority: optional\nDepends: libc6 (>= 2.35), libstdc++6 (>= 12), libgcc-s1, libgl1, libegl1, udev, xdg-utils\nHomepage: https://github.com/pauljones0/Deckard\nDescription: Native Rust Stream Deck controller\n")
-    (control / "postinst").write_text("#!/bin/sh\nset -e\nif command -v udevadm >/dev/null; then\n udevadm control --reload-rules || true\n udevadm trigger --subsystem-match=usb || true\n udevadm trigger --subsystem-match=hidraw || true\nfi\n")
+    (control / "postinst").write_text("#!/bin/sh\nset -e\nif command -v udevadm >/dev/null; then\n udevadm control --reload-rules || true\n udevadm trigger --subsystem-match=usb || true\n udevadm trigger --subsystem-match=hidraw || true\n udevadm trigger --subsystem-match=misc || true\nfi\nif command -v modprobe >/dev/null; then modprobe uinput || true; fi\n")
     (control / "postinst").chmod(0o755)
     run("dpkg-deb", "--build", "--root-owner-group", staging, output / f"deckard-{VERSION}-{ARCH}.deb")
 
@@ -191,6 +191,8 @@ cp -a {staging}/. %{{buildroot}}/
 udevadm control --reload-rules >/dev/null 2>&1 || :
 udevadm trigger --subsystem-match=usb >/dev/null 2>&1 || :
 udevadm trigger --subsystem-match=hidraw >/dev/null 2>&1 || :
+udevadm trigger --subsystem-match=misc >/dev/null 2>&1 || :
+command -v modprobe >/dev/null && modprobe uinput >/dev/null 2>&1 || :
 %files
 /opt/deckard
 /usr/bin/deckard
@@ -263,6 +265,7 @@ def main():
         copy_libraries(prefix)
         shutil.copy2(prefix / "share/deckard/licenses/ubuntu-sources.json", output / f"SOURCES-{ARCH}.json")
         run(prefix / "bin/deckard", "--doctor", cwd=work)
+        run(prefix / "bin/pactl", "--version", cwd=work)
         alias = work / "installed-command"
         alias.symlink_to(prefix / "bin/deckard")
         run(alias, "--doctor", cwd=work)

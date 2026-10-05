@@ -1,4 +1,6 @@
 # Elgato Stream Deck USB and hidraw access for the active desktop user.
+# Native OS input actions use the same Linux uinput interface as the old OS plugin.
+KERNEL=="uinput", SUBSYSTEM=="misc", OPTIONS+="static_node=uinput", TAG+="uaccess"
 SUBSYSTEM=="usb", ATTRS{idVendor}=="0fd9", TAG+="uaccess"
 SUBSYSTEM=="hidraw", ATTRS{idVendor}=="0fd9", TAG+="uaccess"
 # Mirabox 293S and Ulanzi D200; restrict access to the supported product IDs.

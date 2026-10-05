@@ -20,7 +20,7 @@ pub fn run_command(argv: &[String], timeout: Duration) -> Result<String> {
         .and_then(|exe| exe.parent().map(|dir| dir.join(program)))
         .filter(|p| {
             !program.contains('/')
-                && ["ffmpeg", "xdotool", "wtype"].contains(&program.as_str())
+                && ["ffmpeg", "xdotool", "wtype", "pactl"].contains(&program.as_str())
                 && p.is_file()
         });
     let mut child = Command::new(
@@ -81,6 +81,75 @@ pub fn run_command(argv: &[String], timeout: Duration) -> Result<String> {
         }
         std::thread::sleep(Duration::from_millis(5));
     }
+}
+
+/// Preserve explicitly configured legacy shell syntax and detached application launches.
+pub fn run_shell(command: &str, detached: bool) -> Result<()> {
+    ensure!(!command.trim().is_empty(), "shell command is empty");
+    if !detached {
+        run_command(
+            &["/bin/sh".into(), "-c".into(), command.into()],
+            Duration::from_secs(5),
+        )?;
+        return Ok(());
+    }
+    launch_argv(&["/bin/sh", "-c", command])
+}
+pub fn launch(path: &str) -> Result<()> {
+    ensure!(!path.is_empty(), "application path is empty");
+    let argv = desktop_argv(path)?;
+    launch_argv(&argv.iter().map(String::as_str).collect::<Vec<_>>())
+}
+fn desktop_argv(command: &str) -> Result<Vec<String>> {
+    if std::path::Path::new(command).is_file() {
+        return Ok(vec![command.into()]);
+    }
+    let argv = shell_words::split(command)?
+        .into_iter()
+        .filter(|word| !["%f", "%F", "%u", "%U", "%i", "%c", "%k"].contains(&word.as_str()))
+        .map(|word| word.replace("%%", "%"))
+        .collect::<Vec<_>>();
+    ensure!(!argv.is_empty(), "desktop application command is empty");
+    ensure!(
+        argv.iter()
+            .all(|word| !regex::Regex::new(r"%[fFuUick]").unwrap().is_match(word)),
+        "embedded desktop field codes need explicit arguments"
+    );
+    Ok(argv)
+}
+fn launch_argv(argv: &[&str]) -> Result<()> {
+    use std::sync::atomic::AtomicUsize;
+    static ACTIVE: AtomicUsize = AtomicUsize::new(0);
+    ACTIVE
+        .try_update(Ordering::SeqCst, Ordering::SeqCst, |n| {
+            (n < 32).then_some(n + 1)
+        })
+        .map_err(|_| anyhow::anyhow!("32 detached launches are still running"))?;
+    let child = Command::new(argv[0])
+        .args(&argv[1..])
+        .current_dir(
+            std::env::var_os("HOME")
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|| "/".into()),
+        )
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .process_group(0)
+        .spawn();
+    match child {
+        Ok(mut child) => {
+            std::thread::spawn(move || {
+                let _ = child.wait();
+                ACTIVE.fetch_sub(1, Ordering::SeqCst);
+            });
+        }
+        Err(error) => {
+            ACTIVE.fetch_sub(1, Ordering::SeqCst);
+            return Err(error.into());
+        }
+    }
+    Ok(())
 }
 fn query(args: &[&str]) -> Option<String> {
     run_command(
@@ -403,6 +472,22 @@ pub fn watch(shared: Shared, stop: Arc<AtomicBool>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn desktop_exec_keeps_quoted_arguments_and_removes_empty_file_placeholders() {
+        assert_eq!(
+            desktop_argv("firefox --new-window 'https://example.com/path with spaces' %U").unwrap(),
+            [
+                "firefox",
+                "--new-window",
+                "https://example.com/path with spaces"
+            ]
+        );
+        assert_eq!(
+            desktop_argv("printf '%% $(literal)' ").unwrap(),
+            ["printf", "% $(literal)"]
+        );
+        assert!(desktop_argv("app --url=%u").is_err());
+    }
     #[test]
     fn process_timeout_is_bounded_and_no_shell_interpolation_occurs() {
         let start = Instant::now();

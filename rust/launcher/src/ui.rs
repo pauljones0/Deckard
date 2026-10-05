@@ -30,7 +30,12 @@ pub fn run(shared: Shared, events: SyncSender<InputEvent>, signal: Arc<AtomicBoo
         options,
         Box::new(move |cc| {
             cc.egui_ctx.set_visuals(egui::Visuals::dark());
-            Ok(Box::new(App::new(shared, events, signal)))
+            Ok(Box::new(App::new(
+                shared,
+                events,
+                signal,
+                cc.egui_ctx.clone(),
+            )))
         }),
     )
     .map_err(|error| anyhow::anyhow!(error.to_string()))
@@ -41,6 +46,9 @@ enum Task {
     Ai(Value),
 }
 struct App {
+    repaint: egui::Context,
+    watch_stop: Arc<AtomicBool>,
+    watch_thread: Option<std::thread::JoinHandle<()>>,
     shared: Shared,
     events: SyncSender<InputEvent>,
     signal: Arc<AtomicBool>,
@@ -58,6 +66,7 @@ struct App {
     page_name: String,
     path: String,
     notice: String,
+    migration_report: Option<Value>,
     textures: HashMap<u8, (u64, egui::TextureHandle)>,
     settings: String,
     settings_revision: u64,
@@ -79,7 +88,12 @@ struct App {
     hidden: bool,
 }
 impl App {
-    fn new(shared: Shared, events: SyncSender<InputEvent>, signal: Arc<AtomicBool>) -> Self {
+    fn new(
+        shared: Shared,
+        events: SyncSender<InputEvent>,
+        signal: Arc<AtomicBool>,
+        repaint: egui::Context,
+    ) -> Self {
         let engine = shared.lock().unwrap();
         let page = engine
             .docs
@@ -92,7 +106,55 @@ impl App {
         let settings_revision = engine.docs.revision;
         drop(engine);
         let (send, receive) = mpsc::sync_channel(4);
+        let watch_stop = Arc::new(AtomicBool::new(false));
+        let stop = watch_stop.clone();
+        let watched = shared.clone();
+        let context = repaint.clone();
+        let watch_signal = signal.clone();
+        let watch_thread = std::thread::spawn(move || {
+            let mut previous = None;
+            while !stop.load(Ordering::Relaxed) {
+                let signature = {
+                    let engine = watched.lock().unwrap();
+                    let mut frames: Vec<_> = engine
+                        .devices
+                        .iter()
+                        .map(|(id, d)| {
+                            (
+                                id.clone(),
+                                d.frame.as_ref().map(|frame| {
+                                    frame
+                                        .tiles
+                                        .iter()
+                                        .chain(frame.strip.iter())
+                                        .map(|tile| (tile.key, tile.identity))
+                                        .collect::<Vec<_>>()
+                                }),
+                            )
+                        })
+                        .collect();
+                    frames.sort_unstable();
+                    (
+                        engine.generation,
+                        engine.docs.revision,
+                        engine.errors.back().cloned(),
+                        engine.quit,
+                        engine.show_window,
+                        watch_signal.load(Ordering::Relaxed),
+                        frames,
+                    )
+                };
+                if previous.as_ref() != Some(&signature) {
+                    context.request_repaint();
+                    previous = Some(signature);
+                }
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+        });
         Self {
+            repaint,
+            watch_stop,
+            watch_thread: Some(watch_thread),
             shared,
             events,
             signal,
@@ -110,6 +172,7 @@ impl App {
             page_name: String::new(),
             path: String::new(),
             notice: String::new(),
+            migration_report: None,
             textures: HashMap::new(),
             settings,
             settings_revision,
@@ -202,9 +265,11 @@ impl App {
         }
         self.busy = true;
         let send = self.send.clone();
+        let context = self.repaint.clone();
         std::thread::spawn(move || {
             let result = work().unwrap_or_else(|e| Task::Message(e.to_string()));
             let _ = send.send(result);
+            context.request_repaint();
         });
     }
     fn editor(&mut self, ctx: &egui::Context, ui: &mut egui::Ui) {
@@ -286,7 +351,7 @@ impl App {
             egui::ComboBox::from_id_salt("pages").selected_text(&self.page).show_ui(left,|ui|{for page in pages{if ui.selectable_value(&mut self.page,page.clone(),&page).clicked()&&!self.serial.is_empty(){self.command("change-page",json!({"serial":self.serial,"page":self.page}));}}});
             left.add_space(20.0);
             let device=devices.iter().find(|d|d.serial==self.serial);let kind=device.map(|d|d.kind).unwrap_or(deckard_core::engine::fake_kind("plus").unwrap());let rotation=self.shared.lock().unwrap().docs.settings["devices"][&self.serial]["rotation"].as_u64().unwrap_or(0)as u16;let(rows,cols)=render::layout(kind,rotation);
-            if let Some(frame)=device.and_then(|d|d.frame.as_ref()){for tile in frame.tiles.iter().chain(frame.strip.iter()){if self.textures.get(&tile.key).is_none_or(|(identity,_)|*identity!=tile.identity){let texture=ctx.load_texture(format!("tile{}",tile.key),egui::ColorImage::from_rgb([tile.width as usize,tile.height as usize],&tile.rgb),egui::TextureOptions::LINEAR);self.textures.insert(tile.key,(tile.identity,texture));}}}
+            if let Some(frame)=device.and_then(|d|d.frame.as_ref()){for tile in frame.tiles.iter().chain(frame.strip.iter()){if self.textures.get(&tile.key).is_none_or(|(identity,_)|*identity!=tile.identity){let image=egui::ColorImage::from_rgb([tile.width as usize,tile.height as usize],&tile.rgb);if let Some((identity,texture))=self.textures.get_mut(&tile.key){texture.set(image,egui::TextureOptions::LINEAR);*identity=tile.identity;}else{let texture=ctx.load_texture(format!("tile{}",tile.key),image,egui::TextureOptions::LINEAR);self.textures.insert(tile.key,(tile.identity,texture));}}}}
             let size=((left.available_width()-f32::from(cols)*8.0)/f32::from(cols)).clamp(16.0,100.0);
             egui::Grid::new("key-grid").spacing([8.0,8.0]).show(left,|ui|{for y in 0..rows{for x in 0..cols{let input=format!("{x}x{y}");let physical=(0..kind.key_count()).find(|p|render::logical_input(kind,*p,rotation)==input).unwrap_or(0);let selected=self.family=="keys"&&self.input==input;let clicked=if let Some((_,texture))=self.textures.get(&physical){ui.add(egui::Button::image(egui::Image::new((texture.id(),Vec2::splat(size)))).selected(selected)).clicked()}else{ui.add_sized([size,size],egui::Button::new(&input).selected(selected)).clicked()};
 if clicked{self.family="keys".into();self.input=input;self.state=0;}}ui.end_row();}});
@@ -550,6 +615,63 @@ if ui.button("Apply state JSON").clicked(){match serde_json::from_str(&self.raw)
     }
     fn settings(&mut self, ui: &mut egui::Ui) {
         ui.heading("Settings");
+        ui.label("Restore supported actions from old OS and Media plugin pages. Originals are backed up before conversion.");
+        ui.horizontal(|ui| {
+            for (label, method) in [
+                ("Inspect old plugin actions", "inspect-legacy-actions"),
+                ("Migrate supported actions", "migrate-legacy-actions"),
+            ] {
+                if ui.button(label).clicked() {
+                    let result = self
+                        .shared
+                        .lock()
+                        .unwrap()
+                        .command(&json!({"method":method}));
+                    match result {
+                        Ok(report) => {
+                            self.migration_report = Some(report);
+                            self.selected.clear();
+                            let engine = self.shared.lock().unwrap();
+                            self.settings = serde_json::to_string_pretty(&engine.docs.settings)
+                                .unwrap_or_default();
+                            self.settings_revision = engine.docs.revision;
+                        }
+                        Err(error) => self.notice = error.to_string(),
+                    }
+                }
+            }
+        });
+        if let Some(report) = &self.migration_report
+            && let Some(documents) = report["documents"].as_array()
+        {
+            let converted: usize = documents
+                .iter()
+                .map(|d| d["converted"].as_array().map_or(0, Vec::len))
+                .sum();
+            let remaining: usize = documents
+                .iter()
+                .map(|d| d["remaining"].as_array().map_or(0, Vec::len))
+                .sum();
+            ui.label(format!(
+                "{converted} supported actions; {remaining} actions still need a replacement."
+            ));
+            ui.label("Media conversions restore playback controls. Plugin-generated artwork and live labels require a separate native implementation.");
+            for document in documents {
+                if let Some(items) = document["remaining"].as_array() {
+                    for item in items {
+                        ui.label(format!(
+                            "{} · {} {} · {}: {}",
+                            item["document"].as_str().unwrap_or(""),
+                            item["family"].as_str().unwrap_or(""),
+                            item["input"].as_str().unwrap_or(""),
+                            item["id"].as_str().unwrap_or(""),
+                            item["reason"].as_str().unwrap_or("")
+                        ));
+                    }
+                }
+            }
+        }
+        ui.separator();
         let helper = std::env::current_exe()
             .ok()
             .and_then(|p| p.parent().map(|p| p.join("install-udev.sh")))
@@ -685,6 +807,14 @@ if ui.button("Apply state JSON").clicked(){match serde_json::from_str(&self.raw)
         ui.label("StreamController by Core447; Deckard improvements by nazbert and contributors. GPL-3.0-or-later.");
     }
 }
+impl Drop for App {
+    fn drop(&mut self) {
+        self.watch_stop.store(true, Ordering::Relaxed);
+        if let Some(thread) = self.watch_thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         if self.signal.load(Ordering::Relaxed) || self.shared.lock().unwrap().quit {
@@ -810,7 +940,12 @@ impl eframe::App for App {
                 _ => self.settings(ui),
             });
         });
-        ctx.request_repaint_after(std::time::Duration::from_millis(50));
+        // Input events and changed engine frames wake the UI. Static pages stay asleep.
+        if std::env::var_os("DECKARD_UI_CAPTURE").is_some()
+            || std::env::var_os("DECKARD_UI_SMOKE_TEST").is_some()
+        {
+            ctx.request_repaint_after(std::time::Duration::from_millis(100));
+        }
     }
 }
 fn set_nested(value: &mut Value, path: &[&str], new: Value) {
@@ -875,13 +1010,150 @@ fn action_definitions(plugins: &[plugin::Installed]) -> Vec<(String, String, Vec
             ));
         }
     }
+    let field = |key: &str, label: &str, kind: &str, default: Value| plugin::Field {
+        key: key.into(),
+        label: label.into(),
+        kind: kind.into(),
+        default,
+    };
+    result.extend([
+        (
+            "native::previous-page".into(),
+            "Previous page".into(),
+            vec![],
+        ),
+        (
+            "native::adjust-brightness".into(),
+            "Adjust brightness".into(),
+            vec![
+                field("adjust", "Change (%)", "number", json!(5)),
+                field("min_brightness", "Minimum (%)", "number", json!(0)),
+            ],
+        ),
+        (
+            "native::audio".into(),
+            "Audio volume / mute".into(),
+            vec![
+                field(
+                    "target",
+                    "output / microphone / stream:ID",
+                    "string",
+                    json!("output"),
+                ),
+                field(
+                    "operation",
+                    "toggle-mute / set-volume / adjust-volume",
+                    "string",
+                    json!("toggle-mute"),
+                ),
+                field("value", "Volume or change (%)", "number", json!(5)),
+            ],
+        ),
+        (
+            "native::mixer".into(),
+            "Application volume mixer".into(),
+            vec![
+                field(
+                    "operation",
+                    "open / exit / left / right",
+                    "string",
+                    json!("open"),
+                ),
+                field("increments", "Volume step (%)", "number", json!(10)),
+            ],
+        ),
+        (
+            "native::obs".into(),
+            "OBS Studio".into(),
+            vec![
+                field(
+                    "connection",
+                    "Connection profile",
+                    "string",
+                    json!("default"),
+                ),
+                field(
+                    "operation",
+                    "OBS WebSocket operation",
+                    "string",
+                    json!("ToggleRecord"),
+                ),
+                field("data", "Request fields as JSON object", "array", json!({})),
+            ],
+        ),
+        (
+            "native::input".into(),
+            "Linux key sequence / mouse".into(),
+            vec![
+                field("operation", "keys / click / move", "string", json!("keys")),
+                field("keys", "Evdev [code, value] pairs", "array", json!([])),
+                field("delay", "Delay per key (seconds)", "number", json!(0.02)),
+                field("button", "left / middle / right", "string", json!("left")),
+                field("x", "Mouse horizontal movement", "number", json!(0)),
+                field("y", "Mouse vertical movement", "number", json!(0)),
+            ],
+        ),
+        (
+            "native::launch".into(),
+            "Launch application".into(),
+            vec![field("path", "Application executable", "string", json!(""))],
+        ),
+        (
+            "native::delay".into(),
+            "Delay action sequence".into(),
+            vec![field("delay", "Delay (0–5 seconds)", "number", json!(0))],
+        ),
+    ]);
+    result.push((
+        "native::media".into(),
+        "Media playback (MPRIS)".into(),
+        vec![
+            plugin::Field {
+                key: "method".into(),
+                label: "Play / Pause / PlayPause / Next / Previous / Stop".into(),
+                kind: "string".into(),
+                default: json!("PlayPause"),
+            },
+            plugin::Field {
+                key: "player".into(),
+                label: "Player identity or bus name (empty = all players)".into(),
+                kind: "string".into(),
+                default: json!(""),
+            },
+        ],
+    ));
+    result.push((
+        "native::shell".into(),
+        "Run shell command".into(),
+        vec![
+            plugin::Field {
+                key: "command".into(),
+                label: "Shell command".into(),
+                kind: "string".into(),
+                default: json!(""),
+            },
+            plugin::Field {
+                key: "detached".into(),
+                label: "Launch in background".into(),
+                kind: "bool".into(),
+                default: json!(true),
+            },
+        ],
+    ));
     result
 }
 fn has_privileged_action(v: &Value) -> bool {
-    if v["id"]
-        .as_str()
-        .is_some_and(|id| ["native::command", "native::text", "native::hotkey"].contains(&id))
-    {
+    if v["id"].as_str().is_some_and(|id| {
+        [
+            "native::command",
+            "native::shell",
+            "native::launch",
+            "native::input",
+            "native::text",
+            "native::hotkey",
+        ]
+        .contains(&id)
+    }) {
         return true;
     }
     match v {

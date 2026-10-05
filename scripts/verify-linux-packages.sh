@@ -13,6 +13,7 @@ export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
 apt-get install -y --no-install-recommends "/packages/deckard-$version-$arch.deb" xvfb xauth dbus-x11 libgl1-mesa-dri > /tmp/install.log
 /usr/bin/deckard --doctor
+/opt/deckard/bin/pactl --version
 /usr/bin/deckard --smoke-test --skip-load-hardware-decks --fake-deck-model studio --fake-deck-model mirabox-293s --fake-deck-model ulanzi-d200 --data /tmp/deckard-models
 LIBGL_ALWAYS_SOFTWARE=1 dbus-run-session -- xvfb-run -a /usr/bin/deckard --ui-smoke-test --skip-load-hardware-decks --fake-deck-model plus --data /tmp/deckard-deb
 /opt/deckard/bin/ffmpeg -loglevel error -f lavfi -i color=c=red:s=16x16 -frames:v 1 -f rawvideo -pix_fmt rgba -threads 1 /tmp/frame.rgba
@@ -31,6 +32,7 @@ version="$1"
 arch="$2"
 dnf install -y "/packages/deckard-$version-$arch.rpm" xorg-x11-server-Xvfb xorg-x11-xauth dbus-daemon mesa-dri-drivers > /tmp/install.log 2>&1
 /usr/bin/deckard --doctor
+/opt/deckard/bin/pactl --version
 LIBGL_ALWAYS_SOFTWARE=1 dbus-run-session -- xvfb-run -a /usr/bin/deckard --ui-smoke-test --skip-load-hardware-decks --fake-deck-model plus --data /tmp/deckard-rpm
 printf '%s\n' 'Fedora: installed RPM and GUI passed.'
 VERIFY
