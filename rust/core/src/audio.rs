@@ -159,7 +159,7 @@ pub fn control(target: &str, operation: &str, value: f64) -> Result<()> {
         "toggle-mute" => (mute, "toggle".into()),
         "set-volume" => {
             ensure!((0.0..=100.0).contains(&value), "volume must be 0–100");
-            (volume, format!("{value:.2}%"))
+            (volume, pulse_units(value))
         }
         "adjust-volume" => {
             ensure!(
@@ -187,10 +187,7 @@ pub fn control(target: &str, operation: &str, value: f64) -> Result<()> {
                     .context("cannot read audio volume")?[1]
                     .parse::<f64>()?
             };
-            (
-                volume,
-                format!("{:.2}%", (current + value).clamp(0.0, 100.0)),
-            )
+            (volume, pulse_units((current + value).clamp(0.0, 100.0)))
         }
         _ => anyhow::bail!("unknown audio operation"),
     };
@@ -199,6 +196,11 @@ pub fn control(target: &str, operation: &str, value: f64) -> Result<()> {
         Duration::from_secs(2),
     )?;
     Ok(())
+}
+fn pulse_units(percent: f64) -> String {
+    // Older pactl treats decimal percent strings as dB. Integer PulseAudio
+    // units are unambiguous on both the bundled 15.x helper and newer clients.
+    ((percent * 65536.0 / 100.0).round() as u32).to_string()
 }
 #[cfg(test)]
 mod tests {
@@ -211,5 +213,12 @@ mod tests {
         assert_eq!(result[0].name, "VLC");
         assert_eq!(result[0].volume, 75.0);
         assert!(result[0].muted);
+    }
+    #[test]
+    fn volume_arguments_use_unambiguous_pulse_units() {
+        assert_eq!(pulse_units(0.0), "0");
+        assert_eq!(pulse_units(50.0), "32768");
+        assert_eq!(pulse_units(60.0), "39322");
+        assert_eq!(pulse_units(100.0), "65536");
     }
 }

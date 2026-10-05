@@ -253,6 +253,12 @@ def main():
             print(
                 "PASS: five-plugin migration, exact private backups, sticky migration, OBS credentials, unknown actions, idempotence, detached command, brightness, mixer open/dial/mute/live labels/return"
             )
+        except Exception:
+            print("Native status:", rpc(data, "status"), flush=True)
+            print("Fixture stream:", stream(), flush=True)
+            log.flush()
+            print((data / "application.log").read_text(), flush=True)
+            raise
         finally:
             if process.poll() is None:
                 try:
