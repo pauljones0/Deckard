@@ -38,7 +38,7 @@ requests==2.32.3          # every app-side fetch goes through src/backend/http_c
 rpyc==6.0.1               # src/backend/PluginManager/ActionCore.py (plugin backend RPC)
 setproctitle==1.3.5       # main.py
 streamcontroller-plugin-tools==2.0.2  # ecosystem pin: no app code imports it, plugin backends do. A backend launched with no venv of its own runs on sys.executable, so `from streamcontroller_plugin_tools import BackendBase` resolves out of this environment
-streamcontroller-streamdeck==0.1.5    # StreamDeck.*, the pinned/patched Stream Deck device library (main.py + DeckManagement)
+streamcontroller-streamdeck==0.2.1    # StreamDeck.*, the pinned/patched Stream Deck device library (main.py + DeckManagement)
 typing_extensions==4.14.1  # GtkHelper/*
 usb-monitor==1.23         # DeckManager.py (import name: usbmonitor)
 websocket-client==1.8.0   # ecosystem pin: HomeAssistantPlugin runtime-imports `websocket` and ships no requirements.txt of its own

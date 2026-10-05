@@ -1,0 +1,19 @@
+[workspace]
+members = ["rust/core", "rust/launcher", "rust/plugin-example"]
+resolver = "2"
+exclude = ["vendor/elgato-streamdeck"]
+
+[workspace.package]
+version = "0.4.0"
+edition = "2024"
+rust-version = "1.99"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/pauljones0/Deckard"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "debuginfo"
+
+[patch.crates-io]
+elgato-streamdeck = { path = "vendor/elgato-streamdeck" }

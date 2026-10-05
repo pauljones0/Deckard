@@ -1,0 +1,11 @@
+.git
+.venv
+target
+dist
+build
+*.so
+*.log
+**/__pycache__
+.claude
+localdev
+data

@@ -37,6 +37,7 @@ from src.backend.WindowGrabber.Integrations.Gnome import Gnome
 from src.backend.WindowGrabber.Integrations.Sway import Sway
 from src.backend.WindowGrabber.Integrations.X11 import X11
 from src.backend.WindowGrabber.Integrations.KDE import KDE
+from src.backend.WindowGrabber.Integrations.Mangowm import MangoWM
 from src.api import notify_foreground_window_changed
 
 
@@ -51,6 +52,8 @@ def select_integration_class(environment_components: list[str], server: str | No
     # the same IPC.
     if any("sway" in component for component in environment_components):
         return Sway
+    if any(component in ("mango", "mangowm") for component in environment_components):
+        return MangoWM
     if server == "x11":
         return X11
     if "kde" in environment_components:

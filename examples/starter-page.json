@@ -1,0 +1,144 @@
+{
+  "keys": {
+    "0x0": {
+      "states": {
+        "0": {
+          "labels": {
+            "bottom": {
+              "text": "Hello Rust"
+            }
+          },
+          "background": {
+            "color": [
+              36,
+              100,
+              170,
+              255
+            ]
+          },
+          "actions": [
+            {
+              "id": "example::hello",
+              "settings": {
+                "label": "Running in Rust"
+              }
+            }
+          ]
+        }
+      }
+    },
+    "1x0": {
+      "states": {
+        "0": {
+          "labels": {
+            "bottom": {
+              "text": "Project"
+            }
+          },
+          "background": {
+            "color": [
+              40,
+              120,
+              80,
+              255
+            ]
+          },
+          "actions": [
+            {
+              "id": "native::url",
+              "settings": {
+                "url": "https://github.com/pauljones0/Deckard"
+              }
+            }
+          ]
+        }
+      }
+    },
+    "2x0": {
+      "states": {
+        "0": {
+          "labels": {
+            "bottom": {
+              "text": "Dim"
+            }
+          },
+          "background": {
+            "color": [
+              90,
+              70,
+              150,
+              255
+            ]
+          },
+          "actions": [
+            {
+              "id": "native::brightness",
+              "settings": {
+                "value": 35
+              }
+            }
+          ]
+        }
+      }
+    },
+    "3x0": {
+      "states": {
+        "0": {
+          "labels": {
+            "bottom": {
+              "text": "Bright"
+            }
+          },
+          "background": {
+            "color": [
+              150,
+              100,
+              40,
+              255
+            ]
+          },
+          "actions": [
+            {
+              "id": "native::brightness",
+              "settings": {
+                "value": 100
+              }
+            }
+          ]
+        }
+      }
+    },
+    "0x1": {
+      "states": {
+        "0": {
+          "labels": {
+            "bottom": {
+              "text": "Sleep"
+            }
+          },
+          "background": {
+            "color": [
+              70,
+              70,
+              80,
+              255
+            ]
+          },
+          "actions": [
+            {
+              "id": "native::sleep",
+              "settings": {}
+            }
+          ]
+        }
+      }
+    }
+  },
+  "dials": {},
+  "touchscreens": {},
+  "settings": {},
+  "background": {
+    "show": true,
+    "overwrite": true
+  }
+}

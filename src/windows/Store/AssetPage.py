@@ -230,6 +230,7 @@ class StoreAssetPreview(StorePreview):
         page = self.store_page
         page.set_info_visible(True)
 
+        page.info_page.set_source_url(self.asset_data.github)
         page.info_page.set_asset_name(self.asset_data.asset_name)
         page.info_page.set_description(self.asset_data.description)
         page.info_page.set_author(self.asset_data.author)

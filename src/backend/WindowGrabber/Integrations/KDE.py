@@ -174,8 +174,8 @@ class KDE(Integration):
             if out_bytes is None:
                 return None
             title = out_bytes.decode().strip()
-            if title is None or len(title) < 2:
-                return None
+            # Desktop focus often has an empty title; retain it so the default
+            # page returns when the last application is minimised (upstream #640).
             return cast("str | None", title)
         except CalledProcessError as e:
             log.error(f"An error occurred while running kdotool: {e}")
@@ -191,8 +191,6 @@ class KDE(Integration):
             if out_bytes is None:
                 return None
             window_class = out_bytes.decode().strip()
-            if window_class is None or len(window_class) < 4:
-                return None
             return cast("str | None", window_class)
         except CalledProcessError as e:
             log.error(f"An error occurred while running kdotool: {e}")

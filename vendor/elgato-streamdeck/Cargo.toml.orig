@@ -1,0 +1,33 @@
+[package]
+name = "elgato-streamdeck"
+description = "HidApi driver for Elgato Stream Deck devices"
+authors = ["TheJebForge", "nekename"]
+version = "0.13.2"
+edition = "2024"
+repository = "https://github.com/OpenActionAPI/rust-elgato-streamdeck"
+license = "MPL-2.0"
+
+[dependencies]
+hidapi = "2.6"
+image = { version = "0.25", default-features = false, features = [
+  "bmp",
+  "jpeg",
+] }
+tokio = { version = "1", optional = true }
+strum = { version = "0.27", features = ["derive"], optional = true }
+
+[features]
+async = [
+  "tokio",
+  "tokio/sync",
+  "tokio/rt-multi-thread",
+  "tokio/time"
+]
+strum = ["dep:strum"]
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]

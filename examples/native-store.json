@@ -1,0 +1,14 @@
+[
+  {
+    "kind": "plugin",
+    "name": "Your native plugin",
+    "description": "Example catalog entry: replace the URL and SHA-256 with your published package.",
+    "url": "https://example.com/plugin-x86_64.zip",
+    "sha256": "REPLACE_WITH_SHA256",
+    "source": "https://example.com/source",
+    "branch": "main",
+    "architectures": [
+      "x86_64"
+    ]
+  }
+]

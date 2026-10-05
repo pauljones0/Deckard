@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Deckard
+Comment=Configure and control Stream Deck devices
+Exec=deckard
+Icon=io.github.nazbert.Deckard
+Terminal=false
+Categories=Utility;
+StartupNotify=true
+StartupWMClass=io.github.nazbert.Deckard

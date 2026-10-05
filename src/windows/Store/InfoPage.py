@@ -53,6 +53,10 @@ class InfoPage(Gtk.Box):
         self.author_row = AttributeRow(title="Author:", attr="Error")
         self.about_group.add(self.author_row)
 
+        self.source_url_row = OriginalURL()
+        self.source_url_row.set_title("Source:")
+        self.about_group.add(self.source_url_row)
+
         self.version_row = AttributeRow(title="Version:", attr="Error")
         self.about_group.add(self.version_row)
 
@@ -73,6 +77,9 @@ class InfoPage(Gtk.Box):
 
         self.license_description = DescriptionRow(title="License Description:", desc="N/A")
         self.legal_group.add(self.license_description)
+
+    def set_source_url(self, url: str | None) -> None:
+        self.source_url_row.set_url(url)
 
     def set_asset_name(self, name: str | None) -> None:
         self.name_row.set_attribute(name)

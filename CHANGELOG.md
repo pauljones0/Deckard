@@ -1,3 +1,11 @@
+# 0.4.0 — Native Rust application
+
+- Replace the Python/GTK runtime and plugin widget API with Rust/egui and executable JSON-RPC API 1.
+- Audit original StreamController through 0f439967 and retain nazbert/Deckard through a3609c7. See docs/upstream-audit.md for commit-by-commit disposition.
+- Add architecture-specific AppImage, DEB, RPM and portable Linux releases, bundled media/input helpers, native plugin/page packages and README download links.
+- Add native regression tests for rendering, persistence, device state, CLI/IPC, plugin boundaries and transactional installs.
+- Preserve old page documents and unknown plugin settings; Python plugin actions require native replacements.
+
 # Changelog
 
 Notable changes to this fork. Versions are the fork's own release line (root

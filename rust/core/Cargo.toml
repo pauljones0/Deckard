@@ -1,0 +1,26 @@
+[package]
+name = "deckard-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+serde_json = { version = "1", features = ["preserve_order"] }
+tempfile = "3"
+image = { version = "0.25", default-features = false, features = ["png", "bmp", "jpeg", "gif", "webp"] }
+turbojpeg = { version = "1.5.1", default-features = false, features = ["cmake", "require-simd"] }
+
+
+serde = { version = "1", features = ["derive"] }
+anyhow = "1"
+regex = "1"
+sha2 = "0.10"
+hashlink = "0.10"
+gif = "0.13"
+zip = { version = "4", default-features = false, features = ["deflate"] }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+elgato-streamdeck = "0.13.2"
+libc = "0.2"
+fontdue = "0.9"
+resvg = { version = "0.45.1", default-features = false, features = ["text", "raster-images", "system-fonts"] }
