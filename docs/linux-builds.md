@@ -1,6 +1,6 @@
 # Linux release builds
 
-Release 0.4.0 supplies AppImage, DEB, RPM and portable tar.gz builds for x86_64 and aarch64. The builds use Ubuntu 22.04 with glibc 2.35; no Python/GTK runtime is included. The GUI uses egui/OpenGL and supports X11 and Wayland. GPU drivers, libc, the desktop session and system services remain supplied by the host.
+Release 0.4.0 supplies AppImage, DEB, RPM and portable tar.gz builds for x86_64 and aarch64. The builds use Ubuntu 22.04 with glibc 2.35; no Python/GTK runtime is included. The GUI uses egui/OpenGL and supports X11 and Wayland. GPU drivers, libc, the host C++/GCC runtime, the desktop session and system services remain supplied by the host.
 
 ## Reproduce
 
@@ -8,7 +8,7 @@ Release 0.4.0 supplies AppImage, DEB, RPM and portable tar.gz builds for x86_64 
 scripts/build-linux.sh
 ```
 
-Docker installs the compiler and packaging tools, compiles the committed Cargo.lock with Rust 1.99, runs native unit/integration tests, Clippy with warnings denied, formatting checks, JPEG diagnostics, a fake-deck smoke test and GUI startup under isolated Xvfb/D-Bus. The packager then tests the relocated portable GUI, FFmpeg frame output, native plugin RPC and AppImage extract-and-run diagnostics. Artifacts appear in `dist/linux/`. The screenshot is copied out for visual inspection.
+Docker installs the compiler and packaging tools, compiles the committed Cargo.lock with Rust 1.99, runs native unit/integration tests, Clippy with warnings denied, formatting checks, JPEG diagnostics, a fake-deck smoke test and GUI startup under isolated Xvfb/D-Bus. The packager then tests the relocated portable GUI, FFmpeg frame output, native plugin RPC and AppImage extract-and-run diagnostics. Artifacts appear in `dist/linux/`. The screenshot is copied out for visual inspection. Run `scripts/verify-linux-packages.sh` to install and launch the DEB/RPM on fresh Ubuntu 22.04 and Fedora 43 containers, and check the portable GUI and AppImage there. These installation checks also run on both release architectures.
 
 The GitHub workflow uses native `ubuntu-24.04` and `ubuntu-24.04-arm` runners, with the same Ubuntu 22.04 container on each. [GitHub documents both runner architectures](https://docs.github.com/en/actions/reference/runners/github-hosted-runners). A version tag releases artifacts only after both jobs succeed. Build metadata and SHA-256 sums are published separately per architecture.
 

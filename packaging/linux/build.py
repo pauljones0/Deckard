@@ -27,7 +27,7 @@ def run(*args, **kwargs):
 def copy_application(prefix):
     (prefix / "bin").mkdir(parents=True)
     shutil.copy2(ROOT / "target/release/deckard", prefix / "bin/deckard-bin")
-    (prefix / "bin/deckard").write_text('#!/bin/sh\nbundle="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"\nexport PATH="$bundle/bin:$PATH"\nexport LD_LIBRARY_PATH="$bundle/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"\nexec "$bundle/bin/deckard-bin" "$@"\n')
+    (prefix / "bin/deckard").write_text('#!/bin/sh\nbundle="$(CDPATH= cd -- "$(dirname -- "$(readlink -f -- "$0")")/.." && pwd)"\nexport PATH="$bundle/bin:$PATH"\nexport LD_LIBRARY_PATH="$bundle/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"\nexec "$bundle/bin/deckard-bin" "$@"\n')
     (prefix / "bin/deckard").chmod(0o755)
     for program in ("ffmpeg", "xdotool", "wtype"):
         shutil.copy2(shutil.which(program), prefix / "bin" / program)
@@ -55,13 +55,14 @@ def copy_libraries(prefix):
     library.mkdir()
     seeds = list((prefix / "bin").iterdir())
     # Keep graphics drivers on the host. Bundle the client interfaces that egui
-    # dlopens and the FFmpeg/input-helper dependency closure.
+    # dlopens and the FFmpeg/input-helper dependency closure. C++/GCC runtimes
+    # stay on the host too: older copies prevent newer Mesa drivers from loading.
     triplet = "x86_64-linux-gnu" if ARCH == "x86_64" else "aarch64-linux-gnu"
     system = Path("/usr/lib") / triplet
     for pattern in ("libxkbcommon.so.*", "libxkbcommon-x11.so.*", "libwayland-client.so.*", "libwayland-cursor.so.*", "libX11.so.*", "libXcursor.so.*", "libXi.so.*", "libXrandr.so.*"):
         seeds.extend(system.glob(pattern))
     visited = set()
-    excluded = re.compile(r"^(libc\.so|libm\.so|libdl\.so|libpthread\.so|librt\.so|ld-linux|libGL[EX]|libGL\.so|libEGL|libGLdispatch|libGLES|libgbm|libdrm)")
+    excluded = re.compile(r"^(libc\.so|libm\.so|libdl\.so|libpthread\.so|librt\.so|libstdc\+\+\.so|libgcc_s\.so|ld-linux|libGL[EX]|libGL\.so|libEGL|libGLdispatch|libGLES|libgbm|libdrm)")
     while seeds:
         path = seeds.pop()
         if str(path) in visited:
@@ -157,7 +158,7 @@ def deb(prefix, output, work):
     control = staging / "DEBIAN"
     control.mkdir()
     arch = "amd64" if ARCH == "x86_64" else "arm64"
-    (control / "control").write_text(f"Package: deckard\nVersion: {VERSION}\nArchitecture: {arch}\nMaintainer: Deckard contributors\nSection: utils\nPriority: optional\nDepends: libc6 (>= 2.35), libgl1, libegl1, udev, xdg-utils\nHomepage: https://github.com/pauljones0/Deckard\nDescription: Native Rust Stream Deck controller\n")
+    (control / "control").write_text(f"Package: deckard\nVersion: {VERSION}\nArchitecture: {arch}\nMaintainer: Deckard contributors\nSection: utils\nPriority: optional\nDepends: libc6 (>= 2.35), libstdc++6 (>= 12), libgcc-s1, libgl1, libegl1, udev, xdg-utils\nHomepage: https://github.com/pauljones0/Deckard\nDescription: Native Rust Stream Deck controller\n")
     (control / "postinst").write_text("#!/bin/sh\nset -e\nif command -v udevadm >/dev/null; then\n udevadm control --reload-rules || true\n udevadm trigger --subsystem-match=usb || true\n udevadm trigger --subsystem-match=hidraw || true\nfi\n")
     (control / "postinst").chmod(0o755)
     run("dpkg-deb", "--build", "--root-owner-group", staging, output / f"deckard-{VERSION}-{ARCH}.deb")
@@ -178,7 +179,7 @@ Summary: Native Rust Stream Deck controller
 License: GPL-3.0-or-later
 URL: https://github.com/pauljones0/Deckard
 AutoReqProv: no
-Requires: glibc >= 2.35, libglvnd-glx, libglvnd-egl, systemd-udev, xdg-utils
+Requires: glibc >= 2.35, libstdc++, libgcc, libglvnd-glx, libglvnd-egl, systemd-udev, xdg-utils
 %global _build_id_links none
 %global __os_install_post %{{nil}}
 %description
@@ -262,6 +263,9 @@ def main():
         copy_libraries(prefix)
         shutil.copy2(prefix / "share/deckard/licenses/ubuntu-sources.json", output / f"SOURCES-{ARCH}.json")
         run(prefix / "bin/deckard", "--doctor", cwd=work)
+        alias = work / "installed-command"
+        alias.symlink_to(prefix / "bin/deckard")
+        run(alias, "--doctor", cwd=work)
         # Exercise helpers and the bundled plugin after relocation, without host FFmpeg.
         pixels = subprocess.check_output([str(prefix / "bin/ffmpeg"), "-loglevel", "error", "-f", "lavfi", "-i", "color=c=red:s=16x16", "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgba", "-threads", "1", "pipe:1"], cwd=work)
         if len(pixels) != 16 * 16 * 4 or pixels[0] < 240 or pixels[1] > 10:
