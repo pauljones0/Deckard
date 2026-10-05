@@ -1049,6 +1049,7 @@ fn action_loop(shared: Shared, events: Receiver<InputEvent>, stop: Arc<AtomicBoo
     let mut processes = HashMap::<String, plugin::Process>::new();
     let mut plugin_revision = 0;
     let mut holds = HashMap::<(String, String, String), (Instant, InputEvent)>::new();
+    let mut wake_gestures = HashSet::new();
     while !stop.load(Ordering::Relaxed) {
         let revision = shared.lock().unwrap().plugin_revision;
         if revision != plugin_revision {
@@ -1098,8 +1099,10 @@ fn action_loop(shared: Shared, events: Receiver<InputEvent>, stop: Arc<AtomicBoo
                 ),
             );
         }
+        let suppressed = wake_gestures.contains(&hold_key);
         if event.event == "release" {
             holds.remove(&hold_key);
+            wake_gestures.remove(&hold_key);
         }
         let actions = {
             let mut engine = shared.lock().unwrap();
@@ -1107,8 +1110,11 @@ fn action_loop(shared: Shared, events: Receiver<InputEvent>, stop: Arc<AtomicBoo
             let Some(device) = engine.devices.get_mut(&event.serial) else {
                 continue;
             };
-            device.sleeping = false;
-            device.last_input = Instant::now();
+            // A release/hold following a Sleep action must not immediately wake the deck.
+            if !["release", "long-press"].contains(&event.event.as_str()) {
+                device.sleeping = false;
+                device.last_input = Instant::now();
+            }
             if event.family == "keys" {
                 if event.event == "press" {
                     device.pressed.insert(event.input.clone());
@@ -1117,7 +1123,12 @@ fn action_loop(shared: Shared, events: Receiver<InputEvent>, stop: Arc<AtomicBoo
                 }
             }
             engine.generation += 1;
-            if waking || engine.locked {
+            if waking || engine.locked || suppressed {
+                // Consume the entire wake gesture, including release and held-input actions.
+                if event.event == "press" {
+                    wake_gestures.insert(hold_key.clone());
+                    holds.remove(&hold_key);
+                }
                 continue;
             }
             let Some(config) = engine.config(&event.serial) else {
@@ -1354,6 +1365,75 @@ pub fn fake_kind(name: &str) -> Result<Kind> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn sleep_action_survives_release_and_wake_gesture_does_not_run_actions() {
+        let tmp = tempfile::tempdir().unwrap();
+        let shared = Engine::open(tmp.path().into()).unwrap();
+        shared
+            .lock()
+            .unwrap()
+            .docs
+            .put(
+                "Main",
+                json!({"keys":{"0x0":{"states":{"0":{"actions":[
+                    {"id":"native::sleep","event":"press"},
+                    {"id":"native::brightness","event":"release","settings":{"value":99}},
+                    {"id":"native::brightness","event":"long-press","settings":{"value":88}}
+                ]}}}}}),
+            )
+            .unwrap();
+        let runtime = Runtime::start(shared.clone(), vec![Kind::Plus], false).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while shared.lock().unwrap().devices.is_empty() {
+            assert!(Instant::now() < deadline);
+            thread::sleep(Duration::from_millis(10));
+        }
+        let serial = shared
+            .lock()
+            .unwrap()
+            .devices
+            .keys()
+            .next()
+            .unwrap()
+            .clone();
+        let send = |event: &str| {
+            runtime
+                .events
+                .send(InputEvent {
+                    serial: serial.clone(),
+                    family: "keys".into(),
+                    input: "0x0".into(),
+                    event: event.into(),
+                    value: 1,
+                })
+                .unwrap()
+        };
+        let wait = |predicate: &dyn Fn(&Device) -> bool| {
+            let deadline = Instant::now() + Duration::from_secs(3);
+            loop {
+                if predicate(&shared.lock().unwrap().devices[&serial]) {
+                    break;
+                }
+                assert!(Instant::now() < deadline, "input transition timed out");
+                thread::sleep(Duration::from_millis(10));
+            }
+        };
+        send("press");
+        wait(&|d| d.sleeping);
+        // A held Sleep key must not wake the deck either.
+        thread::sleep(Duration::from_millis(650));
+        assert!(shared.lock().unwrap().devices[&serial].sleeping);
+        send("release");
+        wait(&|d| d.pressed.is_empty());
+        assert!(shared.lock().unwrap().devices[&serial].sleeping);
+        send("press");
+        wait(&|d| !d.sleeping && !d.pressed.is_empty());
+        send("release");
+        wait(&|d| d.pressed.is_empty());
+        let engine = shared.lock().unwrap();
+        assert!(!engine.devices[&serial].sleeping);
+        assert_eq!(engine.devices[&serial].brightness, 75);
+    }
     #[test]
     fn error_redaction_preserves_useful_context_without_credentials() {
         let result = redact(
