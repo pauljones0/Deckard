@@ -1,0 +1,3503 @@
+[
+  {
+    "version": "after",
+    "case": "plus100",
+    "model": "plus",
+    "source_fps": 100,
+    "requested_fps": 120,
+    "kind": "gif",
+    "trial": 1,
+    "cpu_percent": 7.598883451224241,
+    "pss_mib": 216.9228515625,
+    "samples": [
+      {
+        "elapsed": 1.0042022289999295,
+        "cpu_percent": 7.96652284666515,
+        "pss_mib": 216.923828125,
+        "rss_mib": 258.90625,
+        "processes": 1
+      },
+      {
+        "elapsed": 2.00830237599439,
+        "cpu_percent": 7.9673327645117284,
+        "pss_mib": 215.9228515625,
+        "rss_mib": 257.90625,
+        "processes": 1
+      },
+      {
+        "elapsed": 3.0124319099995773,
+        "cpu_percent": 6.9712121424005655,
+        "pss_mib": 217.9208984375,
+        "rss_mib": 259.90625,
+        "processes": 1
+      },
+      {
+        "elapsed": 4.016656524996506,
+        "cpu_percent": 7.966345258350866,
+        "pss_mib": 215.921875,
+        "rss_mib": 257.90625,
+        "processes": 1
+      },
+      {
+        "elapsed": 5.020716258994071,
+        "cpu_percent": 7.967653446422751,
+        "pss_mib": 217.9248046875,
+        "rss_mib": 259.90625,
+        "processes": 1
+      },
+      {
+        "elapsed": 6.0250997969997115,
+        "cpu_percent": 6.969449154751749,
+        "pss_mib": 216.9248046875,
+        "rss_mib": 258.90625,
+        "processes": 1
+      },
+      {
+        "elapsed": 7.029394779005088,
+        "cpu_percent": 7.96578708779925,
+        "pss_mib": 215.9169921875,
+        "rss_mib": 257.90625,
+        "processes": 1
+      },
+      {
+        "elapsed": 8.033495663985377,
+        "cpu_percent": 6.971411045153491,
+        "pss_mib": 217.9208984375,
+        "rss_mib": 259.90625,
+        "processes": 1
+      },
+      {
+        "elapsed": 9.037570059997961,
+        "cpu_percent": 8.96347923594223,
+        "pss_mib": 215.9169921875,
+        "rss_mib": 257.90625,
+        "processes": 1
+      },
+      {
+        "elapsed": 10.041979481000453,
+        "cpu_percent": 5.973659619810627,
+        "pss_mib": 217.923828125,
+        "rss_mib": 259.90625,
+        "processes": 1
+      },
+      {
+        "elapsed": 11.046104345005006,
+        "cpu_percent": 8.963028725438699,
+        "pss_mib": 216.9208984375,
+        "rss_mib": 258.90625,
+        "processes": 1
+      },
+      {
+        "elapsed": 12.050130372983404,
+        "cpu_percent": 6.971930811489473,
+        "pss_mib": 215.9189453125,
+        "rss_mib": 257.90625,
+        "processes": 1
+      },
+      {
+        "elapsed": 13.054239469987806,
+        "cpu_percent": 7.967261748615481,
+        "pss_mib": 217.9208984375,
+        "rss_mib": 259.90625,
+        "processes": 1
+      },
+      {
+        "elapsed": 14.058631502994103,
+        "cpu_percent": 6.969390208171927,
+        "pss_mib": 215.9189453125,
+        "rss_mib": 257.90625,
+        "processes": 1
+      },
+      {
+        "elapsed": 15.062780546984868,
+        "cpu_percent": 7.966944795571187,
+        "pss_mib": 215.921875,
+        "rss_mib": 257.90625,
+        "processes": 1
+      },
+      {
+        "elapsed": 16.066838719998486,
+        "cpu_percent": 6.971707604341209,
+        "pss_mib": 215.923828125,
+        "rss_mib": 257.90625,
+        "processes": 1
+      },
+      {
+        "elapsed": 17.070879281003727,
+        "cpu_percent": 7.967805595413842,
+        "pss_mib": 216.916015625,
+        "rss_mib": 258.90625,
+        "processes": 1
+      },
+      {
+        "elapsed": 18.074896759004332,
+        "cpu_percent": 7.9679887803658165,
+        "pss_mib": 215.91796875,
+        "rss_mib": 257.90625,
+        "processes": 1
+      },
+      {
+        "elapsed": 19.079019397991942,
+        "cpu_percent": 6.971260011683052,
+        "pss_mib": 217.90234375,
+        "rss_mib": 259.90625,
+        "processes": 1
+      },
+      {
+        "elapsed": 20.083037289005006,
+        "cpu_percent": 7.967985502656663,
+        "pss_mib": 216.9208984375,
+        "rss_mib": 258.90625,
+        "processes": 1
+      },
+      {
+        "elapsed": 21.087050631991588,
+        "cpu_percent": 6.972018896858007,
+        "pss_mib": 217.9208984375,
+        "rss_mib": 259.90625,
+        "processes": 1
+      },
+      {
+        "elapsed": 22.091562460991554,
+        "cpu_percent": 7.964067489343852,
+        "pss_mib": 217.9208984375,
+        "rss_mib": 259.90625,
+        "processes": 1
+      },
+      {
+        "elapsed": 23.095667771005537,
+        "cpu_percent": 7.967291797200631,
+        "pss_mib": 216.921875,
+        "rss_mib": 258.90625,
+        "processes": 1
+      },
+      {
+        "elapsed": 24.099996073986404,
+        "cpu_percent": 6.96983245341577,
+        "pss_mib": 218.919921875,
+        "rss_mib": 260.90625,
+        "processes": 1
+      },
+      {
+        "elapsed": 25.1040448389831,
+        "cpu_percent": 7.9677404911964915,
+        "pss_mib": 217.9208984375,
+        "rss_mib": 259.90625,
+        "processes": 1
+      },
+      {
+        "elapsed": 26.10816399898613,
+        "cpu_percent": 7.967181902968444,
+        "pss_mib": 216.921875,
+        "rss_mib": 258.90625,
+        "processes": 1
+      },
+      {
+        "elapsed": 27.11225408699829,
+        "cpu_percent": 7.96741258131318,
+        "pss_mib": 218.9208984375,
+        "rss_mib": 260.90625,
+        "processes": 1
+      },
+      {
+        "elapsed": 28.11631443799706,
+        "cpu_percent": 6.9716924814697725,
+        "pss_mib": 216.9208984375,
+        "rss_mib": 258.90625,
+        "processes": 1
+      },
+      {
+        "elapsed": 29.120403032982722,
+        "cpu_percent": 7.967424428433244,
+        "pss_mib": 218.919921875,
+        "rss_mib": 260.90625,
+        "processes": 1
+      },
+      {
+        "elapsed": 30.004408076987602,
+        "cpu_percent": 6.787291589217367,
+        "pss_mib": 217.921875,
+        "rss_mib": 259.90625,
+        "processes": 1
+      }
+    ],
+    "timing_instrumented": false,
+    "memory_mappings": [
+      {
+        "path": "[anon]",
+        "pss_mib": 34.4375
+      },
+      {
+        "path": "/memfd:/.glXXXXXX",
+        "pss_mib": 0.0078125
+      },
+      {
+        "path": "/home/paul/Deckard/target/release/deckard",
+        "pss_mib": 10.04296875
+      },
+      {
+        "path": "[heap]",
+        "pss_mib": 37.3125
+      },
+      {
+        "path": "/dev/nvidiactl",
+        "pss_mib": 19.3203125
+      },
+      {
+        "path": "/usr/lib/libnvidia-rtcore.so.610.57.04",
+        "pss_mib": 7.96484375
+      },
+      {
+        "path": "/dev/nvidia0",
+        "pss_mib": 0.0
+      },
+      {
+        "path": "/home/paul/Deckard/target/gtk-performance-091/high-fps/after-plus100-1/home/.cache/radv_builtin_shaders/index",
+        "pss_mib": 0.0
+      },
+      {
+        "path": "/home/paul/Deckard/target/gtk-performance-091/high-fps/after-plus100-1/home/.cache/mesa_shader_cache/index",
+        "pss_mib": 0.0
+      },
+      {
+        "path": "/usr/lib/libvulkan_radeon.so",
+        "pss_mib": 3.3984375
+      },
+      {
+        "path": "/usr/lib/libLLVM.so.22.1",
+        "pss_mib": 10.39453125
+      },
+      {
+        "path": "/usr/lib/libgallium-26.2.2-arch1.1.so",
+        "pss_mib": 2.376953125
+      },
+      {
+        "path": "/usr/share/fonts/Adwaita/AdwaitaSans-Regular.ttf",
+        "pss_mib": 0.4482421875
+      },
+      {
+        "path": "/usr/lib/libnvidia-eglcore.so.610.57.04",
+        "pss_mib": 7.94140625
+      },
+      {
+        "path": "/memfd:weston-shared",
+        "pss_mib": 0.005859375
+      },
+      {
+        "path": "/usr/lib/libnvidia-glvkspirv.so.610.57.04",
+        "pss_mib": 7.4375
+      },
+      {
+        "path": "/usr/lib/libVkLayer_MESA_device_select.so",
+        "pss_mib": 0.09765625
+      },
+      {
+        "path": "/usr/lib/libnvidia-allocator.so.610.57.04",
+        "pss_mib": 0.052734375
+      },
+      {
+        "path": "/usr/lib/libncursesw.so.6.6",
+        "pss_mib": 0.0322265625
+      },
+      {
+        "path": "/usr/lib/libedit.so.0.0.78",
+        "pss_mib": 0.103515625
+      },
+      {
+        "path": "/usr/lib/libdrm_intel.so.1.134.0",
+        "pss_mib": 0.060546875
+      },
+      {
+        "path": "/usr/lib/libEGL_mesa.so.0.0.0",
+        "pss_mib": 0.228515625
+      },
+      {
+        "path": "/usr/lib/libpciaccess.so.0.11.1",
+        "pss_mib": 0.025390625
+      },
+      {
+        "path": "/usr/lib/libdrm_amdgpu.so.1.134.0",
+        "pss_mib": 0.029296875
+      },
+      {
+        "path": "/usr/lib/libsensors.so.5.0.0",
+        "pss_mib": 0.02734375
+      },
+      {
+        "path": "/usr/lib/libnvidia-egl-xlib.so.1.0.6",
+        "pss_mib": 0.04296875
+      },
+      {
+        "path": "/usr/lib/libnvidia-egl-xcb.so.1.0.6",
+        "pss_mib": 0.04296875
+      },
+      {
+        "path": "/usr/lib/libnvidia-egl-gbm.so.1.1.3",
+        "pss_mib": 0.01953125
+      },
+      {
+        "path": "/usr/lib/libwayland-server.so.0.26.0",
+        "pss_mib": 0.03125
+      },
+      {
+        "path": "/usr/lib/libnvidia-egl-wayland.so.1.1.22",
+        "pss_mib": 0.046875
+      },
+      {
+        "path": "/usr/lib/libnvidia-egl-wayland2.so.1.0.2",
+        "pss_mib": 0.0341796875
+      },
+      {
+        "path": "/usr/lib/libEGL_nvidia.so.610.57.04",
+        "pss_mib": 0.447265625
+      },
+      {
+        "path": "/usr/lib/libSPIRV-Tools.so",
+        "pss_mib": 0.126953125
+      },
+      {
+        "path": "/usr/lib/libdisplay-info.so.0.3.0",
+        "pss_mib": 0.044921875
+      },
+      {
+        "path": "/usr/lib/libxcb-randr.so.0.1.0",
+        "pss_mib": 0.033203125
+      },
+      {
+        "path": "/usr/lib/libxcb-keysyms.so.1.0.0",
+        "pss_mib": 0.015625
+      },
+      {
+        "path": "/var/cache/fontconfig/923e285e415b1073c8df160bee08820f-le64.cache-12",
+        "pss_mib": 1.1015625
+      },
+      {
+        "path": "/usr/lib/locale/locale-archive",
+        "pss_mib": 0.0009765625
+      },
+      {
+        "path": "/usr/lib/libxshmfence.so.1.0.0",
+        "pss_mib": 0.01171875
+      },
+      {
+        "path": "/usr/lib/libxcb-sync.so.1.0.0",
+        "pss_mib": 0.01953125
+      },
+      {
+        "path": "/usr/lib/libxcb-xfixes.so.0.0.0",
+        "pss_mib": 0.01953125
+      },
+      {
+        "path": "/usr/lib/libxcb-present.so.0.0.0",
+        "pss_mib": 0.01171875
+      },
+      {
+        "path": "/usr/lib/libxcb-dri3.so.0.1.0",
+        "pss_mib": 0.015625
+      },
+      {
+        "path": "/usr/lib/gio/modules/libdconfsettings.so",
+        "pss_mib": 0.0546875
+      },
+      {
+        "path": "/usr/lib/libnvidia-gpucomp.so.610.57.04",
+        "pss_mib": 38.60546875
+      },
+      {
+        "path": "/usr/share/glib-2.0/schemas/gschemas.compiled",
+        "pss_mib": 0.0625
+      },
+      {
+        "path": "/var/cache/fontconfig/f2e43df3287529323e79e7929dc44cc9-le64.cache-12",
+        "pss_mib": 0.1640625
+      },
+      {
+        "path": "/usr/lib/gvfs/libgvfscommon.so",
+        "pss_mib": 0.1259765625
+      },
+      {
+        "path": "/usr/share/icons/hicolor/icon-theme.cache",
+        "pss_mib": 0.0048828125
+      },
+      {
+        "path": "/usr/share/icons/AdwaitaLegacy/icon-theme.cache",
+        "pss_mib": 0.03125
+      },
+      {
+        "path": "/usr/share/icons/Adwaita/icon-theme.cache",
+        "pss_mib": 0.0390625
+      },
+      {
+        "path": "/var/cache/fontconfig/a9166a13c4a4e072c9ea2dae19ae425f-le64.cache-12",
+        "pss_mib": 0.03125
+      },
+      {
+        "path": "/var/cache/fontconfig/b67b32625a2bb51b023d3814a918f351-le64.cache-12",
+        "pss_mib": 0.0234375
+      },
+      {
+        "path": "/var/cache/fontconfig/491f45a0a771fef1c10b9b647a97fb82-le64.cache-12",
+        "pss_mib": 0.0625
+      },
+      {
+        "path": "/var/cache/fontconfig/ec9db0aec63b087e87fa5135389d951c-le64.cache-12",
+        "pss_mib": 0.01171875
+      },
+      {
+        "path": "/usr/lib/gio/modules/libgvfsdbus.so",
+        "pss_mib": 0.125
+      },
+      {
+        "path": "/usr/lib/libFcitx5GClient.so.5.1.7",
+        "pss_mib": 0.046875
+      },
+      {
+        "path": "/var/cache/fontconfig/4b31aef11cb0687b6d280d34cbe23592-le64.cache-12",
+        "pss_mib": 0.046875
+      },
+      {
+        "path": "/usr/lib/gtk-4.0/4.0.0/immodules/libim-fcitx5.so",
+        "pss_mib": 0.09375
+      },
+      {
+        "path": "/usr/lib/locale/C.utf8/LC_CTYPE",
+        "pss_mib": 0.0234375
+      },
+      {
+        "path": "/usr/lib/locale/C.utf8/LC_NUMERIC",
+        "pss_mib": 0.0009765625
+      },
+      {
+        "path": "/usr/lib/locale/C.utf8/LC_TIME",
+        "pss_mib": 0.0009765625
+      },
+      {
+        "path": "/usr/lib/gconv/gconv-modules.cache",
+        "pss_mib": 0.0
+      },
+      {
+        "path": "/usr/lib/libnvidia-glcore.so.610.57.04",
+        "pss_mib": 7.0244140625
+      },
+      {
+        "path": "/usr/lib/locale/C.utf8/LC_COLLATE",
+        "pss_mib": 0.0009765625
+      },
+      {
+        "path": "/usr/lib/locale/C.utf8/LC_MONETARY",
+        "pss_mib": 0.0009765625
+      },
+      {
+        "path": "/usr/lib/locale/C.utf8/LC_MESSAGES/SYS_LC_MESSAGES",
+        "pss_mib": 0.0009765625
+      },
+      {
+        "path": "/tmp/deckard-endpoint-wayland/dconf/user",
+        "pss_mib": 0.00390625
+      },
+      {
+        "path": "/var/cache/fontconfig/061e4bb214a55cfecd58789ba388a75a-le64.cache-12",
+        "pss_mib": 0.00390625
+      },
+      {
+        "path": "/var/cache/fontconfig/f6b893a7224233d96cb72fd88691c0b4-le64.cache-12",
+        "pss_mib": 0.01171875
+      },
+      {
+        "path": "/usr/lib/libstdc++.so.6.0.36",
+        "pss_mib": 0.1318359375
+      },
+      {
+        "path": "/usr/lib/locale/C.utf8/LC_PAPER",
+        "pss_mib": 0.0009765625
+      },
+      {
+        "path": "/usr/lib/locale/C.utf8/LC_NAME",
+        "pss_mib": 0.0009765625
+      },
+      {
+        "path": "/usr/lib/libGLX_nvidia.so.610.57.04",
+        "pss_mib": 0.9921875
+      },
+      {
+        "path": "/usr/lib/libicudata.so.78.3",
+        "pss_mib": 0.0107421875
+      },
+      {
+        "path": "/usr/lib/locale/C.utf8/LC_ADDRESS",
+        "pss_mib": 0.0009765625
+      },
+      {
+        "path": "/usr/lib/locale/C.utf8/LC_TELEPHONE",
+        "pss_mib": 0.0009765625
+      },
+      {
+        "path": "/usr/lib/locale/C.utf8/LC_MEASUREMENT",
+        "pss_mib": 0.0009765625
+      },
+      {
+        "path": "/usr/lib/librt.so.1",
+        "pss_mib": 0.0078125
+      },
+      {
+        "path": "/usr/lib/libnvidia-glsi.so.610.57.04",
+        "pss_mib": 0.267578125
+      },
+      {
+        "path": "/usr/lib/libbrotlicommon.so.1.2.0",
+        "pss_mib": 0.0078125
+      },
+      {
+        "path": "/usr/lib/libunistring.so.5.2.1",
+        "pss_mib": 0.0322265625
+      },
+      {
+        "path": "/usr/lib/libp11-kit.so.0.4.11",
+        "pss_mib": 0.2978515625
+      },
+      {
+        "path": "/usr/lib/libleancrypto.so.1",
+        "pss_mib": 0.296875
+      },
+      {
+        "path": "/usr/lib/locale/C.utf8/LC_IDENTIFICATION",
+        "pss_mib": 0.0009765625
+      },
+      {
+        "path": "/usr/lib/libpthread.so.0",
+        "pss_mib": 0.0078125
+      },
+      {
+        "path": "/usr/lib/libdl.so.2",
+        "pss_mib": 0.0078125
+      },
+      {
+        "path": "/usr/lib/libkrb5.so.3.3",
+        "pss_mib": 0.09375
+      },
+      {
+        "path": "/usr/lib/libbrotlienc.so.1.2.0",
+        "pss_mib": 0.009765625
+      },
+      {
+        "path": "/usr/lib/libicuuc.so.78.3",
+        "pss_mib": 0.1103515625
+      },
+      {
+        "path": "/usr/lib/libnvidia-tls.so.610.57.04",
+        "pss_mib": 0.0234375
+      },
+      {
+        "path": "/usr/lib/libresolv.so.2",
+        "pss_mib": 0.01171875
+      },
+      {
+        "path": "/usr/lib/libk5crypto.so.3.1",
+        "pss_mib": 0.0283203125
+      },
+      {
+        "path": "/usr/lib/libgmp.so.10.5.0",
+        "pss_mib": 0.033203125
+      },
+      {
+        "path": "/usr/lib/libnettle.so.9.0",
+        "pss_mib": 0.23828125
+      },
+      {
+        "path": "/usr/lib/libhogweed.so.7.0",
+        "pss_mib": 0.14453125
+      },
+      {
+        "path": "/usr/lib/libdbus-1.so.3.38.3",
+        "pss_mib": 0.025390625
+      },
+      {
+        "path": "/usr/lib/libcrypto.so.3",
+        "pss_mib": 0.5263671875
+      },
+      {
+        "path": "/usr/lib/libkeyutils.so.1.10",
+        "pss_mib": 0.0078125
+      },
+      {
+        "path": "/usr/lib/libkrb5support.so.0.1",
+        "pss_mib": 0.0126953125
+      },
+      {
+        "path": "/usr/lib/libcom_err.so.2.1",
+        "pss_mib": 0.0078125
+      },
+      {
+        "path": "/usr/lib/libtasn1.so.6.6.5",
+        "pss_mib": 0.0859375
+      },
+      {
+        "path": "/usr/lib/libsharpyuv.so.0.1.2",
+        "pss_mib": 0.017578125
+      },
+      {
+        "path": "/usr/lib/libGLdispatch.so.0.0.0",
+        "pss_mib": 0.1865234375
+      },
+      {
+        "path": "/usr/lib/libelf-0.196.so",
+        "pss_mib": 0.017578125
+      },
+      {
+        "path": "/usr/lib/libgstaudio-1.0.so.0.2806.0",
+        "pss_mib": 0.19921875
+      },
+      {
+        "path": "/usr/lib/libXdmcp.so.6.0.0",
+        "pss_mib": 0.0078125
+      },
+      {
+        "path": "/usr/lib/libbz2.so.1.0.8",
+        "pss_mib": 0.0107421875
+      },
+      {
+        "path": "/usr/lib/libbrotlidec.so.1.2.0",
+        "pss_mib": 0.0087890625
+      },
+      {
+        "path": "/usr/lib/libgssapi_krb5.so.2.2",
+        "pss_mib": 0.025390625
+      },
+      {
+        "path": "/usr/lib/libssl.so.3",
+        "pss_mib": 0.076171875
+      },
+      {
+        "path": "/usr/lib/libpsl.so.5.3.5",
+        "pss_mib": 0.009765625
+      },
+      {
+        "path": "/usr/lib/libssh2.so.1.0.1",
+        "pss_mib": 0.05859375
+      },
+      {
+        "path": "/usr/lib/libidn2.so.0.4.0",
+        "pss_mib": 0.0087890625
+      },
+      {
+        "path": "/usr/lib/libnghttp2.so.14.29.5",
+        "pss_mib": 0.033203125
+      },
+      {
+        "path": "/usr/lib/libngtcp2.so.16.11.0",
+        "pss_mib": 0.0234375
+      },
+      {
+        "path": "/usr/lib/libnghttp3.so.9.9.0",
+        "pss_mib": 0.0361328125
+      },
+      {
+        "path": "/usr/lib/libblkid.so.1.1.0",
+        "pss_mib": 0.0302734375
+      },
+      {
+        "path": "/usr/lib/libgnutls.so.30.42.0",
+        "pss_mib": 0.71875
+      },
+      {
+        "path": "/usr/lib/libXau.so.6.0.0",
+        "pss_mib": 0.0078125
+      },
+      {
+        "path": "/usr/lib/libngtcp2_crypto_ossl.so.0.3.1",
+        "pss_mib": 0.0126953125
+      },
+      {
+        "path": "/usr/lib/libdatrie.so.1.4.1",
+        "pss_mib": 0.01953125
+      },
+      {
+        "path": "/usr/lib/libseccomp.so.2.6.0",
+        "pss_mib": 0.0146484375
+      },
+      {
+        "path": "/usr/lib/liblcms2.so.2.0.19",
+        "pss_mib": 0.140625
+      },
+      {
+        "path": "/usr/lib/libavahi-client.so.3.2.9",
+        "pss_mib": 0.0244140625
+      },
+      {
+        "path": "/usr/lib/libavahi-common.so.3.5.4",
+        "pss_mib": 0.0419921875
+      },
+      {
+        "path": "/usr/lib/liblzo2.so.2.0.0",
+        "pss_mib": 0.08203125
+      },
+      {
+        "path": "/usr/lib/libwebp.so.7.2.0",
+        "pss_mib": 0.044921875
+      },
+      {
+        "path": "/usr/lib/liblzma.so.5.8.3",
+        "pss_mib": 0.0166015625
+      },
+      {
+        "path": "/usr/lib/libjbig.so.2.1",
+        "pss_mib": 0.05078125
+      },
+      {
+        "path": "/usr/lib/libdeflate.so.0",
+        "pss_mib": 0.0859375
+      },
+      {
+        "path": "/usr/lib/libsqlite3.so.3.53.4",
+        "pss_mib": 0.0390625
+      },
+      {
+        "path": "/usr/lib/libjson-glib-1.0.so.0.1000.8",
+        "pss_mib": 0.078125
+      },
+      {
+        "path": "/usr/lib/libgbm.so.1.0.0",
+        "pss_mib": 0.013671875
+      },
+      {
+        "path": "/usr/lib/libdrm.so.2.134.0",
+        "pss_mib": 0.0439453125
+      },
+      {
+        "path": "/usr/lib/libgudev-1.0.so.0.3.0",
+        "pss_mib": 0.0185546875
+      },
+      {
+        "path": "/usr/lib/libX11-xcb.so.1.0.0",
+        "pss_mib": 0.01171875
+      },
+      {
+        "path": "/usr/lib/libwayland-cursor.so.0.26.0",
+        "pss_mib": 0.03515625
+      },
+      {
+        "path": "/usr/lib/libGLX.so.0.0.0",
+        "pss_mib": 0.12890625
+      },
+      {
+        "path": "/usr/lib/libEGL.so.1.1.0",
+        "pss_mib": 0.0302734375
+      },
+      {
+        "path": "/usr/lib/libdw-0.196.so",
+        "pss_mib": 0.1796875
+      },
+      {
+        "path": "/usr/lib/libunwind.so.8.2.0",
+        "pss_mib": 0.02734375
+      },
+      {
+        "path": "/usr/lib/liborc-0.4.so.0.43.0",
+        "pss_mib": 0.25390625
+      },
+      {
+        "path": "/usr/lib/libgstbase-1.0.so.0.2806.0",
+        "pss_mib": 0.17578125
+      },
+      {
+        "path": "/usr/lib/libgstpbutils-1.0.so.0.2806.0",
+        "pss_mib": 0.1875
+      },
+      {
+        "path": "/usr/lib/libgsttag-1.0.so.0.2806.0",
+        "pss_mib": 0.16015625
+      },
+      {
+        "path": "/usr/lib/libexpat.so.1.12.4",
+        "pss_mib": 0.0478515625
+      },
+      {
+        "path": "/usr/lib/libgraphite2.so.3.3.1",
+        "pss_mib": 0.05078125
+      },
+      {
+        "path": "/usr/lib/libpixman-1.so.0.46.4",
+        "pss_mib": 0.345703125
+      },
+      {
+        "path": "/usr/lib/libxcb-shm.so.0.0.0",
+        "pss_mib": 0.01171875
+      },
+      {
+        "path": "/usr/lib/libxcb-render.so.0.0.0",
+        "pss_mib": 0.029296875
+      },
+      {
+        "path": "/usr/lib/libxcb.so.1.1.0",
+        "pss_mib": 0.0166015625
+      },
+      {
+        "path": "/usr/lib/libXrender.so.1.3.0",
+        "pss_mib": 0.025390625
+      },
+      {
+        "path": "/usr/lib/libfreetype.so.6.20.6",
+        "pss_mib": 0.4775390625
+      },
+      {
+        "path": "/usr/lib/libstemmer.so.0.0.0",
+        "pss_mib": 0.46484375
+      },
+      {
+        "path": "/usr/lib/libzstd.so.1.5.7",
+        "pss_mib": 0.01171875
+      },
+      {
+        "path": "/usr/lib/libsystemd.so.0.44.0",
+        "pss_mib": 0.0439453125
+      },
+      {
+        "path": "/usr/lib/libfyaml.so.0.9.6",
+        "pss_mib": 0.16015625
+      },
+      {
+        "path": "/usr/lib/libxml2.so.16.1.4",
+        "pss_mib": 0.0595703125
+      },
+      {
+        "path": "/usr/lib/libxmlb.so.2.0.0",
+        "pss_mib": 0.1015625
+      },
+      {
+        "path": "/usr/lib/libcurl.so.4.8.0",
+        "pss_mib": 0.0517578125
+      },
+      {
+        "path": "/usr/lib/libpcre2-8.so.0.16.0",
+        "pss_mib": 0.0126953125
+      },
+      {
+        "path": "/usr/lib/libglycin-2.so.0",
+        "pss_mib": 0.42578125
+      },
+      {
+        "path": "/usr/lib/libthai.so.0.3.2",
+        "pss_mib": 0.01953125
+      },
+      {
+        "path": "/usr/lib/libffi.so.8.5.0",
+        "pss_mib": 0.0078125
+      },
+      {
+        "path": "/usr/lib/libmount.so.1.1.0",
+        "pss_mib": 0.0146484375
+      },
+      {
+        "path": "/usr/lib/libz.so.1.3.2",
+        "pss_mib": 0.0087890625
+      },
+      {
+        "path": "/usr/lib/libcolord.so.2.0.5",
+        "pss_mib": 0.140625
+      },
+      {
+        "path": "/usr/lib/libcups.so.2",
+        "pss_mib": 0.08203125
+      },
+      {
+        "path": "/usr/lib/libcairo-script-interpreter.so.2.11804.4",
+        "pss_mib": 0.09375
+      },
+      {
+        "path": "/usr/lib/libXinerama.so.1.0.0",
+        "pss_mib": 0.015625
+      },
+      {
+        "path": "/usr/lib/libXrandr.so.2.2.0",
+        "pss_mib": 0.04296875
+      },
+      {
+        "path": "/usr/lib/libXfixes.so.3.1.0",
+        "pss_mib": 0.02734375
+      },
+      {
+        "path": "/usr/lib/libXdamage.so.1.1.0",
+        "pss_mib": 0.015625
+      },
+      {
+        "path": "/usr/lib/libXcursor.so.1.0.2",
+        "pss_mib": 0.04296875
+      },
+      {
+        "path": "/usr/lib/libXext.so.6.4.0",
+        "pss_mib": 0.037109375
+      },
+      {
+        "path": "/usr/lib/libwayland-egl.so.1.26.0",
+        "pss_mib": 0.01953125
+      },
+      {
+        "path": "/usr/lib/libwayland-client.so.0.26.0",
+        "pss_mib": 0.021484375
+      },
+      {
+        "path": "/usr/lib/libxkbcommon.so.0.13.2",
+        "pss_mib": 0.078125
+      },
+      {
+        "path": "/usr/lib/libjpeg.so.8.3.2",
+        "pss_mib": 0.068359375
+      },
+      {
+        "path": "/usr/lib/libtiff.so.6.3.0",
+        "pss_mib": 0.16796875
+      },
+      {
+        "path": "/usr/lib/libpng16.so.16.58.0",
+        "pss_mib": 0.08203125
+      },
+      {
+        "path": "/usr/lib/libvulkan.so.1.4.357",
+        "pss_mib": 0.58984375
+      },
+      {
+        "path": "/usr/lib/libtinysparql-3.0.so.0.1101.0",
+        "pss_mib": 0.19921875
+      },
+      {
+        "path": "/usr/lib/libcloudproviders.so.0.4.1",
+        "pss_mib": 0.09375
+      },
+      {
+        "path": "/usr/lib/libpangoft2-1.0.so.0.5800.2",
+        "pss_mib": 0.064453125
+      },
+      {
+        "path": "/usr/lib/libX11.so.6.4.0",
+        "pss_mib": 0.208984375
+      },
+      {
+        "path": "/usr/lib/libXi.so.6.1.0",
+        "pss_mib": 0.08203125
+      },
+      {
+        "path": "/usr/lib/libgstallocators-1.0.so.0.2806.0",
+        "pss_mib": 0.0390625
+      },
+      {
+        "path": "/usr/lib/libgstgl-1.0.so.0.2806.0",
+        "pss_mib": 0.203125
+      },
+      {
+        "path": "/usr/lib/libgstreamer-1.0.so.0.2806.0",
+        "pss_mib": 0.296875
+      },
+      {
+        "path": "/usr/lib/libgstvideo-1.0.so.0.2806.0",
+        "pss_mib": 0.2734375
+      },
+      {
+        "path": "/usr/lib/libgstplay-1.0.so.0.2806.0",
+        "pss_mib": 0.12109375
+      },
+      {
+        "path": "/usr/lib/libepoxy.so.0.0.0",
+        "pss_mib": 0.41015625
+      },
+      {
+        "path": "/usr/lib/libfontconfig.so.1.17.0",
+        "pss_mib": 0.349609375
+      },
+      {
+        "path": "/usr/lib/libharfbuzz-subset.so.0.61440.0",
+        "pss_mib": 0.1171875
+      },
+      {
+        "path": "/usr/lib/libharfbuzz.so.0.61440.0",
+        "pss_mib": 0.916015625
+      },
+      {
+        "path": "/usr/lib/libcairo.so.2.11804.4",
+        "pss_mib": 0.75390625
+      },
+      {
+        "path": "/usr/lib/libpangocairo-1.0.so.0.5800.2",
+        "pss_mib": 0.0390625
+      },
+      {
+        "path": "/usr/lib/libappstream.so.1.2.0",
+        "pss_mib": 0.3515625
+      },
+      {
+        "path": "/usr/lib/libc.so.6",
+        "pss_mib": 0.0458984375
+      },
+      {
+        "path": "/usr/lib/libcairo-gobject.so.2.11804.4",
+        "pss_mib": 0.03515625
+      },
+      {
+        "path": "/usr/lib/libgmodule-2.0.so.0.8800.3",
+        "pss_mib": 0.0078125
+      },
+      {
+        "path": "/usr/lib/libpango-1.0.so.0.5800.2",
+        "pss_mib": 0.3671875
+      },
+      {
+        "path": "/usr/lib/libm.so.6",
+        "pss_mib": 0.146484375
+      },
+      {
+        "path": "/usr/lib/libgcc_s.so.1",
+        "pss_mib": 0.0078125
+      },
+      {
+        "path": "/usr/lib/libudev.so.1.7.14",
+        "pss_mib": 0.0341796875
+      },
+      {
+        "path": "/usr/lib/libglib-2.0.so.0.8800.3",
+        "pss_mib": 0.2509765625
+      },
+      {
+        "path": "/usr/lib/libgobject-2.0.so.0.8800.3",
+        "pss_mib": 0.03515625
+      },
+      {
+        "path": "/usr/lib/libgio-2.0.so.0.8800.3",
+        "pss_mib": 0.75390625
+      },
+      {
+        "path": "/usr/lib/libgtk-4.so.1.2200.4",
+        "pss_mib": 8.0703125
+      },
+      {
+        "path": "/usr/lib/libfribidi.so.0.4.0",
+        "pss_mib": 0.095703125
+      },
+      {
+        "path": "/usr/lib/libgraphene-1.0.so.0.1000.8",
+        "pss_mib": 0.1171875
+      },
+      {
+        "path": "/usr/lib/libgdk_pixbuf-2.0.so.0.4400.7",
+        "pss_mib": 0.2265625
+      },
+      {
+        "path": "/usr/lib/libadwaita-1.so.0",
+        "pss_mib": 1.7734375
+      },
+      {
+        "path": "/etc/ld.so.cache",
+        "pss_mib": 0.0009765625
+      },
+      {
+        "path": "[vvar]",
+        "pss_mib": 0.0
+      },
+      {
+        "path": "[vvar_vclock]",
+        "pss_mib": 0.0
+      },
+      {
+        "path": "[vdso]",
+        "pss_mib": 0.0
+      },
+      {
+        "path": "/usr/lib/ld-linux-x86-64.so.2",
+        "pss_mib": 0.0126953125
+      },
+      {
+        "path": "[stack]",
+        "pss_mib": 0.171875
+      },
+      {
+        "path": "[vsyscall]",
+        "pss_mib": 0.0
+      }
+    ],
+    "validation": {
+      "seconds": 4.011166,
+      "method": "two changed-tile counter snapshots over the engine monotonic clock",
+      "poll_interval_ms": null,
+      "fps_per_key": {
+        "0": 99.97093114570676,
+        "1": 99.97093114570676,
+        "2": 99.97093114570676,
+        "3": 99.97093114570676,
+        "4": 99.97093114570676,
+        "5": 99.97093114570676,
+        "6": 99.97093114570676,
+        "7": 99.97093114570676
+      },
+      "fps_min": 99.97093114570676,
+      "fps_max": 99.97093114570676,
+      "sizes": {
+        "0": [
+          120,
+          120
+        ],
+        "1": [
+          120,
+          120
+        ],
+        "2": [
+          120,
+          120
+        ],
+        "3": [
+          120,
+          120
+        ],
+        "4": [
+          120,
+          120
+        ],
+        "5": [
+          120,
+          120
+        ],
+        "6": [
+          120,
+          120
+        ],
+        "7": [
+          120,
+          120
+        ]
+      },
+      "written_tiles": 0,
+      "instrumented": true
+    }
+  },
+  {
+    "version": "after",
+    "case": "plus100",
+    "model": "plus",
+    "source_fps": 100,
+    "requested_fps": 120,
+    "kind": "gif",
+    "trial": 2,
+    "cpu_percent": 7.665593211490483,
+    "pss_mib": 216.0546875,
+    "samples": [
+      {
+        "elapsed": 1.004085390974069,
+        "cpu_percent": 8.963381083822995,
+        "pss_mib": 215.9970703125,
+        "rss_mib": 258.0390625,
+        "processes": 1
+      },
+      {
+        "elapsed": 2.0081736689899117,
+        "cpu_percent": 6.971498575635756,
+        "pss_mib": 215.0517578125,
+        "rss_mib": 257.08203125,
+        "processes": 1
+      },
+      {
+        "elapsed": 3.0122810939792544,
+        "cpu_percent": 7.96727501550438,
+        "pss_mib": 217.0595703125,
+        "rss_mib": 259.08203125,
+        "processes": 1
+      },
+      {
+        "elapsed": 4.016295432986226,
+        "cpu_percent": 6.972011980350191,
+        "pss_mib": 216.0517578125,
+        "rss_mib": 258.08203125,
+        "processes": 1
+      },
+      {
+        "elapsed": 5.0203970589791425,
+        "cpu_percent": 7.967321028973614,
+        "pss_mib": 215.05078125,
+        "rss_mib": 257.08203125,
+        "processes": 1
+      },
+      {
+        "elapsed": 6.024476854974637,
+        "cpu_percent": 6.971557467760699,
+        "pss_mib": 217.05078125,
+        "rss_mib": 259.08203125,
+        "processes": 1
+      },
+      {
+        "elapsed": 7.028529379982501,
+        "cpu_percent": 7.9677106533219915,
+        "pss_mib": 215.0517578125,
+        "rss_mib": 257.08203125,
+        "processes": 1
+      },
+      {
+        "elapsed": 8.032623263978167,
+        "cpu_percent": 8.963305268014997,
+        "pss_mib": 217.05078125,
+        "rss_mib": 259.08203125,
+        "processes": 1
+      },
+      {
+        "elapsed": 9.036779627989745,
+        "cpu_percent": 6.971025878913133,
+        "pss_mib": 216.052734375,
+        "rss_mib": 258.08203125,
+        "processes": 1
+      },
+      {
+        "elapsed": 10.040931463998277,
+        "cpu_percent": 6.9710573132293785,
+        "pss_mib": 215.05078125,
+        "rss_mib": 257.08203125,
+        "processes": 1
+      },
+      {
+        "elapsed": 11.045055477996357,
+        "cpu_percent": 7.967143389138445,
+        "pss_mib": 217.0517578125,
+        "rss_mib": 259.08203125,
+        "processes": 1
+      },
+      {
+        "elapsed": 12.04910922999261,
+        "cpu_percent": 7.967700916504184,
+        "pss_mib": 215.05859375,
+        "rss_mib": 257.08203125,
+        "processes": 1
+      },
+      {
+        "elapsed": 13.053232975973515,
+        "cpu_percent": 6.971252326237828,
+        "pss_mib": 217.0517578125,
+        "rss_mib": 257.08203125,
+        "processes": 1
+      },
+      {
+        "elapsed": 14.057327326998347,
+        "cpu_percent": 8.963301098959578,
+        "pss_mib": 216.0517578125,
+        "rss_mib": 258.08203125,
+        "processes": 1
+      },
+      {
+        "elapsed": 15.061401781975292,
+        "cpu_percent": 6.97159455188088,
+        "pss_mib": 215.005859375,
+        "rss_mib": 257.08203125,
+        "processes": 1
+      },
+      {
+        "elapsed": 16.065817252994748,
+        "cpu_percent": 6.969227577603083,
+        "pss_mib": 217.0517578125,
+        "rss_mib": 259.08203125,
+        "processes": 1
+      },
+      {
+        "elapsed": 17.069932846992742,
+        "cpu_percent": 7.967210197530291,
+        "pss_mib": 217.0595703125,
+        "rss_mib": 259.08203125,
+        "processes": 1
+      },
+      {
+        "elapsed": 18.07428426897968,
+        "cpu_percent": 7.965339446797776,
+        "pss_mib": 216.0595703125,
+        "rss_mib": 258.08203125,
+        "processes": 1
+      },
+      {
+        "elapsed": 19.078287923999596,
+        "cpu_percent": 6.972086172197388,
+        "pss_mib": 215.0576171875,
+        "rss_mib": 257.08203125,
+        "processes": 1
+      },
+      {
+        "elapsed": 20.082481719000498,
+        "cpu_percent": 7.966589755708285,
+        "pss_mib": 216.05078125,
+        "rss_mib": 258.08203125,
+        "processes": 1
+      },
+      {
+        "elapsed": 21.0870629499841,
+        "cpu_percent": 7.963517287862388,
+        "pss_mib": 215.0517578125,
+        "rss_mib": 259.08203125,
+        "processes": 1
+      },
+      {
+        "elapsed": 22.091152369976044,
+        "cpu_percent": 6.971490646775467,
+        "pss_mib": 218.05859375,
+        "rss_mib": 260.08203125,
+        "processes": 1
+      },
+      {
+        "elapsed": 23.09518657598528,
+        "cpu_percent": 7.9678560273337125,
+        "pss_mib": 217.0517578125,
+        "rss_mib": 259.08203125,
+        "processes": 1
+      },
+      {
+        "elapsed": 24.09922130400082,
+        "cpu_percent": 7.967851884776867,
+        "pss_mib": 216.05078125,
+        "rss_mib": 258.08203125,
+        "processes": 1
+      },
+      {
+        "elapsed": 25.10341377198347,
+        "cpu_percent": 6.970775247958683,
+        "pss_mib": 217.0517578125,
+        "rss_mib": 260.08203125,
+        "processes": 1
+      },
+      {
+        "elapsed": 26.1077749299875,
+        "cpu_percent": 7.965262232858971,
+        "pss_mib": 216.0517578125,
+        "rss_mib": 258.08203125,
+        "processes": 1
+      },
+      {
+        "elapsed": 27.11182374798227,
+        "cpu_percent": 6.971772561796373,
+        "pss_mib": 218.033203125,
+        "rss_mib": 260.08203125,
+        "processes": 1
+      },
+      {
+        "elapsed": 28.11594735799008,
+        "cpu_percent": 7.967146594568913,
+        "pss_mib": 217.0517578125,
+        "rss_mib": 259.08203125,
+        "processes": 1
+      },
+      {
+        "elapsed": 29.120083843998145,
+        "cpu_percent": 7.967044432180705,
+        "pss_mib": 216.056640625,
+        "rss_mib": 258.08203125,
+        "processes": 1
+      },
+      {
+        "elapsed": 30.00420106499223,
+        "cpu_percent": 7.917502152179853,
+        "pss_mib": 218.05078125,
+        "rss_mib": 260.08203125,
+        "processes": 1
+      }
+    ],
+    "timing_instrumented": false,
+    "memory_mappings": [
+      {
+        "path": "[anon]",
+        "pss_mib": 34.39453125
+      },
+      {
+        "path": "/memfd:/.glXXXXXX",
+        "pss_mib": 0.0078125
+      },
+      {
+        "path": "/home/paul/Deckard/target/release/deckard",
+        "pss_mib": 10.10546875
+      },
+      {
+        "path": "[heap]",
+        "pss_mib": 36.75390625
+      },
+      {
+        "path": "/dev/nvidiactl",
+        "pss_mib": 20.3203125
+      },
+      {
+        "path": "/usr/lib/libnvidia-rtcore.so.610.57.04",
+        "pss_mib": 7.96484375
+      },
+      {
+        "path": "/dev/nvidia0",
+        "pss_mib": 0.0
+      },
+      {
+        "path": "/home/paul/Deckard/target/gtk-performance-091/high-fps/after-plus100-2/home/.cache/radv_builtin_shaders/index",
+        "pss_mib": 0.0
+      },
+      {
+        "path": "/home/paul/Deckard/target/gtk-performance-091/high-fps/after-plus100-2/home/.cache/mesa_shader_cache/index",
+        "pss_mib": 0.0
+      },
+      {
+        "path": "/usr/lib/libnvidia-glvkspirv.so.610.57.04",
+        "pss_mib": 7.4375
+      },
+      {
+        "path": "/usr/lib/libvulkan_radeon.so",
+        "pss_mib": 3.3984375
+      },
+      {
+        "path": "/usr/lib/libLLVM.so.22.1",
+        "pss_mib": 10.39453125
+      },
+      {
+        "path": "/usr/lib/libgallium-26.2.2-arch1.1.so",
+        "pss_mib": 2.376953125
+      },
+      {
+        "path": "/usr/lib/libnvidia-eglcore.so.610.57.04",
+        "pss_mib": 7.94140625
+      },
+      {
+        "path": "/usr/lib/libVkLayer_MESA_device_select.so",
+        "pss_mib": 0.09765625
+      },
+      {
+        "path": "/usr/share/fonts/Adwaita/AdwaitaSans-Regular.ttf",
+        "pss_mib": 0.4150390625
+      },
+      {
+        "path": "/memfd:weston-shared",
+        "pss_mib": 0.005859375
+      },
+      {
+        "path": "/usr/lib/libnvidia-allocator.so.610.57.04",
+        "pss_mib": 0.05078125
+      },
+      {
+        "path": "/usr/lib/libncursesw.so.6.6",
+        "pss_mib": 0.0341796875
+      },
+      {
+        "path": "/usr/lib/libedit.so.0.0.78",
+        "pss_mib": 0.072265625
+      },
+      {
+        "path": "/usr/lib/libdrm_intel.so.1.134.0",
+        "pss_mib": 0.060546875
+      },
+      {
+        "path": "/usr/lib/libdrm_amdgpu.so.1.134.0",
+        "pss_mib": 0.029296875
+      },
+      {
+        "path": "/usr/lib/libsensors.so.5.0.0",
+        "pss_mib": 0.02734375
+      },
+      {
+        "path": "/usr/lib/libEGL_mesa.so.0.0.0",
+        "pss_mib": 0.16796875
+      },
+      {
+        "path": "/usr/lib/libnvidia-egl-xlib.so.1.0.6",
+        "pss_mib": 0.04296875
+      },
+      {
+        "path": "/usr/lib/libnvidia-egl-xcb.so.1.0.6",
+        "pss_mib": 0.04296875
+      },
+      {
+        "path": "/usr/lib/libEGL_nvidia.so.610.57.04",
+        "pss_mib": 0.4580078125
+      },
+      {
+        "path": "/usr/lib/libSPIRV-Tools.so",
+        "pss_mib": 0.10546875
+      },
+      {
+        "path": "/usr/lib/locale/locale-archive",
+        "pss_mib": 0.0009765625
+      },
+      {
+        "path": "/usr/lib/libwayland-server.so.0.26.0",
+        "pss_mib": 0.03125
+      },
+      {
+        "path": "/usr/lib/libnvidia-egl-wayland.so.1.1.22",
+        "pss_mib": 0.046875
+      },
+      {
+        "path": "/usr/lib/libpciaccess.so.0.11.1",
+        "pss_mib": 0.025390625
+      },
+      {
+        "path": "/var/cache/fontconfig/923e285e415b1073c8df160bee08820f-le64.cache-12",
+        "pss_mib": 1.1015625
+      },
+      {
+        "path": "/usr/lib/libnvidia-gpucomp.so.610.57.04",
+        "pss_mib": 38.60546875
+      },
+      {
+        "path": "/usr/lib/libnvidia-egl-gbm.so.1.1.3",
+        "pss_mib": 0.01953125
+      },
+      {
+        "path": "/usr/lib/libnvidia-egl-wayland2.so.1.0.2",
+        "pss_mib": 0.0341796875
+      },
+      {
+        "path": "/usr/lib/libdisplay-info.so.0.3.0",
+        "pss_mib": 0.044921875
+      },
+      {
+        "path": "/usr/lib/libxcb-keysyms.so.1.0.0",
+        "pss_mib": 0.015625
+      },
+      {
+        "path": "/usr/lib/libxshmfence.so.1.0.0",
+        "pss_mib": 0.01171875
+      },
+      {
+        "path": "/usr/lib/libxcb-randr.so.0.1.0",
+        "pss_mib": 0.033203125
+      },
+      {
+        "path": "/usr/lib/libxcb-sync.so.1.0.0",
+        "pss_mib": 0.01953125
+      },
+      {
+        "path": "/usr/lib/libxcb-xfixes.so.0.0.0",
+        "pss_mib": 0.01953125
+      },
+      {
+        "path": "/usr/lib/libxcb-present.so.0.0.0",
+        "pss_mib": 0.01171875
+      },
+      {
+        "path": "/usr/lib/libxcb-dri3.so.0.1.0",
+        "pss_mib": 0.015625
+      },
+      {
+        "path": "/usr/lib/gio/modules/libdconfsettings.so",
+        "pss_mib": 0.0546875
+      },
+      {
+        "path": "/usr/share/glib-2.0/schemas/gschemas.compiled",
+        "pss_mib": 0.0625
+      },
+      {
+        "path": "/usr/share/icons/AdwaitaLegacy/icon-theme.cache",
+        "pss_mib": 0.03125
+      },
+      {
+        "path": "/usr/share/icons/Adwaita/icon-theme.cache",
+        "pss_mib": 0.0390625
+      },
+      {
+        "path": "/var/cache/fontconfig/f2e43df3287529323e79e7929dc44cc9-le64.cache-12",
+        "pss_mib": 0.1640625
+      },
+      {
+        "path": "/usr/lib/gvfs/libgvfscommon.so",
+        "pss_mib": 0.1259765625
+      },
+      {
+        "path": "/usr/lib/gio/modules/libgvfsdbus.so",
+        "pss_mib": 0.125
+      },
+      {
+        "path": "/var/cache/fontconfig/a9166a13c4a4e072c9ea2dae19ae425f-le64.cache-12",
+        "pss_mib": 0.03125
+      },
+      {
+        "path": "/var/cache/fontconfig/491f45a0a771fef1c10b9b647a97fb82-le64.cache-12",
+        "pss_mib": 0.0625
+      },
+      {
+        "path": "/usr/lib/libnvidia-glcore.so.610.57.04",
+        "pss_mib": 7.0244140625
+      },
+      {
+        "path": "/usr/share/icons/hicolor/icon-theme.cache",
+        "pss_mib": 0.0048828125
+      },
+      {
+        "path": "/var/cache/fontconfig/b67b32625a2bb51b023d3814a918f351-le64.cache-12",
+        "pss_mib": 0.0234375
+      },
+      {
+        "path": "/usr/lib/libstdc++.so.6.0.36",
+        "pss_mib": 0.1318359375
+      },
+      {
+        "path": "/var/cache/fontconfig/ec9db0aec63b087e87fa5135389d951c-le64.cache-12",
+        "pss_mib": 0.01171875
+      },
+      {
+        "path": "/usr/lib/libFcitx5GClient.so.5.1.7",
+        "pss_mib": 0.04296875
+      },
+      {
+        "path": "/usr/lib/gtk-4.0/4.0.0/immodules/libim-fcitx5.so",
+        "pss_mib": 0.09375
+      },
+      {
+        "path": "/usr/lib/locale/C.utf8/LC_CTYPE",
+        "pss_mib": 0.021484375
+      },
+      {
+        "path": "/var/cache/fontconfig/4b31aef11cb0687b6d280d34cbe23592-le64.cache-12",
+        "pss_mib": 0.046875
+      },
+      {
+        "path": "/usr/lib/libnvidia-glsi.so.610.57.04",
+        "pss_mib": 0.267578125
+      },
+      {
+        "path": "/usr/lib/libicudata.so.78.3",
+        "pss_mib": 0.0107421875
+      },
+      {
+        "path": "/usr/lib/locale/C.utf8/LC_NAME",
+        "pss_mib": 0.0009765625
+      },
+      {
+        "path": "/tmp/deckard-endpoint-wayland/dconf/user",
+        "pss_mib": 0.00390625
+      },
+      {
+        "path": "/var/cache/fontconfig/061e4bb214a55cfecd58789ba388a75a-le64.cache-12",
+        "pss_mib": 0.00390625
+      },
+      {
+        "path": "/var/cache/fontconfig/f6b893a7224233d96cb72fd88691c0b4-le64.cache-12",
+        "pss_mib": 0.01171875
+      },
+      {
+        "path": "/usr/lib/locale/C.utf8/LC_NUMERIC",
+        "pss_mib": 0.0009765625
+      },
+      {
+        "path": "/usr/lib/locale/C.utf8/LC_TIME",
+        "pss_mib": 0.0009765625
+      },
+      {
+        "path": "/usr/lib/locale/C.utf8/LC_COLLATE",
+        "pss_mib": 0.0009765625
+      },
+      {
+        "path": "/usr/lib/locale/C.utf8/LC_MONETARY",
+        "pss_mib": 0.0009765625
+      },
+      {
+        "path": "/usr/lib/locale/C.utf8/LC_MESSAGES/SYS_LC_MESSAGES",
+        "pss_mib": 0.0009765625
+      },
+      {
+        "path": "/usr/lib/locale/C.utf8/LC_PAPER",
+        "pss_mib": 0.0009765625
+      },
+      {
+        "path": "/usr/lib/locale/C.utf8/LC_ADDRESS",
+        "pss_mib": 0.0009765625
+      },
+      {
+        "path": "/usr/lib/gconv/gconv-modules.cache",
+        "pss_mib": 0.0
+      },
+      {
+        "path": "/usr/lib/libGLX_nvidia.so.610.57.04",
+        "pss_mib": 1.0234375
+      },
+      {
+        "path": "/usr/lib/libkrb5.so.3.3",
+        "pss_mib": 0.08203125
+      },
+      {
+        "path": "/usr/lib/libbrotlienc.so.1.2.0",
+        "pss_mib": 0.009765625
+      },
+      {
+        "path": "/usr/lib/libunistring.so.5.2.1",
+        "pss_mib": 0.0322265625
+      },
+      {
+        "path": "/usr/lib/libp11-kit.so.0.4.11",
+        "pss_mib": 0.2978515625
+      },
+      {
+        "path": "/usr/lib/libleancrypto.so.1",
+        "pss_mib": 0.296875
+      },
+      {
+        "path": "/usr/lib/librt.so.1",
+        "pss_mib": 0.0078125
+      },
+      {
+        "path": "/usr/lib/libpthread.so.0",
+        "pss_mib": 0.0078125
+      },
+      {
+        "path": "/usr/lib/libdl.so.2",
+        "pss_mib": 0.0078125
+      },
+      {
+        "path": "/usr/lib/libnvidia-tls.so.610.57.04",
+        "pss_mib": 0.0234375
+      },
+      {
+        "path": "/usr/lib/libbrotlicommon.so.1.2.0",
+        "pss_mib": 0.0078125
+      },
+      {
+        "path": "/usr/lib/libresolv.so.2",
+        "pss_mib": 0.0126953125
+      },
+      {
+        "path": "/usr/lib/libk5crypto.so.3.1",
+        "pss_mib": 0.0263671875
+      },
+      {
+        "path": "/usr/lib/libgmp.so.10.5.0",
+        "pss_mib": 0.029296875
+      },
+      {
+        "path": "/usr/lib/libnettle.so.9.0",
+        "pss_mib": 0.23828125
+      },
+      {
+        "path": "/usr/lib/libicuuc.so.78.3",
+        "pss_mib": 0.1103515625
+      },
+      {
+        "path": "/usr/lib/locale/C.utf8/LC_TELEPHONE",
+        "pss_mib": 0.0009765625
+      },
+      {
+        "path": "/usr/lib/libkeyutils.so.1.10",
+        "pss_mib": 0.0078125
+      },
+      {
+        "path": "/usr/lib/libkrb5support.so.0.1",
+        "pss_mib": 0.0126953125
+      },
+      {
+        "path": "/usr/lib/libcom_err.so.2.1",
+        "pss_mib": 0.0078125
+      },
+      {
+        "path": "/usr/lib/libhogweed.so.7.0",
+        "pss_mib": 0.1171875
+      },
+      {
+        "path": "/usr/lib/libtasn1.so.6.6.5",
+        "pss_mib": 0.0859375
+      },
+      {
+        "path": "/usr/lib/libdbus-1.so.3.38.3",
+        "pss_mib": 0.025390625
+      },
+      {
+        "path": "/usr/lib/libGLdispatch.so.0.0.0",
+        "pss_mib": 0.169921875
+      },
+      {
+        "path": "/usr/lib/libelf-0.196.so",
+        "pss_mib": 0.0166015625
+      },
+      {
+        "path": "/usr/lib/libgstaudio-1.0.so.0.2806.0",
+        "pss_mib": 0.1796875
+      },
+      {
+        "path": "/usr/lib/libcrypto.so.3",
+        "pss_mib": 0.5263671875
+      },
+      {
+        "path": "/usr/lib/locale/C.utf8/LC_MEASUREMENT",
+        "pss_mib": 0.0009765625
+      },
+      {
+        "path": "/usr/lib/libsharpyuv.so.0.1.2",
+        "pss_mib": 0.017578125
+      },
+      {
+        "path": "/usr/lib/libXdmcp.so.6.0.0",
+        "pss_mib": 0.0078125
+      },
+      {
+        "path": "/usr/lib/libbz2.so.1.0.8",
+        "pss_mib": 0.0107421875
+      },
+      {
+        "path": "/usr/lib/libbrotlidec.so.1.2.0",
+        "pss_mib": 0.0087890625
+      },
+      {
+        "path": "/usr/lib/libgssapi_krb5.so.2.2",
+        "pss_mib": 0.0283203125
+      },
+      {
+        "path": "/usr/lib/libssl.so.3",
+        "pss_mib": 0.0625
+      },
+      {
+        "path": "/usr/lib/libssh2.so.1.0.1",
+        "pss_mib": 0.05859375
+      },
+      {
+        "path": "/usr/lib/libidn2.so.0.4.0",
+        "pss_mib": 0.0087890625
+      },
+      {
+        "path": "/usr/lib/libngtcp2.so.16.11.0",
+        "pss_mib": 0.0341796875
+      },
+      {
+        "path": "/usr/lib/libgnutls.so.30.42.0",
+        "pss_mib": 0.71875
+      },
+      {
+        "path": "/usr/lib/locale/C.utf8/LC_IDENTIFICATION",
+        "pss_mib": 0.0009765625
+      },
+      {
+        "path": "/usr/lib/libXau.so.6.0.0",
+        "pss_mib": 0.0078125
+      },
+      {
+        "path": "/usr/lib/libpsl.so.5.3.5",
+        "pss_mib": 0.009765625
+      },
+      {
+        "path": "/usr/lib/libnghttp2.so.14.29.5",
+        "pss_mib": 0.0302734375
+      },
+      {
+        "path": "/usr/lib/libngtcp2_crypto_ossl.so.0.3.1",
+        "pss_mib": 0.0126953125
+      },
+      {
+        "path": "/usr/lib/libnghttp3.so.9.9.0",
+        "pss_mib": 0.0322265625
+      },
+      {
+        "path": "/usr/lib/libdatrie.so.1.4.1",
+        "pss_mib": 0.01953125
+      },
+      {
+        "path": "/usr/lib/libblkid.so.1.1.0",
+        "pss_mib": 0.0302734375
+      },
+      {
+        "path": "/usr/lib/libseccomp.so.2.6.0",
+        "pss_mib": 0.0146484375
+      },
+      {
+        "path": "/usr/lib/liblcms2.so.2.0.19",
+        "pss_mib": 0.1640625
+      },
+      {
+        "path": "/usr/lib/libavahi-client.so.3.2.9",
+        "pss_mib": 0.0234375
+      },
+      {
+        "path": "/usr/lib/libavahi-common.so.3.5.4",
+        "pss_mib": 0.0419921875
+      },
+      {
+        "path": "/usr/lib/liblzo2.so.2.0.0",
+        "pss_mib": 0.08203125
+      },
+      {
+        "path": "/usr/lib/libwebp.so.7.2.0",
+        "pss_mib": 0.044921875
+      },
+      {
+        "path": "/usr/lib/liblzma.so.5.8.3",
+        "pss_mib": 0.0126953125
+      },
+      {
+        "path": "/usr/lib/libjbig.so.2.1",
+        "pss_mib": 0.05078125
+      },
+      {
+        "path": "/usr/lib/libdeflate.so.0",
+        "pss_mib": 0.09375
+      },
+      {
+        "path": "/usr/lib/libsqlite3.so.3.53.4",
+        "pss_mib": 0.0458984375
+      },
+      {
+        "path": "/usr/lib/libjson-glib-1.0.so.0.1000.8",
+        "pss_mib": 0.078125
+      },
+      {
+        "path": "/usr/lib/libgbm.so.1.0.0",
+        "pss_mib": 0.013671875
+      },
+      {
+        "path": "/usr/lib/libdrm.so.2.134.0",
+        "pss_mib": 0.0439453125
+      },
+      {
+        "path": "/usr/lib/libgudev-1.0.so.0.3.0",
+        "pss_mib": 0.0185546875
+      },
+      {
+        "path": "/usr/lib/libX11-xcb.so.1.0.0",
+        "pss_mib": 0.01171875
+      },
+      {
+        "path": "/usr/lib/libwayland-cursor.so.0.26.0",
+        "pss_mib": 0.03515625
+      },
+      {
+        "path": "/usr/lib/libGLX.so.0.0.0",
+        "pss_mib": 0.12890625
+      },
+      {
+        "path": "/usr/lib/libEGL.so.1.1.0",
+        "pss_mib": 0.0302734375
+      },
+      {
+        "path": "/usr/lib/libdw-0.196.so",
+        "pss_mib": 0.140625
+      },
+      {
+        "path": "/usr/lib/libunwind.so.8.2.0",
+        "pss_mib": 0.02734375
+      },
+      {
+        "path": "/usr/lib/liborc-0.4.so.0.43.0",
+        "pss_mib": 0.2109375
+      },
+      {
+        "path": "/usr/lib/libgstbase-1.0.so.0.2806.0",
+        "pss_mib": 0.13671875
+      },
+      {
+        "path": "/usr/lib/libgstpbutils-1.0.so.0.2806.0",
+        "pss_mib": 0.1484375
+      },
+      {
+        "path": "/usr/lib/libgsttag-1.0.so.0.2806.0",
+        "pss_mib": 0.12109375
+      },
+      {
+        "path": "/usr/lib/libexpat.so.1.12.4",
+        "pss_mib": 0.0478515625
+      },
+      {
+        "path": "/usr/lib/libgraphite2.so.3.3.1",
+        "pss_mib": 0.056640625
+      },
+      {
+        "path": "/usr/lib/libpixman-1.so.0.46.4",
+        "pss_mib": 0.3505859375
+      },
+      {
+        "path": "/usr/lib/libxcb-shm.so.0.0.0",
+        "pss_mib": 0.01171875
+      },
+      {
+        "path": "/usr/lib/libxcb-render.so.0.0.0",
+        "pss_mib": 0.029296875
+      },
+      {
+        "path": "/usr/lib/libxcb.so.1.1.0",
+        "pss_mib": 0.0166015625
+      },
+      {
+        "path": "/usr/lib/libXrender.so.1.3.0",
+        "pss_mib": 0.025390625
+      },
+      {
+        "path": "/usr/lib/libfreetype.so.6.20.6",
+        "pss_mib": 0.4853515625
+      },
+      {
+        "path": "/usr/lib/libstemmer.so.0.0.0",
+        "pss_mib": 0.48828125
+      },
+      {
+        "path": "/usr/lib/libzstd.so.1.5.7",
+        "pss_mib": 0.0126953125
+      },
+      {
+        "path": "/usr/lib/libsystemd.so.0.44.0",
+        "pss_mib": 0.0478515625
+      },
+      {
+        "path": "/usr/lib/libfyaml.so.0.9.6",
+        "pss_mib": 0.12890625
+      },
+      {
+        "path": "/usr/lib/libxml2.so.16.1.4",
+        "pss_mib": 0.0849609375
+      },
+      {
+        "path": "/usr/lib/libxmlb.so.2.0.0",
+        "pss_mib": 0.1328125
+      },
+      {
+        "path": "/usr/lib/libcurl.so.4.8.0",
+        "pss_mib": 0.060546875
+      },
+      {
+        "path": "/usr/lib/libthai.so.0.3.2",
+        "pss_mib": 0.01953125
+      },
+      {
+        "path": "/usr/lib/libglycin-2.so.0",
+        "pss_mib": 0.42578125
+      },
+      {
+        "path": "/usr/lib/libpcre2-8.so.0.16.0",
+        "pss_mib": 0.009765625
+      },
+      {
+        "path": "/usr/lib/libffi.so.8.5.0",
+        "pss_mib": 0.0078125
+      },
+      {
+        "path": "/usr/lib/libmount.so.1.1.0",
+        "pss_mib": 0.015625
+      },
+      {
+        "path": "/usr/lib/libz.so.1.3.2",
+        "pss_mib": 0.0087890625
+      },
+      {
+        "path": "/usr/lib/libcolord.so.2.0.5",
+        "pss_mib": 0.140625
+      },
+      {
+        "path": "/usr/lib/libcups.so.2",
+        "pss_mib": 0.0908203125
+      },
+      {
+        "path": "/usr/lib/libcairo-script-interpreter.so.2.11804.4",
+        "pss_mib": 0.09375
+      },
+      {
+        "path": "/usr/lib/libXinerama.so.1.0.0",
+        "pss_mib": 0.015625
+      },
+      {
+        "path": "/usr/lib/libXrandr.so.2.2.0",
+        "pss_mib": 0.04296875
+      },
+      {
+        "path": "/usr/lib/libXfixes.so.3.1.0",
+        "pss_mib": 0.02734375
+      },
+      {
+        "path": "/usr/lib/libXdamage.so.1.1.0",
+        "pss_mib": 0.015625
+      },
+      {
+        "path": "/usr/lib/libXcursor.so.1.0.2",
+        "pss_mib": 0.04296875
+      },
+      {
+        "path": "/usr/lib/libXext.so.6.4.0",
+        "pss_mib": 0.037109375
+      },
+      {
+        "path": "/usr/lib/libwayland-egl.so.1.26.0",
+        "pss_mib": 0.01953125
+      },
+      {
+        "path": "/usr/lib/libxkbcommon.so.0.13.2",
+        "pss_mib": 0.115234375
+      },
+      {
+        "path": "/usr/lib/libjpeg.so.8.3.2",
+        "pss_mib": 0.05078125
+      },
+      {
+        "path": "/usr/lib/libtiff.so.6.3.0",
+        "pss_mib": 0.1328125
+      },
+      {
+        "path": "/usr/lib/libpng16.so.16.58.0",
+        "pss_mib": 0.0625
+      },
+      {
+        "path": "/usr/lib/libvulkan.so.1.4.357",
+        "pss_mib": 0.60546875
+      },
+      {
+        "path": "/usr/lib/libtinysparql-3.0.so.0.1101.0",
+        "pss_mib": 0.2265625
+      },
+      {
+        "path": "/usr/lib/libcloudproviders.so.0.4.1",
+        "pss_mib": 0.09375
+      },
+      {
+        "path": "/usr/lib/libpangoft2-1.0.so.0.5800.2",
+        "pss_mib": 0.064453125
+      },
+      {
+        "path": "/usr/lib/libX11.so.6.4.0",
+        "pss_mib": 0.19140625
+      },
+      {
+        "path": "/usr/lib/libXi.so.6.1.0",
+        "pss_mib": 0.08203125
+      },
+      {
+        "path": "/usr/lib/libgstgl-1.0.so.0.2806.0",
+        "pss_mib": 0.19140625
+      },
+      {
+        "path": "/usr/lib/libgstreamer-1.0.so.0.2806.0",
+        "pss_mib": 0.28515625
+      },
+      {
+        "path": "/usr/lib/libgstvideo-1.0.so.0.2806.0",
+        "pss_mib": 0.26171875
+      },
+      {
+        "path": "/usr/lib/libgstplay-1.0.so.0.2806.0",
+        "pss_mib": 0.109375
+      },
+      {
+        "path": "/usr/lib/libepoxy.so.0.0.0",
+        "pss_mib": 0.41015625
+      },
+      {
+        "path": "/usr/lib/libharfbuzz-subset.so.0.61440.0",
+        "pss_mib": 0.125
+      },
+      {
+        "path": "/usr/lib/libharfbuzz.so.0.61440.0",
+        "pss_mib": 0.90625
+      },
+      {
+        "path": "/usr/lib/libcairo.so.2.11804.4",
+        "pss_mib": 0.79296875
+      },
+      {
+        "path": "/usr/lib/libappstream.so.1.2.0",
+        "pss_mib": 0.3515625
+      },
+      {
+        "path": "/usr/lib/libc.so.6",
+        "pss_mib": 0.0458984375
+      },
+      {
+        "path": "/usr/lib/libwayland-client.so.0.26.0",
+        "pss_mib": 0.021484375
+      },
+      {
+        "path": "/usr/lib/libgstallocators-1.0.so.0.2806.0",
+        "pss_mib": 0.0390625
+      },
+      {
+        "path": "/usr/lib/libfontconfig.so.1.17.0",
+        "pss_mib": 0.341796875
+      },
+      {
+        "path": "/usr/lib/libpangocairo-1.0.so.0.5800.2",
+        "pss_mib": 0.0390625
+      },
+      {
+        "path": "/usr/lib/libpango-1.0.so.0.5800.2",
+        "pss_mib": 0.357421875
+      },
+      {
+        "path": "/usr/lib/libfribidi.so.0.4.0",
+        "pss_mib": 0.111328125
+      },
+      {
+        "path": "/usr/lib/libm.so.6",
+        "pss_mib": 0.09375
+      },
+      {
+        "path": "/usr/lib/libgcc_s.so.1",
+        "pss_mib": 0.0078125
+      },
+      {
+        "path": "/usr/lib/libglib-2.0.so.0.8800.3",
+        "pss_mib": 0.2705078125
+      },
+      {
+        "path": "/usr/lib/libgio-2.0.so.0.8800.3",
+        "pss_mib": 0.75390625
+      },
+      {
+        "path": "/usr/lib/libgtk-4.so.1.2200.4",
+        "pss_mib": 8.0703125
+      },
+      {
+        "path": "/usr/lib/libcairo-gobject.so.2.11804.4",
+        "pss_mib": 0.03515625
+      },
+      {
+        "path": "/usr/lib/libgmodule-2.0.so.0.8800.3",
+        "pss_mib": 0.0078125
+      },
+      {
+        "path": "/usr/lib/libudev.so.1.7.14",
+        "pss_mib": 0.0341796875
+      },
+      {
+        "path": "/usr/lib/libgobject-2.0.so.0.8800.3",
+        "pss_mib": 0.03515625
+      },
+      {
+        "path": "/usr/lib/libgraphene-1.0.so.0.1000.8",
+        "pss_mib": 0.1171875
+      },
+      {
+        "path": "/usr/lib/libgdk_pixbuf-2.0.so.0.4400.7",
+        "pss_mib": 0.2265625
+      },
+      {
+        "path": "/usr/lib/libadwaita-1.so.0",
+        "pss_mib": 1.7734375
+      },
+      {
+        "path": "/etc/ld.so.cache",
+        "pss_mib": 0.0009765625
+      },
+      {
+        "path": "[vvar]",
+        "pss_mib": 0.0
+      },
+      {
+        "path": "[vvar_vclock]",
+        "pss_mib": 0.0
+      },
+      {
+        "path": "[vdso]",
+        "pss_mib": 0.0
+      },
+      {
+        "path": "/usr/lib/ld-linux-x86-64.so.2",
+        "pss_mib": 0.0126953125
+      },
+      {
+        "path": "[stack]",
+        "pss_mib": 0.171875
+      },
+      {
+        "path": "[vsyscall]",
+        "pss_mib": 0.0
+      }
+    ],
+    "validation": {
+      "seconds": 4.011046,
+      "method": "two changed-tile counter snapshots over the engine monotonic clock",
+      "poll_interval_ms": null,
+      "fps_per_key": {
+        "0": 99.97392201435734,
+        "1": 99.97392201435734,
+        "2": 99.97392201435734,
+        "3": 99.97392201435734,
+        "4": 99.97392201435734,
+        "5": 99.97392201435734,
+        "6": 99.97392201435734,
+        "7": 99.97392201435734
+      },
+      "fps_min": 99.97392201435734,
+      "fps_max": 99.97392201435734,
+      "sizes": {
+        "0": [
+          120,
+          120
+        ],
+        "1": [
+          120,
+          120
+        ],
+        "2": [
+          120,
+          120
+        ],
+        "3": [
+          120,
+          120
+        ],
+        "4": [
+          120,
+          120
+        ],
+        "5": [
+          120,
+          120
+        ],
+        "6": [
+          120,
+          120
+        ],
+        "7": [
+          120,
+          120
+        ]
+      },
+      "written_tiles": 0,
+      "instrumented": true
+    }
+  },
+  {
+    "version": "after",
+    "case": "plus100",
+    "model": "plus",
+    "source_fps": 100,
+    "requested_fps": 120,
+    "kind": "gif",
+    "trial": 3,
+    "cpu_percent": 7.632394011803652,
+    "pss_mib": 216.98779296875,
+    "samples": [
+      {
+        "elapsed": 1.0041152760095429,
+        "cpu_percent": 7.967212720627883,
+        "pss_mib": 217.9296875,
+        "rss_mib": 259.9609375,
+        "processes": 1
+      },
+      {
+        "elapsed": 2.0085327650012914,
+        "cpu_percent": 5.973611636355424,
+        "pss_mib": 215.927734375,
+        "rss_mib": 257.9609375,
+        "processes": 1
+      },
+      {
+        "elapsed": 3.012883949006209,
+        "cpu_percent": 7.965341334192956,
+        "pss_mib": 217.9287109375,
+        "rss_mib": 259.9609375,
+        "processes": 1
+      },
+      {
+        "elapsed": 4.016972337005427,
+        "cpu_percent": 7.967426070867173,
+        "pss_mib": 216.919921875,
+        "rss_mib": 258.9609375,
+        "processes": 1
+      },
+      {
+        "elapsed": 5.020854816015344,
+        "cpu_percent": 6.972927754356073,
+        "pss_mib": 215.919921875,
+        "rss_mib": 257.9609375,
+        "processes": 1
+      },
+      {
+        "elapsed": 6.024930020008469,
+        "cpu_percent": 7.967530687128476,
+        "pss_mib": 217.921875,
+        "rss_mib": 259.9609375,
+        "processes": 1
+      },
+      {
+        "elapsed": 7.0290414040209725,
+        "cpu_percent": 6.971338151777012,
+        "pss_mib": 215.9208984375,
+        "rss_mib": 257.9609375,
+        "processes": 1
+      },
+      {
+        "elapsed": 8.033304245996987,
+        "cpu_percent": 7.96604202168726,
+        "pss_mib": 217.9228515625,
+        "rss_mib": 258.9609375,
+        "processes": 1
+      },
+      {
+        "elapsed": 9.037452532007592,
+        "cpu_percent": 8.962819660586405,
+        "pss_mib": 216.9052734375,
+        "rss_mib": 258.9609375,
+        "processes": 1
+      },
+      {
+        "elapsed": 10.041294217022369,
+        "cpu_percent": 6.973211119337992,
+        "pss_mib": 215.921875,
+        "rss_mib": 257.9609375,
+        "processes": 1
+      },
+      {
+        "elapsed": 11.045414672000334,
+        "cpu_percent": 7.967171628005092,
+        "pss_mib": 217.9228515625,
+        "rss_mib": 259.9609375,
+        "processes": 1
+      },
+      {
+        "elapsed": 12.049593308009207,
+        "cpu_percent": 7.966710018643804,
+        "pss_mib": 216.9287109375,
+        "rss_mib": 258.9609375,
+        "processes": 1
+      },
+      {
+        "elapsed": 13.053729575010948,
+        "cpu_percent": 6.971165398598131,
+        "pss_mib": 215.9287109375,
+        "rss_mib": 257.9609375,
+        "processes": 1
+      },
+      {
+        "elapsed": 14.0577555730124,
+        "cpu_percent": 7.967921165312682,
+        "pss_mib": 216.921875,
+        "rss_mib": 258.9609375,
+        "processes": 1
+      },
+      {
+        "elapsed": 15.061645427020267,
+        "cpu_percent": 6.972876528290103,
+        "pss_mib": 215.919921875,
+        "rss_mib": 257.9609375,
+        "processes": 1
+      },
+      {
+        "elapsed": 16.065682058018865,
+        "cpu_percent": 7.967836783049775,
+        "pss_mib": 215.921875,
+        "rss_mib": 257.9609375,
+        "processes": 1
+      },
+      {
+        "elapsed": 17.06980601500254,
+        "cpu_percent": 6.971250861325462,
+        "pss_mib": 217.9208984375,
+        "rss_mib": 259.9609375,
+        "processes": 1
+      },
+      {
+        "elapsed": 18.073875689995475,
+        "cpu_percent": 7.967574561054548,
+        "pss_mib": 216.921875,
+        "rss_mib": 258.9609375,
+        "processes": 1
+      },
+      {
+        "elapsed": 19.078117802011548,
+        "cpu_percent": 7.966206459854101,
+        "pss_mib": 215.9228515625,
+        "rss_mib": 257.9609375,
+        "processes": 1
+      },
+      {
+        "elapsed": 20.082094543002313,
+        "cpu_percent": 7.968312086697625,
+        "pss_mib": 216.921875,
+        "rss_mib": 259.9609375,
+        "processes": 1
+      },
+      {
+        "elapsed": 21.08620485800202,
+        "cpu_percent": 7.96725208425166,
+        "pss_mib": 217.921875,
+        "rss_mib": 259.9609375,
+        "processes": 1
+      },
+      {
+        "elapsed": 22.09025807501166,
+        "cpu_percent": 6.971742016671226,
+        "pss_mib": 218.9873046875,
+        "rss_mib": 261.02734375,
+        "processes": 1
+      },
+      {
+        "elapsed": 23.09433559901663,
+        "cpu_percent": 7.9675122774289,
+        "pss_mib": 217.986328125,
+        "rss_mib": 260.02734375,
+        "processes": 1
+      },
+      {
+        "elapsed": 24.098471235018224,
+        "cpu_percent": 6.971169779287549,
+        "pss_mib": 216.98828125,
+        "rss_mib": 259.02734375,
+        "processes": 1
+      },
+      {
+        "elapsed": 25.10255310899811,
+        "cpu_percent": 7.967477759846775,
+        "pss_mib": 218.994140625,
+        "rss_mib": 261.02734375,
+        "processes": 1
+      },
+      {
+        "elapsed": 26.10656312800711,
+        "cpu_percent": 6.972041979132108,
+        "pss_mib": 216.9873046875,
+        "rss_mib": 259.02734375,
+        "processes": 1
+      },
+      {
+        "elapsed": 27.110642039013328,
+        "cpu_percent": 7.967501271372108,
+        "pss_mib": 218.9873046875,
+        "rss_mib": 261.02734375,
+        "processes": 1
+      },
+      {
+        "elapsed": 28.114746348001063,
+        "cpu_percent": 7.967299740068909,
+        "pss_mib": 217.9873046875,
+        "rss_mib": 260.02734375,
+        "processes": 1
+      },
+      {
+        "elapsed": 29.119136449997313,
+        "cpu_percent": 7.965032694069572,
+        "pss_mib": 216.98828125,
+        "rss_mib": 259.02734375,
+        "processes": 1
+      },
+      {
+        "elapsed": 30.00369211100042,
+        "cpu_percent": 7.9135777527689735,
+        "pss_mib": 218.9716796875,
+        "rss_mib": 261.02734375,
+        "processes": 1
+      }
+    ],
+    "timing_instrumented": false,
+    "memory_mappings": [
+      {
+        "path": "[anon]",
+        "pss_mib": 34.43359375
+      },
+      {
+        "path": "/memfd:/.glXXXXXX",
+        "pss_mib": 0.0078125
+      },
+      {
+        "path": "/home/paul/Deckard/target/release/deckard",
+        "pss_mib": 10.11328125
+      },
+      {
+        "path": "[heap]",
+        "pss_mib": 37.38671875
+      },
+      {
+        "path": "/dev/nvidiactl",
+        "pss_mib": 20.3203125
+      },
+      {
+        "path": "/usr/lib/libnvidia-rtcore.so.610.57.04",
+        "pss_mib": 7.96484375
+      },
+      {
+        "path": "/dev/nvidia0",
+        "pss_mib": 0.0
+      },
+      {
+        "path": "/home/paul/Deckard/target/gtk-performance-091/high-fps/after-plus100-3/home/.cache/radv_builtin_shaders/index",
+        "pss_mib": 0.0
+      },
+      {
+        "path": "/home/paul/Deckard/target/gtk-performance-091/high-fps/after-plus100-3/home/.cache/mesa_shader_cache/index",
+        "pss_mib": 0.0
+      },
+      {
+        "path": "/usr/lib/libnvidia-glvkspirv.so.610.57.04",
+        "pss_mib": 7.4375
+      },
+      {
+        "path": "/usr/lib/libvulkan_radeon.so",
+        "pss_mib": 3.3984375
+      },
+      {
+        "path": "/usr/lib/libVkLayer_MESA_device_select.so",
+        "pss_mib": 0.09765625
+      },
+      {
+        "path": "/usr/lib/libLLVM.so.22.1",
+        "pss_mib": 10.39453125
+      },
+      {
+        "path": "/usr/lib/libgallium-26.2.2-arch1.1.so",
+        "pss_mib": 2.376953125
+      },
+      {
+        "path": "/usr/lib/libncursesw.so.6.6",
+        "pss_mib": 0.033203125
+      },
+      {
+        "path": "/usr/lib/libnvidia-eglcore.so.610.57.04",
+        "pss_mib": 7.94140625
+      },
+      {
+        "path": "/usr/lib/libnvidia-allocator.so.610.57.04",
+        "pss_mib": 0.052734375
+      },
+      {
+        "path": "/usr/lib/libedit.so.0.0.78",
+        "pss_mib": 0.076171875
+      },
+      {
+        "path": "/usr/share/fonts/Adwaita/AdwaitaSans-Regular.ttf",
+        "pss_mib": 0.455078125
+      },
+      {
+        "path": "/usr/lib/libpciaccess.so.0.11.1",
+        "pss_mib": 0.025390625
+      },
+      {
+        "path": "/usr/lib/libdrm_intel.so.1.134.0",
+        "pss_mib": 0.064453125
+      },
+      {
+        "path": "/usr/lib/libsensors.so.5.0.0",
+        "pss_mib": 0.02734375
+      },
+      {
+        "path": "/usr/lib/libEGL_mesa.so.0.0.0",
+        "pss_mib": 0.185546875
+      },
+      {
+        "path": "/memfd:weston-shared",
+        "pss_mib": 0.005859375
+      },
+      {
+        "path": "/usr/lib/libnvidia-egl-xlib.so.1.0.6",
+        "pss_mib": 0.04296875
+      },
+      {
+        "path": "/usr/lib/libEGL_nvidia.so.610.57.04",
+        "pss_mib": 0.4482421875
+      },
+      {
+        "path": "/usr/lib/libnvidia-egl-xcb.so.1.0.6",
+        "pss_mib": 0.04296875
+      },
+      {
+        "path": "/usr/lib/libSPIRV-Tools.so",
+        "pss_mib": 0.103515625
+      },
+      {
+        "path": "/usr/lib/locale/locale-archive",
+        "pss_mib": 0.0009765625
+      },
+      {
+        "path": "/usr/lib/libdrm_amdgpu.so.1.134.0",
+        "pss_mib": 0.029296875
+      },
+      {
+        "path": "/usr/lib/libwayland-server.so.0.26.0",
+        "pss_mib": 0.03125
+      },
+      {
+        "path": "/usr/lib/libnvidia-egl-wayland.so.1.1.22",
+        "pss_mib": 0.046875
+      },
+      {
+        "path": "/var/cache/fontconfig/923e285e415b1073c8df160bee08820f-le64.cache-12",
+        "pss_mib": 1.1015625
+      },
+      {
+        "path": "/usr/lib/libnvidia-gpucomp.so.610.57.04",
+        "pss_mib": 38.60546875
+      },
+      {
+        "path": "/usr/lib/libnvidia-egl-wayland2.so.1.0.2",
+        "pss_mib": 0.0341796875
+      },
+      {
+        "path": "/usr/lib/libdisplay-info.so.0.3.0",
+        "pss_mib": 0.044921875
+      },
+      {
+        "path": "/usr/lib/gvfs/libgvfscommon.so",
+        "pss_mib": 0.1259765625
+      },
+      {
+        "path": "/usr/lib/gio/modules/libgvfsdbus.so",
+        "pss_mib": 0.11328125
+      },
+      {
+        "path": "/usr/lib/libnvidia-egl-gbm.so.1.1.3",
+        "pss_mib": 0.01953125
+      },
+      {
+        "path": "/usr/lib/libxcb-keysyms.so.1.0.0",
+        "pss_mib": 0.015625
+      },
+      {
+        "path": "/usr/lib/libxshmfence.so.1.0.0",
+        "pss_mib": 0.01171875
+      },
+      {
+        "path": "/usr/lib/libxcb-randr.so.0.1.0",
+        "pss_mib": 0.033203125
+      },
+      {
+        "path": "/usr/lib/libxcb-sync.so.1.0.0",
+        "pss_mib": 0.01953125
+      },
+      {
+        "path": "/usr/lib/libxcb-xfixes.so.0.0.0",
+        "pss_mib": 0.01953125
+      },
+      {
+        "path": "/usr/lib/libxcb-present.so.0.0.0",
+        "pss_mib": 0.01171875
+      },
+      {
+        "path": "/usr/lib/libxcb-dri3.so.0.1.0",
+        "pss_mib": 0.015625
+      },
+      {
+        "path": "/usr/lib/gio/modules/libdconfsettings.so",
+        "pss_mib": 0.0546875
+      },
+      {
+        "path": "/usr/share/glib-2.0/schemas/gschemas.compiled",
+        "pss_mib": 0.0625
+      },
+      {
+        "path": "/usr/share/icons/AdwaitaLegacy/icon-theme.cache",
+        "pss_mib": 0.03125
+      },
+      {
+        "path": "/usr/share/icons/Adwaita/icon-theme.cache",
+        "pss_mib": 0.0390625
+      },
+      {
+        "path": "/var/cache/fontconfig/a9166a13c4a4e072c9ea2dae19ae425f-le64.cache-12",
+        "pss_mib": 0.03125
+      },
+      {
+        "path": "/var/cache/fontconfig/f2e43df3287529323e79e7929dc44cc9-le64.cache-12",
+        "pss_mib": 0.1640625
+      },
+      {
+        "path": "/usr/lib/gtk-4.0/4.0.0/immodules/libim-fcitx5.so",
+        "pss_mib": 0.09375
+      },
+      {
+        "path": "/usr/lib/libnvidia-glcore.so.610.57.04",
+        "pss_mib": 7.0244140625
+      },
+      {
+        "path": "/var/cache/fontconfig/b67b32625a2bb51b023d3814a918f351-le64.cache-12",
+        "pss_mib": 0.0234375
+      },
+      {
+        "path": "/usr/lib/libstdc++.so.6.0.36",
+        "pss_mib": 0.1318359375
+      },
+      {
+        "path": "/usr/share/icons/hicolor/icon-theme.cache",
+        "pss_mib": 0.0048828125
+      },
+      {
+        "path": "/tmp/deckard-endpoint-wayland/dconf/user",
+        "pss_mib": 0.00390625
+      },
+      {
+        "path": "/var/cache/fontconfig/491f45a0a771fef1c10b9b647a97fb82-le64.cache-12",
+        "pss_mib": 0.0625
+      },
+      {
+        "path": "/var/cache/fontconfig/ec9db0aec63b087e87fa5135389d951c-le64.cache-12",
+        "pss_mib": 0.01171875
+      },
+      {
+        "path": "/var/cache/fontconfig/f6b893a7224233d96cb72fd88691c0b4-le64.cache-12",
+        "pss_mib": 0.01171875
+      },
+      {
+        "path": "/var/cache/fontconfig/4b31aef11cb0687b6d280d34cbe23592-le64.cache-12",
+        "pss_mib": 0.046875
+      },
+      {
+        "path": "/usr/lib/libFcitx5GClient.so.5.1.7",
+        "pss_mib": 0.046875
+      },
+      {
+        "path": "/usr/lib/locale/C.utf8/LC_CTYPE",
+        "pss_mib": 0.0224609375
+      },
+      {
+        "path": "/usr/lib/libnvidia-glsi.so.610.57.04",
+        "pss_mib": 0.267578125
+      },
+      {
+        "path": "/usr/lib/libicudata.so.78.3",
+        "pss_mib": 0.0107421875
+      },
+      {
+        "path": "/var/cache/fontconfig/061e4bb214a55cfecd58789ba388a75a-le64.cache-12",
+        "pss_mib": 0.00390625
+      },
+      {
+        "path": "/usr/lib/locale/C.utf8/LC_NUMERIC",
+        "pss_mib": 0.0009765625
+      },
+      {
+        "path": "/usr/lib/locale/C.utf8/LC_TIME",
+        "pss_mib": 0.0009765625
+      },
+      {
+        "path": "/usr/lib/locale/C.utf8/LC_COLLATE",
+        "pss_mib": 0.0009765625
+      },
+      {
+        "path": "/usr/lib/locale/C.utf8/LC_MONETARY",
+        "pss_mib": 0.0009765625
+      },
+      {
+        "path": "/usr/lib/locale/C.utf8/LC_MESSAGES/SYS_LC_MESSAGES",
+        "pss_mib": 0.0009765625
+      },
+      {
+        "path": "/usr/lib/locale/C.utf8/LC_PAPER",
+        "pss_mib": 0.0009765625
+      },
+      {
+        "path": "/usr/lib/locale/C.utf8/LC_NAME",
+        "pss_mib": 0.0009765625
+      },
+      {
+        "path": "/usr/lib/locale/C.utf8/LC_ADDRESS",
+        "pss_mib": 0.0009765625
+      },
+      {
+        "path": "/usr/lib/locale/C.utf8/LC_TELEPHONE",
+        "pss_mib": 0.0009765625
+      },
+      {
+        "path": "/usr/lib/locale/C.utf8/LC_MEASUREMENT",
+        "pss_mib": 0.0009765625
+      },
+      {
+        "path": "/usr/lib/gconv/gconv-modules.cache",
+        "pss_mib": 0.0
+      },
+      {
+        "path": "/usr/lib/locale/C.utf8/LC_IDENTIFICATION",
+        "pss_mib": 0.0009765625
+      },
+      {
+        "path": "/usr/lib/libGLX_nvidia.so.610.57.04",
+        "pss_mib": 1.0234375
+      },
+      {
+        "path": "/usr/lib/libkrb5.so.3.3",
+        "pss_mib": 0.0771484375
+      },
+      {
+        "path": "/usr/lib/libbrotlienc.so.1.2.0",
+        "pss_mib": 0.009765625
+      },
+      {
+        "path": "/usr/lib/libunistring.so.5.2.1",
+        "pss_mib": 0.0322265625
+      },
+      {
+        "path": "/usr/lib/libp11-kit.so.0.4.11",
+        "pss_mib": 0.2978515625
+      },
+      {
+        "path": "/usr/lib/libleancrypto.so.1",
+        "pss_mib": 0.296875
+      },
+      {
+        "path": "/usr/lib/librt.so.1",
+        "pss_mib": 0.0078125
+      },
+      {
+        "path": "/usr/lib/libpthread.so.0",
+        "pss_mib": 0.0078125
+      },
+      {
+        "path": "/usr/lib/libdl.so.2",
+        "pss_mib": 0.0078125
+      },
+      {
+        "path": "/usr/lib/libnvidia-tls.so.610.57.04",
+        "pss_mib": 0.0234375
+      },
+      {
+        "path": "/usr/lib/libbrotlicommon.so.1.2.0",
+        "pss_mib": 0.0078125
+      },
+      {
+        "path": "/usr/lib/libresolv.so.2",
+        "pss_mib": 0.0126953125
+      },
+      {
+        "path": "/usr/lib/libkeyutils.so.1.10",
+        "pss_mib": 0.0078125
+      },
+      {
+        "path": "/usr/lib/libk5crypto.so.3.1",
+        "pss_mib": 0.0234375
+      },
+      {
+        "path": "/usr/lib/libgmp.so.10.5.0",
+        "pss_mib": 0.029296875
+      },
+      {
+        "path": "/usr/lib/libnettle.so.9.0",
+        "pss_mib": 0.23828125
+      },
+      {
+        "path": "/usr/lib/libicuuc.so.78.3",
+        "pss_mib": 0.1103515625
+      },
+      {
+        "path": "/usr/lib/libkrb5support.so.0.1",
+        "pss_mib": 0.01171875
+      },
+      {
+        "path": "/usr/lib/libcom_err.so.2.1",
+        "pss_mib": 0.0078125
+      },
+      {
+        "path": "/usr/lib/libhogweed.so.7.0",
+        "pss_mib": 0.109375
+      },
+      {
+        "path": "/usr/lib/libtasn1.so.6.6.5",
+        "pss_mib": 0.0859375
+      },
+      {
+        "path": "/usr/lib/libdbus-1.so.3.38.3",
+        "pss_mib": 0.025390625
+      },
+      {
+        "path": "/usr/lib/libGLdispatch.so.0.0.0",
+        "pss_mib": 0.169921875
+      },
+      {
+        "path": "/usr/lib/libelf-0.196.so",
+        "pss_mib": 0.0166015625
+      },
+      {
+        "path": "/usr/lib/libgstaudio-1.0.so.0.2806.0",
+        "pss_mib": 0.1796875
+      },
+      {
+        "path": "/usr/lib/libcrypto.so.3",
+        "pss_mib": 0.525390625
+      },
+      {
+        "path": "/usr/lib/libsharpyuv.so.0.1.2",
+        "pss_mib": 0.017578125
+      },
+      {
+        "path": "/usr/lib/libXdmcp.so.6.0.0",
+        "pss_mib": 0.0078125
+      },
+      {
+        "path": "/usr/lib/libXau.so.6.0.0",
+        "pss_mib": 0.0078125
+      },
+      {
+        "path": "/usr/lib/libbz2.so.1.0.8",
+        "pss_mib": 0.0107421875
+      },
+      {
+        "path": "/usr/lib/libbrotlidec.so.1.2.0",
+        "pss_mib": 0.0087890625
+      },
+      {
+        "path": "/usr/lib/libgssapi_krb5.so.2.2",
+        "pss_mib": 0.0244140625
+      },
+      {
+        "path": "/usr/lib/libssl.so.3",
+        "pss_mib": 0.0625
+      },
+      {
+        "path": "/usr/lib/libssh2.so.1.0.1",
+        "pss_mib": 0.05859375
+      },
+      {
+        "path": "/usr/lib/libidn2.so.0.4.0",
+        "pss_mib": 0.0087890625
+      },
+      {
+        "path": "/usr/lib/libngtcp2.so.16.11.0",
+        "pss_mib": 0.0341796875
+      },
+      {
+        "path": "/usr/lib/libgnutls.so.30.42.0",
+        "pss_mib": 0.71875
+      },
+      {
+        "path": "/usr/lib/libpsl.so.5.3.5",
+        "pss_mib": 0.009765625
+      },
+      {
+        "path": "/usr/lib/libnghttp2.so.14.29.5",
+        "pss_mib": 0.0380859375
+      },
+      {
+        "path": "/usr/lib/libngtcp2_crypto_ossl.so.0.3.1",
+        "pss_mib": 0.0126953125
+      },
+      {
+        "path": "/usr/lib/libnghttp3.so.9.9.0",
+        "pss_mib": 0.0234375
+      },
+      {
+        "path": "/usr/lib/libdatrie.so.1.4.1",
+        "pss_mib": 0.01953125
+      },
+      {
+        "path": "/usr/lib/libblkid.so.1.1.0",
+        "pss_mib": 0.0302734375
+      },
+      {
+        "path": "/usr/lib/libseccomp.so.2.6.0",
+        "pss_mib": 0.0146484375
+      },
+      {
+        "path": "/usr/lib/liblcms2.so.2.0.19",
+        "pss_mib": 0.1328125
+      },
+      {
+        "path": "/usr/lib/libavahi-client.so.3.2.9",
+        "pss_mib": 0.0244140625
+      },
+      {
+        "path": "/usr/lib/libavahi-common.so.3.5.4",
+        "pss_mib": 0.0419921875
+      },
+      {
+        "path": "/usr/lib/liblzo2.so.2.0.0",
+        "pss_mib": 0.08203125
+      },
+      {
+        "path": "/usr/lib/libwebp.so.7.2.0",
+        "pss_mib": 0.044921875
+      },
+      {
+        "path": "/usr/lib/liblzma.so.5.8.3",
+        "pss_mib": 0.015625
+      },
+      {
+        "path": "/usr/lib/libjbig.so.2.1",
+        "pss_mib": 0.05078125
+      },
+      {
+        "path": "/usr/lib/libdeflate.so.0",
+        "pss_mib": 0.078125
+      },
+      {
+        "path": "/usr/lib/libsqlite3.so.3.53.4",
+        "pss_mib": 0.0419921875
+      },
+      {
+        "path": "/usr/lib/libjson-glib-1.0.so.0.1000.8",
+        "pss_mib": 0.078125
+      },
+      {
+        "path": "/usr/lib/libgbm.so.1.0.0",
+        "pss_mib": 0.013671875
+      },
+      {
+        "path": "/usr/lib/libdrm.so.2.134.0",
+        "pss_mib": 0.0458984375
+      },
+      {
+        "path": "/usr/lib/libgudev-1.0.so.0.3.0",
+        "pss_mib": 0.0185546875
+      },
+      {
+        "path": "/usr/lib/libX11-xcb.so.1.0.0",
+        "pss_mib": 0.01171875
+      },
+      {
+        "path": "/usr/lib/libwayland-cursor.so.0.26.0",
+        "pss_mib": 0.03515625
+      },
+      {
+        "path": "/usr/lib/libGLX.so.0.0.0",
+        "pss_mib": 0.12890625
+      },
+      {
+        "path": "/usr/lib/libEGL.so.1.1.0",
+        "pss_mib": 0.0302734375
+      },
+      {
+        "path": "/usr/lib/libdw-0.196.so",
+        "pss_mib": 0.171875
+      },
+      {
+        "path": "/usr/lib/liborc-0.4.so.0.43.0",
+        "pss_mib": 0.25390625
+      },
+      {
+        "path": "/usr/lib/libgstbase-1.0.so.0.2806.0",
+        "pss_mib": 0.17578125
+      },
+      {
+        "path": "/usr/lib/libgstpbutils-1.0.so.0.2806.0",
+        "pss_mib": 0.1875
+      },
+      {
+        "path": "/usr/lib/libgsttag-1.0.so.0.2806.0",
+        "pss_mib": 0.16015625
+      },
+      {
+        "path": "/usr/lib/libexpat.so.1.12.4",
+        "pss_mib": 0.0478515625
+      },
+      {
+        "path": "/usr/lib/libgraphite2.so.3.3.1",
+        "pss_mib": 0.056640625
+      },
+      {
+        "path": "/usr/lib/libpixman-1.so.0.46.4",
+        "pss_mib": 0.3818359375
+      },
+      {
+        "path": "/usr/lib/libfreetype.so.6.20.6",
+        "pss_mib": 0.4755859375
+      },
+      {
+        "path": "/usr/lib/libstemmer.so.0.0.0",
+        "pss_mib": 0.46875
+      },
+      {
+        "path": "/usr/lib/libzstd.so.1.5.7",
+        "pss_mib": 0.0107421875
+      },
+      {
+        "path": "/usr/lib/libsystemd.so.0.44.0",
+        "pss_mib": 0.0439453125
+      },
+      {
+        "path": "/usr/lib/libfyaml.so.0.9.6",
+        "pss_mib": 0.1640625
+      },
+      {
+        "path": "/usr/lib/libxml2.so.16.1.4",
+        "pss_mib": 0.060546875
+      },
+      {
+        "path": "/usr/lib/libcurl.so.4.8.0",
+        "pss_mib": 0.0517578125
+      },
+      {
+        "path": "/usr/lib/libpcre2-8.so.0.16.0",
+        "pss_mib": 0.0126953125
+      },
+      {
+        "path": "/usr/lib/libglycin-2.so.0",
+        "pss_mib": 0.42578125
+      },
+      {
+        "path": "/usr/lib/libunwind.so.8.2.0",
+        "pss_mib": 0.02734375
+      },
+      {
+        "path": "/usr/lib/libxcb-shm.so.0.0.0",
+        "pss_mib": 0.01171875
+      },
+      {
+        "path": "/usr/lib/libxcb-render.so.0.0.0",
+        "pss_mib": 0.029296875
+      },
+      {
+        "path": "/usr/lib/libxcb.so.1.1.0",
+        "pss_mib": 0.0166015625
+      },
+      {
+        "path": "/usr/lib/libXrender.so.1.3.0",
+        "pss_mib": 0.025390625
+      },
+      {
+        "path": "/usr/lib/libxmlb.so.2.0.0",
+        "pss_mib": 0.13671875
+      },
+      {
+        "path": "/usr/lib/libthai.so.0.3.2",
+        "pss_mib": 0.01953125
+      },
+      {
+        "path": "/usr/lib/libffi.so.8.5.0",
+        "pss_mib": 0.0078125
+      },
+      {
+        "path": "/usr/lib/libmount.so.1.1.0",
+        "pss_mib": 0.0146484375
+      },
+      {
+        "path": "/usr/lib/libz.so.1.3.2",
+        "pss_mib": 0.0087890625
+      },
+      {
+        "path": "/usr/lib/libcolord.so.2.0.5",
+        "pss_mib": 0.140625
+      },
+      {
+        "path": "/usr/lib/libcups.so.2",
+        "pss_mib": 0.11328125
+      },
+      {
+        "path": "/usr/lib/libcairo-script-interpreter.so.2.11804.4",
+        "pss_mib": 0.09375
+      },
+      {
+        "path": "/usr/lib/libXinerama.so.1.0.0",
+        "pss_mib": 0.015625
+      },
+      {
+        "path": "/usr/lib/libXrandr.so.2.2.0",
+        "pss_mib": 0.04296875
+      },
+      {
+        "path": "/usr/lib/libXfixes.so.3.1.0",
+        "pss_mib": 0.02734375
+      },
+      {
+        "path": "/usr/lib/libXdamage.so.1.1.0",
+        "pss_mib": 0.015625
+      },
+      {
+        "path": "/usr/lib/libXcursor.so.1.0.2",
+        "pss_mib": 0.04296875
+      },
+      {
+        "path": "/usr/lib/libXext.so.6.4.0",
+        "pss_mib": 0.037109375
+      },
+      {
+        "path": "/usr/lib/libwayland-client.so.0.26.0",
+        "pss_mib": 0.021484375
+      },
+      {
+        "path": "/usr/lib/libxkbcommon.so.0.13.2",
+        "pss_mib": 0.1162109375
+      },
+      {
+        "path": "/usr/lib/libjpeg.so.8.3.2",
+        "pss_mib": 0.05078125
+      },
+      {
+        "path": "/usr/lib/libtiff.so.6.3.0",
+        "pss_mib": 0.1328125
+      },
+      {
+        "path": "/usr/lib/libpng16.so.16.58.0",
+        "pss_mib": 0.0703125
+      },
+      {
+        "path": "/usr/lib/libvulkan.so.1.4.357",
+        "pss_mib": 0.60546875
+      },
+      {
+        "path": "/usr/lib/libtinysparql-3.0.so.0.1101.0",
+        "pss_mib": 0.2265625
+      },
+      {
+        "path": "/usr/lib/libcloudproviders.so.0.4.1",
+        "pss_mib": 0.09375
+      },
+      {
+        "path": "/usr/lib/libpangoft2-1.0.so.0.5800.2",
+        "pss_mib": 0.064453125
+      },
+      {
+        "path": "/usr/lib/libX11.so.6.4.0",
+        "pss_mib": 0.19140625
+      },
+      {
+        "path": "/usr/lib/libXi.so.6.1.0",
+        "pss_mib": 0.08203125
+      },
+      {
+        "path": "/usr/lib/libgstgl-1.0.so.0.2806.0",
+        "pss_mib": 0.19140625
+      },
+      {
+        "path": "/usr/lib/libgstreamer-1.0.so.0.2806.0",
+        "pss_mib": 0.28515625
+      },
+      {
+        "path": "/usr/lib/libgstvideo-1.0.so.0.2806.0",
+        "pss_mib": 0.26171875
+      },
+      {
+        "path": "/usr/lib/libgstplay-1.0.so.0.2806.0",
+        "pss_mib": 0.109375
+      },
+      {
+        "path": "/usr/lib/libepoxy.so.0.0.0",
+        "pss_mib": 0.41015625
+      },
+      {
+        "path": "/usr/lib/libharfbuzz-subset.so.0.61440.0",
+        "pss_mib": 0.125
+      },
+      {
+        "path": "/usr/lib/libharfbuzz.so.0.61440.0",
+        "pss_mib": 0.92578125
+      },
+      {
+        "path": "/usr/lib/libcairo.so.2.11804.4",
+        "pss_mib": 0.79296875
+      },
+      {
+        "path": "/usr/lib/libappstream.so.1.2.0",
+        "pss_mib": 0.3515625
+      },
+      {
+        "path": "/usr/lib/libc.so.6",
+        "pss_mib": 0.0458984375
+      },
+      {
+        "path": "/usr/lib/libwayland-egl.so.1.26.0",
+        "pss_mib": 0.01953125
+      },
+      {
+        "path": "/usr/lib/libgstallocators-1.0.so.0.2806.0",
+        "pss_mib": 0.0390625
+      },
+      {
+        "path": "/usr/lib/libfontconfig.so.1.17.0",
+        "pss_mib": 0.369140625
+      },
+      {
+        "path": "/usr/lib/libcairo-gobject.so.2.11804.4",
+        "pss_mib": 0.03515625
+      },
+      {
+        "path": "/usr/lib/libpangocairo-1.0.so.0.5800.2",
+        "pss_mib": 0.0390625
+      },
+      {
+        "path": "/usr/lib/libpango-1.0.so.0.5800.2",
+        "pss_mib": 0.357421875
+      },
+      {
+        "path": "/usr/lib/libfribidi.so.0.4.0",
+        "pss_mib": 0.111328125
+      },
+      {
+        "path": "/usr/lib/libm.so.6",
+        "pss_mib": 0.083984375
+      },
+      {
+        "path": "/usr/lib/libgcc_s.so.1",
+        "pss_mib": 0.0078125
+      },
+      {
+        "path": "/usr/lib/libglib-2.0.so.0.8800.3",
+        "pss_mib": 0.2705078125
+      },
+      {
+        "path": "/usr/lib/libgio-2.0.so.0.8800.3",
+        "pss_mib": 0.75390625
+      },
+      {
+        "path": "/usr/lib/libgtk-4.so.1.2200.4",
+        "pss_mib": 8.0703125
+      },
+      {
+        "path": "/usr/lib/libgmodule-2.0.so.0.8800.3",
+        "pss_mib": 0.0078125
+      },
+      {
+        "path": "/usr/lib/libudev.so.1.7.14",
+        "pss_mib": 0.03515625
+      },
+      {
+        "path": "/usr/lib/libgobject-2.0.so.0.8800.3",
+        "pss_mib": 0.03515625
+      },
+      {
+        "path": "/usr/lib/libgraphene-1.0.so.0.1000.8",
+        "pss_mib": 0.1171875
+      },
+      {
+        "path": "/usr/lib/libgdk_pixbuf-2.0.so.0.4400.7",
+        "pss_mib": 0.2265625
+      },
+      {
+        "path": "/usr/lib/libadwaita-1.so.0",
+        "pss_mib": 1.7734375
+      },
+      {
+        "path": "/etc/ld.so.cache",
+        "pss_mib": 0.0009765625
+      },
+      {
+        "path": "[vvar]",
+        "pss_mib": 0.0
+      },
+      {
+        "path": "[vvar_vclock]",
+        "pss_mib": 0.0
+      },
+      {
+        "path": "[vdso]",
+        "pss_mib": 0.0
+      },
+      {
+        "path": "/usr/lib/ld-linux-x86-64.so.2",
+        "pss_mib": 0.0126953125
+      },
+      {
+        "path": "[stack]",
+        "pss_mib": 0.16796875
+      },
+      {
+        "path": "[vsyscall]",
+        "pss_mib": 0.0
+      }
+    ],
+    "validation": {
+      "seconds": 4.011269,
+      "method": "two changed-tile counter snapshots over the engine monotonic clock",
+      "poll_interval_ms": null,
+      "fps_per_key": {
+        "0": 99.96836412616555,
+        "1": 99.96836412616555,
+        "2": 99.96836412616555,
+        "3": 99.96836412616555,
+        "4": 99.96836412616555,
+        "5": 99.96836412616555,
+        "6": 99.96836412616555,
+        "7": 99.96836412616555
+      },
+      "fps_min": 99.96836412616555,
+      "fps_max": 99.96836412616555,
+      "sizes": {
+        "0": [
+          120,
+          120
+        ],
+        "1": [
+          120,
+          120
+        ],
+        "2": [
+          120,
+          120
+        ],
+        "3": [
+          120,
+          120
+        ],
+        "4": [
+          120,
+          120
+        ],
+        "5": [
+          120,
+          120
+        ],
+        "6": [
+          120,
+          120
+        ],
+        "7": [
+          120,
+          120
+        ]
+      },
+      "written_tiles": 0,
+      "instrumented": true
+    }
+  }
+]

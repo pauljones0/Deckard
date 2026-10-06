@@ -2,13 +2,41 @@
 
 These scripts run the real applications, including their interfaces and device-rendering workers. Python here is **measurement/test tooling only** and is never bundled into native Deckard.
 
-[Recorded results, summary and frame validation](results/2026-10-06). Regenerate the README table with:
+[Current Rust GTK results](results/2026-10-06/gtk-editor) · [Historical results](results/2026-10-06). The following command summarizes the historical 0.5.0 table:
 
 ```sh
 .venv/bin/python benchmarks/summarize.py \
   benchmarks/results/2026-10-06/visible \
   benchmarks/results/2026-10-06/background
 ```
+
+## Rust GTK editor (0.9.1)
+
+The [current results](results/2026-10-06/gtk-editor) use source `88171a62`, a frozen host release binary and GTK's automatic renderer. Three trials use 15 seconds warmup and 30 seconds sampling. The upstream fixtures and Python revisions listed below are unchanged; fresh upstream timings from the same session supply the comparison. Their native 0.9.0 entries are retained as provenance, and the README uses the separate final 0.9.1 runs. Requested DejaVu Sans is unavailable on this host; the same requested family and fallback apply to all three apps.
+
+Each trial uses a private D-Bus session without service activation and `GTK_A11Y=none`. This avoids launching host accessibility services while measuring. The timing phase has no frame observer. A separate, longer upstream observer covers the original's delayed playback startup. GPU-backed 1280×800 Wayland sessions are fresh per trial. An unrelated compute job used 97–100% GPU at spot checks; it was left running. These are measurements of this session, not quiet-lab or universal estimates.
+
+The modes are distinct: `--background` never opens a window; `DECKARD_UI_HIDE_AFTER_MS=3000` opens and then closes the real GTK window before warmup ends. Hidden trials verify resource release after using the editor. Do not describe them as identical workloads.
+
+```sh
+.venv/bin/python benchmarks/compare.py --native target/release/deckard \
+  --apps rust --workloads static animated --trials 3 --warmup 15 --duration 30 \
+  --wayland-runtime /tmp/deckard-gtk --wayland-socket deckard-gtk \
+  --weston-bundle target/benchmarks/weston --output target/gtk-visible
+```
+
+Repeat with a fresh output directory and the close environment variable for hidden measurements, or `--background` for the daemon. Select `--apps original direct` for upstream baselines. Run `--observe-legacy-frames --workloads animated --warmup 30 --duration 5 --trials 1` separately for validation; its timing results must be excluded.
+
+The 100 FPS diagnostic uses `endpoints.py`, 200 distinct native 120×120 source frames and installed Liberation Sans. That differs from the 10 FPS upstream comparison fixture, so do not treat them as a matched pair.
+
+```sh
+.venv/bin/python benchmarks/endpoints.py --after target/release/deckard \
+  --versions after --cases plus100 --visible --gtk-renderer auto \
+  --font-family 'Liberation Sans' --trials 3 --warmup 15 --duration 30 \
+  --validate-seconds 4 --output target/gtk-100
+```
+
+`--gtk-renderer cairo --disable-gpu` tests software painting; `--gtk-renderer gl` tests OpenGL. `--clear-glx-vendor` removes only a forced GLX vendor hint from the child environment. These are diagnostics rather than application defaults. Memory mappings are collected after CPU sampling. The raw records distinguish three-trial comparisons from single-trial vendor investigations, retain executable hashes and mark excluded measurements in their provenance.
 
 ## What is compared
 

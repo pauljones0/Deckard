@@ -1,0 +1,27 @@
+{
+  "build": {
+    "version": "0.9.1",
+    "architecture": "x86_64",
+    "target": "cachyos",
+    "distribution": "CachyOS",
+    "rust": "rustc 1.99.0 (b940084d7 2026-09-28)",
+    "runtime": "Rust; no Python",
+    "frontend": "GTK4/libadwaita",
+    "source_revision": "88171a62dca827f63cce5e005855c8b4ffed5718",
+    "bundled_system_libraries": false,
+    "system_dependencies": "Installed and updated by the distribution package manager",
+    "artifacts": [
+      "deckard-0.9.1-cachyos-x86_64.pkg.tar.zst",
+      "deckard-0.9.1-example-plugin-cachyos-x86_64.zip",
+      "deckard-0.9.1-starter-page-cachyos-x86_64.zip",
+      "native-store-cachyos-x86_64.json"
+    ]
+  },
+  "checksums_verified": true,
+  "files": {
+    "deckard-0.9.1-cachyos-x86_64.pkg.tar.zst": "c7accf67fe4aedca815a03503718b04d8ba4d03446d312564f162955d375de9f",
+    "native-ui-cachyos-x86_64.png": "499df98511955bdfaebcadd8a130fa8fcff169e5df5d9b71cc2928ef7522bb61"
+  },
+  "screenshot_inspected": true,
+  "release_url": "https://github.com/pauljones0/Deckard/releases/tag/v0.9.1"
+}

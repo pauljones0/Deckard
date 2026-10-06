@@ -1,0 +1,23 @@
+{
+  "date": "2026-10-06T08:30:10Z",
+  "platform": "Linux-7.2.5-3-omarchy-x86_64-with-glibc2.44",
+  "warmup": 15.0,
+  "duration": 30.0,
+  "trials": 3,
+  "visible": true,
+  "gtk_renderer": "auto",
+  "gtk_a11y": "none",
+  "gtk_gpu_disabled": false,
+  "requested_font": "Liberation Sans",
+  "cpu_unit": "100% = one logical core",
+  "memory_unit": "MiB PSS, application plus descendants",
+  "hardware_usb": false,
+  "git_head": "97e1dc35e3abd48adeb3961b9598ae71c7db7b5c",
+  "git_dirty": true,
+  "binaries": {
+    "after": {
+      "path": "/home/paul/Deckard/target/gtk-cachy-installed/usr/lib/deckard/bin/deckard-bin",
+      "sha256": "abcfeb4c538116f3b6baca283bb4ce404690dd0f8923345cd6a61d2a7c0b340b"
+    }
+  }
+}

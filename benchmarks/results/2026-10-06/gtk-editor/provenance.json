@@ -1,0 +1,23 @@
+{
+  "date": "2026-10-06",
+  "host": "Omarchy/Arch, Ryzen 7 9800X3D, RTX 5070, NVIDIA 610.57.04, GTK 4.22.4, libadwaita 1.9.3",
+  "host_condition": "An unrelated user compute job occupied 97\u2013100% GPU at spot checks; left untouched. Host compilation, other benchmark workloads and screenshot capture excluded during timing. Remote CI does not share this host.",
+  "upstream_timings": "Three trials per application and mode; 15 s warmup, 30 s sampling. Uninstrumented original and direct baselines from the same session, before the final Rust 0.9.1 trials. The rust entries in upstream-visible are 0.9.0, retained for provenance and excluded from the final README table.",
+  "diagnostics_090": "Actual released CachyOS v0.9.0 binary, source 97e1dc35e3abd48adeb3961b9598ae71c7db7b5c, SHA256 abcfeb4c538116f3b6baca283bb4ce404690dd0f8923345cd6a61d2a7c0b340b. Some records say git_dirty=true: benchmark renderer/A11Y diagnostics were being improved; the package executable did not change. Only auto and Cairo 100 FPS have three trials; OpenGL and vendor-hint cases are single diagnostic trials.",
+  "diagnostic_exclusions": "The initial GTK high-FPS run used an earlier session-bus harness and emitted an AT-SPI warning; excluded. A short original frame observer ended before playback began; excluded and replaced with a longer validation-only run.",
+  "measurement": "CPU is percent of one logical core; memory is process-tree PSS including descendants, excluding compositor, D-Bus daemon and GPU VRAM. One fake Plus with 8 keys; no physical USB or ARM timing. High-FPS endpoint fixture differs from upstream fixture; compare within the same fixture only.",
+  "checked_release": {
+    "tag": "v0.9.1",
+    "source": "88171a62dca827f63cce5e005855c8b4ffed5718",
+    "workflow": "https://github.com/pauljones0/Deckard/actions/runs/37439742113",
+    "targets": [
+      "cachyos-x86_64",
+      "fedora44-x86_64",
+      "fedora44-aarch64",
+      "ubuntu26-x86_64",
+      "ubuntu26-aarch64"
+    ],
+    "result": "all five native build/test/GTK interaction/fresh-install jobs and publication succeeded"
+  },
+  "working_tree_during_final_timing": "Application source and executable frozen at 88171a62; only benchmark result archives and documentation were edited. These documentation/results files can cause later metadata to record git_dirty=true."
+}

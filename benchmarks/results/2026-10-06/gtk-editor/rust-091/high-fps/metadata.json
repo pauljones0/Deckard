@@ -1,0 +1,24 @@
+{
+  "date": "2026-10-06T09:13:44Z",
+  "platform": "Linux-7.2.5-3-omarchy-x86_64-with-glibc2.44",
+  "warmup": 15.0,
+  "duration": 30.0,
+  "trials": 3,
+  "visible": true,
+  "gtk_renderer": "auto",
+  "gtk_a11y": "none",
+  "gtk_gpu_disabled": false,
+  "glx_vendor_hint": "nvidia",
+  "requested_font": "Liberation Sans",
+  "cpu_unit": "100% = one logical core",
+  "memory_unit": "MiB PSS, application plus descendants",
+  "hardware_usb": false,
+  "git_head": "88171a62dca827f63cce5e005855c8b4ffed5718",
+  "git_dirty": true,
+  "binaries": {
+    "after": {
+      "path": "/home/paul/Deckard/target/release/deckard",
+      "sha256": "1be44ec31d62f565e96c796cf875cb18a2b999c425002e6ed1dcdef49a3f50e9"
+    }
+  }
+}

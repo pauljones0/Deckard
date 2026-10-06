@@ -1,0 +1,9 @@
+{
+  "source": "88171a62dca827f63cce5e005855c8b4ffed5718",
+  "automatic_renderer": "GskVulkanRenderer",
+  "selected_device": 0,
+  "selected_queue": 0,
+  "device": "NVIDIA GeForce RTX 5070",
+  "method": "Separate GTK startup/capture diagnostic using GSK_DEBUG=renderer and GDK_DEBUG=vulkan. Excluded from CPU/RAM timing.",
+  "python_runtime_loaded": false
+}

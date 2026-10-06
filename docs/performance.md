@@ -1,5 +1,51 @@
 # Performance results
 
+## Rust GTK editor · 6 October 2026
+
+GTK4/libadwaita is restored in Rust **0.9.1**, source `88171a62`. The README screenshot is captured from the running editor, with the native Rust example plugin. No Python runtime is loaded or packaged.
+
+| Eight Plus keys · Rust GTK | CPU · one core | RAM · PSS |
+| --- | ---: | ---: |
+| Editor visible · static | 0.10% | 200.1 MiB |
+| Editor visible · 10 FPS GIFs | 2.07% | 214.3 MiB |
+| Window closed to tray · static | 0.13% | 199.2 MiB |
+| Window closed to tray · 10 FPS GIFs | 0.53% | 201.5 MiB |
+| Daemon only · 10 FPS GIFs | 0.53% | 54.6 MiB |
+| Editor visible · 100 FPS GIFs* | 7.63% | 216.9 MiB |
+
+Medians of three trials each, with 15 seconds warmup and 30 seconds sampling. CPU is percent of one logical core; RAM is application-plus-descendants PSS. The compositor, private D-Bus daemon and GPU VRAM are excluded. Static CPU differences are near the accounting floor.
+
+The first five cases share the upstream-comparison fixture: one fake Plus, eight native 120×120 output keys, a 96×96 100-frame GIF requesting 10 FPS and identical label settings. *The 100 FPS endpoint fixture has 200 native 120×120 source frames and installed Liberation Sans; it is a separate workload. Its post-timing counters report approximately 100.0 FPS on every key. The UI coalesces previews near 60 Hz independently of device output.
+
+### Compared with both upstreams
+
+| Eight animated keys · 10 FPS source | StreamController | nazbert/Deckard | Rust GTK 0.9.1 |
+| --- | ---: | ---: | ---: |
+| Editor visible | 6.67% / 345 MiB | 3.77% / 309 MiB | **2.07% / 214 MiB** |
+| Daemon only | 4.33% / 204 MiB | 2.33% / 200 MiB | **0.53% / 55 MiB** |
+
+The original and direct upstream revisions are `0f439967` and `a3609c7d`. Their fresh three-trial baselines are from the same session and unchanged fixture. Final Rust trials follow the GTK interaction fixes; binaries are frozen during measurement. Separate output validation checks all eight keys, dimensions, changing pixels and errors; observer timing is excluded. Source requests are identical, but upstream scheduling differs, so CPU savings describe the complete applications rather than equal-cost frame engines. Final validation observed 9.2–10.0 FPS in the original, 9.0–9.1 in the direct upstream and 9.8–9.9 FPS in Rust across visible and daemon modes, with all keys at 120×120 and no frame errors.
+
+Ryzen 7 9800X3D / RTX 5070, GTK 4.22.4 / libadwaita 1.9.3, hardware-backed 1280×800 Wayland sessions recreated per trial. An unrelated user compute job occupied 97–100% GPU at spot checks and was left running. Results describe this session, not quiet-lab or universal performance. No physical USB/LCD, ARM throughput, input latency or long-duration soak was measured. [Raw samples, ranges, executable hashes and validation](../benchmarks/results/2026-10-06/gtk-editor) · [Reproduction](../benchmarks/README.md#rust-gtk-editor-091).
+
+### GTK renderer and driver costs
+
+GTK restores the requested interface, but its high-FPS editor uses more resources than egui. A frozen 0.8.0 package measured **3.30% CPU / 178.0 MiB** at 100 FPS in the same endpoint fixture. A corrected three-trial 0.9.0 CachyOS package run measured **8.23% / 215.9 MiB**. Neither frontend silently lowers native device FPS to obtain a better CPU result.
+
+Renderer diagnostics ruled out the initial accessibility/session-bus warning as the cause: rerunning with a private bus and accessibility disabled reproduced the cost. Cairo reduced memory to **81.0 MiB**, but increased CPU to **11.83%** at the same 100 FPS. A single OpenGL diagnostic also used more CPU than automatic GTK rendering. The app therefore keeps GTK's automatic renderer. A separate GTK debug run confirmed `GskVulkanRenderer` selecting the NVIDIA RTX 5070, rather than software Vulkan.
+
+This host exports `__GLX_VENDOR_LIBRARY_NAME=nvidia`, which loads NVIDIA driver/compiler libraries even in the daemon before a window opens. Single-trial matched-fixture diagnostics measured **69.5 → 31.0 MiB** by removing only that hint from the child environment; CPU stayed at 0.27%. These use the native-source/Liberation Sans endpoint fixture, so their absolute RAM differs from the upstream-comparison daemon row. Cairo at 100 FPS similarly fell **81.0 → 56.9 MiB** without the hint, with CPU around 11.9%. The inherited vendor hint is recorded; Deckard does not change the user's GPU configuration.
+
+Closing to the tray stops preview painting, drops textures and unrealizes the native window. Reopening recreates its surface and frames. GTK widget allocations and global graphics-driver resources remain, which explains why hidden RAM stays much closer to the visible editor than the never-opened daemon.
+
+For a per-process memory-focused option, with the measured CPU tradeoff:
+
+```sh
+env -u __GLX_VENDOR_LIBRARY_NAME GSK_RENDERER=cairo GDK_DISABLE=gl,vulkan deckard
+```
+
+The GPU-backed memory maps include NVIDIA shader/compiler libraries and the Mesa driver's `libLLVM`; this is runtime graphics-driver overhead, not Rust invoking LLVM to compile application code. Diagnostic and profiler observations are kept separate from CPU timing. [Renderer and environment documentation](https://docs.gtk.org/gtk4/running.html).
+
 ## Previous egui editor · 6 October 2026
 
 Fresh measurements of the latest native CachyOS package from `main` (`b655ac08`), running on the Omarchy/Arch host. These readings describe the previous egui frontend, before the GTK restoration.
@@ -23,7 +69,7 @@ Reproduce after extracting the native package into `target/current-editor-packag
 
 Use fresh output directories, the benchmark environment and extracted Weston described in [the methodology](../benchmarks/README.md). Run workloads sequentially; do not build during timing.
 
-## Under 1% of a CPU core at 100 FPS
+## Historical Rust 0.8.0 · background rendering
 
 **Eight native-resolution Plus keys at 100 FPS: 33% less CPU than 0.7.0. XL animation uses 29% less.** These are fresh, matched-rate Rust **0.7.0 → 0.8.0** measurements.
 
@@ -41,7 +87,7 @@ Use fresh output directories, the benchmark environment and extracted Weston des
 
 CPU means percent of one logical core; RAM is application-plus-descendants PSS, including FFmpeg. Each result is the median of three trials with 15 seconds warmup, 15 seconds timing and separate four-second per-key validation. Both versions use installed 14-point Liberation Sans, identical GIF/video fixtures and the same native endpoints. The visible editor uses Vulkan on the Ryzen 7 9800X3D / RTX 5070 host. These fake-device checks measure rendered pixels; physical USB/LCD and ARM performance remain unmeasured. Compare the paired values here rather than chaining medians from older tables. [Methodology](../benchmarks/README.md#native-simd-and-allocation-optimization-080), [all 30 runs, ranges and executable hashes](../benchmarks/results/2026-10-06/native-0.8).
 
-## Same pixels, half the rendering CPU
+## Historical Rust 0.7.0 · render and cache optimization
 
 **100 FPS with 53% less background CPU. Single-pass video uses 56% less RAM.** These are measured Rust **0.6.0 → 0.7.0** results at the same source rates and native key dimensions.
 
@@ -57,7 +103,7 @@ The renderer copies opaque RGBA rows, allocates RGB previews directly in their s
 
 Looping GIF/editor RAM is essentially flat: measured increases are 0.06–0.33 MiB, and the table retains them. The video memory result covers the measured playback window, when 0.6.0 accumulates encoded history; it is not an unlimited-duration soak result. CPU is percent of one logical core; RAM is application-plus-descendants PSS, including FFmpeg. Each result is the median of three trials with 15 seconds warmup, 15 seconds timing and separate four-second per-key validation. GIFs have 200 distinct 120×120 source frames; the single-pass video is a 120-second 60 FPS FFV1 clip. Both versions use the installed 14-point Liberation Sans font. The visible editor uses Vulkan on the same Ryzen 7 9800X3D / RTX 5070 host. These fake-device checks measure rendered pixels; physical USB/LCD and ARM performance remain unmeasured. [Methodology](../benchmarks/README.md#native-rendering-and-cache-optimization-070), [raw samples, FPS and executable hashes](../benchmarks/results/2026-10-06/native-0.7).
 
-## Faster animation, less work per frame (0.6.0)
+## Historical Rust 0.6.0 · native frame rates
 
 **100 FPS at about 17 MiB: 3.4× the frames, with 34% less CPU work per device frame. At the same 10 FPS, background CPU falls 20%.** These are measured Rust 0.5.0 → 0.6.0 results, with every key animated at its native resolution.
 
@@ -72,7 +118,7 @@ Looping GIF/editor RAM is essentially flat: measured increases are 0.06–0.33 M
 
 Higher-rate sources use more total CPU because more frames are rendered; the final column compares CPU cost for a complete frame across all keys. CPU is percent of one logical core; RAM is application-plus-descendants PSS. Results are medians of three trials, each with 15 seconds warmup and 15 seconds sampling, on the Ryzen 7 9800X3D / RTX 5070 host. Separate pixel checks validate every key after timing; the visible editor uses Vulkan in a fresh private 1280×800 Wayland session. GIFs have 200 distinct 120×120 source frames; video is a 60 FPS FFV1 clip. These fake-device measurements establish rendering throughput, rather than physical USB/LCD limits or ARM performance. [Methodology](../benchmarks/README.md#native-endpoint-optimization-060), [raw samples, per-key FPS and executable hashes](../benchmarks/results/2026-10-06/endpoints).
 
-## More room for your stream 🦀
+## Historical Rust 0.5.0 · upstream comparison
 
 **Published 0.5.0 comparison: editor animation uses 52% less CPU and 42% less RAM than the direct upstream. Background animation uses 80% less CPU and 92% less RAM than the original.**
 

@@ -31,14 +31,14 @@ Python plugins need native replacements. **Settings → Inspect legacy actions**
 
 ## Less CPU. Less RAM.
 
-Historical upstream comparison with eight animated Plus keys, using Rust 0.5.0. Current GTK measurements are tracked in [performance results](docs/performance.md).
+Eight animated Plus keys, 10 FPS source. **45% less editor CPU and 31% less RAM than the direct upstream.**
 
-| Mode | StreamController CPU / RAM | nazbert/Deckard CPU / RAM | Rust 0.5.0 CPU / RAM |
+| Mode | StreamController CPU / RAM | nazbert/Deckard CPU / RAM | Rust GTK CPU / RAM |
 | --- | ---: | ---: | ---: |
-| Editor | 6.33% / 339 MiB | 3.80% / 303 MiB | **1.83% / 176 MiB** |
-| Background | 4.07% / 197 MiB | 2.23% / 195 MiB | **0.80% / 16 MiB** |
+| Editor | 6.67% / 345 MiB | 3.77% / 309 MiB | **2.07% / 214 MiB** |
+| Daemon only | 4.33% / 204 MiB | 2.33% / 200 MiB | **0.53% / 55 MiB** |
 
-CPU is percent of one core; RAM is process-tree PSS. Three trials per case on a Ryzen 9800X3D / RTX 5070, using fake devices. USB/LCD and ARM performance remain unmeasured.
+Rust 0.9.1; medians of three trials on a 9800X3D / RTX 5070 under GPU load. CPU is percent of one core; RAM is process-tree PSS. Fake devices; USB/LCD and ARM performance unmeasured. [Method, hidden-window and 100 FPS results](docs/performance.md).
 
 ## Build
 

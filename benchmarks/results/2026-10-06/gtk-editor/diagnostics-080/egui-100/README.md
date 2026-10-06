@@ -1,0 +1,1 @@
+Frozen 0.8.0 egui package: the three `before` trials only. The metadata retains both executable hashes from the original paired run; GTK `after` trials are excluded because that earlier harness emitted an AT-SPI warning. Corrected GTK results are recorded separately.
