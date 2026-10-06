@@ -8,14 +8,15 @@ from compare import native_status, snapshot, stop, start_compositor
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 MODELS = {"mini": (2, 3, (80,80)), "mk2": (3,5,(72,72)), "xl": (4,8,(96,96)), "plus": (2,4,(120,120)), "plus-xl": (4,9,(112,112)), "studio": (2,16,(144,112)), "ulanzi": (3,5,(196,196)), "mirabox": (3,6,(85,85))}
-CASES = {"plus10":("plus",10,"gif"), "plus50":("plus",50,"gif"), "plus100":("plus",100,"gif"), "plus60video":("plus",60,"video"), "xl50":("xl",50,"gif"), "plusxl50":("plus-xl",50,"gif"), "mini100":("mini",100,"gif"), "mk2100":("mk2",100,"gif"), "studio50":("studio",50,"gif"), "ulanzi50":("ulanzi",50,"gif"), "mirabox100":("mirabox",100,"gif")}
+CASES = {"plus10":("plus",10,"gif"), "plus50":("plus",50,"gif"), "plus100":("plus",100,"gif"), "plus60video":("plus",60,"video"), "plus60once":("plus",60,"video-once"), "xl50":("xl",50,"gif"), "plusxl50":("plus-xl",50,"gif"), "mini100":("mini",100,"gif"), "mk2100":("mk2",100,"gif"), "studio50":("studio",50,"gif"), "ulanzi50":("ulanzi",50,"gif"), "mirabox100":("mirabox",100,"gif")}
 
 def asset(directory, rate, kind):
     directory.mkdir(parents=True,exist_ok=True)
-    path=directory / f"{rate}.{kind if kind=='gif' else 'mkv'}"
+    suffix="-once" if kind=="video-once" else ""
+    path=directory / f"{rate}{suffix}.{kind if kind=='gif' else 'mkv'}"
     if path.exists(): return path
-    if kind == "video":
-        subprocess.run(["ffmpeg","-v","error","-f","lavfi","-i",f"testsrc2=size=120x120:rate={rate}","-frames:v","180","-c:v","ffv1","-threads","1",str(path)],check=True)
+    if kind.startswith("video"):
+        subprocess.run(["ffmpeg","-v","error","-f","lavfi","-i",f"testsrc2=size=120x120:rate={rate}","-frames:v", "7200" if kind=="video-once" else "180","-c:v","ffv1","-threads","1",str(path)],check=True)
     else:
         frames=[]
         for index in range(200):
@@ -25,7 +26,7 @@ def asset(directory, rate, kind):
         frames[0].save(path,save_all=True,append_images=frames[1:],duration=1000//rate,loop=0,optimize=False)
     return path
 
-def prepare(data, model, media):
+def prepare(data, model, media, looping=True, font_family="DejaVu Sans"):
     (data/"pages").mkdir(parents=True)
     (data/"settings").mkdir()
     (data/".skip-onboarding").touch()
@@ -33,7 +34,7 @@ def prepare(data, model, media):
     page={"keys":{},"dials":{},"settings":{}}
     for y in range(rows):
         for x in range(cols):
-            page["keys"][f"{x}x{y}"]={"states":{"0":{"actions":[],"media":{"path":str(media),"fps":120,"loop":True},"labels":{"center":{"text":f"Key {y*cols+x+1}","font-family":"DejaVu Sans","font-size":14,"color":[255,255,255,255]}}}}}
+            page["keys"][f"{x}x{y}"]={"states":{"0":{"actions":[],"media":{"path":str(media),"fps":120,"loop":looping},"labels":{"center":{"text":f"Key {y*cols+x+1}","font-family":font_family,"font-size":14,"color":[255,255,255,255]}}}}}
     (data/"pages/Bench.json").write_text(json.dumps(page))
     serial="FAKE-"+{"plus-xl":"PLUSXL","ulanzi":"ULANZID200","mirabox":"MIRABOX293S"}.get(model,model.upper())+"-0"
     (data/"settings/native.json").write_text(json.dumps({"devices":{serial:{"page":"Bench","brightness":75,"screensaver":{"enable":False}}},"auto_lock":False,"cache_mib":64}))
@@ -83,10 +84,11 @@ def main():
     parser.add_argument("--validate-seconds",type=float,default=4)
     parser.add_argument("--trials",type=int,default=3)
     parser.add_argument("--visible",action="store_true")
+    parser.add_argument("--font-family",default="DejaVu Sans")
     parser.add_argument("--weston-bundle",type=pathlib.Path,default=ROOT/"target/benchmarks/weston")
     args=parser.parse_args(); args.output=args.output.resolve(); args.output.mkdir(parents=True,exist_ok=True)
     args.wayland_runtime=pathlib.Path("/tmp/deckard-endpoint-wayland"); args.wayland_socket="deckard-endpoint"
-    metadata={"date":time.strftime("%Y-%m-%dT%H:%M:%SZ",time.gmtime()),"platform":platform.platform(),"warmup":args.warmup,"duration":args.duration,"trials":args.trials,"visible":args.visible,"cpu_unit":"100% = one logical core","memory_unit":"MiB PSS, application plus descendants","hardware_usb":False,"git_head":subprocess.check_output(["git","rev-parse","HEAD"],cwd=ROOT,text=True).strip(),"git_dirty":bool(subprocess.check_output(["git","status","--porcelain"],cwd=ROOT)),"binaries":{v:{"path":str(getattr(args,v)),"sha256":hashlib.sha256(getattr(args,v).read_bytes()).hexdigest()} for v in args.versions}}
+    metadata={"date":time.strftime("%Y-%m-%dT%H:%M:%SZ",time.gmtime()),"platform":platform.platform(),"warmup":args.warmup,"duration":args.duration,"trials":args.trials,"visible":args.visible,"requested_font":args.font_family,"cpu_unit":"100% = one logical core","memory_unit":"MiB PSS, application plus descendants","hardware_usb":False,"git_head":subprocess.check_output(["git","rev-parse","HEAD"],cwd=ROOT,text=True).strip(),"git_dirty":bool(subprocess.check_output(["git","status","--porcelain"],cwd=ROOT)),"binaries":{v:{"path":str(getattr(args,v)),"sha256":hashlib.sha256(getattr(args,v).read_bytes()).hexdigest()} for v in args.versions}}
     (args.output/"metadata.json").write_text(json.dumps(metadata,indent=2)); results=[]
     # Prepare fixtures before timing so media generation cannot affect CPU samples.
     assets={case:asset(args.output/"assets",rate,kind) for case,(model,rate,kind) in CASES.items() if case in args.cases}
@@ -95,7 +97,7 @@ def main():
             model,rate,kind=CASES[case]
             versions=args.versions if trial%2==0 else list(reversed(args.versions))
             for version in versions:
-                name=f"{version}-{case}-{trial+1}"; data=args.output/name; prepare(data,model,assets[case])
+                name=f"{version}-{case}-{trial+1}"; data=args.output/name; prepare(data,model,assets[case],looping=kind!="video-once",font_family=args.font_family)
                 compositor=start_compositor(args,name) if args.visible else None
                 bus=None; process=None
                 try:

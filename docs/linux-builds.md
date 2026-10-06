@@ -1,6 +1,6 @@
 # Linux release builds
 
-Release 0.6.0 supplies AppImage, DEB, RPM and portable tar.gz builds for x86_64 and aarch64. The builds use Ubuntu 22.04 with glibc 2.35; no Python/GTK runtime is included. The GUI uses egui/Vulkan with automatic OpenGL fallback and supports X11 and Wayland. `DECKARD_RENDERER=glow` selects OpenGL explicitly. Vulkan allocation favors memory usage; the loader is bundled, while graphics drivers remain on the host. GPU drivers, libc, the host C++/GCC runtime, the desktop session and system services remain supplied by the host.
+Release 0.7.0 supplies AppImage, DEB, RPM and portable tar.gz builds for x86_64 and aarch64. The builds use Ubuntu 22.04 with glibc 2.35; no Python/GTK runtime is included. The GUI uses egui/Vulkan with automatic OpenGL fallback and supports X11 and Wayland. `DECKARD_RENDERER=glow` selects OpenGL explicitly. Vulkan allocation favors memory usage; the loader is bundled, while graphics drivers remain on the host. GPU drivers, libc, the host C++/GCC runtime, the desktop session and system services remain supplied by the host.
 
 ## Reproduce
 
@@ -28,7 +28,7 @@ At least your downloaded package should report `OK`. `deckard --doctor` reports 
 
 DEB/RPM installers place USB/hidraw uaccess rules under `/usr/lib/udev/rules.d/`. Portable/AppImage users can click **Settings → Enable USB access** and authenticate with their system's polkit dialog. Unplug and reconnect the deck after installation. Running the application as root is unnecessary. If your desktop has no polkit agent, run the bundled `bin/install-udev.sh` with administrator privileges once.
 
-For AppImage without FUSE, run `./deckard-0.6.0-x86_64.AppImage --appimage-extract-and-run`. If the file manager does not execute files, use the DEB/RPM installer or run the extracted `bin/deckard`. A graphical installer and executable-file settings depend on your desktop; no binary can bypass those settings.
+For AppImage without FUSE, run `./deckard-0.7.0-x86_64.AppImage --appimage-extract-and-run`. If the file manager does not execute files, use the DEB/RPM installer or run the extracted `bin/deckard`. A graphical installer and executable-file settings depend on your desktop; no binary can bypass those settings.
 
 Install your desktop's XDG portal for file dialogs. KDE automatic switching needs `kdotool`. GNOME automatic switching uses the StreamController shell extension. The bundled `pactl` helper supports PulseAudio and PipeWire-Pulse without a Python audio library. OS evdev hotkeys/mouse actions use Linux uinput; the installation helper and package rules enable active-session access.
 

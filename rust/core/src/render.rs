@@ -5,7 +5,7 @@ use crate::{
 use anyhow::{Context, Result};
 use elgato_streamdeck::info::{ImageFormat, ImageMirroring, ImageMode, ImageRotation, Kind};
 use image::{
-    DynamicImage, Rgba, RgbaImage,
+    DynamicImage, Pixel, Rgba, RgbaImage,
     imageops::{self, FilterType},
 };
 use serde_json::{Value, json};
@@ -175,6 +175,9 @@ pub struct Renderer {
     font: ab_glyph::FontArc,
     assets: HashMap<AssetKey, Asset>,
     encoded: ByteCache<u64>,
+    streaming_encoded: ByteCache<u64>,
+    encoded_budget: usize,
+    streaming_budget: usize,
     jpeg: crate::media::JpegEncoder,
     used: HashSet<AssetKey>,
     pub animated: bool,
@@ -190,7 +193,7 @@ pub struct Renderer {
     stamps: HashMap<AssetKey, (u64, std::time::SystemTime)>,
     glyphs: std::cell::RefCell<GlyphCache>,
     pub errors: Vec<String>,
-    fonts: std::cell::RefCell<HashMap<String, ab_glyph::FontArc>>,
+    fonts: std::cell::RefCell<HashMap<String, Option<ab_glyph::FontArc>>>,
 }
 pub fn layout(kind: Kind, rotation: u16) -> (u8, u8) {
     let (rows, cols) = kind.key_layout();
@@ -296,6 +299,9 @@ impl Renderer {
             ))?,
             assets: HashMap::new(),
             encoded: ByteCache::new(budget),
+            streaming_encoded: ByteCache::new((budget / 8).min(1024 * 1024)),
+            encoded_budget: budget,
+            streaming_budget: (budget / 8).min(1024 * 1024),
             jpeg: crate::media::JpegEncoder::new(90).map_err(anyhow::Error::msg)?,
             used: HashSet::new(),
             animated: false,
@@ -315,6 +321,9 @@ impl Renderer {
         })
     }
     pub fn release_media(&mut self) {
+        self.encoded.clear();
+        self.streaming_encoded.clear();
+        self.encoded.set_capacity(self.encoded_budget);
         self.assets.clear();
         self.asset_frames.clear();
         self.stamps.clear();
@@ -670,6 +679,7 @@ impl Renderer {
             } else {
                 RgbaImage::from_pixel(w, h, Rgba([0, 0, 0, 255]))
             };
+            let mut persistent = whole.is_none() || repeatable_media(bgpath, background);
             if config.sleeping {
                 tile.fill(0)
             } else {
@@ -684,8 +694,9 @@ impl Renderer {
                 .flatten()
                 {
                     if let Some(img) = self.asset_playback(path, w, h, &state["media"]) {
+                        persistent &= repeatable_media(path, &state["media"]);
                         let img = self.scaled_media(&img, w, h, &state["media"], "cover");
-                        imageops::overlay(&mut tile, img.as_ref(), 0, 0);
+                        overlay_rgba(&mut tile, img.as_ref(), 0, 0);
                     }
                 }
                 self.native_visual(&mut tile, &state["native-visual"]);
@@ -703,7 +714,7 @@ impl Renderer {
                         FilterType::Triangle,
                     );
                     tile = RgbaImage::from_pixel(w, h, Rgba([0, 0, 0, 255]));
-                    imageops::overlay(
+                    overlay_rgba(
                         &mut tile,
                         &small,
                         i64::from((w - small.width()) / 2),
@@ -711,7 +722,7 @@ impl Renderer {
                     );
                 }
             }
-            tiles.push(self.encode(physical, tile, fmt, config.rotation)?);
+            tiles.push(self.encode(physical, tile, fmt, config.rotation, persistent)?);
         }
         let mut strip_paths = vec![if extend { bgpath } else { "" }];
         for (family, input) in std::iter::once(("infobar", "0".to_owned()))
@@ -736,12 +747,14 @@ impl Renderer {
             let sw = sw as u32;
             let sh = sh as u32;
             let mut strip = RgbaImage::from_pixel(sw, sh, Rgba([0, 0, 0, 255]));
+            let mut persistent = true;
             if !config.sleeping {
                 if extend && let Some(whole) = &whole {
+                    persistent &= repeatable_media(bgpath, background);
                     let (l, t, r, b) = band.crop;
                     let crop = imageops::crop_imm(whole, l, t, r - l, b - t).to_image();
                     let crop = imageops::resize(&crop, sw, sh, FilterType::Triangle);
-                    imageops::overlay(&mut strip, &crop, 0, 0);
+                    overlay_rgba(&mut strip, &crop, 0, 0);
                 }
                 if kind == Kind::Neo {
                     let data = effective_input(config_ref, "infobar", "0");
@@ -754,7 +767,8 @@ impl Renderer {
                     if let Some(path) = state["media"]["path"].as_str()
                         && let Some(image) = self.asset_playback(path, sw, sh, &state["media"])
                     {
-                        imageops::overlay(
+                        persistent &= repeatable_media(path, &state["media"]);
+                        overlay_rgba(
                             &mut strip,
                             self.scaled_media(&image, sw, sh, &state["media"], "contain")
                                 .as_ref(),
@@ -793,7 +807,8 @@ impl Renderer {
                         if let Some(path) = state["media"]["path"].as_str()
                             && let Some(img) = self.asset_playback(path, tw, th, &state["media"])
                         {
-                            imageops::overlay(
+                            persistent &= repeatable_media(path, &state["media"]);
+                            overlay_rgba(
                                 &mut part,
                                 self.scaled_media(&img, tw, th, &state["media"], "contain")
                                     .as_ref(),
@@ -808,7 +823,7 @@ impl Renderer {
                         } else {
                             i
                         };
-                        imageops::overlay(
+                        overlay_rgba(
                             &mut strip,
                             &part,
                             if vertical {
@@ -830,6 +845,7 @@ impl Renderer {
                 strip,
                 kind.lcd_image_format().context("LCD format missing")?,
                 config.rotation,
+                persistent,
             )?)
         } else {
             None
@@ -844,6 +860,17 @@ impl Renderer {
         };
         self.previous_config = Some((kind, config));
         self.previous_frame = Some(frame.clone());
+        if !self.assets.iter().any(|(key, asset)| {
+            !key.looping
+                && match asset {
+                    Asset::Gif(player) => player.running(),
+                    Asset::Video(player) => player.running(),
+                    _ => false,
+                }
+        }) {
+            self.streaming_encoded.clear();
+            self.encoded.set_capacity(self.encoded_budget);
+        }
         Ok(frame)
     }
     fn scaled_media(
@@ -883,17 +910,57 @@ impl Renderer {
         img: RgbaImage,
         format: ImageFormat,
         user_rotation: u16,
+        persistent: bool,
     ) -> Result<Tile> {
-        let preview = DynamicImage::ImageRgba8(img).to_rgb8();
-        let oriented =
-            (!user_rotation.is_multiple_of(360)).then(|| rotate_ccw(&preview, user_rotation));
-        let rgb = oriented.as_ref().unwrap_or(&preview);
-        let (width, height) = rgb.dimensions();
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        rgb.as_raw().hash(&mut hasher);
-        format.hash(&mut hasher);
-        let identity = hasher.finish();
+        let (preview_width, preview_height) = img.dimensions();
+        let preview = rgb_pixels(&img);
+        let oriented = (!user_rotation.is_multiple_of(360)).then(|| {
+            let image = image::ImageBuffer::<image::Rgb<u8>, _>::from_raw(
+                preview_width,
+                preview_height,
+                preview.clone(),
+            )
+            .expect("RGB preview matches image dimensions");
+            rotate_ccw(&image, user_rotation)
+        });
+        let (pixels, width, height) = oriented
+            .as_ref()
+            .map(|image| (image.as_raw().as_slice(), image.width(), image.height()))
+            .unwrap_or((&preview, preview_width, preview_height));
+        // This is a pixel identity, not a security signature or an untrusted map key.
+        let mut format_hash = std::collections::hash_map::DefaultHasher::new();
+        format.hash(&mut format_hash);
+        (width, height).hash(&mut format_hash);
+        let identity = xxhash_rust::xxh3::xxh3_64_with_seed(pixels, format_hash.finish());
+        let previous = self
+            .previous_frame
+            .as_ref()
+            .and_then(|frame| {
+                if key == 255 {
+                    frame.strip.as_ref()
+                } else {
+                    frame.tiles.get(key as usize)
+                }
+            })
+            .filter(|tile| tile.key == key && tile.identity == identity);
+        if !persistent {
+            self.encoded
+                .set_capacity(self.encoded_budget - self.streaming_budget);
+        }
         let encoded = if let Some(bytes) = self.encoded.get(&identity) {
+            bytes
+        } else if let Some(bytes) = self.streaming_encoded.get(&identity) {
+            if persistent {
+                self.encoded.put(identity, bytes.clone());
+            }
+            bytes
+        } else if let Some(tile) = previous {
+            let bytes = tile.encoded.clone();
+            if persistent {
+                self.encoded.put(identity, bytes.clone());
+            } else {
+                self.streaming_encoded.put(identity, bytes.clone());
+            }
             bytes
         } else {
             let bytes = match format.mode {
@@ -911,14 +978,14 @@ impl Renderer {
                         ImageMirroring::Both => (true, true),
                     };
                     self.jpeg
-                        .encode(rgb.as_raw(), width, height, rotation, flips)
+                        .encode(pixels, width, height, rotation, flips)
                         .map_err(anyhow::Error::msg)?
                 }
                 ImageMode::PNG => {
                     use image::ImageEncoder;
                     let mut out = Vec::new();
                     image::codecs::png::PngEncoder::new(&mut out).write_image(
-                        rgb.as_raw(),
+                        pixels,
                         width,
                         height,
                         image::ColorType::Rgb8.into(),
@@ -927,19 +994,28 @@ impl Renderer {
                 }
                 ImageMode::BMP => elgato_streamdeck::images::convert_image_with_format(
                     format,
-                    DynamicImage::ImageRgb8(rgb.clone()),
+                    DynamicImage::ImageRgb8(
+                        image::RgbImage::from_raw(width, height, pixels.to_vec())
+                            .expect("RGB pixels match image dimensions"),
+                    ),
                 )?,
                 ImageMode::None => vec![],
             };
             let bytes: Arc<[u8]> = bytes.into();
-            self.encoded.put(identity, bytes.clone());
+            if persistent {
+                self.encoded.put(identity, bytes.clone());
+            } else {
+                // A small reuse window handles repeated pixels without keeping
+                // an entire single-pass video's frame history in the main cache.
+                self.streaming_encoded.put(identity, bytes.clone());
+            }
             bytes
         };
         Ok(Tile {
             key,
-            width: preview.width(),
-            height: preview.height(),
-            rgb: preview.into_raw().into(),
+            width: preview_width,
+            height: preview_height,
+            rgb: preview,
             encoded,
             identity,
         })
@@ -992,7 +1068,7 @@ impl Renderer {
                     "cover",
                 )
             };
-            imageops::overlay(img, image.as_ref(), 0, 0);
+            overlay_rgba(img, image.as_ref(), 0, 0);
             if visual["darken"] == true {
                 overlay_color(img, [0, 0, 0, 120]);
             }
@@ -1226,6 +1302,15 @@ impl Renderer {
             None
         } else {
             let mut fonts = self.fonts.borrow_mut();
+            if !fonts.contains_key(family) && fonts.len() >= 32 {
+                // Failed lookups must not occupy every slot and block a valid font.
+                let missing = fonts
+                    .iter()
+                    .find_map(|(name, font)| font.is_none().then(|| name.clone()));
+                if let Some(name) = missing {
+                    fonts.remove(&name);
+                }
+            }
             if !fonts.contains_key(family) && fonts.len() < 32 {
                 static DATABASE: std::sync::OnceLock<resvg::usvg::fontdb::Database> =
                     std::sync::OnceLock::new();
@@ -1238,16 +1323,19 @@ impl Renderer {
                     families: &[resvg::usvg::fontdb::Family::Name(family)],
                     ..Default::default()
                 };
-                if let Some(id) = db.query(&query)
-                    && let Some(Ok(font)) = db.with_face_data(id, |bytes, index| {
-                        ab_glyph::FontVec::try_from_vec_and_index(bytes.to_vec(), index)
-                            .map(ab_glyph::FontArc::new)
+                let font = db
+                    .query(&query)
+                    .and_then(|id| {
+                        db.with_face_data(id, |bytes, index| {
+                            ab_glyph::FontVec::try_from_vec_and_index(bytes.to_vec(), index)
+                                .map(ab_glyph::FontArc::new)
+                        })
                     })
-                {
-                    fonts.insert(family.into(), font);
-                }
+                    .and_then(Result::ok);
+                // A missing/unsupported family must not scan the database every frame.
+                fonts.insert(family.into(), font);
             }
-            fonts.get(family).cloned()
+            fonts.get(family).cloned().flatten()
         };
         let font = custom.as_ref().unwrap_or(&self.font);
         let glyphs: Vec<_> = text
@@ -1278,6 +1366,48 @@ impl Renderer {
                 }
             }
             x += metrics.advance_width as i32;
+        }
+    }
+}
+/// Composite contiguous RGBA rows without repeated coordinate/buffer checks.
+/// Opaque rows are copied; mixed rows use the same Pixel::blend as imageops.
+fn overlay_rgba(bottom: &mut RgbaImage, top: &RgbaImage, x: i64, y: i64) {
+    let dst_x = x.clamp(0, i64::from(bottom.width())) as usize;
+    let dst_y = y.clamp(0, i64::from(bottom.height())) as usize;
+    let src_x = x.saturating_neg().clamp(0, i64::from(top.width())) as usize;
+    let src_y = y.saturating_neg().clamp(0, i64::from(top.height())) as usize;
+    let width = (bottom.width() as usize - dst_x).min(top.width() as usize - src_x);
+    let height = (bottom.height() as usize - dst_y).min(top.height() as usize - src_y);
+    if width == 0 || height == 0 {
+        return;
+    }
+    let dst_stride = bottom.width() as usize * 4;
+    let src_stride = top.width() as usize * 4;
+    for row in 0..height {
+        let start = (src_y + row) * src_stride + src_x * 4;
+        let source = &top.as_raw()[start..start + width * 4];
+        let start = (dst_y + row) * dst_stride + dst_x * 4;
+        let target = &mut bottom.as_mut()[start..start + width * 4];
+        if source
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .all(|pixel| pixel[3] == 255)
+        {
+            target.copy_from_slice(source);
+        } else {
+            for (source, target) in source
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .zip(target.as_chunks_mut::<4>().0)
+            {
+                if source[3] == 255 {
+                    target.copy_from_slice(source);
+                } else if source[3] != 0 {
+                    Rgba::from_slice_mut(target).blend(Rgba::from_slice(source));
+                }
+            }
         }
     }
 }
@@ -1342,12 +1472,42 @@ pub fn color(value: &Value, default: [u8; 4]) -> [u8; 4] {
     }
     result
 }
-fn rotate_ccw(img: &image::RgbImage, rotation: u16) -> image::RgbImage {
+fn repeatable_media(path: &str, options: &Value) -> bool {
+    options["loop"].as_bool() != Some(false)
+        || !Path::new(path)
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .is_some_and(|ext| {
+                ["gif", "mp4", "mkv", "webm", "mov", "avi"]
+                    .iter()
+                    .any(|format| ext.eq_ignore_ascii_case(format))
+            })
+}
+fn rgb_pixels(img: &RgbaImage) -> Arc<[u8]> {
+    let length = img.width() as usize * img.height() as usize * 3;
+    // SAFETY: every byte is zero-initialized, and all u8 bit patterns are valid.
+    // Allocate the final immutable preview directly, avoiding Vec -> Arc copies.
+    let mut rgb = unsafe { Arc::<[u8]>::new_zeroed_slice(length).assume_init() };
+    for (target, source) in Arc::get_mut(&mut rgb)
+        .expect("unshared RGB buffer")
+        .as_chunks_mut::<3>()
+        .0
+        .iter_mut()
+        .zip(img.pixels())
+    {
+        target.copy_from_slice(&source.0[..3]);
+    }
+    rgb
+}
+fn rotate_ccw<I: image::GenericImageView<Pixel = image::Rgb<u8>>>(
+    img: &I,
+    rotation: u16,
+) -> image::RgbImage {
     match rotation % 360 {
         90 => imageops::rotate270(img),
         180 => imageops::rotate180(img),
         270 => imageops::rotate90(img),
-        _ => img.clone(),
+        _ => image::RgbImage::from_fn(img.width(), img.height(), |x, y| img.get_pixel(x, y)),
     }
 }
 fn media_layout(image: &RgbaImage, w: u32, h: u32, media: &Value, default_mode: &str) -> RgbaImage {
@@ -1387,7 +1547,7 @@ fn media_layout(image: &RgbaImage, w: u32, h: u32, media: &Value, default_mode: 
     let valign = media["valign"].as_f64().unwrap_or(0.0).clamp(-1.0, 1.0);
     let x = ((f64::from(w) - f64::from(resized.width())) * (halign + 1.0) / 2.0) as i64;
     let y = ((f64::from(h) - f64::from(resized.height())) * (valign + 1.0) / 2.0) as i64;
-    imageops::overlay(&mut canvas, &resized, x, y);
+    overlay_rgba(&mut canvas, &resized, x, y);
     canvas
 }
 fn viewport_rect(source: (u32, u32), canvas: (u32, u32), view: &Value) -> (f64, f64, f64, f64) {
@@ -1449,7 +1609,7 @@ fn fit(img: &RgbaImage, w: u32, h: u32, view: &Value) -> RgbaImage {
         return resized;
     }
     let mut canvas = RgbaImage::new(w, h);
-    imageops::overlay(&mut canvas, &resized, i64::from(dx), i64::from(dy));
+    overlay_rgba(&mut canvas, &resized, i64::from(dx), i64::from(dy));
     canvas
 }
 pub fn default_config(page: Value) -> RenderConfig {
@@ -1468,6 +1628,151 @@ pub fn default_config(page: Value) -> RenderConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn single_pass_reuse_is_bounded_and_shared_looping_sources_keep_the_main_cache() {
+        // Reserve a window large enough for one native JPEG, then force history eviction.
+        let mut renderer = Renderer::new(256 * 1024).unwrap();
+        let format = Kind::Mk2.key_image_format();
+        for index in 0..64 {
+            let image = RgbaImage::from_fn(72, 72, |x, y| {
+                Rgba([
+                    (x * 11 + index * 13) as u8,
+                    (y * 19 + index * 7) as u8,
+                    (x * 3 + y * 5 + index * 23) as u8,
+                    255,
+                ])
+            });
+            let a = renderer.encode(0, image.clone(), format, 0, false).unwrap();
+            let b = renderer.encode(1, image, format, 0, false).unwrap();
+            assert!(
+                Arc::ptr_eq(&a.encoded, &b.encoded),
+                "same-frame keys reuse compression"
+            );
+            assert!(renderer.streaming_encoded.bytes() <= renderer.streaming_budget);
+            assert!(
+                renderer.encoded.bytes() + renderer.streaming_encoded.bytes()
+                    <= renderer.encoded_budget
+            );
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("shared.gif");
+        let mut encoder =
+            gif::Encoder::new(std::fs::File::create(&path).unwrap(), 72, 72, &[]).unwrap();
+        for color in [[220, 40, 10, 255], [10, 200, 50, 255]] {
+            let mut pixels = color.repeat(72 * 72);
+            let mut frame = gif::Frame::from_rgba_speed(72, 72, &mut pixels, 10);
+            frame.delay = 100;
+            encoder.write_frame(&frame).unwrap();
+        }
+        drop(encoder);
+        let mut config = default_config(json!({"name":"Mixed"}));
+        config.page["keys"] = json!({
+            "0x0":{"states":{"0":{"media":{"path":path,"loop":false}}}},
+            "1x0":{"states":{"0":{"media":{"path":path,"loop":true}}}}
+        });
+        let frame = renderer.render(Kind::Mk2, &config).unwrap();
+        assert_eq!(frame.tiles[0].identity, frame.tiles[1].identity);
+        assert!(Arc::ptr_eq(
+            &frame.tiles[0].encoded,
+            &frame.tiles[1].encoded
+        ));
+        assert!(
+            renderer.encoded.get(&frame.tiles[1].identity).is_some(),
+            "a looping instance of the same file must promote the shared encoding"
+        );
+        assert!(!repeatable_media("video.MKV", &json!({"loop":false})));
+        assert!(repeatable_media("video.MKV", &json!({"loop":true})));
+        assert!(repeatable_media("image.png", &json!({"loop":false})));
+        renderer.release_media();
+        assert_eq!(renderer.streaming_encoded.bytes(), 0);
+        assert_eq!(renderer.encoded.bytes(), 0);
+    }
+    #[test]
+    fn row_compositing_matches_reference_for_alpha_clipping_and_extreme_offsets() {
+        let offsets = [i64::MIN, -31, -3, -1, 0, 1, 5, 29, i64::MAX];
+        for (width, height) in [(0, 0), (1, 1), (13, 7), (31, 17)] {
+            let mut top = RgbaImage::new(width, height);
+            for (x, y, pixel) in top.enumerate_pixels_mut() {
+                *pixel = Rgba([
+                    (x * 19 + y * 23) as u8,
+                    (x * 31 + y * 7) as u8,
+                    (x * 5 + y * 41) as u8,
+                    if y % 3 == 0 {
+                        255
+                    } else {
+                        (x * 37 + y * 51) as u8
+                    },
+                ]);
+            }
+            for x in offsets {
+                for y in offsets {
+                    let mut expected = RgbaImage::from_fn(17, 11, |x, y| {
+                        Rgba([x as u8 * 11, y as u8 * 19, 73, (x * 13 + y * 17) as u8])
+                    });
+                    let mut actual = expected.clone();
+                    imageops::overlay(&mut expected, &top, x, y);
+                    overlay_rgba(&mut actual, &top, x, y);
+                    assert_eq!(actual, expected, "top {width}x{height}, offset {x},{y}");
+                }
+            }
+        }
+    }
+    #[test]
+    fn direct_rgb_conversion_preserves_channels_and_alpha_behavior_in_each_color_space() {
+        for space in [
+            image::metadata::Cicp::SRGB,
+            image::metadata::Cicp::DISPLAY_P3,
+        ] {
+            let mut image = RgbaImage::from_fn(256, 4, |x, y| {
+                Rgba([x as u8, (x * 7 + y * 23) as u8, 251 - y as u8, x as u8])
+            });
+            image.set_color_space(space).unwrap();
+            let expected = DynamicImage::ImageRgba8(image.clone()).to_rgb8();
+            let actual = rgb_pixels(&image);
+            assert_eq!(actual.as_ref(), expected.as_raw().as_slice());
+        }
+        assert!(rgb_pixels(&RgbaImage::new(0, 0)).is_empty());
+    }
+    #[test]
+    fn pixel_cache_respects_encoding_and_orientation_and_releases_inactive_bytes() {
+        let mut renderer = Renderer::new(1024 * 1024).unwrap();
+        let pixels = RgbaImage::from_fn(72, 72, |x, y| Rgba([x as u8 * 3, y as u8 * 3, 90, 255]));
+        let format = Kind::Mk2.key_image_format();
+        let first = renderer.encode(0, pixels.clone(), format, 0, true).unwrap();
+        let repeated = renderer.encode(0, pixels.clone(), format, 0, true).unwrap();
+        assert!(Arc::ptr_eq(&first.encoded, &repeated.encoded));
+        let mut other_format = format;
+        other_format.mirror = ImageMirroring::None;
+        let other = renderer
+            .encode(0, pixels.clone(), other_format, 0, true)
+            .unwrap();
+        assert_ne!(first.identity, other.identity);
+        let rotated = renderer.encode(0, pixels, format, 90, true).unwrap();
+        assert_ne!(first.identity, rotated.identity);
+        assert!(renderer.encoded.bytes() > 0);
+        renderer.release_media();
+        assert_eq!(renderer.encoded.bytes(), 0);
+        assert_eq!(renderer.encoded.len(), 0);
+        assert!(
+            image::load_from_memory(&first.encoded).is_ok(),
+            "live frames survive cache eviction"
+        );
+        let mut target = RgbaImage::new(24, 24);
+        renderer.text_font(
+            &mut target,
+            ("test", "Deckard definitely missing font"),
+            14.0,
+            [255; 4],
+            (0.5, 0.5),
+        );
+        assert!(
+            renderer
+                .fonts
+                .borrow()
+                .get("Deckard definitely missing font")
+                .is_some_and(Option::is_none)
+        );
+    }
     #[test]
     fn endpoint_sized_pixels_are_borrowed_and_oversized_artwork_grids_are_bounded() {
         let mut renderer = Renderer::new(1024 * 1024).unwrap();

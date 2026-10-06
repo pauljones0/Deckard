@@ -27,6 +27,12 @@ impl<K: Eq + Hash + Clone> ByteCache<K> {
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
+    pub fn set_capacity(&mut self, capacity: usize) {
+        self.capacity = capacity;
+        while self.bytes > capacity {
+            self.evict();
+        }
+    }
     pub fn get(&mut self, key: &K) -> Option<Arc<[u8]>> {
         let (bytes, stamp) = self.entries.get_mut(key)?;
         *stamp = Instant::now();
@@ -78,6 +84,19 @@ impl<K: Eq + Hash + Clone> ByteCache<K> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn reducing_capacity_evicts_oldest_bytes_without_invalidating_live_frames() {
+        let mut cache = ByteCache::new(8);
+        cache.put(1, Arc::from(&b"abcd"[..]));
+        cache.put(2, Arc::from(&b"efgh"[..]));
+        let retained = cache.get(&2).unwrap();
+        cache.set_capacity(4);
+        assert!(cache.get(&1).is_none());
+        assert_eq!(cache.bytes(), 4);
+        cache.set_capacity(0);
+        assert!(cache.is_empty());
+        assert_eq!(&*retained, b"efgh");
+    }
     #[test]
     fn byte_accounting_lru_and_retained_frame_survive_eviction() {
         let mut cache = ByteCache::new(5);

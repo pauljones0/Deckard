@@ -28,3 +28,4 @@ shell-words = "1.1"
 tungstenite = { version = "0.28", features = ["rustls-tls-webpki-roots"] }
 ab_glyph = "0.2.32"
 resvg = { version = "0.45.1", default-features = false, features = ["text", "raster-images", "system-fonts", "memmap-fonts"] }
+xxhash-rust = { version = "0.8", default-features = false, features = ["xxh3"] }
