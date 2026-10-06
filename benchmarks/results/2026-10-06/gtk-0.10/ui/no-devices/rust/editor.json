@@ -1,0 +1,427 @@
+[
+  {
+    "type": "AdwApplicationWindow",
+    "title": null,
+    "css": [
+      "background",
+      "csd"
+    ],
+    "bounds": [
+      0.0,
+      0.0,
+      1400.0,
+      900.0
+    ]
+  },
+  {
+    "type": "AdwDialogHost",
+    "title": null,
+    "css": [],
+    "bounds": [
+      0.0,
+      0.0,
+      1400.0,
+      900.0
+    ]
+  },
+  {
+    "type": "AdwBin",
+    "title": null,
+    "css": [],
+    "bounds": [
+      0.0,
+      0.0,
+      1400.0,
+      900.0
+    ]
+  },
+  {
+    "type": "AdwBreakpointBin",
+    "title": null,
+    "css": [],
+    "bounds": [
+      0.0,
+      0.0,
+      1400.0,
+      900.0
+    ]
+  },
+  {
+    "type": "AdwToastOverlay",
+    "title": null,
+    "css": [],
+    "bounds": [
+      0.0,
+      0.0,
+      1400.0,
+      900.0
+    ]
+  },
+  {
+    "type": "AdwNavigationSplitView",
+    "title": null,
+    "css": [],
+    "bounds": [
+      0.0,
+      0.0,
+      1400.0,
+      900.0
+    ]
+  },
+  {
+    "type": "AdwNavigationView",
+    "title": null,
+    "css": [],
+    "bounds": [
+      0.0,
+      0.0,
+      1400.0,
+      900.0
+    ]
+  },
+  {
+    "type": "AdwNavigationPage",
+    "title": null,
+    "css": [],
+    "bounds": [
+      0.0,
+      0.0,
+      1400.0,
+      900.0
+    ]
+  },
+  {
+    "type": "GtkBox",
+    "title": null,
+    "css": [
+      "vertical"
+    ],
+    "bounds": [
+      0.0,
+      0.0,
+      1400.0,
+      900.0
+    ]
+  },
+  {
+    "type": "AdwHeaderBar",
+    "title": null,
+    "css": [
+      "flat"
+    ],
+    "bounds": [
+      -1.0,
+      0.0,
+      1402.0,
+      46.0
+    ]
+  },
+  {
+    "type": "GtkWindowHandle",
+    "title": null,
+    "css": [],
+    "bounds": [
+      -1.0,
+      0.0,
+      1402.0,
+      46.0
+    ]
+  },
+  {
+    "type": "GtkCenterBox",
+    "title": null,
+    "css": [],
+    "bounds": [
+      -1.0,
+      0.0,
+      1402.0,
+      46.0
+    ]
+  },
+  {
+    "type": "AdwGizmo",
+    "title": null,
+    "css": [],
+    "bounds": [
+      6.0,
+      6.0,
+      0.0,
+      34.0
+    ]
+  },
+  {
+    "type": "AdwBin",
+    "title": null,
+    "css": [],
+    "bounds": [
+      632.0,
+      6.0,
+      137.0,
+      34.0
+    ]
+  },
+  {
+    "type": "GtkStack",
+    "title": null,
+    "css": [],
+    "bounds": [
+      632.0,
+      6.0,
+      137.0,
+      34.0
+    ]
+  },
+  {
+    "type": "GtkLabel",
+    "title": "No Decks Detected",
+    "css": [
+      "bold"
+    ],
+    "bounds": [
+      632.0,
+      6.0,
+      137.0,
+      34.0
+    ]
+  },
+  {
+    "type": "AdwGizmo",
+    "title": null,
+    "css": [],
+    "bounds": [
+      1240.0,
+      6.0,
+      154.0,
+      34.0
+    ]
+  },
+  {
+    "type": "GtkBox",
+    "title": null,
+    "css": [
+      "horizontal",
+      "end"
+    ],
+    "bounds": [
+      1246.0,
+      6.0,
+      148.0,
+      34.0
+    ]
+  },
+  {
+    "type": "GtkMenuButton",
+    "title": null,
+    "css": [
+      "popup"
+    ],
+    "bounds": [
+      1246.0,
+      6.0,
+      34.0,
+      34.0
+    ]
+  },
+  {
+    "type": "GtkToggleButton",
+    "title": null,
+    "css": [
+      "image-button",
+      "toggle"
+    ],
+    "bounds": [
+      1246.0,
+      6.0,
+      34.0,
+      34.0
+    ]
+  },
+  {
+    "type": "GtkBox",
+    "title": null,
+    "css": [
+      "horizontal"
+    ],
+    "bounds": [
+      1255.0,
+      11.0,
+      16.0,
+      24.0
+    ]
+  },
+  {
+    "type": "GtkImage",
+    "title": null,
+    "css": [],
+    "bounds": [
+      1255.0,
+      11.0,
+      16.0,
+      24.0
+    ]
+  },
+  {
+    "type": "GtkWindowControls",
+    "title": null,
+    "css": [
+      "end"
+    ],
+    "bounds": [
+      1286.0,
+      6.0,
+      108.0,
+      34.0
+    ]
+  },
+  {
+    "type": "GtkButton",
+    "title": null,
+    "css": [
+      "image-button",
+      "minimize"
+    ],
+    "bounds": [
+      1286.0,
+      6.0,
+      34.0,
+      34.0
+    ]
+  },
+  {
+    "type": "GtkImage",
+    "title": null,
+    "css": [],
+    "bounds": [
+      1291.0,
+      11.0,
+      24.0,
+      24.0
+    ]
+  },
+  {
+    "type": "GtkButton",
+    "title": null,
+    "css": [
+      "image-button",
+      "maximize"
+    ],
+    "bounds": [
+      1323.0,
+      6.0,
+      34.0,
+      34.0
+    ]
+  },
+  {
+    "type": "GtkImage",
+    "title": null,
+    "css": [],
+    "bounds": [
+      1328.0,
+      11.0,
+      24.0,
+      24.0
+    ]
+  },
+  {
+    "type": "GtkButton",
+    "title": null,
+    "css": [
+      "image-button",
+      "close"
+    ],
+    "bounds": [
+      1360.0,
+      6.0,
+      34.0,
+      34.0
+    ]
+  },
+  {
+    "type": "GtkImage",
+    "title": null,
+    "css": [],
+    "bounds": [
+      1365.0,
+      11.0,
+      24.0,
+      24.0
+    ]
+  },
+  {
+    "type": "GtkStack",
+    "title": null,
+    "css": [],
+    "bounds": [
+      0.0,
+      46.0,
+      1400.0,
+      854.0
+    ]
+  },
+  {
+    "type": "GtkBox",
+    "title": null,
+    "css": [
+      "vertical"
+    ],
+    "bounds": [
+      490.0,
+      375.0,
+      419.0,
+      195.0
+    ]
+  },
+  {
+    "type": "GtkLabel",
+    "title": "No Decks Available",
+    "css": [
+      "error-label"
+    ],
+    "bounds": [
+      490.0,
+      375.0,
+      419.0,
+      61.0
+    ]
+  },
+  {
+    "type": "GtkButton",
+    "title": "Add A Fake Deck",
+    "css": [
+      "text-button",
+      "suggested-action",
+      "pill"
+    ],
+    "bounds": [
+      607.0,
+      496.0,
+      185.0,
+      44.0
+    ]
+  },
+  {
+    "type": "GtkLabel",
+    "title": "Add A Fake Deck",
+    "css": [],
+    "bounds": [
+      639.0,
+      506.0,
+      121.0,
+      24.0
+    ]
+  },
+  {
+    "type": "GtkLabel",
+    "title": "<a href=\"https://core447.com/streamcontroller/docs/latest/common_problems/#1-no-decks-found\">Checkout Common Problems</a>",
+    "css": [
+      "link"
+    ],
+    "bounds": [
+      490.0,
+      552.0,
+      419.0,
+      18.0
+    ]
+  }
+]

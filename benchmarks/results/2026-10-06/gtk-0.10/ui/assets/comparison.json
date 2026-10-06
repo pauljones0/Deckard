@@ -1,0 +1,15 @@
+{
+  "case": "assets",
+  "direct_upstream": "a3609c7de63347dbc7e031926826898950600c83",
+  "native_sha256": "1f914169f92e813a6c19f0175490726a0b4999b9f1656b298dd782ce294a51c2",
+  "size": [
+    1050,
+    750
+  ],
+  "mean_channel_error": 0.0,
+  "pixels_over_4_percent": 0.0,
+  "environment": "GTK Cairo, private Weston desktop shell, identical Plus/label fixtures",
+  "note": "Device text rasterization, runtime IDs and data paths can differ; this is not a universal pixel-identity claim.",
+  "artifacts": "ui/assets",
+  "native_build": "host debug candidate; identical UI source before remote C-char and smoke-exit fixes"
+}

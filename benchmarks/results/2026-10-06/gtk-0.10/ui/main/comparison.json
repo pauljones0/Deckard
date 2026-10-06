@@ -1,0 +1,15 @@
+{
+  "case": "main",
+  "direct_upstream": "a3609c7de63347dbc7e031926826898950600c83",
+  "native_sha256": "b5032a0c8a734914c41cdff6c968ba68173f39baa75bc78c098dbc15dc9f2dae",
+  "size": [
+    1400,
+    900
+  ],
+  "mean_channel_error": 0.1205021164021164,
+  "pixels_over_4_percent": 0.29619047619047617,
+  "environment": "GTK Cairo, private Weston desktop shell, identical Plus/label fixtures",
+  "note": "Device text rasterization, runtime IDs and data paths can differ; this is not a universal pixel-identity claim.",
+  "artifacts": "ui/main",
+  "native_build": "final host release"
+}

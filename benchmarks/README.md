@@ -2,7 +2,7 @@
 
 These scripts run the real applications, including their interfaces and device-rendering workers. Python here is **measurement/test tooling only** and is never bundled into native Deckard.
 
-[Current Rust GTK results](results/2026-10-06/gtk-editor) · [Historical results](results/2026-10-06). The following command summarizes the historical 0.5.0 table:
+[Current Rust GTK results](results/2026-10-06/gtk-0.10) · [Historical results](results/2026-10-06). The following command summarizes the historical 0.5.0 table:
 
 ```sh
 .venv/bin/python benchmarks/summarize.py \
@@ -10,9 +10,35 @@ These scripts run the real applications, including their interfaces and device-r
   benchmarks/results/2026-10-06/background
 ```
 
-## Rust GTK editor (0.9.1)
+## Direct-upstream GTK layout (0.10.0)
 
-The [current results](results/2026-10-06/gtk-editor) use source `88171a62`, a frozen host release binary and GTK's automatic renderer. Three trials use 15 seconds warmup and 30 seconds sampling. The upstream fixtures and Python revisions listed below are unchanged; fresh upstream timings from the same session supply the comparison. Their native 0.9.0 entries are retained as provenance, and the README uses the separate final 0.9.1 runs. Requested DejaVu Sans is unavailable on this host; the same requested family and fallback apply to all three apps.
+[Current results](results/2026-10-06/gtk-0.10) use final application source `2bd27218` and a frozen host release binary. Three trials use 15 seconds warmup and 30 seconds sampling. Original/direct baselines rotate application order; final Rust measurements follow the ARM C-character and screenshot-test timer fixes. `provenance.json` identifies included datasets and excluded candidate/observer timings. No compilation runs during measurement.
+
+```sh
+.venv/bin/python benchmarks/compare.py --native target/release/deckard \
+  --workloads animated --trials 3 --warmup 15 --duration 30 \
+  --wayland-runtime /tmp/deckard-010 --wayland-socket deckard-010 \
+  --weston-bundle target/benchmarks/weston --output target/gtk-010-visible
+```
+
+Repeat with `--background` and a fresh output directory for daemon results. `--apps rust --workloads static` measures the idle editor. Keep reference exports at the revisions below. Font requests, GIFs, backgrounds and native endpoints are shared; each application retains its fallback fonts, encoder and scheduling. The source requests 10 FPS; actual direct-upstream output is approximately 9 FPS. Fresh pixel validation is separate from timings:
+
+```sh
+.venv/bin/python benchmarks/compare.py --native target/release/deckard \
+  --observe-legacy-frames --workloads animated --trials 1 --warmup 30 --duration 5 \
+  --wayland-runtime /tmp/deckard-010 --wayland-socket deckard-010 \
+  --weston-bundle target/benchmarks/weston --output target/gtk-010-validation
+.venv/bin/python benchmarks/endpoints.py --after target/release/deckard \
+  --versions after --cases plus100 --visible --font-family 'Liberation Sans' \
+  --trials 3 --warmup 15 --duration 30 --validate-seconds 4 \
+  --output target/gtk-010-100
+```
+
+Validation-only `compare.py` timings are excluded. Endpoint validation and memory-map inspection happen after its timing phase. The 100 FPS fixture has 200 distinct native-size frames and an installed font, and differs from the upstream-comparison fixture. GPU load, inherited NVIDIA vendor hint, raw trial ranges and fake-device limitations are recorded in the results.
+
+## Historical Rust GTK editor (0.9.1)
+
+The [historical results](results/2026-10-06/gtk-editor) use source `88171a62`, a frozen host release binary and GTK's automatic renderer. Three trials use 15 seconds warmup and 30 seconds sampling. The upstream fixtures and Python revisions listed below are unchanged; fresh upstream timings from the same session supply the comparison. Their native 0.9.0 entries are retained as provenance, and the README uses the separate final 0.9.1 runs. Requested DejaVu Sans is unavailable on this host; the same requested family and fallback apply to all three apps.
 
 Each trial uses a private D-Bus session without service activation and `GTK_A11Y=none`. This avoids launching host accessibility services while measuring. The timing phase has no frame observer. A separate, longer upstream observer covers the original's delayed playback startup. GPU-backed 1280×800 Wayland sessions are fresh per trial. An unrelated compute job used 97–100% GPU at spot checks; it was left running. These are measurements of this session, not quiet-lab or universal estimates.
 

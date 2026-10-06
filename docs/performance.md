@@ -1,8 +1,37 @@
 # Performance results
 
-## Rust GTK editor · 6 October 2026
+## Direct-upstream GTK layout · Rust 0.10.0
 
-GTK4/libadwaita is restored in Rust **0.9.1**, source `88171a62`. The README screenshot is captured from the running editor, with the native Rust example plugin. No Python runtime is loaded or packaged.
+Final application source `2bd27218`; host release SHA-256 `b5032a0c8a734914c41cdff6c968ba68173f39baa75bc78c098dbc15dc9f2dae`. The README image is a new capture of this executable. The editor, engine and common-plugin replacements run without Python; GTK/libadwaita are system libraries.
+
+**Eight animated Plus keys: 52% less editor CPU and 31% less RAM than the direct upstream.**
+
+| 10 FPS source · CPU / PSS | StreamController | nazbert/Deckard | Rust GTK 0.10.0 |
+| --- | ---: | ---: | ---: |
+| Editor visible | 7.27% / 345 MiB | 3.80% / 311 MiB | **1.83% / 214 MiB** |
+| Daemon only | 4.53% / 203 MiB | 2.50% / 200 MiB | **0.93% / 56 MiB** |
+
+| Final Rust editor · eight Plus keys | CPU · one core | RAM · PSS |
+| --- | ---: | ---: |
+| Static | 0.17% | 199.4 MiB |
+| 10 FPS comparison fixture | 1.83% | 213.6 MiB |
+| 100 FPS endpoint fixture | 7.20% | 217.3 MiB |
+
+Medians of three trials, each with 15 seconds warmup and 30 seconds sampling. Editor animation CPU ranged 1.83–2.40%; 100 FPS CPU ranged 7.07–7.30%. Static CPU varied 0.13–0.50%, so no idle speedup is claimed. PSS includes the application and descendants; compositor, private D-Bus daemon and GPU VRAM are excluded.
+
+Original and direct upstream revisions remain `0f439967` and `a3609c7d`, verified again before release. Their fresh baseline trials rotate application order. Final Rust trials follow the ARM C-character and screenshot-test timer fixes, using a frozen executable and clean application source. Candidate Rust rows in the baseline datasets and every instrumented validation timing are excluded from this table. The source changes made after these measurements affect documentation and evidence only.
+
+The comparison fixture uses one fake Plus, eight 120×120 output keys, identical backgrounds and label requests, and a 96×96, 100-frame GIF with 100 ms delays. Requested DejaVu Sans is unavailable on this host; fallback selection is part of each application. Encoders and scheduling retain their defaults. Separate validation observed 9.4–10.0 FPS in the original, 8.8–9.0 in the direct upstream and 9.8–10.0 in Rust, with every key at 120×120, changing pixels and no frame errors. Savings describe complete applications with the same source request, rather than normalized equal-cost renderers.
+
+The 100 FPS fixture is separate: 200 native 120×120 frames, installed Liberation Sans and a 10 ms source delay. Post-timing checks measured 100.0–100.2 FPS on every key. GTK previews are coalesced near 60 Hz independently of device rendering.
+
+Ryzen 7 9800X3D / RTX 5070, GTK 4.22.4 / libadwaita 1.9.3, NVIDIA 610.57.04 and fresh hardware-backed 1280×800 Wayland sessions. The inherited GLX vendor hint is `nvidia`. An unrelated user compute job occupied 99% GPU at a spot check and was left running. These figures describe this session; physical USB/LCD performance, ARM throughput, input latency and long-duration soak were not measured. Historical hidden-window and driver diagnostics below retain their version labels.
+
+[Raw samples, ranges, executable hashes and frame checks](../benchmarks/results/2026-10-06/gtk-0.10) · [Reproduction](../benchmarks/README.md#direct-upstream-gtk-layout-0100) · [UI captures](ui-restoration.md).
+
+## Historical Rust GTK 0.9.1 · 6 October 2026
+
+GTK4/libadwaita is restored in Rust **0.9.1**, source `88171a62`. That version’s screenshot was captured from the running editor with the native Rust example plugin. No Python runtime is loaded or packaged.
 
 | Eight Plus keys · Rust GTK | CPU · one core | RAM · PSS |
 | --- | ---: | ---: |
@@ -26,7 +55,7 @@ The first five cases share the upstream-comparison fixture: one fake Plus, eight
 
 The original and direct upstream revisions are `0f439967` and `a3609c7d`. Their fresh three-trial baselines are from the same session and unchanged fixture. Final Rust trials follow the GTK interaction fixes; binaries are frozen during measurement. Separate output validation checks all eight keys, dimensions, changing pixels and errors; observer timing is excluded. Source requests are identical, but upstream scheduling differs, so CPU savings describe the complete applications rather than equal-cost frame engines. Final validation observed 9.2–10.0 FPS in the original, 9.0–9.1 in the direct upstream and 9.8–9.9 FPS in Rust across visible and daemon modes, with all keys at 120×120 and no frame errors.
 
-Ryzen 7 9800X3D / RTX 5070, GTK 4.22.4 / libadwaita 1.9.3, hardware-backed 1280×800 Wayland sessions recreated per trial. An unrelated user compute job occupied 97–100% GPU at spot checks and was left running. Results describe this session, not quiet-lab or universal performance. No physical USB/LCD, ARM throughput, input latency or long-duration soak was measured. [Raw samples, ranges, executable hashes and validation](../benchmarks/results/2026-10-06/gtk-editor) · [Reproduction](../benchmarks/README.md#rust-gtk-editor-091).
+Ryzen 7 9800X3D / RTX 5070, GTK 4.22.4 / libadwaita 1.9.3, hardware-backed 1280×800 Wayland sessions recreated per trial. An unrelated user compute job occupied 97–100% GPU at spot checks and was left running. Results describe this session, not quiet-lab or universal performance. No physical USB/LCD, ARM throughput, input latency or long-duration soak was measured. [Raw samples, ranges, executable hashes and validation](../benchmarks/results/2026-10-06/gtk-editor) · [Reproduction](../benchmarks/README.md#historical-rust-gtk-editor-091).
 
 ### GTK renderer and driver costs
 

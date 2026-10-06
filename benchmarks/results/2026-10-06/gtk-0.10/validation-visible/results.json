@@ -1,0 +1,137 @@
+[
+  {
+    "app": "original",
+    "workload": "animated",
+    "trial": 1,
+    "cpu_percent": 7.392556167581144,
+    "pss_mib": 336.9111328125,
+    "rss_mib": 384.9609375,
+    "samples": [
+      {
+        "elapsed": 1.0050608619931154,
+        "cpu_percent": 7.959716970905949,
+        "pss_mib": 336.9033203125,
+        "rss_mib": 384.953125,
+        "processes": 1
+      },
+      {
+        "elapsed": 2.0098020489967894,
+        "cpu_percent": 6.966968300438935,
+        "pss_mib": 336.9072265625,
+        "rss_mib": 384.95703125,
+        "processes": 1
+      },
+      {
+        "elapsed": 3.0146530449856073,
+        "cpu_percent": 7.961379380559456,
+        "pss_mib": 338.9072265625,
+        "rss_mib": 386.95703125,
+        "processes": 1
+      },
+      {
+        "elapsed": 4.019816991989501,
+        "cpu_percent": 7.958900658788768,
+        "pss_mib": 336.9111328125,
+        "rss_mib": 384.9609375,
+        "processes": 1
+      },
+      {
+        "elapsed": 5.005034681002144,
+        "cpu_percent": 6.090024638121337,
+        "pss_mib": 336.9111328125,
+        "rss_mib": 384.9609375,
+        "processes": 1
+      }
+    ]
+  },
+  {
+    "app": "direct",
+    "workload": "animated",
+    "trial": 1,
+    "cpu_percent": 3.5976060112232195,
+    "pss_mib": 306.76953125,
+    "rss_mib": 354.75,
+    "samples": [
+      {
+        "elapsed": 1.0047942509991117,
+        "cpu_percent": 3.9809144966968364,
+        "pss_mib": 306.76953125,
+        "rss_mib": 354.74609375,
+        "processes": 1
+      },
+      {
+        "elapsed": 2.0096868189866655,
+        "cpu_percent": 4.975656263448363,
+        "pss_mib": 307.689453125,
+        "rss_mib": 355.74609375,
+        "processes": 1
+      },
+      {
+        "elapsed": 3.0142969519947655,
+        "cpu_percent": 2.9862330683616904,
+        "pss_mib": 306.763671875,
+        "rss_mib": 354.74609375,
+        "processes": 1
+      },
+      {
+        "elapsed": 4.01808819398866,
+        "cpu_percent": 2.9886692317029313,
+        "pss_mib": 307.763671875,
+        "rss_mib": 355.74609375,
+        "processes": 1
+      },
+      {
+        "elapsed": 5.0033271969878115,
+        "cpu_percent": 3.0449464453474553,
+        "pss_mib": 306.767578125,
+        "rss_mib": 354.75,
+        "processes": 1
+      }
+    ]
+  },
+  {
+    "app": "rust",
+    "workload": "animated",
+    "trial": 1,
+    "cpu_percent": 2.398327380096186,
+    "pss_mib": 213.08984375,
+    "rss_mib": 254.27734375,
+    "samples": [
+      {
+        "elapsed": 1.0040037410217337,
+        "cpu_percent": 2.9880366749899006,
+        "pss_mib": 213.08984375,
+        "rss_mib": 255.27734375,
+        "processes": 1
+      },
+      {
+        "elapsed": 2.0080591770238243,
+        "cpu_percent": 1.991921888260996,
+        "pss_mib": 212.08984375,
+        "rss_mib": 254.27734375,
+        "processes": 1
+      },
+      {
+        "elapsed": 3.012130874005379,
+        "cpu_percent": 2.987834443514935,
+        "pss_mib": 213.08984375,
+        "rss_mib": 255.27734375,
+        "processes": 1
+      },
+      {
+        "elapsed": 4.016332418017555,
+        "cpu_percent": 1.9916320702009913,
+        "pss_mib": 214.08984375,
+        "rss_mib": 254.27734375,
+        "processes": 1
+      },
+      {
+        "elapsed": 5.003487055015285,
+        "cpu_percent": 2.026025026922506,
+        "pss_mib": 212.08984375,
+        "rss_mib": 254.27734375,
+        "processes": 1
+      }
+    ]
+  }
+]

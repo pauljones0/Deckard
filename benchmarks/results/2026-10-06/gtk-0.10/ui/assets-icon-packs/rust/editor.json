@@ -1,0 +1,421 @@
+[
+  {
+    "type": "GtkApplicationWindow",
+    "title": null,
+    "css": [
+      "background",
+      "csd"
+    ],
+    "bounds": [
+      0.0,
+      0.0,
+      1050.0,
+      750.0
+    ]
+  },
+  {
+    "type": "GtkStack",
+    "title": null,
+    "css": [],
+    "bounds": [
+      0.0,
+      46.0,
+      1050.0,
+      704.0
+    ]
+  },
+  {
+    "type": "GtkStack",
+    "title": null,
+    "css": [],
+    "bounds": [
+      0.0,
+      46.0,
+      1050.0,
+      704.0
+    ]
+  },
+  {
+    "type": "GtkStack",
+    "title": null,
+    "css": [],
+    "bounds": [
+      0.0,
+      46.0,
+      1050.0,
+      704.0
+    ]
+  },
+  {
+    "type": "GtkBox",
+    "title": null,
+    "css": [
+      "vertical"
+    ],
+    "bounds": [
+      15.0,
+      61.0,
+      1020.0,
+      674.0
+    ]
+  },
+  {
+    "type": "GtkBox",
+    "title": null,
+    "css": [
+      "horizontal"
+    ],
+    "bounds": [
+      15.0,
+      61.0,
+      1020.0,
+      34.0
+    ]
+  },
+  {
+    "type": "GtkSearchEntry",
+    "title": null,
+    "css": [
+      "search"
+    ],
+    "bounds": [
+      15.0,
+      61.0,
+      885.0,
+      34.0
+    ]
+  },
+  {
+    "type": "GtkImage",
+    "title": null,
+    "css": [],
+    "bounds": [
+      24.0,
+      61.0,
+      16.0,
+      34.0
+    ]
+  },
+  {
+    "type": "GtkText",
+    "title": null,
+    "css": [],
+    "bounds": [
+      46.0,
+      61.0,
+      845.0,
+      34.0
+    ]
+  },
+  {
+    "type": "GtkLabel",
+    "title": "Search",
+    "css": [],
+    "bounds": [
+      46.0,
+      61.0,
+      845.0,
+      34.0
+    ]
+  },
+  {
+    "type": "GtkButton",
+    "title": "Import Pack",
+    "css": [
+      "text-button"
+    ],
+    "bounds": [
+      915.0,
+      61.0,
+      120.0,
+      34.0
+    ]
+  },
+  {
+    "type": "GtkLabel",
+    "title": "Import Pack",
+    "css": [],
+    "bounds": [
+      932.0,
+      66.0,
+      86.0,
+      24.0
+    ]
+  },
+  {
+    "type": "GtkScrolledWindow",
+    "title": null,
+    "css": [],
+    "bounds": [
+      15.0,
+      110.0,
+      1020.0,
+      625.0
+    ]
+  },
+  {
+    "type": "GtkViewport",
+    "title": null,
+    "css": [],
+    "bounds": [
+      15.0,
+      110.0,
+      1020.0,
+      625.0
+    ]
+  },
+  {
+    "type": "GtkBox",
+    "title": null,
+    "css": [
+      "vertical"
+    ],
+    "bounds": [
+      15.0,
+      110.0,
+      1020.0,
+      625.0
+    ]
+  },
+  {
+    "type": "GtkFlowBox",
+    "title": null,
+    "css": [
+      "horizontal"
+    ],
+    "bounds": [
+      15.0,
+      110.0,
+      1020.0,
+      0.0
+    ]
+  },
+  {
+    "type": "GtkBox",
+    "title": null,
+    "css": [
+      "horizontal"
+    ],
+    "bounds": [
+      15.0,
+      110.0,
+      1020.0,
+      625.0
+    ]
+  },
+  {
+    "type": "GtkHeaderBar",
+    "title": null,
+    "css": [
+      "titlebar",
+      "flat"
+    ],
+    "bounds": [
+      -1.0,
+      0.0,
+      1052.0,
+      46.0
+    ]
+  },
+  {
+    "type": "GtkWindowHandle",
+    "title": null,
+    "css": [],
+    "bounds": [
+      -1.0,
+      0.0,
+      1052.0,
+      46.0
+    ]
+  },
+  {
+    "type": "GtkCenterBox",
+    "title": null,
+    "css": [],
+    "bounds": [
+      -1.0,
+      0.0,
+      1052.0,
+      46.0
+    ]
+  },
+  {
+    "type": "GtkBox",
+    "title": null,
+    "css": [
+      "horizontal",
+      "start"
+    ],
+    "bounds": [
+      6.0,
+      6.0,
+      0.0,
+      34.0
+    ]
+  },
+  {
+    "type": "GtkStackSwitcher",
+    "title": null,
+    "css": [
+      "linked"
+    ],
+    "bounds": [
+      222.0,
+      6.0,
+      607.0,
+      34.0
+    ]
+  },
+  {
+    "type": "GtkToggleButton",
+    "title": null,
+    "css": [
+      "text-button",
+      "toggle"
+    ],
+    "bounds": [
+      222.0,
+      6.0,
+      143.0,
+      34.0
+    ]
+  },
+  {
+    "type": "GtkLabel",
+    "title": "Custom Assets",
+    "css": [],
+    "bounds": [
+      233.0,
+      11.0,
+      121.0,
+      24.0
+    ]
+  },
+  {
+    "type": "GtkToggleButton",
+    "title": null,
+    "css": [
+      "text-button",
+      "toggle"
+    ],
+    "bounds": [
+      364.0,
+      6.0,
+      134.0,
+      34.0
+    ]
+  },
+  {
+    "type": "GtkLabel",
+    "title": "Icon Packs",
+    "css": [],
+    "bounds": [
+      386.0,
+      11.0,
+      90.0,
+      24.0
+    ]
+  },
+  {
+    "type": "GtkToggleButton",
+    "title": null,
+    "css": [
+      "text-button",
+      "toggle"
+    ],
+    "bounds": [
+      497.0,
+      6.0,
+      155.0,
+      34.0
+    ]
+  },
+  {
+    "type": "GtkLabel",
+    "title": "Wallpaper Packs",
+    "css": [],
+    "bounds": [
+      508.0,
+      11.0,
+      133.0,
+      24.0
+    ]
+  },
+  {
+    "type": "GtkToggleButton",
+    "title": null,
+    "css": [
+      "text-button",
+      "toggle"
+    ],
+    "bounds": [
+      651.0,
+      6.0,
+      178.0,
+      34.0
+    ]
+  },
+  {
+    "type": "GtkLabel",
+    "title": "SD+ Bar Wallpapers",
+    "css": [],
+    "bounds": [
+      662.0,
+      11.0,
+      156.0,
+      24.0
+    ]
+  },
+  {
+    "type": "GtkBox",
+    "title": null,
+    "css": [
+      "horizontal",
+      "end"
+    ],
+    "bounds": [
+      1010.0,
+      6.0,
+      34.0,
+      34.0
+    ]
+  },
+  {
+    "type": "GtkWindowControls",
+    "title": null,
+    "css": [
+      "end"
+    ],
+    "bounds": [
+      1010.0,
+      6.0,
+      34.0,
+      34.0
+    ]
+  },
+  {
+    "type": "GtkButton",
+    "title": null,
+    "css": [
+      "image-button",
+      "close"
+    ],
+    "bounds": [
+      1010.0,
+      6.0,
+      34.0,
+      34.0
+    ]
+  },
+  {
+    "type": "GtkImage",
+    "title": null,
+    "css": [],
+    "bounds": [
+      1015.0,
+      11.0,
+      24.0,
+      24.0
+    ]
+  }
+]

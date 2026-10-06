@@ -31,14 +31,14 @@ Python plugins use a new native interface. `deckard --migrate-legacy-actions` co
 
 ## Less CPU. Less RAM.
 
-Eight animated Plus keys, 10 FPS source. **45% less editor CPU and 31% less RAM than the direct upstream.**
+Eight animated Plus keys, 10 FPS source. **52% less editor CPU and 31% less RAM than the direct upstream.**
 
 | Mode | StreamController CPU / RAM | nazbert/Deckard CPU / RAM | Rust GTK CPU / RAM |
 | --- | ---: | ---: | ---: |
-| Editor | 6.67% / 345 MiB | 3.77% / 309 MiB | **2.07% / 214 MiB** |
-| Daemon only | 4.33% / 204 MiB | 2.33% / 200 MiB | **0.53% / 55 MiB** |
+| Editor | 7.27% / 345 MiB | 3.80% / 311 MiB | **1.83% / 214 MiB** |
+| Daemon only | 4.53% / 203 MiB | 2.50% / 200 MiB | **0.93% / 56 MiB** |
 
-Rust 0.9.1 historical measurements; medians of three trials on a 9800X3D / RTX 5070 under GPU load. CPU is percent of one core; RAM is process-tree PSS. Fake devices; USB/LCD and ARM performance unmeasured. [Method, hidden-window and 100 FPS results](docs/performance.md).
+Rust 0.10.0; medians of three trials on a 9800X3D / RTX 5070 under GPU load. CPU is percent of one core; RAM is process-tree PSS. Fake devices; USB/LCD and ARM performance unmeasured. [Method, ranges and 100 FPS results](docs/performance.md).
 
 ## Build
 

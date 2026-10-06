@@ -1,0 +1,9 @@
+{
+  "native_release_sha256": "b5032a0c8a734914c41cdff6c968ba68173f39baa75bc78c098dbc15dc9f2dae",
+  "screenshot_sha256": "b60b88155a6df4dbc23962de381ddb3384e5093bcbcde82221eb2725fba4fc04",
+  "native_source_commit": "2bd27218dbec3c52bd2519c21939ad5d974621fc",
+  "reference_source_commit": "a3609c7de63347dbc7e031926826898950600c83",
+  "capture": "ui/main",
+  "python_runtime": false,
+  "mode": "Actual mapped GTK window; GTK Cairo; isolated Plus fixture"
+}

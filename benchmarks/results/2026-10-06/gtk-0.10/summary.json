@@ -1,0 +1,132 @@
+[
+  {
+    "mode": "visible",
+    "app": "original",
+    "dataset": "upstream-visible",
+    "trials": 3,
+    "cpu_percent": 7.265397705865122,
+    "cpu_range": [
+      6.998875793213253,
+      7.698609248293807
+    ],
+    "pss_mib": 344.8388671875,
+    "pss_range": [
+      344.560546875,
+      345.6572265625
+    ]
+  },
+  {
+    "mode": "visible",
+    "app": "direct",
+    "dataset": "upstream-visible",
+    "trials": 3,
+    "cpu_percent": 3.7993337563059235,
+    "cpu_range": [
+      3.466277203040752,
+      3.966010136787103
+    ],
+    "pss_mib": 310.953125,
+    "pss_range": [
+      307.1064453125,
+      311.47607421875
+    ]
+  },
+  {
+    "mode": "visible",
+    "app": "rust",
+    "dataset": "visible",
+    "trials": 3,
+    "cpu_percent": 1.8330885448885763,
+    "cpu_range": [
+      1.8330875933979915,
+      2.399698001126582
+    ],
+    "pss_mib": 213.56884765625,
+    "pss_range": [
+      212.91650390625,
+      216.291015625
+    ]
+  },
+  {
+    "mode": "daemon",
+    "app": "original",
+    "dataset": "upstream-daemon",
+    "trials": 3,
+    "cpu_percent": 4.53272952752466,
+    "cpu_range": [
+      4.166120800133464,
+      4.599390238295147
+    ],
+    "pss_mib": 203.15234375,
+    "pss_range": [
+      202.826171875,
+      204.515625
+    ]
+  },
+  {
+    "mode": "daemon",
+    "app": "direct",
+    "dataset": "upstream-daemon",
+    "trials": 3,
+    "cpu_percent": 2.4996629106245347,
+    "cpu_range": [
+      2.199704474834978,
+      2.4996671913952664
+    ],
+    "pss_mib": 200.037109375,
+    "pss_range": [
+      195.373046875,
+      201.1083984375
+    ]
+  },
+  {
+    "mode": "daemon",
+    "app": "rust",
+    "dataset": "daemon",
+    "trials": 3,
+    "cpu_percent": 0.9332457639585404,
+    "cpu_range": [
+      0.9332456511087405,
+      0.9332463954279846
+    ],
+    "pss_mib": 56.1337890625,
+    "pss_range": [
+      55.9267578125,
+      56.7978515625
+    ]
+  },
+  {
+    "mode": "visible",
+    "app": "rust",
+    "case": "static",
+    "dataset": "visible",
+    "trials": 3,
+    "cpu_percent": 0.16664521892692802,
+    "cpu_range": [
+      0.1333158834396006,
+      0.49993256782859624
+    ],
+    "pss_mib": 199.4326171875,
+    "pss_range": [
+      199.1923828125,
+      199.5439453125
+    ]
+  },
+  {
+    "mode": "visible",
+    "app": "rust",
+    "case": "plus100",
+    "dataset": "endpoints",
+    "trials": 3,
+    "cpu_percent": 7.1993148601601265,
+    "cpu_range": [
+      7.066154668175526,
+      7.299050461901007
+    ],
+    "pss_mib": 217.2919921875,
+    "pss_range": [
+      209.6015625,
+      220.990234375
+    ]
+  }
+]

@@ -11,7 +11,9 @@
       "mean_channel_error": 0.08648941798941799,
       "pixels_over_4_percent": 0.271984126984127,
       "environment": "GTK Cairo, private Weston desktop shell, identical Plus/label fixtures",
-      "note": "Device text rasterization, runtime IDs and data paths can differ; this is not a universal pixel-identity claim."
+      "note": "Device text rasterization, runtime IDs and data paths can differ; this is not a universal pixel-identity claim.",
+      "artifacts": "ui/action",
+      "native_build": "host debug candidate; identical UI source before remote C-char and smoke-exit fixes"
     },
     {
       "case": "assets",
@@ -24,7 +26,9 @@
       "mean_channel_error": 0.0,
       "pixels_over_4_percent": 0.0,
       "environment": "GTK Cairo, private Weston desktop shell, identical Plus/label fixtures",
-      "note": "Device text rasterization, runtime IDs and data paths can differ; this is not a universal pixel-identity claim."
+      "note": "Device text rasterization, runtime IDs and data paths can differ; this is not a universal pixel-identity claim.",
+      "artifacts": "ui/assets",
+      "native_build": "host debug candidate; identical UI source before remote C-char and smoke-exit fixes"
     },
     {
       "case": "assets-icon-packs",
@@ -37,7 +41,9 @@
       "mean_channel_error": 0.0,
       "pixels_over_4_percent": 0.0,
       "environment": "GTK Cairo, private Weston desktop shell, identical Plus/label fixtures",
-      "note": "Device text rasterization, runtime IDs and data paths can differ; this is not a universal pixel-identity claim."
+      "note": "Device text rasterization, runtime IDs and data paths can differ; this is not a universal pixel-identity claim.",
+      "artifacts": "ui/assets-icon-packs",
+      "native_build": "host debug candidate; identical UI source before remote C-char and smoke-exit fixes"
     },
     {
       "case": "chooser-populated",
@@ -50,7 +56,9 @@
       "mean_channel_error": 0.07752116402116402,
       "pixels_over_4_percent": 0.21317460317460318,
       "environment": "GTK Cairo, private Weston desktop shell, identical Plus/label fixtures",
-      "note": "Device text rasterization, runtime IDs and data paths can differ; this is not a universal pixel-identity claim."
+      "note": "Device text rasterization, runtime IDs and data paths can differ; this is not a universal pixel-identity claim.",
+      "artifacts": "ui/chooser-populated",
+      "native_build": "host debug candidate; identical UI source before remote C-char and smoke-exit fixes"
     },
     {
       "case": "deck-settings",
@@ -63,7 +71,9 @@
       "mean_channel_error": 0.06987777777777777,
       "pixels_over_4_percent": 0.16523809523809524,
       "environment": "GTK Cairo, private Weston desktop shell, identical Plus/label fixtures",
-      "note": "Device text rasterization, runtime IDs and data paths can differ; this is not a universal pixel-identity claim."
+      "note": "Device text rasterization, runtime IDs and data paths can differ; this is not a universal pixel-identity claim.",
+      "artifacts": "ui/deck-settings",
+      "native_build": "host debug candidate; identical UI source before remote C-char and smoke-exit fixes"
     },
     {
       "case": "dial",
@@ -76,7 +86,9 @@
       "mean_channel_error": 0.07752116402116402,
       "pixels_over_4_percent": 0.21317460317460318,
       "environment": "GTK Cairo, private Weston desktop shell, identical Plus/label fixtures",
-      "note": "Device text rasterization, runtime IDs and data paths can differ; this is not a universal pixel-identity claim."
+      "note": "Device text rasterization, runtime IDs and data paths can differ; this is not a universal pixel-identity claim.",
+      "artifacts": "ui/dial",
+      "native_build": "host debug candidate; identical UI source before remote C-char and smoke-exit fixes"
     },
     {
       "case": "labels-detail",
@@ -89,12 +101,14 @@
       "mean_channel_error": 0.07897037037037037,
       "pixels_over_4_percent": 0.21317460317460318,
       "environment": "GTK Cairo, private Weston desktop shell, identical Plus/label fixtures",
-      "note": "Device text rasterization, runtime IDs and data paths can differ; this is not a universal pixel-identity claim."
+      "note": "Device text rasterization, runtime IDs and data paths can differ; this is not a universal pixel-identity claim.",
+      "artifacts": "ui/labels-detail",
+      "native_build": "host debug candidate; identical UI source before remote C-char and smoke-exit fixes"
     },
     {
       "case": "main",
       "direct_upstream": "a3609c7de63347dbc7e031926826898950600c83",
-      "native_sha256": "1f914169f92e813a6c19f0175490726a0b4999b9f1656b298dd782ce294a51c2",
+      "native_sha256": "b5032a0c8a734914c41cdff6c968ba68173f39baa75bc78c098dbc15dc9f2dae",
       "size": [
         1400,
         900
@@ -102,7 +116,9 @@
       "mean_channel_error": 0.1205021164021164,
       "pixels_over_4_percent": 0.29619047619047617,
       "environment": "GTK Cairo, private Weston desktop shell, identical Plus/label fixtures",
-      "note": "Device text rasterization, runtime IDs and data paths can differ; this is not a universal pixel-identity claim."
+      "note": "Device text rasterization, runtime IDs and data paths can differ; this is not a universal pixel-identity claim.",
+      "artifacts": "ui/main",
+      "native_build": "final host release"
     },
     {
       "case": "no-devices",
@@ -115,7 +131,9 @@
       "mean_channel_error": 0.0,
       "pixels_over_4_percent": 0.0,
       "environment": "GTK Cairo, private Weston desktop shell, identical Plus/label fixtures",
-      "note": "Device text rasterization, runtime IDs and data paths can differ; this is not a universal pixel-identity claim."
+      "note": "Device text rasterization, runtime IDs and data paths can differ; this is not a universal pixel-identity claim.",
+      "artifacts": "ui/no-devices",
+      "native_build": "host debug candidate; identical UI source before remote C-char and smoke-exit fixes"
     },
     {
       "case": "pages",
@@ -128,7 +146,9 @@
       "mean_channel_error": 0.0,
       "pixels_over_4_percent": 0.0,
       "environment": "GTK Cairo, private Weston desktop shell, identical Plus/label fixtures",
-      "note": "Device text rasterization, runtime IDs and data paths can differ; this is not a universal pixel-identity claim."
+      "note": "Device text rasterization, runtime IDs and data paths can differ; this is not a universal pixel-identity claim.",
+      "artifacts": "ui/pages",
+      "native_build": "host debug candidate; identical UI source before remote C-char and smoke-exit fixes"
     },
     {
       "case": "settings-developer",
@@ -141,7 +161,9 @@
       "mean_channel_error": 0.03820428571428571,
       "pixels_over_4_percent": 0.04228571428571429,
       "environment": "GTK Cairo, private Weston desktop shell, identical Plus/label fixtures",
-      "note": "Device text rasterization, runtime IDs and data paths can differ; this is not a universal pixel-identity claim."
+      "note": "Device text rasterization, runtime IDs and data paths can differ; this is not a universal pixel-identity claim.",
+      "artifacts": "ui/settings-developer",
+      "native_build": "host debug candidate; identical UI source before remote C-char and smoke-exit fixes"
     },
     {
       "case": "settings-performance",
@@ -154,7 +176,9 @@
       "mean_channel_error": 0.0,
       "pixels_over_4_percent": 0.0,
       "environment": "GTK Cairo, private Weston desktop shell, identical Plus/label fixtures",
-      "note": "Device text rasterization, runtime IDs and data paths can differ; this is not a universal pixel-identity claim."
+      "note": "Device text rasterization, runtime IDs and data paths can differ; this is not a universal pixel-identity claim.",
+      "artifacts": "ui/settings-performance",
+      "native_build": "host debug candidate; identical UI source before remote C-char and smoke-exit fixes"
     },
     {
       "case": "settings-ui",
@@ -167,7 +191,9 @@
       "mean_channel_error": 0.0,
       "pixels_over_4_percent": 0.0,
       "environment": "GTK Cairo, private Weston desktop shell, identical Plus/label fixtures",
-      "note": "Device text rasterization, runtime IDs and data paths can differ; this is not a universal pixel-identity claim."
+      "note": "Device text rasterization, runtime IDs and data paths can differ; this is not a universal pixel-identity claim.",
+      "artifacts": "ui/settings-ui",
+      "native_build": "host debug candidate; identical UI source before remote C-char and smoke-exit fixes"
     },
     {
       "case": "touchscreen",
@@ -180,11 +206,9 @@
       "mean_channel_error": 0.07752116402116402,
       "pixels_over_4_percent": 0.21317460317460318,
       "environment": "GTK Cairo, private Weston desktop shell, identical Plus/label fixtures",
-      "note": "Device text rasterization, runtime IDs and data paths can differ; this is not a universal pixel-identity claim."
+      "note": "Device text rasterization, runtime IDs and data paths can differ; this is not a universal pixel-identity claim.",
+      "artifacts": "ui/touchscreen",
+      "native_build": "host debug candidate; identical UI source before remote C-char and smoke-exit fixes"
     }
-  ],
-  "gtk_workflow": "Passed with fatal GTK criticals; GTK/libadwaita mapped and libpython absent",
-  "reference": "nazbert/Deckard a3609c7de63347dbc7e031926826898950600c83",
-  "native_version": "0.10.0",
-  "scope": "Core editor and listed dialogs. Native plugin schemas replace Python-created plugin widgets; deck font rasterization and runtime-specific values differ."
+  ]
 }

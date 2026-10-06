@@ -1,0 +1,19 @@
+{
+  "version": "0.10.0",
+  "final_code_commit": "2bd27218dbec3c52bd2519c21939ad5d974621fc",
+  "native_sha256": "b5032a0c8a734914c41cdff6c968ba68173f39baa75bc78c098dbc15dc9f2dae",
+  "native_doctor": {
+    "version": "0.10.0",
+    "runtime": "Rust",
+    "python": false,
+    "plugin_api": 1,
+    "jpeg": "libjpeg-turbo SIMD",
+    "architecture": "x86_64"
+  },
+  "ci": "https://github.com/pauljones0/Deckard/actions/runs/37530635862",
+  "included": "Original/direct entries in upstream-*; final Rust entries in visible, daemon and endpoints.",
+  "excluded": "Rust candidate entries in upstream-* and all instrumented validation timings. The candidate executable predates ARM C-char and smoke-exit fixes.",
+  "measurement_notes": "15 seconds warmup, 30 seconds sampling, three trials. Baselines rotate application order; final Rust runs follow the portability/test fixes. Applications retain their encoders and scheduling. Source request is 10 FPS, but actual upstream rates differ.",
+  "host": "Ryzen 7 9800X3D / RTX 5070; GTK 4.22.4 / libadwaita 1.9.3; NVIDIA 610.57.04; inherited GLX vendor nvidia; unrelated compute job at 99% GPU spot check, left running.",
+  "scope": "Fake devices, process-tree PSS, CPU percent of one core; compositor/DBus/GPU VRAM excluded. No USB/LCD, ARM performance, input latency or soak measurements."
+}

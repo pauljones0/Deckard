@@ -1,0 +1,74 @@
+[
+  {
+    "mode": "visible",
+    "app": "original",
+    "fps_min": 9.396753487471413,
+    "fps_max": 9.99654626326746,
+    "keys": 8,
+    "dimensions": [
+      120,
+      120
+    ],
+    "errors": []
+  },
+  {
+    "mode": "visible",
+    "app": "direct",
+    "fps_min": 8.796884271994076,
+    "fps_max": 8.996813459993941,
+    "keys": 8,
+    "dimensions": [
+      120,
+      120
+    ],
+    "errors": []
+  },
+  {
+    "mode": "visible",
+    "app": "rust",
+    "fps_min": 9.991689130780125,
+    "fps_max": 9.991689130780125,
+    "keys": 8,
+    "dimensions": [
+      120,
+      120
+    ],
+    "errors": []
+  },
+  {
+    "mode": "daemon",
+    "app": "original",
+    "fps_min": 9.595910595207387,
+    "fps_max": 9.995740203341029,
+    "keys": 8,
+    "dimensions": [
+      120,
+      120
+    ],
+    "errors": []
+  },
+  {
+    "mode": "daemon",
+    "app": "direct",
+    "fps_min": 8.995508609145727,
+    "fps_max": 8.995508609145727,
+    "keys": 8,
+    "dimensions": [
+      120,
+      120
+    ],
+    "errors": []
+  },
+  {
+    "mode": "daemon",
+    "app": "rust",
+    "fps_min": 9.771552816988988,
+    "fps_max": 9.771552816988988,
+    "keys": 8,
+    "dimensions": [
+      120,
+      120
+    ],
+    "errors": []
+  }
+]
