@@ -152,8 +152,15 @@ fn run() -> Result<()> {
     let runtime = Runtime::start(shared.clone(), fakes, !args.skip_load_hardware_decks)?;
     if args.ui_smoke_test {
         let test_shared = shared.clone();
+        // Captures settle the reference scene at 5.2 seconds after activation.
+        // Allow GTK startup and that capture to finish before the smoke exit.
+        let duration = if std::env::var_os("DECKARD_UI_CAPTURE").is_some() {
+            Duration::from_secs(10)
+        } else {
+            Duration::from_secs(3)
+        };
         std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_secs(3));
+            std::thread::sleep(duration);
             test_shared.lock().unwrap().quit = true;
         });
     }
