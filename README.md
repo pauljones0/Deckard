@@ -6,15 +6,15 @@ Stream Deck controller for Linux. Rust engine. GTK4/libadwaita editor. No Python
 
 ## Download
 
-**[Deckard 0.9.0](https://github.com/pauljones0/Deckard/releases/tag/v0.9.0)**
+**[Deckard 0.9.1](https://github.com/pauljones0/Deckard/releases/tag/v0.9.1)**
 
 | Linux | x86-64 · Intel/AMD | ARM64 |
 | --- | --- | --- |
-| CachyOS | [pacman package](https://github.com/pauljones0/Deckard/releases/download/v0.9.0/deckard-0.9.0-cachyos-x86_64.pkg.tar.zst) | — |
-| Fedora 44 stable | [RPM](https://github.com/pauljones0/Deckard/releases/download/v0.9.0/deckard-0.9.0-fedora44-x86_64.rpm) | [RPM](https://github.com/pauljones0/Deckard/releases/download/v0.9.0/deckard-0.9.0-fedora44-aarch64.rpm) |
-| Ubuntu 26.04 LTS | [DEB](https://github.com/pauljones0/Deckard/releases/download/v0.9.0/deckard-0.9.0-ubuntu26-x86_64.deb) | [DEB](https://github.com/pauljones0/Deckard/releases/download/v0.9.0/deckard-0.9.0-ubuntu26-aarch64.deb) |
+| CachyOS | [pacman package](https://github.com/pauljones0/Deckard/releases/download/v0.9.1/deckard-0.9.1-cachyos-x86_64.pkg.tar.zst) | — |
+| Fedora 44 stable | [RPM](https://github.com/pauljones0/Deckard/releases/download/v0.9.1/deckard-0.9.1-fedora44-x86_64.rpm) | [RPM](https://github.com/pauljones0/Deckard/releases/download/v0.9.1/deckard-0.9.1-fedora44-aarch64.rpm) |
+| Ubuntu 26.04 LTS | [DEB](https://github.com/pauljones0/Deckard/releases/download/v0.9.1/deckard-0.9.1-ubuntu26-x86_64.deb) | [DEB](https://github.com/pauljones0/Deckard/releases/download/v0.9.1/deckard-0.9.1-ubuntu26-aarch64.deb) |
 
-Open the DEB/RPM in your software installer. CachyOS: `sudo pacman -U ./deckard-0.9.0-cachyos-x86_64.pkg.tar.zst`. Your package manager installs the libraries and helpers. Reconnect your deck, then launch Deckard. [Builds and setup](docs/linux-builds.md).
+Open the DEB/RPM in your software installer. CachyOS: `sudo pacman -U ./deckard-0.9.1-cachyos-x86_64.pkg.tar.zst`. Your package manager installs the libraries and helpers. Reconnect your deck, then launch Deckard. [Builds and setup](docs/linux-builds.md).
 
 **Store → Pages → Rust Starter** installs a ready-made page.
 

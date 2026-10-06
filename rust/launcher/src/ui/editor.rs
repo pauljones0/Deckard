@@ -436,6 +436,32 @@ impl Ui {
                 ui.select_input(&owner.0, &owner.1, &owner.2);
             }
         });
+        let menu_click = gtk::GestureClick::new();
+        menu_click.set_button(3);
+        let weak = Rc::downgrade(self);
+        let weak_button = button.downgrade();
+        let owner = (serial.clone(), family.clone(), input.clone());
+        menu_click.connect_pressed(move |_, _, x, y| {
+            let (Some(ui), Some(button)) = (weak.upgrade(), weak_button.upgrade()) else {
+                return;
+            };
+            ui.select_input(&owner.0, &owner.1, &owner.2);
+            let menu = gio::Menu::new();
+            for (title, action) in [
+                ("Copy state", "win.copy-input"),
+                ("Cut state", "win.cut-input"),
+                ("Paste state", "win.paste-input"),
+                ("Clear state", "win.clear-input"),
+            ] {
+                menu.append(Some(title), Some(action));
+            }
+            let popover = gtk::PopoverMenu::from_model(Some(&menu));
+            popover.set_parent(&button);
+            popover.set_pointing_to(Some(&gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
+            popover.connect_closed(|popover| popover.unparent());
+            popover.popup();
+        });
+        button.add_controller(menu_click);
         let keys = gtk::EventControllerKey::new();
         let weak = Rc::downgrade(self);
         keys.connect_key_pressed(move |_, key, _, modifiers| {
@@ -632,7 +658,7 @@ impl Ui {
         // The state switcher and selected-key picture are persistent; replace
         // only document controls, and keep each group's expansion state.
         while let Some(child) = self.controls.last_child() {
-            if child == self.preview.clone().upcast::<gtk::Widget>() {
+            if child == self.preview_host.clone().upcast::<gtk::Widget>() {
                 break;
             }
             self.controls.remove(&child);
@@ -728,8 +754,12 @@ impl Ui {
         let sel = selection.clone();
         let run = button("Test", "media-playback-start-symbolic", move || {
             if let Some(ui) = weak.upgrade() {
-                ui.send_event(&sel.serial, &sel.family, &sel.input, "press", 1);
-                ui.send_event(&sel.serial, &sel.family, &sel.input, "release", 0);
+                if sel.family == "touchscreens" {
+                    ui.send_event(&sel.serial, &sel.family, &sel.input, "short-touch", 1);
+                } else {
+                    ui.send_event(&sel.serial, &sel.family, &sel.input, "press", 1);
+                    ui.send_event(&sel.serial, &sel.family, &sel.input, "release", 0);
+                }
             }
         });
         test.add_suffix(&run);
@@ -774,7 +804,6 @@ impl Ui {
     }
     pub(super) fn change_states(self: &Rc<Self>, add: bool) {
         let sel = self.selection.borrow().clone();
-        let next = sel.clone();
         self.submit(Work {
             key: None,
             title: String::new(),
@@ -805,7 +834,6 @@ impl Ui {
                 Ok(Value::Null)
             }),
         });
-        let _ = next;
     }
     fn send_event(&self, serial: &str, family: &str, input: &str, event: &str, value: i32) {
         if self
@@ -822,7 +850,7 @@ impl Ui {
             self.toast("Input queue busy; try again");
         }
     }
-    fn clipboard(self: &Rc<Self>, paste: bool, cut: bool) {
+    pub(super) fn clipboard(self: &Rc<Self>, paste: bool, cut: bool) {
         let clipboard = self.window.clipboard();
         let selection = self.selection.borrow().clone();
         if paste {
@@ -844,7 +872,7 @@ impl Ui {
             }
         }
     }
-    fn clear_input(self: &Rc<Self>) {
+    pub(super) fn clear_input(self: &Rc<Self>) {
         self.replace_state(self.selection.borrow().clone(), json!({}));
     }
     fn replace_state(self: &Rc<Self>, sel: Selection, document: Value) {

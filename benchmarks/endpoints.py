@@ -84,11 +84,14 @@ def main():
     parser.add_argument("--validate-seconds",type=float,default=4)
     parser.add_argument("--trials",type=int,default=3)
     parser.add_argument("--visible",action="store_true")
+    parser.add_argument("--gtk-renderer", choices=["auto", "gl", "vulkan", "cairo"], default="auto")
+    parser.add_argument("--clear-glx-vendor", action="store_true", help="Diagnostic: remove a forced GLX vendor hint from the child environment")
+    parser.add_argument("--disable-gpu", action="store_true", help="Diagnostic: disable GTK GL/Vulkan probing; use with Cairo")
     parser.add_argument("--font-family",default="DejaVu Sans")
     parser.add_argument("--weston-bundle",type=pathlib.Path,default=ROOT/"target/benchmarks/weston")
     args=parser.parse_args(); args.output=args.output.resolve(); args.output.mkdir(parents=True,exist_ok=True)
     args.wayland_runtime=pathlib.Path("/tmp/deckard-endpoint-wayland"); args.wayland_socket="deckard-endpoint"
-    metadata={"date":time.strftime("%Y-%m-%dT%H:%M:%SZ",time.gmtime()),"platform":platform.platform(),"warmup":args.warmup,"duration":args.duration,"trials":args.trials,"visible":args.visible,"requested_font":args.font_family,"cpu_unit":"100% = one logical core","memory_unit":"MiB PSS, application plus descendants","hardware_usb":False,"git_head":subprocess.check_output(["git","rev-parse","HEAD"],cwd=ROOT,text=True).strip(),"git_dirty":bool(subprocess.check_output(["git","status","--porcelain"],cwd=ROOT)),"binaries":{v:{"path":str(getattr(args,v)),"sha256":hashlib.sha256(getattr(args,v).read_bytes()).hexdigest()} for v in args.versions}}
+    metadata={"date":time.strftime("%Y-%m-%dT%H:%M:%SZ",time.gmtime()),"platform":platform.platform(),"warmup":args.warmup,"duration":args.duration,"trials":args.trials,"visible":args.visible,"gtk_renderer":args.gtk_renderer,"gtk_a11y":"none","gtk_gpu_disabled":args.disable_gpu,"glx_vendor_hint":None if args.clear_glx_vendor else os.environ.get("__GLX_VENDOR_LIBRARY_NAME"),"requested_font":args.font_family,"cpu_unit":"100% = one logical core","memory_unit":"MiB PSS, application plus descendants","hardware_usb":False,"git_head":subprocess.check_output(["git","rev-parse","HEAD"],cwd=ROOT,text=True).strip(),"git_dirty":bool(subprocess.check_output(["git","status","--porcelain"],cwd=ROOT)),"binaries":{v:{"path":str(getattr(args,v)),"sha256":hashlib.sha256(getattr(args,v).read_bytes()).hexdigest()} for v in args.versions}}
     (args.output/"metadata.json").write_text(json.dumps(metadata,indent=2)); results=[]
     # Prepare fixtures before timing so media generation cannot affect CPU samples.
     assets={case:asset(args.output/"assets",rate,kind) for case,(model,rate,kind) in CASES.items() if case in args.cases}
@@ -101,11 +104,18 @@ def main():
                 compositor=start_compositor(args,name) if args.visible else None
                 bus=None; process=None
                 try:
-                    bus=subprocess.Popen(["dbus-daemon","--session","--nofork","--print-address=1"],stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,text=True,start_new_session=True)
+                    config=args.output/"session.conf"
+                    config.write_text('<busconfig><type>session</type><listen>unix:tmpdir=/tmp</listen><policy context="default"><allow own="*"/><allow send_destination="*"/><allow receive_sender="*"/></policy></busconfig>')
+                    bus=subprocess.Popen(["dbus-daemon",f"--config-file={config}","--nofork","--print-address=1"],stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,text=True,start_new_session=True)
                     address=bus.stdout.readline().strip()
                     home=data/"home"; home.mkdir()
                     env=os.environ.copy(); env.update(HOME=str(home),XDG_CONFIG_HOME=str(home/".config"),XDG_DATA_HOME=str(home/".local/share"),XDG_CACHE_HOME=str(home/".cache"),DBUS_SESSION_BUS_ADDRESS=address)
                     env.pop("DISPLAY",None); env.pop("DECKARD_RENDERER",None); env.pop("WGPU_BACKEND",None)
+                    env.pop("GSK_RENDERER",None); env.pop("GDK_DISABLE",None)
+                    env["GTK_A11Y"]="none"
+                    if args.clear_glx_vendor: env.pop("__GLX_VENDOR_LIBRARY_NAME",None)
+                    if args.gtk_renderer != "auto": env["GSK_RENDERER"]=args.gtk_renderer
+                    if args.disable_gpu: env["GDK_DISABLE"]="gl,vulkan"
                     env.update(XDG_RUNTIME_DIR=str(args.wayland_runtime),WAYLAND_DISPLAY=args.wayland_socket,XDG_SESSION_TYPE="wayland")
                     command=[str(getattr(args,version)),"--skip-load-hardware-decks","--fake-deck-model",{"ulanzi":"ulanzi-d200","mirabox":"mirabox-293s"}.get(model,model),"--data",str(data)]
                     if not args.visible: command.append("-b")
@@ -121,7 +131,8 @@ def main():
                             current,pss,rss,count=snapshot(root); now=time.monotonic(); delta=max(0,sum(current.values())-sum(previous.values())); accumulated+=delta
                             samples.append({"elapsed":now-start,"cpu_percent":100*delta/(now-last),"pss_mib":pss,"rss_mib":rss,"processes":count}); previous=current;last=now
                         result={"version":version,"case":case,"model":model,"source_fps":rate,"requested_fps":120,"kind":kind,"trial":trial+1,"cpu_percent":100*accumulated/(last-start),"pss_mib":statistics.median(s["pss_mib"] for s in samples),"samples":samples,"timing_instrumented":False}
-                        # Polling is only AFTER timing, never included in the CPU/PSS table.
+                        # Mapping inspection and frame validation are AFTER CPU/PSS timing.
+                        result["memory_mappings"]=[{"path":m.path,"pss_mib":m.pss/2**20} for m in root.memory_maps(grouped=True)]
                         result["validation"]=validate(data,model,args.validate_seconds)
                         results.append(result); (args.output/"results.json").write_text(json.dumps(results,indent=2))
                         print(f"{name}: {result['cpu_percent']:.3f}% CPU, {result['pss_mib']:.1f} MiB, {result['validation']['fps_min']:.1f}–{result['validation']['fps_max']:.1f} FPS",flush=True)

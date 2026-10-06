@@ -6,13 +6,13 @@ Deckard uses GTK4 and libadwaita through their Rust bindings. The previous layou
 
 The editor retains the paired header bars, 40% left sidebar, state switcher, selected-input preview, grouped controls, action chooser and dialogs. Keys display at 75 logical pixels; the selected preview is 175. Device frames retain their native resolution independently of those display sizes.
 
-Pages, assets, store, device settings, OBS connections, automatic switching, migration and optional AI review use GTK controls. Layout, background, labels and action properties save through the Rust engine. Unknown JSON fields survive edits. The common upstream actions and native plugin field schemas supply their settings forms.
+Pages, assets, store, device settings, OBS connections, automatic switching, migration and optional AI review use GTK controls. Layout, background, labels and action properties save through the Rust engine. Unknown JSON fields survive edits. Clicking the large preview opens asset selection; hover controls remove its image. Inputs provide right-click menus and clipboard shortcuts. The common upstream actions and native plugin field schemas supply their settings forms.
 
 ## Rendering and lifecycle
 
 GTK stays on the main thread. A bounded worker serializes saved edits, carrying the selected device, page, input and state with each command. Network requests run separately. Structural settings changes update their lists after persistence; closing the application drains pending edits.
 
-Previews wrap the engine's shared RGB buffers in `glib::Bytes` and `gdk::MemoryTexture`. They do not decode device JPEGs. Unchanged textures are reused, only the selected device receives preview updates, and closing to the tray releases textures. Reopening restores frames. The preview cadence is capped around 60 Hz; device rendering and USB pacing retain their independent source/model rates.
+Previews wrap the engine's shared RGB buffers in `glib::Bytes` and `gdk::MemoryTexture`. They do not decode device JPEGs. Unchanged textures are reused, only the selected device receives preview updates, and closing to the tray releases textures and the native window surface/renderer. Reopening recreates them and restores frames. The preview cadence is capped around 60 Hz; device rendering and USB pacing retain their independent source/model rates.
 
 Asset browsing uses search and pages of 40 scaled thumbnails. GTK, GLib, Pango, Cairo and libadwaita are supplied by the distribution. egui, eframe, wgpu and rfd were removed from the launcher.
 

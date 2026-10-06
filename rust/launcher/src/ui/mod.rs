@@ -124,6 +124,7 @@ struct Ui {
     page_button: gtk::MenuButton,
     deck_settings: gtk::Button,
     preview: PreviewImage,
+    preview_host: gtk::Overlay,
     dial_preview: Cell<Option<(usize, u64)>>,
     state_box: gtk::Box,
     selection: RefCell<Selection>,
@@ -271,9 +272,37 @@ impl Ui {
         preview.set_halign(gtk::Align::Center);
         preview.add_css_class("key-image");
         preview.set_overflow(gtk::Overflow::Hidden);
-        preview.set_margin_top(37);
-        preview.set_margin_bottom(70);
-        controls.append(&preview);
+        preview.add_css_class("icon-selector-image-base");
+        let preview_button = gtk::Button::builder()
+            .child(&preview)
+            .tooltip_text("Choose image, GIF or video")
+            .build();
+        preview_button.add_css_class("deckard-key");
+        preview_button.set_widget_name("selected-icon");
+        let preview_host = gtk::Overlay::builder()
+            .child(&preview_button)
+            .halign(gtk::Align::Center)
+            .build();
+        preview_host.set_margin_top(37);
+        preview_host.set_margin_bottom(70);
+        let hint = gtk::Label::builder()
+            .label("Choose an image")
+            .halign(gtk::Align::Center)
+            .valign(gtk::Align::Center)
+            .can_target(false)
+            .visible(false)
+            .build();
+        hint.add_css_class("heading");
+        preview_host.add_overlay(&hint);
+        let remove_icon = gtk::Button::from_icon_name("user-trash-symbolic");
+        remove_icon.set_tooltip_text(Some("Remove image"));
+        remove_icon.set_widget_name("remove-selected-image");
+        remove_icon.add_css_class("icon-selector-remove-button");
+        remove_icon.set_halign(gtk::Align::End);
+        remove_icon.set_valign(gtk::Align::End);
+        remove_icon.set_visible(false);
+        preview_host.add_overlay(&remove_icon);
+        controls.append(&preview_host);
         scroll.set_child(Some(&controls));
         sidebar.add_named(&scroll, Some("editor"));
         side.append(&sidebar);
@@ -314,6 +343,7 @@ impl Ui {
             page_button,
             deck_settings,
             preview,
+            preview_host,
             dial_preview: Cell::new(None),
             state_box,
             selection: RefCell::new(Selection {
@@ -339,6 +369,49 @@ impl Ui {
             catalog_box: RefCell::new(None),
             capture_done: Cell::new(false),
         });
+        let weak = Rc::downgrade(&ui);
+        preview_button.connect_clicked(move |_| {
+            if let Some(ui) = weak.upgrade() {
+                ui.assets();
+            }
+        });
+        let weak = Rc::downgrade(&ui);
+        remove_icon.connect_clicked(move |button| {
+            if let Some(ui) = weak.upgrade() {
+                ui.edit(
+                    ui.selection.borrow().clone(),
+                    vec!["media".into(), "path".into()],
+                    Value::Null,
+                );
+                button.set_visible(false);
+            }
+        });
+        let motion = gtk::EventControllerMotion::new();
+        let weak = Rc::downgrade(&ui);
+        let caption = hint.clone();
+        let remove = remove_icon.clone();
+        motion.connect_enter(move |_, _, _| {
+            if let Some(ui) = weak.upgrade() {
+                ui.preview.remove_css_class("icon-selector-image-base");
+                ui.preview.add_css_class("icon-selector-image-hover");
+                caption.set_visible(true);
+                remove.set_visible(
+                    ui.draft.borrow()["media"]["path"]
+                        .as_str()
+                        .is_some_and(|p| !p.is_empty()),
+                );
+            }
+        });
+        let weak = Rc::downgrade(&ui);
+        motion.connect_leave(move |_| {
+            if let Some(ui) = weak.upgrade() {
+                ui.preview.remove_css_class("icon-selector-image-hover");
+                ui.preview.add_css_class("icon-selector-image-base");
+                hint.set_visible(false);
+                remove_icon.set_visible(false);
+            }
+        });
+        ui.preview_host.add_controller(motion);
         ui.install_actions(app);
         ui.bridge.listen(&ui);
         let weak = Rc::downgrade(&ui);
@@ -366,9 +439,10 @@ impl Ui {
                     .as_bool()
                     .unwrap_or(true);
                 if keep {
-                    ui.window.set_visible(false);
                     ui.bridge.hidden.store(true, Ordering::Relaxed);
                     ui.clear_textures();
+                    ui.window.set_visible(false);
+                    gtk::prelude::WidgetExt::unrealize(&ui.window);
                 } else {
                     ui.command("quit", json!({}), "", false);
                 }
@@ -417,7 +491,18 @@ impl Ui {
     }
 
     fn install_actions(self: &Rc<Self>, app: &adw::Application) {
-        for name in ["store", "pages", "assets", "settings", "about", "quit"] {
+        for name in [
+            "store",
+            "pages",
+            "assets",
+            "settings",
+            "about",
+            "quit",
+            "copy-input",
+            "cut-input",
+            "paste-input",
+            "clear-input",
+        ] {
             let action = gio::SimpleAction::new(name, None);
             let weak = Rc::downgrade(self);
             action.connect_activate(move |_, _| {
@@ -428,6 +513,10 @@ impl Ui {
                         "assets" => ui.assets(),
                         "settings" => ui.settings(),
                         "about" => ui.about(),
+                        "copy-input" => ui.clipboard(false, false),
+                        "cut-input" => ui.clipboard(false, true),
+                        "paste-input" => ui.clipboard(true, false),
+                        "clear-input" => ui.clear_input(),
                         _ => ui.command("quit", json!({}), "", false),
                     }
                 }

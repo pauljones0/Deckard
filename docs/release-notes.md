@@ -1,6 +1,8 @@
-Deckard 0.9.0 restores the previous GTK4/libadwaita editor, implemented entirely in Rust.
+Deckard 0.9.1 restores the previous GTK4/libadwaita editor, implemented entirely in Rust.
 
 The original window proportions, header bars, state selector, selected-input preview, key grid, touch strip, dials and grouped settings return. GTK dialogs cover pages, assets, store, device settings, OBS connections, automatic switching and migration. All 56 native replacements for the common upstream plugin actions remain available; executable native plugins receive GTK forms from their field schemas.
+
+The selected preview opens the asset picker, with hover hints and image removal. Right-click input menus provide copy, cut, paste and clear. Closing to the tray releases the window surface and renderer, which are recreated on reopening.
 
 Saved edits retain unknown JSON and the selected input at the time of editing. Pending writes drain on exit. Preview textures share engine RGB buffers, update only when pixels change and are released while hidden. Searchable asset pages keep 40 scaled thumbnails at a time. Touchscreen state backgrounds and animations now reach the native strip.
 

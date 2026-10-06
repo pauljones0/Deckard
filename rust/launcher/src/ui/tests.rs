@@ -372,19 +372,28 @@ fn gtk_editor_workflows() {
     assert!(find(&root_widget, "remove-slide-1").is_none());
     dialog.close();
     settle(&ui, || ui.window.visible_dialog().is_none());
-    ui.assets();
+    find(&ui.controls, "selected-icon")
+        .unwrap()
+        .downcast::<gtk::Button>()
+        .unwrap()
+        .emit_clicked();
+    assert_eq!(ui.window.visible_dialog().unwrap().title(), "Assets");
     ui.window.visible_dialog().unwrap().close();
     settle(&ui, || ui.window.visible_dialog().is_none());
     ui.device_settings();
     ui.window.visible_dialog().unwrap().close();
     settle(&ui, || ui.window.visible_dialog().is_none());
     ui.store();
-    ui.show_catalog(json!({"plugins":[],"pages":[],"icons":[]}));
+    ui.show_catalog(json!([]));
     ui.window.visible_dialog().unwrap().close();
     settle(&ui, || ui.catalog_dialog.borrow().is_none());
     ui.window.close();
     settle(&ui, || !ui.window.is_visible());
     assert!(ui.bridge.hidden.load(Ordering::Relaxed));
+    assert!(
+        !ui.window.is_realized(),
+        "hidden window releases its native renderer/surface"
+    );
     assert!(ui.preview.paintable().is_none());
     assert!(
         ui.previews
