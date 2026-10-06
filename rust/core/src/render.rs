@@ -1,5 +1,5 @@
 use crate::{
-    animation::{GifPlayer, VideoPlayer},
+    animation::{GifPlayer, MAX_FPS, VideoPlayer},
     cache::ByteCache,
 };
 use anyhow::{Context, Result};
@@ -14,7 +14,7 @@ use std::{
     hash::{Hash, Hasher},
     path::{Path, PathBuf},
     sync::Arc,
-    time::Instant,
+    time::{Duration, Instant},
 };
 #[derive(Clone, PartialEq)]
 pub struct RenderConfig {
@@ -25,6 +25,8 @@ pub struct RenderConfig {
     pub rotation: u16,
     pub sleeping: bool,
     pub revision: u64,
+    pub key_size: Option<(usize, usize)>,
+    pub max_fps: u32,
 }
 #[derive(Clone)]
 pub struct Tile {
@@ -40,6 +42,40 @@ pub struct Frame {
     pub tiles: Vec<Tile>,
     pub strip: Option<Tile>,
     pub revision: u64,
+}
+#[derive(Clone, Debug, Hash, Eq, PartialEq)]
+struct AssetKey {
+    path: PathBuf,
+    width: u32,
+    height: u32,
+    fps: u32,
+    looping: bool,
+}
+impl AssetKey {
+    fn new(path: &str, width: u32, height: u32, options: &Value, cap: u32) -> Self {
+        let extension = Path::new(path)
+            .extension()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_ascii_lowercase();
+        let sized = ["svg", "mp4", "mkv", "webm", "mov", "avi"].contains(&extension.as_str());
+        let timed = extension == "gif" || (sized && extension != "svg");
+        Self {
+            path: path.into(),
+            width: if sized { width } else { 0 },
+            height: if sized { height } else { 0 },
+            fps: if timed {
+                options["fps"]
+                    .as_u64()
+                    .filter(|fps| *fps != 0)
+                    .unwrap_or(u64::from(cap))
+                    .clamp(1, u64::from(cap)) as u32
+            } else {
+                0
+            },
+            looping: !timed || options["loop"].as_bool().unwrap_or(true),
+        }
+    }
 }
 enum Asset {
     Static(Arc<RgbaImage>),
@@ -137,18 +173,21 @@ fn rasterize(font: &ab_glyph::FontArc, c: char, pixels: f32) -> (GlyphMetrics, A
 }
 pub struct Renderer {
     font: ab_glyph::FontArc,
-    assets: HashMap<PathBuf, Asset>,
+    assets: HashMap<AssetKey, Asset>,
     encoded: ByteCache<u64>,
-    used: HashSet<PathBuf>,
+    jpeg: crate::media::JpegEncoder,
+    used: HashSet<AssetKey>,
     pub animated: bool,
-    asset_frames: HashMap<PathBuf, Arc<RgbaImage>>,
+    next_frame: Option<Instant>,
+    max_fps: u32,
+    asset_frames: HashMap<AssetKey, Arc<RgbaImage>>,
     last_revision: u64,
-    gif_frames: HashMap<PathBuf, (u64, Arc<RgbaImage>)>,
+    gif_frames: HashMap<AssetKey, (u64, Arc<RgbaImage>)>,
     previous_config: Option<(Kind, Arc<RenderConfig>)>,
     previous_frame: Option<Frame>,
     scaled: HashMap<(usize, u32, u32, String, String), Arc<RgbaImage>>,
     scaled_bytes: usize,
-    stamps: HashMap<PathBuf, (u64, std::time::SystemTime)>,
+    stamps: HashMap<AssetKey, (u64, std::time::SystemTime)>,
     glyphs: std::cell::RefCell<GlyphCache>,
     pub errors: Vec<String>,
     fonts: std::cell::RefCell<HashMap<String, ab_glyph::FontArc>>,
@@ -235,15 +274,18 @@ pub fn active_state(config: &RenderConfig, family: &str, input: &str) -> usize {
 }
 fn unchanged_sources(
     paths: &[&str],
-    before: &HashMap<PathBuf, Arc<RgbaImage>>,
-    after: &HashMap<PathBuf, Arc<RgbaImage>>,
+    before: &HashMap<AssetKey, Arc<RgbaImage>>,
+    after: &HashMap<AssetKey, Arc<RgbaImage>>,
 ) -> bool {
     paths.iter().filter(|p| !p.is_empty()).all(|path| {
-        match (before.get(Path::new(path)), after.get(Path::new(path))) {
-            (Some(a), Some(b)) => Arc::ptr_eq(a, b),
-            (None, None) => true,
-            _ => false,
-        }
+        after
+            .iter()
+            .filter(|(key, _)| key.path == Path::new(path))
+            .all(|(key, frame)| before.get(key).is_some_and(|old| Arc::ptr_eq(old, frame)))
+            && before
+                .keys()
+                .filter(|key| key.path == Path::new(path))
+                .all(|key| after.contains_key(key))
     })
 }
 impl Renderer {
@@ -254,8 +296,11 @@ impl Renderer {
             ))?,
             assets: HashMap::new(),
             encoded: ByteCache::new(budget),
+            jpeg: crate::media::JpegEncoder::new(90).map_err(anyhow::Error::msg)?,
             used: HashSet::new(),
             animated: false,
+            next_frame: None,
+            max_fps: MAX_FPS,
             asset_frames: HashMap::new(),
             last_revision: u64::MAX,
             gif_frames: HashMap::new(),
@@ -279,6 +324,10 @@ impl Renderer {
         self.scaled.clear();
         self.scaled_bytes = 0;
         self.animated = false;
+        self.next_frame = None;
+    }
+    pub fn next_deadline(&self) -> Option<Instant> {
+        self.next_frame
     }
     fn asset_playback(
         &mut self,
@@ -290,12 +339,16 @@ impl Renderer {
         if path.is_empty() {
             return None;
         }
-        let path = PathBuf::from(path);
-        self.used.insert(path.clone());
-        if let Some(frame) = self.asset_frames.get(&path) {
+        self.asset_key(AssetKey::new(path, width, height, options, self.max_fps))
+    }
+    fn asset_key(&mut self, key: AssetKey) -> Option<Arc<RgbaImage>> {
+        let path = &key.path;
+        let (width, height) = (key.width, key.height);
+        self.used.insert(key.clone());
+        if let Some(frame) = self.asset_frames.get(&key) {
             return Some(frame.clone());
         }
-        if !self.assets.contains_key(&path) {
+        if !self.assets.contains_key(&key) {
             // Static and decoded GIF canvases share a hard per-asset bound.
             let loaded = (|| -> Result<Asset> {
                 let extension = path
@@ -304,22 +357,22 @@ impl Renderer {
                     .to_string_lossy()
                     .to_lowercase();
                 if extension == "gif" {
-                    let mut player = GifPlayer::new(&path)?;
-                    player.looping = options["loop"].as_bool().unwrap_or(true);
-                    player.fps = options["fps"].as_u64().unwrap_or(30).clamp(1, 60) as u32;
+                    let mut player = GifPlayer::new(path)?;
+                    player.looping = key.looping;
+                    player.fps = key.fps;
                     return Ok(Asset::Gif(Box::new(player)));
                 }
                 if ["mp4", "mkv", "webm", "mov", "avi"].contains(&extension.as_str()) {
                     return Ok(Asset::Video(VideoPlayer::new(
-                        &path,
+                        path,
                         width,
                         height,
-                        options["fps"].as_u64().unwrap_or(30).clamp(1, 60) as u32,
-                        options["loop"].as_bool().unwrap_or(true),
+                        key.fps,
+                        key.looping,
                     )?));
                 }
                 if extension == "svg" {
-                    let source = std::fs::read(&path)?;
+                    let source = std::fs::read(path)?;
                     anyhow::ensure!(source.len() <= 4 * 1024 * 1024, "SVG source exceeds limit");
                     let mut options = resvg::usvg::Options::default();
                     std::sync::Arc::make_mut(&mut options.fontdb).load_font_data(
@@ -354,7 +407,7 @@ impl Renderer {
                         RgbaImage::from_raw(sw, sh, pixels).context("SVG image")?,
                     )));
                 }
-                let mut reader = image::ImageReader::open(&path)?.with_guessed_format()?;
+                let mut reader = image::ImageReader::open(path)?.with_guessed_format()?;
                 let mut limits = image::Limits::default();
                 limits.max_image_width = Some(4096);
                 limits.max_image_height = Some(4096);
@@ -377,27 +430,31 @@ impl Renderer {
                 ));
                 Asset::Failed
             };
-            if let Ok(meta) = std::fs::metadata(&path)
+            if let Ok(meta) = std::fs::metadata(path)
                 && let Ok(modified) = meta.modified()
             {
-                self.stamps.insert(path.clone(), (meta.len(), modified));
+                self.stamps.insert(key.clone(), (meta.len(), modified));
             }
-            self.assets.insert(path.clone(), loaded);
+            self.assets.insert(key.clone(), loaded);
         }
-        let asset = self.assets.get_mut(&path)?;
+        let asset = self.assets.get_mut(&key)?;
         let result = match asset {
             Asset::Static(image) => Some(image.clone()),
             Asset::Gif(player) => {
                 self.animated |= player.running();
                 match player.tick(Instant::now()).map(|_| ()) {
                     Ok(()) => {
+                        if let Some(deadline) = player.next_deadline() {
+                            self.next_frame =
+                                Some(self.next_frame.map_or(deadline, |old| old.min(deadline)));
+                        }
                         let sequence = player.sequence;
                         let frame = player.current_image();
                         let cached = self
                             .gif_frames
-                            .entry(path.clone())
+                            .entry(key.clone())
                             .or_insert_with(|| (sequence, Arc::new(frame.clone())));
-                        if cached.0 != sequence {
+                        if cached.0 != sequence && player.caught_up(Instant::now()) {
                             *cached = (sequence, Arc::new(frame.clone()));
                         }
                         Some(cached.1.clone())
@@ -412,6 +469,11 @@ impl Renderer {
             Asset::Video(player) => {
                 let running = player.running();
                 self.animated |= running;
+                if running {
+                    let deadline = player.next_deadline();
+                    self.next_frame =
+                        Some(self.next_frame.map_or(deadline, |old| old.min(deadline)));
+                }
                 let frame = player.current().map(|(_, p)| p);
                 if !running && frame.is_none() {
                     self.errors
@@ -423,7 +485,7 @@ impl Renderer {
             Asset::Failed => None,
         };
         if let Some(frame) = &result {
-            self.asset_frames.insert(path, frame.clone());
+            self.asset_frames.insert(key, frame.clone());
         }
         result
     }
@@ -436,7 +498,7 @@ impl Renderer {
             self.last_revision = config.revision;
             self.assets.retain(|path, asset| {
                 !matches!(asset, Asset::Failed)
-                    && std::fs::metadata(path)
+                    && std::fs::metadata(&path.path)
                         .ok()
                         .and_then(|m| m.modified().ok().map(|t| (m.len(), t)))
                         .is_some_and(|stamp| self.stamps.get(path) == Some(&stamp))
@@ -447,9 +509,15 @@ impl Renderer {
         self.used.clear();
         let previous_assets = std::mem::take(&mut self.asset_frames);
         self.animated = false;
+        self.next_frame = None;
+        self.max_fps = config.max_fps.clamp(1, MAX_FPS);
         let slideshow = config.page["background"]["media-paths"]
             .as_array()
-            .is_some_and(|paths| paths.len() > 1);
+            .is_some_and(|paths| paths.len() > 1)
+            && config.page["background"]["slideshow-interval"]
+                .as_i64()
+                .unwrap_or(10)
+                > 0;
         let unchanged_config = !slideshow
             && self
                 .previous_config
@@ -463,7 +531,7 @@ impl Renderer {
             // Advance playback clocks, but reuse the composed frame until its pixels change.
             let paths: Vec<_> = self.assets.keys().cloned().collect();
             for path in paths {
-                self.asset_playback(&path.to_string_lossy(), 1, 1, &Value::Null);
+                self.asset_key(path);
             }
             if self.asset_frames.len() == previous_assets.len()
                 && self.asset_frames.iter().all(|(path, frame)| {
@@ -480,16 +548,16 @@ impl Renderer {
         self.scaled_bytes = 0;
         let (rows, cols) = layout(kind, config.rotation);
         let mut fmt = kind.key_image_format();
-        if kind == Kind::PlusXl {
-            fmt.size = (112, 112);
+        if let Some(size) = config.key_size {
+            fmt.size = size;
         }
         let (fw, fh) = if config.rotation % 180 == 90 {
             (fmt.size.1, fmt.size.0)
         } else {
             fmt.size
         };
-        let w = fw.max(72) as u32;
-        let h = fh.max(72) as u32;
+        let w = fw.max(1) as u32;
+        let h = fh.max(1) as u32;
         let background = &config.page["background"];
         let paths = background["media-paths"].as_array();
         let interval = background["slideshow-interval"].as_i64().unwrap_or(10);
@@ -501,7 +569,17 @@ impl Renderer {
             if paths.len() < 2 {
                 return None;
             }
-            self.animated = true;
+            self.animated = interval > 0;
+            if interval > 0 {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default();
+                let until = Duration::from_secs(interval as u64)
+                    - Duration::from_nanos(
+                        (now.as_nanos() % Duration::from_secs(interval as u64).as_nanos()) as u64,
+                    );
+                self.next_frame = Some(Instant::now() + until);
+            }
             let index = if interval <= 0 {
                 0
             } else {
@@ -546,13 +624,7 @@ impl Renderer {
         let extend = background["extend-to-touchscreen"]
             .as_bool()
             .unwrap_or(false);
-        let strip_size = kind.lcd_strip_size().map(|(sw, sh)| {
-            if kind == Kind::PlusXl {
-                (sh as u32, sw as u32)
-            } else {
-                (sw as u32, sh as u32)
-            }
-        });
+        let strip_size = kind.lcd_strip_size().map(|(sw, sh)| (sw as u32, sh as u32));
         let band = crate::geometry::background_band(
             grid,
             if extend { strip_size } else { None },
@@ -656,11 +728,6 @@ impl Renderer {
         let strip = if reusable_strip {
             self.previous_frame.as_ref().and_then(|f| f.strip.clone())
         } else if let Some((sw, sh)) = kind.lcd_strip_size() {
-            let (sw, sh) = if kind == Kind::PlusXl {
-                (sh, sw)
-            } else {
-                (sw, sh)
-            };
             let (sw, sh) = if config.rotation % 180 == 90 {
                 (sh, sw)
             } else {
@@ -787,6 +854,12 @@ impl Renderer {
         options: &Value,
         mode: &str,
     ) -> Arc<RgbaImage> {
+        if source.dimensions() == (width, height)
+            && options["size"].as_f64().unwrap_or(1.0) == 1.0
+            && !options["view"].is_object()
+        {
+            return source.clone();
+        }
         let key = (
             Arc::as_ptr(source) as usize,
             width,
@@ -811,8 +884,10 @@ impl Renderer {
         format: ImageFormat,
         user_rotation: u16,
     ) -> Result<Tile> {
-        let preview = DynamicImage::ImageRgba8(img.clone()).to_rgb8();
-        let rgb = DynamicImage::ImageRgba8(rotate_ccw(img, user_rotation)).to_rgb8();
+        let preview = DynamicImage::ImageRgba8(img).to_rgb8();
+        let oriented =
+            (!user_rotation.is_multiple_of(360)).then(|| rotate_ccw(&preview, user_rotation));
+        let rgb = oriented.as_ref().unwrap_or(&preview);
         let (width, height) = rgb.dimensions();
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         rgb.as_raw().hash(&mut hasher);
@@ -835,7 +910,8 @@ impl Renderer {
                         ImageMirroring::Y => (false, true),
                         ImageMirroring::Both => (true, true),
                     };
-                    crate::media::encode_rgb(rgb.as_raw(), width, height, rotation, flips, 90)
+                    self.jpeg
+                        .encode(rgb.as_raw(), width, height, rotation, flips)
                         .map_err(anyhow::Error::msg)?
                 }
                 ImageMode::PNG => {
@@ -883,10 +959,17 @@ impl Renderer {
                 let rows = crop[3].as_u64().unwrap_or(1).clamp(1, 64) as u32;
                 let sx = visual["spacing"][0].as_u64().unwrap_or(0).min(512) as u32;
                 let sy = visual["spacing"][1].as_u64().unwrap_or(0).min(512) as u32;
+                let width = w * cols + sx * (cols - 1);
+                let height = h * rows + sy * (rows - 1);
+                if u64::from(width) * u64::from(height) > 4 * 1024 * 1024 {
+                    self.errors
+                        .push("Artwork grid exceeds the pixel budget".into());
+                    return;
+                }
                 let full = self.scaled_media(
                     &art,
-                    w * cols + sx * (cols - 1),
-                    h * rows + sy * (rows - 1),
+                    width,
+                    height,
                     &serde_json::json!({"fill-mode":visual["fit"].as_str().unwrap_or("cover")}),
                     "cover",
                 );
@@ -1259,12 +1342,12 @@ pub fn color(value: &Value, default: [u8; 4]) -> [u8; 4] {
     }
     result
 }
-fn rotate_ccw(img: RgbaImage, rotation: u16) -> RgbaImage {
+fn rotate_ccw(img: &image::RgbImage, rotation: u16) -> image::RgbImage {
     match rotation % 360 {
-        90 => imageops::rotate270(&img),
-        180 => imageops::rotate180(&img),
-        270 => imageops::rotate90(&img),
-        _ => img,
+        90 => imageops::rotate270(img),
+        180 => imageops::rotate180(img),
+        270 => imageops::rotate90(img),
+        _ => img.clone(),
     }
 }
 fn media_layout(image: &RgbaImage, w: u32, h: u32, media: &Value, default_mode: &str) -> RgbaImage {
@@ -1378,11 +1461,99 @@ pub fn default_config(page: Value) -> RenderConfig {
         rotation: 0,
         sleeping: false,
         revision: 0,
+        key_size: None,
+        max_fps: MAX_FPS,
     }
 }
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn endpoint_sized_pixels_are_borrowed_and_oversized_artwork_grids_are_bounded() {
+        let mut renderer = Renderer::new(1024 * 1024).unwrap();
+        let image = Arc::new(RgbaImage::from_pixel(120, 120, Rgba([10, 20, 30, 127])));
+        let scaled = renderer.scaled_media(&image, 120, 120, &Value::Null, "cover");
+        assert!(
+            Arc::ptr_eq(&image, &scaled),
+            "native-sized media requires no intermediate pixels"
+        );
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("art.png");
+        image.save(&path).unwrap();
+        let mut target = RgbaImage::new(120, 120);
+        renderer.native_visual(
+            &mut target,
+            &json!({"artwork":path,"crop":[0,0,64,64],"spacing":[512,512]}),
+        );
+        assert_eq!(
+            renderer.errors,
+            vec!["Artwork grid exceeds the pixel budget"]
+        );
+        assert_eq!(renderer.scaled_bytes, 0);
+    }
+    #[test]
+    fn shared_svg_keeps_endpoint_resolution_and_playback_options_are_independent() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("shared.svg");
+        std::fs::write(&path, r#"<svg xmlns="http://www.w3.org/2000/svg" width="200" height="100"><path d="M0 50H200" stroke="red"/></svg>"#).unwrap();
+        let config = default_config(json!({
+            "keys":{"0x0":{"states":{"0":{"media":{"path":path}}}}},
+            "dials":{"0":{"states":{"0":{"media":{"path":path}}}}}
+        }));
+        let mut renderer = Renderer::new(1024 * 1024).unwrap();
+        let frame = renderer.render(Kind::Plus, &config).unwrap();
+        assert_eq!(
+            renderer.assets.len(),
+            2,
+            "key and strip SVGs need distinct rasterization sizes"
+        );
+        assert!(
+            renderer
+                .assets
+                .keys()
+                .any(|key| (key.width, key.height) == (200, 100))
+        );
+        assert_eq!(
+            (
+                frame.strip.as_ref().unwrap().width,
+                frame.strip.as_ref().unwrap().height
+            ),
+            (800, 100)
+        );
+        assert!(
+            renderer.next_deadline().is_none(),
+            "static assets must not create frame timers"
+        );
+        assert_ne!(
+            AssetKey::new("a.gif", 120, 120, &json!({"fps":30}), 120),
+            AssetKey::new("a.gif", 120, 120, &json!({"fps":60}), 120)
+        );
+        assert_ne!(
+            AssetKey::new("a.gif", 120, 120, &json!({"loop":false}), 120),
+            AssetKey::new("a.gif", 120, 120, &json!({"loop":true}), 120)
+        );
+    }
+    #[test]
+    fn negotiated_native_geometry_preserves_all_pixels_after_rotation() {
+        let mut renderer = Renderer::new(1024 * 1024).unwrap();
+        for rotation in [0, 90, 180, 270] {
+            let mut config = default_config(json!({}));
+            config.rotation = rotation;
+            config.key_size = Some((144, 112));
+            let frame = renderer.render(Kind::Studio, &config).unwrap();
+            let wire = image::load_from_memory(&frame.tiles[0].encoded).unwrap();
+            assert_eq!((wire.width(), wire.height()), (144, 112));
+            let preview = &frame.tiles[0];
+            assert_eq!(
+                (preview.width, preview.height),
+                if rotation % 180 == 90 {
+                    (112, 144)
+                } else {
+                    (144, 112)
+                }
+            );
+        }
+    }
     #[test]
     fn unchanged_animation_reuses_composition_but_new_frames_and_settings_invalidate_it() {
         let directory = tempfile::tempdir().unwrap();
@@ -1414,12 +1585,22 @@ mod tests {
         // Use a controlled deadline: encoding time on slower runners must not
         // advance (or loop) the GIF while checking composition reuse.
         let deadline = Instant::now() + std::time::Duration::from_secs(3600);
-        if let Asset::Gif(player) = renderer.assets.get_mut(&path).unwrap() {
+        if let Asset::Gif(player) = renderer
+            .assets
+            .values_mut()
+            .find(|asset| matches!(asset, Asset::Gif(_)))
+            .unwrap()
+        {
             player.defer_until(deadline);
         }
         let repeated = renderer.render(Kind::Plus, &config).unwrap();
         assert!(Arc::ptr_eq(&first.tiles[0].rgb, &repeated.tiles[0].rgb));
-        if let Asset::Gif(player) = renderer.assets.get_mut(&path).unwrap() {
+        if let Asset::Gif(player) = renderer
+            .assets
+            .values_mut()
+            .find(|asset| matches!(asset, Asset::Gif(_)))
+            .unwrap()
+        {
             player
                 .tick(deadline + std::time::Duration::from_millis(1))
                 .unwrap();
@@ -1466,9 +1647,9 @@ mod tests {
     fn grid_artwork_resizes_once_and_crops_across_physical_gaps() {
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("cover.png");
-        let mut source = RgbaImage::from_pixel(276, 120, Rgba([255, 0, 0, 255]));
-        for y in 0..120 {
-            for x in 138..276 {
+        let mut source = RgbaImage::from_pixel(138, 60, Rgba([255, 0, 0, 255]));
+        for y in 0..60 {
+            for x in 69..138 {
                 source.put_pixel(x, y, Rgba([0, 255, 0, 255]));
             }
         }
@@ -1568,7 +1749,7 @@ mod tests {
     fn additional_upstream_models_encode_physical_key_sizes_in_every_orientation() {
         let mut renderer = Renderer::new(1024 * 1024).unwrap();
         for (kind, size) in [
-            (Kind::Studio, (80, 120)),
+            (Kind::Studio, (144, 112)),
             (Kind::Mirabox293s, (85, 85)),
             (Kind::UlanziD200, (196, 196)),
         ] {

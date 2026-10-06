@@ -5,7 +5,7 @@ use std::io::{Cursor, Read};
 #[test]
 fn device_ids_and_key_dimensions_match_original_sdk() {
     for (vid, pid, kind, keys, size) in [
-        (0x0fd9, 0x00aa, Kind::Studio, 32, (80, 120)),
+        (0x0fd9, 0x00aa, Kind::Studio, 32, (144, 112)),
         (0x5548, 0x6670, Kind::Mirabox293s, 18, (85, 85)),
         (0x2207, 0x0019, Kind::UlanziD200, 15, (196, 196)),
     ] {
@@ -84,4 +84,24 @@ fn mirabox_release_reports_and_output_framing_match_fixtures() {
     assert_eq!(report[0], 0);
     assert_eq!(&report[1..1 + command.len()], command);
     assert!(report[1 + command.len()..].iter().all(|b| *b == 0));
+}
+
+#[test]
+fn negotiated_geometry_rejects_wrong_layout_and_invalid_firmware_reports() {
+    use elgato_streamdeck::info::native_key_size_from_report;
+    let mut report = [0u8; 32];
+    report[..7].copy_from_slice(&[8, 2, 16, 144, 0, 112, 0]);
+    assert_eq!(
+        native_key_size_from_report(Kind::Studio, &report),
+        Some((144, 112))
+    );
+    assert_eq!(native_key_size_from_report(Kind::Plus, &report), None);
+    assert_eq!(
+        native_key_size_from_report(Kind::Studio, &report[..7]),
+        None
+    );
+    report[3..5].copy_from_slice(&0u16.to_le_bytes());
+    assert_eq!(native_key_size_from_report(Kind::Studio, &report), None);
+    report[3..5].copy_from_slice(&513u16.to_le_bytes());
+    assert_eq!(native_key_size_from_report(Kind::Studio, &report), None);
 }

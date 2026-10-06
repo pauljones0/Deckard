@@ -8,27 +8,43 @@ Based on [StreamController](https://github.com/StreamController/StreamController
 
 ## Download and play
 
-[**Download Deckard 0.5.0**](https://github.com/pauljones0/Deckard/releases/tag/v0.5.0). Pick your format and architecture below. Intel/AMD PCs use **x86-64**; 64-bit ARM computers use **ARM64**.
+[**Download Deckard 0.6.0**](https://github.com/pauljones0/Deckard/releases/tag/v0.6.0). Pick your format and architecture below. Intel/AMD PCs use **x86-64**; 64-bit ARM computers use **ARM64**.
 
 | Linux build | x86-64 | ARM64 | Start it |
 | --- | --- | --- | --- |
-| AppImage | [Download](https://github.com/pauljones0/Deckard/releases/download/v0.5.0/deckard-0.5.0-x86_64.AppImage) | [Download](https://github.com/pauljones0/Deckard/releases/download/v0.5.0/deckard-0.5.0-aarch64.AppImage) | In file properties, allow executing the file; double-click. |
-| Ubuntu / Debian / Mint / Pop!_OS DEB | [Download](https://github.com/pauljones0/Deckard/releases/download/v0.5.0/deckard-0.5.0-x86_64.deb) | [Download](https://github.com/pauljones0/Deckard/releases/download/v0.5.0/deckard-0.5.0-aarch64.deb) | Open in your software installer, install, then launch **Deckard**. |
-| Fedora / compatible RPM systems | [Download](https://github.com/pauljones0/Deckard/releases/download/v0.5.0/deckard-0.5.0-x86_64.rpm) | [Download](https://github.com/pauljones0/Deckard/releases/download/v0.5.0/deckard-0.5.0-aarch64.rpm) | Open in your software installer, install, then launch **Deckard**. |
-| Portable archive | [Download](https://github.com/pauljones0/Deckard/releases/download/v0.5.0/deckard-0.5.0-x86_64.tar.gz) | [Download](https://github.com/pauljones0/Deckard/releases/download/v0.5.0/deckard-0.5.0-aarch64.tar.gz) | Extract; open `deckard/bin/deckard`. Keep the extracted directory together. |
+| AppImage | [Download](https://github.com/pauljones0/Deckard/releases/download/v0.6.0/deckard-0.6.0-x86_64.AppImage) | [Download](https://github.com/pauljones0/Deckard/releases/download/v0.6.0/deckard-0.6.0-aarch64.AppImage) | In file properties, allow executing the file; double-click. |
+| Ubuntu / Debian / Mint / Pop!_OS DEB | [Download](https://github.com/pauljones0/Deckard/releases/download/v0.6.0/deckard-0.6.0-x86_64.deb) | [Download](https://github.com/pauljones0/Deckard/releases/download/v0.6.0/deckard-0.6.0-aarch64.deb) | Open in your software installer, install, then launch **Deckard**. |
+| Fedora / compatible RPM systems | [Download](https://github.com/pauljones0/Deckard/releases/download/v0.6.0/deckard-0.6.0-x86_64.rpm) | [Download](https://github.com/pauljones0/Deckard/releases/download/v0.6.0/deckard-0.6.0-aarch64.rpm) | Open in your software installer, install, then launch **Deckard**. |
+| Portable archive | [Download](https://github.com/pauljones0/Deckard/releases/download/v0.6.0/deckard-0.6.0-x86_64.tar.gz) | [Download](https://github.com/pauljones0/Deckard/releases/download/v0.6.0/deckard-0.6.0-aarch64.tar.gz) | Extract; open `deckard/bin/deckard`. Keep the extracted directory together. |
 | Arch / EndeavourOS / Manjaro | [PKGBUILD](packaging/aur/deckard-git/PKGBUILD) | Same PKGBUILD | `makepkg -si`; launch **Deckard**. This option builds from source. |
 
-Bundles include FFmpeg, audio/input helpers and the native example plugin. They require a Linux desktop with **glibc 2.35 or newer** and working Vulkan or OpenGL/EGL drivers: for example Ubuntu 22.04+, Debian 12+, Mint 21+ and current Fedora/Arch. They do not support Alpine/musl. File dialogs use your desktop's XDG portal. [Build details, checksums and troubleshooting](docs/linux-builds.md).
+Bundles include FFmpeg/FFprobe, audio/input helpers and the native example plugin. They require a Linux desktop with **glibc 2.35 or newer** and working Vulkan or OpenGL/EGL drivers: for example Ubuntu 22.04+, Debian 12+, Mint 21+ and current Fedora/Arch. They do not support Alpine/musl. File dialogs use your desktop's XDG portal. [Build details, checksums and troubleshooting](docs/linux-builds.md).
 
 Connect your deck and launch Deckard. Select an input, choose an action and edit its labels or image. In **Store → Pages**, load the catalog and install **Rust Starter** for a ready-made page. Select that page in the editor; its native plugin is included. **Settings** includes autostart and an **Enable USB access** button for portable installations. DEB/RPM installers install the USB rules automatically; reconnect the deck if permission errors persist. The portable access helper requires administrator authentication.
+
+## Every pixel, every useful frame
+
+**0.6.0 removes the fixed 30 FPS render loop.** Auto follows the source animation rate (up to 120 FPS), renders at the controller's native resolution and applies bounded USB backpressure. The editor's **Animation FPS cap → 0** selects Auto; saved page limits remain configurable.
+
+| Model | Native key image | Extra display |
+| --- | --- | --- |
+| Original / V2 / MK.2 | 72×72 | — |
+| Mini family | **80×80** | — |
+| XL / Neo | 96×96 | Neo: 248×58 infobar |
+| Plus | 120×120 | 800×100 touch strip |
+| Plus XL | **112×112** | 1200×100 touch strip |
+| Studio | **144×112** fallback; queried from firmware when available | Encoder LEDs |
+| Mirabox / Ulanzi | 85×85 / 196×196 | Model-specific key layouts |
+
+These are controller image endpoints, rather than Valve Steam Deck screen dimensions or 144×144 source-icon artwork. [Verified specifications, FPS settings, transport behavior and diagnostics](docs/rendering-endpoints.md). Maximum visible hardware FPS needs a connected controller; the software limit is not a guaranteed LCD refresh rate.
 
 ## More room for your stream 🦀
 
 **Same animation, more headroom: editor animation uses 52% less CPU and 42% less RAM than the direct upstream. Background animation uses 80% less CPU and 92% less RAM than the original.**
 
-Each application cell shows **CPU / RAM**. CPU is percent of one logical core; RAM is proportional resident memory (PSS). Negative changes mean lower resource use.
+The upstream table records the published **0.5.0** comparison. Each application cell shows **CPU / RAM**. CPU is percent of one logical core; RAM is proportional resident memory (PSS). Negative changes mean lower resource use.
 
-| Workload | Original StreamController | Direct upstream Deckard | Rust Deckard | vs original | vs direct |
+| Workload | Original StreamController | Direct upstream Deckard | Rust 0.5.0 | vs original | vs direct |
 | --- | ---: | ---: | ---: | --- | --- |
 | Editor visible · static | 0.10% / 297 MiB | 0.07% / 266 MiB | **0.10% / 171 MiB** | CPU: idle floor; RAM -42% | CPU: idle floor; RAM -36% |
 | Editor visible · 8 animated keys | 6.33% / 339 MiB | 3.80% / 303 MiB | **1.83% / 176 MiB** | CPU -71%; RAM -48% | CPU -52%; RAM -42% |

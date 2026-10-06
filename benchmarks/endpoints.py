@@ -1,0 +1,131 @@
+#!/usr/bin/env python3
+"""Native endpoint throughput comparison. Timing excludes the later IPC frame observer."""
+import argparse, hashlib, json, os, pathlib, platform, statistics, subprocess, time
+from types import SimpleNamespace
+import psutil
+from PIL import Image, ImageDraw
+from compare import native_status, snapshot, stop, start_compositor
+
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+MODELS = {"mini": (2, 3, (80,80)), "mk2": (3,5,(72,72)), "xl": (4,8,(96,96)), "plus": (2,4,(120,120)), "plus-xl": (4,9,(112,112)), "studio": (2,16,(144,112)), "ulanzi": (3,5,(196,196)), "mirabox": (3,6,(85,85))}
+CASES = {"plus10":("plus",10,"gif"), "plus50":("plus",50,"gif"), "plus100":("plus",100,"gif"), "plus60video":("plus",60,"video"), "xl50":("xl",50,"gif"), "plusxl50":("plus-xl",50,"gif"), "mini100":("mini",100,"gif"), "mk2100":("mk2",100,"gif"), "studio50":("studio",50,"gif"), "ulanzi50":("ulanzi",50,"gif"), "mirabox100":("mirabox",100,"gif")}
+
+def asset(directory, rate, kind):
+    directory.mkdir(parents=True,exist_ok=True)
+    path=directory / f"{rate}.{kind if kind=='gif' else 'mkv'}"
+    if path.exists(): return path
+    if kind == "video":
+        subprocess.run(["ffmpeg","-v","error","-f","lavfi","-i",f"testsrc2=size=120x120:rate={rate}","-frames:v","180","-c:v","ffv1","-threads","1",str(path)],check=True)
+    else:
+        frames=[]
+        for index in range(200):
+            frame=Image.new("RGB",(120,120),(index*7%256,index*11%256,index*17%256))
+            ImageDraw.Draw(frame).rectangle((index%92,20,index%92+28,90),fill=(240,240,240))
+            frames.append(frame)
+        frames[0].save(path,save_all=True,append_images=frames[1:],duration=1000//rate,loop=0,optimize=False)
+    return path
+
+def prepare(data, model, media):
+    (data/"pages").mkdir(parents=True)
+    (data/"settings").mkdir()
+    (data/".skip-onboarding").touch()
+    rows,cols,_=MODELS[model]
+    page={"keys":{},"dials":{},"settings":{}}
+    for y in range(rows):
+        for x in range(cols):
+            page["keys"][f"{x}x{y}"]={"states":{"0":{"actions":[],"media":{"path":str(media),"fps":120,"loop":True},"labels":{"center":{"text":f"Key {y*cols+x+1}","font-family":"DejaVu Sans","font-size":14,"color":[255,255,255,255]}}}}}
+    (data/"pages/Bench.json").write_text(json.dumps(page))
+    serial="FAKE-"+{"plus-xl":"PLUSXL","ulanzi":"ULANZID200","mirabox":"MIRABOX293S"}.get(model,model.upper())+"-0"
+    (data/"settings/native.json").write_text(json.dumps({"devices":{serial:{"page":"Bench","brightness":75,"screensaver":{"enable":False}}},"auto_lock":False,"cache_mib":64}))
+
+def validate(data, model, seconds):
+    first=native_status(data)["devices"][0]
+    before={}; changes={}; sizes={}; start=time.monotonic()
+    while time.monotonic()-start < seconds:
+        state=native_status(data)
+        if state["errors"]: raise RuntimeError(state["errors"])
+        device=state["devices"][0]
+        for tile in device["frame_tiles"]:
+            key=str(tile["key"]); sizes[key]=[tile["width"],tile["height"]]
+            if key in before and before[key]!=tile["identity"]: changes[key]=changes.get(key,0)+1
+            before[key]=tile["identity"]
+        time.sleep(0.001)
+    elapsed=time.monotonic()-start
+    rows,cols,size=MODELS[model]
+    assert len(before)==rows*cols and len(changes)==rows*cols,(model,changes)
+    assert all(value==list(size) for value in sizes.values()),sizes
+    method="observed pixel identities (legacy observer limited to ~50 polls/s)"
+    if first.get("tile_updates") is not None:
+        elapsed=(device["frame_clock_us"]-first["frame_clock_us"])/1e6
+        changes={key:device["tile_updates"].get(key,0)-first["tile_updates"].get(key,0) for key in sizes}
+        method="actual changed-tile counters over the engine monotonic clock"
+    fps={key:value/elapsed for key,value in changes.items()}
+    return {"seconds":elapsed,"method":method,"poll_interval_ms":1,"fps_per_key":fps,"fps_min":min(fps.values()),"fps_max":max(fps.values()),"sizes":sizes,"written_tiles":device.get("written_tiles"),"instrumented":True}
+
+def main():
+    parser=argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--before",type=pathlib.Path,default=ROOT/"target/benchmarks/deckard-v0.5.0-endpoint-baseline")
+    parser.add_argument("--after",type=pathlib.Path,default=ROOT/"target/release/deckard")
+    parser.add_argument("--versions",nargs="+",choices=["before","after"],default=["before","after"])
+    parser.add_argument("--cases",nargs="+",choices=CASES,default=["plus10","plus50","plus100","plus60video","xl50","plusxl50"])
+    parser.add_argument("--output",type=pathlib.Path,required=True)
+    parser.add_argument("--warmup",type=float,default=15)
+    parser.add_argument("--duration",type=float,default=15)
+    parser.add_argument("--validate-seconds",type=float,default=4)
+    parser.add_argument("--trials",type=int,default=3)
+    parser.add_argument("--visible",action="store_true")
+    parser.add_argument("--weston-bundle",type=pathlib.Path,default=ROOT/"target/benchmarks/weston")
+    args=parser.parse_args(); args.output=args.output.resolve(); args.output.mkdir(parents=True,exist_ok=True)
+    args.wayland_runtime=pathlib.Path("/tmp/deckard-endpoint-wayland"); args.wayland_socket="deckard-endpoint"
+    metadata={"date":time.strftime("%Y-%m-%dT%H:%M:%SZ",time.gmtime()),"platform":platform.platform(),"warmup":args.warmup,"duration":args.duration,"trials":args.trials,"visible":args.visible,"cpu_unit":"100% = one logical core","memory_unit":"MiB PSS, application plus descendants","hardware_usb":False,"git_head":subprocess.check_output(["git","rev-parse","HEAD"],cwd=ROOT,text=True).strip(),"git_dirty":bool(subprocess.check_output(["git","status","--porcelain"],cwd=ROOT)),"binaries":{v:{"path":str(getattr(args,v)),"sha256":hashlib.sha256(getattr(args,v).read_bytes()).hexdigest()} for v in args.versions}}
+    (args.output/"metadata.json").write_text(json.dumps(metadata,indent=2)); results=[]
+    # Prepare fixtures before timing so media generation cannot affect CPU samples.
+    assets={case:asset(args.output/"assets",rate,kind) for case,(model,rate,kind) in CASES.items() if case in args.cases}
+    for trial in range(args.trials):
+        for case in args.cases:
+            model,rate,kind=CASES[case]
+            versions=args.versions if trial%2==0 else list(reversed(args.versions))
+            for version in versions:
+                name=f"{version}-{case}-{trial+1}"; data=args.output/name; prepare(data,model,assets[case])
+                compositor=start_compositor(args,name) if args.visible else None
+                bus=None; process=None
+                try:
+                    bus=subprocess.Popen(["dbus-daemon","--session","--nofork","--print-address=1"],stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,text=True,start_new_session=True)
+                    address=bus.stdout.readline().strip()
+                    home=data/"home"; home.mkdir()
+                    env=os.environ.copy(); env.update(HOME=str(home),XDG_CONFIG_HOME=str(home/".config"),XDG_DATA_HOME=str(home/".local/share"),XDG_CACHE_HOME=str(home/".cache"),DBUS_SESSION_BUS_ADDRESS=address)
+                    env.pop("DISPLAY",None); env.pop("DECKARD_RENDERER",None); env.pop("WGPU_BACKEND",None)
+                    env.update(XDG_RUNTIME_DIR=str(args.wayland_runtime),WAYLAND_DISPLAY=args.wayland_socket,XDG_SESSION_TYPE="wayland")
+                    command=[str(getattr(args,version)),"--skip-load-hardware-decks","--fake-deck-model",{"ulanzi":"ulanzi-d200","mirabox":"mirabox-293s"}.get(model,model),"--data",str(data)]
+                    if not args.visible: command.append("-b")
+                    with (args.output/f"{name}.log").open("w") as log:
+                        process=subprocess.Popen(command,env=env,stdout=log,stderr=log,start_new_session=True)
+                        time.sleep(args.warmup)
+                        if process.poll() is not None: raise RuntimeError(f"{name} failed startup")
+                        state=native_status(data)
+                        if state["errors"]: raise RuntimeError(state["errors"])
+                        root=psutil.Process(process.pid); previous,_,_,_=snapshot(root); start=time.monotonic(); last=start; accumulated=0; samples=[]
+                        while time.monotonic()-start<args.duration:
+                            time.sleep(min(1,args.duration-(time.monotonic()-start)))
+                            current,pss,rss,count=snapshot(root); now=time.monotonic(); delta=max(0,sum(current.values())-sum(previous.values())); accumulated+=delta
+                            samples.append({"elapsed":now-start,"cpu_percent":100*delta/(now-last),"pss_mib":pss,"rss_mib":rss,"processes":count}); previous=current;last=now
+                        result={"version":version,"case":case,"model":model,"source_fps":rate,"requested_fps":120,"kind":kind,"trial":trial+1,"cpu_percent":100*accumulated/(last-start),"pss_mib":statistics.median(s["pss_mib"] for s in samples),"samples":samples,"timing_instrumented":False}
+                        # Polling is only AFTER timing, never included in the CPU/PSS table.
+                        result["validation"]=validate(data,model,args.validate_seconds)
+                        results.append(result); (args.output/"results.json").write_text(json.dumps(results,indent=2))
+                        print(f"{name}: {result['cpu_percent']:.3f}% CPU, {result['pss_mib']:.1f} MiB, {result['validation']['fps_min']:.1f}–{result['validation']['fps_max']:.1f} FPS",flush=True)
+                finally:
+                    if compositor is not None: stop(compositor)
+                    if process is not None: stop(process)
+                    if bus is not None: stop(bus)
+    summary=[]
+    for case in args.cases:
+        row={"case":case}
+        for version in args.versions:
+            subset=[r for r in results if r["case"]==case and r["version"]==version]
+            cpu=statistics.median(r["cpu_percent"] for r in subset);fps=statistics.median(r["validation"]["fps_min"] for r in subset)
+            row[version]={"cpu_percent":cpu,"pss_mib":statistics.median(r["pss_mib"] for r in subset),"fps":fps,"cpu_ms_per_device_frame":cpu*10/fps,"cpu_range":[min(r["cpu_percent"] for r in subset),max(r["cpu_percent"] for r in subset)]}
+        summary.append(row)
+    (args.output/"summary.json").write_text(json.dumps(summary,indent=2))
+
+if __name__=="__main__": main()

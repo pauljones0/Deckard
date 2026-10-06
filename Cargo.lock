@@ -783,7 +783,7 @@ checksum = "be1e0bca6c3637f992fc1cc7cbc52a78c1ef6db076dbf1059c4323d6a2048376"
 
 [[package]]
 name = "deckard"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -800,7 +800,7 @@ dependencies = [
 
 [[package]]
 name = "deckard-core"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "ab_glyph",
  "anyhow",
@@ -826,7 +826,7 @@ dependencies = [
 
 [[package]]
 name = "deckard-plugin-example"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "serde_json",
 ]

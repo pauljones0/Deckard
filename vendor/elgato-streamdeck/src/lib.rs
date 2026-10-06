@@ -316,6 +316,23 @@ impl StreamDeck {
         Ok(())
     }
 
+    /// Write borrowed, already encoded image bytes immediately, without copying
+    /// into the deferred image cache. The caller serializes device access.
+    pub fn write_image_immediate(&self, key: u8, image_data: &[u8]) -> Result<(), StreamDeckError> {
+        if matches!(self.kind, Kind::UlanziD200 | Kind::Mirabox293s) {
+            return self.compatibility.lock()?.image(self.kind, &self.device, key, image_data);
+        }
+        self.send_image(key, image_data)
+    }
+
+    /// Read native key geometry from the unit-information report when supported.
+    /// Legacy firmware, invalid reports and non-Elgato devices use model defaults.
+    pub fn native_key_size(&self) -> Result<Option<(usize, usize)>, StreamDeckError> {
+        if !matches!(self.kind.key_image_format().mode, crate::info::ImageMode::JPEG) || self.kind.vendor_id() != crate::info::ELGATO_VENDOR_ID { return Ok(None); }
+        let data = get_feature_report(&self.device, 0x08, 32)?;
+        Ok(crate::info::native_key_size_from_report(self.kind, &data))
+    }
+
     /// Upload a complete group of changed keys. Ulanzi uses a single ZIP transaction.
     /// Other models retain their normal image reports and flush once after the group.
     pub fn write_images(&self, images: &[(u8, &[u8])]) -> Result<(), StreamDeckError> {
@@ -512,17 +529,16 @@ impl StreamDeck {
         let mut page_number = 0;
         let mut bytes_remaining = image_data.len();
 
+        let mut buf = Vec::with_capacity(image_report_length);
         while bytes_remaining > 0 {
             let this_length = bytes_remaining.min(image_report_payload_length);
             let bytes_sent = page_number * image_report_payload_length;
 
             // Selecting header based on device
-            let mut buf: Vec<u8> = header_fn(page_number, this_length, this_length == bytes_remaining);
-
-            buf.extend(&image_data[bytes_sent..bytes_sent + this_length]);
-
-            // Adding padding
-            buf.extend(vec![0u8; image_report_length - buf.len()]);
+            buf.clear();
+            buf.extend(header_fn(page_number, this_length, this_length == bytes_remaining));
+            buf.extend_from_slice(&image_data[bytes_sent..bytes_sent + this_length]);
+            buf.resize(image_report_length, 0);
 
             write_data(&self.device, &buf)?;
 

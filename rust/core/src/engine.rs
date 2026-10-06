@@ -34,6 +34,12 @@ pub struct Device {
     pub last_input: Instant,
     pub frame: Option<Arc<Frame>>,
     pub rendered_frames: u64,
+    pub key_size: (usize, usize),
+    pub tile_updates: HashMap<u8, u64>,
+    pub frame_clock: Instant,
+    pub written_tiles: u64,
+    pub written_bytes: u64,
+    pub write_time_us: u64,
 }
 pub struct Engine {
     pub docs: Documents,
@@ -46,6 +52,7 @@ pub struct Engine {
     pub locked: bool,
     pub generation: u64,
     pub plugin_revision: u64,
+    pub frame_ready: Arc<crate::transport::FrameSignal>,
     pub mixer: crate::audio::Mixer,
     overlays: HashMap<(String, String, String, usize), Value>,
     pub(crate) live_overlays: HashMap<String, (crate::live::Action, Value)>,
@@ -71,6 +78,7 @@ impl Engine {
             locked: false,
             generation: 0,
             plugin_revision: 0,
+            frame_ready: Arc::new(crate::transport::FrameSignal::default()),
             mixer: crate::audio::Mixer {
                 increment: 10.0,
                 ..Default::default()
@@ -267,6 +275,12 @@ impl Engine {
             rotation: deck["rotation"].as_u64().unwrap_or(0) as u16,
             sleeping: self.locked,
             revision: self.render_revision(serial),
+            key_size: Some(device.key_size),
+            max_fps: deck["max_fps"]
+                .as_u64()
+                .filter(|fps| *fps > 0)
+                .unwrap_or(u64::from(crate::animation::MAX_FPS))
+                .clamp(1, u64::from(crate::animation::MAX_FPS)) as u32,
         })
     }
     pub fn obs_profile(&self, name: &str) -> Value {
@@ -283,7 +297,7 @@ impl Engine {
         }
     }
     pub fn status(&self) -> Value {
-        let mut devices:Vec<_>=self.devices.values().map(|d|json!({"serial":d.serial,"model":format!("{:?}",d.kind),"fake":d.fake,"connected":d.connected,"page":d.page,"brightness":d.brightness,"sleeping":d.sleeping,"rendered_frames":d.rendered_frames,"frame_tiles":d.frame.as_ref().map(|f|f.tiles.iter().map(|t|json!({"key":t.key,"width":t.width,"height":t.height,"identity":t.identity})).collect::<Vec<_>>())})).collect();
+        let mut devices:Vec<_>=self.devices.values().map(|d|json!({"serial":d.serial,"model":format!("{:?}",d.kind),"fake":d.fake,"connected":d.connected,"page":d.page,"brightness":d.brightness,"sleeping":d.sleeping,"rendered_frames":d.rendered_frames,"tile_updates":d.tile_updates,"frame_clock_us":d.frame_clock.elapsed().as_micros() as u64,"native_key_size":d.key_size,"native_strip_size":d.kind.lcd_strip_size(),"max_fps":self.docs.settings["devices"][&d.serial]["max_fps"].as_u64().unwrap_or(0),"written_tiles":d.written_tiles,"written_bytes":d.written_bytes,"write_time_us":d.write_time_us,"frame_tiles":d.frame.as_ref().map(|f|f.tiles.iter().map(|t|json!({"key":t.key,"width":t.width,"height":t.height,"identity":t.identity})).collect::<Vec<_>>())})).collect();
         devices.sort_by_key(|d| d["serial"].as_str().unwrap_or("").to_owned());
         json!({"version":env!("CARGO_PKG_VERSION"),"runtime":"Rust","plugin_api":1,"devices":devices,"pages":self.docs.pages.keys().collect::<Vec<_>>(),"errors":self.errors,"locked":self.locked})
     }
@@ -873,11 +887,17 @@ fn start_device(
                     last_input: Instant::now(),
                     frame: None,
                     rendered_frames: 0,
+                    key_size: kind.key_image_format().size,
+                    tile_updates: HashMap::new(),
+                    frame_clock: Instant::now(),
+                    written_tiles: 0,
+                    written_bytes: 0,
+                    write_time_us: 0,
                 },
             );
             engine.generation += 1;
         }
-        let slot: Arc<Mutex<Option<Arc<Frame>>>> = Arc::new(Mutex::new(None));
+        let slot = Arc::new(crate::transport::FrameMailbox::default());
         let render_slot = slot.clone();
         let render_shared = shared.clone();
         let render_stop = stop.clone();
@@ -905,7 +925,12 @@ fn start_device(
                     if available && (cached_config.is_none() || revision != previous) {
                         cached_config = engine.config(&render_serial).map(Arc::new);
                     }
-                    let config = if available && (renderer.animated || revision != previous) {
+                    let due = renderer
+                        .next_deadline()
+                        .is_some_and(|deadline| Instant::now() >= deadline);
+                    let config = if available
+                        && (revision != previous || (due && render_slot.available()))
+                    {
                         cached_config.clone()
                     } else {
                         None
@@ -918,23 +943,41 @@ fn start_device(
                     }
                     previous = u64::MAX;
                 }
-                if let Some(config) = config
-                    && (renderer.animated || config.revision != previous)
-                {
+                if let Some(config) = config {
                     previous = config.revision;
                     match renderer.render_shared(kind, config) {
                         Ok(frame) => {
                             let frame = Arc::new(frame);
-                            *render_slot.lock().unwrap_or_else(|p| p.into_inner()) =
-                                Some(frame.clone());
-                            if let Some(device) = render_shared
-                                .lock()
-                                .unwrap_or_else(|p| p.into_inner())
-                                .devices
-                                .get_mut(&render_serial)
-                            {
-                                device.frame = Some(frame);
+                            let mut engine =
+                                render_shared.lock().unwrap_or_else(|p| p.into_inner());
+                            let mut pixels_changed = false;
+                            let mut revision_changed = false;
+                            if let Some(device) = engine.devices.get_mut(&render_serial) {
+                                revision_changed = device
+                                    .frame
+                                    .as_ref()
+                                    .is_none_or(|old| old.revision != frame.revision);
+                                for tile in frame.tiles.iter().chain(frame.strip.iter()) {
+                                    let old = device.frame.as_ref().and_then(|old| {
+                                        if tile.key == 255 {
+                                            old.strip.as_ref()
+                                        } else {
+                                            old.tiles.get(tile.key as usize)
+                                        }
+                                    });
+                                    if old.is_none_or(|old| old.identity != tile.identity) {
+                                        *device.tile_updates.entry(tile.key).or_default() += 1;
+                                        pixels_changed = true;
+                                    }
+                                }
+                                device.frame = Some(frame.clone());
                                 device.rendered_frames += 1;
+                            }
+                            if pixels_changed || revision_changed {
+                                render_slot.publish(frame, !fake);
+                            }
+                            if pixels_changed {
+                                engine.frame_ready.notify();
                             }
                         }
                         Err(error) => render_shared
@@ -946,7 +989,7 @@ fn start_device(
                 for error in renderer.errors.drain(..) {
                     render_shared.lock().unwrap().error(error);
                 }
-                thread::sleep(Duration::from_millis(33));
+                render_slot.wait(renderer.next_deadline());
             }
         });
         let mut deck: Option<StreamDeck> = None;
@@ -958,7 +1001,7 @@ fn start_device(
         let mut touch_colors = HashMap::new();
         let mut led_revision = None;
         let mut pending: Option<Arc<Frame>> = None;
-        let mut tile_index = 0;
+        let mut cursor = crate::transport::TileCursor::default();
         while !stop.load(Ordering::Relaxed) {
             if !fake && deck.is_none() && Instant::now() >= retry {
                 retry = Instant::now() + Duration::from_secs(2);
@@ -967,6 +1010,11 @@ fn start_device(
                     Ok(StreamDeck::connect(&api, kind, &serial)?)
                 })() {
                     Ok(device) => {
+                        let key_size = device
+                            .native_key_size()
+                            .ok()
+                            .flatten()
+                            .unwrap_or_else(|| kind.key_image_format().size);
                         deck = Some(device);
                         hashes.clear();
                         touch_colors.clear();
@@ -976,6 +1024,7 @@ fn start_device(
                         old_dials.fill(false);
                         if let Some(device) = shared.lock().unwrap().devices.get_mut(&serial) {
                             device.connected = true;
+                            device.key_size = key_size;
                         }
                     }
                     Err(error) => shared
@@ -1046,7 +1095,7 @@ fn start_device(
                         }
                     }
                 }
-                match deck.read_input(Some(Duration::from_millis(2))) {
+                match deck.read_input(Some(Duration::ZERO)) {
                     Ok(input) => route_input(
                         input,
                         kind,
@@ -1058,7 +1107,8 @@ fn start_device(
                     ),
                     Err(_) => failed = true,
                 }
-                if let Some(frame) = slot.lock().unwrap().take() {
+                if let Some(frame) = slot.take(pending.as_ref().map(|frame| frame.revision)) {
+                    cursor.replace(frame.tiles.len() + usize::from(frame.strip.is_some()));
                     pending = Some(frame);
                     // Retain the cursor when coalescing: large frame writes must not starve later keys.
                 }
@@ -1067,6 +1117,7 @@ fn start_device(
                     .is_some_and(|frame| frame.revision != revision)
                 {
                     pending = None;
+                    slot.finish();
                 }
                 if kind == Kind::UlanziD200
                     && let Some(frame) = pending.take()
@@ -1083,31 +1134,41 @@ fn start_device(
                         .map(|tile| (tile.key, tile.encoded.as_ref()))
                         .collect();
                     if !images.is_empty() {
+                        let write_start = Instant::now();
                         if deck.write_images(&images).is_err() {
                             failed = true;
                         } else {
+                            let elapsed = write_start.elapsed().as_micros() as u64;
+                            if let Some(device) = shared.lock().unwrap().devices.get_mut(&serial) {
+                                device.written_tiles += changed.len() as u64;
+                                device.written_bytes += changed
+                                    .iter()
+                                    .map(|tile| tile.encoded.len() as u64)
+                                    .sum::<u64>();
+                                device.write_time_us += elapsed;
+                            }
                             for tile in changed {
                                 hashes.insert(tile.key, tile.identity);
                             }
                         }
                     }
-                    tile_index = 0;
+                    slot.finish();
                 }
                 if let Some(frame) = pending.as_ref() {
-                    let tile = frame.tiles.get(tile_index).or_else(|| {
-                        if tile_index == frame.tiles.len() {
+                    let tile = frame.tiles.get(cursor.index()).or_else(|| {
+                        if cursor.index() == frame.tiles.len() {
                             frame.strip.as_ref()
                         } else {
                             None
                         }
                     });
                     if let Some(tile) = tile {
-                        if hashes.get(&tile.key) != Some(&tile.identity) {
+                        if kind.is_visual() && hashes.get(&tile.key) != Some(&tile.identity) {
+                            let write_start = Instant::now();
                             let result = if tile.key == 255 {
                                 deck.write_lcd_fill(&tile.encoded)
                             } else if kind.is_visual() {
-                                deck.write_image(tile.key, &tile.encoded)
-                                    .and_then(|_| deck.flush())
+                                deck.write_image_immediate(tile.key, &tile.encoded)
                             } else {
                                 Ok(())
                             };
@@ -1115,16 +1176,23 @@ fn start_device(
                                 failed = true
                             } else {
                                 hashes.insert(tile.key, tile.identity);
+                                let write_time_us = write_start.elapsed().as_micros() as u64;
+                                if let Some(device) =
+                                    shared.lock().unwrap().devices.get_mut(&serial)
+                                {
+                                    device.written_tiles += 1;
+                                    device.written_bytes += tile.encoded.len() as u64;
+                                    device.write_time_us += write_time_us;
+                                }
                             }
                         }
-                        tile_index += 1;
-                        if tile_index > frame.tiles.len() {
-                            tile_index = 0;
+                        if cursor.advance() {
                             pending = None;
+                            slot.finish();
                         }
                     } else {
                         pending = None;
-                        tile_index = 0;
+                        slot.finish();
                     }
                 }
             }
@@ -1132,6 +1200,7 @@ fn start_device(
                 deck = None;
                 pending = None;
                 hashes.clear();
+                slot.clear();
                 touch_colors.clear();
                 led_revision = None;
                 sent_brightness = None;
@@ -1144,11 +1213,12 @@ fn start_device(
                 }
                 engine.generation += 1;
             }
-            thread::sleep(Duration::from_millis(if fake || deck.is_none() {
-                20
-            } else {
-                1
-            }));
+            if fake || deck.is_none() {
+                slot.clear();
+                thread::sleep(Duration::from_millis(20));
+            } else if pending.is_none() {
+                slot.wait_output();
+            }
         }
         if let Some(deck) = deck {
             let _ = deck.set_brightness(0);
@@ -1263,14 +1333,10 @@ fn route_input(
                 1,
             )
         }
-        StreamDeckInput::TouchScreenSwipe((x, y), (xx, yy)) => send(
+        StreamDeckInput::TouchScreenSwipe((x, _y), (xx, _yy)) => send(
             "touchscreens",
             "0".into(),
-            if if kind == Kind::PlusXl { yy < y } else { xx < x } {
-                "swipe-left"
-            } else {
-                "swipe-right"
-            },
+            if xx < x { "swipe-left" } else { "swipe-right" },
             1,
         ),
         _ => {}

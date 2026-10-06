@@ -144,6 +144,7 @@ impl App {
         repaint: egui::Context,
     ) -> Self {
         let engine = shared.lock().unwrap();
+        let frame_ready = engine.frame_ready.clone();
         let page = engine
             .docs
             .pages
@@ -174,25 +175,14 @@ impl App {
         let watch_signal = signal.clone();
         let watch_thread = std::thread::spawn(move || {
             let mut previous = None;
+            let mut frame_version = 0;
             while !stop.load(Ordering::Relaxed) {
                 let signature = {
                     let engine = watched.lock().unwrap();
                     let mut frames: Vec<_> = engine
                         .devices
                         .iter()
-                        .map(|(id, d)| {
-                            (
-                                id.clone(),
-                                d.frame.as_ref().map(|frame| {
-                                    frame
-                                        .tiles
-                                        .iter()
-                                        .chain(frame.strip.iter())
-                                        .map(|tile| (tile.key, tile.identity))
-                                        .collect::<Vec<_>>()
-                                }),
-                            )
-                        })
+                        .map(|(id, d)| (id.clone(), d.tile_updates.values().sum::<u64>()))
                         .collect();
                     frames.sort_unstable();
                     (
@@ -209,7 +199,8 @@ impl App {
                     context.request_repaint();
                     previous = Some(signature);
                 }
-                std::thread::sleep(std::time::Duration::from_millis(50));
+                frame_version =
+                    frame_ready.wait(frame_version, std::time::Duration::from_millis(50));
             }
         });
         Self {
@@ -537,6 +528,15 @@ if ui.text_edit_singleline(&mut value).changed(){set_nested(&mut self.draft,&["l
 if right.button("Choose file…").clicked()&& let Some(file)=rfd::FileDialog::new().add_filter("Images and video",&["png","jpg","jpeg","webp","svg","gif","mp4","mkv","webm"]).pick_file(){path=file.to_string_lossy().into_owned();set_nested(&mut self.draft,&["media","path"],json!(path));changed=true;}
 
 if right.text_edit_singleline(&mut path).changed(){set_nested(&mut self.draft,&["media","path"],json!(path));changed=true;}
+            right.horizontal(|ui| {
+                ui.label("Animation FPS cap");
+                let mut fps = self.draft["media"]["fps"].as_u64().unwrap_or(0).min(120) as u32;
+                if ui.add(egui::DragValue::new(&mut fps).range(0..=120)).changed() {
+                    set_nested(&mut self.draft, &["media", "fps"], json!(fps)); changed = true;
+                }
+                if fps == 0 { ui.label("Auto · source rate"); }
+            });
+            right.label("Native device resolution · FPS adapts to USB throughput");
             let mut color=render::color(&self.draft["background"]["color"],[0,0,0,255]);
 if right.color_edit_button_srgba_unmultiplied(&mut color).changed(){set_nested(&mut self.draft,&["background","color"],json!(color));changed=true;}
             right.separator();right.heading("Actions");
@@ -896,7 +896,7 @@ if let Ok(filters)=client.query("GetSourceFilterList",json!({"sourceName":name})
             });
         }
 
-        ui.label("Device names, rotation, persistent states, wallpaper and automatic page rules are saved here.");
+        ui.label("Device names, rotation, persistent states, wallpaper and automatic page rules are saved here. Per-device max_fps: 0 = Auto, 1–120 = cap; native resolution is automatic.");
         ui.add(
             egui::TextEdit::multiline(&mut self.settings)
                 .code_editor()

@@ -29,7 +29,7 @@ def copy_application(prefix):
     shutil.copy2(ROOT / "target/release/deckard", prefix / "bin/deckard-bin")
     (prefix / "bin/deckard").write_text('#!/bin/sh\nbundle="$(CDPATH= cd -- "$(dirname -- "$(readlink -f -- "$0")")/.." && pwd)"\nexport PATH="$bundle/bin:$PATH"\nexport LD_LIBRARY_PATH="$bundle/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"\nexec "$bundle/bin/deckard-bin" "$@"\n')
     (prefix / "bin/deckard").chmod(0o755)
-    for program in ("ffmpeg", "xdotool", "wtype", "pactl", "ping"):
+    for program in ("ffmpeg", "ffprobe", "xdotool", "wtype", "pactl", "ping"):
         shutil.copy2(shutil.which(program), prefix / "bin" / program)
     shutil.copy2(ROOT / "packaging/linux/install-udev.sh", prefix / "bin/install-udev.sh")
     (prefix / "bin/install-udev.sh").chmod(0o755)

@@ -233,7 +233,7 @@ impl Kind {
     pub fn lcd_strip_size(&self) -> Option<(usize, usize)> {
         match self {
             Kind::Plus => Some((800, 100)),
-            Kind::PlusXl => Some((100, 1200)),
+            Kind::PlusXl => Some((1200, 100)),
             Kind::Neo => Some((248, 58)),
             _ => None,
         }
@@ -252,7 +252,7 @@ impl Kind {
     /// Image format used by the Stream Deck kind
     pub fn key_image_format(&self) -> ImageFormat {
         match self {
-            Kind::Studio => ImageFormat { mode: ImageMode::JPEG, size: (80,120), rotation: ImageRotation::Rot0, mirror: ImageMirroring::None },
+            Kind::Studio => ImageFormat { mode: ImageMode::JPEG, size: (144,112), rotation: ImageRotation::Rot0, mirror: ImageMirroring::None },
             Kind::Mirabox293s => ImageFormat { mode: ImageMode::JPEG, size: (85,85), rotation: ImageRotation::Rot270, mirror: ImageMirroring::None },
             Kind::UlanziD200 => ImageFormat { mode: ImageMode::PNG, size: (196,196), rotation: ImageRotation::Rot0, mirror: ImageMirroring::None },
             Kind::Original => ImageFormat {
@@ -292,7 +292,7 @@ impl Kind {
 
             Kind::PlusXl => ImageFormat {
                 mode: ImageMode::JPEG,
-                size: (120, 120),
+                size: (112, 112),
                 rotation: ImageRotation::Rot270,
                 mirror: ImageMirroring::None,
             },
@@ -318,7 +318,7 @@ impl Kind {
             }),
             Kind::PlusXl => Some(ImageFormat {
                 mode: ImageMode::JPEG,
-                size: (100, 1200),
+                size: (1200, 100),
                 rotation: ImageRotation::Rot270,
                 mirror: ImageMirroring::None,
             }),
@@ -504,4 +504,13 @@ pub enum ImageMode {
     BMP,
     /// Jpeg image
     JPEG,
+}
+
+/// Validate an Elgato unit-information report before using its native key size.
+/// Firmware variations are allowed, but layout must match the connected model.
+pub fn native_key_size_from_report(kind: Kind, data: &[u8]) -> Option<(usize, usize)> {
+    if data.len() < 11 || data[0] != 0x08 || data[1] != kind.row_count() || data[2] != kind.column_count() { return None; }
+    let width = usize::from(u16::from_le_bytes([data[3], data[4]]));
+    let height = usize::from(u16::from_le_bytes([data[5], data[6]]));
+    ((16..=512).contains(&width) && (16..=512).contains(&height)).then_some((width, height))
 }
