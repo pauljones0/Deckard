@@ -278,6 +278,11 @@ def main():
         pixels = subprocess.check_output([str(prefix / "bin/ffmpeg"), "-loglevel", "error", "-f", "lavfi", "-i", "color=c=red:s=16x16", "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgba", "-threads", "1", "pipe:1"], cwd=work)
         if len(pixels) != 16 * 16 * 4 or pixels[0] < 240 or pixels[1] > 10:
             raise ValueError("Relocated FFmpeg produced an invalid frame")
+        video = work / "probe-video.mkv"
+        run(prefix / "bin/ffmpeg", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=red:s=16x16:r=60", "-frames:v", "3", "-c:v", "ffv1", "-threads", "1", video, cwd=work)
+        probe = json.loads(subprocess.check_output([str(prefix / "bin/ffprobe"), "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=avg_frame_rate,width,height", "-of", "json", str(video)], cwd=work))
+        if probe["streams"][0] != {"width": 16, "height": 16, "avg_frame_rate": "60/1"}:
+            raise ValueError("Relocated FFprobe did not preserve source dimensions/rate")
         plugin = prefix / "share/deckard/plugins/example/deckard-plugin-example"
         request = json.dumps({"jsonrpc": "2.0", "id": 73, "method": "event", "params": {"action": "hello", "settings": {"label": "Relocated Rust"}}}) + "\n"
         response = json.loads(subprocess.check_output([str(plugin)], input=request, text=True, cwd=work))
