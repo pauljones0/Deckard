@@ -24,13 +24,16 @@ def run(*args, **kwargs):
     return subprocess.run([str(arg) for arg in args], check=True, **kwargs)
 
 
-def copy_application(prefix):
+def copy_application(prefix, bundled=True):
     (prefix / "bin").mkdir(parents=True)
     shutil.copy2(ROOT / "target/release/deckard", prefix / "bin/deckard-bin")
-    (prefix / "bin/deckard").write_text('#!/bin/sh\nbundle="$(CDPATH= cd -- "$(dirname -- "$(readlink -f -- "$0")")/.." && pwd)"\nexport PATH="$bundle/bin:$PATH"\nexport LD_LIBRARY_PATH="$bundle/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"\nexec "$bundle/bin/deckard-bin" "$@"\n')
-    (prefix / "bin/deckard").chmod(0o755)
-    for program in ("ffmpeg", "ffprobe", "xdotool", "wtype", "pactl", "ping"):
-        shutil.copy2(shutil.which(program), prefix / "bin" / program)
+    if bundled:
+        (prefix / "bin/deckard").write_text('#!/bin/sh\nbundle="$(CDPATH= cd -- "$(dirname -- "$(readlink -f -- "$0")")/.." && pwd)"\nexport PATH="$bundle/bin:$PATH"\nexport LD_LIBRARY_PATH="$bundle/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"\nexec "$bundle/bin/deckard-bin" "$@"\n')
+        (prefix / "bin/deckard").chmod(0o755)
+        for program in ("ffmpeg", "ffprobe", "xdotool", "wtype", "pactl", "ping"):
+            shutil.copy2(shutil.which(program), prefix / "bin" / program)
+    else:
+        (prefix / "bin/deckard").symlink_to("deckard-bin")
     shutil.copy2(ROOT / "packaging/linux/install-udev.sh", prefix / "bin/install-udev.sh")
     (prefix / "bin/install-udev.sh").chmod(0o755)
     (prefix / "share/applications").mkdir(parents=True)
@@ -235,13 +238,14 @@ def appimage(prefix, output, work):
     run(destination, "--appimage-extract-and-run", "--doctor", cwd=work)
 
 
-def plugin_packages(prefix, output):
+def plugin_packages(prefix, output, target=None):
     plugin = prefix / "share/deckard/plugins/example"
-    destination = output / f"deckard-{VERSION}-example-plugin-{ARCH}.zip"
+    suffix = f"{target}-{ARCH}" if target else ARCH
+    destination = output / f"deckard-{VERSION}-example-plugin-{suffix}.zip"
     with zipfile.ZipFile(destination, "w", zipfile.ZIP_DEFLATED) as archive:
         for path in sorted(plugin.iterdir()): archive.write(path, path.name)
     page = json.loads((ROOT / "examples/starter-page.json").read_text())
-    bundle = output / f"deckard-{VERSION}-starter-page-{ARCH}.zip"
+    bundle = output / f"deckard-{VERSION}-starter-page-{suffix}.zip"
     with zipfile.ZipFile(bundle, "w", zipfile.ZIP_DEFLATED) as archive:
         archive.writestr("page.json", json.dumps(page))
         archive.writestr("package.json", json.dumps({"api": 1, "id": "rust-starter", "name": "Rust Starter", "required_plugins": ["example"]}))
@@ -249,7 +253,7 @@ def plugin_packages(prefix, output):
     catalog = []
     for path, kind, name, description in ((destination, "plugin", "Rust example", "Native executable plugin with a label and color action."), (bundle, "page", "Rust Starter", "A ready-to-use page with built-in actions and its native plugin included.")):
         catalog.append({"kind": kind, "name": name, "description": description, "url": f"https://github.com/pauljones0/Deckard/releases/download/v{VERSION}/{path.name}", "sha256": hashlib.sha256(path.read_bytes()).hexdigest(), "source": "https://github.com/pauljones0/Deckard", "branch": "main", "architectures": [ARCH]})
-    (output / f"native-store-{ARCH}.json").write_text(json.dumps(catalog, indent=2) + "\n")
+    (output / f"native-store-{suffix}.json").write_text(json.dumps(catalog, indent=2) + "\n")
 
 
 def main():

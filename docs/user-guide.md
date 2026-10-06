@@ -43,4 +43,4 @@ For a hardware-free editor: `deckard --skip-load-hardware-decks --fake-deck-mode
 
 ## Build from source
 
-Use Rust **1.99**, C/C++ build tools, CMake, NASM and the platform development libraries listed in [the Dockerfile](../packaging/linux/Dockerfile). `scripts/build-rust.sh` builds the native application and runs tests. `scripts/build-linux.sh` needs only Docker on the host and builds all four Linux formats for the host architecture. GitHub Actions builds both architectures on native runners and publishes checked artifacts for version tags.
+Use Rust **1.99**, C/C++ build tools, CMake, NASM and the platform development libraries listed in [the Dockerfile](../packaging/linux/Dockerfile). `scripts/build-rust.sh` builds the native application and runs tests. `scripts/build-linux.sh` needs only Docker and builds native CachyOS, Fedora stable and Ubuntu 26.04 LTS packages for the host architecture; CachyOS is x86_64 only. GitHub Actions builds and installs each target before publishing version tags. [Build details](linux-builds.md).

@@ -1,45 +1,48 @@
-# Linux release builds
+# Linux builds
 
-Release 0.8.0 supplies AppImage, DEB, RPM and portable tar.gz builds for x86_64 and aarch64. The builds use Ubuntu 22.04 with glibc 2.35; no Python/GTK runtime is included. The GUI uses egui/Vulkan with automatic OpenGL fallback and supports X11 and Wayland. `DECKARD_RENDERER=glow` selects OpenGL explicitly. Vulkan allocation favors memory usage; the loader is bundled, while graphics drivers remain on the host. GPU drivers, libc, the host C++/GCC runtime, the desktop session and system services remain supplied by the host.
+The default pipeline produces distro-native packages for CachyOS rolling (x86_64), Fedora 44 stable and Ubuntu 26.04 LTS (x86_64 and aarch64). Each binary is compiled inside its target distribution. The GTK editor restoration is [planned separately](ui-restoration.md); these packaging changes also work with the current egui frontend.
 
-## Reproduce
+Packages contain Deckard, its example native plugin, desktop icon, USB rules, documentation and license records. FFmpeg, audio/input helpers and shared libraries come from the distribution's package manager. There is no bundled system-library directory or `LD_LIBRARY_PATH` wrapper. Linked dependencies are generated with `dpkg-shlibdeps` for DEB and RPM's automatic ELF dependency detection; subprocess and dynamically loaded dependencies are explicit. GTK development libraries are available in the builders; GTK runtime dependencies will be added with the restored frontend.
 
-```sh
-scripts/build-linux.sh
-```
-
-Docker installs the compiler and packaging tools, compiles the committed Cargo.lock with Rust 1.99, runs native unit/integration tests, Clippy with warnings denied, formatting checks, JPEG diagnostics, a fake-deck smoke test and GUI startup under isolated Xvfb/D-Bus. The packager then tests the relocated portable GUI, FFmpeg frame output, native plugin RPC and AppImage extract-and-run diagnostics. Artifacts appear in `dist/linux/`. The screenshot is copied out for visual inspection. Both architectures also exercise native migration and real mixer control against a private null-sink PulseAudio server. The bundles include the benchmark documentation and raw JSON results, without bundling the Python measurement tools. Run `scripts/verify-linux-packages.sh` to install and launch the DEB/RPM on fresh Ubuntu 22.04 and Fedora 43 containers, and check the portable GUI and AppImage there. These installation checks also run on both release architectures.
-
-The GitHub workflow uses native `ubuntu-24.04` and `ubuntu-24.04-arm` runners, with the same Ubuntu 22.04 container on each. [GitHub documents both runner architectures](https://docs.github.com/en/actions/reference/runners/github-hosted-runners). A version tag releases artifacts only after both jobs succeed. Build metadata and SHA-256 sums are published separately per architecture.
-
-AppImage's type-2 runtime is downloaded from the official AppImage repository and checksum-pinned in `packaging/linux/appimage-runtime.json`. A changed upstream runtime intentionally fails the build until its new checksum is reviewed. The archives are relocatable; keep their bin/lib/share directories together. Build-time Python performs packaging only and is not copied into the application. The packager rejects any interpreter, `.py`, `.pyc`, `.pyo` or libpython file in runtime bundles.
-
-## Verify a download
-
-Download `SHA256SUMS-x86_64` or `SHA256SUMS-aarch64` from the same release, then, in that directory:
+## Build and verify
 
 ```sh
-sha256sum --ignore-missing -c SHA256SUMS-x86_64
+scripts/build-linux.sh             # all targets available on this architecture
+scripts/build-linux.sh cachyos     # or fedora44 / ubuntu26
+scripts/verify-linux-packages.sh   # install and launch on fresh distro images
 ```
 
-At least your downloaded package should report `OK`. `deckard --doctor` reports the native runtime, architecture, API version and a JPEG self-test; it explicitly reports `python: false`.
+Docker supplies Rust 1.99, builds the locked workspace, runs native tests, Clippy, formatting, JPEG diagnostics, model smoke tests, a private PulseAudio fixture and GUI startup under Xvfb/D-Bus. Installation checks exercise package-manager dependency resolution, system FFmpeg/FFprobe, mixer helpers, native plugin RPC, fake models, Vulkan and OpenGL fallback. They reject Python runtime files, copied helpers and shared-library files in the application payload.
 
-## Desktop and USB setup
+Artifacts appear under `dist/linux/<target>/<architecture>/`. CachyOS uses `.pkg.tar.zst`, Fedora `.rpm` and Ubuntu `.deb`. Filenames, store catalogs, checksums and build metadata identify the target to prevent collisions or installing plugins built for another distribution. A source build without a target uses the Ubuntu catalog, which shares the modern Linux baseline. The GitHub workflow runs five native jobs; ARM64 does not emulate x86_64, and CachyOS has no ARM build in this pipeline. A version tag publishes artifacts only after all build/install jobs pass.
 
-DEB/RPM installers place USB/hidraw uaccess rules under `/usr/lib/udev/rules.d/`. Portable/AppImage users can click **Settings → Enable USB access** and authenticate with their system's polkit dialog. Unplug and reconnect the deck after installation. Running the application as root is unnecessary. If your desktop has no polkit agent, run the bundled `bin/install-udev.sh` with administrator privileges once.
+Fedora is pinned to 44, the current stable target. Advance its builder, verifier and workflow target together after checking the next stable release. Ubuntu stays pinned to 26.04 LTS; CachyOS follows its stable rolling repositories. Updating these targets changes the package compatibility baseline. These installers do not claim compatibility with older Ubuntu or Fedora releases.
 
-For AppImage without FUSE, run `./deckard-0.8.0-x86_64.AppImage --appimage-extract-and-run`. If the file manager does not execute files, use the DEB/RPM installer or run the extracted `bin/deckard`. A graphical installer and executable-file settings depend on your desktop; no binary can bypass those settings.
+## Install
 
-Install your desktop's XDG portal for file dialogs. KDE automatic switching needs `kdotool`. GNOME automatic switching uses the StreamController shell extension. The bundled `pactl` helper supports PulseAudio and PipeWire-Pulse without a Python audio library. OS evdev hotkeys/mouse actions use Linux uinput; the installation helper and package rules enable active-session access.
+Open the DEB/RPM with your desktop's package installer, or use `sudo apt install ./<download>.deb` / `sudo dnf install ./<download>.rpm`. For CachyOS, use `sudo pacman -U ./<download>.pkg.tar.zst`; dependencies are resolved from the configured repositories. The [source PKGBUILD](../packaging/aur/deckard-git/PKGBUILD) remains available for CachyOS/Arch builds with `makepkg -si`.
 
-Text/hotkey actions use bundled `wtype` on Wayland and `xdotool` on X11. Wayland synthetic keyboard support depends on the compositor implementing the virtual keyboard protocol; unsupported desktops need an appropriate native plugin. Helpers such as `hyprctl`, `swaymsg`, `kdotool`, `busctl`, `xdg-open` and compositor IPC remain host facilities.
+USB/hidraw rules install under `/usr/lib/udev/rules.d/`. Reconnect the deck after installation. The native executable and example plugin live under `/usr/lib/deckard`; `/usr/bin/deckard` starts the application. No interpreter is included in the application package. Python is used only by the build tools.
 
-## Source and licenses
+File dialogs use your desktop's XDG portal backend. KDE automatic switching needs `kdotool`; GNOME uses the StreamController shell extension. Text/hotkey actions use system `wtype` on compatible Wayland compositors and `xdotool` on X11. Mixer actions use `pactl` with PulseAudio or PipeWire-Pulse.
 
-Deckard is GPL-3.0-or-later. Source, build scripts and the exact Cargo.lock are available through the release tag and GitHub's source downloads. `share/deckard/licenses` contains Rust dependency identifiers and their supplied license files, Roboto's Apache 2.0 license, libjpeg-turbo's license, and Ubuntu copyright files for bundled system libraries/helpers. Native libraries and FFmpeg retain their individual licenses; Deckard's license does not replace them.
+Fedora's standard repositories supply [ffmpeg-free](https://packages.fedoraproject.org/pkgs/ffmpeg/ffmpeg-free/). Its codec selection differs from Ubuntu/CachyOS FFmpeg; additional formats depend on the codecs installed on that Fedora system. The native packager accepts either provider of `/usr/bin/ffmpeg` and `/usr/bin/ffprobe`.
 
-The bundles copy FFmpeg and input helpers from Ubuntu 22.04, adjusting only ELF RPATHs in executables and dependency libraries. Ubuntu package copyright records identify corresponding source projects. Release source records list exact Ubuntu package/source versions and the source download location; use Ubuntu's source packages, including distribution patches, when rebuilding these dependencies. The Dockerfile supplies the compiler and installation recipe. Original source author attribution remains in the historical tree and the upstream audit.
+## Published 0.8.0 and optional portable builds
 
-## Verification scope
+The [0.8.0 downloads](../README.md#download) are unchanged: AppImage, DEB, RPM and portable tar.gz on a glibc 2.35 baseline, using egui with Vulkan/OpenGL fallback. Those release packages include FFmpeg and helper libraries. The native distro packages described above are built from the updated tree and are not yet published as a new release.
 
-Fake-model rendering is checked for all supported layouts and rotations, including Studio's rectangular keys, Mirabox/Ulanzi wire fixtures and Plus XL's 112-pixel keys and 100×1200 wire-format strip and Neo's infobar. Process tests check a separate daemon, page/state persistence, plugin RPC and bounded failures. These checks do not replace real-device USB tests, desktop-specific focus/keyboard tests, or multi-day Rust soak testing.
+```sh
+scripts/build-linux.sh portable
+scripts/verify-linux-packages.sh portable
+```
+
+This explicit target retains the Ubuntu 22.04 bundle recipe in `packaging/linux/Dockerfile.portable`. Portable archives and AppImages need their bundled dependencies for broader compatibility and are outside the default distro-native release matrix. Keep portable `bin/lib/share` directories together. The AppImage runtime remains checksum-pinned; use `--appimage-extract-and-run` when FUSE is unavailable. Portable users can choose **Settings → Enable USB access** and authenticate through polkit.
+
+## Checksums, licenses and scope
+
+Download the matching `SHA256SUMS-<target>-<architecture>` and run `sha256sum --ignore-missing -c <checksum-file>` beside the package. `deckard --doctor` reports the Rust runtime, architecture and JPEG self-test, including `python: false`.
+
+Deckard is GPL-3.0-or-later. Source and Cargo.lock are in the release tag. Native packages include Rust dependency license records, including statically linked libjpeg-turbo; system libraries retain their distribution-managed licenses and source packages. Legacy portable bundles additionally record corresponding Ubuntu source versions and copyrights.
+
+Container checks cover installation, rendering and startup. They do not establish physical USB throughput, real desktop interactions, ARM performance or a full GTK frontend. [Performance measurements](performance.md) retain their original workloads and version labels.

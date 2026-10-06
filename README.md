@@ -14,7 +14,7 @@ Stream Deck controller for Linux. Written in Rust. No Python or GTK required.
 | DEB · Debian / Ubuntu / Mint | [Download](https://github.com/pauljones0/Deckard/releases/download/v0.8.0/deckard-0.8.0-x86_64.deb) | [Download](https://github.com/pauljones0/Deckard/releases/download/v0.8.0/deckard-0.8.0-aarch64.deb) | Install with your software installer. |
 | RPM · Fedora | [Download](https://github.com/pauljones0/Deckard/releases/download/v0.8.0/deckard-0.8.0-x86_64.rpm) | [Download](https://github.com/pauljones0/Deckard/releases/download/v0.8.0/deckard-0.8.0-aarch64.rpm) | Install with your software installer. |
 | Portable | [Download](https://github.com/pauljones0/Deckard/releases/download/v0.8.0/deckard-0.8.0-x86_64.tar.gz) | [Download](https://github.com/pauljones0/Deckard/releases/download/v0.8.0/deckard-0.8.0-aarch64.tar.gz) | Extract and open `deckard/bin/deckard`. |
-| Arch | [PKGBUILD](packaging/aur/deckard-git/PKGBUILD) | Same | Build with `makepkg -si`. |
+| CachyOS / Arch | [PKGBUILD](packaging/aur/deckard-git/PKGBUILD) | Arch ARM | Build with `makepkg -si`. |
 
 Requires glibc 2.35+ and Vulkan or OpenGL drivers. FFmpeg and helpers are bundled. [Troubleshooting](docs/linux-builds.md).
 
@@ -43,7 +43,7 @@ CPU is percent of one core; RAM is process-tree PSS. Three trials per case on a 
 
 ## Build
 
-`scripts/build-rust.sh` builds and tests with Rust 1.99, CMake, NASM and the required development libraries. `scripts/build-linux.sh` builds Linux packages using Docker. [Build details](docs/linux-builds.md).
+`scripts/build-linux.sh` builds CachyOS, Fedora 44 stable and Ubuntu 26.04 LTS packages using system libraries. These are the next release targets; downloads above remain 0.8.0. [Build details](docs/linux-builds.md) · [GTK editor restoration](docs/ui-restoration.md).
 
 [Usage and CLI](docs/user-guide.md) · [All docs](docs/README.md)
 

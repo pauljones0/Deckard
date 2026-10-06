@@ -18,20 +18,31 @@ jobs:
         include:
           - runner: ubuntu-24.04
             arch: x86_64
+            target: ubuntu26
           - runner: ubuntu-24.04-arm
             arch: aarch64
+            target: ubuntu26
+          - runner: ubuntu-24.04
+            arch: x86_64
+            target: fedora44
+          - runner: ubuntu-24.04-arm
+            arch: aarch64
+            target: fedora44
+          - runner: ubuntu-24.04
+            arch: x86_64
+            target: cachyos
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       - name: Build and test native packages
-        run: scripts/build-linux.sh
-      - name: Verify packages on fresh Ubuntu and Fedora
-        run: scripts/verify-linux-packages.sh
+        run: scripts/build-linux.sh "${{ matrix.target }}"
+      - name: Install and verify on the target distribution
+        run: scripts/verify-linux-packages.sh "${{ matrix.target }}"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: linux-${{ matrix.arch }}
-          path: dist/linux/
+          name: linux-${{ matrix.target }}-${{ matrix.arch }}
+          path: dist/linux/${{ matrix.target }}/${{ matrix.arch }}/
           retention-days: 14
           if-no-files-found: error
   release:

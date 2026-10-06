@@ -238,7 +238,10 @@ impl App {
             obs_choices: json!({}),
             media_players: Vec::new(),
             catalog_url: format!(
-                "https://github.com/pauljones0/Deckard/releases/latest/download/native-store-{}.json",
+                "https://github.com/pauljones0/Deckard/releases/latest/download/native-store-{}{}.json",
+                option_env!("DECKARD_PACKAGE_TARGET")
+                    .map(|target| format!("{target}-"))
+                    .unwrap_or_default(),
                 std::env::consts::ARCH
             ),
             catalog: vec![],
