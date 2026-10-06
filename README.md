@@ -24,20 +24,27 @@ Connect your deck and launch Deckard. Select an input, choose an action and edit
 
 ## More room for your stream 🦀
 
-**Background animation: 74% less CPU and 67% less RAM than the original; 52% less CPU and 67% less RAM than the direct upstream.**
+**Same animation, more headroom: editor animation uses 52% less CPU and 42% less RAM than the direct upstream. Background animation uses 80% less CPU and 92% less RAM than the original.**
 
-The table below records the 0.4.1 baseline; 0.5.0 measurements are being repeated before publication. Each application cell shows **CPU / RAM**. CPU is percent of one logical core; RAM is proportional resident memory (PSS). Negative changes mean lower resource use.
+Each application cell shows **CPU / RAM**. CPU is percent of one logical core; RAM is proportional resident memory (PSS). Negative changes mean lower resource use.
 
 | Workload | Original StreamController | Direct upstream Deckard | Rust Deckard | vs original | vs direct |
 | --- | ---: | ---: | ---: | --- | --- |
-| Editor visible · static | 0.13% / 293 MiB | 0.07% / 262 MiB | **0.10% / 178 MiB** | CPU: idle floor; RAM -39% | CPU: idle floor; RAM -32% |
-| Editor visible · 8 animated keys | 6.23% / 335 MiB | 3.67% / 298 MiB | **4.90% / 187 MiB** | CPU -21%; RAM -44% | CPU +34%; RAM -37% |
-| Background · static | 0.10% / 167 MiB | 0.03% / 149 MiB | **0.07% / 64 MiB** | CPU: idle floor; RAM -62% | CPU: idle floor; RAM -57% |
-| Background · 8 animated keys | 4.07% / 198 MiB | 2.23% / 195 MiB | **1.07% / 64 MiB** | CPU -74%; RAM -67% | CPU -52%; RAM -67% |
+| Editor visible · static | 0.10% / 297 MiB | 0.07% / 266 MiB | **0.10% / 171 MiB** | CPU: idle floor; RAM -42% | CPU: idle floor; RAM -36% |
+| Editor visible · 8 animated keys | 6.33% / 339 MiB | 3.80% / 303 MiB | **1.83% / 176 MiB** | CPU -71%; RAM -48% | CPU -52%; RAM -42% |
+| Background · static | 0.10% / 167 MiB | 0.03% / 149 MiB | **0.10% / 13 MiB** | CPU: idle floor; RAM -92% | CPU: idle floor; RAM -91% |
+| Background · 8 animated keys | 4.07% / 197 MiB | 2.23% / 195 MiB | **0.80% / 16 MiB** | CPU -80%; RAM -92% | CPU -64%; RAM -92% |
 
-The visible editor has a tradeoff: Rust uses **34% more CPU than the optimized direct upstream** during animation, while using **37% less RAM**. Static CPU values are near the accounting floor, so their tiny differences are not treated as speedups. CPU savings are resource savings; input-response latency was not measured.
+The Rust port itself also got leaner:
 
-Measured on a Ryzen 7 9800X3D / NVIDIA RTX 5070, using three trials per case, 30 seconds warmup and 30 seconds sampling, a private 1280×800 GPU-backed Wayland session, one fake Plus and eight labelled keys. The GIF requests 10 FPS; separate frame checks observed roughly 9–10 FPS on all eight keys. No installed plugins or physical USB hardware were used. The Python baselines share one dependency environment; applications retain their default renderers/encoders. [Methodology and reproduction](benchmarks/README.md), [raw samples and revisions](benchmarks/results/2026-10-05), [frame validation](benchmarks/results/2026-10-05/validation).
+| Animated workload | Rust 0.4.1 | Rust 0.5.0 | Improvement |
+| --- | ---: | ---: | --- |
+| Editor visible · 8 keys | 4.90% / 187 MiB | **1.83% / 176 MiB** | **63% less CPU; 6% less RAM** |
+| Background · 8 keys | 1.07% / 64 MiB | **0.80% / 16 MiB** | **25% less CPU; 75% less RAM** |
+
+Static CPU values are near the accounting floor, so their tiny differences are not treated as speedups. CPU savings are resource savings; input-response latency was not measured.
+
+Measured on a Ryzen 7 9800X3D / NVIDIA RTX 5070, using three trials per case, 30 seconds warmup and 30 seconds sampling, a fresh private 1280×800 GPU-backed Wayland session, one fake Plus and eight labelled keys. The GIF requests 10 FPS; separate frame checks observed **8.9–10 FPS upstream and 9.95 FPS in Rust**, on all eight keys in both modes. No installed plugins or physical USB hardware were used. The Python baselines share one dependency environment; applications retain their default renderers/encoders. Rust 0.5.0 uses Vulkan with memory-focused allocation; 0.4.1 used OpenGL. Results depend on hardware, drivers and workload. [Methodology and reproduction](benchmarks/README.md), [raw samples and revisions](benchmarks/results/2026-10-06), [frame validation](benchmarks/results/2026-10-06/validation), [archived 0.4.1 baseline](benchmarks/results/2026-10-05).
 
 ## What the Rust port includes
 
