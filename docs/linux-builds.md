@@ -1,8 +1,8 @@
 # Linux builds
 
-The default pipeline produces distro-native packages for CachyOS rolling (x86_64), Fedora 44 stable and Ubuntu 26.04 LTS (x86_64 and aarch64). Each binary is compiled inside its target distribution. The GTK editor restoration is [planned separately](ui-restoration.md); these packaging changes also work with the current egui frontend.
+The default pipeline produces distro-native packages for CachyOS rolling (x86_64), Fedora 44 stable and Ubuntu 26.04 LTS (x86_64 and aarch64). Each binary is compiled inside its target distribution. The [GTK4/libadwaita editor](ui-restoration.md) and application engine are implemented in Rust.
 
-Packages contain Deckard, its example native plugin, desktop icon, USB rules, documentation and license records. FFmpeg, audio/input helpers and shared libraries come from the distribution's package manager. There is no bundled system-library directory or `LD_LIBRARY_PATH` wrapper. Linked dependencies are generated with `dpkg-shlibdeps` for DEB and RPM's automatic ELF dependency detection; subprocess and dynamically loaded dependencies are explicit. GTK development libraries are available in the builders; GTK runtime dependencies will be added with the restored frontend.
+Packages contain Deckard, its example native plugin, desktop icon, USB rules, documentation and license records. FFmpeg, audio/input helpers and shared libraries come from the distribution's package manager. There is no bundled system-library directory or `LD_LIBRARY_PATH` wrapper. Linked dependencies are generated with `dpkg-shlibdeps` for DEB and RPM's automatic ELF dependency detection; subprocess and dynamically loaded dependencies are explicit. Packages require GTK 4.16+ and libadwaita 1.6+, including the Adwaita icon theme.
 
 ## Build and verify
 
@@ -12,7 +12,7 @@ scripts/build-linux.sh cachyos     # or fedora44 / ubuntu26
 scripts/verify-linux-packages.sh   # install and launch on fresh distro images
 ```
 
-Docker supplies Rust 1.99, builds the locked workspace, runs native tests, Clippy, formatting, JPEG diagnostics, model smoke tests, a private PulseAudio fixture and GUI startup under Xvfb/D-Bus. Installation checks exercise package-manager dependency resolution, system FFmpeg/FFprobe, mixer helpers, native plugin RPC, fake models, Vulkan and OpenGL fallback. They reject Python runtime files, copied helpers and shared-library files in the application payload.
+Docker supplies Rust 1.99, builds the locked workspace, runs native tests, Clippy, formatting, JPEG diagnostics, model smoke tests, a private PulseAudio fixture and GUI startup under Xvfb/D-Bus. Installation checks exercise package-manager dependency resolution, system FFmpeg/FFprobe, mixer helpers, native plugin RPC, fake models, the default GTK renderer, OpenGL and Cairo. They reject Python runtime files, copied helpers and shared-library files in the application payload.
 
 Artifacts appear under `dist/linux/<target>/<architecture>/`. CachyOS uses `.pkg.tar.zst`, Fedora `.rpm` and Ubuntu `.deb`. Filenames, store catalogs, checksums and build metadata identify the target to prevent collisions or installing plugins built for another distribution. A source build without a target uses the Ubuntu catalog, which shares the modern Linux baseline. The GitHub workflow runs five native jobs; ARM64 does not emulate x86_64, and CachyOS has no ARM build in this pipeline. A version tag publishes artifacts only after all build/install jobs pass.
 
@@ -24,20 +24,13 @@ Open the DEB/RPM with your desktop's package installer, or use `sudo apt install
 
 USB/hidraw rules install under `/usr/lib/udev/rules.d/`. Reconnect the deck after installation. The native executable and example plugin live under `/usr/lib/deckard`; `/usr/bin/deckard` starts the application. No interpreter is included in the application package. Python is used only by the build tools.
 
-File dialogs use your desktop's XDG portal backend. KDE automatic switching needs `kdotool`; GNOME uses the StreamController shell extension. Text/hotkey actions use system `wtype` on compatible Wayland compositors and `xdotool` on X11. Mixer actions use `pactl` with PulseAudio or PipeWire-Pulse.
+File dialogs use GTK and your desktop's available XDG portal backend. KDE automatic switching needs `kdotool`; GNOME uses the StreamController shell extension. Text/hotkey actions use system `wtype` on compatible Wayland compositors and `xdotool` on X11. Mixer actions use `pactl` with PulseAudio or PipeWire-Pulse.
 
 Fedora's standard repositories supply [ffmpeg-free](https://packages.fedoraproject.org/pkgs/ffmpeg/ffmpeg-free/). Its codec selection differs from Ubuntu/CachyOS FFmpeg; additional formats depend on the codecs installed on that Fedora system. The native packager accepts either provider of `/usr/bin/ffmpeg` and `/usr/bin/ffprobe`.
 
-## Published 0.8.0 and optional portable builds
+## Older portable builds
 
-The [0.8.0 downloads](../README.md#download) are unchanged: AppImage, DEB, RPM and portable tar.gz on a glibc 2.35 baseline, using egui with Vulkan/OpenGL fallback. Those release packages include FFmpeg and helper libraries. The native distro packages described above are built from the updated tree and are not yet published as a new release.
-
-```sh
-scripts/build-linux.sh portable
-scripts/verify-linux-packages.sh portable
-```
-
-This explicit target retains the Ubuntu 22.04 bundle recipe in `packaging/linux/Dockerfile.portable`. Portable archives and AppImages need their bundled dependencies for broader compatibility and are outside the default distro-native release matrix. Keep portable `bin/lib/share` directories together. The AppImage runtime remains checksum-pinned; use `--appimage-extract-and-run` when FUSE is unavailable. Portable users can choose **Settings → Enable USB access** and authenticate through polkit.
+[v0.8.0](https://github.com/pauljones0/Deckard/releases/tag/v0.8.0) retains the old egui AppImages and portable archives. They bundle their dependencies on a glibc 2.35 baseline. Check out that tag to build or verify those artifacts. The GTK release uses distro-native installers.
 
 ## Checksums, licenses and scope
 

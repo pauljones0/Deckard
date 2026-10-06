@@ -1,4 +1,5 @@
 mod cli;
+mod editor_model;
 mod tray;
 mod ui;
 use anyhow::{Context, Result, ensure};
@@ -59,21 +60,6 @@ fn copy_tree(source: &Path, target: &Path) -> Result<()> {
 }
 fn main() {
     if let Err(error) = run() {
-        if error.downcast_ref::<ui::GraphicsUnavailable>().is_some()
-            && std::env::var("DECKARD_RENDERER").as_deref() != Ok("glow")
-        {
-            // A fresh process releases the failed Vulkan event loop, IPC lock,
-            // and device workers before starting the OpenGL fallback.
-            use std::os::unix::process::CommandExt;
-            if let Ok(exe) = std::env::current_exe() {
-                let fallback = std::process::Command::new(exe)
-                    .args(std::env::args_os().skip(1))
-                    .env("DECKARD_RENDERER", "glow")
-                    .exec();
-                eprintln!("Deckard: graphics fallback failed: {fallback}");
-            }
-        }
-
         eprintln!(
             "Deckard: {}",
             deckard_core::engine::redact(&format!("{error:#}"))

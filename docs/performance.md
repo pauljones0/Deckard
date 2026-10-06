@@ -1,8 +1,8 @@
 # Performance results
 
-## Current editor · 6 October 2026
+## Previous egui editor · 6 October 2026
 
-Fresh measurements of the latest native CachyOS package from `main` (`b655ac08`), running on the Omarchy/Arch host. The editor still uses egui; the GTK restoration remains a prototype and migration plan.
+Fresh measurements of the latest native CachyOS package from `main` (`b655ac08`), running on the Omarchy/Arch host. These readings describe the previous egui frontend, before the GTK restoration.
 
 | Editor open · eight Plus keys | CPU · one core | RAM · PSS |
 | --- | ---: | ---: |

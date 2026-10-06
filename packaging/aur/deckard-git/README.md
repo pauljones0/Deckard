@@ -1,4 +1,4 @@
-Build the native Rust application on CachyOS or Arch with `makepkg -si` from this directory. Dependencies, including FFmpeg and audio/input helpers, come from pacman. No Python interpreter, venv or Python plugin loader is installed. The current frontend uses egui; the planned GTK frontend will also use system libraries. `cargo test` and the native codec self-test run in `check()`.
+Build the native Rust application on CachyOS or Arch with `makepkg -si` from this directory. Dependencies, including FFmpeg and audio/input helpers, come from pacman. No Python interpreter, venv or Python plugin loader is installed. The GTK4/libadwaita editor uses system libraries. `cargo test` and the native codec self-test run in `check()`.
 
 The source package follows pauljones0/Deckard. Its USB/hidraw rules are installed automatically. Native file selection uses your desktop portal backend; automatic page switching uses the desktop's own helpers, with kdotool needed on KDE and the StreamController extension needed on GNOME.
 

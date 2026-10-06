@@ -1,52 +1,47 @@
 # Deckard
 
-Stream Deck controller for Linux. Written in Rust. No Python or GTK required.
+Stream Deck controller for Linux. Rust engine. GTK4/libadwaita editor. No Python runtime.
 
-![Current Rust editor (egui)](docs/images/native-editor.png)
-
-[Restoring the previous GTK editor in Rust](docs/ui-restoration.md) is still pending.
+![Rust GTK editor](docs/images/native-editor.png)
 
 ## Download
 
-**[Deckard 0.8.0](https://github.com/pauljones0/Deckard/releases/tag/v0.8.0)** · x86-64 for Intel/AMD, ARM64 for ARM.
+**[Deckard 0.9.0](https://github.com/pauljones0/Deckard/releases/tag/v0.9.0)**
 
-| Format | x86-64 | ARM64 | Run it |
-| --- | --- | --- | --- |
-| AppImage | [Download](https://github.com/pauljones0/Deckard/releases/download/v0.8.0/deckard-0.8.0-x86_64.AppImage) | [Download](https://github.com/pauljones0/Deckard/releases/download/v0.8.0/deckard-0.8.0-aarch64.AppImage) | Allow execution in file properties, then double-click. |
-| DEB · Debian / Ubuntu / Mint | [Download](https://github.com/pauljones0/Deckard/releases/download/v0.8.0/deckard-0.8.0-x86_64.deb) | [Download](https://github.com/pauljones0/Deckard/releases/download/v0.8.0/deckard-0.8.0-aarch64.deb) | Install with your software installer. |
-| RPM · Fedora | [Download](https://github.com/pauljones0/Deckard/releases/download/v0.8.0/deckard-0.8.0-x86_64.rpm) | [Download](https://github.com/pauljones0/Deckard/releases/download/v0.8.0/deckard-0.8.0-aarch64.rpm) | Install with your software installer. |
-| Portable | [Download](https://github.com/pauljones0/Deckard/releases/download/v0.8.0/deckard-0.8.0-x86_64.tar.gz) | [Download](https://github.com/pauljones0/Deckard/releases/download/v0.8.0/deckard-0.8.0-aarch64.tar.gz) | Extract and open `deckard/bin/deckard`. |
-| CachyOS / Arch | [PKGBUILD](packaging/aur/deckard-git/PKGBUILD) | Arch ARM | Build with `makepkg -si`. |
+| Linux | x86-64 · Intel/AMD | ARM64 |
+| --- | --- | --- |
+| CachyOS | [pacman package](https://github.com/pauljones0/Deckard/releases/download/v0.9.0/deckard-0.9.0-cachyos-x86_64.pkg.tar.zst) | — |
+| Fedora 44 stable | [RPM](https://github.com/pauljones0/Deckard/releases/download/v0.9.0/deckard-0.9.0-fedora44-x86_64.rpm) | [RPM](https://github.com/pauljones0/Deckard/releases/download/v0.9.0/deckard-0.9.0-fedora44-aarch64.rpm) |
+| Ubuntu 26.04 LTS | [DEB](https://github.com/pauljones0/Deckard/releases/download/v0.9.0/deckard-0.9.0-ubuntu26-x86_64.deb) | [DEB](https://github.com/pauljones0/Deckard/releases/download/v0.9.0/deckard-0.9.0-ubuntu26-aarch64.deb) |
 
-Requires glibc 2.35+ and Vulkan or OpenGL drivers. FFmpeg and helpers are bundled. [Troubleshooting](docs/linux-builds.md).
+Open the DEB/RPM in your software installer. CachyOS: `sudo pacman -U ./deckard-0.9.0-cachyos-x86_64.pkg.tar.zst`. Your package manager installs the libraries and helpers. Reconnect your deck, then launch Deckard. [Builds and setup](docs/linux-builds.md).
 
-Connect your deck, launch Deckard, and choose an action. **Store → Pages → Rust Starter** installs a ready-made page. Portable/AppImage users: **Settings → Enable USB access**, then reconnect the deck.
+**Store → Pages → Rust Starter** installs a ready-made page.
 
 ## Features
 
-- Keys, dials, touchscreens, pages, labels and animated wallpapers.
+- The previous GTK layout, rebuilt in Rust: keys, dials, touchscreens, pages, states and grouped controls.
 - OS, media, OBS and volume controls: 56 built-in actions replacing the common upstream plugins.
 - Native device resolution. Auto FPS follows the source, up to 120 FPS, adapting to USB throughput.
+- Animated wallpapers, asset browsing, automatic page switching and close-to-tray.
 
-Supports Elgato models plus Mirabox and Ulanzi. [Models and resolutions](docs/rendering-endpoints.md).
+Supports Elgato, Mirabox and Ulanzi. [Models](docs/rendering-endpoints.md) · [Usage](docs/user-guide.md).
 
-Python plugins need native replacements. Saved pages can be migrated through **Settings → Inspect legacy actions**. [Migration](docs/plugin-migration.md) · [Plugin API](docs/native-plugins.md).
+Python plugins need native replacements. **Settings → Inspect legacy actions** migrates supported actions. [Migration](docs/plugin-migration.md) · [Plugin API](docs/native-plugins.md).
 
 ## Less CPU. Less RAM.
 
-Measured upstream comparison with eight animated Plus keys, using Rust 0.5.0.
+Historical upstream comparison with eight animated Plus keys, using Rust 0.5.0. Current GTK measurements are tracked in [performance results](docs/performance.md).
 
 | Mode | StreamController CPU / RAM | nazbert/Deckard CPU / RAM | Rust 0.5.0 CPU / RAM |
 | --- | ---: | ---: | ---: |
 | Editor | 6.33% / 339 MiB | 3.80% / 303 MiB | **1.83% / 176 MiB** |
 | Background | 4.07% / 197 MiB | 2.23% / 195 MiB | **0.80% / 16 MiB** |
 
-CPU is percent of one core; RAM is process-tree PSS. Three trials per case on a Ryzen 9800X3D / RTX 5070, using fake devices. USB/LCD and ARM performance remain unmeasured. [Current editor readings and full results](docs/performance.md).
+CPU is percent of one core; RAM is process-tree PSS. Three trials per case on a Ryzen 9800X3D / RTX 5070, using fake devices. USB/LCD and ARM performance remain unmeasured.
 
 ## Build
 
-`scripts/build-linux.sh` builds CachyOS, Fedora 44 stable and Ubuntu 26.04 LTS packages using system libraries. These are the next release targets; downloads above remain 0.8.0. [Build details](docs/linux-builds.md).
+`scripts/build-linux.sh` builds distro-native packages. [Build details](docs/linux-builds.md) · [GTK editor](docs/ui-restoration.md) · [All docs](docs/README.md).
 
-[Usage and CLI](docs/user-guide.md) · [All docs](docs/README.md)
-
-Based on [StreamController](https://github.com/StreamController/StreamController) by Core447 and [nazbert/Deckard](https://github.com/nazbert/Deckard). [Upstream audit](docs/upstream-audit.md). Licensed [GPL-3.0-or-later](LICENSE).
+Based on [StreamController](https://github.com/StreamController/StreamController) by Core447 and [nazbert/Deckard](https://github.com/nazbert/Deckard). [Upstream audit](docs/upstream-audit.md). [GPL-3.0-or-later](LICENSE).

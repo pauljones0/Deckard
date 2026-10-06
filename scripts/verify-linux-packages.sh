@@ -14,8 +14,8 @@ for target in "${targets[@]}"; do
     ubuntu26) image=ubuntu:26.04 ;;
     fedora44) image=fedora:44 ;;
     cachyos) image=cachyos/cachyos:latest ;;
-    portable) exec scripts/verify-portable-linux-packages.sh ;;
-    *) echo 'Usage: scripts/verify-linux-packages.sh [all|ubuntu26|fedora44|cachyos|portable]' >&2; exit 1 ;;
+    portable) echo "Use the v0.8.0 tag to verify legacy portable packages." >&2; exit 1 ;;
+    *) echo 'Usage: scripts/verify-linux-packages.sh [all|ubuntu26|fedora44|cachyos]' >&2; exit 1 ;;
   esac
   packages="$PWD/dist/linux/$target/$arch"
   docker run --rm -i -v "$packages:/packages:ro" "$image" sh -s -- "$version" "$arch" "$target" <<'VERIFY'
@@ -67,9 +67,10 @@ case "$target" in
   cachyos) pacman -S --needed --noconfirm xorg-server-xvfb xorg-xauth dbus mesa vulkan-swrast > /tmp/ui-install.log 2>&1 ;;
 esac
 LIBGL_ALWAYS_SOFTWARE=1 dbus-run-session -- xvfb-run -a /usr/bin/deckard --ui-smoke-test --skip-load-hardware-decks --fake-deck-model plus --data /tmp/deckard-ui
-LIBGL_ALWAYS_SOFTWARE=1 VK_ICD_FILENAMES=/tmp/deckard-no-vulkan-driver.json dbus-run-session -- xvfb-run -a /usr/bin/deckard --ui-smoke-test --skip-load-hardware-decks --fake-deck-model plus --data /tmp/deckard-gl-fallback > /tmp/deckard-gl-fallback.log 2>&1
+GSK_RENDERER=gl LIBGL_ALWAYS_SOFTWARE=1 VK_ICD_FILENAMES=/tmp/deckard-no-vulkan-driver.json dbus-run-session -- xvfb-run -a /usr/bin/deckard --ui-smoke-test --skip-load-hardware-decks --fake-deck-model plus --data /tmp/deckard-gl-fallback > /tmp/deckard-gl-fallback.log 2>&1
 cat /tmp/deckard-gl-fallback.log
-grep -q 'Deckard graphics: OpenGL' /tmp/deckard-gl-fallback.log
+grep -q 'Deckard editor: GTK 4 / libadwaita' /tmp/deckard-gl-fallback.log
+GSK_RENDERER=cairo dbus-run-session -- xvfb-run -a /usr/bin/deckard --ui-smoke-test --skip-load-hardware-decks --fake-deck-model plus --data /tmp/deckard-cairo
 printf '%s\n' "$target: installed package, native plugin, system helpers and GUI passed; no bundled system libraries."
 VERIFY
 done

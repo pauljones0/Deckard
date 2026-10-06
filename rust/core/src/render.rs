@@ -729,8 +729,12 @@ impl Renderer {
             tiles.push(self.encode(physical, tile, fmt, config.rotation, persistent)?);
         }
         let mut strip_paths = vec![if extend { bgpath } else { "" }];
-        for (family, input) in std::iter::once(("infobar", "0".to_owned()))
-            .chain((0..kind.encoder_count()).map(|i| ("dials", i.to_string())))
+        for (family, input) in [
+            ("infobar", "0".to_owned()),
+            ("touchscreens", "0".to_owned()),
+        ]
+        .into_iter()
+        .chain((0..kind.encoder_count()).map(|i| ("dials", i.to_string())))
         {
             let data = effective_input(config_ref, family, &input);
             let state = &data["states"][active_state(config_ref, family, &input).to_string()];
@@ -759,6 +763,22 @@ impl Renderer {
                     let crop = imageops::crop_imm(whole, l, t, r - l, b - t).to_image();
                     let crop = imageops::resize(&crop, sw, sh, FilterType::Triangle);
                     overlay_rgba(&mut strip, &crop, 0, 0);
+                }
+                if kind != Kind::Neo {
+                    let data = effective_input(config_ref, "touchscreens", "0");
+                    let state =
+                        &data["states"][active_state(config_ref, "touchscreens", "0").to_string()];
+                    overlay_color(
+                        &mut strip,
+                        color(&state["background"]["color"], [0, 0, 0, 0]),
+                    );
+                    if let Some(path) = state["media"]["path"].as_str()
+                        && let Some(image) = self.asset_playback(path, sw, sh, &state["media"])
+                    {
+                        persistent &= repeatable_media(path, &state["media"]);
+                        let image = self.scaled_media(&image, sw, sh, &state["media"], "contain");
+                        self.overlay_image(&mut strip, &image, 0, 0);
+                    }
                 }
                 if kind == Kind::Neo {
                     let data = effective_input(config_ref, "infobar", "0");
@@ -1618,6 +1638,62 @@ pub fn default_config(page: Value) -> RenderConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn touchscreen_state_background_and_animation_reach_the_native_strip() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("touch.gif");
+        {
+            let mut file = std::fs::File::create(&path).unwrap();
+            let mut encoder = gif::Encoder::new(&mut file, 2, 2, &[255, 0, 0, 0, 255, 0]).unwrap();
+            for index in [0, 1] {
+                encoder
+                    .write_frame(&gif::Frame {
+                        width: 2,
+                        height: 2,
+                        delay: 10,
+                        buffer: vec![index; 4].into(),
+                        ..Default::default()
+                    })
+                    .unwrap();
+            }
+        }
+        let mut renderer = Renderer::new(1024 * 1024).unwrap();
+        let mut config = default_config(
+            json!({"touchscreens":{"0":{"states":{"0":{"background":{"color":[17,31,53,255]}},"1":{"media":{"path":path,"loop":true}}}}}}),
+        );
+        let first = renderer.render(Kind::Plus, &config).unwrap().strip.unwrap();
+        assert_eq!((first.width, first.height), (800, 100));
+        assert!(
+            first
+                .rgb
+                .as_chunks::<3>()
+                .0
+                .iter()
+                .all(|pixel| *pixel == [17, 31, 53])
+        );
+        config.states.insert("touchscreens/0".into(), 1);
+        let red = renderer.render(Kind::Plus, &config).unwrap().strip.unwrap();
+        assert_eq!(
+            &red.rgb[(50 * 800 + 400) * 3..(50 * 800 + 400) * 3 + 3],
+            &[255, 0, 0]
+        );
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        let green = loop {
+            let frame = renderer.render(Kind::Plus, &config).unwrap().strip.unwrap();
+            if frame.rgb[(50 * 800 + 400) * 3..(50 * 800 + 400) * 3 + 3] == [0, 255, 0] {
+                break frame;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "touchscreen animation stopped advancing"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        };
+        assert_ne!(
+            red.identity, green.identity,
+            "animated touch media must invalidate strip reuse"
+        );
+    }
     #[test]
     fn single_pass_reuse_is_bounded_and_shared_looping_sources_keep_the_main_cache() {
         // Reserve a window large enough for one native JPEG, then force history eviction.

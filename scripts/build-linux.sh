@@ -14,11 +14,11 @@ for target in "${targets[@]}"; do
   case "$target" in
     ubuntu26|fedora44) ;;
     cachyos) [[ "$arch" == x86_64 ]] || { echo 'CachyOS builds require x86_64.' >&2; exit 1; } ;;
-    portable) dockerfile=packaging/linux/Dockerfile.portable ;;
-    *) echo 'Usage: scripts/build-linux.sh [all|ubuntu26|fedora44|cachyos|portable]' >&2; exit 1 ;;
+    portable) echo "GTK builds use CachyOS, Fedora 44 or Ubuntu 26.04 packages; portable builds ended at v0.8.0." >&2; exit 1 ;;
+    *) echo 'Usage: scripts/build-linux.sh [all|ubuntu26|fedora44|cachyos]' >&2; exit 1 ;;
   esac
   image="deckard-linux-$target:$arch"
-  docker build --file "$dockerfile" --build-arg "BUILD_TARGET=$target" --tag "$image" .
+  docker build --file "$dockerfile" --build-arg "BUILD_TARGET=$target" --build-arg "SOURCE_REVISION=$(git rev-parse HEAD)" --tag "$image" .
   container="$(docker create "$image")"
   destination="dist/linux/$target/$arch"
   mkdir -p "$destination"

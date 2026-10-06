@@ -33,6 +33,8 @@ RUN sed -i '/^\[options\]/a DisableSandboxNetwork' /etc/pacman.conf \
 FROM ${BUILD_TARGET} AS build
 ARG BUILD_TARGET
 ARG CARGO_BUILD_JOBS=2
+ARG SOURCE_REVISION=unknown
+ENV DECKARD_SOURCE_REVISION=${SOURCE_REVISION}
 ENV DECKARD_PACKAGE_TARGET=${BUILD_TARGET}
 ENV CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS}
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -o /tmp/rustup.sh \
@@ -46,6 +48,9 @@ RUN --mount=type=cache,target=/root/.cargo/registry --mount=type=cache,target=/c
     && dbus-run-session -- cargo test --workspace --locked \
     && cargo clippy --workspace --all-targets --locked -- -D warnings \
     && cargo fmt --all -- --check \
+    && dbus-run-session -- xvfb-run -a -s "-screen 0 1600x1000x24" \
+       env GTK_A11Y=none GSK_RENDERER=cairo G_DEBUG=fatal-criticals \
+       cargo test -p deckard gtk_editor_workflows --locked -- --ignored --test-threads=1 \
     && mkdir -p target/release \
     && cp "$CARGO_TARGET_DIR/release/deckard" "$CARGO_TARGET_DIR/release/deckard-plugin-example" target/release/
 RUN target/release/deckard --doctor \

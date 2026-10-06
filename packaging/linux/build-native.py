@@ -3,6 +3,7 @@
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import shutil
@@ -74,7 +75,7 @@ def deb(staging, output, work):
     generated = subprocess.check_output(
         ["dpkg-shlibdeps", "-O", *[f"-e{p}" for p in elf]], cwd=work, text=True
     ).strip().removeprefix("shlibs:Depends=")
-    dependencies = generated + ", libxkbcommon0, libxkbcommon-x11-0, libwayland-client0, libwayland-cursor0, libx11-6, libxcursor1, libxi6, libxrandr2, libvulkan1, libgl1, libegl1, ffmpeg, xdotool, wtype, pulseaudio-utils, iputils-ping, udev, xdg-utils, xdg-desktop-portal, hicolor-icon-theme"
+    dependencies = generated + ", libgtk-4-1 (>= 4.16), libadwaita-1-0 (>= 1.6), adwaita-icon-theme, ffmpeg, xdotool, wtype, pulseaudio-utils, iputils-ping, udev, xdg-utils, xdg-desktop-portal, hicolor-icon-theme"
     control = staging / "DEBIAN"
     control.mkdir()
     arch = "amd64" if ARCH == "x86_64" else "arm64"
@@ -97,7 +98,7 @@ Release: 1%{{?dist}}
 Summary: Native Rust Stream Deck controller
 License: GPL-3.0-or-later
 URL: https://github.com/pauljones0/Deckard
-Requires: libxkbcommon, libxkbcommon-x11, libX11, libXcursor, libXi, libXrandr, libwayland-client, libwayland-cursor, vulkan-loader, libglvnd-glx, libglvnd-egl
+Requires: gtk4 >= 4.16, libadwaita >= 1.6, adwaita-icon-theme
 Requires: /usr/bin/ffmpeg, /usr/bin/ffprobe, xdotool, wtype, pulseaudio-utils, iputils, systemd-udev, xdg-utils, xdg-desktop-portal, hicolor-icon-theme
 %global _build_id_links none
 %global debug_package %{{nil}}
@@ -137,7 +138,7 @@ pkgdesc='Native Rust Stream Deck controller'
 arch=('x86_64')
 url='https://github.com/pauljones0/Deckard'
 license=('GPL-3.0-or-later')
-depends=('glibc' 'gcc-libs' 'systemd-libs' 'libxkbcommon' 'libxkbcommon-x11' 'libglvnd' 'vulkan-icd-loader' 'libx11' 'libxcursor' 'libxi' 'libxrandr' 'wayland' 'ffmpeg' 'libpulse' 'iputils' 'xdg-utils' 'xdg-desktop-portal' 'xdotool' 'wtype' 'hicolor-icon-theme')
+depends=('glibc' 'gcc-libs' 'systemd-libs' 'gtk4>=4.16' 'libadwaita>=1.6' 'adwaita-icon-theme' 'ffmpeg' 'libpulse' 'iputils' 'xdg-utils' 'xdg-desktop-portal' 'xdotool' 'wtype' 'hicolor-icon-theme')
 optdepends=('kdotool: KDE automatic page switching')
 options=('!debug' '!strip')
 install=deckard.install
@@ -190,7 +191,8 @@ def main():
         "version": VERSION, "architecture": ARCH, "target": args.target,
         "distribution": distro["PRETTY_NAME"].strip('"'),
         "rust": subprocess.check_output(["rustc", "--version"], text=True).strip(),
-        "runtime": "Rust; no Python", "bundled_system_libraries": False,
+        "runtime": "Rust; no Python", "frontend": "GTK4/libadwaita",
+        "source_revision": os.environ.get("DECKARD_SOURCE_REVISION", "unknown"), "bundled_system_libraries": False,
         "system_dependencies": "Installed and updated by the distribution package manager",
         "artifacts": [p.name for p in artifacts],
     }, indent=2) + "\n")

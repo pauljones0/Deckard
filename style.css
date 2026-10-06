@@ -396,9 +396,7 @@
   border-color: #00000000;
 }
 
-.action-row-toggle:toggled {
-  background-color: red;
-}
+
 
 .action-row-label-toggle-active {
   background-color: @accent_bg_color;

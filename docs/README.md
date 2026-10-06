@@ -5,7 +5,7 @@
 - [Models, resolutions and frame rates](rendering-endpoints.md)
 - [Plugin migration](plugin-migration.md)
 - [Native plugin API](native-plugins.md)
-- [GTK editor restoration plan](ui-restoration.md)
+- [Rust GTK editor](ui-restoration.md)
 - [Performance results](performance.md)
 - [Benchmark method and tools](../benchmarks/README.md)
 - [Upstream audit](upstream-audit.md)
