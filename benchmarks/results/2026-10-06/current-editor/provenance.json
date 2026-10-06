@@ -1,0 +1,36 @@
+{
+  "measured_at": "2026-10-06T07:05:26.227813+00:00",
+  "source_head": "b655ac0847dfa41a10794b9bdd0b5547c02adf6d",
+  "package": "dist/linux/cachyos/x86_64/deckard-0.8.0-cachyos-x86_64.pkg.tar.zst",
+  "package_sha256": "e2ad3cccb6a341f1d18a7d1422f8e6bb6c6a122fb281f8dc0a0f31979aafc3ad",
+  "package_build": {
+    "version": "0.8.0",
+    "architecture": "x86_64",
+    "target": "cachyos",
+    "distribution": "CachyOS",
+    "rust": "rustc 1.99.0 (b940084d7 2026-09-28)",
+    "runtime": "Rust; no Python",
+    "bundled_system_libraries": false,
+    "system_dependencies": "Installed and updated by the distribution package manager",
+    "artifacts": [
+      "deckard-0.8.0-cachyos-x86_64.pkg.tar.zst",
+      "deckard-0.8.0-example-plugin-cachyos-x86_64.zip",
+      "deckard-0.8.0-starter-page-cachyos-x86_64.zip",
+      "native-store-cachyos-x86_64.json"
+    ]
+  },
+  "host": "Linux-7.2.5-3-omarchy-x86_64-with-glibc2.44",
+  "cpu": "AMD Ryzen 7 9800X3D 8-Core Processor",
+  "gpu": "NVIDIA GeForce RTX 5070, 610.57.04, 97 %, 842 MiB",
+  "limitations": [
+    "Other user compute work was using the GPU at 100%; it was left running. These are current-session measurements, not a controlled upstream speedup comparison.",
+    "No compilation or packaging ran during sampling.",
+    "The CachyOS package was measured on the Omarchy/Arch host, not on CachyOS itself.",
+    "CPU: percent of one logical core. Memory: process-tree PSS, not GPU VRAM.",
+    "Private GPU-backed Wayland session; fake Plus; no physical USB/LCD measurement; no interaction latency measurement."
+  ],
+  "gpu_after": "NVIDIA GeForce RTX 5070, 610.57.04, 100 %, 761 MiB",
+  "binary_sha256": "35074164b3b53c2c40bf30fe121ed7aa2bd91ac2ea5a2c84a4a6345be96a44d7",
+  "frontend": "egui / eframe / wgpu Vulkan; GTK restoration has not shipped",
+  "documentation_edits": "README status text was edited during the static trials; measured binary, runtime sources and fixtures were unchanged. Both runners recorded a clean tree at startup."
+}

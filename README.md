@@ -2,7 +2,9 @@
 
 Stream Deck controller for Linux. Written in Rust. No Python or GTK required.
 
-![Deckard editor](docs/images/native-editor.png)
+![Current Rust editor (egui)](docs/images/native-editor.png)
+
+[Restoring the previous GTK editor in Rust](docs/ui-restoration.md) is still pending.
 
 ## Download
 
@@ -39,11 +41,11 @@ Measured upstream comparison with eight animated Plus keys, using Rust 0.5.0.
 | Editor | 6.33% / 339 MiB | 3.80% / 303 MiB | **1.83% / 176 MiB** |
 | Background | 4.07% / 197 MiB | 2.23% / 195 MiB | **0.80% / 16 MiB** |
 
-CPU is percent of one core; RAM is process-tree PSS. Three trials per case on a Ryzen 9800X3D / RTX 5070, using fake devices. USB/LCD and ARM performance remain unmeasured. [Full results and method](docs/performance.md).
+CPU is percent of one core; RAM is process-tree PSS. Three trials per case on a Ryzen 9800X3D / RTX 5070, using fake devices. USB/LCD and ARM performance remain unmeasured. [Current editor readings and full results](docs/performance.md).
 
 ## Build
 
-`scripts/build-linux.sh` builds CachyOS, Fedora 44 stable and Ubuntu 26.04 LTS packages using system libraries. These are the next release targets; downloads above remain 0.8.0. [Build details](docs/linux-builds.md) · [GTK editor restoration](docs/ui-restoration.md).
+`scripts/build-linux.sh` builds CachyOS, Fedora 44 stable and Ubuntu 26.04 LTS packages using system libraries. These are the next release targets; downloads above remain 0.8.0. [Build details](docs/linux-builds.md).
 
 [Usage and CLI](docs/user-guide.md) · [All docs](docs/README.md)
 

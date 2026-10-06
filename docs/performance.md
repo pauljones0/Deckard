@@ -1,5 +1,28 @@
 # Performance results
 
+## Current editor · 6 October 2026
+
+Fresh measurements of the latest native CachyOS package from `main` (`b655ac08`), running on the Omarchy/Arch host. The editor still uses egui; the GTK restoration remains a prototype and migration plan.
+
+| Editor open · eight Plus keys | CPU · one core | RAM · PSS |
+| --- | ---: | ---: |
+| Static page · no interaction | **0.17%** | **171.3 MiB** |
+| 10 FPS GIF on every key | **1.33%** | **178.7 MiB** |
+| 100 FPS GIF on every key | **3.70%** | **178.3 MiB** |
+
+Medians of three trials each, with 15 seconds warmup and 30 seconds sampling. CPU ranges were 0.10–0.17%, 1.33–1.43% and 3.57–3.77%, respectively. Static CPU is near the accounting floor. Separate four-second animation checks confirmed eight 120×120 keys at 10.0 and 100.0 FPS; that observer was excluded from timing.
+
+Ryzen 7 9800X3D / RTX 5070, Vulkan, fresh GPU-backed 1280×800 Wayland session per trial. A separate user compute job was using 97–100% of the GPU at spot checks and was left running. These describe this session, not a controlled speedup comparison with older versions or upstream. RAM includes the application and descendants, excluding compositor and GPU VRAM. No physical USB/LCD, ARM, editing latency or long-duration soak was measured. [Raw samples, ranges and package/executable hashes](../benchmarks/results/2026-10-06/current-editor).
+
+Reproduce after extracting the native package into `target/current-editor-package`:
+
+```sh
+.venv/bin/python benchmarks/endpoints.py --after "$PWD/target/current-editor-package/usr/lib/deckard/bin/deckard-bin" --versions after --cases plus10 plus100 --visible --font-family 'Liberation Sans' --trials 3 --warmup 15 --duration 30 --validate-seconds 4 --output target/editor-current-animation
+.venv/bin/python benchmarks/compare.py --native "$PWD/target/current-editor-package/usr/lib/deckard/bin/deckard-bin" --apps rust --workloads static --trials 3 --warmup 15 --duration 30 --wayland-runtime /tmp/deckard-editor-static-wayland --wayland-socket deckard-editor-static --weston-bundle target/benchmarks/weston --output target/editor-current-static
+```
+
+Use fresh output directories, the benchmark environment and extracted Weston described in [the methodology](../benchmarks/README.md). Run workloads sequentially; do not build during timing.
+
 ## Under 1% of a CPU core at 100 FPS
 
 **Eight native-resolution Plus keys at 100 FPS: 33% less CPU than 0.7.0. XL animation uses 29% less.** These are fresh, matched-rate Rust **0.7.0 → 0.8.0** measurements.

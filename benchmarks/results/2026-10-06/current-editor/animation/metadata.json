@@ -1,0 +1,20 @@
+{
+  "date": "2026-10-06T07:03:53Z",
+  "platform": "Linux-7.2.5-3-omarchy-x86_64-with-glibc2.44",
+  "warmup": 15.0,
+  "duration": 30.0,
+  "trials": 3,
+  "visible": true,
+  "requested_font": "Liberation Sans",
+  "cpu_unit": "100% = one logical core",
+  "memory_unit": "MiB PSS, application plus descendants",
+  "hardware_usb": false,
+  "git_head": "b655ac0847dfa41a10794b9bdd0b5547c02adf6d",
+  "git_dirty": false,
+  "binaries": {
+    "after": {
+      "path": "/home/paul/Deckard/target/current-editor-package/usr/lib/deckard/bin/deckard-bin",
+      "sha256": "35074164b3b53c2c40bf30fe121ed7aa2bd91ac2ea5a2c84a4a6345be96a44d7"
+    }
+  }
+}
