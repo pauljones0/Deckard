@@ -38,7 +38,23 @@ Connect your deck and launch Deckard. Select an input, choose an action and edit
 
 These are controller image endpoints, rather than Valve Steam Deck screen dimensions or 144×144 source-icon artwork. [Verified specifications, FPS settings, transport behavior and diagnostics](docs/rendering-endpoints.md). Maximum visible hardware FPS needs a connected controller; the software limit is not a guaranteed LCD refresh rate.
 
-## Faster animation, less work per frame
+## Same pixels, half the rendering CPU
+
+**100 FPS with 53% less background CPU. Single-pass video uses 56% less RAM.** These are measured Rust **0.6.0 → 0.7.0** results at the same source rates and native key dimensions.
+
+| Workload · all keys | FPS · 0.6 → 0.7 | CPU · 0.6 → 0.7 | CPU saved | RAM MiB · 0.6 → 0.7 |
+| --- | ---: | ---: | ---: | ---: |
+| Plus · 8 × 120² · 10 FPS GIF · background | 10.0 → 10.0 | 0.60% → **0.40%** | **−33%** | 17.3 → 17.6 |
+| Plus · 8 × 120² · 100 FPS GIF · background | 99.9 → 100.0 | 3.27% → **1.53%** | **−53%** | 17.5 → 17.6 |
+| XL · 32 × 96² · 50 FPS GIF · background | 50.1 → 50.0 | 4.60% → **2.47%** | **−46%** | 27.8 → 28.1 |
+| Plus · 8 × 120² · single-pass 60 FPS video · background | 60.1 → 59.8 | 5.47% → **4.13%** | **−24%** | 123.3 → 54.5 |
+| Plus · 8 × 120² · 100 FPS GIF · visible editor | 100.0 → 100.0 | 5.93% → **3.53%** | **−40%** | 177.2 → 177.3 |
+
+The renderer copies opaque RGBA rows, allocates RGB previews directly in their shared buffer and hashes pixel identities with single-pass XXH3. Partial transparency matches the reference compositor. JPEG quality 90 and 4:4:4 chroma are retained. Non-looping GIF/video playback keeps a short reuse cache, up to 1 MiB within the existing total cache budget; looping animations retain the larger cache. Unused encoded bytes are cleared after single-pass playback or device release.
+
+Looping GIF/editor RAM is essentially flat: measured increases are 0.06–0.33 MiB, and the table retains them. The video memory result covers the measured playback window, when 0.6.0 accumulates encoded history; it is not an unlimited-duration soak result. CPU is percent of one logical core; RAM is application-plus-descendants PSS, including FFmpeg. Each result is the median of three trials with 15 seconds warmup, 15 seconds timing and separate four-second per-key validation. GIFs have 200 distinct 120×120 source frames; the single-pass video is a 120-second 60 FPS FFV1 clip. Both versions use the installed 14-point Liberation Sans font. The visible editor uses Vulkan on the same Ryzen 7 9800X3D / RTX 5070 host. These fake-device checks measure rendered pixels; physical USB/LCD and ARM performance remain unmeasured. [Methodology](benchmarks/README.md#native-rendering-and-cache-optimization-070), [raw samples, FPS and executable hashes](benchmarks/results/2026-10-06/native-0.7).
+
+## Faster animation, less work per frame (0.6.0)
 
 **100 FPS at about 17 MiB: 3.4× the frames, with 34% less CPU work per device frame. At the same 10 FPS, background CPU falls 20%.** These are measured Rust 0.5.0 → 0.6.0 results, with every key animated at its native resolution.
 

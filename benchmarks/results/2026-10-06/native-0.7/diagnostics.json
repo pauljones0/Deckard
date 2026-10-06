@@ -1,0 +1,23 @@
+{
+  "instrumented": true,
+  "included_in_performance_table": false,
+  "baseline_profile": {
+    "binary_sha256": "11c37331663c79f1f01cbfe376e2336746d1b203aea82db3d743759bd77eb6c5",
+    "workload": "Plus, eight labelled 120x120 keys, looping 100 FPS GIF, requested DejaVu Sans (missing-family fallback)",
+    "method": "perf record -F 4999 -e cycles:u --call-graph dwarf,8192; 15-second warmup, separate 20-second profile",
+    "samples": 1700,
+    "lost_samples": 0,
+    "self_user_cycle_percent": {
+      "imageops::overlay": 52.82,
+      "SipHasher::write": 13.83,
+      "CICP cast_pixels": 8.69,
+      "fontdb::Database::query": 2.63
+    }
+  },
+  "memory_maps": {
+    "workload": "Plus, all eight labelled 120x120 keys, looping 100 FPS GIF, installed Liberation Sans",
+    "method": "Separate fresh HOME/private D-Bus background runs; /proc/PID/smaps grouped at 15 and 30 seconds. No CPU benchmark claim.",
+    "raw_summary": "memory-maps.json",
+    "finding": "New mapped application image +0.39453125 MiB; anonymous heap -0.0390625 MiB. Both are stable between the two snapshots. This diagnostic explains a small code footprint cost, not a heap growth trend or a long-duration leak claim."
+  }
+}

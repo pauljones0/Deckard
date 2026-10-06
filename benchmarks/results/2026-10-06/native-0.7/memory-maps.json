@@ -1,0 +1,110 @@
+[
+  {
+    "version": "before",
+    "elapsed_seconds": 15,
+    "groups_mib": {
+      "application_image": {
+        "Rss": 10.9140625,
+        "Pss": 10.91015625,
+        "Private_Dirty": 0.77734375
+      },
+      "anonymous_heap": {
+        "Rss": 6.39453125,
+        "Pss": 6.39453125,
+        "Private_Dirty": 6.39453125
+      },
+      "system_files": {
+        "Rss": 2.7890625,
+        "Pss": 0.1181640625,
+        "Private_Dirty": 0.07421875
+      },
+      "other": {
+        "Rss": 0.09375,
+        "Pss": 0.078125,
+        "Private_Dirty": 0.078125
+      }
+    },
+    "instrumented": true
+  },
+  {
+    "version": "before",
+    "elapsed_seconds": 30,
+    "groups_mib": {
+      "application_image": {
+        "Rss": 10.9140625,
+        "Pss": 10.91015625,
+        "Private_Dirty": 0.77734375
+      },
+      "anonymous_heap": {
+        "Rss": 6.39453125,
+        "Pss": 6.39453125,
+        "Private_Dirty": 6.39453125
+      },
+      "system_files": {
+        "Rss": 2.7890625,
+        "Pss": 0.1181640625,
+        "Private_Dirty": 0.07421875
+      },
+      "other": {
+        "Rss": 0.09375,
+        "Pss": 0.078125,
+        "Private_Dirty": 0.078125
+      }
+    },
+    "instrumented": true
+  },
+  {
+    "version": "after",
+    "elapsed_seconds": 15,
+    "groups_mib": {
+      "application_image": {
+        "Rss": 11.30859375,
+        "Pss": 11.3046875,
+        "Private_Dirty": 0.78125
+      },
+      "anonymous_heap": {
+        "Rss": 6.35546875,
+        "Pss": 6.35546875,
+        "Private_Dirty": 6.35546875
+      },
+      "system_files": {
+        "Rss": 2.828125,
+        "Pss": 0.1181640625,
+        "Private_Dirty": 0.07421875
+      },
+      "other": {
+        "Rss": 0.09375,
+        "Pss": 0.078125,
+        "Private_Dirty": 0.078125
+      }
+    },
+    "instrumented": true
+  },
+  {
+    "version": "after",
+    "elapsed_seconds": 30,
+    "groups_mib": {
+      "application_image": {
+        "Rss": 11.30859375,
+        "Pss": 11.3046875,
+        "Private_Dirty": 0.78125
+      },
+      "anonymous_heap": {
+        "Rss": 6.35546875,
+        "Pss": 6.35546875,
+        "Private_Dirty": 6.35546875
+      },
+      "system_files": {
+        "Rss": 2.828125,
+        "Pss": 0.1181640625,
+        "Private_Dirty": 0.07421875
+      },
+      "other": {
+        "Rss": 0.09375,
+        "Pss": 0.078125,
+        "Private_Dirty": 0.078125
+      }
+    },
+    "instrumented": true
+  }
+]

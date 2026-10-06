@@ -124,3 +124,29 @@ For visible editor checks, add `--visible --weston-bundle /path/to/extracted/wes
 The recorded host build is x86-64, on the same Ryzen 7 9800X3D / NVIDIA RTX 5070 machine as the upstream comparison. CPU uses percent of one logical core; RAM is MiB PSS. These timings do not measure the ARM64 builds, separately distributed Python packages, physical USB transfer, or LCD scanout. [Endpoint specifications and runtime diagnostics](../docs/rendering-endpoints.md) explain those limits.
 
 [Recorded 0.6.0 endpoint results](results/2026-10-06/endpoints) contain separate background and visible samples, plus model fidelity checks. [Provenance](results/2026-10-06/endpoints/provenance.json) identifies the frozen 0.5.0/0.6.0 runtime source commits and both executable hashes. The visible/model metadata correctly records a dirty tree: only this methodology document was being edited; Rust sources and measured executables remained unchanged. Host-built binaries differ from the Ubuntu 22.04 release bundles, whose packaging checks run independently on both architectures.
+
+## Native rendering and cache optimization (0.7.0)
+
+The 0.7.0 comparison freezes both host-built executables before timing and uses the same native resolution, source rate, page, labels and JPEG quality in each version. The existing release profile remains optimized with thin LTO and one code-generation unit. A separate 0.6.0 PMU profile identified RGBA composition (about 53% of sampled user-space cycles), pixel hashing (14%) and generic RGBA-to-RGB conversion (9%) as large costs. Those sampled percentages are diagnostics, not benchmark speedups. The optimized paths preserve byte-for-byte reference RGBA blending/RGB extraction and reuse encoded images according to playback needs. Hash changes affect pixel identity; cryptographic download verification is unchanged.
+
+All keys have 14-point **Liberation Sans**, which is installed on the measured host. Both versions load the same `/usr/share/fonts/liberation/LiberationSans-Regular.ttf`. This intentionally avoids relying on renderer-specific fallback for the historical fixture's requested DejaVu Sans family. Results here compare only these two executables and do not pool timings with previous tables. Missing-font lookup caching is implemented, but the new CPU comparison uses an available font.
+
+Background cases cover Plus GIFs at 10 and 100 FPS, an XL GIF at 50 FPS, and a Plus single-pass 60 FPS video. GIF fixtures have 200 distinct 120×120 source frames. `plus60once` generates 7,200 FFV1 frames, 120 seconds at 60 FPS, and sets `loop: false`; it does not finish or loop during the measured window. Both versions receive an explicit 120 FPS limit and retain the detected source timing. The visible case animates all eight Plus keys at 100 FPS in a fresh private GPU-backed 1280×800 Weston session. There are three trials per version/case; execution order reverses in trial two. Each has 15 seconds warmup, 15 seconds of process-tree CPU/PSS sampling and four seconds of frame validation afterward. The CPU windows have no frame observer. Counter-window quantization and scheduling account for the small deviations around nominal FPS; all keys must change at the correct native dimensions without engine errors. CPU milliseconds per complete device frame remain in the summaries.
+
+The video RAM figures are medians within that measurement window, including the FFmpeg child. The older large encoded cache fills with single-pass history during playback, while the new short cache retains recent repeated pixels. This is a bounded-window comparison, not a multi-day steady-state memory claim. The new cache stays within the existing configured byte budget. Looping GIF and editor PSS differences are small, slightly positive, and retained rather than marketed as savings. The raw samples show their variation. A separate Plus 100 FPS `/proc/PID/smaps` diagnostic found mapped application-image PSS higher by 0.39 MiB, anonymous heap lower by 0.04 MiB, and both stable between 15 and 30 seconds. This explains a small code footprint cost without claiming a long-duration leak test. [Diagnostic methods](results/2026-10-06/native-0.7/diagnostics.json) and [memory maps](results/2026-10-06/native-0.7/memory-maps.json) are excluded from CPU timings.
+
+```sh
+.venv/bin/python benchmarks/endpoints.py \
+  --before /path/to/deckard-0.6.0 --after /path/to/deckard-0.7.0 \
+  --cases plus10 plus100 xl50 plus60once --font-family 'Liberation Sans' \
+  --trials 3 --warmup 15 --duration 15 --validate-seconds 4 \
+  --output /tmp/deckard-native-bg
+.venv/bin/python benchmarks/endpoints.py \
+  --before /path/to/deckard-0.6.0 --after /path/to/deckard-0.7.0 \
+  --cases plus100 --font-family 'Liberation Sans' --visible \
+  --weston-bundle /path/to/extracted/weston \
+  --trials 3 --warmup 15 --duration 15 --validate-seconds 4 \
+  --output /tmp/deckard-native-ui
+```
+
+Use an available shared font, short absolute output paths and run one benchmark at a time. Do not compile or package software during timing. Source, compiler, host, executable hashes and measurement limits are recorded in [provenance](results/2026-10-06/native-0.7/provenance.json); [raw results](results/2026-10-06/native-0.7) retain all 30 runs. Both metadata files record a clean source tree. Ubuntu 22.04 distribution builds and their ARM64 variants are checked separately; these host timings do not measure their performance or physical LCD scanout.
