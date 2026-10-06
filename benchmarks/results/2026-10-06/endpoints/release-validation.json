@@ -1,0 +1,196 @@
+{
+  "version": "0.6.0",
+  "tag_commit": "7103338a9a74f4f89e82474716f7d07ce1ad394e",
+  "release_url": "https://github.com/pauljones0/Deckard/releases/tag/v0.6.0",
+  "ci_url": "https://github.com/pauljones0/Deckard/actions/runs/37408506350",
+  "ci_conclusion": "success",
+  "checked_architectures": [
+    "x86_64",
+    "aarch64"
+  ],
+  "package_checks": [
+    "Fresh Ubuntu 22.04 DEB install, portable GUI, AppImage and bundled FFmpeg",
+    "Fresh Fedora 43 RPM install and GUI",
+    "Forced OpenGL fallback",
+    "Relocated FFprobe 16x16 60/1 source-rate check",
+    "Relocated native plugin RPC"
+  ],
+  "asset_count": 22,
+  "all_published_asset_sha256_digests_match": true,
+  "all_eight_readme_download_links_http_status": 200,
+  "archives_have_no_python_or_gtk_runtime": true,
+  "published_assets": [
+    {
+      "name": "BUILD-aarch64.json",
+      "bytes": 465,
+      "digest": "sha256:4d9e1c4c1cc199a5e2c9fde39b0a788ad1b98ee5c554e37f20162ed9190137dd"
+    },
+    {
+      "name": "BUILD-x86_64.json",
+      "bytes": 457,
+      "digest": "sha256:6fede3414fd67659725ee07a50c8d5b43d9fe9411328db59402b60734e38a6d0"
+    },
+    {
+      "name": "deckard-0.6.0-aarch64.AppImage",
+      "bytes": 90311176,
+      "digest": "sha256:8173aacab4e3f29db40b609416db71253556311a466e31dd1d5681b6b12a521a"
+    },
+    {
+      "name": "deckard-0.6.0-aarch64.deb",
+      "bytes": 78802660,
+      "digest": "sha256:41a01ebdcfcf961ac22f04fc6c774b630e916406d9740b12affd1025c740aff8"
+    },
+    {
+      "name": "deckard-0.6.0-aarch64.rpm",
+      "bytes": 95938479,
+      "digest": "sha256:dda133df6823501ed8afe255542aeb18d1bf5a28f35175e0e42adc7df442f31a"
+    },
+    {
+      "name": "deckard-0.6.0-aarch64.tar.gz",
+      "bytes": 95677384,
+      "digest": "sha256:f78444a07a93308656869defc6c687a085eb9878fa6dd582c51f657637acec33"
+    },
+    {
+      "name": "deckard-0.6.0-example-plugin-aarch64.zip",
+      "bytes": 228157,
+      "digest": "sha256:5d0f8840e5c8077d8d171de69063038891b37bf81efaad47b779d3a4a2c35ea7"
+    },
+    {
+      "name": "deckard-0.6.0-example-plugin-x86_64.zip",
+      "bytes": 232834,
+      "digest": "sha256:009355166f9612878ff3effcb0d4c7b22a4642bc5d82c759624ca168309dd32c"
+    },
+    {
+      "name": "deckard-0.6.0-starter-page-aarch64.zip",
+      "bytes": 228822,
+      "digest": "sha256:ce9e44be6a3c951c0416f8c6420328b5df1f6cace30186b772499e18aa6e7b4d"
+    },
+    {
+      "name": "deckard-0.6.0-starter-page-x86_64.zip",
+      "bytes": 233499,
+      "digest": "sha256:a68f29869a01a49144302d854e5c1fabd2e946f67e6d1febb6dde536e5b0fbf3"
+    },
+    {
+      "name": "deckard-0.6.0-x86_64.AppImage",
+      "bytes": 94960120,
+      "digest": "sha256:a7ddc3bd2bb05948b3777740692a9976a6eeeb761194cfaabf3be8c0ec83110f"
+    },
+    {
+      "name": "deckard-0.6.0-x86_64.deb",
+      "bytes": 82672436,
+      "digest": "sha256:f13af873331056b7053c13af33e25c2b414e291ead5877fafa00c23eff3ed27a"
+    },
+    {
+      "name": "deckard-0.6.0-x86_64.rpm",
+      "bytes": 100644466,
+      "digest": "sha256:adcccbce41a4f8298e58ebe862279002677a9c837a47a228a01f3faf9eaac00a"
+    },
+    {
+      "name": "deckard-0.6.0-x86_64.tar.gz",
+      "bytes": 100389068,
+      "digest": "sha256:9a21aebfedbc22f5734b500e4cbee194263c1ecf7698a8e5865e4bd0e130ea90"
+    },
+    {
+      "name": "native-store-aarch64.json",
+      "bytes": 935,
+      "digest": "sha256:c9fd7094b0f4bff7230a698a8f85d05ee06556631cdf997e06707c5ba997078c"
+    },
+    {
+      "name": "native-store-x86_64.json",
+      "bytes": 931,
+      "digest": "sha256:d90529144b5fe2ff26d1b3f778c7b041168fc433d9459633eb25ee41d03393a4"
+    },
+    {
+      "name": "native-ui-aarch64.png",
+      "bytes": 105226,
+      "digest": "sha256:307f0940e18f2773e266e36b1a41afd654738220f31b582c3200db28029f387e"
+    },
+    {
+      "name": "native-ui-x86_64.png",
+      "bytes": 105280,
+      "digest": "sha256:5349cea1f727f8ef93f579435c34c653b4a95b474c71e21fa0f1c53e87f30fad"
+    },
+    {
+      "name": "SHA256SUMS-aarch64",
+      "bytes": 680,
+      "digest": "sha256:4f7ff32a1e5a99dcd709e97d6ba75f433518007678057a859ec5325cbac90332"
+    },
+    {
+      "name": "SHA256SUMS-x86_64",
+      "bytes": 673,
+      "digest": "sha256:9091df758f0c1afda7eeb8e9e64aa61afe76aea9ef688b68e61ee13a41421025"
+    },
+    {
+      "name": "SOURCES-aarch64.json",
+      "bytes": 173212,
+      "digest": "sha256:e9ac4f95ef67432a21acf7666c55e953d702bce744b9082f53be330985237cd6"
+    },
+    {
+      "name": "SOURCES-x86_64.json",
+      "bytes": 175014,
+      "digest": "sha256:8236c517f75b8162c48f2196d70fa2ad4d1f5e328ddccf542b354684269c16db"
+    }
+  ],
+  "downloaded_x86_64_portable_gui": {
+    "renderer": "NVIDIA GeForce RTX 5070 (Vulkan)",
+    "executable_sha256": "c4a864a5a449e93861269d9c62894db2859d29e3cc4fc12d1d0ac36037a211d9",
+    "fixture": "Same 120x120 200-frame 100 FPS GIF and all-eight-key labels as the endpoint comparison",
+    "validation": {
+      "seconds": 3.008295,
+      "method": "two changed-tile counter snapshots over the engine monotonic clock",
+      "poll_interval_ms": null,
+      "fps_per_key": {
+        "0": 100.0566766224722,
+        "1": 100.0566766224722,
+        "2": 100.0566766224722,
+        "3": 100.0566766224722,
+        "4": 100.0566766224722,
+        "5": 100.0566766224722,
+        "6": 100.0566766224722,
+        "7": 100.0566766224722
+      },
+      "fps_min": 100.0566766224722,
+      "fps_max": 100.0566766224722,
+      "sizes": {
+        "0": [
+          120,
+          120
+        ],
+        "1": [
+          120,
+          120
+        ],
+        "2": [
+          120,
+          120
+        ],
+        "3": [
+          120,
+          120
+        ],
+        "4": [
+          120,
+          120
+        ],
+        "5": [
+          120,
+          120
+        ],
+        "6": [
+          120,
+          120
+        ],
+        "7": [
+          120,
+          120
+        ]
+      },
+      "written_tiles": 0,
+      "instrumented": true
+    },
+    "hardware_usb": false,
+    "fidelity_only": true,
+    "cpu_or_ram_timings": null,
+    "note": "This checks the actual released Ubuntu 22.04 portable bundle. It does not replace the frozen host-built CPU/RAM comparison or establish physical LCD refresh."
+  }
+}

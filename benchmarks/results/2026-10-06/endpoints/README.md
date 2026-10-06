@@ -7,3 +7,5 @@
 [provenance.json](provenance.json) ties each measured executable to its frozen runtime sources and SHA-256. The dirty-tree flags in visible/model metadata refer only to methodology documentation edits. Runtime sources and executables remained unchanged. These are host-built x86-64 application measurements without physical USB hardware, rather than ARM benchmarks or LCD refresh measurements.
 
 FPS counts actual changing rendered pixels on every key. CPU is percent of one logical core and RAM is MiB PSS, including application descendants. CPU milliseconds per complete device frame equal `CPU percent × 10 / FPS`. Higher total CPU at higher FPS can coexist with lower CPU cost per frame. Visible measurements exclude the private compositor and count controller rendering, rather than monitor presentations.
+
+[Release validation](release-validation.json) records both architectures' completed package checks, published asset digests, live download links and a separate GPU/fake-device fidelity check of the actual downloaded x86-64 portable bundle. Its short frame check is excluded from CPU/RAM comparisons.
