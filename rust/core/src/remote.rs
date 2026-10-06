@@ -112,7 +112,7 @@ fn now() -> u64 {
 fn datetime(format: &str) -> String {
     let seconds = now() as libc::time_t;
     let mut time = std::mem::MaybeUninit::<libc::tm>::uninit();
-    let mut buffer = [0i8; 64];
+    let mut buffer = [0 as libc::c_char; 64];
     let format = std::ffi::CString::new(format).unwrap();
     unsafe {
         if libc::localtime_r(&seconds, time.as_mut_ptr()).is_null() {
