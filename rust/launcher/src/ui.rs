@@ -17,7 +17,27 @@ use std::{
 };
 
 pub fn run(shared: Shared, events: SyncSender<InputEvent>, signal: Arc<AtomicBool>) -> Result<()> {
+    let mut wgpu_options = eframe::egui_wgpu::WgpuConfiguration::default();
+    if let eframe::egui_wgpu::WgpuSetup::CreateNew(setup) = &mut wgpu_options.wgpu_setup {
+        setup.instance_descriptor.backends =
+            eframe::wgpu::Backends::from_env().unwrap_or(eframe::wgpu::Backends::VULKAN);
+        let original = setup.device_descriptor.clone();
+        setup.device_descriptor = Arc::new(move |adapter| {
+            let mut descriptor = original(adapter);
+            descriptor.memory_hints = eframe::wgpu::MemoryHints::MemoryUsage;
+            descriptor
+        });
+    }
     let options = eframe::NativeOptions {
+        wgpu_options,
+        renderer: if std::env::var("DECKARD_RENDERER").as_deref() == Ok("glow") {
+            eframe::Renderer::Glow
+        } else {
+            eframe::Renderer::Wgpu
+        },
+        // Repaints follow input/frame changes. Wayland schedules presentation;
+        // an additional EGL swap wait can busy-spin inside the GPU driver.
+        vsync: std::env::var_os("WAYLAND_DISPLAY").is_none(),
         viewport: egui::ViewportBuilder::default()
             .with_title("Deckard")
             .with_app_id("io.github.nazbert.Deckard")
@@ -29,6 +49,12 @@ pub fn run(shared: Shared, events: SyncSender<InputEvent>, signal: Arc<AtomicBoo
         "Deckard",
         options,
         Box::new(move |cc| {
+            if let Some(state) = &cc.wgpu_render_state {
+                let info = state.adapter.get_info();
+                eprintln!("Deckard graphics: {} ({:?})", info.name, info.backend);
+            } else {
+                eprintln!("Deckard graphics: OpenGL");
+            }
             cc.egui_ctx.set_visuals(egui::Visuals::dark());
             Ok(Box::new(App::new(
                 shared,
@@ -38,14 +64,30 @@ pub fn run(shared: Shared, events: SyncSender<InputEvent>, signal: Arc<AtomicBoo
             )))
         }),
     )
-    .map_err(|error| anyhow::anyhow!(error.to_string()))
+    .map_err(|error| match error {
+        eframe::Error::Wgpu(error) => GraphicsUnavailable(error.to_string()).into(),
+        other => anyhow::anyhow!(other.to_string()),
+    })
 }
+#[derive(Debug)]
+pub struct GraphicsUnavailable(pub String);
+impl std::fmt::Display for GraphicsUnavailable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+impl std::error::Error for GraphicsUnavailable {}
 enum Task {
     Catalog(Vec<Entry>),
     Message(String),
     Ai(Value),
+    Choices(Value),
+    Players(Vec<String>),
 }
+type ActionDefinitions = Vec<(String, String, Vec<plugin::Field>)>;
 struct App {
+    definitions: Arc<ActionDefinitions>,
+    definitions_revision: u64,
     repaint: egui::Context,
     watch_stop: Arc<AtomicBool>,
     watch_thread: Option<std::thread::JoinHandle<()>>,
@@ -68,8 +110,15 @@ struct App {
     notice: String,
     migration_report: Option<Value>,
     textures: HashMap<u8, (u64, egui::TextureHandle)>,
+    key_atlas: Option<egui::TextureHandle>,
+    key_uvs: HashMap<u8, egui::Rect>,
+    key_signature: Vec<(u8, u64)>,
     settings: String,
     settings_revision: u64,
+    obs_id: String,
+    obs_profile: Value,
+    obs_choices: Value,
+    media_players: Vec<String>,
     catalog_url: String,
     catalog: Vec<Entry>,
     store_tab: String,
@@ -104,6 +153,18 @@ impl App {
             .unwrap_or("Main".into());
         let settings = serde_json::to_string_pretty(&engine.docs.settings).unwrap_or_default();
         let settings_revision = engine.docs.revision;
+        let definitions = Arc::new(action_definitions(&engine.plugins));
+        let definitions_revision = engine.plugin_revision;
+        let obs_id = engine.docs.settings["obs"]["default_connection"]
+            .as_str()
+            .unwrap_or("default")
+            .to_owned();
+        let obs_profile = engine.obs_profile(&obs_id);
+        let obs_profile = if obs_profile.is_object() {
+            obs_profile
+        } else {
+            json!({"name":"Default","host":"localhost","port":4455,"password":"","tls":false})
+        };
         drop(engine);
         let (send, receive) = mpsc::sync_channel(4);
         let watch_stop = Arc::new(AtomicBool::new(false));
@@ -152,6 +213,8 @@ impl App {
             }
         });
         Self {
+            definitions,
+            definitions_revision,
             repaint,
             watch_stop,
             watch_thread: Some(watch_thread),
@@ -174,8 +237,15 @@ impl App {
             notice: String::new(),
             migration_report: None,
             textures: HashMap::new(),
+            key_atlas: None,
+            key_uvs: HashMap::new(),
+            key_signature: Vec::new(),
             settings,
             settings_revision,
+            obs_id,
+            obs_profile,
+            obs_choices: json!({}),
+            media_players: Vec::new(),
             catalog_url: format!(
                 "https://github.com/pauljones0/Deckard/releases/latest/download/native-store-{}.json",
                 std::env::consts::ARCH
@@ -272,14 +342,89 @@ impl App {
             context.request_repaint();
         });
     }
+    fn upload_frame(&mut self, ctx: &egui::Context, frame: &render::Frame, cols: usize) {
+        let signature: Vec<_> = frame.tiles.iter().map(|t| (t.key, t.identity)).collect();
+        if self.key_signature != signature
+            && let Some(first) = frame.tiles.first()
+        {
+            let cols = cols.max(1);
+            let rows = frame.tiles.len().div_ceil(cols);
+            let tw = first.width as usize;
+            let th = first.height as usize;
+            // A gutter keeps linear filtering from sampling neighbouring keys.
+            let aw = cols * (tw + 2);
+            let ah = rows * (th + 2);
+            let mut atlas = egui::ColorImage::filled([aw, ah], Color32::TRANSPARENT);
+            self.key_uvs.clear();
+            for (index, tile) in frame.tiles.iter().enumerate() {
+                let x = (index % cols) * (tw + 2) + 1;
+                let y = (index / cols) * (th + 2) + 1;
+                for row in 0..th {
+                    let source = &tile.rgb[row * tw * 3..(row + 1) * tw * 3];
+                    for (rgb, pixel) in source
+                        .as_chunks::<3>()
+                        .0
+                        .iter()
+                        .zip(&mut atlas.pixels[(y + row) * aw + x..(y + row) * aw + x + tw])
+                    {
+                        *pixel = Color32::from_rgb(rgb[0], rgb[1], rgb[2]);
+                    }
+                    atlas.pixels[(y + row) * aw + x - 1] = atlas.pixels[(y + row) * aw + x];
+                    atlas.pixels[(y + row) * aw + x + tw] =
+                        atlas.pixels[(y + row) * aw + x + tw - 1];
+                }
+                for col in x - 1..=x + tw {
+                    atlas.pixels[(y - 1) * aw + col] = atlas.pixels[y * aw + col];
+                    atlas.pixels[(y + th) * aw + col] = atlas.pixels[(y + th - 1) * aw + col];
+                }
+                self.key_uvs.insert(
+                    tile.key,
+                    egui::Rect::from_min_max(
+                        egui::pos2(x as f32 / aw as f32, y as f32 / ah as f32),
+                        egui::pos2((x + tw) as f32 / aw as f32, (y + th) as f32 / ah as f32),
+                    ),
+                );
+            }
+            if let Some(texture) = self.key_atlas.as_mut() {
+                texture.set(atlas, egui::TextureOptions::LINEAR);
+            } else {
+                self.key_atlas =
+                    Some(ctx.load_texture("deck-keys", atlas, egui::TextureOptions::LINEAR));
+            }
+            self.key_signature = signature;
+        }
+        if let Some(tile) = &frame.strip
+            && self
+                .textures
+                .get(&tile.key)
+                .is_none_or(|(id, _)| *id != tile.identity)
+        {
+            let image =
+                egui::ColorImage::from_rgb([tile.width as usize, tile.height as usize], &tile.rgb);
+            if let Some((id, texture)) = self.textures.get_mut(&tile.key) {
+                texture.set(image, egui::TextureOptions::LINEAR);
+                *id = tile.identity;
+            } else {
+                self.textures.insert(
+                    tile.key,
+                    (
+                        tile.identity,
+                        ctx.load_texture("deck-strip", image, egui::TextureOptions::LINEAR),
+                    ),
+                );
+            }
+        }
+    }
     fn editor(&mut self, ctx: &egui::Context, ui: &mut egui::Ui) {
-        let (devices, plugins) = {
+        let devices = {
             let engine = self.shared.lock().unwrap();
-            (
-                engine.devices.values().cloned().collect::<Vec<_>>(),
-                engine.plugins.clone(),
-            )
+            if self.definitions_revision != engine.plugin_revision {
+                self.definitions = Arc::new(action_definitions(&engine.plugins));
+                self.definitions_revision = engine.plugin_revision;
+            }
+            engine.devices.values().cloned().collect::<Vec<_>>()
         };
+        let definitions = self.definitions.clone();
         if let Some(device) = devices.iter().find(|d| d.serial == self.serial)
             && self.page != device.page
         {
@@ -312,6 +457,7 @@ impl App {
                         {
                             self.page = device.page.clone();
                             self.textures.clear();
+                            self.key_signature.clear();
                         }
                     }
                 });
@@ -351,9 +497,9 @@ impl App {
             egui::ComboBox::from_id_salt("pages").selected_text(&self.page).show_ui(left,|ui|{for page in pages{if ui.selectable_value(&mut self.page,page.clone(),&page).clicked()&&!self.serial.is_empty(){self.command("change-page",json!({"serial":self.serial,"page":self.page}));}}});
             left.add_space(20.0);
             let device=devices.iter().find(|d|d.serial==self.serial);let kind=device.map(|d|d.kind).unwrap_or(deckard_core::engine::fake_kind("plus").unwrap());let rotation=self.shared.lock().unwrap().docs.settings["devices"][&self.serial]["rotation"].as_u64().unwrap_or(0)as u16;let(rows,cols)=render::layout(kind,rotation);
-            if let Some(frame)=device.and_then(|d|d.frame.as_ref()){for tile in frame.tiles.iter().chain(frame.strip.iter()){if self.textures.get(&tile.key).is_none_or(|(identity,_)|*identity!=tile.identity){let image=egui::ColorImage::from_rgb([tile.width as usize,tile.height as usize],&tile.rgb);if let Some((identity,texture))=self.textures.get_mut(&tile.key){texture.set(image,egui::TextureOptions::LINEAR);*identity=tile.identity;}else{let texture=ctx.load_texture(format!("tile{}",tile.key),image,egui::TextureOptions::LINEAR);self.textures.insert(tile.key,(tile.identity,texture));}}}}
+            if let Some(frame)=device.and_then(|d|d.frame.as_ref()){self.upload_frame(ctx, frame, cols as usize);}
             let size=((left.available_width()-f32::from(cols)*8.0)/f32::from(cols)).clamp(16.0,100.0);
-            egui::Grid::new("key-grid").spacing([8.0,8.0]).show(left,|ui|{for y in 0..rows{for x in 0..cols{let input=format!("{x}x{y}");let physical=(0..kind.key_count()).find(|p|render::logical_input(kind,*p,rotation)==input).unwrap_or(0);let selected=self.family=="keys"&&self.input==input;let clicked=if let Some((_,texture))=self.textures.get(&physical){ui.add(egui::Button::image(egui::Image::new((texture.id(),Vec2::splat(size)))).selected(selected)).clicked()}else{ui.add_sized([size,size],egui::Button::new(&input).selected(selected)).clicked()};
+            egui::Grid::new("key-grid").spacing([8.0,8.0]).show(left,|ui|{for y in 0..rows{for x in 0..cols{let input=format!("{x}x{y}");let physical=(0..kind.key_count()).find(|p|render::logical_input(kind,*p,rotation)==input).unwrap_or(0);let selected=self.family=="keys"&&self.input==input;let clicked=if let Some((texture, uv))=self.key_atlas.as_ref().zip(self.key_uvs.get(&physical)){ui.add(egui::Button::image(egui::Image::new((texture.id(),Vec2::splat(size))).uv(*uv)).selected(selected)).clicked()}else{ui.add_sized([size,size],egui::Button::new(&input).selected(selected)).clicked()};
 if clicked{self.family="keys".into();self.input=input;self.state=0;}}ui.end_row();}});
             if let Some((_,texture))=self.textures.get(&255){left.add(egui::Image::new((texture.id(),Vec2::new(left.available_width(),70.0))));}
             left.horizontal_wrapped(|ui|{for i in 0..kind.encoder_count(){if ui.selectable_label(self.family=="dials"&&self.input==i.to_string(),format!("Dial {}",i+1)).clicked(){self.family="dials".into();self.input=i.to_string();self.state=0;}}if kind.lcd_strip_size().is_some()&&kind.encoder_count()>0&&ui.button("Touchscreen gestures").clicked(){self.family="touchscreens".into();self.input="0".into();self.state=0;}
@@ -361,8 +507,8 @@ if format!("{kind:?}")=="Neo"{if ui.button("Infobar").clicked(){self.family="inf
             left.add_space(12.0);
             if left.button("Test selected input").clicked(){let _=self.events.try_send(InputEvent{serial:self.serial.clone(),family:self.family.clone(),input:self.input.clone(),event:"press".into(),value:1});let _=self.events.try_send(InputEvent{serial:self.serial.clone(),family:self.family.clone(),input:self.input.clone(),event:"release".into(),value:0});}
             if device.is_none(){left.label("Connect a Stream Deck, or start with --fake-deck-model plus to preview without hardware.");}
-            let page=self.shared.lock().unwrap().docs.pages.get(&self.page).cloned().unwrap_or_default();
             left.collapsing("Wallpaper",|ui| {
+                let page=self.shared.lock().unwrap().docs.pages.get(&self.page).cloned().unwrap_or_default();
                 let id = egui::Id::new(("wallpaper-path", &self.page));
                 let current = page["background"]["media-path"].as_str().unwrap_or("");
                 let mut path = ctx.data_mut(|d| d.get_temp::<String>(id)).unwrap_or_else(|| current.into());
@@ -379,9 +525,11 @@ if format!("{kind:?}")=="Neo"{if ui.button("Infobar").clicked(){self.family="inf
             right.horizontal(|ui|{ui.label("State");ui.add(egui::DragValue::new(&mut self.state).range(0..=127));
 if ui.button("Add state").clicked(){self.command("add-state",json!({"page":self.page,"family":self.family,"input":self.input}));}
 if ui.button("Remove state").clicked(){self.command("remove-state",json!({"page":self.page,"family":self.family,"input":self.input,"state":self.state}));self.selected.clear();}});
-            if !self.serial.is_empty(){right.checkbox(&mut self.sticky,"Edit sticky input across all pages");let config=self.shared.lock().unwrap().config(&self.serial);
-if let Some(config)=config{let effective=render::effective_input(&config,&self.family,&self.input);
-if !self.sticky&&effective!=&config.page[&self.family][&self.input]{right.colored_label(Color32::YELLOW,"This input is controlled by sticky settings. Enable the sticky editor to change it.");}}}
+            if !self.serial.is_empty(){right.checkbox(&mut self.sticky,"Edit sticky input across all pages");
+let engine = self.shared.lock().unwrap();
+let page = engine.docs.pages.get(&self.page).unwrap_or(&Value::Null);
+if !self.sticky && !std::ptr::eq(render::effective_input_from(page, engine.docs.sticky_ref(&self.serial), &self.family, &self.input), &page[&self.family][&self.input]) {
+right.colored_label(Color32::YELLOW,"This input is controlled by sticky settings. Enable the sticky editor to change it.");}}
             self.select();let mut changed=false;
             for(position,title)in[("top","Top label"),("center","Center label"),("bottom","Bottom label")]{let mut value=self.draft["labels"][position]["text"].as_str().unwrap_or("").to_owned();right.horizontal(|ui|{ui.label(title);
 if ui.text_edit_singleline(&mut value).changed(){set_nested(&mut self.draft,&["labels",position,"text"],json!(value));changed=true;}});}
@@ -392,12 +540,12 @@ if right.text_edit_singleline(&mut path).changed(){set_nested(&mut self.draft,&[
             let mut color=render::color(&self.draft["background"]["color"],[0,0,0,255]);
 if right.color_edit_button_srgba_unmultiplied(&mut color).changed(){set_nested(&mut self.draft,&["background","color"],json!(color));changed=true;}
             right.separator();right.heading("Actions");
-            let mut actions=self.draft["actions"].as_array().cloned().unwrap_or_default();let definitions=action_definitions(&plugins);
+            let mut actions=self.draft["actions"].as_array().cloned().unwrap_or_default();
             let mut remove=None;let mut movement=None;
             for(index,action)in actions.iter_mut().enumerate(){
                 let group=right.group(|ui|{
                     ui.dnd_drag_source(egui::Id::new(("drag-action",&self.selected,index)),index,|ui|{ui.label("↕ Drag to reorder");});
-                    changed|=edit_action(ui,action,&definitions,&self.selected,index);
+                    changed|=edit_action(ui,action,&definitions,&self.selected,index,&self.obs_choices,&self.media_players);
                     ui.horizontal(|ui|{
                         if ui.button("Move up").clicked()&&index>0{movement=Some((index,index-1));}
                         if ui.button("Move down").clicked(){movement=Some((index,index+1));}
@@ -613,9 +761,62 @@ if ui.button("Apply state JSON").clicked(){match serde_json::from_str(&self.raw)
             ));
         }
     }
+    fn integrations(&mut self, ui: &mut egui::Ui) {
+        ui.collapsing("OBS connections",|ui| {
+            let settings=self.shared.lock().unwrap().docs.settings.clone();
+            egui::ComboBox::from_id_salt("obs-profile-picker").selected_text(&self.obs_id).show_ui(ui,|ui| {
+                if let Some(profiles)=settings["obs"]["connections"].as_object(){for (id,profile) in profiles {
+                    if ui.selectable_label(self.obs_id==*id,profile["name"].as_str().unwrap_or(id)).clicked(){self.obs_id=id.clone();self.obs_profile=profile.clone();self.obs_choices=json!({});}
+                }}
+            });
+            ui.horizontal(|ui|{ui.label("Profile ID");ui.text_edit_singleline(&mut self.obs_id);});
+            for (key,label) in [("name","Name"),("host","Host"),("password","Password")] {
+                let mut value=self.obs_profile[key].as_str().or_else(||if key=="host"{self.obs_profile["ip"].as_str()}else{None}).unwrap_or("").to_owned();
+                ui.horizontal(|ui| {ui.label(label);if ui.add(egui::TextEdit::singleline(&mut value).password(key=="password")).changed(){self.obs_profile[key]=json!(value);}});
+            }
+            let mut port=self.obs_profile["port"].as_u64().unwrap_or(4455);ui.horizontal(|ui|{ui.label("Port");if ui.add(egui::DragValue::new(&mut port).range(1..=65535)).changed(){self.obs_profile["port"]=json!(port);}});
+            let mut tls=self.obs_profile["tls"].as_bool().unwrap_or(false);if ui.checkbox(&mut tls,"TLS (wss)").changed(){self.obs_profile["tls"]=json!(tls);}
+            ui.horizontal(|ui| {
+                if ui.button("New profile").clicked(){self.obs_id=format!("profile-{}",std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos());self.obs_profile=json!({"name":"New profile","host":"localhost","port":4455,"password":"","tls":false});}
+                if ui.button("Save profile").clicked(){if self.obs_id.is_empty(){self.notice="Enter a profile ID".into();}else{let mut next=settings.clone();set_nested(&mut next,&["obs","connections",&self.obs_id],self.obs_profile.clone());self.command("put-settings",next);self.sync_settings();}}
+                if ui.button("Make default").clicked(){let mut next=settings.clone();set_nested(&mut next,&["obs","default_connection"],json!(self.obs_id));self.command("put-settings",next);self.sync_settings();}
+                if ui.button("Delete profile").clicked(){let mut next=settings.clone();if let Some(profiles)=next["obs"]["connections"].as_object_mut(){profiles.remove(&self.obs_id);}self.command("put-settings",next);self.sync_settings();self.obs_choices=json!({});}
+            });
+            ui.horizontal(|ui| {
+                if ui.add_enabled(!self.busy,egui::Button::new("Test connection")).clicked(){let profile=self.obs_profile.clone();self.background_task(move||{let mut client=deckard_core::obs::connect(&profile,0)?;let version=client.query("GetVersion",json!({}))?;Ok(Task::Message(format!("Connected to OBS {}",version["obsVersion"].as_str().unwrap_or(""))))});}
+                if ui.add_enabled(!self.busy,egui::Button::new("Refresh OBS choices")).clicked(){let profile=self.obs_profile.clone();let id=self.obs_id.clone();self.background_task(move||{let mut client=deckard_core::obs::connect(&profile,0)?;let mut choices=json!({"connection":id});for (key,request) in [("scenes","GetSceneList"),("inputs","GetInputList"),("collections","GetSceneCollectionList")] {choices[key]=client.query(request,json!({}))?;}let scenes=choices["scenes"]["scenes"].as_array().cloned().unwrap_or_default();for scene in scenes {if let Some(name)=scene["sceneName"].as_str(){if let Ok(items)=client.query("GetSceneItemList",json!({"sceneName":name})){choices["items"][name]=items;}
+if let Ok(filters)=client.query("GetSourceFilterList",json!({"sourceName":name})){choices["filters"][name]=filters;}}}Ok(Task::Choices(choices))});}
+            });
+        });
+        ui.collapsing("Media players", |ui| {
+            if ui
+                .add_enabled(!self.busy, egui::Button::new("Refresh running players"))
+                .clicked()
+            {
+                self.background_task(|| {
+                    Ok(Task::Players(
+                        deckard_core::mpris::snapshot()?
+                            .into_iter()
+                            .map(|p| p.identity)
+                            .collect(),
+                    ))
+                });
+            }
+            for player in &self.media_players {
+                ui.label(player);
+            }
+            ui.label("Leave player selection empty to control all matching players.");
+        });
+    }
+    fn sync_settings(&mut self) {
+        let e = self.shared.lock().unwrap();
+        self.settings = serde_json::to_string_pretty(&e.docs.settings).unwrap_or_default();
+        self.settings_revision = e.docs.revision;
+    }
     fn settings(&mut self, ui: &mut egui::Ui) {
         ui.heading("Settings");
-        ui.label("Restore supported actions from old OS and Media plugin pages. Originals are backed up before conversion.");
+        self.integrations(ui);
+        ui.label("Migrate actions from OS, Deck, Media, OBS and VolumeMixer pages. Originals are backed up before conversion.");
         ui.horizontal(|ui| {
             for (label, method) in [
                 ("Inspect old plugin actions", "inspect-legacy-actions"),
@@ -655,7 +856,7 @@ if ui.button("Apply state JSON").clicked(){match serde_json::from_str(&self.raw)
             ui.label(format!(
                 "{converted} supported actions; {remaining} actions still need a replacement."
             ));
-            ui.label("Media conversions restore playback controls. Plugin-generated artwork and live labels require a separate native implementation.");
+            ui.label("All 56 actions from the five recommended upstream plugins have Rust implementations, including live displays and timers.");
             for document in documents {
                 if let Some(items) = document["remaining"].as_array() {
                     for item in items {
@@ -880,6 +1081,14 @@ impl eframe::App for App {
         while let Ok(task) = self.receive.try_recv() {
             self.busy = false;
             match task {
+                Task::Choices(choices) => {
+                    self.obs_choices = choices;
+                    self.notice = "OBS choices refreshed".into();
+                }
+                Task::Players(players) => {
+                    self.media_players = players;
+                    self.notice = "Media players refreshed".into();
+                }
                 Task::Catalog(entries) => {
                     self.catalog = entries;
                     self.notice = "Catalog loaded".into()
@@ -1140,9 +1349,29 @@ fn action_definitions(plugins: &[plugin::Installed]) -> Vec<(String, String, Vec
             },
         ],
     ));
+    result.extend(
+        deckard_core::builtins::definitions()
+            .into_iter()
+            .map(|a| (format!("native::{}", a.id), a.name, a.fields)),
+    );
     result
 }
 fn has_privileged_action(v: &Value) -> bool {
+    if v["id"].as_str().is_some_and(|id| {
+        matches!(
+            id,
+            "native::OSPlugin-RunCommand"
+                | "native::OSPlugin-EasyCommand"
+                | "native::OSPlugin-Launch"
+                | "native::OSPlugin-Hotkey"
+                | "native::OSPlugin-EasyHotkey"
+                | "native::OSPlugin-WriteText"
+                | "native::OSPlugin-Click"
+                | "native::OSPlugin-MoveXY"
+        )
+    }) {
+        return true;
+    }
     if v["id"].as_str().is_some_and(|id| {
         [
             "native::command",
@@ -1239,6 +1468,8 @@ fn edit_action(
     definitions: &[(String, String, Vec<plugin::Field>)],
     selected: &str,
     index: usize,
+    choices: &Value,
+    players: &[String],
 ) -> bool {
     let mut changed = false;
     let id = action["id"].as_str().unwrap_or("").to_owned();
@@ -1260,7 +1491,7 @@ fn edit_action(
                     for field in fields {
                         settings[&field.key] = field.default.clone();
                     }
-                    *action = json!({"id":def_id,"event":"press","settings":settings});
+                    *action = json!({"id":def_id,"event":if def_id.contains("Plugin-") || def_id.contains("VolumeMixer-"){"auto"}else{"press"},"settings":settings});
                     changed = true;
                 }
             }
@@ -1270,6 +1501,8 @@ fn edit_action(
         .selected_text(&event)
         .show_ui(ui, |ui| {
             for choice in [
+                "auto",
+                "lifecycle",
                 "press",
                 "release",
                 "long-press",
@@ -1296,6 +1529,83 @@ fn edit_action(
         for field in fields {
             ui.label(&field.label);
             let current = action["settings"][&field.key].clone();
+            let mut options = Vec::<String>::new();
+            match field.key.as_str() {
+                "player_name" | "player" => options.extend(players.iter().cloned()),
+                "scene" => {
+                    if let Some(scenes) = choices["scenes"]["scenes"].as_array() {
+                        options.extend(
+                            scenes
+                                .iter()
+                                .filter_map(|s| s["sceneName"].as_str().map(str::to_owned)),
+                        );
+                    }
+                }
+                "input" => {
+                    if let Some(inputs) = choices["inputs"]["inputs"].as_array() {
+                        options.extend(
+                            inputs
+                                .iter()
+                                .filter_map(|s| s["inputName"].as_str().map(str::to_owned)),
+                        );
+                    }
+                }
+                "scene_collection" => {
+                    if let Some(items) = choices["collections"]["sceneCollections"].as_array() {
+                        options.extend(
+                            items.iter().filter_map(|s| {
+                                s["sceneCollectionName"].as_str().map(str::to_owned)
+                            }),
+                        );
+                    }
+                }
+                "item" => {
+                    let scene = action["settings"]["scene"].as_str().unwrap_or("");
+                    if let Some(items) = choices["items"][scene]["sceneItems"].as_array() {
+                        options.extend(
+                            items
+                                .iter()
+                                .filter_map(|s| s["sourceName"].as_str().map(str::to_owned)),
+                        );
+                    }
+                }
+                "filter" => {
+                    let scene = action["settings"]["scene"].as_str().unwrap_or("");
+                    if let Some(items) = choices["filters"][scene]["filters"].as_array() {
+                        options.extend(
+                            items
+                                .iter()
+                                .filter_map(|s| s["filterName"].as_str().map(str::to_owned)),
+                        );
+                    }
+                }
+                _ => {}
+            }
+            if !options.is_empty() {
+                egui::ComboBox::from_id_salt(("integration-choice", selected, index, &field.key))
+                    .selected_text("Choose available…")
+                    .show_ui(ui, |ui| {
+                        for option in options {
+                            if ui.selectable_label(current == option, &option).clicked() {
+                                set_nested(action, &["settings", &field.key], json!(option));
+                                changed = true;
+                            }
+                        }
+                    });
+            }
+            if (field.key == "app_path"
+                || field.key == "idle_icon"
+                || field.key.starts_with("custom_icon_"))
+                && ui.button("Choose file…").clicked()
+                && let Some(path) = rfd::FileDialog::new().pick_file()
+            {
+                set_nested(
+                    action,
+                    &["settings", &field.key],
+                    json!(path.to_string_lossy()),
+                );
+                changed = true;
+            }
             match field.kind.as_str() {
                 "bool" => {
                     let mut value = current.as_bool().unwrap_or(false);
@@ -1317,7 +1627,7 @@ fn edit_action(
                         .ctx()
                         .data_mut(|d| d.get_temp::<String>(key))
                         .unwrap_or_else(|| {
-                            if current.is_array() {
+                            if current.is_array() || current.is_object() {
                                 current.to_string()
                             } else {
                                 "[]".into()
@@ -1325,12 +1635,12 @@ fn edit_action(
                         });
                     if ui.text_edit_singleline(&mut text).changed() {
                         match serde_json::from_str::<Value>(&text) {
-                            Ok(parsed) if parsed.is_array() => {
+                            Ok(parsed) if parsed.is_array() || parsed.is_object() => {
                                 set_nested(action, &["settings", &field.key], parsed);
                                 changed = true;
                             }
                             _ => {
-                                ui.colored_label(Color32::YELLOW,"Enter a JSON array, for example [\"playerctl\", \"play-pause\"].");
+                                ui.colored_label(Color32::YELLOW, "Enter a JSON array or object.");
                             }
                         }
                     }
@@ -1347,4 +1657,20 @@ fn edit_action(
         }
     }
     changed
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn ai_review_gates_native_aliases_inside_proposed_pages() {
+        let page = json!({"keys":{"0x0":{"states":{"0":{"actions":[{"id":"native::OSPlugin-RunCommand","settings":{"command":"touch /tmp/should-require-review"}}]}}}}});
+        assert!(has_privileged_action(&page));
+        assert!(has_privileged_action(
+            &json!({"id":"native::OSPlugin-Hotkey","settings":{"keys":[[29,1],[29,0]]}})
+        ));
+        assert!(!has_privileged_action(
+            &json!({"id":"native::MediaPlugin-Info","settings":{"player_name":"Music"}})
+        ));
+    }
 }

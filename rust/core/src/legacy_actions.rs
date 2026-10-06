@@ -3,7 +3,7 @@ use anyhow::{Context, Result};
 use serde_json::{Value, json};
 use std::{fs, path::Path};
 
-fn replacement(action: &Value) -> std::result::Result<Vec<Value>, &'static str> {
+pub(crate) fn replacement(action: &Value) -> std::result::Result<Vec<Value>, &'static str> {
     let id = action["id"].as_str().unwrap_or("");
     let mut settings = action["settings"].as_object().cloned().unwrap_or_default();
     let target;
@@ -18,13 +18,6 @@ fn replacement(action: &Value) -> std::result::Result<Vec<Value>, &'static str> 
             target = "native::launch";
         }
         "com_core447_OSPlugin::Hotkey" => {
-            if settings.get("repeat").and_then(Value::as_bool) == Some(true)
-                || settings.get("hold_until_release").and_then(Value::as_bool) == Some(true)
-            {
-                return Err(
-                    "repeating/held hotkeys require lifecycle support; one-shot sequences are supported",
-                );
-            }
             crate::uinput::sequence(&json!(settings)).map_err(|_| "invalid evdev key sequence")?;
             settings.insert("operation".into(), json!("keys"));
             target = "native::input";
@@ -34,27 +27,13 @@ fn replacement(action: &Value) -> std::result::Result<Vec<Value>, &'static str> 
             target = "native::input";
         }
         "com_core447_OSPlugin::MoveXY" => {
-            settings.insert("operation".into(), json!("move"));
+            settings.insert("operation".into(), json!("position"));
             target = "native::input";
         }
         "com_core447_OSPlugin::Delay" => {
-            let delay = settings.get("delay").and_then(Value::as_f64).unwrap_or(0.0);
-            if !(0.0..=5.0).contains(&delay) {
-                return Err(
-                    "delays longer than five seconds require asynchronous action scheduling",
-                );
-            }
             target = "native::delay";
         }
         id if id.starts_with("com_core447_DeckPlugin::") => {
-            if settings
-                .get("return_timeout")
-                .and_then(Value::as_f64)
-                .unwrap_or(0.0)
-                > 0.0
-            {
-                return Err("timed page/state returns need a separate replacement");
-            }
             target = match id.split_once("::").unwrap().1 {
                 "ChangePage" => {
                     let path = settings
@@ -105,6 +84,7 @@ fn replacement(action: &Value) -> std::result::Result<Vec<Value>, &'static str> 
             let suffix = id.split_once("::").unwrap().1;
             let mut data = json!({});
             let operation = match suffix {
+                "OBSStats" => "GetStats",
                 "ToggleStream" | "ToggleRecord" | "RecPlayPause" | "ToggleReplayBuffer"
                 | "SaveReplayBuffer" | "ToggleStudioMode" | "TriggerTransition" => suffix,
                 "ToggleVirtualCamera" => "ToggleVirtualCam",
@@ -154,6 +134,7 @@ fn replacement(action: &Value) -> std::result::Result<Vec<Value>, &'static str> 
                         .unwrap_or(json!("default"));
                     settings.insert("connection".into(), connection);
                     settings.insert("operation".into(), json!("ToggleInputMute"));
+                    settings.insert("presentation".into(), json!(suffix));
                     settings.insert("data".into(), data);
                     let mut result = action.clone();
                     result["id"] = json!("native::obs");
@@ -162,10 +143,11 @@ fn replacement(action: &Value) -> std::result::Result<Vec<Value>, &'static str> 
                     let mut cw = result.clone();
                     cw["event"] = json!("turn-cw");
                     cw["settings"]["operation"] = json!("AdjustInputVolume");
-                    cw["settings"]["data"]["increment"] = json!(0.05);
+                    cw["settings"]["data"]["increment"] = json!(5.0);
+                    cw["settings"]["data"]["volume_curve"] = json!("legacy");
                     let mut ccw = cw.clone();
                     ccw["event"] = json!("turn-ccw");
-                    ccw["settings"]["data"]["increment"] = json!(-0.05);
+                    ccw["settings"]["data"]["increment"] = json!(-5.0);
                     return Ok(vec![result, cw, ccw]);
                 }
                 "ToggleSceneItemEnabled" | "SetSceneItemEnabled" => {
@@ -206,6 +188,7 @@ fn replacement(action: &Value) -> std::result::Result<Vec<Value>, &'static str> 
                 .unwrap_or(json!("default"));
             settings.insert("connection".into(), connection);
             settings.insert("operation".into(), json!(operation));
+            settings.insert("presentation".into(), json!(suffix));
             settings.insert("data".into(), data);
             target = "native::obs";
         }
@@ -228,7 +211,7 @@ fn replacement(action: &Value) -> std::result::Result<Vec<Value>, &'static str> 
                 let mut result = action.clone();
                 result["id"] = json!(target);
                 result["settings"] = json!(settings);
-                result["event"] = json!("press");
+                result["event"] = json!("release");
                 let mut cw = result.clone();
                 cw["event"] = json!("turn-cw");
                 cw["settings"]["operation"] = json!("volume-up");
@@ -237,6 +220,13 @@ fn replacement(action: &Value) -> std::result::Result<Vec<Value>, &'static str> 
                 ccw["settings"]["operation"] = json!("volume-down");
                 return Ok(vec![result, cw, ccw]);
             }
+        }
+        id if ["CPU", "RAM", "CPUTemp", "CPU_Graph", "RAM_Graph", "Ping"]
+            .iter()
+            .any(|suffix| id == format!("com_core447_OSPlugin::{suffix}")) =>
+        {
+            settings.insert("metric".into(), json!(id.split_once("::").unwrap().1));
+            target = "native::system";
         }
         "com_core447_OSPlugin::OpenInBrowser" => {
             let url = settings
@@ -248,11 +238,6 @@ fn replacement(action: &Value) -> std::result::Result<Vec<Value>, &'static str> 
             } else {
                 format!("https://{url}")
             };
-            if !(url.starts_with("https://") || url.starts_with("http://"))
-                || settings.get("new_window").and_then(Value::as_bool) == Some(true)
-            {
-                return Err("custom URL schemes/new-window behavior need a separate replacement");
-            }
             settings.insert("url".into(), json!(url));
             target = "native::url";
         }
@@ -287,18 +272,6 @@ fn replacement(action: &Value) -> std::result::Result<Vec<Value>, &'static str> 
             if !settings.get("command").is_some_and(Value::is_string) {
                 return Err("command is missing");
             }
-            if settings
-                .get("auto_run")
-                .and_then(Value::as_f64)
-                .unwrap_or(0.0)
-                != 0.0
-                || settings.get("display_output").and_then(Value::as_bool) == Some(true)
-                || settings.get("interactive_shell").and_then(Value::as_bool) == Some(true)
-            {
-                return Err(
-                    "periodic commands, output labels and interactive shells need a separate replacement",
-                );
-            }
             settings.entry("detached").or_insert(json!(true));
             target = "native::shell";
         }
@@ -311,6 +284,8 @@ fn replacement(action: &Value) -> std::result::Result<Vec<Value>, &'static str> 
                 "Next" => "Next",
                 "Previous" => "Previous",
                 "MediaDial" => "PlayPause",
+                "Info" => "Info",
+                "Thumbnail" => "Thumbnail",
                 _ => {
                     return Err(
                         "artwork, metadata labels and custom media UI need a native plugin",
@@ -324,6 +299,7 @@ fn replacement(action: &Value) -> std::result::Result<Vec<Value>, &'static str> 
                 .to_owned();
             settings.insert("player".into(), json!(player));
             settings.insert("method".into(), json!(method));
+            settings.insert("presentation".into(), json!(suffix));
             let mut result = action.clone();
             result["id"] = json!("native::media");
             result["settings"] = json!(settings);
@@ -344,8 +320,19 @@ fn replacement(action: &Value) -> std::result::Result<Vec<Value>, &'static str> 
     let mut result = action.clone();
     result["id"] = json!(target);
     result["settings"] = json!(settings);
-    result["event"] = json!("press");
+    result["event"] = json!(if target == "native::input"
+        && (settings_lifecycle(&result["settings"]))
+    {
+        "lifecycle"
+    } else {
+        "press"
+    });
     Ok(vec![result])
+}
+
+fn settings_lifecycle(settings: &Value) -> bool {
+    settings["repeat"].as_bool().unwrap_or(false)
+        || settings["hold_until_release"].as_bool().unwrap_or(false)
 }
 
 pub fn obs_connections(root: &Path) -> Result<Value> {
@@ -383,7 +370,9 @@ pub fn translate(page: &mut Value, document: &str, apply: bool) -> Value {
                     continue;
                 };
                 let mut new = Vec::new();
+                let mut index_map = Vec::new();
                 for (index, action) in actions.iter().enumerate() {
+                    index_map.push(new.len());
                     let id = action["id"].as_str().unwrap_or("");
                     if id.starts_with("native::") || id == "example::hello" {
                         new.push(action.clone());
@@ -407,6 +396,24 @@ pub fn translate(page: &mut Value, document: &str, apply: bool) -> Value {
                 }
                 if apply {
                     *actions = new;
+                    for name in ["image-control-action", "background-control-action"] {
+                        if let Some(index) = value[name]
+                            .as_u64()
+                            .and_then(|index| index_map.get(index as usize))
+                        {
+                            value[name] = json!(index);
+                        }
+                    }
+                    if let Some(owners) = value["label-control-actions"].as_array_mut() {
+                        for owner in owners {
+                            if let Some(index) = owner
+                                .as_u64()
+                                .and_then(|index| index_map.get(index as usize))
+                            {
+                                *owner = json!(index);
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -452,7 +459,7 @@ pub fn migrate_file(path: &Path, root: &Path, apply: bool) -> Result<Value> {
 mod tests {
     use super::*;
     #[test]
-    fn conversion_preserves_unknown_fields_and_reports_complex_actions() {
+    fn conversion_preserves_unknown_fields_and_all_command_modes() {
         let mut page = json!({"unknown":42,"keys":{"0x0":{"states":{"0":{"actions":[
             {"id":"com_core447_OSPlugin::WriteText","settings":{"text":"Hello 🦀","delay":0.03,"unknown":17},"sticky":true},
             {"id":"com_core447_OSPlugin::RunCommand","settings":{"command":"date","auto_run":1}},
@@ -461,8 +468,8 @@ mod tests {
         let original = page.clone();
         let preview = translate(&mut page, "Test", false);
         assert_eq!(page, original);
-        assert_eq!(preview["converted"].as_array().unwrap().len(), 2);
-        assert_eq!(preview["remaining"].as_array().unwrap().len(), 2);
+        assert_eq!(preview["converted"].as_array().unwrap().len(), 3);
+        assert_eq!(preview["remaining"].as_array().unwrap().len(), 1);
         translate(&mut page, "Test", true);
         assert_eq!(page["unknown"], 42);
         let text = &page["keys"]["0x0"]["states"]["0"]["actions"][0];
@@ -471,7 +478,7 @@ mod tests {
         assert_eq!(text["sticky"], true);
         assert_eq!(
             page["keys"]["0x0"]["states"]["0"]["actions"][1],
-            original["keys"]["0x0"]["states"]["0"]["actions"][1]
+            json!({"id":"native::shell","event":"press","settings":{"command":"date","auto_run":1,"detached":true}})
         );
         let dial = page["dials"]["0"]["states"]["0"]["actions"]
             .as_array()
@@ -484,6 +491,27 @@ mod tests {
                 .as_array()
                 .unwrap()
                 .is_empty()
+        );
+    }
+    #[test]
+    fn dial_expansion_remaps_visual_owners_and_retains_all_modes() {
+        let mut page = json!({"keys":{"0x0":{"states":{"0":{"image-control-action":1,"label-control-actions":[0,1,null],"background-control-action":1,"actions":[
+            {"id":"com_core447_MediaPlugin::MediaDial","settings":{}},
+            {"id":"com_core447_OSPlugin::RunCommand","settings":{"command":"printf hello","auto_run":1,"display_output":true,"interactive_shell":true,"keep_auto_run_in_background":true,"detached":false}}
+        ]}}}},"dials":{"0":{"states":{"0":{"actions":[{"id":"com_core447_OSPlugin::Hotkey","settings":{"keys":[[29,1],[30,1],[30,0],[29,0]],"repeat":true,"hold_until_release":false}}]}}}}});
+        let report = translate(&mut page, "fixture", true);
+        assert!(report["remaining"].as_array().unwrap().is_empty());
+        let state = &page["keys"]["0x0"]["states"]["0"];
+        assert_eq!(state["image-control-action"], 3);
+        assert_eq!(state["label-control-actions"], json!([0, 3, null]));
+        assert_eq!(state["background-control-action"], 3);
+        assert_eq!(
+            state["actions"][3]["settings"]["keep_auto_run_in_background"],
+            true
+        );
+        assert_eq!(
+            page["dials"]["0"]["states"]["0"]["actions"][0]["event"],
+            "lifecycle"
         );
     }
     #[test]

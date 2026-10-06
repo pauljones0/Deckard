@@ -1,6 +1,6 @@
-# Common Python plugins → native actions
+# Python plugins → native Rust actions
 
-Deckard 0.4.1 implements the common controls from the five plugins recommended by **both** StreamController and nazbert/Deckard. These replacements are built into Rust; no Python plugin installation or interpreter is required. The old plugin's Python classes and GTK settings panels cannot run against the executable plugin API. Migration translates supported saved actions/settings to native controls, rather than loading that code.
+Deckard 0.5.0 implements all 56 registered actions from the five plugins recommended by **both** StreamController and nazbert/Deckard. These replacements are built into Rust; no Python plugin installation or interpreter is required. The old plugin's Python classes and GTK settings panels cannot run against the executable plugin API. Migration translates saved actions/settings into native controls. Readouts, artwork, background jobs and held/repeating inputs run in Rust. Arbitrary plugins outside the five audited integrations still need an executable native replacement.
 
 ## Migrate saved pages
 
@@ -21,23 +21,29 @@ OBS connection profiles import into `settings/native.json` under `obs.connection
 
 ## Coverage
 
-| Upstream plugin | Native replacements included | What remains outside this replacement |
-| --- | --- | --- |
-| **OSPlugin** | Launch applications; one-shot evdev hotkeys; mouse click and relative movement; HTTP(S) links; text; easy hotkeys; user-configured shell commands; short delays. | Held/repeating hotkeys, automatic/periodic command execution, command-output displays, interactive terminal modes, non-HTTP links and separate browser-window modes. |
-| **DeckPlugin** | Change/previous page, sleep, set/adjust brightness, change input state including another input. | Timed page/state returns and the original live status/icon decorations. |
-| **MediaPlugin** | MPRIS Play, Pause, PlayPause, Stop, Next and Previous. Media dial: press to play/pause, turn to change track. Select a player by identity or D-Bus name; an empty selection controls all available players. | Album artwork, track metadata and continuously updated playback-state icons. Player-specific behavior depends on that player's MPRIS implementation. |
-| **OBSPlugin** | OBS WebSocket **v5** authentication and multiple connection profiles; stream, recording/pause, replay buffer/save, virtual camera, studio mode, transition, scenes/collections, input mute/volume, scene-item visibility and filters. | WebSocket v4, live status subscriptions/icons, elapsed recording counters and other actions not listed in the migration report. |
-| **VolumeMixer** | Open/exit, previous/next streams, per-application mute and volume, dial control and refreshed stream names/volume labels. The generated page follows device layout and rotation. | Application artwork and the original plugin's exact page styling. Requires PulseAudio or PipeWire's PulseAudio-compatible server. |
+| Upstream plugin | Actions | Native implementations |
+| --- | ---: | --- |
+| **OSPlugin** | 16 | `RunCommand`, `EasyCommand`, `OpenInBrowser`, `Hotkey`, `EasyHotkey`, `Delay`, `Launch`, `CPU_Graph`, `RAM_Graph`, `MoveXY`, `Click`, `CPU`, `RAM`, `WriteText`, `CPUTemp`, `Ping` |
+| **DeckPlugin** | 6 | `ChangePage`, `GoToSleep`, `GoToPreviousPage`, `ChangeBrightness`, `AdjustBrightness`, `ChangeState` |
+| **MediaPlugin** | 8 | `Play`, `Pause`, `PlayPause`, `Next`, `Previous`, `Info`, `Thumbnail`, `MediaDial` |
+| **OBSPlugin** | 18 | `ToggleStream`, `ToggleRecord`, `RecPlayPause`, `ToggleReplayBuffer`, `SaveReplayBuffer`, `ToggleVirtualCamera`, `ToggleStudioMode`, `TriggerTransition`, `ToggleInputMute`, `SetInputMute`, `InputDial`, `SwitchScene`, `ToggleSceneItemEnabled`, `SetSceneItemEnabled`, `SwitchSceneCollection`, `ToggleSceneFilter`, `SetSceneFilter`, `OBSStats` |
+| **VolumeMixer** | 8 | `Open`, `Exit`, `VolumeMute`, `VolumeUp`, `VolumeDown`, `MoveRight`, `MoveLeft`, `Dial` |
 
-Native actions appear in the editor's action chooser. You can also create them on new pages. The volume mixer creates a `Native Mixer SERIAL` page and returns to the page it opened from. Volume is clamped to 0–100%; the step is configurable. Additional native audio actions control the default output and microphone directly.
+All 56 actions appear in the editor with typed settings. Native replacements also preserve the saved per-action label, image and background ownership selectors; explicit user labels and images take priority. Unknown fields are retained in page JSON and exact original backups.
 
-Delays are limited to five seconds. Evdev sequences are limited to 256 events, with a maximum of one second per event and five seconds in total. Migrated shell commands retain intentional shell syntax and default to detached execution; foreground execution has a five-second deadline. OBS requests have bounded frames and connection/read/write timeouts. These bounds prevent a stalled helper or remote service from indefinitely blocking input handling.
+- **OS:** CPU/RAM/temperature readouts, history graphs, ping, absolute pointer positioning, held/repeating evdev hotkeys, configurable delays, `.desktop` application launchers, custom URL schemes and new browser windows. Commands support output labels, interactive shells, intervals, long-hold pause and opt-in background execution.
+- **Deck:** timed page/state returns, cross-input/cross-device targets, manual-navigation cancellation, brightness bounds and live status decorations.
+- **Media:** persistent native MPRIS transport, live playback state, title/artist, artwork, idle images, tiled/grid thumbnails including physical key gaps, dial progress and timestamps. An empty player selection controls all players; the display prefers a playing player.
+- **OBS:** authenticated WebSocket v5 profiles, server events, recording/stream counters, scene/item/filter state, input mute/volume, VU meters with decay, configurable statistics and custom status icons. The original logarithmic dial volume curve is preserved. State queries are shared and cached; invalid selections do not force connection churn. Enable OBS's current built-in WebSocket server (port 4455).
+- **Mixer:** application icons, refreshed names/volumes, muted indicators, dial bars, configurable increments, layout/rotation and return to the previous page. Requires PulseAudio or PipeWire's PulseAudio-compatible server.
+
+Long commands and delays execute outside the input dispatcher. Page changes, disconnects and shutdown cancel their workers; held keys are released. Detached launches and explicitly enabled background commands follow their configured lifecycle. Evdev sequences are bounded to 256 events and a maximum delay of 60 seconds per event. Media downloads, decoded artwork, glyphs, JPEG caches, worker queues and remote IO have explicit bounds.
 
 ## Input and OBS setup
 
-DEB/RPM install the deck and `uinput` rules. Portable builds provide **Settings → Enable USB access**, which also enables native input access. Log out/in if your session has not acquired `/dev/uinput` access. One-shot evdev hotkeys and mouse controls work through Linux uinput. Text/easy hotkeys use bundled `wtype` on Wayland or `xdotool` on X11; Wayland virtual-keyboard support depends on your compositor.
+DEB/RPM install the deck and `uinput` rules. Portable builds provide **Settings → Enable USB access**, which also enables native input access. Log out/in if your session has not acquired `/dev/uinput` access. Evdev hotkeys and mouse controls work through Linux uinput. Text/easy hotkeys use bundled `wtype` on Wayland or `xdotool` on X11; Wayland virtual-keyboard support depends on your compositor.
 
-For OBS, enable **Tools → WebSocket Server Settings**. Native profiles can be edited in Deckard's Settings JSON:
+For OBS, enable **Tools → WebSocket Server Settings**. Use **Settings → OBS connection profiles** to add/test a profile and refresh available scenes, inputs, collections, items and filters. Media players also have a refreshable chooser. Advanced profiles can be edited in Settings JSON:
 
 ```json
 {
@@ -63,6 +69,6 @@ Both application onboarding lists recommend these five plugins at the applicatio
 | OBSPlugin | [242afda](https://github.com/StreamController/OBSPlugin/tree/242afda6bec75c568dfe71d2ce47a9a196d5a430) |
 | VolumeMixer | [c5f72f7](https://github.com/StreamController/VolumeMixer/tree/c5f72f7897abccbd6d8811fbe118089902d3c8b8) |
 
-Tests exercise a private MPRIS D-Bus service and an authenticated local OBS WebSocket server. `benchmarks/validate_common_actions.py` verifies all five migration schemas, exact backups, sticky actions, private imported OBS credentials, unknown-action retention and repeated migration. Against a private PulseAudio server it exercises actual Rust mixer open/dial/mute/label-refresh/return behavior, brightness and a detached command. Tests avoid injecting input into the user's active desktop. Physical controller, real OBS UI and compositor-specific input testing remain separate hardware/session checks.
+Tests exercise live metadata changes on a private MPRIS D-Bus service, authenticated local OBS WebSocket requests, cached readouts/event invalidation and rejected selections. They verify held/repeating key release, cancellation of long commands/delays, timed page/state returns, periodic command output, ownership selectors, thumbnail geometry and bounded glyph memory. `benchmarks/validate_common_actions.py` verifies all five migration schemas, exact backups, sticky actions, private imported OBS credentials, unknown-action retention and repeated migration. Against a private PulseAudio server it exercises actual Rust mixer open/dial/mute/label-refresh/return behavior, brightness and a detached command. Tests avoid injecting input into the user's active desktop. Physical controller, real OBS UI and compositor-specific input testing remain separate hardware/session checks.
 
 For integrations beyond these built-ins, use the [native executable plugin interface](native-plugins.md). The host owns the UI; native plugins declare settings fields and handle JSON-RPC events.

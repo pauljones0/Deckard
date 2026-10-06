@@ -5,8 +5,8 @@ RUN sed 's/^deb /deb-src /' /etc/apt/sources.list > /etc/apt/sources.list.d/deck
     && apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends \
     build-essential ca-certificates curl git pkg-config libudev-dev \
     cmake nasm libxkbcommon-dev libxkbcommon-x11-0 libwayland-dev libx11-dev libxi-dev \
-    libxrandr-dev libxcursor-dev libxinerama-dev libgl1-mesa-dev libegl1-mesa-dev \
-    patchelf rpm squashfs-tools dpkg-dev zstd python3 ffmpeg xdotool wtype pulseaudio pulseaudio-utils \
+    libxrandr-dev libxcursor-dev libxinerama-dev libgl1-mesa-dev libegl1-mesa-dev libvulkan1 mesa-vulkan-drivers \
+    patchelf rpm squashfs-tools dpkg-dev zstd python3 ffmpeg xdotool wtype pulseaudio pulseaudio-utils iputils-ping \
     xvfb xauth dbus-x11 mesa-utils x11-utils xdg-utils
 
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -o /tmp/rustup.sh \
@@ -32,6 +32,12 @@ RUN mkdir -p /tmp/deckard-ui-smoke/pages \
     && dbus-run-session -- xvfb-run -a -s "-screen 0 1280x900x24" \
     env LIBGL_ALWAYS_SOFTWARE=1 DECKARD_UI_CAPTURE=/work/native-ui.png \
     target/release/deckard --ui-smoke-test --skip-load-hardware-decks --fake-deck-model plus --data /tmp/deckard-ui-smoke
+RUN dbus-run-session -- xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1 \
+    VK_ICD_FILENAMES=/tmp/deckard-no-vulkan-driver.json \
+    target/release/deckard --ui-smoke-test --skip-load-hardware-decks --fake-deck-model plus --data /tmp/deckard-gl-fallback \
+    > /tmp/deckard-gl-fallback.log 2>&1 \
+    && cat /tmp/deckard-gl-fallback.log \
+    && grep -q 'Deckard graphics: OpenGL' /tmp/deckard-gl-fallback.log
 FROM build AS packages
 RUN --mount=type=cache,target=/root/.cargo/registry python3 packaging/linux/build.py --output /artifacts
 CMD ["bash"]

@@ -29,7 +29,7 @@ def copy_application(prefix):
     shutil.copy2(ROOT / "target/release/deckard", prefix / "bin/deckard-bin")
     (prefix / "bin/deckard").write_text('#!/bin/sh\nbundle="$(CDPATH= cd -- "$(dirname -- "$(readlink -f -- "$0")")/.." && pwd)"\nexport PATH="$bundle/bin:$PATH"\nexport LD_LIBRARY_PATH="$bundle/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"\nexec "$bundle/bin/deckard-bin" "$@"\n')
     (prefix / "bin/deckard").chmod(0o755)
-    for program in ("ffmpeg", "xdotool", "wtype", "pactl"):
+    for program in ("ffmpeg", "xdotool", "wtype", "pactl", "ping"):
         shutil.copy2(shutil.which(program), prefix / "bin" / program)
     shutil.copy2(ROOT / "packaging/linux/install-udev.sh", prefix / "bin/install-udev.sh")
     (prefix / "bin/install-udev.sh").chmod(0o755)
@@ -55,7 +55,7 @@ def copy_application(prefix):
 
 
 def copy_libraries(prefix):
-    source_packages = {"ffmpeg", "xdotool", "wtype", "pulseaudio-utils"}
+    source_packages = {"ffmpeg", "xdotool", "wtype", "pulseaudio-utils", "iputils-ping"}
     library = prefix / "lib"
     library.mkdir()
     seeds = list((prefix / "bin").iterdir())
@@ -64,7 +64,7 @@ def copy_libraries(prefix):
     # stay on the host too: older copies prevent newer Mesa drivers from loading.
     triplet = "x86_64-linux-gnu" if ARCH == "x86_64" else "aarch64-linux-gnu"
     system = Path("/usr/lib") / triplet
-    for pattern in ("libxkbcommon.so.*", "libxkbcommon-x11.so.*", "libwayland-client.so.*", "libwayland-cursor.so.*", "libX11.so.*", "libXcursor.so.*", "libXi.so.*", "libXrandr.so.*"):
+    for pattern in ("libxkbcommon.so.*", "libxkbcommon-x11.so.*", "libvulkan.so.*", "libwayland-client.so.*", "libwayland-cursor.so.*", "libX11.so.*", "libXcursor.so.*", "libXi.so.*", "libXrandr.so.*"):
         seeds.extend(system.glob(pattern))
     visited = set()
     excluded = re.compile(r"^(libc\.so|libm\.so|libdl\.so|libpthread\.so|librt\.so|libstdc\+\+\.so|libgcc_s\.so|ld-linux|libGL[EX]|libGL\.so|libEGL|libGLdispatch|libGLES|libgbm|libdrm)")
@@ -105,7 +105,7 @@ def copy_libraries(prefix):
             source_packages.add(package)
             copyright = Path("/usr/share/doc") / package / "copyright"
             if copyright.exists(): shutil.copy2(copyright, licenses / f"{package}-copyright")
-    for name in ("ffmpeg", "xdotool", "wtype", "pactl"):
+    for name in ("ffmpeg", "xdotool", "wtype", "pulseaudio-utils", "iputils-ping"):
         copyright = Path("/usr/share/doc") / name / "copyright"
         if copyright.exists():
             shutil.copy2(copyright, licenses / f"{name}-copyright")

@@ -1,0 +1,1294 @@
+[
+  {
+    "id": "OSPlugin-RunCommand",
+    "name": "OS \u00b7 Run Command",
+    "fields": [
+      {
+        "key": "command",
+        "label": "Command",
+        "kind": "string",
+        "default": ""
+      },
+      {
+        "key": "detached",
+        "label": "Detached",
+        "kind": "bool",
+        "default": true
+      },
+      {
+        "key": "interactive_shell",
+        "label": "Interactive shell",
+        "kind": "bool",
+        "default": false
+      },
+      {
+        "key": "display_output",
+        "label": "Display output",
+        "kind": "bool",
+        "default": false
+      },
+      {
+        "key": "label_position",
+        "label": "Label position",
+        "kind": "string",
+        "default": "center"
+      },
+      {
+        "key": "auto_run",
+        "label": "Auto run",
+        "kind": "number",
+        "default": 0
+      },
+      {
+        "key": "clear_output",
+        "label": "Clear output",
+        "kind": "bool",
+        "default": false
+      },
+      {
+        "key": "keep_auto_run_in_background",
+        "label": "Keep auto run in background",
+        "kind": "bool",
+        "default": false
+      },
+      {
+        "key": "timeout",
+        "label": "Timeout",
+        "kind": "number",
+        "default": 0
+      }
+    ]
+  },
+  {
+    "id": "OSPlugin-EasyCommand",
+    "name": "OS \u00b7 Easy Command",
+    "fields": [
+      {
+        "key": "command",
+        "label": "Command",
+        "kind": "string",
+        "default": ""
+      }
+    ]
+  },
+  {
+    "id": "OSPlugin-OpenInBrowser",
+    "name": "OS \u00b7 Open In Browser",
+    "fields": [
+      {
+        "key": "url",
+        "label": "Url",
+        "kind": "string",
+        "default": ""
+      },
+      {
+        "key": "new_window",
+        "label": "New window",
+        "kind": "bool",
+        "default": false
+      }
+    ]
+  },
+  {
+    "id": "OSPlugin-Hotkey",
+    "name": "OS \u00b7 Hotkey",
+    "fields": [
+      {
+        "key": "keys",
+        "label": "Keys",
+        "kind": "array",
+        "default": []
+      },
+      {
+        "key": "delay",
+        "label": "Delay",
+        "kind": "number",
+        "default": 0.02
+      },
+      {
+        "key": "repeat",
+        "label": "Repeat",
+        "kind": "bool",
+        "default": false
+      },
+      {
+        "key": "hold_until_release",
+        "label": "Hold until release",
+        "kind": "bool",
+        "default": false
+      }
+    ]
+  },
+  {
+    "id": "OSPlugin-EasyHotkey",
+    "name": "OS \u00b7 Easy Hotkey",
+    "fields": [
+      {
+        "key": "hotkey",
+        "label": "Hotkey",
+        "kind": "string",
+        "default": ""
+      },
+      {
+        "key": "delay",
+        "label": "Delay",
+        "kind": "number",
+        "default": 0.02
+      }
+    ]
+  },
+  {
+    "id": "OSPlugin-Delay",
+    "name": "OS \u00b7 Delay",
+    "fields": [
+      {
+        "key": "delay",
+        "label": "Delay",
+        "kind": "number",
+        "default": 0
+      }
+    ]
+  },
+  {
+    "id": "OSPlugin-Launch",
+    "name": "OS \u00b7 Launch",
+    "fields": [
+      {
+        "key": "app_path",
+        "label": "App path",
+        "kind": "string",
+        "default": ""
+      }
+    ]
+  },
+  {
+    "id": "OSPlugin-CPU_Graph",
+    "name": "OS \u00b7 CPU  Graph",
+    "fields": [
+      {
+        "key": "time-period",
+        "label": "Time period",
+        "kind": "number",
+        "default": 15
+      },
+      {
+        "key": "line-width",
+        "label": "Line width",
+        "kind": "number",
+        "default": 5
+      },
+      {
+        "key": "line-color",
+        "label": "Line color",
+        "kind": "array",
+        "default": [
+          255,
+          255,
+          255,
+          255
+        ]
+      },
+      {
+        "key": "fill-color",
+        "label": "Fill color",
+        "kind": "array",
+        "default": [
+          255,
+          255,
+          255,
+          150
+        ]
+      },
+      {
+        "key": "dynamic-scaling",
+        "label": "Dynamic scaling",
+        "kind": "bool",
+        "default": false
+      },
+      {
+        "key": "toggle-dynamic-scaling-on-press",
+        "label": "Toggle dynamic scaling on press",
+        "kind": "bool",
+        "default": false
+      }
+    ]
+  },
+  {
+    "id": "OSPlugin-RAM_Graph",
+    "name": "OS \u00b7 RAM  Graph",
+    "fields": [
+      {
+        "key": "time-period",
+        "label": "Time period",
+        "kind": "number",
+        "default": 15
+      },
+      {
+        "key": "line-width",
+        "label": "Line width",
+        "kind": "number",
+        "default": 5
+      },
+      {
+        "key": "line-color",
+        "label": "Line color",
+        "kind": "array",
+        "default": [
+          255,
+          255,
+          255,
+          255
+        ]
+      },
+      {
+        "key": "fill-color",
+        "label": "Fill color",
+        "kind": "array",
+        "default": [
+          255,
+          255,
+          255,
+          150
+        ]
+      },
+      {
+        "key": "dynamic-scaling",
+        "label": "Dynamic scaling",
+        "kind": "bool",
+        "default": false
+      },
+      {
+        "key": "toggle-dynamic-scaling-on-press",
+        "label": "Toggle dynamic scaling on press",
+        "kind": "bool",
+        "default": false
+      }
+    ]
+  },
+  {
+    "id": "OSPlugin-MoveXY",
+    "name": "OS \u00b7 MoveXY",
+    "fields": [
+      {
+        "key": "x",
+        "label": "X",
+        "kind": "number",
+        "default": 0
+      },
+      {
+        "key": "y",
+        "label": "Y",
+        "kind": "number",
+        "default": 0
+      }
+    ]
+  },
+  {
+    "id": "OSPlugin-Click",
+    "name": "OS \u00b7 Click",
+    "fields": [
+      {
+        "key": "button",
+        "label": "Button",
+        "kind": "string",
+        "default": "left"
+      }
+    ]
+  },
+  {
+    "id": "OSPlugin-CPU",
+    "name": "OS \u00b7 CPU",
+    "fields": []
+  },
+  {
+    "id": "OSPlugin-RAM",
+    "name": "OS \u00b7 RAM",
+    "fields": []
+  },
+  {
+    "id": "OSPlugin-WriteText",
+    "name": "OS \u00b7 Write Text",
+    "fields": [
+      {
+        "key": "text",
+        "label": "Text",
+        "kind": "string",
+        "default": ""
+      },
+      {
+        "key": "delay",
+        "label": "Delay",
+        "kind": "number",
+        "default": 0.01
+      }
+    ]
+  },
+  {
+    "id": "OSPlugin-CPUTemp",
+    "name": "OS \u00b7 CPU Temp",
+    "fields": [
+      {
+        "key": "unit",
+        "label": "Unit",
+        "kind": "string",
+        "default": "C"
+      }
+    ]
+  },
+  {
+    "id": "OSPlugin-Ping",
+    "name": "OS \u00b7 Ping",
+    "fields": [
+      {
+        "key": "host",
+        "label": "Host",
+        "kind": "string",
+        "default": ""
+      },
+      {
+        "key": "count",
+        "label": "Count",
+        "kind": "number",
+        "default": 3
+      },
+      {
+        "key": "timeout",
+        "label": "Timeout",
+        "kind": "number",
+        "default": 2
+      },
+      {
+        "key": "interval",
+        "label": "Interval",
+        "kind": "number",
+        "default": 0
+      },
+      {
+        "key": "value",
+        "label": "Value",
+        "kind": "string",
+        "default": "avg"
+      },
+      {
+        "key": "color_background",
+        "label": "Color background",
+        "kind": "bool",
+        "default": true
+      }
+    ]
+  },
+  {
+    "id": "DeckPlugin-ChangePage",
+    "name": "Deck \u00b7 Change Page",
+    "fields": [
+      {
+        "key": "selected_page",
+        "label": "Selected page",
+        "kind": "string",
+        "default": ""
+      },
+      {
+        "key": "return_timeout",
+        "label": "Return timeout",
+        "kind": "number",
+        "default": 0
+      },
+      {
+        "key": "deck_number",
+        "label": "Deck number",
+        "kind": "number",
+        "default": null
+      }
+    ]
+  },
+  {
+    "id": "DeckPlugin-GoToSleep",
+    "name": "Deck \u00b7 Go To Sleep",
+    "fields": []
+  },
+  {
+    "id": "DeckPlugin-GoToPreviousPage",
+    "name": "Deck \u00b7 Go To Previous Page",
+    "fields": []
+  },
+  {
+    "id": "DeckPlugin-ChangeBrightness",
+    "name": "Deck \u00b7 Change Brightness",
+    "fields": [
+      {
+        "key": "brightness",
+        "label": "Brightness",
+        "kind": "number",
+        "default": 50
+      }
+    ]
+  },
+  {
+    "id": "DeckPlugin-AdjustBrightness",
+    "name": "Deck \u00b7 Adjust Brightness",
+    "fields": [
+      {
+        "key": "adjust",
+        "label": "Adjust",
+        "kind": "number",
+        "default": 0
+      },
+      {
+        "key": "min_brightness",
+        "label": "Min brightness",
+        "kind": "number",
+        "default": 0
+      }
+    ]
+  },
+  {
+    "id": "DeckPlugin-ChangeState",
+    "name": "Deck \u00b7 Change State",
+    "fields": [
+      {
+        "key": "state",
+        "label": "State",
+        "kind": "number",
+        "default": 0
+      },
+      {
+        "key": "return_timeout",
+        "label": "Return timeout",
+        "kind": "number",
+        "default": 0
+      },
+      {
+        "key": "target_input",
+        "label": "Target input",
+        "kind": "array",
+        "default": null
+      }
+    ]
+  },
+  {
+    "id": "MediaPlugin-Play",
+    "name": "Media \u00b7 Play",
+    "fields": [
+      {
+        "key": "player_name",
+        "label": "Player name",
+        "kind": "string",
+        "default": null
+      },
+      {
+        "key": "show_thumbnail",
+        "label": "Show thumbnail",
+        "kind": "bool",
+        "default": true
+      },
+      {
+        "key": "show_label",
+        "label": "Show label",
+        "kind": "bool",
+        "default": true
+      }
+    ]
+  },
+  {
+    "id": "MediaPlugin-Pause",
+    "name": "Media \u00b7 Pause",
+    "fields": [
+      {
+        "key": "player_name",
+        "label": "Player name",
+        "kind": "string",
+        "default": null
+      },
+      {
+        "key": "show_thumbnail",
+        "label": "Show thumbnail",
+        "kind": "bool",
+        "default": true
+      },
+      {
+        "key": "show_label",
+        "label": "Show label",
+        "kind": "bool",
+        "default": true
+      }
+    ]
+  },
+  {
+    "id": "MediaPlugin-PlayPause",
+    "name": "Media \u00b7 Play Pause",
+    "fields": [
+      {
+        "key": "player_name",
+        "label": "Player name",
+        "kind": "string",
+        "default": null
+      },
+      {
+        "key": "show_thumbnail",
+        "label": "Show thumbnail",
+        "kind": "bool",
+        "default": true
+      },
+      {
+        "key": "show_label",
+        "label": "Show label",
+        "kind": "bool",
+        "default": true
+      }
+    ]
+  },
+  {
+    "id": "MediaPlugin-Next",
+    "name": "Media \u00b7 Next",
+    "fields": [
+      {
+        "key": "player_name",
+        "label": "Player name",
+        "kind": "string",
+        "default": null
+      },
+      {
+        "key": "show_thumbnail",
+        "label": "Show thumbnail",
+        "kind": "bool",
+        "default": true
+      },
+      {
+        "key": "show_label",
+        "label": "Show label",
+        "kind": "bool",
+        "default": true
+      }
+    ]
+  },
+  {
+    "id": "MediaPlugin-Previous",
+    "name": "Media \u00b7 Previous",
+    "fields": [
+      {
+        "key": "player_name",
+        "label": "Player name",
+        "kind": "string",
+        "default": null
+      },
+      {
+        "key": "show_thumbnail",
+        "label": "Show thumbnail",
+        "kind": "bool",
+        "default": true
+      },
+      {
+        "key": "show_label",
+        "label": "Show label",
+        "kind": "bool",
+        "default": true
+      }
+    ]
+  },
+  {
+    "id": "MediaPlugin-Info",
+    "name": "Media \u00b7 Info",
+    "fields": [
+      {
+        "key": "player_name",
+        "label": "Player name",
+        "kind": "string",
+        "default": null
+      },
+      {
+        "key": "show_thumbnail",
+        "label": "Show thumbnail",
+        "kind": "bool",
+        "default": true
+      },
+      {
+        "key": "seperator_text",
+        "label": "Seperator text",
+        "kind": "string",
+        "default": "--"
+      },
+      {
+        "key": "idle_icon",
+        "label": "Idle icon",
+        "kind": "string",
+        "default": ""
+      }
+    ]
+  },
+  {
+    "id": "MediaPlugin-Thumbnail",
+    "name": "Media \u00b7 Thumbnail",
+    "fields": [
+      {
+        "key": "player_name",
+        "label": "Player name",
+        "kind": "string",
+        "default": null
+      },
+      {
+        "key": "size_mode",
+        "label": "Size mode",
+        "kind": "string",
+        "default": "fill"
+      }
+    ]
+  },
+  {
+    "id": "MediaPlugin-MediaDial",
+    "name": "Media \u00b7 Media Dial",
+    "fields": [
+      {
+        "key": "player_name",
+        "label": "Player name",
+        "kind": "string",
+        "default": null
+      },
+      {
+        "key": "song_font_desc",
+        "label": "Song font desc",
+        "kind": "string",
+        "default": "DejaVu Sans Bold 30"
+      },
+      {
+        "key": "song_font_size",
+        "label": "Song font size",
+        "kind": "number",
+        "default": 30
+      },
+      {
+        "key": "song_outline_size",
+        "label": "Song outline size",
+        "kind": "number",
+        "default": 2
+      },
+      {
+        "key": "artist_font_desc",
+        "label": "Artist font desc",
+        "kind": "string",
+        "default": "DejaVu Sans Book 18"
+      },
+      {
+        "key": "artist_font_size",
+        "label": "Artist font size",
+        "kind": "number",
+        "default": 18
+      },
+      {
+        "key": "artist_outline_size",
+        "label": "Artist outline size",
+        "kind": "number",
+        "default": 2
+      }
+    ]
+  },
+  {
+    "id": "OBSPlugin-ToggleStream",
+    "name": "OBS \u00b7 Toggle Stream",
+    "fields": [
+      {
+        "key": "connection_id",
+        "label": "OBS connection profile",
+        "kind": "string",
+        "default": "default"
+      },
+      {
+        "key": "custom_icon_stream_inactive.png",
+        "label": "Stream Off Icon (image path)",
+        "kind": "string",
+        "default": ""
+      },
+      {
+        "key": "custom_icon_stream_active.png",
+        "label": "Stream On Icon (image path)",
+        "kind": "string",
+        "default": ""
+      },
+      {
+        "key": "custom_icon_stream_reconnecting.png",
+        "label": "Stream Reconnecting Icon (image path)",
+        "kind": "string",
+        "default": ""
+      }
+    ]
+  },
+  {
+    "id": "OBSPlugin-ToggleRecord",
+    "name": "OBS \u00b7 Toggle Record",
+    "fields": [
+      {
+        "key": "connection_id",
+        "label": "OBS connection profile",
+        "kind": "string",
+        "default": "default"
+      },
+      {
+        "key": "custom_icon_record_inactive.png",
+        "label": "Record Off Icon (image path)",
+        "kind": "string",
+        "default": ""
+      },
+      {
+        "key": "custom_icon_record_active.png",
+        "label": "Record On Icon (image path)",
+        "kind": "string",
+        "default": ""
+      },
+      {
+        "key": "custom_icon_record_resume.png",
+        "label": "Record Paused Icon (image path)",
+        "kind": "string",
+        "default": ""
+      }
+    ]
+  },
+  {
+    "id": "OBSPlugin-RecPlayPause",
+    "name": "OBS \u00b7 Rec Play Pause",
+    "fields": [
+      {
+        "key": "connection_id",
+        "label": "OBS connection profile",
+        "kind": "string",
+        "default": "default"
+      },
+      {
+        "key": "custom_icon_record_inactive.png",
+        "label": "Record Off Icon (image path)",
+        "kind": "string",
+        "default": ""
+      },
+      {
+        "key": "custom_icon_record_pause.png",
+        "label": "Record Pause Button Icon (image path)",
+        "kind": "string",
+        "default": ""
+      },
+      {
+        "key": "custom_icon_record_resume.png",
+        "label": "Record Resume Button Icon (image path)",
+        "kind": "string",
+        "default": ""
+      }
+    ]
+  },
+  {
+    "id": "OBSPlugin-ToggleReplayBuffer",
+    "name": "OBS \u00b7 Toggle Replay Buffer",
+    "fields": [
+      {
+        "key": "connection_id",
+        "label": "OBS connection profile",
+        "kind": "string",
+        "default": "default"
+      },
+      {
+        "key": "custom_icon_replay_buffer_disabled.png",
+        "label": "Replay Buffer Off Icon (image path)",
+        "kind": "string",
+        "default": ""
+      },
+      {
+        "key": "custom_icon_replay_buffer_enabled.png",
+        "label": "Replay Buffer On Icon (image path)",
+        "kind": "string",
+        "default": ""
+      }
+    ]
+  },
+  {
+    "id": "OBSPlugin-SaveReplayBuffer",
+    "name": "OBS \u00b7 Save Replay Buffer",
+    "fields": [
+      {
+        "key": "connection_id",
+        "label": "OBS connection profile",
+        "kind": "string",
+        "default": "default"
+      },
+      {
+        "key": "custom_icon_replay_buffer_save.png",
+        "label": "Save Replay Buffer Icon (image path)",
+        "kind": "string",
+        "default": ""
+      }
+    ]
+  },
+  {
+    "id": "OBSPlugin-ToggleVirtualCamera",
+    "name": "OBS \u00b7 Toggle Virtual Camera",
+    "fields": [
+      {
+        "key": "connection_id",
+        "label": "OBS connection profile",
+        "kind": "string",
+        "default": "default"
+      },
+      {
+        "key": "custom_icon_virtual_camera_disabled.png",
+        "label": "Virtual Camera Off Icon (image path)",
+        "kind": "string",
+        "default": ""
+      },
+      {
+        "key": "custom_icon_virtual_camera_enabled.png",
+        "label": "Virtual Camera On Icon (image path)",
+        "kind": "string",
+        "default": ""
+      }
+    ]
+  },
+  {
+    "id": "OBSPlugin-ToggleStudioMode",
+    "name": "OBS \u00b7 Toggle Studio Mode",
+    "fields": [
+      {
+        "key": "connection_id",
+        "label": "OBS connection profile",
+        "kind": "string",
+        "default": "default"
+      },
+      {
+        "key": "custom_icon_studio_mode_disabled.png",
+        "label": "Studio Mode Off Icon (image path)",
+        "kind": "string",
+        "default": ""
+      },
+      {
+        "key": "custom_icon_studio_mode_enabled.png",
+        "label": "Studio Mode On Icon (image path)",
+        "kind": "string",
+        "default": ""
+      }
+    ]
+  },
+  {
+    "id": "OBSPlugin-TriggerTransition",
+    "name": "OBS \u00b7 Trigger Transition",
+    "fields": [
+      {
+        "key": "connection_id",
+        "label": "OBS connection profile",
+        "kind": "string",
+        "default": "default"
+      },
+      {
+        "key": "custom_icon_transition.png",
+        "label": "Transition Icon (image path)",
+        "kind": "string",
+        "default": ""
+      }
+    ]
+  },
+  {
+    "id": "OBSPlugin-ToggleInputMute",
+    "name": "OBS \u00b7 Toggle Input Mute",
+    "fields": [
+      {
+        "key": "input",
+        "label": "Input",
+        "kind": "string",
+        "default": ""
+      },
+      {
+        "key": "connection_id",
+        "label": "OBS connection profile",
+        "kind": "string",
+        "default": "default"
+      },
+      {
+        "key": "custom_icon_input_unmuted.png",
+        "label": "Input Unmuted Icon (image path)",
+        "kind": "string",
+        "default": ""
+      },
+      {
+        "key": "custom_icon_input_muted.png",
+        "label": "Input Muted Icon (image path)",
+        "kind": "string",
+        "default": ""
+      }
+    ]
+  },
+  {
+    "id": "OBSPlugin-SetInputMute",
+    "name": "OBS \u00b7 Set Input Mute",
+    "fields": [
+      {
+        "key": "input",
+        "label": "Input",
+        "kind": "string",
+        "default": ""
+      },
+      {
+        "key": "set_mode",
+        "label": "Set mode",
+        "kind": "string",
+        "default": "ENABLED"
+      },
+      {
+        "key": "connection_id",
+        "label": "OBS connection profile",
+        "kind": "string",
+        "default": "default"
+      },
+      {
+        "key": "custom_icon_input_unmuted.png",
+        "label": "Input Unmuted Icon (image path)",
+        "kind": "string",
+        "default": ""
+      },
+      {
+        "key": "custom_icon_input_muted.png",
+        "label": "Input Muted Icon (image path)",
+        "kind": "string",
+        "default": ""
+      }
+    ]
+  },
+  {
+    "id": "OBSPlugin-InputDial",
+    "name": "OBS \u00b7 Input Dial",
+    "fields": [
+      {
+        "key": "input",
+        "label": "Input",
+        "kind": "string",
+        "default": ""
+      },
+      {
+        "key": "live_meter",
+        "label": "Live meter",
+        "kind": "bool",
+        "default": false
+      },
+      {
+        "key": "bar_color",
+        "label": "Bar color",
+        "kind": "array",
+        "default": [
+          66,
+          133,
+          244,
+          255
+        ]
+      },
+      {
+        "key": "connection_id",
+        "label": "OBS connection profile",
+        "kind": "string",
+        "default": "default"
+      },
+      {
+        "key": "custom_icon_input_unmuted.png",
+        "label": "Input Unmuted Icon (image path)",
+        "kind": "string",
+        "default": ""
+      },
+      {
+        "key": "custom_icon_input_muted.png",
+        "label": "Input Muted Icon (image path)",
+        "kind": "string",
+        "default": ""
+      }
+    ]
+  },
+  {
+    "id": "OBSPlugin-SwitchScene",
+    "name": "OBS \u00b7 Switch Scene",
+    "fields": [
+      {
+        "key": "scene",
+        "label": "Scene",
+        "kind": "string",
+        "default": ""
+      },
+      {
+        "key": "connection_id",
+        "label": "OBS connection profile",
+        "kind": "string",
+        "default": "default"
+      },
+      {
+        "key": "custom_icon_scene_active.png",
+        "label": "Active Scene Icon (image path)",
+        "kind": "string",
+        "default": ""
+      },
+      {
+        "key": "custom_icon_scene_inactive.png",
+        "label": "Inactive Scene Icon (image path)",
+        "kind": "string",
+        "default": ""
+      }
+    ]
+  },
+  {
+    "id": "OBSPlugin-ToggleSceneItemEnabled",
+    "name": "OBS \u00b7 Toggle Scene Item Enabled",
+    "fields": [
+      {
+        "key": "scene",
+        "label": "Scene",
+        "kind": "string",
+        "default": ""
+      },
+      {
+        "key": "item",
+        "label": "Item",
+        "kind": "string",
+        "default": ""
+      },
+      {
+        "key": "connection_id",
+        "label": "OBS connection profile",
+        "kind": "string",
+        "default": "default"
+      },
+      {
+        "key": "custom_icon_scene_item_enabled.png",
+        "label": "Scene Item Enabled Icon (image path)",
+        "kind": "string",
+        "default": ""
+      },
+      {
+        "key": "custom_icon_scene_item_disabled.png",
+        "label": "Scene Item Disabled Icon (image path)",
+        "kind": "string",
+        "default": ""
+      }
+    ]
+  },
+  {
+    "id": "OBSPlugin-SetSceneItemEnabled",
+    "name": "OBS \u00b7 Set Scene Item Enabled",
+    "fields": [
+      {
+        "key": "scene",
+        "label": "Scene",
+        "kind": "string",
+        "default": ""
+      },
+      {
+        "key": "item",
+        "label": "Item",
+        "kind": "string",
+        "default": ""
+      },
+      {
+        "key": "set_mode",
+        "label": "Set mode",
+        "kind": "string",
+        "default": "ENABLED"
+      },
+      {
+        "key": "connection_id",
+        "label": "OBS connection profile",
+        "kind": "string",
+        "default": "default"
+      },
+      {
+        "key": "custom_icon_scene_item_enabled.png",
+        "label": "Scene Item Enabled Icon (image path)",
+        "kind": "string",
+        "default": ""
+      },
+      {
+        "key": "custom_icon_scene_item_disabled.png",
+        "label": "Scene Item Disabled Icon (image path)",
+        "kind": "string",
+        "default": ""
+      }
+    ]
+  },
+  {
+    "id": "OBSPlugin-SwitchSceneCollection",
+    "name": "OBS \u00b7 Switch Scene Collection",
+    "fields": [
+      {
+        "key": "scene_collection",
+        "label": "Scene collection",
+        "kind": "string",
+        "default": ""
+      },
+      {
+        "key": "connection_id",
+        "label": "OBS connection profile",
+        "kind": "string",
+        "default": "default"
+      },
+      {
+        "key": "custom_icon_scene.png",
+        "label": "Switch Scene Collection Icon (image path)",
+        "kind": "string",
+        "default": ""
+      }
+    ]
+  },
+  {
+    "id": "OBSPlugin-ToggleSceneFilter",
+    "name": "OBS \u00b7 Toggle Scene Filter",
+    "fields": [
+      {
+        "key": "scene",
+        "label": "Scene",
+        "kind": "string",
+        "default": ""
+      },
+      {
+        "key": "filter",
+        "label": "Filter",
+        "kind": "string",
+        "default": ""
+      },
+      {
+        "key": "connection_id",
+        "label": "OBS connection profile",
+        "kind": "string",
+        "default": "default"
+      },
+      {
+        "key": "custom_icon_scene_item_enabled.png",
+        "label": "Filter Enabled Icon (image path)",
+        "kind": "string",
+        "default": ""
+      },
+      {
+        "key": "custom_icon_scene_item_disabled.png",
+        "label": "Filter Disabled Icon (image path)",
+        "kind": "string",
+        "default": ""
+      }
+    ]
+  },
+  {
+    "id": "OBSPlugin-SetSceneFilter",
+    "name": "OBS \u00b7 Set Scene Filter",
+    "fields": [
+      {
+        "key": "scene",
+        "label": "Scene",
+        "kind": "string",
+        "default": ""
+      },
+      {
+        "key": "filter",
+        "label": "Filter",
+        "kind": "string",
+        "default": ""
+      },
+      {
+        "key": "set_mode",
+        "label": "Set mode",
+        "kind": "string",
+        "default": "ENABLED"
+      },
+      {
+        "key": "connection_id",
+        "label": "OBS connection profile",
+        "kind": "string",
+        "default": "default"
+      },
+      {
+        "key": "custom_icon_scene_item_enabled.png",
+        "label": "Filter Enabled Icon (image path)",
+        "kind": "string",
+        "default": ""
+      },
+      {
+        "key": "custom_icon_scene_item_disabled.png",
+        "label": "Filter Disabled Icon (image path)",
+        "kind": "string",
+        "default": ""
+      }
+    ]
+  },
+  {
+    "id": "OBSPlugin-OBSStats",
+    "name": "OBS \u00b7 OBS Stats",
+    "fields": [
+      {
+        "key": "stats_count",
+        "label": "Stats count",
+        "kind": "string",
+        "default": "3"
+      },
+      {
+        "key": "stat_1",
+        "label": "Stat 1",
+        "kind": "string",
+        "default": "CPU"
+      },
+      {
+        "key": "stat_2",
+        "label": "Stat 2",
+        "kind": "string",
+        "default": "FPS"
+      },
+      {
+        "key": "stat_3",
+        "label": "Stat 3",
+        "kind": "string",
+        "default": "Stream"
+      },
+      {
+        "key": "connection_id",
+        "label": "OBS connection profile",
+        "kind": "string",
+        "default": "default"
+      },
+      {
+        "key": "custom_icon_stats.png",
+        "label": "OBS Stats Icon (image path)",
+        "kind": "string",
+        "default": ""
+      }
+    ]
+  },
+  {
+    "id": "VolumeMixer-Open",
+    "name": "VolumeMixer \u00b7 Open",
+    "fields": [
+      {
+        "key": "increments",
+        "label": "Increments",
+        "kind": "number",
+        "default": 10
+      }
+    ]
+  },
+  {
+    "id": "VolumeMixer-Exit",
+    "name": "VolumeMixer \u00b7 Exit",
+    "fields": []
+  },
+  {
+    "id": "VolumeMixer-VolumeMute",
+    "name": "VolumeMixer \u00b7 Volume Mute",
+    "fields": []
+  },
+  {
+    "id": "VolumeMixer-VolumeUp",
+    "name": "VolumeMixer \u00b7 Volume Up",
+    "fields": []
+  },
+  {
+    "id": "VolumeMixer-VolumeDown",
+    "name": "VolumeMixer \u00b7 Volume Down",
+    "fields": []
+  },
+  {
+    "id": "VolumeMixer-MoveRight",
+    "name": "VolumeMixer \u00b7 Move Right",
+    "fields": []
+  },
+  {
+    "id": "VolumeMixer-MoveLeft",
+    "name": "VolumeMixer \u00b7 Move Left",
+    "fields": []
+  },
+  {
+    "id": "VolumeMixer-Dial",
+    "name": "VolumeMixer \u00b7 Dial",
+    "fields": []
+  }
+]

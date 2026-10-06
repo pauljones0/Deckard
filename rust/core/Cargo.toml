@@ -26,5 +26,5 @@ zbus = { version = "5.19", features = ["blocking-api"] }
 base64 = "0.22"
 shell-words = "1.1"
 tungstenite = { version = "0.28", features = ["rustls-tls-webpki-roots"] }
-fontdue = "0.9"
-resvg = { version = "0.45.1", default-features = false, features = ["text", "raster-images", "system-fonts"] }
+ab_glyph = "0.2.32"
+resvg = { version = "0.45.1", default-features = false, features = ["text", "raster-images", "system-fonts", "memmap-fonts"] }

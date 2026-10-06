@@ -29,7 +29,7 @@ fn authentication(password: &str, salt: &str, challenge: &str) -> String {
     let secret = STANDARD.encode(Sha256::digest(format!("{password}{salt}")));
     STANDARD.encode(Sha256::digest(format!("{secret}{challenge}")))
 }
-pub fn execute(settings: &Value, connection: &Value) -> Result<Value> {
+pub fn connect(connection: &Value, subscriptions: u64) -> Result<Client> {
     let host = connection["host"]
         .as_str()
         .or_else(|| connection["ip"].as_str())
@@ -56,6 +56,7 @@ pub fn execute(settings: &Value, connection: &Value) -> Result<Value> {
         }
     }
     let stream = stream.context("cannot connect to OBS WebSocket; enable it in OBS Tools")?;
+    stream.set_nodelay(true)?;
     stream.set_read_timeout(Some(Duration::from_secs(3)))?;
     stream.set_write_timeout(Some(Duration::from_secs(3)))?;
     let url = format!(
@@ -76,7 +77,7 @@ pub fn execute(settings: &Value, connection: &Value) -> Result<Value> {
         .max_frame_size(Some(1024 * 1024));
     let (mut socket, _) = tungstenite::client_tls_with_config(url, stream, Some(config), None)?;
     let hello = receive(&mut socket, 0)?;
-    let mut identify = json!({"rpcVersion":1,"eventSubscriptions":0});
+    let mut identify = json!({"rpcVersion":1,"eventSubscriptions":subscriptions});
     if hello["authentication"].is_object() {
         let auth = &hello["authentication"];
         identify["authentication"] = json!(authentication(
@@ -91,12 +92,109 @@ pub fn execute(settings: &Value, connection: &Value) -> Result<Value> {
         json!({"op":1,"d":identify}).to_string().into(),
     ))?;
     receive(&mut socket, 2)?;
+    Ok(Client {
+        socket,
+        events: std::collections::HashMap::new(),
+        readout_cache: std::collections::HashMap::new(),
+        readout_bytes: 0,
+        event_received: std::collections::HashMap::new(),
+    })
+}
+
+pub struct Client {
+    socket: Socket,
+    readout_cache: std::collections::HashMap<String, (Instant, Value, usize)>,
+    readout_bytes: usize,
+    pub events: std::collections::HashMap<String, Value>,
+    pub event_received: std::collections::HashMap<String, Instant>,
+}
+impl Client {
+    pub fn query(&mut self, operation: &str, data: Value) -> Result<Value> {
+        request_events(
+            &mut self.socket,
+            operation,
+            data,
+            &mut self.events,
+            &mut self.event_received,
+        )
+    }
+    pub fn readout(&mut self, operation: &str, data: Value) -> Result<Value> {
+        let key = format!("{operation}{data}");
+        if let Some((stamp, value, _)) = self.readout_cache.get(&key)
+            && stamp.elapsed() < Duration::from_millis(500)
+        {
+            return Ok(value.clone());
+        }
+        let value = self.query(operation, data)?;
+        let bytes = value.to_string().len();
+        if let Some((_, _, previous)) = self.readout_cache.remove(&key) {
+            self.readout_bytes -= previous;
+        }
+        if self.readout_bytes + bytes > 4 * 1024 * 1024 || self.readout_cache.len() >= 256 {
+            self.readout_cache.clear();
+            self.readout_bytes = 0;
+        }
+        if bytes <= 4 * 1024 * 1024 {
+            self.readout_bytes += bytes;
+            self.readout_cache
+                .insert(key, (Instant::now(), value.clone(), bytes));
+        }
+        Ok(value)
+    }
+    pub fn poll(&mut self) -> Result<()> {
+        let stream = match self.socket.get_mut() {
+            MaybeTlsStream::Plain(s) => s,
+            MaybeTlsStream::Rustls(s) => &mut s.sock,
+            _ => anyhow::bail!("unknown OBS transport"),
+        };
+        stream.set_read_timeout(Some(Duration::from_millis(25)))?;
+        let deadline = Instant::now() + Duration::from_millis(30);
+        while Instant::now() < deadline {
+            match self.socket.read() {
+                Ok(Message::Text(text)) => {
+                    let v: Value = serde_json::from_str(&text)?;
+                    if v["op"] == 5
+                        && let Some(name) = v["d"]["eventType"].as_str()
+                    {
+                        self.events.insert(name.into(), v["d"]["eventData"].clone());
+                        self.event_received.insert(name.into(), Instant::now());
+                        if name != "InputVolumeMeters" {
+                            self.readout_cache.clear();
+                            self.readout_bytes = 0;
+                        }
+                    }
+                }
+                Err(tungstenite::Error::Io(e))
+                    if matches!(
+                        e.kind(),
+                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                    ) =>
+                {
+                    break;
+                }
+                Ok(Message::Close(_)) => anyhow::bail!("OBS closed connection"),
+                Err(e) => return Err(e.into()),
+                _ => {}
+            }
+        }
+        let stream = match self.socket.get_mut() {
+            MaybeTlsStream::Plain(s) => s,
+            MaybeTlsStream::Rustls(s) => &mut s.sock,
+            _ => unreachable!(),
+        };
+        stream.set_read_timeout(Some(Duration::from_secs(3)))?;
+        Ok(())
+    }
+}
+pub fn execute(settings: &Value, connection: &Value) -> Result<Value> {
+    let mut client = connect(connection, 0)?;
+    let socket = &mut client.socket;
     let operation = settings["operation"].as_str().unwrap_or("ToggleRecord");
     let data = settings["data"].as_object().cloned().unwrap_or_default();
     let response = match operation {
         "AdjustInputVolume" => {
             let state = request(
-                &mut socket,
+                socket,
                 "GetInputVolume",
                 json!({"inputName":data.get("inputName")}),
             )?;
@@ -104,24 +202,41 @@ pub fn execute(settings: &Value, connection: &Value) -> Result<Value> {
                 .get("increment")
                 .and_then(Value::as_f64)
                 .unwrap_or(0.05);
+            let legacy = data.get("volume_curve").and_then(Value::as_str) == Some("legacy");
             ensure!(
-                increment.is_finite() && (-1.0..=1.0).contains(&increment),
+                increment.is_finite() && increment.abs() <= if legacy { 100.0 } else { 1.0 },
                 "invalid OBS volume change"
             );
-            let volume = (state["inputVolumeMul"]
-                .as_f64()
-                .context("OBS input volume missing")?
-                + increment)
-                .clamp(0.0, 1.0);
-            request(
-                &mut socket,
-                "SetInputVolume",
-                json!({"inputName":data.get("inputName"),"inputVolumeMul":volume}),
-            )?
+            let mut fields = json!({"inputName":data.get("inputName")});
+            if legacy {
+                let db = state["inputVolumeDb"].as_f64().unwrap_or(-100.0);
+                let current = if db < -100.0 {
+                    0.0
+                } else if db > 0.0 {
+                    100.0
+                } else {
+                    (1.5_f64.powf(db / 10.0) * 100.0).floor()
+                };
+                let volume = (current + increment).clamp(0.0, 100.0);
+                fields["inputVolumeDb"] = json!(if volume == 0.0 {
+                    -100.0
+                } else {
+                    10.0 * (volume / 100.0).ln() / 1.5_f64.ln()
+                });
+            } else {
+                fields["inputVolumeMul"] = json!(
+                    (state["inputVolumeMul"]
+                        .as_f64()
+                        .context("OBS input volume missing")?
+                        + increment)
+                        .clamp(0.0, 1.0)
+                );
+            }
+            request(socket, "SetInputVolume", fields)?
         }
         "ToggleSceneItemEnabled" | "SetSceneItemEnabled" => {
             let id = request(
-                &mut socket,
+                socket,
                 "GetSceneItemId",
                 json!({"sceneName":data.get("sceneName"),"sourceName":data.get("sourceName")}),
             )?["sceneItemId"]
@@ -129,7 +244,7 @@ pub fn execute(settings: &Value, connection: &Value) -> Result<Value> {
             ensure!(id.is_number(), "OBS scene item missing");
             let mut fields = json!({"sceneName":data.get("sceneName"),"sceneItemId":id});
             let enabled = if operation == "ToggleSceneItemEnabled" {
-                !request(&mut socket, "GetSceneItemEnabled", fields.clone())?["sceneItemEnabled"]
+                !request(socket, "GetSceneItemEnabled", fields.clone())?["sceneItemEnabled"]
                     .as_bool()
                     .context("OBS scene item state missing")?
             } else {
@@ -138,13 +253,13 @@ pub fn execute(settings: &Value, connection: &Value) -> Result<Value> {
                     .context("scene item enabled state missing")?
             };
             fields["sceneItemEnabled"] = json!(enabled);
-            request(&mut socket, "SetSceneItemEnabled", fields)?
+            request(socket, "SetSceneItemEnabled", fields)?
         }
         "ToggleSceneFilter" | "SetSceneFilter" => {
             let mut fields =
                 json!({"sourceName":data.get("sourceName"),"filterName":data.get("filterName")});
             let enabled = if operation == "ToggleSceneFilter" {
-                !request(&mut socket, "GetSourceFilter", fields.clone())?["filterEnabled"]
+                !request(socket, "GetSourceFilter", fields.clone())?["filterEnabled"]
                     .as_bool()
                     .context("OBS filter state missing")?
             } else {
@@ -153,24 +268,24 @@ pub fn execute(settings: &Value, connection: &Value) -> Result<Value> {
                     .context("filter enabled state missing")?
             };
             fields["filterEnabled"] = json!(enabled);
-            request(&mut socket, "SetSourceFilterEnabled", fields)?
+            request(socket, "SetSourceFilterEnabled", fields)?
         }
         "ToggleStudioMode" => {
-            let state = request(&mut socket, "GetStudioModeEnabled", json!({}))?;
+            let state = request(socket, "GetStudioModeEnabled", json!({}))?;
             request(
-                &mut socket,
+                socket,
                 "SetStudioModeEnabled",
                 json!({"studioModeEnabled":!state["studioModeEnabled"].as_bool().unwrap_or(false)}),
             )?
         }
         "RecPlayPause" => {
-            let state = request(&mut socket, "GetRecordStatus", json!({}))?;
+            let state = request(socket, "GetRecordStatus", json!({}))?;
             ensure!(
                 state["outputActive"].as_bool() == Some(true),
                 "OBS is not recording"
             );
             request(
-                &mut socket,
+                socket,
                 if state["outputPaused"].as_bool() == Some(true) {
                     "ResumeRecord"
                 } else {
@@ -179,7 +294,7 @@ pub fn execute(settings: &Value, connection: &Value) -> Result<Value> {
                 json!({}),
             )?
         }
-        "TriggerTransition" => request(&mut socket, "TriggerStudioModeTransition", json!({}))?,
+        "TriggerTransition" => request(socket, "TriggerStudioModeTransition", json!({}))?,
         operation => {
             ensure!(
                 [
@@ -204,34 +319,134 @@ pub fn execute(settings: &Value, connection: &Value) -> Result<Value> {
                 .contains(&operation),
                 "unsupported OBS operation"
             );
-            request(&mut socket, operation, json!(data))?
+            request(socket, operation, json!(data))?
         }
     };
     let _ = socket.close(None);
     Ok(response)
 }
 fn request(socket: &mut Socket, request: &str, data: Value) -> Result<Value> {
+    request_events(
+        socket,
+        request,
+        data,
+        &mut std::collections::HashMap::new(),
+        &mut std::collections::HashMap::new(),
+    )
+}
+#[derive(Debug)]
+pub struct RequestRejected(pub i64);
+impl std::fmt::Display for RequestRejected {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "OBS request rejected (code {})", self.0)
+    }
+}
+impl std::error::Error for RequestRejected {}
+fn request_events(
+    socket: &mut Socket,
+    request: &str,
+    data: Value,
+    events: &mut std::collections::HashMap<String, Value>,
+    received: &mut std::collections::HashMap<String, Instant>,
+) -> Result<Value> {
     socket.send(Message::Text(
         json!({"op":6,"d":{"requestType":request,"requestId":"deckard","requestData":data}})
             .to_string()
             .into(),
     ))?;
-    let response = receive(socket, 7)?;
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let response = loop {
+        ensure!(
+            Instant::now() < deadline && !crate::desktop::cancelled(),
+            "OBS request timed out or cancelled"
+        );
+        match socket.read()? {
+            Message::Text(text) => {
+                let message: Value = serde_json::from_str(&text)?;
+                if message["op"] == 7 {
+                    break message["d"].clone();
+                }
+                if message["op"] == 5
+                    && let Some(name) = message["d"]["eventType"].as_str()
+                {
+                    events.insert(name.into(), message["d"]["eventData"].clone());
+                    received.insert(name.into(), Instant::now());
+                }
+            }
+            Message::Close(_) => anyhow::bail!("OBS disconnected"),
+            _ => {}
+        }
+    };
     ensure!(
         response["requestId"] == "deckard",
         "OBS response ID mismatch"
     );
-    ensure!(
-        response["requestStatus"]["result"].as_bool() == Some(true),
-        "OBS request failed (code {})",
-        response["requestStatus"]["code"]
-    );
+    if response["requestStatus"]["result"].as_bool() != Some(true) {
+        return Err(
+            RequestRejected(response["requestStatus"]["code"].as_i64().unwrap_or(0)).into(),
+        );
+    }
     Ok(response["responseData"].clone())
 }
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::net::TcpListener;
+    #[test]
+    fn persistent_readouts_cache_invalidate_on_events_and_survive_bad_selection() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = std::thread::spawn(move || {
+            let mut socket = tungstenite::accept(listener.accept().unwrap().0).unwrap();
+            socket
+                .send(Message::Text(
+                    json!({"op":0,"d":{"rpcVersion":1}}).to_string().into(),
+                ))
+                .unwrap();
+            let identify: Value =
+                serde_json::from_str(socket.read().unwrap().to_text().unwrap()).unwrap();
+            assert_eq!(identify["d"]["eventSubscriptions"], 1023);
+            socket
+                .send(Message::Text(json!({"op":2,"d":{}}).to_string().into()))
+                .unwrap();
+            for (expected, result, code, data) in [
+                ("GetStreamStatus", true, 100, json!({"outputActive":false})),
+                ("GetStreamStatus", true, 100, json!({"outputActive":true})),
+                ("GetInputMute", false, 600, json!({})),
+                ("GetStats", true, 100, json!({"cpuUsage":4.0})),
+            ] {
+                let request: Value =
+                    serde_json::from_str(socket.read().unwrap().to_text().unwrap()).unwrap();
+                assert_eq!(request["d"]["requestType"], expected);
+                socket.send(Message::Text(json!({"op":7,"d":{"requestId":"deckard","requestStatus":{"result":result,"code":code},"responseData":data}}).to_string().into())).unwrap();
+                if expected == "GetStreamStatus" && data["outputActive"] == false {
+                    socket.send(Message::Text(json!({"op":5,"d":{"eventType":"StreamStateChanged","eventData":{"outputActive":true}}}).to_string().into())).unwrap();
+                }
+            }
+        });
+        let mut c = connect(&json!({"host":"127.0.0.1","port":port}), 1023).unwrap();
+        let initial = c.readout("GetStreamStatus", json!({})).unwrap();
+        assert_eq!(initial["outputActive"], false);
+        assert_eq!(c.readout("GetStreamStatus", json!({})).unwrap(), initial);
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while !c.events.contains_key("StreamStateChanged") {
+            assert!(Instant::now() < deadline, "OBS event was not delivered");
+            c.poll().unwrap();
+        }
+        assert_eq!(c.events["StreamStateChanged"]["outputActive"], true);
+        assert_eq!(
+            c.readout("GetStreamStatus", json!({})).unwrap()["outputActive"],
+            true
+        );
+        assert!(
+            c.query("GetInputMute", json!({"inputName":"Removed"}))
+                .unwrap_err()
+                .downcast_ref::<RequestRejected>()
+                .is_some()
+        );
+        assert_eq!(c.query("GetStats", json!({})).unwrap()["cpuUsage"], 4.0);
+        server.join().unwrap();
+    }
     #[test]
     fn authenticated_wire_request_and_response() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();

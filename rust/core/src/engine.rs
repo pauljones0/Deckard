@@ -25,6 +25,7 @@ pub struct Device {
     pub fake: bool,
     pub connected: bool,
     pub page: String,
+    pub epoch: u64,
     pub previous_page: Option<String>,
     pub brightness: u8,
     pub sleeping: bool,
@@ -47,6 +48,11 @@ pub struct Engine {
     pub plugin_revision: u64,
     pub mixer: crate::audio::Mixer,
     overlays: HashMap<(String, String, String, usize), Value>,
+    pub(crate) live_overlays: HashMap<String, (crate::live::Action, Value)>,
+    pub(crate) background_overlays: HashMap<String, (crate::live::Action, String, Value)>,
+    pub(crate) command_holds: HashSet<String>,
+    pub(crate) command_runs: HashMap<String, Instant>,
+    returns: Vec<TimedReturn>,
 }
 pub type Shared = Arc<Mutex<Engine>>;
 impl Engine {
@@ -70,6 +76,11 @@ impl Engine {
                 ..Default::default()
             },
             overlays: HashMap::new(),
+            live_overlays: HashMap::new(),
+            background_overlays: HashMap::new(),
+            command_holds: HashSet::new(),
+            command_runs: HashMap::new(),
+            returns: Vec::new(),
         })))
     }
     pub fn error(&mut self, error: impl ToString) {
@@ -82,8 +93,11 @@ impl Engine {
         }
     }
     pub fn saver(&self, serial: &str) -> Value {
+        self.saver_ref(serial).clone()
+    }
+    fn saver_ref(&self, serial: &str) -> &Value {
         let Some(device) = self.devices.get(serial) else {
-            return Value::Null;
+            return &Value::Null;
         };
         let page = self.docs.pages.get(&device.page).unwrap_or(&Value::Null);
         let deck = &self.docs.settings["devices"][serial];
@@ -91,16 +105,16 @@ impl Engine {
             .as_bool()
             .unwrap_or(false)
         {
-            page["settings"]["screensaver"].clone()
+            &page["settings"]["screensaver"]
         } else {
-            deck["screensaver"].clone()
+            &deck["screensaver"]
         }
     }
     pub fn saver_active(&self, serial: &str) -> bool {
         let Some(device) = self.devices.get(serial) else {
             return false;
         };
-        let saver = self.saver(serial);
+        let saver = self.saver_ref(serial);
         device.sleeping
             || (saver["enable"].as_bool().unwrap_or(false)
                 && device.last_input.elapsed().as_secs()
@@ -135,6 +149,28 @@ impl Engine {
             device.brightness
         }
     }
+    pub(crate) fn active_input<'a>(
+        &'a self,
+        serial: &str,
+        family: &str,
+        input: &str,
+    ) -> Option<(usize, &'a Value)> {
+        let d = self.devices.get(serial)?;
+        let page = self.docs.pages.get(&d.page)?;
+        let data = render::effective_input_from(page, self.docs.sticky_ref(serial), family, input);
+        let wanted = d
+            .states
+            .get(&format!("{family}/{input}"))
+            .copied()
+            .or_else(|| data["active-state"].as_u64().map(|v| v as usize))
+            .unwrap_or(0);
+        let number = if data["states"].get(wanted.to_string()).is_some() {
+            wanted
+        } else {
+            0
+        };
+        Some((number, data))
+    }
     pub fn config(&self, serial: &str) -> Option<RenderConfig> {
         let device = self.devices.get(serial)?;
         let mut page = self.docs.pages.get(&device.page)?.clone();
@@ -161,17 +197,10 @@ impl Engine {
                 if owner != serial {
                     continue;
                 }
-                let probe = RenderConfig {
-                    page: page.clone(),
-                    sticky: sticky.clone(),
-                    states: device.states.clone(),
-                    pressed: device.pressed.clone(),
-                    rotation: 0,
-                    sleeping: false,
-                    revision: 0,
-                };
-                let is_sticky =
-                    render::effective_input(&probe, family, input) == &probe.sticky[family][input];
+                let is_sticky = std::ptr::eq(
+                    render::effective_input_from(&page, &sticky, family, input),
+                    &sticky[family][input],
+                );
                 if let Ok(state) = model::state_mut(
                     if is_sticky { &mut sticky } else { &mut page },
                     family,
@@ -187,6 +216,49 @@ impl Engine {
                 }
             }
         }
+        if !active && (!self.background_overlays.is_empty() || !self.live_overlays.is_empty()) {
+            let sticky_owner = |family: &str, input: &str| {
+                std::ptr::eq(
+                    render::effective_input_from(
+                        self.docs.pages.get(&device.page).unwrap_or(&Value::Null),
+                        self.docs.sticky_ref(serial),
+                        family,
+                        input,
+                    ),
+                    &self.docs.sticky_ref(serial)[family][input],
+                )
+            };
+            for (source, target, value) in self.background_overlays.values() {
+                if source.serial != serial || source.epoch != device.epoch {
+                    continue;
+                }
+                let sticky_owner = sticky_owner("keys", target);
+                if let Ok(state) = model::state_mut(
+                    if sticky_owner { &mut sticky } else { &mut page },
+                    "keys",
+                    target,
+                    *device.states.get(&format!("keys/{target}")).unwrap_or(&0),
+                ) {
+                    state["native-background"] = value["visual"].clone();
+                }
+            }
+            let mut live = self.live_overlays.values().collect::<Vec<_>>();
+            live.sort_by_key(|(a, _)| a.index);
+            for (a, value) in live {
+                if a.serial != serial || a.epoch != device.epoch || a.page != device.page {
+                    continue;
+                }
+                let sticky_owner = sticky_owner(&a.family, &a.input);
+                if let Ok(state) = model::state_mut(
+                    if sticky_owner { &mut sticky } else { &mut page },
+                    &a.family,
+                    &a.input,
+                    a.state,
+                ) {
+                    crate::live::apply(state, a.index, value);
+                }
+            }
+        }
         Some(RenderConfig {
             page,
             sticky,
@@ -196,6 +268,19 @@ impl Engine {
             sleeping: self.locked,
             revision: self.render_revision(serial),
         })
+    }
+    pub fn obs_profile(&self, name: &str) -> Value {
+        let profiles = &self.docs.settings["obs"]["connections"];
+        if profiles[name].is_object() {
+            profiles[name].clone()
+        } else if name == "default" {
+            profiles[self.docs.settings["obs"]["default_connection"]
+                .as_str()
+                .unwrap_or("default")]
+            .clone()
+        } else {
+            Value::Null
+        }
     }
     pub fn status(&self) -> Value {
         let mut devices:Vec<_>=self.devices.values().map(|d|json!({"serial":d.serial,"model":format!("{:?}",d.kind),"fake":d.fake,"connected":d.connected,"page":d.page,"brightness":d.brightness,"sleeping":d.sleeping,"rendered_frames":d.rendered_frames,"frame_tiles":d.frame.as_ref().map(|f|f.tiles.iter().map(|t|json!({"key":t.key,"width":t.width,"height":t.height,"identity":t.identity})).collect::<Vec<_>>())})).collect();
@@ -207,6 +292,7 @@ impl Engine {
             if device.page == old {
                 device.page = new.into();
                 device.pressed.clear();
+                device.epoch += 1;
                 device.states.clear();
             }
         }
@@ -225,6 +311,8 @@ impl Engine {
             }
         }
         self.overlays.clear();
+        self.live_overlays.clear();
+        self.background_overlays.clear();
         self.docs.save_settings()
     }
     pub fn command(&mut self, request: &Value) -> Result<Value> {
@@ -238,6 +326,29 @@ impl Engine {
             "inspect-legacy-actions" | "migrate-legacy-actions" => {
                 let apply = method == "migrate-legacy-actions";
                 if apply {
+                    for (plugin, key) in [
+                        ("OBSPlugin", "obs"),
+                        ("MediaPlugin", "media"),
+                        ("OSPlugin", "os"),
+                        ("DeckPlugin", "deck"),
+                        ("VolumeMixer", "mixer"),
+                    ] {
+                        let path = self.docs.root.join(format!(
+                            "settings/plugins/com_core447_{plugin}/settings.json"
+                        ));
+                        if path.exists() {
+                            let old = model::load_json(&path, json!({}))?;
+                            if let Some(fields) = old.as_object() {
+                                for (name, value) in fields {
+                                    if name != "connections"
+                                        && self.docs.settings[key][name].is_null()
+                                    {
+                                        self.docs.settings[key][name] = value.clone();
+                                    }
+                                }
+                            }
+                        }
+                    }
                     let connections = crate::legacy_actions::obs_connections(&self.docs.root)?;
                     if let Some(profiles) = connections.as_object() {
                         for (name, profile) in profiles {
@@ -287,6 +398,8 @@ impl Engine {
                 if apply {
                     self.docs = Documents::open(self.docs.root.clone())?;
                     self.overlays.clear();
+                    self.live_overlays.clear();
+                    self.background_overlays.clear();
                     self.generation += 1;
                 }
                 return Ok(json!({"applied":apply,"documents":reports}));
@@ -343,6 +456,7 @@ impl Engine {
                 }
                 device.page = name.into();
                 device.pressed.clear();
+                device.epoch += 1;
                 device.states.clear();
                 self.overlays.retain(|(owner, ..), _| owner != serial);
                 device.last_input = Instant::now();
@@ -544,15 +658,25 @@ impl Engine {
                         device.page = page.into();
                         device.states.clear();
                         device.pressed.clear();
+                        device.epoch += 1;
                     }
                 }
             }
             "reload" => {
+                for d in self.devices.values_mut() {
+                    d.epoch += 1;
+                    d.pressed.clear();
+                }
+                self.command_holds.clear();
+                self.command_runs.clear();
+                self.returns.clear();
                 let docs = Documents::open(self.docs.root.clone())?;
                 self.docs = docs;
                 self.plugins = native_plugins(&self.docs.root);
                 self.plugin_revision += 1;
                 self.overlays.clear();
+                self.live_overlays.clear();
+                self.background_overlays.clear();
                 let missing: Vec<_> = self
                     .devices
                     .values()
@@ -606,11 +730,17 @@ impl Runtime {
         threads.push(thread::spawn(move || {
             action_loop(actions_shared, receiver, actions_stop)
         }));
+        let live_shared = shared.clone();
+        let live_stop = stop.clone();
+        threads.push(thread::spawn(move || {
+            crate::live::watch(live_shared, live_stop)
+        }));
         let monitor_shared = shared.clone();
         let monitor_stop = stop.clone();
         threads.push(thread::spawn(move || {
             let mut next = Instant::now();
             while !monitor_stop.load(Ordering::Relaxed) {
+                process_returns(&monitor_shared);
                 if Instant::now() >= next {
                     next = Instant::now() + Duration::from_secs(1);
                     let active = {
@@ -627,7 +757,7 @@ impl Runtime {
                         monitor_shared.lock().unwrap().error(error);
                     }
                 }
-                thread::sleep(Duration::from_millis(100));
+                thread::sleep(Duration::from_millis(25));
             }
         }));
         let manager_shared = shared.clone();
@@ -734,6 +864,7 @@ fn start_device(
                     fake,
                     connected: fake,
                     page,
+                    epoch: 0,
                     previous_page: None,
                     brightness,
                     sleeping: false,
@@ -762,6 +893,7 @@ fn start_device(
                 return;
             };
             let mut previous = u64::MAX;
+            let mut cached_config = None;
             while !render_stop.load(Ordering::Relaxed) {
                 let (available, config) = {
                     let engine = render_shared.lock().unwrap_or_else(|p| p.into_inner());
@@ -769,24 +901,28 @@ fn start_device(
                         .devices
                         .get(&render_serial)
                         .is_some_and(|d| d.fake || d.connected);
-                    let config = if available
-                        && (renderer.animated || engine.render_revision(&render_serial) != previous)
-                    {
-                        engine.config(&render_serial)
+                    let revision = engine.render_revision(&render_serial);
+                    if available && (cached_config.is_none() || revision != previous) {
+                        cached_config = engine.config(&render_serial).map(Arc::new);
+                    }
+                    let config = if available && (renderer.animated || revision != previous) {
+                        cached_config.clone()
                     } else {
                         None
                     };
                     (available, config)
                 };
                 if !available {
-                    renderer.release_media();
+                    if cached_config.take().is_some() {
+                        renderer.release_media();
+                    }
                     previous = u64::MAX;
                 }
                 if let Some(config) = config
                     && (renderer.animated || config.revision != previous)
                 {
                     previous = config.revision;
-                    match renderer.render(kind, &config) {
+                    match renderer.render_shared(kind, config) {
                         Ok(frame) => {
                             let frame = Arc::new(frame);
                             *render_slot.lock().unwrap_or_else(|p| p.into_inner()) =
@@ -1004,6 +1140,7 @@ fn start_device(
                 if let Some(device) = engine.devices.get_mut(&serial) {
                     device.connected = false;
                     device.pressed.clear();
+                    device.epoch += 1;
                 }
                 engine.generation += 1;
             }
@@ -1139,15 +1276,153 @@ fn route_input(
         _ => {}
     }
 }
+#[derive(Clone)]
+enum ReturnTarget {
+    Page(String),
+    State(String, String, usize),
+}
+struct TimedReturn {
+    deadline: Instant,
+    serial: String,
+    epoch: u64,
+    target: ReturnTarget,
+}
+fn schedule_return(
+    engine: &mut Engine,
+    serial: &str,
+    settings: &Value,
+    target: ReturnTarget,
+) -> Result<()> {
+    let timeout = settings["return_timeout"].as_f64().unwrap_or(0.0);
+    ensure!(
+        timeout.is_finite() && (0.0..=86400.0 * 365.0).contains(&timeout),
+        "invalid return timeout"
+    );
+    if timeout > 0.0 {
+        let device = engine
+            .devices
+            .get(serial)
+            .context("return device missing")?;
+        engine.returns.retain(|old|!(old.serial==serial&&matches!((&old.target,&target),(ReturnTarget::Page(_),ReturnTarget::Page(_))) || old.serial==serial&&matches!((&old.target,&target),(ReturnTarget::State(f,i,_),ReturnTarget::State(g,j,_)) if f==g&&i==j)));
+        engine.returns.push(TimedReturn {
+            deadline: Instant::now() + Duration::from_secs_f64(timeout),
+            serial: serial.into(),
+            epoch: device.epoch,
+            target,
+        });
+    }
+    Ok(())
+}
+fn process_returns(shared: &Shared) {
+    let mut e = shared.lock().unwrap();
+    let mut pending = std::mem::take(&mut e.returns);
+    for entry in pending.drain(..) {
+        if e.devices
+            .get(&entry.serial)
+            .is_none_or(|d| d.epoch != entry.epoch || !(d.fake || d.connected))
+        {
+            continue;
+        }
+        if Instant::now() < entry.deadline {
+            e.returns.push(entry);
+            continue;
+        }
+        let params = match entry.target {
+            ReturnTarget::Page(page) => {
+                json!({"method":"change-page","params":{"serial":entry.serial,"page":page}})
+            }
+            ReturnTarget::State(family, input, state) => {
+                json!({"method":"change-state","params":{"serial":entry.serial,"family":family,"input":input,"state":state}})
+            }
+        };
+        if let Err(error) = e.command(&params) {
+            e.error(error);
+        }
+    }
+}
+fn action_origin(
+    shared: &Shared,
+    event: &InputEvent,
+    action: &Value,
+) -> Result<crate::live::Action> {
+    let e = shared.lock().unwrap();
+    let d = e
+        .devices
+        .get(&event.serial)
+        .context("action device missing")?;
+    let c = e.config(&event.serial).context("device config")?;
+    let state = render::active_state(&c, &event.family, &event.input);
+    let index = render::effective_input(&c, &event.family, &event.input)["states"]
+        [state.to_string()]["actions"]
+        .as_array()
+        .and_then(|a| a.iter().position(|a| a == action))
+        .unwrap_or(0);
+    Ok(crate::live::Action {
+        serial: event.serial.clone(),
+        page: d.page.clone(),
+        epoch: d.epoch,
+        family: event.family.clone(),
+        input: event.input.clone(),
+        state,
+        index,
+        raw: action.clone(),
+        action: crate::builtins::resolve(action, "press")?,
+    })
+}
+
+struct ActionBatch {
+    event: InputEvent,
+    actions: Vec<Value>,
+    epoch: u64,
+    pressed: Arc<AtomicBool>,
+}
+struct ActionWorker {
+    sender: SyncSender<ActionBatch>,
+    stop: Arc<AtomicBool>,
+    thread: JoinHandle<()>,
+    last: Instant,
+    pending: Arc<std::sync::atomic::AtomicUsize>,
+}
 fn action_loop(shared: Shared, events: Receiver<InputEvent>, stop: Arc<AtomicBool>) {
-    let mut processes = HashMap::<String, plugin::Process>::new();
+    let processes = Arc::new(Mutex::new(HashMap::<String, plugin::Process>::new()));
+    let mut workers = HashMap::<String, ActionWorker>::new();
+    let mut presses = HashMap::<String, (u64, Arc<AtomicBool>)>::new();
+    let mut long_inputs = HashSet::<String>::new();
     let mut plugin_revision = 0;
     let mut holds = HashMap::<(String, String, String), (Instant, InputEvent)>::new();
     let mut wake_gestures = HashSet::new();
     while !stop.load(Ordering::Relaxed) {
+        presses.retain(|owner, (epoch, flag)| {
+            let serial = owner.split('/').next().unwrap_or("");
+            let valid = shared
+                .lock()
+                .unwrap()
+                .devices
+                .get(serial)
+                .is_some_and(|d| d.epoch == *epoch && (d.fake || d.connected));
+            if !valid {
+                flag.store(false, Ordering::Relaxed);
+                crate::uinput::release_owner(owner);
+            }
+            valid
+        });
+        let stale = workers
+            .iter()
+            .filter(|(_, worker)| {
+                worker.last.elapsed() > Duration::from_secs(30)
+                    && worker.pending.load(Ordering::Relaxed) == 0
+            })
+            .map(|(k, _)| k.clone())
+            .collect::<Vec<_>>();
+        for key in stale {
+            if let Some(worker) = workers.remove(&key) {
+                worker.stop.store(true, Ordering::Relaxed);
+                let _ = worker.thread.join();
+            }
+        }
         let revision = shared.lock().unwrap().plugin_revision;
         if revision != plugin_revision {
-            processes.clear();
+            processes.lock().unwrap().clear();
             plugin_revision = revision;
         }
         let due = holds
@@ -1193,6 +1468,19 @@ fn action_loop(shared: Shared, events: Receiver<InputEvent>, stop: Arc<AtomicBoo
                 ),
             );
         }
+        let owner = format!("{}/{}/{}", event.serial, event.family, event.input);
+        if event.event == "long-press" {
+            long_inputs.insert(owner.clone());
+            shared.lock().unwrap().command_holds.insert(owner.clone());
+        }
+        let was_long = event.event == "release" && long_inputs.remove(&owner);
+        if event.event == "release" {
+            if let Some((_, flag)) = presses.remove(&owner) {
+                flag.store(false, Ordering::Relaxed);
+            }
+            crate::uinput::release_owner(&owner);
+            shared.lock().unwrap().command_holds.remove(&owner);
+        }
         let suppressed = wake_gestures.contains(&hold_key);
         if event.event == "release" {
             holds.remove(&hold_key);
@@ -1235,18 +1523,204 @@ fn action_loop(shared: Shared, events: Receiver<InputEvent>, stop: Arc<AtomicBoo
                 .cloned()
                 .unwrap_or_default()
         };
-        for action in actions {
-            let filter = action["event"].as_str().unwrap_or("press");
-            if filter != event.event {
+        let epoch = shared
+            .lock()
+            .unwrap()
+            .devices
+            .get(&event.serial)
+            .map(|d| d.epoch)
+            .unwrap_or(0);
+        let pressed = if event.event == "press" {
+            let flag = Arc::new(AtomicBool::new(true));
+            if let Some((_, old)) = presses.insert(owner.clone(), (epoch, flag.clone())) {
+                old.store(false, Ordering::Relaxed);
+            }
+            flag
+        } else {
+            presses
+                .get(&owner)
+                .map(|(_, flag)| flag.clone())
+                .unwrap_or_else(|| Arc::new(AtomicBool::new(false)))
+        };
+        let selected = actions
+            .into_iter()
+            .filter(|action| {
+                let canonical =
+                    crate::builtins::resolve(action, "press").unwrap_or_else(|_| action.clone());
+                if canonical["id"] == "native::shell"
+                    && canonical["settings"]["auto_run"].as_f64().unwrap_or(0.0) > 0.0
+                {
+                    return event.event == "release" && !was_long;
+                }
+                if canonical["id"] == "native::mixer"
+                    && canonical["settings"]["operation"] == "mute"
+                    && event.family == "dials"
+                    && action["event"] == "release"
+                {
+                    return event.event == "release" && !was_long;
+                }
+                crate::builtins::event_matches(action, &event.event)
+            })
+            .collect::<Vec<_>>();
+        if selected.is_empty() {
+            continue;
+        }
+        if workers
+            .get(&owner)
+            .is_some_and(|worker| worker.thread.is_finished())
+            && let Some(worker) = workers.remove(&owner)
+        {
+            let _ = worker.thread.join();
+        }
+        if !workers.contains_key(&owner) {
+            if workers.len() >= 128 {
+                shared
+                    .lock()
+                    .unwrap()
+                    .error("128 action inputs are busy; action skipped");
                 continue;
             }
-            let result = run_action(&shared, &event, &action, &mut processes);
-            if let Err(error) = result {
-                shared.lock().unwrap().error(error);
-            }
+            let (sender, receiver) = mpsc::sync_channel::<ActionBatch>(32);
+            let worker_stop = Arc::new(AtomicBool::new(false));
+            let worker_flag = worker_stop.clone();
+            let app_stop = stop.clone();
+            let worker_shared = shared.clone();
+            let plugins = processes.clone();
+            let pending = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let worker_pending = pending.clone();
+            let thread = thread::spawn(move || {
+                while !app_stop.load(Ordering::Relaxed) && !worker_flag.load(Ordering::Relaxed) {
+                    let batch = match receiver.recv_timeout(Duration::from_millis(25)) {
+                        Ok(batch) => batch,
+                        Err(mpsc::RecvTimeoutError::Timeout) => continue,
+                        Err(_) => break,
+                    };
+                    struct Completed(Arc<std::sync::atomic::AtomicUsize>);
+                    impl Drop for Completed {
+                        fn drop(&mut self) {
+                            self.0.fetch_sub(1, Ordering::Relaxed);
+                        }
+                    }
+                    let _completed = Completed(worker_pending.clone());
+                    let expected = Arc::new(std::sync::atomic::AtomicU64::new(batch.epoch));
+                    let shared_check = worker_shared.clone();
+                    let serial = batch.event.serial.clone();
+                    let expected_check = expected.clone();
+                    let app_check = app_stop.clone();
+                    let worker_check = worker_flag.clone();
+                    let cancellation: Arc<dyn Fn() -> bool + Send + Sync> = Arc::new(move || {
+                        app_check.load(Ordering::Relaxed)
+                            || worker_check.load(Ordering::Relaxed)
+                            || shared_check
+                                .lock()
+                                .unwrap()
+                                .devices
+                                .get(&serial)
+                                .is_none_or(|d| {
+                                    d.epoch != expected_check.load(Ordering::Relaxed)
+                                        || !(d.fake || d.connected)
+                                })
+                    });
+                    crate::desktop::with_cancellation(cancellation.clone(), || {
+                        let mut unused = HashMap::new();
+                        for action in batch.actions {
+                            if crate::desktop::cancelled() {
+                                break;
+                            }
+                            let input = action["id"] == "native::input"
+                                || action["id"] == "native::OSPlugin-Hotkey";
+                            let result = if input {
+                                let press = batch.pressed.clone();
+                                let check = cancellation.clone();
+                                crate::desktop::with_cancellation(
+                                    Arc::new(move || check() || !press.load(Ordering::Relaxed)),
+                                    || {
+                                        run_action(
+                                            &worker_shared,
+                                            &batch.event,
+                                            &action,
+                                            &mut unused,
+                                        )
+                                    },
+                                )
+                            } else if action["id"]
+                                .as_str()
+                                .is_some_and(|id| id.starts_with("native::"))
+                            {
+                                run_action(&worker_shared, &batch.event, &action, &mut unused)
+                            } else {
+                                run_action(
+                                    &worker_shared,
+                                    &batch.event,
+                                    &action,
+                                    &mut plugins.lock().unwrap(),
+                                )
+                            };
+                            if let Err(error) = result
+                                && !crate::desktop::cancelled()
+                            {
+                                worker_shared.lock().unwrap().error(error);
+                            }
+                            // A deliberate navigation action owns the continuation of its own sequence.
+                            let canonical = crate::builtins::resolve(&action, &batch.event.event)
+                                .unwrap_or_else(|_| action.clone());
+                            if ["native::page", "native::previous-page", "native::mixer"]
+                                .contains(&canonical["id"].as_str().unwrap_or(""))
+                                && let Some(device) = worker_shared
+                                    .lock()
+                                    .unwrap()
+                                    .devices
+                                    .get(&batch.event.serial)
+                            {
+                                expected.store(device.epoch, Ordering::Relaxed);
+                            }
+                        }
+                    });
+                }
+            });
+            workers.insert(
+                owner.clone(),
+                ActionWorker {
+                    sender,
+                    stop: worker_stop,
+                    thread,
+                    last: Instant::now(),
+                    pending,
+                },
+            );
+        }
+        let worker = workers.get_mut(&owner).unwrap();
+        worker.last = Instant::now();
+        worker.pending.fetch_add(1, Ordering::Relaxed);
+        if worker
+            .sender
+            .try_send(ActionBatch {
+                event,
+                actions: selected,
+                epoch,
+                pressed,
+            })
+            .is_err()
+        {
+            worker.pending.fetch_sub(1, Ordering::Relaxed);
+            shared
+                .lock()
+                .unwrap()
+                .error("input action queue full; action skipped");
         }
     }
+    for (owner, (_, flag)) in presses {
+        flag.store(false, Ordering::Relaxed);
+        crate::uinput::release_owner(&owner);
+    }
+    for worker in workers.values() {
+        worker.stop.store(true, Ordering::Relaxed);
+    }
+    for (_, worker) in workers {
+        let _ = worker.thread.join();
+    }
 }
+
 fn refresh_mixers(shared: &Shared) -> Result<()> {
     let streams = crate::audio::streams()?;
     let mut engine = shared.lock().unwrap();
@@ -1285,19 +1759,33 @@ fn run_action(
     action: &Value,
     processes: &mut HashMap<String, plugin::Process>,
 ) -> Result<()> {
+    let raw_action = action;
+    let resolved = crate::builtins::resolve(action, &event.event)?;
+    let action = &resolved;
     let id = action["id"].as_str().context("action ID missing")?;
     let settings = &action["settings"];
     match id {
         "native::input" => {
-            crate::uinput::execute(settings["operation"].as_str().unwrap_or("keys"), settings)?
+            if event.event == "press" {
+                crate::uinput::execute_owned(
+                    settings["operation"].as_str().unwrap_or("keys"),
+                    settings,
+                    &format!("{}/{}/{}", event.serial, event.family, event.input),
+                )?;
+            } else if event.event == "release" {
+                crate::uinput::release_owner(&format!(
+                    "{}/{}/{}",
+                    event.serial, event.family, event.input
+                ));
+            }
         }
         "native::delay" => {
             let delay = settings["delay"].as_f64().unwrap_or(0.0);
             ensure!(
-                delay.is_finite() && (0.0..=5.0).contains(&delay),
-                "delay must be zero to five seconds"
+                delay.is_finite() && (0.0..=86400.0 * 365.0).contains(&delay),
+                "invalid delay"
             );
-            thread::sleep(Duration::from_secs_f64(delay));
+            crate::desktop::wait(Duration::from_secs_f64(delay))?;
         }
         "native::launch" => crate::desktop::launch(
             settings["path"]
@@ -1313,7 +1801,7 @@ fn run_action(
             let connection = {
                 let engine = shared.lock().unwrap();
                 let name = settings["connection"].as_str().unwrap_or("default");
-                engine.docs.settings["obs"]["connections"][name].clone()
+                engine.obs_profile(name)
             };
             ensure!(
                 connection.is_object(),
@@ -1424,16 +1912,45 @@ fn run_action(
                 )?;
             }
         }
+        "native::media"
+            if ["Info", "Thumbnail"].contains(&settings["method"].as_str().unwrap_or("")) => {}
         "native::media" => crate::mpris::control(
             settings["method"].as_str().unwrap_or("PlayPause"),
             settings["player"].as_str().unwrap_or(""),
         )?,
-        "native::shell" => crate::desktop::run_shell(
-            settings["command"]
-                .as_str()
-                .context("shell command missing")?,
-            settings["detached"].as_bool().unwrap_or(true),
-        )?,
+        "native::shell" => {
+            let origin = action_origin(shared, event, raw_action)?;
+            crate::live::execute_shell(shared, &origin)?;
+        }
+        "native::system" => {
+            let origin = action_origin(shared, event, raw_action)?;
+            if settings["metric"] == "Ping" {
+                crate::live::overlay(shared, &origin, crate::system::ping(settings)?);
+            } else if settings["toggle-dynamic-scaling-on-press"] == true {
+                let mut engine = shared.lock().unwrap();
+                let config = engine.config(&origin.serial).context("device config")?;
+                let sticky = render::effective_input(&config, &origin.family, &origin.input)
+                    == &config.sticky[&origin.family][&origin.input];
+                let mut doc = if sticky {
+                    engine.docs.sticky(&origin.serial)?
+                } else {
+                    engine.docs.pages[&origin.page].clone()
+                };
+                let state =
+                    model::state_mut(&mut doc, &origin.family, &origin.input, origin.state)?;
+                if let Some(actions) = state["actions"].as_array_mut()
+                    && let Some(action) = actions.get_mut(origin.index)
+                {
+                    action["settings"]["dynamic-scaling"] =
+                        json!(!settings["dynamic-scaling"].as_bool().unwrap_or(false));
+                }
+                if sticky {
+                    engine.docs.put_sticky(&origin.serial, &doc)?;
+                } else {
+                    engine.docs.put(&origin.page, doc)?;
+                }
+            }
+        }
         "native::command" => {
             let argv: Vec<String> = settings["argv"]
                 .as_array()
@@ -1445,16 +1962,9 @@ fn run_action(
                         .context("argv must contain strings")
                 })
                 .collect::<Result<_>>()?;
-            crate::desktop::run_command(&argv, Duration::from_secs(5))?;
+            crate::desktop::run_command(&argv, Duration::from_secs(86400))?;
         }
-        "native::url" => {
-            let url = settings["url"].as_str().context("URL missing")?;
-            ensure!(
-                url.starts_with("https://") || url.starts_with("http://"),
-                "URL action requires HTTP(S)"
-            );
-            crate::desktop::run_command(&["xdg-open".into(), url.into()], Duration::from_secs(5))?;
-        }
+        "native::url" => crate::desktop::open_url(settings)?,
         "native::page" => {
             let mut engine = shared.lock().unwrap();
             let serial = settings["serial"]
@@ -1462,9 +1972,11 @@ fn run_action(
                 .filter(|s| engine.devices.contains_key(*s))
                 .unwrap_or(&event.serial)
                 .to_owned();
+            let previous = engine.devices[&serial].page.clone();
             engine.command(
                 &json!({"method":"change-page","params":{"serial":serial,"page":settings["page"]}}),
             )?;
+            schedule_return(&mut engine, &serial, settings, ReturnTarget::Page(previous))?;
         }
         "native::previous-page" => {
             let mut engine = shared.lock().unwrap();
@@ -1477,12 +1989,23 @@ fn run_action(
             )?;
         }
         "native::state" => {
-            shared.lock().unwrap().command(&json!({"method":"change-state","params":{"serial":event.serial,"family":settings["family"].as_str().unwrap_or(&event.family),"input":settings["input"].as_str().unwrap_or(&event.input),"state":settings["state"]}}))?;
+            let mut engine = shared.lock().unwrap();
+            let family = settings["family"].as_str().unwrap_or(&event.family);
+            let input = settings["input"].as_str().unwrap_or(&event.input);
+            let config = engine.config(&event.serial).context("device config")?;
+            let previous = render::active_state(&config, family, input);
+            engine.command(&json!({"method":"change-state","params":{"serial":event.serial,"family":family,"input":input,"state":settings["state"]}}))?;
+            schedule_return(
+                &mut engine,
+                &event.serial,
+                settings,
+                ReturnTarget::State(family.into(), input.into(), previous),
+            )?;
         }
         "native::adjust-brightness" => {
             let mut engine = shared.lock().unwrap();
             let value = (engine.devices[&event.serial].brightness as f64
-                + settings["adjust"].as_f64().unwrap_or(5.0))
+                + settings["adjust"].as_f64().unwrap_or(0.0))
             .clamp(
                 settings["min_brightness"]
                     .as_f64()
@@ -1570,7 +2093,7 @@ fn run_action(
                 argv.extend(["--".into(), text.into()]);
                 argv
             };
-            crate::desktop::run_command(&argv, Duration::from_secs(5))?;
+            crate::desktop::run_command(&argv, Duration::from_secs(86400))?;
         }
         _ => {
             let (plugin_id, action_id) = id
@@ -1692,6 +2215,123 @@ pub fn fake_kind(name: &str) -> Result<Kind> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn wait_for(shared: &Shared, predicate: impl Fn(&Engine) -> bool) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !predicate(&shared.lock().unwrap()) {
+            assert!(
+                Instant::now() < deadline,
+                "native transition timed out: {}",
+                shared.lock().unwrap().status()
+            );
+            thread::sleep(Duration::from_millis(10));
+        }
+    }
+    fn event(runtime: &Runtime, input: &str, name: &str) {
+        runtime
+            .events
+            .send(InputEvent {
+                serial: "FAKE-PLUS-0".into(),
+                family: "keys".into(),
+                input: input.into(),
+                event: name.into(),
+                value: 1,
+            })
+            .unwrap();
+    }
+    #[test]
+    fn long_delays_do_not_block_other_inputs_and_shutdown_cancels_sequences() {
+        let tmp = tempfile::tempdir().unwrap();
+        let shared = Engine::open(tmp.path().into()).unwrap();
+        shared.lock().unwrap().docs.put("Main",json!({"keys":{
+            "0x0":{"states":{"0":{"actions":[{"id":"native::delay","settings":{"delay":60}},{"id":"native::brightness","settings":{"value":99}}]}}},
+            "1x0":{"states":{"0":{"actions":[{"id":"native::brightness","settings":{"value":42}}]}}}
+        }})).unwrap();
+        let runtime = Runtime::start(shared.clone(), vec![Kind::Plus], false).unwrap();
+        wait_for(&shared, |e| e.devices.contains_key("FAKE-PLUS-0"));
+        event(&runtime, "0x0", "press");
+        thread::sleep(Duration::from_millis(50));
+        event(&runtime, "1x0", "press");
+        wait_for(&shared, |e| e.devices["FAKE-PLUS-0"].brightness == 42);
+        let start = Instant::now();
+        drop(runtime);
+        assert!(start.elapsed() < Duration::from_secs(2));
+        assert_eq!(shared.lock().unwrap().devices["FAKE-PLUS-0"].brightness, 42);
+    }
+    #[test]
+    fn timed_page_and_other_input_state_return_and_manual_navigation_cancels_old_return() {
+        let tmp = tempfile::tempdir().unwrap();
+        let shared = Engine::open(tmp.path().into()).unwrap();
+        {
+            let mut e = shared.lock().unwrap();
+            e.docs.put("Main",json!({"keys":{
+            "0x0":{"states":{"0":{"actions":[{"id":"native::page","settings":{"page":"Menu","return_timeout":0.15}}]}}},
+            "1x0":{"states":{"0":{},"1":{}}},
+            "2x0":{"states":{"0":{"actions":[{"id":"native::state","settings":{"input":"1x0","state":1,"return_timeout":0.15}}]}}}
+        }})).unwrap();
+            e.docs.create("Menu").unwrap();
+            e.docs.create("Other").unwrap();
+        }
+        let runtime = Runtime::start(shared.clone(), vec![Kind::Plus], false).unwrap();
+        wait_for(&shared, |e| e.devices.contains_key("FAKE-PLUS-0"));
+        event(&runtime, "0x0", "press");
+        wait_for(&shared, |e| e.devices["FAKE-PLUS-0"].page == "Menu");
+        wait_for(&shared, |e| e.devices["FAKE-PLUS-0"].page == "Main");
+        event(&runtime, "2x0", "press");
+        wait_for(&shared, |e| {
+            e.devices["FAKE-PLUS-0"].states.get("keys/1x0") == Some(&1)
+        });
+        wait_for(&shared, |e| {
+            e.devices["FAKE-PLUS-0"].states.get("keys/1x0") == Some(&0)
+        });
+        event(&runtime, "0x0", "press");
+        wait_for(&shared, |e| e.devices["FAKE-PLUS-0"].page == "Menu");
+        shared
+            .lock()
+            .unwrap()
+            .command(
+                &json!({"method":"change-page","params":{"serial":"FAKE-PLUS-0","page":"Other"}}),
+            )
+            .unwrap();
+        thread::sleep(Duration::from_millis(250));
+        assert_eq!(shared.lock().unwrap().devices["FAKE-PLUS-0"].page, "Other");
+    }
+    #[test]
+    fn periodic_shell_output_updates_without_presses_and_stops_on_page_change() {
+        let tmp = tempfile::tempdir().unwrap();
+        let shared = Engine::open(tmp.path().into()).unwrap();
+        let count = tmp.path().join("count");
+        let command = format!(
+            "n=$(cat {} 2>/dev/null || echo 0); n=$((n+1)); echo $n > {}; printf 'tick-%s' $n",
+            count.display(),
+            count.display()
+        );
+        {
+            let mut e = shared.lock().unwrap();
+            e.docs.put("Main",json!({"keys":{"0x0":{"states":{"0":{"actions":[{"id":"native::OSPlugin-RunCommand","event":"auto","settings":{"command":command,"auto_run":0.1,"detached":false,"display_output":true,"label_position":"top"}}]}}}}})).unwrap();
+            e.docs.create("Other").unwrap();
+        }
+        let runtime = Runtime::start(shared.clone(), vec![Kind::Plus], false).unwrap();
+        wait_for(&shared, |e| {
+            e.live_overlays.values().any(|(_, v)| {
+                v["labels"]["top"]["text"]
+                    .as_str()
+                    .is_some_and(|s| s.starts_with("tick-"))
+            })
+        });
+        shared
+            .lock()
+            .unwrap()
+            .command(
+                &json!({"method":"change-page","params":{"serial":"FAKE-PLUS-0","page":"Other"}}),
+            )
+            .unwrap();
+        thread::sleep(Duration::from_millis(250));
+        let before = std::fs::read(&count).unwrap();
+        thread::sleep(Duration::from_millis(250));
+        assert_eq!(std::fs::read(&count).unwrap(), before);
+        assert!(shared.lock().unwrap().errors.is_empty());
+        drop(runtime);
+    }
     #[test]
     fn sleep_action_survives_release_and_wake_gesture_does_not_run_actions() {
         let tmp = tempfile::tempdir().unwrap();

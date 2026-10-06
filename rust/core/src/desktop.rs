@@ -5,6 +5,7 @@ use serde_json::{Value, json};
 use std::{
     io::Read,
     os::{fd::AsRawFd, unix::process::CommandExt},
+    path::PathBuf,
     process::{Command, Stdio},
     sync::{
         Arc,
@@ -13,14 +14,46 @@ use std::{
     time::{Duration, Instant},
 };
 
+thread_local! { static CANCEL: std::cell::RefCell<Option<std::sync::Arc<dyn Fn() -> bool + Send + Sync>>> = std::cell::RefCell::new(None); }
+pub fn with_cancellation<T>(
+    check: std::sync::Arc<dyn Fn() -> bool + Send + Sync>,
+    action: impl FnOnce() -> T,
+) -> T {
+    struct Restore(Option<std::sync::Arc<dyn Fn() -> bool + Send + Sync>>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            CANCEL.with(|c| *c.borrow_mut() = self.0.take());
+        }
+    }
+    let _restore = Restore(CANCEL.with(|c| c.replace(Some(check))));
+    action()
+}
+pub fn cancelled() -> bool {
+    CANCEL.with(|c| c.borrow().as_ref().is_some_and(|check| check()))
+}
+pub fn wait(delay: Duration) -> Result<()> {
+    let deadline = Instant::now() + delay;
+    while Instant::now() < deadline {
+        ensure!(!cancelled(), "action cancelled");
+        std::thread::sleep(
+            deadline
+                .saturating_duration_since(Instant::now())
+                .min(Duration::from_millis(20)),
+        );
+    }
+    Ok(())
+}
 pub fn run_command(argv: &[String], timeout: Duration) -> Result<String> {
+    command_output(argv, timeout, false)
+}
+fn command_output(argv: &[String], timeout: Duration, allow_failure: bool) -> Result<String> {
     let (program, args) = argv.split_first().context("empty command")?;
     let bundled = std::env::current_exe()
         .ok()
         .and_then(|exe| exe.parent().map(|dir| dir.join(program)))
         .filter(|p| {
             !program.contains('/')
-                && ["ffmpeg", "xdotool", "wtype", "pactl"].contains(&program.as_str())
+                && ["ffmpeg", "xdotool", "wtype", "pactl", "ping"].contains(&program.as_str())
                 && p.is_file()
         });
     let mut child = Command::new(
@@ -29,6 +62,12 @@ pub fn run_command(argv: &[String], timeout: Duration) -> Result<String> {
             .unwrap_or_else(|| std::path::Path::new(program)),
     )
     .args(args)
+    .current_dir(
+        std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| "/".into()),
+    )
+    .env("LC_ALL", "C")
     .process_group(0)
     .stdin(Stdio::null())
     .stdout(Stdio::piped())
@@ -44,6 +83,7 @@ pub fn run_command(argv: &[String], timeout: Duration) -> Result<String> {
     let deadline = Instant::now() + timeout;
     let mut output = Vec::new();
     let mut buffer = [0u8; 8192];
+    let mut exited: Option<std::process::ExitStatus> = None;
     loop {
         loop {
             match stdout.read(&mut buffer) {
@@ -67,11 +107,18 @@ pub fn run_command(argv: &[String], timeout: Duration) -> Result<String> {
                 }
             }
         }
-        if let Some(status) = child.try_wait()? {
-            ensure!(status.success(), "{program} exited with {status}");
+        if let Some(status) = exited {
+            ensure!(
+                allow_failure || status.success(),
+                "{program} exited with {status}"
+            );
             return Ok(String::from_utf8_lossy(&output).trim_end().to_owned());
         }
-        if Instant::now() >= deadline {
+        if let Some(status) = child.try_wait()? {
+            exited = Some(status);
+            continue;
+        }
+        if Instant::now() >= deadline || cancelled() {
             unsafe {
                 libc::kill(-(child.id() as i32), libc::SIGKILL);
             }
@@ -97,9 +144,136 @@ pub fn run_shell(command: &str, detached: bool) -> Result<()> {
 }
 pub fn launch(path: &str) -> Result<()> {
     ensure!(!path.is_empty(), "application path is empty");
-    let argv = desktop_argv(path)?;
+    let argv = if path.ends_with(".desktop") && std::path::Path::new(path).is_file() {
+        let entry = std::fs::read_to_string(path)?;
+        let mut section = false;
+        let mut executable = None;
+        let mut terminal = false;
+        for line in entry.lines() {
+            if line.starts_with('[') {
+                section = line == "[Desktop Entry]";
+            }
+            if section && let Some(value) = line.strip_prefix("Exec=") {
+                executable = Some(value.to_owned());
+            }
+            if section && line == "Terminal=true" {
+                terminal = true;
+            }
+        }
+        let command = executable.context("desktop entry has no Exec command")?;
+        let mut argv = desktop_argv(&command)?;
+        if terminal {
+            let mut prefix = terminal_argv()?;
+            prefix.extend(argv);
+            argv = prefix;
+        }
+        argv
+    } else {
+        desktop_argv(path)?
+    };
     launch_argv(&argv.iter().map(String::as_str).collect::<Vec<_>>())
 }
+pub fn terminal_argv() -> Result<Vec<String>> {
+    if let Ok(terminal) = std::env::var("TERMINAL") {
+        let mut args = shell_words::split(&terminal)?;
+        args.push("-e".into());
+        return Ok(args);
+    }
+    for (name, flag) in [
+        ("xdg-terminal-exec", "--"),
+        ("x-terminal-emulator", "-e"),
+        ("foot", "-e"),
+        ("kitty", "--"),
+        ("alacritty", "-e"),
+        ("gnome-terminal", "--"),
+        ("konsole", "-e"),
+        ("xterm", "-e"),
+    ] {
+        if std::env::var_os("PATH")
+            .is_some_and(|p| std::env::split_paths(&p).any(|d| d.join(name).is_file()))
+        {
+            return Ok(vec![name.into(), flag.into()]);
+        }
+    }
+    bail!("no terminal found; set TERMINAL to your terminal command")
+}
+pub fn shell_settings(settings: &Value) -> Result<String> {
+    let command = settings["command"]
+        .as_str()
+        .context("shell command missing")?;
+    ensure!(!command.trim().is_empty(), "shell command is empty");
+    let interactive = settings["interactive_shell"].as_bool().unwrap_or(false);
+    let shell = if interactive {
+        std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into())
+    } else {
+        "/bin/sh".into()
+    };
+    let args = [
+        shell,
+        if interactive { "-ic" } else { "-c" }.into(),
+        command.into(),
+    ];
+    if settings["detached"].as_bool().unwrap_or(true) {
+        launch_argv(&args.iter().map(String::as_str).collect::<Vec<_>>())?;
+        Ok(String::new())
+    } else {
+        command_output(
+            &args,
+            Duration::from_secs(
+                settings["timeout"]
+                    .as_u64()
+                    .filter(|t| *t > 0)
+                    .unwrap_or(86400 * 365),
+            ),
+            true,
+        )
+    }
+}
+pub fn open_url(settings: &Value) -> Result<()> {
+    let url = settings["url"].as_str().context("URL missing")?;
+    ensure!(
+        !url.is_empty() && !url.contains('\0') && !url.starts_with('-'),
+        "invalid URL"
+    );
+    if settings["new_window"].as_bool().unwrap_or(false) {
+        // Desktop browser handlers accept a new-window option, unlike xdg-open.
+        let desktop = run_command(
+            &[
+                "xdg-settings".into(),
+                "get".into(),
+                "default-web-browser".into(),
+            ],
+            Duration::from_secs(2),
+        )?;
+        let home = std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .unwrap_or_default();
+        let mut dirs = vec![
+            home.join(".local/share/applications"),
+            PathBuf::from("/usr/local/share/applications"),
+            PathBuf::from("/usr/share/applications"),
+        ];
+        if let Some(data) = std::env::var_os("XDG_DATA_HOME") {
+            dirs.insert(0, PathBuf::from(data).join("applications"));
+        }
+        let entry = dirs
+            .into_iter()
+            .map(|d| d.join(&desktop))
+            .find(|p| p.is_file())
+            .context("default browser desktop entry not found")?;
+        let text = std::fs::read_to_string(entry)?;
+        let exec = text
+            .lines()
+            .find_map(|l| l.strip_prefix("Exec="))
+            .context("browser Exec command missing")?;
+        let mut args = desktop_argv(exec)?;
+        args.extend(["--new-window".into(), url.into()]);
+        launch_argv(&args.iter().map(String::as_str).collect::<Vec<_>>())
+    } else {
+        launch_argv(&["xdg-open", url])
+    }
+}
+
 fn desktop_argv(command: &str) -> Result<Vec<String>> {
     if std::path::Path::new(command).is_file() {
         return Ok(vec![command.into()]);
@@ -117,7 +291,7 @@ fn desktop_argv(command: &str) -> Result<Vec<String>> {
     );
     Ok(argv)
 }
-fn launch_argv(argv: &[&str]) -> Result<()> {
+pub fn launch_argv(argv: &[&str]) -> Result<()> {
     use std::sync::atomic::AtomicUsize;
     static ACTIVE: AtomicUsize = AtomicUsize::new(0);
     ACTIVE
@@ -472,6 +646,33 @@ pub fn watch(shared: Shared, stop: Arc<AtomicBool>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn foreground_shell_captures_complete_output_even_on_nonzero_exit() {
+        assert_eq!(
+            shell_settings(&json!({"command":"printf 'first\nsecond'; exit 7","detached":false}))
+                .unwrap(),
+            "first\nsecond"
+        );
+    }
+    #[test]
+    fn command_and_delay_cancellation_are_prompt() {
+        let stop = Arc::new(AtomicBool::new(false));
+        let flag = stop.clone();
+        let thread = std::thread::spawn(move || {
+            with_cancellation(Arc::new(move || flag.load(Ordering::Relaxed)), || {
+                run_command(
+                    &["/bin/sh".into(), "-c".into(), "sleep 60".into()],
+                    Duration::from_secs(120),
+                )
+            })
+        });
+        std::thread::sleep(Duration::from_millis(50));
+        let start = Instant::now();
+        stop.store(true, Ordering::Relaxed);
+        assert!(thread.join().unwrap().is_err());
+        assert!(start.elapsed() < Duration::from_secs(1));
+        assert!(with_cancellation(Arc::new(|| true), || wait(Duration::from_secs(60))).is_err());
+    }
     #[test]
     fn desktop_exec_keeps_quoted_arguments_and_removes_empty_file_placeholders() {
         assert_eq!(

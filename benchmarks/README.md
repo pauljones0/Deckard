@@ -2,12 +2,12 @@
 
 These scripts run the real applications, including their interfaces and device-rendering workers. Python here is **measurement/test tooling only** and is never bundled into native Deckard.
 
-[Recorded results, summary and frame validation](results/2026-10-05). Regenerate the README table with:
+[Recorded results, summary and frame validation](results/2026-10-06). Regenerate the README table with:
 
 ```sh
 .venv/bin/python benchmarks/summarize.py \
-  benchmarks/results/2026-10-05/visible \
-  benchmarks/results/2026-10-05/background
+  benchmarks/results/2026-10-06/visible \
+  benchmarks/results/2026-10-06/background
 ```
 
 ## What is compared
@@ -18,7 +18,7 @@ These scripts run the real applications, including their interfaces and device-r
 
 Each application runs alone, in a fresh private HOME/data directory and a private D-Bus session without desktop service activation. Tests use one fake Stream Deck Plus with **eight labelled 120×120 output keys**, 14-point DejaVu Sans, the same colored backgrounds, brightness and disabled screensaver/session locking. The animated workload uses a 96×96, 100-frame GIF with **100 ms frame delays**, looping at a requested 10 FPS. No installed plugins or USB devices are used. The interface is visible for one set of measurements; all three applications use `-b` for the other set, while deck animation remains active.
 
-The two Python applications use the **same Python 3.13 environment and dependency set**, including StreamDeck 0.2.1, Pillow 11.1.0 and the host GTK/Adwaita. This controls dependency differences but is not a comparison of their separately distributed Flatpaks or original dependency locks. `dependencies.txt` records that shared environment. GTK uses its default renderer; Rust uses egui/OpenGL. Applications retain their default key JPEG quality: 100 in the original SDK path, 90 in the direct upstream and Rust. These full-application measurements include each implementation’s rendering choices. The hardware-GPU runs use a private 1280×800 Weston headless Wayland compositor; all application windows have the same fullscreen output size. The recorded GPU is NVIDIA RTX 5070, driver 610.57.04, on an AMD Ryzen 7 9800X3D with eight exposed logical CPUs. Host GTK is 4.22.4 and Adwaita 1.9.3. CPU/RAM figures exclude the shared compositor and private D-Bus daemon, but include application descendants.
+The two Python applications use the **same Python 3.13 environment and dependency set**, including StreamDeck 0.2.1, Pillow 11.1.0 and the host GTK/Adwaita. This controls dependency differences but is not a comparison of their separately distributed Flatpaks or original dependency locks. `dependencies.txt` records that shared environment. GTK uses its default renderer; Rust 0.5.0 uses egui/wgpu Vulkan with memory-focused device allocation. The archived 0.4.1 comparison used egui/OpenGL. Applications retain their default key JPEG quality: 100 in the original SDK path, 90 in the direct upstream and Rust. These full-application measurements include each implementation’s rendering choices. The hardware-GPU runs use a private 1280×800 Weston headless Wayland compositor; all application windows have the same fullscreen output size. The recorded GPU is NVIDIA RTX 5070, driver 610.57.04, on an AMD Ryzen 7 9800X3D with eight exposed logical CPUs. Host GTK is 4.22.4 and Adwaita 1.9.3. CPU/RAM figures exclude the shared compositor and private D-Bus daemon, but include application descendants.
 
 Each trial has 30 seconds of warmup and 30 seconds of one-second samples. There are three independent trials per application/workload/mode; application order rotates between trials. Reported CPU is the median of the three trial means. Reported RAM is the median of each trial's median PSS. PSS counts private memory plus a proportional share of shared pages; RSS is also retained in the raw results. **100% CPU means one logical core**, rather than the whole machine. Child CPU includes reaped short-lived helpers. Linux CPU accounting has 10 ms granularity; tiny static CPU differences should not be marketed as meaningful speedups.
 
@@ -75,7 +75,7 @@ Before accepting results we ruled out failed startup, the wrong executable, comp
 
 Initial bare-Xvfb trials lacked a window manager and exercised software Mesa. Those diagnostic timings are excluded. Instrumented source-import wrappers were fixed to respect the direct upstream's rebranding initialization; the application sources themselves remain unchanged. The performance process sampler now includes child CPU that would otherwise disappear when a shell helper exits between samples.
 
-The timed Rust executable was built at `ffc2c9f3624cc1c6dd8b964e187cb2a03a8e039c`. Subsequent release commits change tests, documentation, packaging and PulseAudio volume-argument compatibility; the latter is outside the timed workload, which has no audio actions. The renderer/editor code measured here is retained in the release.
+Each current run records the exact native executable SHA-256 and source commit. Source is frozen before timing; documentation-only commits may follow. The [archived 0.4.1 comparison](results/2026-10-05) used native source `ffc2c9f3624cc1c6dd8b964e187cb2a03a8e039c` and is retained for before/after comparisons.
 
 The Rust investigations found a static editor repaint timer, redundant composition of unchanged GIF frames, repeated resizing of shared media and per-frame GPU texture creation. The implementation now repaints after state or pixel changes, reuses unchanged composed frames, shares resized media within a render and updates existing GPU textures. Playback sampling remains anchored to its clock. Render validation and regression tests check that these savings retain changing pixels, timing, labels, rotation and settings invalidation.
 
@@ -90,3 +90,13 @@ python3 benchmarks/audio_fixture.py --native target/release/deckard
 ```
 
 This also runs inside both architecture builds. The fixture validates the actual bundled-helper baseline: older `pactl` interprets decimal percentage arguments differently, so native volume control sends unambiguous integer PulseAudio units.
+
+## Native CPU/memory optimization (0.5.0)
+
+The native editor prefers Vulkan, with wgpu's `MemoryUsage` device hint. This avoids the observed NVIDIA OpenGL buffer-swap polling while limiting allocation growth. If Vulkan initialization fails, Deckard restarts once into its OpenGL fallback; `DECKARD_RENDERER=glow` selects OpenGL explicitly. GPU model/backend are logged at startup. Results depend on the graphics driver and backend.
+
+Other changes remove repeat work: renderer snapshots and live worker lists are shared; action discovery runs only on document/device/state changes; MPRIS reuses one connection and batches property reads; OBS shares bounded status caches and invalidates them on events; unchanged keys and strips retain their pixel buffers; keys share a preview texture atlas; system fonts are scanned through temporary memory maps and only used glyphs are rasterized. Glyph caching has a 2 MiB bound. Artwork retains small source sizes, uses bounded least-recently-used eviction, refreshes changed local covers and retries transient failures.
+
+A Weston 15 kiosk-shell crash was reproduced in `weston_view_move_to_layer` when the final client closed. The current harness supports `--weston-bundle /path/to/extracted/weston`: every trial gets a fresh private GPU compositor, terminated before client teardown. The compositor stays outside the application process tree. This makes the test sequence repeatable without changing the user's desktop.
+
+Use short output paths because native control sockets have a Unix path-length limit. Never run compilation or package builds during timed trials. Profiler runs, graphics captures and frame observers are diagnostic/validation runs and must be kept separate from timings.

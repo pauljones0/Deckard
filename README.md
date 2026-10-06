@@ -8,17 +8,17 @@ Based on [StreamController](https://github.com/StreamController/StreamController
 
 ## Download and play
 
-[**Download Deckard 0.4.1**](https://github.com/pauljones0/Deckard/releases/tag/v0.4.1). Pick your format and architecture below. Intel/AMD PCs use **x86-64**; 64-bit ARM computers use **ARM64**.
+[**Download Deckard 0.5.0**](https://github.com/pauljones0/Deckard/releases/tag/v0.5.0). Pick your format and architecture below. Intel/AMD PCs use **x86-64**; 64-bit ARM computers use **ARM64**.
 
 | Linux build | x86-64 | ARM64 | Start it |
 | --- | --- | --- | --- |
-| AppImage | [Download](https://github.com/pauljones0/Deckard/releases/download/v0.4.1/deckard-0.4.1-x86_64.AppImage) | [Download](https://github.com/pauljones0/Deckard/releases/download/v0.4.1/deckard-0.4.1-aarch64.AppImage) | In file properties, allow executing the file; double-click. |
-| Ubuntu / Debian / Mint / Pop!_OS DEB | [Download](https://github.com/pauljones0/Deckard/releases/download/v0.4.1/deckard-0.4.1-x86_64.deb) | [Download](https://github.com/pauljones0/Deckard/releases/download/v0.4.1/deckard-0.4.1-aarch64.deb) | Open in your software installer, install, then launch **Deckard**. |
-| Fedora / compatible RPM systems | [Download](https://github.com/pauljones0/Deckard/releases/download/v0.4.1/deckard-0.4.1-x86_64.rpm) | [Download](https://github.com/pauljones0/Deckard/releases/download/v0.4.1/deckard-0.4.1-aarch64.rpm) | Open in your software installer, install, then launch **Deckard**. |
-| Portable archive | [Download](https://github.com/pauljones0/Deckard/releases/download/v0.4.1/deckard-0.4.1-x86_64.tar.gz) | [Download](https://github.com/pauljones0/Deckard/releases/download/v0.4.1/deckard-0.4.1-aarch64.tar.gz) | Extract; open `deckard/bin/deckard`. Keep the extracted directory together. |
+| AppImage | [Download](https://github.com/pauljones0/Deckard/releases/download/v0.5.0/deckard-0.5.0-x86_64.AppImage) | [Download](https://github.com/pauljones0/Deckard/releases/download/v0.5.0/deckard-0.5.0-aarch64.AppImage) | In file properties, allow executing the file; double-click. |
+| Ubuntu / Debian / Mint / Pop!_OS DEB | [Download](https://github.com/pauljones0/Deckard/releases/download/v0.5.0/deckard-0.5.0-x86_64.deb) | [Download](https://github.com/pauljones0/Deckard/releases/download/v0.5.0/deckard-0.5.0-aarch64.deb) | Open in your software installer, install, then launch **Deckard**. |
+| Fedora / compatible RPM systems | [Download](https://github.com/pauljones0/Deckard/releases/download/v0.5.0/deckard-0.5.0-x86_64.rpm) | [Download](https://github.com/pauljones0/Deckard/releases/download/v0.5.0/deckard-0.5.0-aarch64.rpm) | Open in your software installer, install, then launch **Deckard**. |
+| Portable archive | [Download](https://github.com/pauljones0/Deckard/releases/download/v0.5.0/deckard-0.5.0-x86_64.tar.gz) | [Download](https://github.com/pauljones0/Deckard/releases/download/v0.5.0/deckard-0.5.0-aarch64.tar.gz) | Extract; open `deckard/bin/deckard`. Keep the extracted directory together. |
 | Arch / EndeavourOS / Manjaro | [PKGBUILD](packaging/aur/deckard-git/PKGBUILD) | Same PKGBUILD | `makepkg -si`; launch **Deckard**. This option builds from source. |
 
-Bundles include FFmpeg, audio/input helpers and the native example plugin. They require a Linux desktop with **glibc 2.35 or newer** and working OpenGL/EGL drivers: for example Ubuntu 22.04+, Debian 12+, Mint 21+ and current Fedora/Arch. They do not support Alpine/musl. File dialogs use your desktop's XDG portal. [Build details, checksums and troubleshooting](docs/linux-builds.md).
+Bundles include FFmpeg, audio/input helpers and the native example plugin. They require a Linux desktop with **glibc 2.35 or newer** and working Vulkan or OpenGL/EGL drivers: for example Ubuntu 22.04+, Debian 12+, Mint 21+ and current Fedora/Arch. They do not support Alpine/musl. File dialogs use your desktop's XDG portal. [Build details, checksums and troubleshooting](docs/linux-builds.md).
 
 Connect your deck and launch Deckard. Select an input, choose an action and edit its labels or image. In **Store → Pages**, load the catalog and install **Rust Starter** for a ready-made page. Select that page in the editor; its native plugin is included. **Settings** includes autostart and an **Enable USB access** button for portable installations. DEB/RPM installers install the USB rules automatically; reconnect the deck if permission errors persist. The portable access helper requires administrator authentication.
 
@@ -26,7 +26,7 @@ Connect your deck and launch Deckard. Select an input, choose an action and edit
 
 **Background animation: 74% less CPU and 67% less RAM than the original; 52% less CPU and 67% less RAM than the direct upstream.**
 
-Each application cell shows **CPU / RAM**. CPU is percent of one logical core; RAM is proportional resident memory (PSS). Negative changes mean lower resource use.
+The table below records the 0.4.1 baseline; 0.5.0 measurements are being repeated before publication. Each application cell shows **CPU / RAM**. CPU is percent of one logical core; RAM is proportional resident memory (PSS). Negative changes mean lower resource use.
 
 | Workload | Original StreamController | Direct upstream Deckard | Rust Deckard | vs original | vs direct |
 | --- | ---: | ---: | ---: | --- | --- |
@@ -42,7 +42,7 @@ Measured on a Ryzen 7 9800X3D / NVIDIA RTX 5070, using three trials per case, 30
 ## What the Rust port includes
 
 - Original, Original V2, MK.2, Mini, XL, Plus, Plus XL, Neo, Pedal, Studio, Mirabox 293S and Ulanzi D200 device definitions, with fake models for previews and tests.
-- One hardware writer per deck, input polling between image writes, latest-frame coalescing, image identities, immutable byte-budgeted caches, cached glyphs and native SIMD JPEG encoding.
+- One hardware writer per deck, input polling between image writes, latest-frame coalescing, image identities, immutable byte-budgeted caches, bounded on-demand glyphs, shared configuration snapshots, reuse of unchanged keys/strips and native SIMD JPEG encoding.
 - Correct GIF transparency, disposal and individual frame delays; video wallpapers; slideshow order and shuffle; per-image viewport settings; calibrated Plus wallpaper continuity and rotated touchscreen layouts.
 - Pages with multiple persistent input states, sticky inputs across pages, sticky indicators, page search, device names, action drag-and-drop, brightness, screensavers and session-lock handling.
 - Automatic page switching on supported Hyprland, Sway, KDE, GNOME, X11 and Mango desktops; logind lock detection also supports sessions such as Niri. KDE needs `kdotool`; GNOME needs the [StreamController shell extension](https://extensions.gnome.org/extension/6871/streamcontroller-integration/).
@@ -50,7 +50,7 @@ Measured on a Ryzen 7 9800X3D / NVIDIA RTX 5070, using three trials per case, 30
 - Native plugin/page/icon catalogs, branch filtering, source links, custom icon packs, lazy GUI startup, tray Open/Restart/Quit and an expanded CLI.
 - Optional AI page proposals through a configurable endpoint. AI is off by default; proposals are reviewed before saving and command/text/hotkey actions require explicit permission in the UI.
 
-**Common plugins now have native replacements.** Both upstreams recommend OSPlugin, DeckPlugin, MediaPlugin, OBSPlugin and VolumeMixer. Rust now includes their common OS controls, deck/page actions, MPRIS playback, OBS WebSocket v5 controls and application volume mixing. Open **Settings → Inspect legacy actions → Migrate supported actions** to translate saved actions, with exact backups and a report of unsupported modes. [Coverage, setup and migration guide](docs/plugin-migration.md).
+**All 56 actions in the five recommended plugins have native implementations.** OSPlugin, DeckPlugin, MediaPlugin, OBSPlugin and VolumeMixer now include live readouts, graphs, artwork, OBS meters/status, repeating input, periodic commands and timed returns. These run in Rust. Open **Settings → Inspect legacy actions → Migrate supported actions** to translate saved actions with exact backups. [Action coverage, setup and migration](docs/plugin-migration.md).
 
 **Plugin API changed:** Python/GTK plugins do not run. Existing page JSON and unknown plugin settings are retained. See the [new executable plugin interface](docs/native-plugins.md) and [working Rust example](rust/plugin-example). This is a breaking application port, with a new egui interface; it does not reproduce every GTK dialog or Python plugin integration.
 

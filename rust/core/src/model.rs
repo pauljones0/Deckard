@@ -289,6 +289,10 @@ impl Documents {
             .cloned()
             .unwrap_or_else(empty_page))
     }
+    /// Borrow cached sticky inputs without copying the page on each live update.
+    pub fn sticky_ref(&self, serial: &str) -> &Value {
+        self.stickies.get(serial).unwrap_or(&Value::Null)
+    }
     pub fn put_sticky(&mut self, serial: &str, page: &Value) -> Result<()> {
         valid_name(serial)?;
         validate_page(page)?;

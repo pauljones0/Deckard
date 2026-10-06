@@ -11,11 +11,14 @@ version="$1"
 arch="$2"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
-apt-get install -y --no-install-recommends "/packages/deckard-$version-$arch.deb" xvfb xauth dbus-x11 libgl1-mesa-dri > /tmp/install.log
+apt-get install -y --no-install-recommends "/packages/deckard-$version-$arch.deb" xvfb xauth dbus-x11 libgl1-mesa-dri mesa-vulkan-drivers > /tmp/install.log
 /usr/bin/deckard --doctor
 /opt/deckard/bin/pactl --version
 /usr/bin/deckard --smoke-test --skip-load-hardware-decks --fake-deck-model studio --fake-deck-model mirabox-293s --fake-deck-model ulanzi-d200 --data /tmp/deckard-models
 LIBGL_ALWAYS_SOFTWARE=1 dbus-run-session -- xvfb-run -a /usr/bin/deckard --ui-smoke-test --skip-load-hardware-decks --fake-deck-model plus --data /tmp/deckard-deb
+LIBGL_ALWAYS_SOFTWARE=1 VK_ICD_FILENAMES=/tmp/deckard-no-vulkan-driver.json dbus-run-session -- xvfb-run -a /usr/bin/deckard --ui-smoke-test --skip-load-hardware-decks --fake-deck-model plus --data /tmp/deckard-gl-fallback > /tmp/deckard-gl-fallback.log 2>&1
+cat /tmp/deckard-gl-fallback.log
+grep -q 'Deckard graphics: OpenGL' /tmp/deckard-gl-fallback.log
 /opt/deckard/bin/ffmpeg -loglevel error -f lavfi -i color=c=red:s=16x16 -frames:v 1 -f rawvideo -pix_fmt rgba -threads 1 /tmp/frame.rgba
 [ "$(wc -c < /tmp/frame.rgba)" -eq 1024 ]
 "/packages/deckard-$version-$arch.AppImage" --appimage-extract-and-run --doctor
@@ -30,7 +33,7 @@ docker run --rm -i -v "$packages:/packages:ro" fedora:43 sh -s -- "$version" "$a
 set -eu
 version="$1"
 arch="$2"
-dnf install -y "/packages/deckard-$version-$arch.rpm" xorg-x11-server-Xvfb xorg-x11-xauth dbus-daemon mesa-dri-drivers > /tmp/install.log 2>&1
+dnf install -y "/packages/deckard-$version-$arch.rpm" xorg-x11-server-Xvfb xorg-x11-xauth dbus-daemon mesa-dri-drivers mesa-vulkan-drivers > /tmp/install.log 2>&1
 /usr/bin/deckard --doctor
 /opt/deckard/bin/pactl --version
 LIBGL_ALWAYS_SOFTWARE=1 dbus-run-session -- xvfb-run -a /usr/bin/deckard --ui-smoke-test --skip-load-hardware-decks --fake-deck-model plus --data /tmp/deckard-rpm

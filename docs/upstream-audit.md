@@ -1,10 +1,10 @@
-# Upstream reconciliation — 2026-10-05
+# Upstream reconciliation — 2026-10-06
 
 ## Provenance and scope
 
 - Original: [StreamController/StreamController](https://github.com/StreamController/StreamController), `main` at [`0f439967a16a8bfdc859439b0ae2b1370185aa06`](https://github.com/StreamController/StreamController/commit/0f439967a16a8bfdc859439b0ae2b1370185aa06).
 - Immediate parent: [nazbert/Deckard](https://github.com/nazbert/Deckard), `main` at [`a3609c7de63347dbc7e031926826898950600c83`](https://github.com/nazbert/Deckard/commit/a3609c7de63347dbc7e031926826898950600c83).
-- This repository started at exactly the immediate parent's HEAD. No parent commits were missing. Both upstream heads were checked again on 2026-10-05.
+- This repository started at exactly the immediate parent's HEAD. No parent commits were missing. Both upstream heads were checked again on 2026-10-06.
 - Last common ancestor with original: `129bdb58829929ac943b37583ab77c83e8a3dd12`. There are 81 later original commits absent from the fork's ancestry. A mechanical merge produces roughly 70 conflicts and would replace substantial fork fixes. This port reconciles behavior rather than falsely recording an untested merge.
 - The owner explicitly requested an entirely Python-free application and replacement plugin interface. Python backend repairs and GTK widget changes therefore inform the native design rather than being added as runtime dependencies.
 

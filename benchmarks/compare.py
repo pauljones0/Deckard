@@ -160,6 +160,44 @@ def snapshot(root):
     return cpu, pss / 2**20, rss / 2**20, len(cpu)
 
 
+def start_compositor(args, name):
+    """Give every trial a fresh private compositor; exclude it from app timings."""
+    if not args.weston_bundle:
+        return None
+    if not args.wayland_runtime:
+        raise ValueError("--weston-bundle requires --wayland-runtime")
+    bundle = args.weston_bundle.resolve()
+    lib = bundle / "usr/lib"
+    config = args.output / "weston.ini"
+    config.write_text("[core]\nshell=kiosk-shell.so\nidle-time=0\n")
+    args.wayland_runtime.mkdir(mode=0o700, parents=True, exist_ok=True)
+    env = os.environ.copy()
+    env["XDG_RUNTIME_DIR"] = str(args.wayland_runtime.resolve())
+    env["LD_LIBRARY_PATH"] = f"{lib}:{lib}/weston"
+    env["WESTON_MODULE_MAP"] = ";".join(
+        f"{module}={lib}/{directory}/{module}" for module, directory in
+        [("headless-backend.so", "libweston-15"), ("gl-renderer.so", "libweston-15"), ("kiosk-shell.so", "weston")]
+    )
+    process = subprocess.Popen(
+        [str(bundle / "usr/bin/weston"), "--backend=headless", "--renderer=gl",
+         "--socket=" + args.wayland_socket, "--width=1280", "--height=800",
+         "--config=" + str(config), "--log=" + str(args.output / f"{name}-weston.log")],
+        env=env, start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+    deadline = time.monotonic() + 10
+    socket_path = args.wayland_runtime / args.wayland_socket
+    while time.monotonic() < deadline:
+        if process.poll() is not None:
+            raise RuntimeError("private Weston failed to start")
+        if socket_path.exists():
+            # Wait for initial EGL/output setup as well as the listening socket.
+            time.sleep(0.5)
+            return process
+        time.sleep(0.05)
+    stop(process)
+    raise RuntimeError("private Weston did not create its socket")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--python", default=str(ROOT / ".venv/bin/python"))
@@ -204,10 +242,13 @@ def main():
         help="Private compositor runtime directory; enables Wayland GPU tests",
     )
     parser.add_argument("--wayland-socket", default="deckard-benchmark")
+    parser.add_argument("--weston-bundle", type=pathlib.Path, help="Extracted Weston package; start a fresh private GPU compositor for each trial")
     parser.add_argument("--display", default=":98")
     args = parser.parse_args()
     args.output = args.output.resolve()
     args.output.mkdir(parents=True, exist_ok=True)
+    if len(str(args.output / "rust-animated-999/native-control.sock").encode()) >= 100:
+        raise ValueError("benchmark output path is too long for native Unix control sockets")
     animation = assets(args.output / "assets")
     metadata = {
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -222,6 +263,8 @@ def main():
             [args.python, "--version"], text=True
         ).strip(),
         "upstreams": SHAS,
+        "native_renderer_override": os.environ.get("DECKARD_RENDERER"),
+        "wgpu_backend_override": os.environ.get("WGPU_BACKEND"),
         "native_sha256": hashlib.sha256(args.native.read_bytes()).hexdigest(),
         "git_head": subprocess.check_output(
             ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True
@@ -240,6 +283,7 @@ def main():
         },
         "instrumented": args.observe_legacy_frames,
         "background": args.background,
+        "fresh_compositor_per_trial": bool(args.weston_bundle),
         "wayland_runtime": str(args.wayland_runtime) if args.wayland_runtime else None,
         "rendering": (
             "Wayland, 1280x800 Weston headless EGL, hardware GPU"
@@ -353,6 +397,7 @@ def main():
                 if app == "direct":
                     command.extend(["--fake-deck-model", "plus"])
                 print(f"Starting {name}", flush=True)
+                compositor = start_compositor(args, name)
                 log_path = args.output / f"{name}.log"
                 process = subprocess.Popen(
                     command,
@@ -434,6 +479,10 @@ def main():
                         flush=True,
                     )
                 finally:
+                    if compositor is not None:
+                        # End the owned compositor before client teardown: Weston 15 kiosk
+                        # can crash in weston_view_move_to_layer on its final client closing.
+                        stop(compositor)
                     stop(process)
                     stop(bus)
     for workload in args.workloads:

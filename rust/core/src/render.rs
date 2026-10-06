@@ -12,7 +12,7 @@ use serde_json::{Value, json};
 use std::{
     collections::{HashMap, HashSet},
     hash::{Hash, Hasher},
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::Arc,
     time::Instant,
 };
@@ -57,9 +57,86 @@ impl Asset {
         }
     }
 }
-type GlyphCache = HashMap<(String, char, u32), (fontdue::Metrics, Arc<[u8]>)>;
+#[derive(Clone, Default)]
+struct GlyphMetrics {
+    width: usize,
+    height: usize,
+    xmin: i32,
+    ymin: i32,
+    advance_width: f32,
+}
+type FamilyGlyphs = HashMap<(char, u32), (GlyphMetrics, Arc<[u8]>)>;
+#[derive(Default)]
+struct GlyphCache {
+    entries: HashMap<String, FamilyGlyphs>,
+    bytes: usize,
+    count: usize,
+}
+impl GlyphCache {
+    fn get(
+        &mut self,
+        family: &str,
+        c: char,
+        size: f32,
+        font: &ab_glyph::FontArc,
+    ) -> (GlyphMetrics, Arc<[u8]>) {
+        let key = (c, size.to_bits());
+        if let Some(value) = self.entries.get(family).and_then(|glyphs| glyphs.get(&key)) {
+            return value.clone();
+        }
+        let glyph = rasterize(font, c, size);
+        let bytes = glyph.1.len() + std::mem::size_of::<GlyphMetrics>() + 64;
+        if self.bytes + bytes > 2 * 1024 * 1024 || self.count >= 4096 {
+            self.entries.clear();
+            self.bytes = 0;
+            self.count = 0;
+        }
+        self.bytes += bytes;
+        self.count += 1;
+        self.entries
+            .entry(family.into())
+            .or_default()
+            .insert(key, glyph.clone());
+        glyph
+    }
+}
+fn rasterize(font: &ab_glyph::FontArc, c: char, pixels: f32) -> (GlyphMetrics, Arc<[u8]>) {
+    use ab_glyph::{Font, ScaleFont};
+    // ab_glyph measures scale as ascent minus descent; page font-size is em pixels.
+    let scale =
+        pixels * font.height_unscaled() / font.units_per_em().unwrap_or(font.height_unscaled());
+    let scaled = font.as_scaled(scale);
+    let id = scaled.glyph_id(c);
+    let advance_width = scaled.h_advance(id);
+    let Some(glyph) = font.outline_glyph(id.with_scale(scale)) else {
+        return (
+            GlyphMetrics {
+                advance_width,
+                ..Default::default()
+            },
+            Arc::from([]),
+        );
+    };
+    let bounds = glyph.px_bounds();
+    let width = bounds.width() as usize;
+    let height = bounds.height() as usize;
+    let mut bitmap = vec![0; width * height];
+    glyph.draw(|x, y, alpha| {
+        bitmap[y as usize * width + x as usize] = (alpha * 255.0).round() as u8
+    });
+    (
+        GlyphMetrics {
+            width,
+            height,
+            xmin: bounds.min.x as i32,
+            ymin: -(bounds.min.y as i32) - height as i32,
+            advance_width,
+        },
+        bitmap.into(),
+    )
+}
 pub struct Renderer {
-    font: fontdue::Font,
+    font: ab_glyph::FontArc,
     assets: HashMap<PathBuf, Asset>,
     encoded: ByteCache<u64>,
     used: HashSet<PathBuf>,
@@ -67,14 +144,14 @@ pub struct Renderer {
     asset_frames: HashMap<PathBuf, Arc<RgbaImage>>,
     last_revision: u64,
     gif_frames: HashMap<PathBuf, (u64, Arc<RgbaImage>)>,
-    previous_config: Option<(Kind, RenderConfig)>,
+    previous_config: Option<(Kind, Arc<RenderConfig>)>,
     previous_frame: Option<Frame>,
     scaled: HashMap<(usize, u32, u32, String, String), Arc<RgbaImage>>,
     scaled_bytes: usize,
     stamps: HashMap<PathBuf, (u64, std::time::SystemTime)>,
     glyphs: std::cell::RefCell<GlyphCache>,
     pub errors: Vec<String>,
-    fonts: std::cell::RefCell<HashMap<String, Arc<fontdue::Font>>>,
+    fonts: std::cell::RefCell<HashMap<String, ab_glyph::FontArc>>,
 }
 pub fn layout(kind: Kind, rotation: u16) -> (u8, u8) {
     let (rows, cols) = kind.key_layout();
@@ -82,6 +159,18 @@ pub fn layout(kind: Kind, rotation: u16) -> (u8, u8) {
         (cols, rows)
     } else {
         (rows, cols)
+    }
+}
+pub fn key_spacing(kind: Kind, rotation: u16) -> (u32, u32) {
+    let gaps = match kind {
+        Kind::Plus => (116, 34),
+        Kind::Neo => (32, 36),
+        _ => (36, 36),
+    };
+    if rotation % 180 == 90 {
+        (gaps.1, gaps.0)
+    } else {
+        gaps
     }
 }
 pub fn logical_index(kind: Kind, physical: u8, rotation: u16) -> u8 {
@@ -101,7 +190,15 @@ pub fn logical_input(kind: Kind, physical: u8, rotation: u16) -> String {
     format!("{}x{}", index % cols, index / cols)
 }
 pub fn effective_input<'a>(config: &'a RenderConfig, family: &str, input: &str) -> &'a Value {
-    let sticky = &config.sticky[family][input];
+    effective_input_from(&config.page, &config.sticky, family, input)
+}
+pub fn effective_input_from<'a>(
+    page: &'a Value,
+    sticky: &'a Value,
+    family: &str,
+    input: &str,
+) -> &'a Value {
+    let sticky = &sticky[family][input];
     if sticky["states"].as_object().is_some_and(|s| {
         s.values().any(|v| {
             v["actions"].as_array().is_some_and(|a| !a.is_empty())
@@ -118,7 +215,7 @@ pub fn effective_input<'a>(config: &'a RenderConfig, family: &str, input: &str) 
     }) {
         sticky
     } else {
-        &config.page[family][input]
+        &page[family][input]
     }
 }
 pub fn active_state(config: &RenderConfig, family: &str, input: &str) -> usize {
@@ -136,14 +233,25 @@ pub fn active_state(config: &RenderConfig, family: &str, input: &str) -> usize {
         0
     }
 }
+fn unchanged_sources(
+    paths: &[&str],
+    before: &HashMap<PathBuf, Arc<RgbaImage>>,
+    after: &HashMap<PathBuf, Arc<RgbaImage>>,
+) -> bool {
+    paths.iter().filter(|p| !p.is_empty()).all(|path| {
+        match (before.get(Path::new(path)), after.get(Path::new(path))) {
+            (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+            (None, None) => true,
+            _ => false,
+        }
+    })
+}
 impl Renderer {
     pub fn new(budget: usize) -> Result<Self> {
         Ok(Self {
-            font: fontdue::Font::from_bytes(
-                include_bytes!("../../../Assets/Fonts/Roboto-Regular.ttf") as &[u8],
-                fontdue::FontSettings::default(),
-            )
-            .map_err(anyhow::Error::msg)?,
+            font: ab_glyph::FontArc::try_from_slice(include_bytes!(
+                "../../../Assets/Fonts/Roboto-Regular.ttf"
+            ))?,
             assets: HashMap::new(),
             encoded: ByteCache::new(budget),
             used: HashSet::new(),
@@ -156,7 +264,7 @@ impl Renderer {
             scaled: HashMap::new(),
             scaled_bytes: 0,
             stamps: HashMap::new(),
-            glyphs: std::cell::RefCell::new(HashMap::new()),
+            glyphs: std::cell::RefCell::new(GlyphCache::default()),
             errors: Vec::new(),
             fonts: std::cell::RefCell::new(HashMap::new()),
         })
@@ -320,6 +428,10 @@ impl Renderer {
         result
     }
     pub fn render(&mut self, kind: Kind, config: &RenderConfig) -> Result<Frame> {
+        self.render_shared(kind, Arc::new(config.clone()))
+    }
+    pub fn render_shared(&mut self, kind: Kind, config: Arc<RenderConfig>) -> Result<Frame> {
+        let config_ref = &config;
         if config.revision != self.last_revision {
             self.last_revision = config.revision;
             self.assets.retain(|path, asset| {
@@ -338,14 +450,16 @@ impl Renderer {
         let slideshow = config.page["background"]["media-paths"]
             .as_array()
             .is_some_and(|paths| paths.len() > 1);
-        if !slideshow
+        let unchanged_config = !slideshow
             && self
                 .previous_config
                 .as_ref()
                 .is_some_and(|(previous_kind, previous)| {
-                    *previous_kind == kind && previous == config
-                })
-        {
+                    *previous_kind == kind
+                        && (Arc::ptr_eq(previous, &config)
+                            || previous.as_ref() == config_ref.as_ref())
+                });
+        if unchanged_config {
             // Advance playback clocks, but reuse the composed frame until its pixels change.
             let paths: Vec<_> = self.assets.keys().cloned().collect();
             for path in paths {
@@ -424,18 +538,7 @@ impl Renderer {
             .map(|v| &v["view"])
             .filter(|v| v.is_object())
             .unwrap_or(&background["view"]);
-        let (sx, sy) = if kind == Kind::Plus {
-            (116, 34)
-        } else if kind == Kind::Neo {
-            (32, 36)
-        } else {
-            (36, 36)
-        };
-        let (sx, sy) = if config.rotation % 180 == 90 {
-            (sy, sx)
-        } else {
-            (sx, sy)
-        };
+        let (sx, sy) = key_spacing(kind, config.rotation);
         let grid = (
             w * u32::from(cols) + sx * u32::from(cols - 1),
             h * u32::from(rows) + sy * u32::from(rows - 1),
@@ -464,8 +567,25 @@ impl Renderer {
         for physical in 0..kind.key_count() {
             let logical = logical_index(kind, physical, config.rotation);
             let input = logical_input(kind, physical, config.rotation);
-            let data = effective_input(config, "keys", &input);
-            let state = &data["states"][active_state(config, "keys", &input).to_string()];
+            let data = effective_input(config_ref, "keys", &input);
+            let state = &data["states"][active_state(config_ref, "keys", &input).to_string()];
+            let paths = [
+                bgpath,
+                state["background"]["image"].as_str().unwrap_or(""),
+                state["media"]["path"].as_str().unwrap_or(""),
+                state["native-background"]["artwork"].as_str().unwrap_or(""),
+                state["native-visual"]["artwork"].as_str().unwrap_or(""),
+            ];
+            if unchanged_config
+                && unchanged_sources(&paths, &previous_assets, &self.asset_frames)
+                && let Some(tile) = self
+                    .previous_frame
+                    .as_ref()
+                    .and_then(|f| f.tiles.iter().find(|t| t.key == physical))
+            {
+                tiles.push(tile.clone());
+                continue;
+            }
             let mut tile = if let Some(bg) = &whole {
                 imageops::crop_imm(
                     bg,
@@ -481,6 +601,7 @@ impl Renderer {
             if config.sleeping {
                 tile.fill(0)
             } else {
+                self.native_visual(&mut tile, &state["native-background"]);
                 let color = color(&state["background"]["color"], [0, 0, 0, 0]);
                 overlay_color(&mut tile, color);
                 for path in [
@@ -495,6 +616,7 @@ impl Renderer {
                         imageops::overlay(&mut tile, img.as_ref(), 0, 0);
                     }
                 }
+                self.native_visual(&mut tile, &state["native-visual"]);
                 self.labels(&mut tile, state);
                 if config.pressed.contains(&input)
                     && config.page["native-options"]["shrink-on-press"]
@@ -519,7 +641,21 @@ impl Renderer {
             }
             tiles.push(self.encode(physical, tile, fmt, config.rotation)?);
         }
-        let strip = if let Some((sw, sh)) = kind.lcd_strip_size() {
+        let mut strip_paths = vec![if extend { bgpath } else { "" }];
+        for (family, input) in std::iter::once(("infobar", "0".to_owned()))
+            .chain((0..kind.encoder_count()).map(|i| ("dials", i.to_string())))
+        {
+            let data = effective_input(config_ref, family, &input);
+            let state = &data["states"][active_state(config_ref, family, &input).to_string()];
+            for v in [&state["media"]["path"], &state["native-visual"]["artwork"]] {
+                strip_paths.push(v.as_str().unwrap_or(""));
+            }
+        }
+        let reusable_strip = unchanged_config
+            && unchanged_sources(&strip_paths, &previous_assets, &self.asset_frames);
+        let strip = if reusable_strip {
+            self.previous_frame.as_ref().and_then(|f| f.strip.clone())
+        } else if let Some((sw, sh)) = kind.lcd_strip_size() {
             let (sw, sh) = if kind == Kind::PlusXl {
                 (sh, sw)
             } else {
@@ -541,8 +677,9 @@ impl Renderer {
                     imageops::overlay(&mut strip, &crop, 0, 0);
                 }
                 if kind == Kind::Neo {
-                    let data = effective_input(config, "infobar", "0");
-                    let state = &data["states"][active_state(config, "infobar", "0").to_string()];
+                    let data = effective_input(config_ref, "infobar", "0");
+                    let state =
+                        &data["states"][active_state(config_ref, "infobar", "0").to_string()];
                     overlay_color(
                         &mut strip,
                         color(&state["background"]["color"], [0, 0, 0, 0]),
@@ -558,6 +695,7 @@ impl Renderer {
                             0,
                         );
                     }
+                    self.native_visual(&mut strip, &state["native-visual"]);
                     self.labels(&mut strip, state);
                     if state["labels"].is_null() {
                         self.text(
@@ -571,9 +709,9 @@ impl Renderer {
                 } else {
                     let count = kind.encoder_count();
                     for i in 0..count {
-                        let data = effective_input(config, "dials", &i.to_string());
+                        let data = effective_input(config_ref, "dials", &i.to_string());
                         let state = &data["states"]
-                            [active_state(config, "dials", &i.to_string()).to_string()];
+                            [active_state(config_ref, "dials", &i.to_string()).to_string()];
                         let vertical = sh > sw;
                         let (tw, th) = if vertical {
                             (sw, sh / u32::from(count))
@@ -596,6 +734,7 @@ impl Renderer {
                                 0,
                             )
                         }
+                        self.native_visual(&mut part, &state["native-visual"]);
                         self.labels(&mut part, state);
                         let slot = if config.rotation % 360 == 270 {
                             count - 1 - i
@@ -636,7 +775,7 @@ impl Renderer {
             strip,
             revision: config.revision,
         };
-        self.previous_config = Some((kind, config.clone()));
+        self.previous_config = Some((kind, config));
         self.previous_frame = Some(frame.clone());
         Ok(frame)
     }
@@ -729,10 +868,255 @@ impl Renderer {
             identity,
         })
     }
+    fn native_visual(&mut self, img: &mut RgbaImage, visual: &Value) {
+        let (w, h) = img.dimensions();
+        if !visual.is_object() {
+            return;
+        }
+        if let Some(path) = visual["artwork"].as_str()
+            && let Some(art) = self.asset_playback(path, w, h, &Value::Null)
+        {
+            let image = if let Some(crop) = visual["crop"].as_array().filter(|a| a.len() == 4) {
+                let x = crop[0].as_u64().unwrap_or(0) as u32;
+                let y = crop[1].as_u64().unwrap_or(0) as u32;
+                let cols = crop[2].as_u64().unwrap_or(1).clamp(1, 64) as u32;
+                let rows = crop[3].as_u64().unwrap_or(1).clamp(1, 64) as u32;
+                let sx = visual["spacing"][0].as_u64().unwrap_or(0).min(512) as u32;
+                let sy = visual["spacing"][1].as_u64().unwrap_or(0).min(512) as u32;
+                let full = self.scaled_media(
+                    &art,
+                    w * cols + sx * (cols - 1),
+                    h * rows + sy * (rows - 1),
+                    &serde_json::json!({"fill-mode":visual["fit"].as_str().unwrap_or("cover")}),
+                    "cover",
+                );
+                Arc::new(
+                    imageops::crop_imm(
+                        full.as_ref(),
+                        x.min(cols - 1) * (w + sx),
+                        y.min(rows - 1) * (h + sy),
+                        w,
+                        h,
+                    )
+                    .to_image(),
+                )
+            } else {
+                self.scaled_media(
+                    &art,
+                    w,
+                    h,
+                    &serde_json::json!({"fill-mode":"cover"}),
+                    "cover",
+                )
+            };
+            imageops::overlay(img, image.as_ref(), 0, 0);
+            if visual["darken"] == true {
+                overlay_color(img, [0, 0, 0, 120]);
+            }
+        }
+        if let Some(points) = visual["graph"].as_array() {
+            let settings = &visual["settings"];
+            let dynamic = settings["dynamic-scaling"].as_bool().unwrap_or(false);
+            let ceiling = if dynamic {
+                points
+                    .iter()
+                    .filter_map(Value::as_f64)
+                    .fold(1.0_f64, f64::max)
+            } else {
+                100.0
+            };
+            let line = color(&settings["line-color"], [255, 255, 255, 255]);
+            let fill = color(&settings["fill-color"], [255, 255, 255, 150]);
+            let thickness = settings["line-width"].as_u64().unwrap_or(5).clamp(1, 32) as i32;
+            let mut previous = None;
+            for x in 0..w {
+                let position = x as f64 / w.saturating_sub(1).max(1) as f64
+                    * points.len().saturating_sub(1) as f64;
+                let index = position.floor() as usize;
+                let fract = position.fract();
+                let a = points.get(index).and_then(Value::as_f64).unwrap_or(0.0);
+                let b = points.get(index + 1).and_then(Value::as_f64).unwrap_or(a);
+                let y = ((h - 1) as f64 * (1.0 - ((a + (b - a) * fract) / ceiling).clamp(0.0, 1.0)))
+                    as i32;
+                for fy in y.max(0) as u32..h {
+                    blend_pixel(img, x, fy, fill);
+                }
+                if let Some((px, py)) = previous {
+                    draw_line(img, (px, py), (x as i32, y), line, thickness);
+                }
+                previous = Some((x as i32, y));
+            }
+        }
+        if let Some(progress) = visual["progress"].as_f64() {
+            let margin = (w / 20).max(2);
+            let y = h * 7 / 10;
+            let height = (h / 15).max(3);
+            let width = w.saturating_sub(2 * margin);
+            for yy in y..(y + height).min(h) {
+                for x in margin..(margin + width).min(w) {
+                    img.put_pixel(
+                        x,
+                        yy,
+                        Rgba(
+                            if ((x - margin) as f64) < width as f64 * progress.clamp(0.0, 1.0) {
+                                color(&visual["bar-color"], [90, 180, 245, 255])
+                            } else {
+                                [45, 45, 52, 255]
+                            },
+                        ),
+                    );
+                }
+            }
+        }
+        if let Some(symbol) = visual["symbol"].as_str().filter(|s| !s.is_empty()) {
+            let active = visual["active"].as_bool().unwrap_or(true);
+            let rgba = if active {
+                [240, 245, 255, 255]
+            } else {
+                [125, 135, 150, 255]
+            };
+            let cx = w as i32 / 2;
+            let cy = h as i32 / 2;
+            let size = w.min(h) as i32 / 5;
+            match symbol {
+                "Play" | "PlayPause" | "Next" | "Previous" => {
+                    let direction = if symbol == "Previous" { -1 } else { 1 };
+                    for dx in -size..=size {
+                        let height = (size - dx).max(0) / 2;
+                        for dy in -height..=height {
+                            put_pixel(img, cx + dx * direction, cy + dy, rgba);
+                        }
+                    }
+                    if ["Next", "Previous"].contains(&symbol) {
+                        draw_line(
+                            img,
+                            (cx + direction * size, cy - size),
+                            (cx + direction * size, cy + size),
+                            rgba,
+                            3,
+                        );
+                    }
+                }
+                "Pause" => {
+                    for x in [-size / 2, size / 2] {
+                        draw_line(
+                            img,
+                            (cx + x, cy - size),
+                            (cx + x, cy + size),
+                            rgba,
+                            (size / 3).max(2),
+                        );
+                    }
+                }
+                "Stop" => {
+                    for x in cx - size..cx + size {
+                        for y in cy - size..cy + size {
+                            put_pixel(img, x, y, rgba);
+                        }
+                    }
+                }
+                "record" | "obs" | "stream" => {
+                    let rgba = if active { [235, 55, 75, 255] } else { rgba };
+                    for x in -size..=size {
+                        for y in -size..=size {
+                            if x * x + y * y < size * size {
+                                put_pixel(img, cx + x, cy + y, rgba);
+                            }
+                        }
+                    }
+                }
+                "mute" => {
+                    draw_line(
+                        img,
+                        (cx - size, cy - size),
+                        (cx + size, cy + size),
+                        [240, 65, 75, 255],
+                        4,
+                    );
+                    draw_line(
+                        img,
+                        (cx - size, cy + size),
+                        (cx + size, cy - size),
+                        [240, 65, 75, 255],
+                        4,
+                    );
+                }
+                "brightness" | "brightness-adjust" => {
+                    for angle in 0..8 {
+                        let angle = angle as f64 * std::f64::consts::TAU / 8.0;
+                        let (x, y) = (angle.cos(), angle.sin());
+                        draw_line(
+                            img,
+                            (
+                                cx + (x * size as f64 * 0.7) as i32,
+                                cy + (y * size as f64 * 0.7) as i32,
+                            ),
+                            (
+                                cx + (x * size as f64 * 1.3) as i32,
+                                cy + (y * size as f64 * 1.3) as i32,
+                            ),
+                            rgba,
+                            3,
+                        );
+                    }
+                }
+                _ => {
+                    draw_line(img, (cx - size, cy - size), (cx + size, cy - size), rgba, 3);
+                    draw_line(img, (cx + size, cy - size), (cx + size, cy + size), rgba, 3);
+                    draw_line(img, (cx + size, cy + size), (cx - size, cy + size), rgba, 3);
+                    draw_line(img, (cx - size, cy + size), (cx - size, cy - size), rgba, 3);
+                    let text = match symbol {
+                        "input" | "hotkey" => "Key",
+                        "text" => "Aa",
+                        "shell" => ">_",
+                        "url" => "Web",
+                        "page" => "Page",
+                        "previous-page" => "Back",
+                        "state" => "1/2",
+                        "sleep" => "Zz",
+                        "launch" => "App",
+                        "delay" => "Wait",
+                        "audio" => "Vol",
+                        "mixer" => "Mix",
+                        "scene" => "Scene",
+                        "filter" => "FX",
+                        "replay_buffer" => "Replay",
+                        "virtual_camera" => "Cam",
+                        "studio_mode" => "Studio",
+                        other => other,
+                    };
+                    self.text(
+                        img,
+                        text,
+                        (w.min(h) / 9).clamp(8, 16) as f32,
+                        rgba,
+                        (0.5, 0.5),
+                    );
+                }
+            }
+        }
+    }
     fn labels(&self, img: &mut RgbaImage, state: &Value) {
         for (position, y) in [("top", 0.12), ("center", 0.5), ("bottom", 0.87)] {
             let label = &state["labels"][position];
             if let Some(text) = label["text"].as_str() {
+                let outline = label["outline-width"].as_u64().unwrap_or(0).min(5) as i32;
+                for dx in -outline..=outline {
+                    for dy in -outline..=outline {
+                        if dx * dx + dy * dy <= outline * outline && (dx != 0 || dy != 0) {
+                            self.text_font(
+                                img,
+                                (text, label["font-family"].as_str().unwrap_or("Roboto")),
+                                label["font-size"].as_f64().unwrap_or(14.0).clamp(6.0, 72.0) as f32,
+                                color(&label["outline-color"], [0, 0, 0, 255]),
+                                (
+                                    0.5 + dx as f32 / img.width() as f32,
+                                    y + dy as f32 / img.height() as f32,
+                                ),
+                            );
+                        }
+                    }
+                }
                 self.text_font(
                     img,
                     (text, label["font-family"].as_str().unwrap_or("Roboto")),
@@ -773,37 +1157,20 @@ impl Renderer {
                 };
                 if let Some(id) = db.query(&query)
                     && let Some(Ok(font)) = db.with_face_data(id, |bytes, index| {
-                        fontdue::Font::from_bytes(
-                            bytes,
-                            fontdue::FontSettings {
-                                collection_index: index,
-                                ..Default::default()
-                            },
-                        )
+                        ab_glyph::FontVec::try_from_vec_and_index(bytes.to_vec(), index)
+                            .map(ab_glyph::FontArc::new)
                     })
                 {
-                    fonts.insert(family.into(), Arc::new(font));
+                    fonts.insert(family.into(), font);
                 }
             }
             fonts.get(family).cloned()
         };
-        let font = custom.as_deref().unwrap_or(&self.font);
+        let font = custom.as_ref().unwrap_or(&self.font);
         let glyphs: Vec<_> = text
             .chars()
             .take(128)
-            .map(|c| {
-                let mut glyphs = self.glyphs.borrow_mut();
-                if glyphs.len() >= 4096 {
-                    glyphs.clear();
-                }
-                glyphs
-                    .entry((family.to_owned(), c, size.to_bits()))
-                    .or_insert_with(|| {
-                        let (metrics, pixels) = font.rasterize(c, size);
-                        (metrics, Arc::from(pixels))
-                    })
-                    .clone()
-            })
+            .map(|c| self.glyphs.borrow_mut().get(family, c, size, font))
             .collect();
         let width: f32 = glyphs.iter().map(|(m, _)| m.advance_width).sum();
         let mut x = (img.width() as f32 * pos.0 - width / 2.0) as i32;
@@ -831,6 +1198,38 @@ impl Renderer {
         }
     }
 }
+fn put_pixel(img: &mut RgbaImage, x: i32, y: i32, color: [u8; 4]) {
+    if x >= 0 && y >= 0 && (x as u32) < img.width() && (y as u32) < img.height() {
+        blend_pixel(img, x as u32, y as u32, color);
+    }
+}
+fn blend_pixel(img: &mut RgbaImage, x: u32, y: u32, color: [u8; 4]) {
+    let pixel = img.get_pixel_mut(x, y);
+    let alpha = color[3] as u32;
+    for i in 0..3 {
+        pixel[i] = ((color[i] as u32 * alpha + pixel[i] as u32 * (255 - alpha)) / 255) as u8;
+    }
+    pixel[3] = 255;
+}
+fn draw_line(
+    img: &mut RgbaImage,
+    start: (i32, i32),
+    end: (i32, i32),
+    color: [u8; 4],
+    thickness: i32,
+) {
+    let steps = (end.0 - start.0).abs().max((end.1 - start.1).abs()).max(1);
+    for step in 0..=steps {
+        let x = start.0 + (end.0 - start.0) * step / steps;
+        let y = start.1 + (end.1 - start.1) * step / steps;
+        for dx in -thickness / 2..=thickness / 2 {
+            for dy in -thickness / 2..=thickness / 2 {
+                put_pixel(img, x + dx, y + dy, color);
+            }
+        }
+    }
+}
+
 fn overlay_color(image: &mut RgbaImage, color: [u8; 4]) {
     let alpha = u32::from(color[3]);
     if alpha == 0 {
@@ -1028,6 +1427,13 @@ mod tests {
             panic!("GIF must be loaded");
         }
         let changed = renderer.render(Kind::Plus, &config).unwrap();
+        assert!(
+            Arc::ptr_eq(
+                &first.strip.as_ref().unwrap().rgb,
+                &changed.strip.as_ref().unwrap().rgb
+            ),
+            "a static strip must survive key animation without copying"
+        );
         assert_ne!(first.tiles[0].identity, changed.tiles[0].identity);
         assert_eq!(&changed.tiles[0].rgb[..3], &[0, 255, 0]);
         config.sleeping = true;
@@ -1035,6 +1441,56 @@ mod tests {
         assert!(sleeping.tiles[0].rgb.iter().all(|byte| *byte == 0));
         renderer.release_media();
         assert!(renderer.previous_frame.is_none());
+    }
+    #[test]
+    fn glyph_cache_is_bounded_and_preserves_descenders_and_spaces() {
+        let font = ab_glyph::FontArc::try_from_slice(include_bytes!(
+            "../../../Assets/Fonts/Roboto-Regular.ttf"
+        ))
+        .unwrap();
+        let mut cache = GlyphCache::default();
+        let g = cache.get("Roboto", 'g', 30.0, &font);
+        assert!(g.0.ymin < 0 && g.1.iter().any(|v| *v > 0));
+        let space = cache.get("Roboto", ' ', 30.0, &font);
+        assert!(space.0.advance_width > 0.0 && space.1.is_empty());
+        for size in 6..=72 {
+            for c in ' '..='~' {
+                cache.get("Roboto", c, size as f32, &font);
+            }
+        }
+        assert!(cache.bytes <= 2 * 1024 * 1024 && cache.count <= 4096);
+        let retained = cache.get("Roboto", 'g', 30.0, &font);
+        assert_eq!(g.1.as_ref(), retained.1.as_ref());
+    }
+    #[test]
+    fn grid_artwork_resizes_once_and_crops_across_physical_gaps() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("cover.png");
+        let mut source = RgbaImage::from_pixel(276, 120, Rgba([255, 0, 0, 255]));
+        for y in 0..120 {
+            for x in 138..276 {
+                source.put_pixel(x, y, Rgba([0, 255, 0, 255]));
+            }
+        }
+        source.save(&path).unwrap();
+        let mut renderer = Renderer::new(1024 * 1024).unwrap();
+        let mut left = RgbaImage::new(120, 120);
+        let mut right = left.clone();
+        renderer.native_visual(
+            &mut left,
+            &json!({"artwork":path,"crop":[0,0,2,1],"spacing":[36,36],"fit":"stretch"}),
+        );
+        renderer.native_visual(
+            &mut right,
+            &json!({"artwork":path,"crop":[1,0,2,1],"spacing":[36,36],"fit":"stretch"}),
+        );
+        assert_eq!(left.get_pixel(119, 60).0, [255, 0, 0, 255]);
+        assert_eq!(right.get_pixel(0, 60).0, [0, 255, 0, 255]);
+        assert_eq!(
+            renderer.scaled.len(),
+            1,
+            "a whole-grid resize is shared by every crop"
+        );
     }
     #[test]
     fn persisted_media_layout_preserves_size_alignment_and_contain() {

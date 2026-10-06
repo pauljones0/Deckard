@@ -1,5 +1,5 @@
 {
-  "api": 1, "id": "example", "name": "Rust example", "version": "0.4.1",
+  "api": 1, "id": "example", "name": "Rust example", "version": "0.5.0",
   "executable": "deckard-plugin-example", "source": "https://github.com/pauljones0/Deckard/tree/main/rust/plugin-example",
   "description": "A native plugin that returns a label and background color.",
   "actions": [{ "id": "hello", "name": "Hello Rust", "fields": [{ "key": "label", "label": "Label", "kind": "string", "default": "Hello Rust" }] }]

@@ -10,7 +10,8 @@ deckard-core = { path = "../core" }
 anyhow = "1"
 serde_json = "1"
 clap = { version = "4", features = ["derive"] }
-eframe = { version = "0.33", default-features = false, features = ["glow", "default_fonts", "x11", "wayland"] }
+eframe = { version = "0.33", default-features = false, features = ["glow", "wgpu", "default_fonts", "x11", "wayland"] }
+wgpu = { version = "27.0.1", default-features = false, features = ["vulkan"] }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 signal-hook = "0.3"
 ksni = { version = "0.3.4", features = ["blocking"] }

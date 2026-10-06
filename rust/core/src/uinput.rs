@@ -12,10 +12,19 @@ use std::{
 struct Device {
     file: File,
     held: BTreeSet<u16>,
+    owners: std::collections::HashMap<String, BTreeSet<u16>>,
 }
 static DEVICE: OnceLock<Mutex<Option<Device>>> = OnceLock::new();
 impl Device {
     fn open() -> Result<Self> {
+        #[cfg(test)]
+        if let Some(path) = std::env::var_os("DECKARD_TEST_INPUT_TRACE") {
+            return Ok(Self {
+                file: OpenOptions::new().create(true).append(true).open(path)?,
+                held: Default::default(),
+                owners: Default::default(),
+            });
+        }
         let file=OpenOptions::new().write(true).open("/dev/uinput").context("cannot open /dev/uinput; enable native input access using the installation helper, then log in again")?;
         let fd = file.as_raw_fd();
         for event in [1, 2] {
@@ -44,6 +53,7 @@ impl Device {
         let mut device = Self {
             file,
             held: BTreeSet::new(),
+            owners: Default::default(),
         };
         device.file.write_all(&descriptor)?;
         ensure!(
@@ -98,29 +108,74 @@ pub fn sequence(settings: &Value) -> Result<Vec<(u16, i32)>> {
         })
         .collect()
 }
+fn with_device<T>(action: impl FnOnce(&mut Device) -> Result<T>) -> Result<T> {
+    let mut slot = DEVICE.get_or_init(|| Mutex::new(None)).lock().unwrap();
+    if slot.is_none() {
+        *slot = Some(Device::open()?);
+    }
+    action(slot.as_mut().unwrap())
+}
+fn write_key(owner: &str, code: u16, value: i32) -> Result<()> {
+    with_device(|device| {
+        if value == 0 {
+            device.owners.entry(owner.into()).or_default().remove(&code);
+            if device
+                .owners
+                .iter()
+                .any(|(other, keys)| other != owner && keys.contains(&code))
+            {
+                return Ok(());
+            }
+        } else {
+            device.owners.entry(owner.into()).or_default().insert(code);
+        }
+        device.event(1, code, value)?;
+        device.event(0, 0, 0)
+    })
+}
+pub fn release_owner(owner: &str) {
+    if let Some(slot) = DEVICE.get() {
+        let mut slot = slot.lock().unwrap();
+        if let Some(device) = slot.as_mut()
+            && let Some(keys) = device.owners.remove(owner)
+        {
+            for code in keys {
+                if !device.owners.values().any(|keys| keys.contains(&code)) {
+                    let _ = device.event(1, code, 0);
+                }
+            }
+            let _ = device.event(0, 0, 0);
+        }
+    }
+}
 pub fn execute(operation: &str, settings: &Value) -> Result<()> {
-    let keys = if operation == "keys" {
-        sequence(settings)?
-    } else {
-        Vec::new()
-    };
+    execute_owned(operation, settings, "one-shot")
+}
+pub fn execute_owned(operation: &str, settings: &Value, owner: &str) -> Result<()> {
     let delay = settings["delay"].as_f64().unwrap_or(0.02);
     ensure!(
-        delay.is_finite() && (0.0..=1.0).contains(&delay) && delay * keys.len() as f64 <= 5.0,
-        "key sequence delay exceeds five seconds"
+        delay.is_finite() && (0.0..=60.0).contains(&delay),
+        "invalid key delay"
     );
-    let mut device = DEVICE.get_or_init(|| Mutex::new(None)).lock().unwrap();
-    if device.is_none() {
-        *device = Some(Device::open()?);
-    }
-    let device = device.as_mut().unwrap();
+    let held = settings["hold_until_release"].as_bool().unwrap_or(false);
+    let repeat = settings["repeat"].as_bool().unwrap_or(false);
     let result = (|| {
         match operation {
             "keys" => {
-                for (code, value) in keys {
-                    device.event(1, code, value)?;
-                    device.event(0, 0, 0)?;
-                    std::thread::sleep(Duration::from_secs_f64(delay));
+                let keys = sequence(settings)?;
+                loop {
+                    for &(code, value) in &keys {
+                        ensure!(!crate::desktop::cancelled(), "input action cancelled");
+                        if held && value != 1 {
+                            continue;
+                        }
+                        write_key(owner, code, value)?;
+                        crate::desktop::wait(Duration::from_secs_f64(delay))?;
+                    }
+                    if !repeat {
+                        break;
+                    }
+                    crate::desktop::wait(Duration::from_millis(1))?;
                 }
             }
             "click" => {
@@ -130,28 +185,35 @@ pub fn execute(operation: &str, settings: &Value) -> Result<()> {
                     "middle" => 274,
                     _ => anyhow::bail!("invalid mouse button"),
                 };
-                device.event(1, button, 1)?;
-                device.event(0, 0, 0)?;
-                std::thread::sleep(Duration::from_millis(10));
-                device.event(1, button, 0)?;
-                device.event(0, 0, 0)?;
+                write_key(owner, button, 1)?;
+                crate::desktop::wait(Duration::from_millis(10))?;
+                write_key(owner, button, 0)?;
             }
-            "move" => {
-                for (code, key) in [(0, "x"), (1, "y")] {
-                    let value = settings[key].as_i64().unwrap_or(0);
-                    ensure!(
-                        (-32768..=32767).contains(&value),
-                        "mouse movement outside supported range"
-                    );
-                    device.event(2, code, value as i32)?;
-                }
-                device.event(0, 0, 0)?;
+            "move" | "position" => {
+                let x = settings["x"].as_i64().unwrap_or(0);
+                let y = settings["y"].as_i64().unwrap_or(0);
+                ensure!(
+                    (-32768..=32767).contains(&x) && (-32768..=32767).contains(&y),
+                    "mouse coordinates outside supported range"
+                );
+                with_device(|device| {
+                    if operation == "position" {
+                        device.event(2, 0, -25000)?;
+                        device.event(2, 1, -25000)?;
+                        device.event(0, 0, 0)?;
+                    }
+                    device.event(2, 0, x as i32)?;
+                    device.event(2, 1, y as i32)?;
+                    device.event(0, 0, 0)
+                })?;
             }
             _ => anyhow::bail!("unsupported native input operation"),
-        };
+        }
         Ok(())
     })();
-    device.release();
+    if !held || result.is_err() || crate::desktop::cancelled() {
+        release_owner(owner);
+    }
     result
 }
 pub fn shutdown() {
@@ -162,6 +224,142 @@ pub fn shutdown() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn input_lifecycle_emits_release_on_release_page_switch_and_shutdown() {
+        let tmp = tempfile::tempdir().unwrap();
+        let trace = tmp.path().join("input.bin");
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "uinput::tests::lifecycle_child", "--nocapture"])
+            .env("DECKARD_TEST_INPUT_TRACE", &trace)
+            .status()
+            .unwrap();
+        assert!(status.success());
+        let bytes = std::fs::read(trace).unwrap();
+        let mut held = std::collections::BTreeSet::new();
+        let mut downs = 0;
+        for event in bytes.as_chunks::<24>().0 {
+            let kind = u16::from_ne_bytes(event[16..18].try_into().unwrap());
+            let code = u16::from_ne_bytes(event[18..20].try_into().unwrap());
+            let value = i32::from_ne_bytes(event[20..24].try_into().unwrap());
+            if kind == 1 {
+                if value == 0 {
+                    held.remove(&code);
+                } else {
+                    held.insert(code);
+                    downs += 1;
+                }
+            }
+        }
+        assert!(downs >= 6, "held and repeating presses were not exercised");
+        assert!(held.is_empty(), "keys left held: {held:?}");
+    }
+    #[test]
+    fn lifecycle_child() {
+        if std::env::var_os("DECKARD_TEST_INPUT_TRACE").is_none() {
+            return;
+        }
+        use crate::engine::{Engine, InputEvent, Runtime};
+        use elgato_streamdeck::info::Kind;
+        use serde_json::json;
+        let tmp = tempfile::tempdir().unwrap();
+        let shared = Engine::open(tmp.path().into()).unwrap();
+        {
+            let mut e = shared.lock().unwrap();
+            e.docs.put("Main",json!({"keys":{"0x0":{"states":{"0":{"actions":[{"id":"native::OSPlugin-Hotkey","event":"auto","settings":{"keys":[[29,1],[30,1],[30,0],[29,0]],"hold_until_release":true,"delay":0}}]}}},"1x0":{"states":{"0":{"actions":[{"id":"native::OSPlugin-Hotkey","event":"auto","settings":{"keys":[[30,1],[30,0]],"repeat":true,"delay":0.005}}]}}}}})).unwrap();
+            e.docs.create("Other").unwrap();
+        }
+        let runtime = Runtime::start(shared.clone(), vec![Kind::Plus], false).unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        while shared.lock().unwrap().devices.is_empty() {
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let send = |input: &str, event: &str| {
+            runtime
+                .events
+                .send(InputEvent {
+                    serial: "FAKE-PLUS-0".into(),
+                    family: "keys".into(),
+                    input: input.into(),
+                    event: event.into(),
+                    value: 1,
+                })
+                .unwrap()
+        };
+        send("0x0", "press");
+        std::thread::sleep(Duration::from_millis(100));
+        assert!(
+            DEVICE
+                .get()
+                .unwrap()
+                .lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .held
+                .contains(&29)
+        );
+        send("0x0", "release");
+        std::thread::sleep(Duration::from_millis(60));
+        assert!(
+            DEVICE
+                .get()
+                .unwrap()
+                .lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .held
+                .is_empty()
+        );
+        send("1x0", "press");
+        std::thread::sleep(Duration::from_millis(100));
+        send("1x0", "release");
+        std::thread::sleep(Duration::from_millis(60));
+        assert!(
+            DEVICE
+                .get()
+                .unwrap()
+                .lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .held
+                .is_empty()
+        );
+        send("0x0", "press");
+        std::thread::sleep(Duration::from_millis(60));
+        shared
+            .lock()
+            .unwrap()
+            .command(
+                &json!({"method":"change-page","params":{"serial":"FAKE-PLUS-0","page":"Other"}}),
+            )
+            .unwrap();
+        std::thread::sleep(Duration::from_millis(60));
+        assert!(
+            DEVICE
+                .get()
+                .unwrap()
+                .lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .held
+                .is_empty()
+        );
+        shared
+            .lock()
+            .unwrap()
+            .command(
+                &json!({"method":"change-page","params":{"serial":"FAKE-PLUS-0","page":"Main"}}),
+            )
+            .unwrap();
+        send("0x0", "press");
+        std::thread::sleep(Duration::from_millis(60));
+        drop(runtime);
+        assert!(DEVICE.get().unwrap().lock().unwrap().is_none());
+    }
     #[test]
     fn rejects_invalid_kernel_events_before_opening_device() {
         assert!(sequence(&serde_json::json!({"keys":[[42,1],[30,1],[30,0],[42,0]]})).is_ok());
