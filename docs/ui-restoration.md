@@ -68,11 +68,13 @@ adw = { package = "libadwaita", version = "0.9.2", features = ["v1_6"], optional
 
 Use separate `ui-gtk` / `ui-egui` Cargo features during migration. Move toolkit-independent action definitions and editing logic out of `ui.rs`; preserve CLI, tray, IPC and lazy window startup. A build without GUI features should retain daemon/control functionality. Once GTK reaches parity, make it the release default and remove egui/eframe/wgpu dependencies.
 
-The split view requires libadwaita 1.4; the existing CSS variables require GTK 4.16. Target GTK 4.16+ / libadwaita 1.6+ for the retained styling. Ubuntu 22.04's stock GTK 4.6 / libadwaita 1.1 cannot supply this UI.
+The split view requires libadwaita 1.4; the existing CSS variables require GTK 4.16. Target GTK 4.16+ / libadwaita 1.6+ for the retained styling. Ubuntu 26.04 LTS and supported Fedora releases already supply suitable versions. Use their system libraries instead of bundling a newer GTK stack for Ubuntu 22.04.
 
-To retain glibc 2.35 support, build a pinned toolkit stack inside the existing Ubuntu 22.04 container. GTK 4.16.13's build requirements include GLib 2.76+, Pango 1.52+, Cairo 1.18+ and Wayland 1.21+; bundle those dependencies as needed. This compatibility build remains to be validated, rather than copying newer-distribution binaries into the current packages.
+Build the DEB inside Ubuntu 26.04 and the RPM inside each supported Fedora release, on both x86_64 and aarch64. Fedora has no LTS edition; follow its supported stable releases. Install application files under standard `/usr` paths and declare runtime dependencies on GTK, libadwaita and required resources. Use Debian shared-library dependency generation and RPM automatic dependency detection; the graphical package installer can install missing dependencies even on a non-GNOME desktop. Do not repackage the Ubuntu-built binary as a Fedora RPM.
 
-Extend `packaging/linux/build.py` to include the toolkit libraries, required GIO/image modules, icon theme and compiled schemas. Make module/resource paths relocatable, preserve host resource lookup and keep bundled libraries from leaking into launched external applications. Include dependency licenses/source records. Retain the Python payload rejection. File dialogs should use the desktop portal; media playback stays in the existing Rust/FFmpeg renderer.
+Keep GTK, GLib, Pango, Cairo, toolkit modules and schemas out of these native application packages. The distribution supplies and updates them. Retain the Python payload rejection. File dialogs should use the desktop portal; media playback stays in the existing Rust/FFmpeg renderer. Existing helper/FFmpeg packaging is a separate choice.
+
+Portable archives and AppImages do not install dependencies. They need either an explicitly documented modern system-library requirement or a bundled toolkit for broader compatibility. Native DEB/RPM builds are the default installation path for the restored editor. The current egui release packages retain their existing compatibility claims until the GTK replacement is built and verified.
 
 ## Implementation order and acceptance
 
@@ -80,7 +82,7 @@ Extend `packaging/linux/build.py` to include the toolkit libraries, required GIO
 2. Restore typed layout/background/label/action controls, shortcuts, clipboard, drag/drop and missing-action states. Preserve unknown JSON and all 56 native actions.
 3. Restore page/deck settings, asset selection, store, migration, OBS/mixer configuration and close-to-tray behavior. Avoid permanent JSON-only substitutes for the previous controls.
 4. Verify every model's geometry, reconnection, page changes during editing, hidden/reopened windows, and worker cancellation. Run existing native tests plus GTK interaction checks on X11 and Wayland.
-5. Build/install all Linux formats on both architectures, relocate portable archives, check dialogs/icons/USB setup, and inspect screenshots before switching the default frontend.
+5. Build/install DEBs on clean Ubuntu 26.04 systems and RPMs on clean supported Fedora systems, on both architectures. Verify dependency installation on GNOME and non-GNOME desktops, dialogs/icons/USB setup, and screenshots before switching the default frontend. Validate any portable/AppImage builds separately against their stated requirements and relocation behavior.
 6. Repeat visible, hidden and never-opened CPU/PSS measurements with identical workloads. The Rust engine optimizations remain, but the GTK frontend's resource cost must be measured; egui benchmark results do not establish GTK performance.
 
 ## Sources
@@ -90,5 +92,6 @@ Extend `packaging/linux/build.py` to include the toolkit libraries, required GIO
 - [NavigationSplitView requirements](https://gnome.pages.gitlab.gnome.org/libadwaita/doc/1-latest/class.NavigationSplitView.html)
 - [GTK CSS properties and version requirements](https://docs.gtk.org/gtk4/css-properties.html)
 - [GLib owned bytes](https://docs.rs/glib/latest/glib/struct.Bytes.html#method.from_owned)
-- [GTK 4.16.13 build dependencies](https://github.com/GNOME/gtk/blob/4.16.13/meson.build)
-- [Ubuntu 22.04 GTK](https://packages.ubuntu.com/jammy/libgtk-4-1) / [libadwaita](https://packages.ubuntu.com/jammy/libadwaita-1-0)
+- [Ubuntu 26.04 GTK](https://packages.ubuntu.com/resolute-updates/libs/libgtk-4-1) / [libadwaita](https://packages.ubuntu.com/resolute-updates/libs/libadwaita-1-0)
+- [Fedora GTK](https://packages.fedoraproject.org/pkgs/gtk4/gtk4/) / [libadwaita](https://packages.fedoraproject.org/pkgs/libadwaita/libadwaita/)
+- [Fedora release lifecycle](https://docs.fedoraproject.org/en-US/releases/lifecycle/)
