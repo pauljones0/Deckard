@@ -38,6 +38,27 @@ Connect your deck and launch Deckard. Select an input, choose an action and edit
 
 These are controller image endpoints, rather than Valve Steam Deck screen dimensions or 144×144 source-icon artwork. [Verified specifications, FPS settings, transport behavior and diagnostics](docs/rendering-endpoints.md). Maximum visible hardware FPS needs a connected controller; the software limit is not a guaranteed LCD refresh rate.
 
+## Under 1% of a CPU core at 100 FPS
+
+**Eight native-resolution Plus keys at 100 FPS: 33% less CPU than 0.7.0. XL animation uses 29% less.** These are fresh, matched-rate Rust **0.7.0 → 0.8.0** measurements.
+
+| Workload · all keys | FPS · 0.7 → 0.8 | CPU · 0.7 → 0.8 | Median CPU change | RAM MiB · 0.7 → 0.8 |
+| --- | ---: | ---: | ---: | ---: |
+| Plus · 8 × 120² · 10 FPS GIF · background | 10.0 → 10.0 | 0.33% → **0.33%** | ≈unchanged | 17.5 → 17.8 |
+| Plus · 8 × 120² · 100 FPS GIF · background | 100.0 → 100.0 | 1.40% → **0.93%** | −33% | 17.7 → 17.8 |
+| XL · 32 × 96² · 50 FPS GIF · background | 49.9 → 49.9 | 2.33% → **1.67%** | −29% | 28.0 → 28.1 |
+| Plus · 8 × 120² · single-pass 60 FPS video · background | 59.8 → 59.8 | 4.00% → **3.87%** | −3%* | 54.2 → 54.1 |
+| Plus · 8 × 120² · 100 FPS GIF · visible editor | 100.2 → 100.2 | 4.00% → **3.60%** | −10%* | 177.7 → 177.8 |
+
+*Video/editor trial ranges overlap: their smaller median changes are estimates, not guaranteed savings. The 10 FPS case is at the CPU accounting floor. RAM is effectively flat; GIF/editor medians increase by 0.07–0.27 MiB, and the table retains those differences. A separate memory-map diagnostic finds identical, stable anonymous heap and a 0.03 MiB mapped-code increase in the Plus 100 FPS pair.
+
+0.8.0 packs RGB previews with runtime-detected x86-64 SSSE3 or ARM64 NEON, with a scalar fallback. It writes the final shared buffer directly without preliminary zero filling. Shared-image opacity is checked once per composed render in a 64-entry metadata cache using weak references; it does not retain pixel buffers. GIF playback borrows the decoder's frame, removing a temporary allocation/copy. Channel bytes, partial transparency, source timing, native dimensions and quality-90 4:4:4 JPEG are preserved.
+
+CPU means percent of one logical core; RAM is application-plus-descendants PSS, including FFmpeg. Each result is the median of three trials with 15 seconds warmup, 15 seconds timing and separate four-second per-key validation. Both versions use installed 14-point Liberation Sans, identical GIF/video fixtures and the same native endpoints. The visible editor uses Vulkan on the Ryzen 7 9800X3D / RTX 5070 host. These fake-device checks measure rendered pixels; physical USB/LCD and ARM performance remain unmeasured. Compare the paired values here rather than chaining medians from older tables. [Methodology](benchmarks/README.md#native-simd-and-allocation-optimization-080), [all 30 runs, ranges and executable hashes](benchmarks/results/2026-10-06/native-0.8).
+
+<details>
+<summary>Earlier Rust performance comparisons (0.5.0–0.7.0)</summary>
+
 ## Same pixels, half the rendering CPU
 
 **100 FPS with 53% less background CPU. Single-pass video uses 56% less RAM.** These are measured Rust **0.6.0 → 0.7.0** results at the same source rates and native key dimensions.
@@ -68,6 +89,9 @@ Looping GIF/editor RAM is essentially flat: measured increases are 0.06–0.33 M
 | Plus · 8 × 120² · 100 FPS GIF · visible editor | 29.6 → **100.0** | 3.07% → 5.33% | 178.3 → 177.7 | **−48%** |
 
 Higher-rate sources use more total CPU because more frames are rendered; the final column compares CPU cost for a complete frame across all keys. CPU is percent of one logical core; RAM is application-plus-descendants PSS. Results are medians of three trials, each with 15 seconds warmup and 15 seconds sampling, on the Ryzen 7 9800X3D / RTX 5070 host. Separate pixel checks validate every key after timing; the visible editor uses Vulkan in a fresh private 1280×800 Wayland session. GIFs have 200 distinct 120×120 source frames; video is a 60 FPS FFV1 clip. These fake-device measurements establish rendering throughput, rather than physical USB/LCD limits or ARM performance. [Methodology](benchmarks/README.md#native-endpoint-optimization-060), [raw samples, per-key FPS and executable hashes](benchmarks/results/2026-10-06/endpoints).
+
+
+</details>
 
 ## More room for your stream 🦀
 

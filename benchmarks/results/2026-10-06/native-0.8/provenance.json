@@ -1,0 +1,50 @@
+{
+  "before": {
+    "version": "0.7.0",
+    "runtime_source_commit": "b3e28f5b561712725bb74be8e784de536aca782c",
+    "published_tag_commit": "9766a440d3b4d5952ff0a8683675bbc3875e5056",
+    "binary_sha256": "7fda93a53285c413d7e4e5e03ab1dd708ee91f7ee07860e04c08481fd6332832"
+  },
+  "after": {
+    "version": "0.8.0",
+    "runtime_source_commit": "a43ce5af524cfcb5f5599d4909c7238458554d0d",
+    "binary_sha256": "e117c24253d180d01bda89b71b1c81bf1102c5feb5dbf746c8b827baa71d9dcb"
+  },
+  "measurement_checkout": "a43ce5af524cfcb5f5599d4909c7238458554d0d",
+  "source_frozen": true,
+  "git_dirty_during_timing": false,
+  "compiler": {
+    "rust": "1.99.0",
+    "LLVM": "23.1.1",
+    "profile": "release; opt-level 3; thin LTO; one code-generation unit; unchanged from baseline"
+  },
+  "host": {
+    "cpu": "AMD Ryzen 7 9800X3D",
+    "logical_cpus_exposed": 8,
+    "gpu": "NVIDIA RTX 5070",
+    "gpu_driver": "610.57.04",
+    "visible_app_renderer": "Vulkan",
+    "visible_compositor": "Weston 15.0.1, private 1280x800 headless GL kiosk output",
+    "architecture": "x86_64",
+    "glibc": "2.44"
+  },
+  "font": {
+    "family": "Liberation Sans",
+    "path": "/usr/share/fonts/liberation/LiberationSans-Regular.ttf",
+    "sha256": "baccc64becc3eb7d104b7c84d99f5314a0a1f896e2b3ea6c2f22fc08d2003bee"
+  },
+  "units": {
+    "cpu": "100% = one logical core",
+    "memory": "MiB process-tree PSS; includes FFmpeg child; excludes compositor and private D-Bus"
+  },
+  "limits": [
+    "Frozen host-built executables, not Ubuntu 22.04 distribution binaries.",
+    "No physical controller; FPS counts changed rendered pixels, not USB transfers or panel scanout.",
+    "No ARM64 timing measurements.",
+    "Single-pass video PSS covers the 15-second warmup plus 15-second sample window, not an unlimited-duration soak.",
+    "Historical upstream and 0.6.0 tables use different fixtures; do not derive unmeasured 0.7.0-to-upstream gains.",
+    "Profiler and memory-map diagnostics are separate from performance timing.",
+    "Video/editor CPU trial ranges overlap; small median changes are estimates.",
+    "Low-rate CPU is at the accounting floor and RAM is essentially flat; do not claim further general RAM savings."
+  ]
+}

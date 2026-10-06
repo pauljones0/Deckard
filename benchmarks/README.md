@@ -150,3 +150,29 @@ The video RAM figures are medians within that measurement window, including the 
 ```
 
 Use an available shared font, short absolute output paths and run one benchmark at a time. Do not compile or package software during timing. Source, compiler, host, executable hashes and measurement limits are recorded in [provenance](results/2026-10-06/native-0.7/provenance.json); [raw results](results/2026-10-06/native-0.7) retain all 30 runs. Both metadata files record a clean source tree. Ubuntu 22.04 distribution builds and their ARM64 variants are checked separately; these host timings do not measure their performance or physical LCD scanout.
+
+## Native SIMD and allocation optimization (0.8.0)
+
+The frozen 0.7.0 and 0.8.0 executables use identical nominal source rates, native dimensions, labels, JPEG quality and fixtures. The unchanged release profile uses opt-level 3, thin LTO and one code-generation unit. A separate 0.7.0 PMU profile attributed about 25% of sampled user-space cycles to `Renderer::encode`; annotation located nearly all of that function's sampled cost in scalar RGB channel packing. RGBA composition accounted for about 16%. These diagnostics are not benchmark speedups.
+
+The new RGB writer selects SSSE3 on capable x86-64 CPUs and NEON on capable ARM64 CPUs, with a scalar fallback. Each SIMD block reads exactly 64 RGBA bytes and writes exactly 48 RGB bytes; all tails are handled by the scalar path. A final uninitialized Arc buffer is exposed as initialized only after every byte has been written. Tests check every channel, zero/small/native sizes, all 16 alignment offsets, surrounding-byte guards, extra source storage, color spaces and the scalar reference. Shared-image opacity uses a bounded 64-entry list of weak references, cleared for each composition and on device release. Partial transparency and clipping match the reference compositor. Borrowed decoder frames remove a GIF copy without changing disposal/timing. Both architectures run these checks in CI; performance is measured only on x86-64.
+
+There are three trials for each of the four background cases and the visible Plus 100 FPS case, reversing version order in trial two. Each trial has 15 seconds warmup, 15 seconds of process-tree sampling and four seconds of changed-tile validation afterward. All keys must change at native dimensions, with no engine errors. The timing window has no frame observer. Both versions use installed 14-point Liberation Sans. The fixtures and sampler are the same as the 0.7.0 comparison: 200-frame 120×120 GIFs, a 120-second 60 FPS FFV1 single-pass video, fresh HOME/data/private D-Bus sessions, and a private 1280×800 GPU-backed Weston session for the editor. CPU/PSS summaries retain trial ranges and raw samples.
+
+High-rate GIF CPU reductions are clear across trial ranges. The 10 FPS median is unchanged at the accounting floor. Video and editor ranges overlap; their small median reductions are retained as estimates rather than promised speedups. RAM is effectively flat, with small increases in the GIF/editor medians retained. A separate Plus 100 FPS memory-map pair finds the same 6.36 MiB anonymous heap in both versions at 15 and 30 seconds, with stable mapped-code PSS higher by 0.03 MiB in 0.8.0. This rules out a growing heap within that diagnostic window without claiming a multi-day leak test. A separate 0.8.0 video PMU capture, attached to the app and FFmpeg child, identifies at least 56.8% of sampled user-space cycles in JPEG routines and 18.8% in libavcodec, while RGB packing is 1.31%. This explains why video benefits less; profile overhead is excluded from the table. The temporary-copy removal reduces allocations; it is not presented as a measured RAM saving.
+
+```sh
+.venv/bin/python benchmarks/endpoints.py \
+  --before /path/to/deckard-0.7.0 --after /path/to/deckard-0.8.0 \
+  --cases plus10 plus100 xl50 plus60once --font-family 'Liberation Sans' \
+  --trials 3 --warmup 15 --duration 15 --validate-seconds 4 \
+  --output /tmp/deckard-simd-bg
+.venv/bin/python benchmarks/endpoints.py \
+  --before /path/to/deckard-0.7.0 --after /path/to/deckard-0.8.0 \
+  --cases plus100 --font-family 'Liberation Sans' --visible \
+  --weston-bundle /path/to/extracted/weston \
+  --trials 3 --warmup 15 --duration 15 --validate-seconds 4 \
+  --output /tmp/deckard-simd-ui
+```
+
+Use an available shared font and short output paths; run one benchmark at a time without host compilation or packaging. [Provenance](results/2026-10-06/native-0.8/provenance.json) records frozen source and executable hashes. Both timing metadata files report a clean source tree. [Diagnostics](results/2026-10-06/native-0.8/diagnostics.json) and [memory maps](results/2026-10-06/native-0.8/memory-maps.json) are separate from performance timing. Physical USB/panel refresh, ARM performance and long-duration soaks remain outside these measurements.

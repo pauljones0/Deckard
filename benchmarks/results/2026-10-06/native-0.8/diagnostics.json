@@ -1,0 +1,46 @@
+{
+  "instrumented": true,
+  "included_in_performance_table": false,
+  "baseline_gif_profile": {
+    "version": "0.7.0",
+    "binary_sha256": "7fda93a53285c413d7e4e5e03ab1dd708ee91f7ee07860e04c08481fd6332832",
+    "workload": "Plus, eight labelled 120x120 keys, 100 FPS looping GIF, installed Liberation Sans",
+    "method": "perf record -F 4999 -e cycles:u --call-graph dwarf,8192; 15-second warmup, separate 20-second profile",
+    "lost_samples": 0,
+    "sampled_user_cycle_percent": {
+      "Renderer::encode (annotation identifies scalar RGB packing)": 24.86,
+      "overlay_rgba": 15.98
+    }
+  },
+  "memory_maps": {
+    "method": "Fresh background Plus 100 FPS processes; /proc/PID/smaps at 15 and 30 seconds, grouped by mappings. Separate from timing.",
+    "raw_summary": "memory-maps.json",
+    "finding": "Both anonymous heaps are 6.35546875 MiB, stable at both snapshots. New application-image PSS +0.03125 MiB. No growing heap in this window; no multi-day leak claim."
+  },
+  "video_profile": {
+    "version": "0.8.0",
+    "binary_sha256": "e117c24253d180d01bda89b71b1c81bf1102c5feb5dbf746c8b827baa71d9dcb",
+    "workload": "Plus, eight labelled 120x120 keys, same 60 FPS single-pass FFV1 video",
+    "method": "Same PMU sampling, attached to the native app and its FFmpeg child together; 15-second warmup, separate 20-second capture",
+    "samples": 5164,
+    "lost_samples": 0,
+    "identified_jpeg_routines_user_cycle_percent_lower_bound": 56.84,
+    "libavcodec_user_cycle_percent": 18.75,
+    "pack_ssse3_user_cycle_percent": 1.31,
+    "process_cpu_instrumented": {
+      "instrumented": true,
+      "seconds": 20.83859844598919,
+      "processes": [
+        {
+          "process": "deckard",
+          "cpu_seconds": 0.6500000000000001
+        },
+        {
+          "process": "ffmpeg",
+          "cpu_seconds": 0.26
+        }
+      ]
+    },
+    "finding": "JPEG encoding and FFmpeg consume most sampled work; RGB packing is a small remaining share. This supports reporting the modest video change rather than promising broad speedups. Profiling overhead means these values must not replace uninstrumented trial results."
+  }
+}
