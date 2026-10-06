@@ -1,0 +1,201 @@
+{
+  "version": "0.7.0",
+  "tag_commit": "9766a440d3b4d5952ff0a8683675bbc3875e5056",
+  "release_url": "https://github.com/pauljones0/Deckard/releases/tag/v0.7.0",
+  "ci_url": "https://github.com/pauljones0/Deckard/actions/runs/37414708498",
+  "ci_conclusion": "success",
+  "checked_architectures": [
+    "x86_64",
+    "aarch64"
+  ],
+  "package_checks": [
+    "Fresh Ubuntu 22.04 DEB install, portable GUI, AppImage and bundled FFmpeg",
+    "Fresh Fedora 43 RPM install and GUI",
+    "Forced OpenGL fallback",
+    "Relocated FFprobe 16x16 60/1 source-rate check",
+    "Relocated native plugin RPC"
+  ],
+  "asset_count": 22,
+  "all_published_asset_sha256_digests_match": true,
+  "checksum_manifest_entries_checked": 14,
+  "all_eight_readme_download_links_http_status": 200,
+  "archives_have_no_python_or_gtk_runtime": true,
+  "published_assets": [
+    {
+      "name": "BUILD-aarch64.json",
+      "bytes": 465,
+      "digest": "sha256:c2964fce22cd4710bb77623a6027b423088c019d69ac4533237bdeeaa7ceb0be"
+    },
+    {
+      "name": "BUILD-x86_64.json",
+      "bytes": 457,
+      "digest": "sha256:8cb521efd421f64f6413585202aa51c3670ac691beaff156fd0f80450b33e0f2"
+    },
+    {
+      "name": "deckard-0.7.0-aarch64.AppImage",
+      "bytes": 90339848,
+      "digest": "sha256:1213e99e97525f3557613c89788a5392e26c79fb8ba43cc23b38f216211c5629"
+    },
+    {
+      "name": "deckard-0.7.0-aarch64.deb",
+      "bytes": 78820926,
+      "digest": "sha256:5519d1be6251b96b5fe67d55b4f75327167b4908550d74791a4f842858648539"
+    },
+    {
+      "name": "deckard-0.7.0-aarch64.rpm",
+      "bytes": 95972567,
+      "digest": "sha256:aa8cde8163506ad98a335cf47c70f7a0f2056f4b61df826d1c20dc544e1d2a49"
+    },
+    {
+      "name": "deckard-0.7.0-aarch64.tar.gz",
+      "bytes": 95703208,
+      "digest": "sha256:4101c5ff669b7378a0400e533da40171de985140c018c79083bbfbd19bbcde55"
+    },
+    {
+      "name": "deckard-0.7.0-example-plugin-aarch64.zip",
+      "bytes": 228164,
+      "digest": "sha256:f63adaaeed9f4d4c8dd941505d7faaf75600d2f97a211ae7940da956f347ec10"
+    },
+    {
+      "name": "deckard-0.7.0-example-plugin-x86_64.zip",
+      "bytes": 232833,
+      "digest": "sha256:fc92c886952476ba4f81c71b810e5b76a3451351af6c2c529138ed206ea909e4"
+    },
+    {
+      "name": "deckard-0.7.0-starter-page-aarch64.zip",
+      "bytes": 228829,
+      "digest": "sha256:a258a5d527b29050e5ab421b912b9cc5ed377b303ec4c993f0e9f01ec01af886"
+    },
+    {
+      "name": "deckard-0.7.0-starter-page-x86_64.zip",
+      "bytes": 233498,
+      "digest": "sha256:8a431f41a05980fcad00e5fb2a54b2f8cde0e275215ad6946736a6cff0f53978"
+    },
+    {
+      "name": "deckard-0.7.0-x86_64.AppImage",
+      "bytes": 94988792,
+      "digest": "sha256:6d456730859f7bdc1b07f13159bf38889d4dcb2c427e3be39bc037a3d3342c30"
+    },
+    {
+      "name": "deckard-0.7.0-x86_64.deb",
+      "bytes": 82670980,
+      "digest": "sha256:4a36c95fd462fcc902b72fa83feea7016eaadac245c8b235bbd9fa6e65aa3ad0"
+    },
+    {
+      "name": "deckard-0.7.0-x86_64.rpm",
+      "bytes": 100683167,
+      "digest": "sha256:5b5860086ce8662da49543d5f4cb52bbef27df83e93cb338472f261c4f2805d7"
+    },
+    {
+      "name": "deckard-0.7.0-x86_64.tar.gz",
+      "bytes": 100412772,
+      "digest": "sha256:14373cffb0b3fa8751906ef8773250ebc12652f520daeb126fdbf7be534cd43d"
+    },
+    {
+      "name": "native-store-aarch64.json",
+      "bytes": 935,
+      "digest": "sha256:841222572c1aca8b1631dd06d26cd1b6cd0bd98bfcc3a0ca6ee05510780c5299"
+    },
+    {
+      "name": "native-store-x86_64.json",
+      "bytes": 931,
+      "digest": "sha256:821a4dbe35d8aba8b403da9853e1095e40c28fa0338e3392f72885e0965941a7"
+    },
+    {
+      "name": "native-ui-aarch64.png",
+      "bytes": 105226,
+      "digest": "sha256:307f0940e18f2773e266e36b1a41afd654738220f31b582c3200db28029f387e"
+    },
+    {
+      "name": "native-ui-x86_64.png",
+      "bytes": 105280,
+      "digest": "sha256:5349cea1f727f8ef93f579435c34c653b4a95b474c71e21fa0f1c53e87f30fad"
+    },
+    {
+      "name": "SHA256SUMS-aarch64",
+      "bytes": 680,
+      "digest": "sha256:d857d29bb2ffda08942871a61dc39e47bbd374800e4424630bd670e32785823d"
+    },
+    {
+      "name": "SHA256SUMS-x86_64",
+      "bytes": 673,
+      "digest": "sha256:140461e0a482b2517b5844639523a2daf11e619bc0035cf313c47ded922f73d9"
+    },
+    {
+      "name": "SOURCES-aarch64.json",
+      "bytes": 173212,
+      "digest": "sha256:e9ac4f95ef67432a21acf7666c55e953d702bce744b9082f53be330985237cd6"
+    },
+    {
+      "name": "SOURCES-x86_64.json",
+      "bytes": 175014,
+      "digest": "sha256:8236c517f75b8162c48f2196d70fa2ad4d1f5e328ddccf542b354684269c16db"
+    }
+  ],
+  "downloaded_x86_64_portable_gui": {
+    "renderer": "NVIDIA GeForce RTX 5070 (Vulkan)",
+    "executable_sha256": "d0cee2b9f345b75205690e0c980fd46c17637000c5cac9e67e2f05a2745d9798",
+    "fixture": "Same 120x120 200-frame 100 FPS GIF and all-eight-key Liberation Sans labels as the 0.7.0 endpoint comparison",
+    "doctor": {
+      "version": "0.7.0",
+      "runtime": "Rust",
+      "python": false,
+      "plugin_api": 1,
+      "jpeg": "libjpeg-turbo SIMD",
+      "architecture": "x86_64"
+    },
+    "validation": {
+      "seconds": 3.009299,
+      "method": "two changed-tile counter snapshots over the engine monotonic clock",
+      "poll_interval_ms": null,
+      "fps_per_key": {
+        "0": 100.02329446160053,
+        "1": 100.02329446160053,
+        "2": 100.02329446160053,
+        "3": 100.02329446160053,
+        "4": 100.02329446160053,
+        "5": 100.02329446160053,
+        "6": 100.02329446160053,
+        "7": 100.02329446160053
+      },
+      "fps_min": 100.02329446160053,
+      "fps_max": 100.02329446160053,
+      "sizes": {
+        "0": [
+          120,
+          120
+        ],
+        "1": [
+          120,
+          120
+        ],
+        "2": [
+          120,
+          120
+        ],
+        "3": [
+          120,
+          120
+        ],
+        "4": [
+          120,
+          120
+        ],
+        "5": [
+          120,
+          120
+        ],
+        "6": [
+          120,
+          120
+        ],
+        "7": [
+          120,
+          120
+        ]
+      },
+      "written_tiles": 0,
+      "instrumented": true
+    }
+  }
+}
