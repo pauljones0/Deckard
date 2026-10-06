@@ -18,7 +18,7 @@ Observer, with one lane per event source.
 A new asyncio event loop per trigger, and the default executor it creates,
 churn file descriptors and threads. AudioControl fires its PulseEvent holder
 tens of times per second during a volume change, which makes that churn visible
-in telemetry. See docs/memory-footprint-plan.md. Instead, a trigger hands its
+in telemetry. See docs/archive/memory-footprint-plan.md. Instead, a trigger hands its
 batch of observers to a background thread that keeps one loop alive across
 events. Lane below states what a lane isolates, and shutdown() states what quit
 does to a queue.

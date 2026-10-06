@@ -13,7 +13,7 @@ You should have received a copy of the GNU General Public License
 along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 CallbackRegistry is a locked holder for callback subscriptions. See
-docs/memory-footprint-plan.md.
+docs/archive/memory-footprint-plan.md.
 
 The registry stores a bound method as a weakref.WeakMethod, so the teardown
 of an action or a controller drops its callback silently. A function, a

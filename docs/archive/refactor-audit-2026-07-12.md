@@ -3,7 +3,7 @@
 **Scope:** maintainability/structure only — fragile structures, inconsistent patterns,
 concurrency that existing decorators already solve, repeated patterns, ad-hoc design.
 This is a **refactor** lens, deliberately distinct from the bug-focused
-`docs/deep-audit-2026-07-10.md` (which catalogues races/data-loss; those are not re-listed here).
+`docs/archive/deep-audit-2026-07-10.md` (which catalogues races/data-loss; those are not re-listed here).
 
 **Tree:** `main` @ working tree. Suite baseline unchanged. Line numbers verified against the
 live tree unless marked *(approx)*.

@@ -3,7 +3,7 @@
 **Tree audited:** `local-integration` @ c54a6a24 (13 squashed topic commits ahead of `main`, merge-base 5eebf549).
 **Method:** 12 parallel audit passes — 6 subsystem auditors (DeckController core, media layer, store/assets, pages/persistence, plugin system, app shell/GUI), 1 test-harness auditor, 5 commit reviewers covering all 13 branch commits — plus 2 contributed peer-session audits (AssetManager/Store reuse, per-scenario test deep-dive), spot-verification of single-source findings, and a full suite run.
 **Baseline:** scenario suite **32/32 PASS** on the working tree. `[DBG-vmix]` instrumentation confirmed fully stripped; no debug leftovers introduced by the branch (the two stray `print()`s found are pre-existing on `main`).
-**De-duplication:** findings already catalogued in `docs/memory-footprint-plan.md` (§6 bug appendix etc.) are *not* re-reported; where relevant they appear under "Known-issue status" with a verified fixed/open verdict.
+**De-duplication:** findings already catalogued in `docs/archive/memory-footprint-plan.md` (§6 bug appendix etc.) are *not* re-reported; where relevant they appear under "Known-issue status" with a verified fixed/open verdict.
 
 **Origin flags used throughout:**
 - `[branch]` — introduced by local-integration (commit sha given where it came from the commit review)
@@ -204,13 +204,13 @@ The harness itself is unusually strong — journal-based ordering/content invari
 
 ---
 
-## 7. Known-issue cross-reference (docs/memory-footprint-plan.md §6 et al.)
+## 7. Known-issue cross-reference (docs/archive/memory-footprint-plan.md §6 et al.)
 
 **Verified fixed on the branch** (confirmed by reading, not just claimed): §6.15 cache opt-out overwrite; §6.17 early-decode capture leak; §6.18/6.19 video close paths; §6.20 touchscreen close_resources guard; §3.3.8 screensaver stash pinning; §3.2 encode-memo thrash (doorkeeper + clears); §6.27 per-trigger asyncio loops; §6.28 SignalManager locking; §6.33 double settings write; §6.5/6.7/6.29 teardown call sites; §6.21 overlay None sentinel; §6.38 uninstall iteration; PluginBase lru_cache-on-method; GenerativeUI leak *substantially* fixed (unregister + 7 drop sites + ExpanderRow teardown; residual: intra-life row rebuilds accumulate until action teardown — bounded now, not unbounded); one deck-unplug leak root fixed (`deck_attributes` purge, DeckStack.py:128-137).
 
 **Still open, re-confirmed:** §6.25 `get_plugins(include_disabled=True)` mutates the live registry (and `get_plugin_by_id` defaults True → first lookup permanently merges disabled plugins); §6.26 `connect_to_event` wrong dict key; §6.30 `ActionManager.on_click_remove` dead-broken (the branch's added teardown call is unreachable past the AttributeError; the live remove path in ActionConfigurator is correct); §6.32 `wait_for_backend` 0.3 s cap; §6.34 (see the diag discussion above — the doc's "dead code" note is itself wrong); doc bug 37 `move_key_to_end` ignores its argument; doc bug 39 `move_page` never re-keys the cache entry (now also amplifies B-04); doc bug 42 shared-mutable `get_app_settings` cache.
 
-**Corrections to the docs:** `docs/render-pipeline-design.md`'s "skipped keys self-heal within one tick" claim is false for opaque keys (B-11). `docs/presenter-migration-plan.md` is *landed* (as-built claims verified) — rename or alias it; the filename ("presenter-") describes the design its v2 explicitly rejected, and it reads as unfinished work.
+**Corrections to the docs:** `docs/archive/render-pipeline-design.md`'s "skipped keys self-heal within one tick" claim is false for opaque keys (B-11). `docs/archive/presenter-migration-plan.md` is *landed* (as-built claims verified) — rename or alias it; the filename ("presenter-") describes the design its v2 explicitly rejected, and it reads as unfinished work.
 
 ---
 

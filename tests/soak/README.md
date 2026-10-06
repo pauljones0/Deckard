@@ -1,6 +1,6 @@
 # Memory soak procedure (Phase 0, P0.6)
 
-Companion to `docs/memory-footprint-plan.md` and `docs/memory-footprint-impl-plan.md`
+Companion to `docs/archive/memory-footprint-plan.md` and `docs/memory-footprint-impl-plan.md`
 (Phase 0). These scripts don't replace the `tests/scenario_*.py` FakeDeck
 harness (`tests/run_all.py`) -- they're for the longer, hardware-attached
 soaks that the harness can't do: multi-hour idle drift, real USB

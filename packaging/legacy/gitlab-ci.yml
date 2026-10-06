@@ -1,5 +1,5 @@
 # Deckard CI — flatpak bundle releases (design in
-# docs/ci-flatpak-releases-plan.md).
+# docs/archive/ci-flatpak-releases-plan.md).
 #
 # Shape (the same skeleton the sibling projects share):
 #   test     — byte-compile smoke over the tree (cheap syntax gate; the real
