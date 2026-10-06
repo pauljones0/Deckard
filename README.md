@@ -32,21 +32,14 @@ Python plugins need native replacements. Saved pages can be migrated through **S
 
 ## Less CPU. Less RAM.
 
-Measured upstream comparison with eight animated Plus keys. **Rust 0.5.0** results; newer releases are measured separately below.
+Measured upstream comparison with eight animated Plus keys, using Rust 0.5.0.
 
 | Mode | StreamController CPU / RAM | nazbert/Deckard CPU / RAM | Rust 0.5.0 CPU / RAM |
 | --- | ---: | ---: | ---: |
 | Editor | 6.33% / 339 MiB | 3.80% / 303 MiB | **1.83% / 176 MiB** |
 | Background | 4.07% / 197 MiB | 2.23% / 195 MiB | **0.80% / 16 MiB** |
 
-**0.8.0: under 1% of a CPU core at 100 FPS.** Compared with 0.7.0 at the same frame rates:
-
-| Background animation | CPU · 0.7 → 0.8 | CPU saved | RAM MiB · 0.7 → 0.8 |
-| --- | ---: | ---: | ---: |
-| Plus · 8 keys · 100 FPS | 1.40% → **0.93%** | **33%** | 17.7 → 17.8 |
-| XL · 32 keys · 50 FPS | 2.33% → **1.67%** | **29%** | 28.0 → 28.1 |
-
-CPU is percent of one core; RAM is process-tree PSS. Three trials per case on a Ryzen 9800X3D / RTX 5070, using fake devices. USB/LCD and ARM performance remain unmeasured. Latest RAM use is effectively unchanged. [Full results and method](docs/performance.md).
+CPU is percent of one core; RAM is process-tree PSS. Three trials per case on a Ryzen 9800X3D / RTX 5070, using fake devices. USB/LCD and ARM performance remain unmeasured. [Full results and method](docs/performance.md).
 
 ## Build
 
