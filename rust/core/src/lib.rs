@@ -15,6 +15,7 @@ pub mod model;
 pub mod mpris;
 pub mod obs;
 pub mod persistence;
+mod pixels;
 pub mod plugin;
 pub mod render;
 pub mod store;

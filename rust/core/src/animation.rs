@@ -114,7 +114,7 @@ impl GifPlayer {
     }
     fn advance(&mut self) -> Result<()> {
         let frame = match self.reader.read_next_frame()? {
-            Some(frame) => frame.clone(),
+            Some(frame) => frame,
             None if !self.looping => {
                 self.finished = true;
                 return Ok(());
@@ -127,7 +127,6 @@ impl GifPlayer {
                 self.reader
                     .read_next_frame()?
                     .context("GIF has no frames")?
-                    .clone()
             }
         };
         match self.dispose {

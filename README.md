@@ -8,14 +8,14 @@ Based on [StreamController](https://github.com/StreamController/StreamController
 
 ## Download and play
 
-[**Download Deckard 0.7.0**](https://github.com/pauljones0/Deckard/releases/tag/v0.7.0). Pick your format and architecture below. Intel/AMD PCs use **x86-64**; 64-bit ARM computers use **ARM64**.
+[**Download Deckard 0.8.0**](https://github.com/pauljones0/Deckard/releases/tag/v0.8.0). Pick your format and architecture below. Intel/AMD PCs use **x86-64**; 64-bit ARM computers use **ARM64**.
 
 | Linux build | x86-64 | ARM64 | Start it |
 | --- | --- | --- | --- |
-| AppImage | [Download](https://github.com/pauljones0/Deckard/releases/download/v0.7.0/deckard-0.7.0-x86_64.AppImage) | [Download](https://github.com/pauljones0/Deckard/releases/download/v0.7.0/deckard-0.7.0-aarch64.AppImage) | In file properties, allow executing the file; double-click. |
-| Ubuntu / Debian / Mint / Pop!_OS DEB | [Download](https://github.com/pauljones0/Deckard/releases/download/v0.7.0/deckard-0.7.0-x86_64.deb) | [Download](https://github.com/pauljones0/Deckard/releases/download/v0.7.0/deckard-0.7.0-aarch64.deb) | Open in your software installer, install, then launch **Deckard**. |
-| Fedora / compatible RPM systems | [Download](https://github.com/pauljones0/Deckard/releases/download/v0.7.0/deckard-0.7.0-x86_64.rpm) | [Download](https://github.com/pauljones0/Deckard/releases/download/v0.7.0/deckard-0.7.0-aarch64.rpm) | Open in your software installer, install, then launch **Deckard**. |
-| Portable archive | [Download](https://github.com/pauljones0/Deckard/releases/download/v0.7.0/deckard-0.7.0-x86_64.tar.gz) | [Download](https://github.com/pauljones0/Deckard/releases/download/v0.7.0/deckard-0.7.0-aarch64.tar.gz) | Extract; open `deckard/bin/deckard`. Keep the extracted directory together. |
+| AppImage | [Download](https://github.com/pauljones0/Deckard/releases/download/v0.8.0/deckard-0.8.0-x86_64.AppImage) | [Download](https://github.com/pauljones0/Deckard/releases/download/v0.8.0/deckard-0.8.0-aarch64.AppImage) | In file properties, allow executing the file; double-click. |
+| Ubuntu / Debian / Mint / Pop!_OS DEB | [Download](https://github.com/pauljones0/Deckard/releases/download/v0.8.0/deckard-0.8.0-x86_64.deb) | [Download](https://github.com/pauljones0/Deckard/releases/download/v0.8.0/deckard-0.8.0-aarch64.deb) | Open in your software installer, install, then launch **Deckard**. |
+| Fedora / compatible RPM systems | [Download](https://github.com/pauljones0/Deckard/releases/download/v0.8.0/deckard-0.8.0-x86_64.rpm) | [Download](https://github.com/pauljones0/Deckard/releases/download/v0.8.0/deckard-0.8.0-aarch64.rpm) | Open in your software installer, install, then launch **Deckard**. |
+| Portable archive | [Download](https://github.com/pauljones0/Deckard/releases/download/v0.8.0/deckard-0.8.0-x86_64.tar.gz) | [Download](https://github.com/pauljones0/Deckard/releases/download/v0.8.0/deckard-0.8.0-aarch64.tar.gz) | Extract; open `deckard/bin/deckard`. Keep the extracted directory together. |
 | Arch / EndeavourOS / Manjaro | [PKGBUILD](packaging/aur/deckard-git/PKGBUILD) | Same PKGBUILD | `makepkg -si`; launch **Deckard**. This option builds from source. |
 
 Bundles include FFmpeg/FFprobe, audio/input helpers and the native example plugin. They require a Linux desktop with **glibc 2.35 or newer** and working Vulkan or OpenGL/EGL drivers: for example Ubuntu 22.04+, Debian 12+, Mint 21+ and current Fedora/Arch. They do not support Alpine/musl. File dialogs use your desktop's XDG portal. [Build details, checksums and troubleshooting](docs/linux-builds.md).

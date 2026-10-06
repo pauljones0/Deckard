@@ -190,6 +190,7 @@ pub struct Renderer {
     previous_frame: Option<Frame>,
     scaled: HashMap<(usize, u32, u32, String, String), Arc<RgbaImage>>,
     scaled_bytes: usize,
+    opacity: crate::pixels::OpacityCache,
     stamps: HashMap<AssetKey, (u64, std::time::SystemTime)>,
     glyphs: std::cell::RefCell<GlyphCache>,
     pub errors: Vec<String>,
@@ -314,6 +315,7 @@ impl Renderer {
             previous_frame: None,
             scaled: HashMap::new(),
             scaled_bytes: 0,
+            opacity: crate::pixels::OpacityCache::default(),
             stamps: HashMap::new(),
             glyphs: std::cell::RefCell::new(GlyphCache::default()),
             errors: Vec::new(),
@@ -321,6 +323,7 @@ impl Renderer {
         })
     }
     pub fn release_media(&mut self) {
+        self.opacity.clear();
         self.encoded.clear();
         self.streaming_encoded.clear();
         self.encoded.set_capacity(self.encoded_budget);
@@ -556,6 +559,7 @@ impl Renderer {
         self.scaled.clear();
         self.scaled_bytes = 0;
         let (rows, cols) = layout(kind, config.rotation);
+        self.opacity.clear();
         let mut fmt = kind.key_image_format();
         if let Some(size) = config.key_size {
             fmt.size = size;
@@ -696,7 +700,7 @@ impl Renderer {
                     if let Some(img) = self.asset_playback(path, w, h, &state["media"]) {
                         persistent &= repeatable_media(path, &state["media"]);
                         let img = self.scaled_media(&img, w, h, &state["media"], "cover");
-                        overlay_rgba(&mut tile, img.as_ref(), 0, 0);
+                        self.overlay_image(&mut tile, &img, 0, 0);
                     }
                 }
                 self.native_visual(&mut tile, &state["native-visual"]);
@@ -768,13 +772,8 @@ impl Renderer {
                         && let Some(image) = self.asset_playback(path, sw, sh, &state["media"])
                     {
                         persistent &= repeatable_media(path, &state["media"]);
-                        overlay_rgba(
-                            &mut strip,
-                            self.scaled_media(&image, sw, sh, &state["media"], "contain")
-                                .as_ref(),
-                            0,
-                            0,
-                        );
+                        let image = self.scaled_media(&image, sw, sh, &state["media"], "contain");
+                        self.overlay_image(&mut strip, &image, 0, 0);
                     }
                     self.native_visual(&mut strip, &state["native-visual"]);
                     self.labels(&mut strip, state);
@@ -808,13 +807,8 @@ impl Renderer {
                             && let Some(img) = self.asset_playback(path, tw, th, &state["media"])
                         {
                             persistent &= repeatable_media(path, &state["media"]);
-                            overlay_rgba(
-                                &mut part,
-                                self.scaled_media(&img, tw, th, &state["media"], "contain")
-                                    .as_ref(),
-                                0,
-                                0,
-                            )
+                            let image = self.scaled_media(&img, tw, th, &state["media"], "contain");
+                            self.overlay_image(&mut part, &image, 0, 0);
                         }
                         self.native_visual(&mut part, &state["native-visual"]);
                         self.labels(&mut part, state);
@@ -1068,7 +1062,7 @@ impl Renderer {
                     "cover",
                 )
             };
-            overlay_rgba(img, image.as_ref(), 0, 0);
+            self.overlay_image(img, &image, 0, 0);
             if visual["darken"] == true {
                 overlay_color(img, [0, 0, 0, 120]);
             }
@@ -1255,6 +1249,10 @@ impl Renderer {
             }
         }
     }
+    fn overlay_image(&mut self, bottom: &mut RgbaImage, top: &Arc<RgbaImage>, x: i64, y: i64) {
+        let opaque = self.opacity.opaque(top);
+        overlay_rgba_inner(bottom, top, x, y, opaque);
+    }
     fn labels(&self, img: &mut RgbaImage, state: &Value) {
         for (position, y) in [("top", 0.12), ("center", 0.5), ("bottom", 0.87)] {
             let label = &state["labels"][position];
@@ -1372,6 +1370,9 @@ impl Renderer {
 /// Composite contiguous RGBA rows without repeated coordinate/buffer checks.
 /// Opaque rows are copied; mixed rows use the same Pixel::blend as imageops.
 fn overlay_rgba(bottom: &mut RgbaImage, top: &RgbaImage, x: i64, y: i64) {
+    overlay_rgba_inner(bottom, top, x, y, false);
+}
+fn overlay_rgba_inner(bottom: &mut RgbaImage, top: &RgbaImage, x: i64, y: i64, opaque: bool) {
     let dst_x = x.clamp(0, i64::from(bottom.width())) as usize;
     let dst_y = y.clamp(0, i64::from(bottom.height())) as usize;
     let src_x = x.saturating_neg().clamp(0, i64::from(top.width())) as usize;
@@ -1388,11 +1389,12 @@ fn overlay_rgba(bottom: &mut RgbaImage, top: &RgbaImage, x: i64, y: i64) {
         let source = &top.as_raw()[start..start + width * 4];
         let start = (dst_y + row) * dst_stride + dst_x * 4;
         let target = &mut bottom.as_mut()[start..start + width * 4];
-        if source
-            .as_chunks::<4>()
-            .0
-            .iter()
-            .all(|pixel| pixel[3] == 255)
+        if opaque
+            || source
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .all(|pixel| pixel[3] == 255)
         {
             target.copy_from_slice(source);
         } else {
@@ -1484,21 +1486,9 @@ fn repeatable_media(path: &str, options: &Value) -> bool {
             })
 }
 fn rgb_pixels(img: &RgbaImage) -> Arc<[u8]> {
-    let length = img.width() as usize * img.height() as usize * 3;
-    // SAFETY: every byte is zero-initialized, and all u8 bit patterns are valid.
-    // Allocate the final immutable preview directly, avoiding Vec -> Arc copies.
-    let mut rgb = unsafe { Arc::<[u8]>::new_zeroed_slice(length).assume_init() };
-    for (target, source) in Arc::get_mut(&mut rgb)
-        .expect("unshared RGB buffer")
-        .as_chunks_mut::<3>()
-        .0
-        .iter_mut()
-        .zip(img.pixels())
-    {
-        target.copy_from_slice(&source.0[..3]);
-    }
-    rgb
+    crate::pixels::rgb_pixels(img)
 }
+
 fn rotate_ccw<I: image::GenericImageView<Pixel = image::Rgb<u8>>>(
     img: &I,
     rotation: u16,
@@ -1716,6 +1706,30 @@ mod tests {
                 }
             }
         }
+    }
+    #[test]
+    fn cached_opacity_composition_matches_reference_and_rechecks_changed_images() {
+        let mut renderer = Renderer::new(1024 * 1024).unwrap();
+        for alpha in [255, 0, 127, 254] {
+            let mut top = Arc::new(RgbaImage::from_fn(19, 13, |x, y| {
+                Rgba([x as u8 * 7, y as u8 * 11, 91, alpha])
+            }));
+            for (x, y) in [(0, 0), (4, 7), (-7, -4), (i64::MIN, i64::MAX)] {
+                let mut actual = RgbaImage::from_pixel(17, 23, Rgba([10, 20, 30, 45]));
+                let mut expected = actual.clone();
+                imageops::overlay(&mut expected, top.as_ref(), x, y);
+                renderer.overlay_image(&mut actual, &top, x, y);
+                assert_eq!(actual, expected);
+            }
+            let replacement = Arc::make_mut(&mut top);
+            replacement.put_pixel(3, 5, Rgba([100, 101, 102, 127]));
+            let mut actual = RgbaImage::from_pixel(19, 13, Rgba([5, 6, 7, 31]));
+            let mut expected = actual.clone();
+            imageops::overlay(&mut expected, top.as_ref(), 0, 0);
+            renderer.overlay_image(&mut actual, &top, 0, 0);
+            assert_eq!(actual, expected);
+        }
+        renderer.release_media();
     }
     #[test]
     fn direct_rgb_conversion_preserves_channels_and_alpha_behavior_in_each_color_space() {
