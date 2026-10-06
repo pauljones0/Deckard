@@ -1,0 +1,38 @@
+{
+  "before": {
+    "version": "0.5.0",
+    "runtime_source_commit": "b19036481e9a90a058d286595af8370b3fedc670",
+    "published_tag_commit": "db23edfd344a0c2a00e77d67edaa30b3ddf2dc82",
+    "binary_sha256": "6494f201eb901bc31f23f67d43af9be035dce53c16380b9581fda6020e68e3c7"
+  },
+  "after": {
+    "version": "0.6.0",
+    "runtime_source_commit": "391d04d8ae48c57a4fff2fa974a236df0f5a604d",
+    "binary_sha256": "11c37331663c79f1f01cbfe376e2336746d1b203aea82db3d743759bd77eb6c5"
+  },
+  "measurement_checkout": "8f748aab2e97de5d26b3c7f3e6f26a56031cc2b4",
+  "dirty_tree_in_visible_and_model_metadata": {
+    "changed_files": [
+      "benchmarks/README.md"
+    ],
+    "explanation": "Documentation-only methodology edits. Rust sources, dependencies and both measured executables were frozen and unchanged throughout all trials."
+  },
+  "host": {
+    "cpu": "AMD Ryzen 7 9800X3D",
+    "logical_cpus_exposed": 8,
+    "gpu": "NVIDIA RTX 5070",
+    "gpu_driver": "610.57.04",
+    "visible_app_renderer": "Vulkan",
+    "visible_compositor": "Weston 15.0.1, private 1280x800 headless GL kiosk output",
+    "architecture": "x86_64",
+    "glibc": "2.44",
+    "rust": "1.99.0"
+  },
+  "limits": [
+    "Host-built frozen executables, rather than Ubuntu 22.04 distribution binaries.",
+    "No physical controller was connected: FPS counts changed rendered pixels, not completed USB transfers or LCD scanout.",
+    "No ARM64 timing measurements.",
+    "Compositor and private D-Bus CPU/RAM are excluded; application descendants are included.",
+    "The optional model runs are short fidelity checks only and are excluded from all CPU/RAM comparisons."
+  ]
+}

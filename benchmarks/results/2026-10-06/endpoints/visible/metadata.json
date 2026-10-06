@@ -1,0 +1,23 @@
+{
+  "date": "2026-10-06T03:05:10Z",
+  "platform": "Linux-7.2.5-3-omarchy-x86_64-with-glibc2.44",
+  "warmup": 15.0,
+  "duration": 15.0,
+  "trials": 3,
+  "visible": true,
+  "cpu_unit": "100% = one logical core",
+  "memory_unit": "MiB PSS, application plus descendants",
+  "hardware_usb": false,
+  "git_head": "8f748aab2e97de5d26b3c7f3e6f26a56031cc2b4",
+  "git_dirty": true,
+  "binaries": {
+    "before": {
+      "path": "/home/paul/Deckard/target/benchmarks/deckard-v0.5.0-endpoint-baseline",
+      "sha256": "6494f201eb901bc31f23f67d43af9be035dce53c16380b9581fda6020e68e3c7"
+    },
+    "after": {
+      "path": "/home/paul/Deckard/target/release/deckard",
+      "sha256": "11c37331663c79f1f01cbfe376e2336746d1b203aea82db3d743759bd77eb6c5"
+    }
+  }
+}

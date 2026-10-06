@@ -100,3 +100,27 @@ Other changes remove repeat work: renderer snapshots and live worker lists are s
 A Weston 15 kiosk-shell crash was reproduced in `weston_view_move_to_layer` when the final client closed. The current harness supports `--weston-bundle /path/to/extracted/weston`: every trial gets a fresh private GPU compositor, terminated before client teardown. The compositor stays outside the application process tree. This makes the test sequence repeatable without changing the user's desktop.
 
 Use short output paths because native control sockets have a Unix path-length limit. Never run compilation or package builds during timed trials. Profiler runs, graphics captures and frame observers are diagnostic/validation runs and must be kept separate from timings.
+
+## Native endpoint optimization (0.6.0)
+
+`endpoints.py` compares the frozen host-built 0.5.0 executable with the 0.6.0 native renderer. It runs the real application and its descendants with a fresh HOME/data directory and private D-Bus session. Models select their own native output dimensions and number of keys. All keys have the same 14-point DejaVu Sans labels in both versions. GIF fixtures contain 200 distinct 120×120 source frames at 10, 50 or 100 FPS; the video fixture is a 120×120, 60 FPS FFV1 clip. Both versions receive an explicit 120 FPS media limit, exercising their maximum software paths. The old version internally clamps to 60 and polls rendering at approximately 30 FPS; it also stretches one-centisecond GIF delays to two centiseconds. The new version preserves valid source delays and rates.
+
+Each case has three independent trials, with application order reversed in the middle trial, 15 seconds warmup and 15 seconds timing. CPU/PSS use the same process-tree sampler as the upstream comparison. The timing phase contains no frame observer. Frame fidelity is checked afterward for four seconds, independently of CPU sampling. 0.5.0 is observed through changing output-tile identities; its approximately 30 FPS renderer is below the control socket's approximately 50-poll/s limit. 0.6.0 uses two snapshots of actual changed-tile counters over the engine's monotonic clock, avoiding both polling aliasing and a continuous observer. Every key must change, have the correct model dimensions, and produce no engine errors. These are fake-device checks; USB write counts are zero.
+
+The summary reports medians of trial CPU means, trial median PSS and each trial's minimum per-key FPS. It retains raw one-second CPU/PSS samples, per-key dimensions and frame rates, executable hashes, source state and CPU ranges. CPU milliseconds per complete device frame equal `CPU percent × 10 / FPS`; a device frame covers all keys, rather than one key. Comparing this cost distinguishes efficiency from simply reducing work. GIF encoded caches fill during warmup/sample according to the source's loop duration and each implementation's scheduling; the records specify the full measurement window rather than claiming an unlimited steady-state soak. A faster source can use more total CPU while costing less per delivered frame.
+
+Reproduce the background comparison, using separate release executables from the two versions:
+
+```sh
+.venv/bin/python benchmarks/endpoints.py \
+  --before /path/to/deckard-0.5.0 --after /path/to/deckard-0.6.0 \
+  --cases plus10 plus100 plus60video xl50 plusxl50 \
+  --trials 3 --warmup 15 --duration 15 --validate-seconds 4 \
+  --output /tmp/deckard-endpoints
+```
+
+For visible editor checks, add `--visible --weston-bundle /path/to/extracted/weston`. This starts a fresh private GPU-backed 1280×800 Weston compositor per trial. The 0.6.0 preview wakes on pixel changes and uses desktop vsync; the old preview watcher polls at 20 FPS. Renderer FPS counts controller pixels, rather than monitor presentations. Optional cases cover Mini, MK.2, Studio, Mirabox and Ulanzi; Studio's corrected geometry should be checked with `--versions after`, since the old fallback has different dimensions. Keep Unix socket data paths short and run one benchmark at a time, without compilation or packaging during sampling.
+
+The recorded host build is x86-64, on the same Ryzen 7 9800X3D / NVIDIA RTX 5070 machine as the upstream comparison. CPU uses percent of one logical core; RAM is MiB PSS. These timings do not measure the ARM64 builds, separately distributed Python packages, physical USB transfer, or LCD scanout. [Endpoint specifications and runtime diagnostics](../docs/rendering-endpoints.md) explain those limits.
+
+[Recorded 0.6.0 endpoint results](results/2026-10-06/endpoints) contain separate background and visible samples, plus model fidelity checks. [Provenance](results/2026-10-06/endpoints/provenance.json) identifies the frozen 0.5.0/0.6.0 runtime source commits and both executable hashes. The visible/model metadata correctly records a dirty tree: only this methodology document was being edited; Rust sources and measured executables remained unchanged. Host-built binaries differ from the Ubuntu 22.04 release bundles, whose packaging checks run independently on both architectures.

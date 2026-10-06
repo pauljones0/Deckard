@@ -38,9 +38,24 @@ Connect your deck and launch Deckard. Select an input, choose an action and edit
 
 These are controller image endpoints, rather than Valve Steam Deck screen dimensions or 144×144 source-icon artwork. [Verified specifications, FPS settings, transport behavior and diagnostics](docs/rendering-endpoints.md). Maximum visible hardware FPS needs a connected controller; the software limit is not a guaranteed LCD refresh rate.
 
+## Faster animation, less work per frame
+
+**100 FPS at about 17 MiB: 3.4× the frames, with 34% less CPU work per device frame. At the same 10 FPS, background CPU falls 20%.** These are measured Rust 0.5.0 → 0.6.0 results, with every key animated at its native resolution.
+
+| Workload · all keys | FPS · 0.5 → 0.6 | CPU · 0.5 → 0.6 | RAM MiB · 0.5 → 0.6 | CPU work per device frame |
+| --- | ---: | ---: | ---: | ---: |
+| Plus · 8 × 120² · 10 FPS GIF · background | 10.0 → **10.0** | 0.67% → **0.53%** | 17.8 → **16.9** | **−20%** |
+| Plus · 8 × 120² · 100 FPS GIF · background | 29.7 → **100.1** | 1.47% → 3.27% | 17.9 → **17.1** | **−34%** |
+| Plus · 8 × 120² · 60 FPS video · background | 29.7 → **60.1** | 2.40% → 2.93% | 66.9 → 66.5 | **−40%** |
+| XL · 32 × 96² · 50 FPS GIF · background | 29.2 → **49.9** | 3.20% → 4.80% | 28.0 → 27.7 | **−12%** |
+| Plus XL · 36 × 112² · 50 FPS GIF · background | 28.7 → **49.9** | 4.47% → 6.53% | 32.8 → 32.4 | **−16%** |
+| Plus · 8 × 120² · 100 FPS GIF · visible editor | 29.6 → **100.0** | 3.07% → 5.33% | 178.3 → 177.7 | **−48%** |
+
+Higher-rate sources use more total CPU because more frames are rendered; the final column compares CPU cost for a complete frame across all keys. CPU is percent of one logical core; RAM is application-plus-descendants PSS. Results are medians of three trials, each with 15 seconds warmup and 15 seconds sampling, on the Ryzen 7 9800X3D / RTX 5070 host. Separate pixel checks validate every key after timing; the visible editor uses Vulkan in a fresh private 1280×800 Wayland session. GIFs have 200 distinct 120×120 source frames; video is a 60 FPS FFV1 clip. These fake-device measurements establish rendering throughput, rather than physical USB/LCD limits or ARM performance. [Methodology](benchmarks/README.md#native-endpoint-optimization-060), [raw samples, per-key FPS and executable hashes](benchmarks/results/2026-10-06/endpoints).
+
 ## More room for your stream 🦀
 
-**Same animation, more headroom: editor animation uses 52% less CPU and 42% less RAM than the direct upstream. Background animation uses 80% less CPU and 92% less RAM than the original.**
+**Published 0.5.0 comparison: editor animation uses 52% less CPU and 42% less RAM than the direct upstream. Background animation uses 80% less CPU and 92% less RAM than the original.**
 
 The upstream table records the published **0.5.0** comparison. Each application cell shows **CPU / RAM**. CPU is percent of one logical core; RAM is proportional resident memory (PSS). Negative changes mean lower resource use.
 
